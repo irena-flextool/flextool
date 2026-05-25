@@ -60,9 +60,185 @@ from flextool.engine_polars._solve_state import (
     RunnerState,
 )
 from flextool.engine_polars import scaling as _scaling
+from flextool.engine_polars.autoscale import (
+    Layer2Plan as _AutoscaleLayer2Plan,
+    apply_layer2 as _autoscale_apply_layer2,
+    compute_ranges as _autoscale_compute_ranges,
+    resolve_auto_scale_config as _autoscale_resolve_config,
+    unscale_solution as _autoscale_unscale_solution,
+    write_report as _autoscale_write_report,
+)
+
+
+def _autoscale_emit_layer1(
+    sol: "Solution | None",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+    work_folder: str | os.PathLike | None,
+    layer2_plan: "_AutoscaleLayer2Plan | None" = None,
+) -> None:
+    """Layer 1 (detect) post-solve emitter.
+
+    Reads polar-high's already-computed ``Solution.streamed_lp_ranges``
+    (no duplicate matrix walk), runs the autoscaler's Layer 1
+    detection, and logs the four ranges + trigger flag.  Optionally
+    writes a YAML audit report when the config carries a path.
+
+    Phase 1b is detection-only — this function does NOT modify the LP
+    or the solve options.  Layer 2 / Layer 3 will hook in alongside
+    it in later phases.
+
+    Failures here are non-fatal: a missing ``streamed_lp_ranges`` (the
+    commercial-solver / LiteSolution path) skips the layer with a
+    debug-level note rather than breaking the solve.
+    """
+    cfg = _autoscale_resolve_config(None)
+    if not cfg.enabled:
+        return
+    if sol is None:
+        return
+    streamed = getattr(sol, "streamed_lp_ranges", None)
+    if not isinstance(streamed, dict):
+        logger.debug(
+            "autoscale Layer 1 skipped for %s: no streamed_lp_ranges on Solution",
+            solve_name,
+        )
+        return
+
+    try:
+        ranges = _autoscale_compute_ranges(sol, cfg)
+    except Exception:  # pragma: no cover — guard against future API drift
+        logger.exception(
+            "autoscale Layer 1 failed for %s; continuing without it", solve_name,
+        )
+        return
+
+    def _fmt(span: tuple[float, float]) -> str:
+        import math as _math
+        if _math.isnan(span[0]) or _math.isnan(span[1]):
+            return "empty"
+        return f"{span[0]:.1e}, {span[1]:.1e}"
+
+    logger.info(
+        "autoscale Layer 1 [%s]: Matrix [%s], Cost [%s], Bound [%s], "
+        "RHS [%s], cross=%s, trigger=%s",
+        solve_name,
+        _fmt(ranges.matrix), _fmt(ranges.cost),
+        _fmt(ranges.bound), _fmt(ranges.rhs),
+        (f"{ranges.cross_group_max_ratio:.1e}"
+         if ranges.cross_group_max_ratio == ranges.cross_group_max_ratio
+         else "n/a"),
+        ranges.trigger,
+    )
+
+    # Default report location next to the existing scaling_report file
+    # when no explicit path is configured — keeps both diagnostics
+    # together for the operator.
+    yaml_path = cfg.report_yaml_path
+    if yaml_path is None and work_folder is not None:
+        yaml_path = Path(work_folder) / "solve_data" / f"autoscale_{solve_name}.yaml"
+    if yaml_path is not None:
+        try:
+            report_tree: dict = {"layer1": ranges}
+            if layer2_plan is not None:
+                from flextool.engine_polars.autoscale._report import (
+                    render_layer2 as _render_l2,
+                )
+                report_tree["layer2"] = _render_l2(layer2_plan)
+            _autoscale_write_report(report_tree, yaml_path)
+        except Exception:  # pragma: no cover — non-fatal
+            logger.exception(
+                "autoscale Layer 1 report write failed (%s)", yaml_path,
+            )
+
+
+def _autoscale_apply_layer2_pre_solve(
+    pb: "Problem",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+) -> "_AutoscaleLayer2Plan | None":
+    """Layer 2 (semantic per-type scaling) pre-solve apply.
+
+    Runs only when the autoscaler is enabled AND the pre-solve Layer-1
+    detector trips (per ``AutoScaleConfig.threshold_decades``).  When
+    triggered, mutates ``pb`` in place and returns the inverse-plan
+    that ``_autoscale_unscale_post_solve`` consumes immediately after
+    ``pb.solve(...)``.
+
+    Returns ``None`` when Layer 2 was skipped (config off or
+    no-trigger) so the caller can branch on ``plan is not None``.
+
+    The detector here uses :func:`_autoscale_compute_ranges` on the
+    pre-solve ``Problem`` — :mod:`_ranges` falls back to
+    ``Problem._build_lp_arrays`` for that path.  Layer-1 emission
+    after solve still happens via the existing post-solve hook so the
+    operator-facing log line and YAML report describe the *scaled*
+    LP that HiGHS actually saw.
+    """
+    cfg = _autoscale_resolve_config(None)
+    if not cfg.enabled:
+        return None
+    try:
+        ranges_pre = _autoscale_compute_ranges(pb, cfg)
+    except Exception:  # pragma: no cover — guard against future API drift
+        logger.exception(
+            "autoscale Layer 2 pre-solve range readout failed for %s; "
+            "skipping Layer 2 (Layer 1 post-solve still fires)",
+            solve_name,
+        )
+        return None
+    if not ranges_pre.trigger:
+        return None
+    try:
+        plan = _autoscale_apply_layer2(pb, cfg)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 2 apply failed for %s; reverting solve to "
+            "un-scaled LP (Layer 1 post-solve still fires)",
+            solve_name,
+        )
+        return None
+    logger.info(
+        "autoscale Layer 2 [%s]: exponents=%s, rows=%d, skipped_rows=%d, "
+        "integer_cols=%d",
+        solve_name,
+        {t.value: e for t, e in plan.type_exponents.items()},
+        plan.row_factors.shape[0],
+        len(plan.skipped_rows),
+        len(plan.skipped_integer_cols),
+    )
+    return plan
+
+
+def _autoscale_unscale_post_solve(
+    sol: "Solution | None",
+    plan: "_AutoscaleLayer2Plan | None",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+) -> None:
+    """Layer 2 unscale guard — invoke immediately after ``pb.solve(...)``.
+
+    Idempotent when ``plan is None`` or ``sol is None``: the eager
+    unscale keeps the rest of the pipeline (output writers, range
+    re-readouts) blind to the Layer-2 substitution.
+    """
+    if plan is None or sol is None:
+        return
+    try:
+        _autoscale_unscale_solution(sol, plan)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 2 unscale failed for %s; downstream output "
+            "values are still in scaled units — re-run with autoscale off",
+            solve_name,
+        )
+
 
 if TYPE_CHECKING:
-    from polar_high import Solution
+    from polar_high import Problem, Solution
 
     from flextool.engine_polars._solve_config import SolveConfig
     from flextool.engine_polars._timeline import TimelineConfig
@@ -1331,6 +1507,17 @@ def _drive_cascade(
                     )
                 )
                 pb.set_solver_options(highs_options)
+                # autoscale Layer 2 (semantic per-type) pre-solve apply.
+                # Trigger gate is the same Layer-1 four-range readout —
+                # see ``_autoscale_apply_layer2_pre_solve``.  Plan is
+                # consumed by ``_autoscale_unscale_post_solve`` once the
+                # solve returns so downstream output writers see the
+                # un-scaled solution.
+                _autoscale_layer2_plan = _autoscale_apply_layer2_pre_solve(
+                    pb,
+                    solve_name=complete_solve_name,
+                    logger=self.state.logger,
+                )
                 # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
                 # ``pb.solve(keep_solver=True)`` for the default HiGHS path
                 # (byte-identical to the pre-Phase-3 behaviour); routes to
@@ -1350,6 +1537,26 @@ def _drive_cascade(
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                # Eager unscale — restore primal / duals / reduced costs
+                # to the un-scaled coordinate so output writers and
+                # subsequent rolling iterations see physical values.
+                _autoscale_unscale_post_solve(
+                    sol, _autoscale_layer2_plan,
+                    solve_name=complete_solve_name,
+                    logger=self.state.logger,
+                )
+            # autoscale Layer 1 (detect) — log the four LP coefficient
+            # ranges + trigger flag now that ``streamed_lp_ranges`` is
+            # populated.  Detection-only in Phase 1b; Layer 2 / Layer 3
+            # actions land in later phases.
+            _autoscale_emit_layer1(
+                sol,
+                solve_name=complete_solve_name,
+                logger=self.state.logger,
+                work_folder=self.state.paths.work_folder
+                if self.state.paths is not None else None,
+                layer2_plan=locals().get("_autoscale_layer2_plan"),
+            )
             # Memory checkpoint after the solve completes.  Fires on
             # level-boundary iters only; on within-group rolling iters
             # the suppressed deltas accumulate into the next emitted
@@ -2125,6 +2332,13 @@ def run_single_solve_from_db(
 
     problem.set_solver_options(highs_options)
 
+    # autoscale Layer 2 (semantic per-type) pre-solve apply — see the
+    # cascade path's wire-in for the rationale.  None when the
+    # autoscaler is disabled or the Layer-1 trigger does not fire.
+    _autoscale_layer2_plan = _autoscale_apply_layer2_pre_solve(
+        problem, solve_name=scenario_name, logger=logger,
+    )
+
     # 5. Solve.  Phase 3 — dispatch through ``run_one_solve`` so the
     # commercial-solver path works end-to-end.  The default HiGHS path
     # is byte-identical to the pre-Phase-3 ``problem.solve(keep_solver=True)``
@@ -2136,6 +2350,14 @@ def run_single_solve_from_db(
     )
     solver_cfg = sc.solver_configs.get(scenario_name, _SolverConfig())
     sol = run_one_solve(problem, solver_cfg, logger=logger)
+    # Eager Layer-2 unscale before any output writer touches ``sol``.
+    _autoscale_unscale_post_solve(
+        sol, _autoscale_layer2_plan, solve_name=scenario_name, logger=logger,
+    )
+    _autoscale_emit_layer1(
+        sol, solve_name=scenario_name, logger=logger, work_folder=work_folder,
+        layer2_plan=_autoscale_layer2_plan,
+    )
     if not sol.optimal:
         logger.error(
             "fast single-solve: HiGHS returned non-optimal status "

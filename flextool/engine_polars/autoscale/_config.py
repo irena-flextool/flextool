@@ -1,0 +1,140 @@
+"""Configuration for the FlexTool autoscaler.
+
+Layer 1 only needs ``enabled`` + ``threshold_decades`` (for detection).
+Layer 2 / Layer 3 will read ``user_bound_scale`` (manual override) and
+``report_yaml_path`` (where to write the audit YAML).  The dataclass is
+forward-declared in one place to keep the public surface stable as the
+later layers land.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+
+# Default trigger threshold: the H2_trade regression handoff identified a
+# coefficient spread of ~1e9 as the operational pain point; anything past
+# nine decades is the conservative "definitely scale" line.  This matches
+# the rule the operator ran by hand in the handoff.
+_DEFAULT_THRESHOLD_DECADES = 9.0
+
+
+@dataclass(frozen=True)
+class AutoScaleConfig:
+    """Caller-facing autoscaler configuration.
+
+    Parameters
+    ----------
+    enabled:
+        Master switch.  When ``False``, the autoscaler short-circuits
+        before any layer runs.  Default ``True``.
+    threshold_decades:
+        Layer 1 raises ``trigger=True`` when any single-group max/min
+        ratio, or the cross-group max/min ratio, exceeds
+        ``10 ** threshold_decades``.  Default 9.0.
+    user_bound_scale:
+        Manual override for the Layer 3 ``user_bound_scale`` HiGHS option.
+        When set, Layer 3 must skip its own recommendation and apply this
+        integer verbatim.  Default ``None`` (let Layer 3 decide).
+    report_yaml_path:
+        Where to write the autoscaler's audit YAML.  ``None`` disables
+        the report.  Coordinated with the existing scaling-report file
+        location so the operator finds both in one place.
+    """
+
+    enabled: bool = True
+    threshold_decades: float = _DEFAULT_THRESHOLD_DECADES
+    user_bound_scale: Optional[int] = None
+    report_yaml_path: Optional[Path] = None
+
+
+def _coerce_env_bool(raw: Optional[str], *, default: bool) -> bool:
+    """Parse ``FLEXTOOL_AUTO_SCALE``-style env flags.
+
+    Accepts ``on`` / ``off`` (case-insensitive) per the spec.  Empty or
+    unrecognised values fall through to ``default`` so a misconfigured env
+    doesn't silently flip behaviour.
+    """
+    if raw is None:
+        return default
+    v = raw.strip().lower()
+    if v == "on":
+        return True
+    if v == "off":
+        return False
+    return default
+
+
+def _coerce_user_bound_scale(raw: Any) -> Optional[int]:
+    """Coerce a ``--user-bound-scale`` value to ``int | None``.
+
+    Accepts already-typed ``int`` / ``None``, as well as decimal strings
+    (the form ``cli_args`` typically carries them).  Non-numeric strings
+    raise ``ValueError`` — the CLI surface should reject them; surfacing
+    the error here is louder than silently falling back to ``None``.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        return int(s)
+    raise ValueError(
+        f"user_bound_scale must be int, decimal str, or None; got {raw!r}"
+    )
+
+
+def resolve_auto_scale_config(cli_args: Any = None) -> AutoScaleConfig:
+    """Build an :class:`AutoScaleConfig` from CLI args + environment.
+
+    The CLI hasn't been wired yet (Phase 1f); for Phase 1b we read:
+
+    * ``FLEXTOOL_AUTO_SCALE`` env var (``on`` / ``off``, default ``on``)
+      for the master switch.  Phase 1f will swap this for a proper
+      ``--auto-scale`` flag, but the env var stays as the override.
+    * ``FLEXTOOL_USER_BOUND_SCALE`` env var (already plumbed through
+      ``--user-bound-scale``) for the manual override.  We read it the
+      same way ``_orchestration.py`` does so existing CLI behaviour is
+      preserved.
+    * ``cli_args`` itself: when it carries the attributes
+      (``auto_scale``, ``user_bound_scale``, ``autoscale_report_yaml``),
+      those win over the env values.
+
+    Returns a frozen :class:`AutoScaleConfig`.
+    """
+    enabled_default = _coerce_env_bool(
+        os.environ.get("FLEXTOOL_AUTO_SCALE"), default=True,
+    )
+    user_bound_scale_env = _coerce_user_bound_scale(
+        os.environ.get("FLEXTOOL_USER_BOUND_SCALE"),
+    )
+
+    enabled = enabled_default
+    user_bound_scale = user_bound_scale_env
+    report_yaml_path: Optional[Path] = None
+
+    if cli_args is not None:
+        cli_enabled = getattr(cli_args, "auto_scale", None)
+        if cli_enabled is not None:
+            enabled = bool(cli_enabled)
+        cli_ubs = getattr(cli_args, "user_bound_scale", None)
+        if cli_ubs is not None:
+            user_bound_scale = _coerce_user_bound_scale(cli_ubs)
+        cli_yaml = getattr(cli_args, "autoscale_report_yaml", None)
+        if cli_yaml is not None:
+            report_yaml_path = Path(cli_yaml)
+
+    return AutoScaleConfig(
+        enabled=enabled,
+        threshold_decades=_DEFAULT_THRESHOLD_DECADES,
+        user_bound_scale=user_bound_scale,
+        report_yaml_path=report_yaml_path,
+    )
+
+
+__all__ = ["AutoScaleConfig", "resolve_auto_scale_config"]
