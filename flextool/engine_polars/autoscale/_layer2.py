@@ -47,6 +47,29 @@ Layer 2 deliberately **does not column-scale integer variables** —
 shifting their bounds by a non-unit factor would break integrality of
 the recovered solution.  Their bounds, cost, and matrix entries flow
 through unchanged.
+
+MPS-export consideration
+------------------------
+
+Because Layer 2 mutates the LP arrays *before* they are passed to HiGHS,
+``Highs.writeModel('out.mps')`` exports the **scaled** model.  An
+external solver consuming that MPS would therefore receive the
+re-coordinatised LP, not the original; its results would live in scaled
+coordinates and would need the inverse transform recorded in the
+``autoscale_<solve>.yaml`` audit (per-type exponents) to be returned to
+user units.
+
+For a workflow that writes MPS and passes it to a third-party solver,
+the safe defaults are either:
+
+1. Run with ``--auto-scale=off`` so the exported MPS reflects the
+   unscaled problem, or
+2. Read the per-type exponents from the autoscale YAML report and apply
+   the inverse transform to the external solver's solution.
+
+Layer 3 (``user_*_scale``) is HiGHS-internal and is **not** captured in
+``writeModel`` output — that scaling is invisible to external solvers
+regardless of FlexTool's autoscale setting.
 """
 from __future__ import annotations
 
