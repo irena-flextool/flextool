@@ -33,6 +33,7 @@ from ._layer2_types import (
     lookup_var,
     resolve_cstr_rhs_type,
 )
+from ._layer3 import Layer3Plan, apply_layer3, recommend_layer3
 from ._quantity_types import QuantityType, lookup, resolve_group_capacity_type
 from ._ranges import (
     RangeReport,
@@ -42,19 +43,18 @@ from ._ranges import (
 )
 from ._report import write_report
 
-# Layer 3 entry points land in a subsequent phase — leaving the
-# docstring above as the contract.
-
 __all__ = [
     "AutoScaleConfig",
     "CONSTRAINT_FAMILIES",
     "CstrFamily",
     "Layer2Plan",
+    "Layer3Plan",
     "QuantityType",
     "RangeReport",
     "VARIABLE_FAMILIES",
     "VarFamily",
     "apply_layer2",
+    "apply_layer3",
     "bucket_coefficients",
     "choose_scale_powers",
     "compute_ranges",
@@ -63,6 +63,7 @@ __all__ = [
     "lookup_var",
     "ranges_from_arrays",
     "ranges_from_streamed",
+    "recommend_layer3",
     "resolve_auto_scale_config",
     "resolve_cstr_rhs_type",
     "resolve_group_capacity_type",

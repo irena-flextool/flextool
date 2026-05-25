@@ -62,8 +62,11 @@ from flextool.engine_polars._solve_state import (
 from flextool.engine_polars import scaling as _scaling
 from flextool.engine_polars.autoscale import (
     Layer2Plan as _AutoscaleLayer2Plan,
+    Layer3Plan as _AutoscaleLayer3Plan,
     apply_layer2 as _autoscale_apply_layer2,
+    apply_layer3 as _autoscale_apply_layer3,
     compute_ranges as _autoscale_compute_ranges,
+    recommend_layer3 as _autoscale_recommend_layer3,
     resolve_auto_scale_config as _autoscale_resolve_config,
     unscale_solution as _autoscale_unscale_solution,
     write_report as _autoscale_write_report,
@@ -77,6 +80,7 @@ def _autoscale_emit_layer1(
     logger: logging.Logger,
     work_folder: str | os.PathLike | None,
     layer2_plan: "_AutoscaleLayer2Plan | None" = None,
+    layer3_plan: "_AutoscaleLayer3Plan | None" = None,
 ) -> None:
     """Layer 1 (detect) post-solve emitter.
 
@@ -146,11 +150,83 @@ def _autoscale_emit_layer1(
                     render_layer2 as _render_l2,
                 )
                 report_tree["layer2"] = _render_l2(layer2_plan)
+            if layer3_plan is not None:
+                from flextool.engine_polars.autoscale._report import (
+                    render_layer3 as _render_l3,
+                )
+                report_tree["layer3"] = _render_l3(layer3_plan)
             _autoscale_write_report(report_tree, yaml_path)
         except Exception:  # pragma: no cover — non-fatal
             logger.exception(
                 "autoscale Layer 1 report write failed (%s)", yaml_path,
             )
+
+
+def _autoscale_apply_layer3_pre_solve(
+    pb: "Problem",
+    *,
+    layer2_plan: "_AutoscaleLayer2Plan | None",
+    solve_name: str,
+    logger: logging.Logger,
+) -> "_AutoscaleLayer3Plan | None":
+    """Layer 3 (HiGHS-native top-up) pre-solve apply.
+
+    Runs unconditionally when the autoscaler is enabled — Layer 3 is
+    cheap and sets HiGHS options that take effect only when needed
+    (``user_*_scale`` defaults to 0 = no-op).  The recommendation is
+    derived from the *post-Layer-2* coefficient ranges so the residual
+    spread (after Layer 2's per-type rescale) drives the global
+    HiGHS-side scaling.
+
+    Returns ``None`` when the autoscaler is disabled or the readout
+    fails; the caller continues without setting any Layer 3 options.
+
+    Layer 2's mutation of the LP arrays is the same the polar-high
+    streaming solve sees — Layer 3 just picks exponents from those
+    arrays.  The HiGHS options it sets *override* polar-high's
+    stream-time ``auto_user_bound_scale`` heuristic (polar-high's gate
+    is "caller has NOT set ``user_bound_scale``").
+    """
+    cfg = _autoscale_resolve_config(None)
+    if not cfg.enabled:
+        return None
+    try:
+        ranges_post_l2 = _autoscale_compute_ranges(pb, cfg)
+    except Exception:  # pragma: no cover — guard against future API drift
+        logger.exception(
+            "autoscale Layer 3 pre-solve range readout failed for %s; "
+            "skipping Layer 3 (Layer 1 / Layer 2 still applied)",
+            solve_name,
+        )
+        return None
+    try:
+        plan = _autoscale_recommend_layer3(ranges_post_l2, cfg)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 3 recommendation failed for %s; "
+            "skipping (HiGHS internal scaling still applies)",
+            solve_name,
+        )
+        return None
+    try:
+        _autoscale_apply_layer3(pb, plan)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 3 option apply failed for %s; HiGHS "
+            "internal scaling will fill in",
+            solve_name,
+        )
+        return plan  # still return for report visibility
+    logger.info(
+        "autoscale Layer 3 [%s]: user_objective_scale=%d, "
+        "user_bound_scale=%d, simplex_scale_strategy=%d (%s)",
+        solve_name,
+        plan.user_objective_scale,
+        plan.user_bound_scale,
+        plan.simplex_scale_strategy,
+        plan.reasoning,
+    )
+    return plan
 
 
 def _autoscale_apply_layer2_pre_solve(
@@ -1518,6 +1594,18 @@ def _drive_cascade(
                     solve_name=complete_solve_name,
                     logger=self.state.logger,
                 )
+                # Layer 3 (HiGHS-native top-up): set user_objective_scale,
+                # user_bound_scale, and simplex_scale_strategy from the
+                # post-Layer-2 ranges so HiGHS sees a final LP that is
+                # already inside its comfort zone.  Layer 3 is HiGHS-
+                # internal (no inverse transform on the solution); the
+                # writeModel MPS export remains unscaled.
+                _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
+                    pb,
+                    layer2_plan=_autoscale_layer2_plan,
+                    solve_name=complete_solve_name,
+                    logger=self.state.logger,
+                )
                 # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
                 # ``pb.solve(keep_solver=True)`` for the default HiGHS path
                 # (byte-identical to the pre-Phase-3 behaviour); routes to
@@ -1556,6 +1644,7 @@ def _drive_cascade(
                 work_folder=self.state.paths.work_folder
                 if self.state.paths is not None else None,
                 layer2_plan=locals().get("_autoscale_layer2_plan"),
+                layer3_plan=locals().get("_autoscale_layer3_plan"),
             )
             # Memory checkpoint after the solve completes.  Fires on
             # level-boundary iters only; on within-group rolling iters
@@ -2338,6 +2427,12 @@ def run_single_solve_from_db(
     _autoscale_layer2_plan = _autoscale_apply_layer2_pre_solve(
         problem, solve_name=scenario_name, logger=logger,
     )
+    _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
+        problem,
+        layer2_plan=_autoscale_layer2_plan,
+        solve_name=scenario_name,
+        logger=logger,
+    )
 
     # 5. Solve.  Phase 3 — dispatch through ``run_one_solve`` so the
     # commercial-solver path works end-to-end.  The default HiGHS path
@@ -2357,6 +2452,7 @@ def run_single_solve_from_db(
     _autoscale_emit_layer1(
         sol, solve_name=scenario_name, logger=logger, work_folder=work_folder,
         layer2_plan=_autoscale_layer2_plan,
+        layer3_plan=_autoscale_layer3_plan,
     )
     if not sol.optimal:
         logger.error(

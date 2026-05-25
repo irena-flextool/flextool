@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ._layer2 import Layer2Plan
+from ._layer3 import Layer3Plan
 from ._ranges import RangeReport
 
 
@@ -150,6 +151,21 @@ def render_layer2(plan: Layer2Plan) -> dict[str, Any]:
     }
 
 
+def render_layer3(plan: Layer3Plan) -> dict[str, Any]:
+    """Build the ``layer3`` section of the autoscaler audit YAML.
+
+    Surfaces the three HiGHS options Layer 3 set and the reasoning
+    string so the operator can correlate the YAML entry with the
+    one-line log emitted at apply time.
+    """
+    return {
+        "user_objective_scale": int(plan.user_objective_scale),
+        "user_bound_scale": int(plan.user_bound_scale),
+        "simplex_scale_strategy": int(plan.simplex_scale_strategy),
+        "reasoning": str(plan.reasoning),
+    }
+
+
 def write_report(result: Mapping[str, Any], path: Path | str) -> Path:
     """Serialise the autoscaler result tree to ``path`` as YAML.
 
@@ -177,4 +193,4 @@ def write_report(result: Mapping[str, Any], path: Path | str) -> Path:
     return path
 
 
-__all__ = ["render_layer2", "write_report"]
+__all__ = ["render_layer2", "render_layer3", "write_report"]
