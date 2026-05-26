@@ -3,10 +3,11 @@
 FlexTool's input data lives in **Spine databases** (SQLite plus a thin
 Python layer from `spinedb_api`). The schema — entity classes, parameter
 definitions, value lists, alternatives — is **template-driven**: every
-JSON file under [`version/`](https://github.com/irena-flextool/flextool/tree/master/version)
-represents one snapshot of the schema. Migrations chain those snapshots
-forward, so a user's database can always be brought up to the latest
-version without losing data.
+JSON file under [`flextool/schemas/`](https://github.com/irena-flextool/flextool/tree/main/flextool/schemas)
+(consolidated from the older top-level `version/` and `textual_templates/`
+directories) represents one snapshot of the schema. Migrations chain
+those snapshots forward, so a user's database can always be brought up
+to the latest version without losing data.
 
 This page is a pointer for developers who need to read or modify the
 schema. For the user-facing meaning of individual parameters, see
@@ -64,6 +65,40 @@ migration is resumable from where it left off.
 
 Skim `migrate_database` in `db_migration.py` to see the full chain and
 the per-version diffs.
+
+### Recent schema versions
+
+A few recent steps worth knowing about (the chain in `db_migration.py`
+is the authoritative inventory):
+
+- **v52 — multi-solver selection parameters.** Adds the
+  `solve_advanced` parameter group on the `solve` entity (`solver`,
+  `solver_io_api`, `solver_options`, `solver_time_limit`,
+  `solver_mip_gap`, `solver_threads`, `solver_log_level`) so each
+  solve can dispatch to a different LP / MIP solver. See
+  [Solver selection](../solvers/index.md) for the user-facing story.
+- **v54 — `storage_binding_method` array → scalar.** The previously
+  array-valued parameter is collapsed to a single scalar via a
+  priority-based reduction. Array values were previously summed
+  silently in `nodeBalance_eq`; the v54 step rejects that pattern at
+  ingestion and the single scalar enforces the one-method-per-node
+  invariant.
+- **v55 — `storage_binding_method` rename + value_list extension.**
+  Renames the three legacy members (`bind_within_timeset` →
+  `bind_within_timeblock`, `bind_using_blended_weights` →
+  `bind_within_solve_blended_weights`, `bind_within_model` →
+  `bind_within_solve`) and adds two new variants
+  (`bind_within_period_blended_weights`,
+  `bind_forward_only_blended_weights`) plus the orthogonal
+  aggregation method `bind_intraperiod_blocks`. The migration also
+  refreshes the parameter description text. See
+  [`reference.md`](../reference.md) for the user-facing enumeration
+  and silent-degrade behaviour.
+
+A separate hand-coded step (independent of the numbered chain)
+migrates legacy databases that carried `has_storage = yes` without
+`has_balance = yes`, retagging the node as `node_type = storage` so
+the v4 single-`node_type` convention takes hold.
 
 ## CLI: `flextool-migrate-database`
 
