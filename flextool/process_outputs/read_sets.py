@@ -728,15 +728,33 @@ def read_sets(
         s.node_self_discharge = pd.Index([], name="node", dtype="object")
 
     # node__storage_binding_method — (node, method).
+    #
+    # Walk every storage_bind_* projection exposed by FlexData.  The four
+    # frames below mirror the entries in ``_projection_params.py:1858-1861``
+    # and the FlexData declarations in ``input.py:579-582``.  Pre-fix this
+    # block walked only ``storage_bind_within_solve`` and
+    # ``storage_bind_forward_only`` (audit §5.2), which silently dropped the
+    # ``bind_within_timeset`` and ``bind_using_blended_weights`` methods and
+    # broke ``calc_storage_vre.py`` for nodes carrying them.
+    #
+    # Orthogonal gap (per audit §4): the v54 value list also accepts
+    # ``bind_within_period`` and ``bind_intraperiod_blocks``, but
+    # ``nodeBalance_eq`` (model.py:615) has no constraint branch for either,
+    # and FlexData carries no projection attribute for them.  Those methods
+    # are accepted at ingestion but currently produce no constraint term —
+    # tracked separately, not in scope here.
     binding_pieces: list[tuple[str, str]] = []
-    if (flex_data.storage_bind_within_solve is not None
-            and flex_data.storage_bind_within_solve.height > 0):
-        for n in flex_data.storage_bind_within_solve["n"].to_list():
-            binding_pieces.append((n, "bind_within_solve"))
-    if (flex_data.storage_bind_forward_only is not None
-            and flex_data.storage_bind_forward_only.height > 0):
-        for n in flex_data.storage_bind_forward_only["n"].to_list():
-            binding_pieces.append((n, "bind_forward_only"))
+    bind_projections: tuple[tuple[str, str], ...] = (
+        ("storage_bind_within_solve", "bind_within_solve"),
+        ("storage_bind_forward_only", "bind_forward_only"),
+        ("storage_bind_within_timeset", "bind_within_timeset"),
+        ("storage_bind_using_blended_weights", "bind_using_blended_weights"),
+    )
+    for attr_name, method_string in bind_projections:
+        frame = getattr(flex_data, attr_name, None)
+        if frame is not None and frame.height > 0:
+            for n in frame["n"].to_list():
+                binding_pieces.append((n, method_string))
     if binding_pieces:
         s.node__storage_binding_method = pd.MultiIndex.from_tuples(
             binding_pieces, names=["node", "method"],

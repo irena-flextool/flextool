@@ -565,9 +565,32 @@ def derive_node_storage_binding_method(input_dir: Path,
     nodes = _drop_blank_rows(nodes, ["node"])
     defaults = {n: _STORAGE_BINDING_METHOD_DEFAULT
                 for n in nodes.get_column("node").to_list()}
-    return _per_entity_fallback(
+    frame = _per_entity_fallback(
         explicit, nodes, defaults, ("node", "storage_binding_method"),
     )
+    # Single-valued contract (v54 migration): each node must appear at most
+    # once.  A duplicate here means either a v52-era DB slipped past the
+    # v54 migration in update_flextool/db_migration.py, or a multi-row
+    # record was manually inserted into node__storage_binding_method.csv.
+    # Compare heights rather than silently dedup so the contract violation
+    # surfaces as an explicit error.
+    unique_node_height = frame.select("node").unique().height
+    if frame.height != unique_node_height:
+        from flextool.engine_polars._solve_state import FlexToolConfigError
+        dup_nodes = (frame
+                     .group_by("node")
+                     .agg(pl.len().alias("_count"))
+                     .filter(pl.col("_count") > 1)
+                     .get_column("node")
+                     .to_list())
+        raise FlexToolConfigError(
+            "node__storage_binding_method must have a single method per "
+            "node (v54 single-valued contract); duplicate node entries "
+            f"detected: {sorted(dup_nodes)}.  Re-run the v54 DB migration "
+            "or remove the extra rows from "
+            "input/node__storage_binding_method.csv."
+        )
+    return frame
 
 
 def derive_process_startup_method(input_dir: Path,

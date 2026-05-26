@@ -45,6 +45,14 @@ def compute_storage_and_vre(par, s, v, r) -> None:
         v_prev_timeblock = pd.Series(v.state[n].squeeze().reindex(prev_timeset_idx).values, index=current_idx)
         v_forward = pd.Series(v.state[n].squeeze().reindex(prev_forward_only_idx).values, index=current_idx)
 
+        # After the single-valued migration (v54), each node appears in
+        # ``s.node__storage_binding_method`` with exactly one method string,
+        # so at most one of these branches fires per node.  Pre-v54 DBs
+        # with array-valued methods were rejected at ingestion
+        # (spinedb_backend/_backend.py).  The four if-blocks are left as
+        # independent membership checks for readability; their additive
+        # form is functionally equivalent to a switch under single-valued
+        # semantics.
         if (n, 'bind_forward_only') in s.node__storage_binding_method:
             mask = ~current_idx.isin(exclude_idx)
             state_change += ((v_current - v_forward) * unitsize[n]).where(mask, 0)
