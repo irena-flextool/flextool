@@ -339,6 +339,14 @@ def main():
     settings_db_url = args.settings_db_url
     scenario_name = args.scenario_name
     DEBUG = args.debug
+    # ``--debug`` widens stdout to also include the full per-checkpoint
+    # phase-progress trace (every memory recorder event, not just the
+    # six whitelisted phase labels) and writes the per-checkpoint CSV
+    # to ``solve_data/memory_diagnostics.csv``.  Both env vars are only
+    # set when not already provided so a caller can still override.
+    if DEBUG:
+        os.environ.setdefault('FLEXTOOL_MEMORY_VERBOSE', '1')
+        os.environ.setdefault('FLEXTOOL_MEMORY_DIAGNOSTICS', '1')
     # Legacy: Spine Toolbox passed ``--flextool-location <repo>/template/flextool_location.txt``
     # so the output dir resolved to the repo root via ``.parent.parent``.
     # Now defaults to CWD (the user's project directory) when unset, and
