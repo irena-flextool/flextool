@@ -123,9 +123,25 @@ def _synthesize_invest_dual(v) -> "pd.DataFrame":
 
     # Collect all entity-level constraint duals, aligned to the same columns and index
     entity_duals: list[pd.DataFrame] = []
+    # ``dual_maxInvest_total`` has a solve-only (period-less) reader shape,
+    # collapsed to a single-row RangeIndex by ``drop_levels.py``; broadcast
+    # it across the period axis of its siblings before combining so
+    # ``combined.add(...)`` doesn't produce a mixed-index union.
+    period_ref: pd.DataFrame | None = (
+        v.dual_maxInvest_period
+        if not v.dual_maxInvest_period.empty
+        else (v.dual_maxCumulative if not v.dual_maxCumulative.empty else None)
+    )
     for df in (v.dual_maxInvest_period, v.dual_maxInvest_total, v.dual_maxCumulative):
-        if not df.empty:
-            entity_duals.append(df)
+        if df.empty:
+            continue
+        if df is v.dual_maxInvest_total and period_ref is not None:
+            df = pd.DataFrame(
+                {c: df.iloc[0][c] for c in df.columns},
+                index=period_ref.index,
+            )
+            df.columns.name = 'entity'
+        entity_duals.append(df)
 
     # Expand group constraint duals to per-entity using the group-entity mapping
     if not v.group_entity_invest.empty:

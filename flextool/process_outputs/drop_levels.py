@@ -12,9 +12,16 @@ _V_DROP = [
     'q_inertia', 'q_non_synchronous', 'q_state_up_group', 'q_capacity_margin',
     'invest', 'divest',
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
-    'dual_maxInvest_period', 'dual_maxInvest_total', 'dual_maxCumulative',
+    'dual_maxInvest_period', 'dual_maxCumulative',
     'dual_maxInvestGroup_period', 'dual_maxInvestGroup_total', 'dual_maxInvestGroup_cumulative',
     'dual_co2_max_period',
+]
+
+# Variables with a solve-only row index — must collapse to a single
+# row (last solve wins) instead of droplevel.  Same pattern as
+# ``dual_co2_max_total`` below.
+_V_SOLVE_ONLY = [
+    'dual_maxInvest_total',
 ]
 
 # Parameters: droplevel('solve') + deduplicate with keep='last'.
@@ -91,13 +98,17 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
             obj = obj[~obj.index.duplicated(keep='last')]
         setattr(v, attr, obj)
 
-    # dual_co2_max_total has solve-only index; collapse to a single row (last solve wins)
-    if not v.dual_co2_max_total.empty:
-        last = v.dual_co2_max_total.iloc[[-1]].copy()
-        last.index = pd.RangeIndex(1)
-        v.dual_co2_max_total = last
-    else:
-        v.dual_co2_max_total = v.dual_co2_max_total.reset_index(drop=True)
+    # Solve-only indexes (``dual_co2_max_total`` historically, plus
+    # ``dual_maxInvest_total`` which became solve-only when its reader
+    # arity was fixed): collapse to a single row (last solve wins).
+    for attr in [*_V_SOLVE_ONLY, 'dual_co2_max_total']:
+        obj = getattr(v, attr)
+        if not obj.empty:
+            last = obj.iloc[[-1]].copy()
+            last.index = pd.RangeIndex(1)
+            setattr(v, attr, last)
+        else:
+            setattr(v, attr, obj.reset_index(drop=True))
 
     # v_angle: drop solve level only when non-empty (may be empty when no DC PF nodes)
     if not v.angle.empty:

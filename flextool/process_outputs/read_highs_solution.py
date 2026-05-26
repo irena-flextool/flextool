@@ -268,7 +268,14 @@ def _invest_dual(
     output_suffix: str,
     *,
     has_period: bool = True,
+    derived_from: tuple[str, ...] | None = None,
 ) -> VariableSpec:
+    # ``derived_from`` is set for invest-cap families whose producer
+    # splits the LHS into process-side (``..._p``) and node-side
+    # (``..._n``) constraints (model.py / _cumulative_invest.py).  The
+    # bracketed entity columns of the two sides are disjoint (process
+    # names vs. node names), so ``df.add(fill_value=0.0)`` cleanly
+    # unions them into one wide frame at the output boundary.
     return VariableSpec(
         name=mps_name,
         col_names=(col,),
@@ -277,6 +284,7 @@ def _invest_dual(
         source="row_dual",
         value_scale=_INV_SCALE_THE_OBJECTIVE,
         output_name=f"v_dual_{output_suffix}",
+        derived_from=derived_from,
     )
 
 
@@ -354,15 +362,33 @@ VARIABLE_SPECS: list[VariableSpec] = [
     ),
 
     # -- Investment-cap duals (period-only, simple 1/scale transform) -------
-    _invest_dual("maxInvest_entity_period",          "entity", "maxInvest_period"),
-    # ``maxInvest_entity_total`` is emitted in ``model.py:2441-2449`` with
-    # ``over=e_inv_p`` carrying only ``(p,)`` — period is summed out inside
-    # ``Sum(over=("d",))``.  No period component in the constraint name.
+    # Most of these families are emitted by a split process/node producer
+    # — ``maxInvest_entity_period_p`` (model.py:2319) for the process arm
+    # and ``maxInvest_entity_period_n`` (model.py:2336) for the node arm
+    # etc. — so the reader matches both via ``derived_from`` and unions
+    # the resulting frames.
+    _invest_dual("maxInvest_entity_period",          "entity", "maxInvest_period",
+                 derived_from=("maxInvest_entity_period_p",
+                                "maxInvest_entity_period_n")),
+    # ``maxInvest_entity_total`` is asymmetric: process side keeps the
+    # bare name (model.py:2442), node side gets the ``_n`` suffix
+    # (model.py:2494).  Period is summed out inside ``Sum(over=("d",))``
+    # — no period component in either constraint name.
     _invest_dual("maxInvest_entity_total",           "entity", "maxInvest_total",
-                 has_period=False),
-    _invest_dual("maxCumulative_capacity",           "entity", "maxCumulative"),
-    _invest_dual("maxInvestGroup_entity_period",     "group",  "maxInvestGroup_period"),
-    _invest_dual("maxInvestGroup_entity_total",      "group",  "maxInvestGroup_total"),
+                 has_period=False,
+                 derived_from=("maxInvest_entity_total",
+                                "maxInvest_entity_total_n")),
+    _invest_dual("maxCumulative_capacity",           "entity", "maxCumulative",
+                 derived_from=("maxCumulative_capacity_p",
+                                "maxCumulative_capacity_n")),
+    _invest_dual("maxInvestGroup_entity_period",     "group",  "maxInvestGroup_period",
+                 derived_from=("maxInvestGroup_entity_period_p",
+                                "maxInvestGroup_entity_period_n")),
+    _invest_dual("maxInvestGroup_entity_total",      "group",  "maxInvestGroup_total",
+                 derived_from=("maxInvestGroup_entity_total_p",
+                                "maxInvestGroup_entity_total_n")),
+    # ``maxInvestGroup_entity_cumulative`` keeps a single non-suffixed
+    # name (_cumulative_invest.py:990).
     _invest_dual("maxInvestGroup_entity_cumulative", "group",  "maxInvestGroup_cumulative"),
 
     # -- CO2 emission-cap duals ---------------------------------------------
