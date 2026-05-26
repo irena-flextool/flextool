@@ -7057,26 +7057,37 @@ def _node_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
         return pl.LazyFrame(schema={"n": schema_dtype(_enums, "n"),
                                      "us": pl.Float64})
     base = nodes.lazy().select(alias_to_axis("name", "n"))
+    # virtual_unitsize may carry a period dim authored as a Spine Map; the
+    # index column inherits the Map's ``index_name`` and may be named
+    # ``period``, ``x``, etc.  Treat any non-(name|value) column as the
+    # period axis and collapse to one row per node before joining.
     if us is not None and us.height > 0:
-        us_lf = us.lazy().select(alias_to_axis("name", "n"),
-                                    pl.col("value").cast(pl.Float64)
-                                                     .alias("vu"))
+        us_cols = us.columns
+        us_extra = [c for c in us_cols if c not in ("name", "value")]
+        us_base = us.lazy().select(alias_to_axis("name", "n"),
+                                      pl.col("value").cast(pl.Float64))
+        if us_extra:
+            us_lf = (us_base
+                       .group_by("n")
+                       .agg(pl.col("value").max().alias("vu")))
+        else:
+            us_lf = us_base.rename({"value": "vu"})
         base = base.join(us_lf, on="n", how="left")
     else:
         base = base.with_columns(vu=pl.lit(None, dtype=pl.Float64))
     # Existing has no default (schema-None policy); rows present == explicit.
+    # Same Map-index naming applies as for virtual_unitsize above.
     if ex is not None and ex.height > 0:
         ex_cols = ex.columns
-        if "period" in ex_cols:
-            ex_lf = (ex.lazy()
-                       .select(alias_to_axis("name", "n"),
-                                 pl.col("value").cast(pl.Float64))
+        ex_extra = [c for c in ex_cols if c not in ("name", "value")]
+        ex_base = ex.lazy().select(alias_to_axis("name", "n"),
+                                      pl.col("value").cast(pl.Float64))
+        if ex_extra:
+            ex_lf = (ex_base
                        .group_by("n")
                        .agg(pl.col("value").max().alias("ex")))
         else:
-            ex_lf = ex.lazy().select(alias_to_axis("name", "n"),
-                                       pl.col("value").cast(pl.Float64)
-                                                        .alias("ex"))
+            ex_lf = ex_base.rename({"value": "ex"})
         base = base.join(ex_lf, on="n", how="left")
     else:
         base = base.with_columns(ex=pl.lit(None, dtype=pl.Float64))
