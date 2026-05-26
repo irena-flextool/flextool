@@ -103,7 +103,7 @@ def _build_toy_rp_2base_1rep() -> FlexData:
     })
 
     # RP-blended-weights structures.
-    storage_bind_using_blended_weights = pl.DataFrame({"n": ["bat"]})
+    storage_bind_within_solve_blended_weights = pl.DataFrame({"n": ["bat"]})
     nodeState_rp = pl.DataFrame({"n": ["bat"]})
     rp_base_period_set = pl.DataFrame({"b": ["b1", "b2"]})
     # Chain b2 ← b1 (Phase 7 active edge).
@@ -128,7 +128,7 @@ def _build_toy_rp_2base_1rep() -> FlexData:
         p_state_self_discharge=p_state_sd,
         p_state_existing_capacity=p_state_exi_cap,
         dtttdt=dtttdt,
-        storage_bind_using_blended_weights=storage_bind_using_blended_weights,
+        storage_bind_within_solve_blended_weights=storage_bind_within_solve_blended_weights,
         nodeState_rp=nodeState_rp,
         rp_base_period_set=rp_base_period_set,
         rp_base_chain=rp_base_chain,

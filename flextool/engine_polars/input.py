@@ -576,10 +576,10 @@ class FlexData:
     nodeState: pl.DataFrame | None = None
     nodeState_dt: pl.DataFrame | None = None
     nodeState_first_dt: pl.DataFrame | None = None
-    storage_bind_within_timeset: pl.DataFrame | None = None
+    storage_bind_within_timeblock: pl.DataFrame | None = None
     storage_bind_forward_only: pl.DataFrame | None = None    # set: (n,)
     storage_bind_within_solve: pl.DataFrame | None = None    # set: (n,)
-    storage_bind_using_blended_weights: pl.DataFrame | None = None  # set: (n,)
+    storage_bind_within_solve_blended_weights: pl.DataFrame | None = None  # set: (n,)
     storage_fix_start: pl.DataFrame | None = None
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
@@ -619,7 +619,7 @@ class FlexData:
     period_block_succ: pl.DataFrame | None = None          # set: (d, b_first, b_next)
     period_block_time: pl.DataFrame | None = None          # set: (d, b_first, t)
     dtttdt_block_interior: pl.DataFrame | None = None      # dtttdt rows where t_previous_within_timeset == t_previous (interior-of-block jump=1)
-    # ─── RP-blended-weights storage (bind_using_blended_weights) ─────────
+    # ─── RP-blended-weights storage (bind_within_solve_blended_weights) ─────────
     # Eight per-solve sets / params that drive the intra-period state-change
     # branch for ``nodeState_rp`` plus the three ``rp_inter_period_*``
     # constraints (.mod:2197-2200, .mod:2965-2997).  Populated by
@@ -2302,7 +2302,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         p_state_upper = None, p_state_unitsize = None,
         p_state_self_discharge = None, p_state_start = None,
         p_state_existing_capacity = None,
-        storage_bind_within_timeset = None,
+        storage_bind_within_timeblock = None,
         storage_bind_forward_only = None,
         storage_fix_start = None,
         storage_use_reference_value = None,
@@ -2442,7 +2442,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # Binding methods (sd-level, per node).
     # NOTE: the .mod attaches a (v_state[t] - v_state[t-1]) term in
     # nodeBalance for several binding methods, with subtle differences:
-    #   * ``bind_within_timeset``  — fully cyclic (wraps via
+    #   * ``bind_within_timeblock``  — fully cyclic (wraps via
     #     ``t_previous_within_timeset``).
     #   * ``bind_within_period``   — cyclic within period
     #     (``t_previous`` column).
@@ -2455,13 +2455,13 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     #     (line 2188 condition).  This makes the storage non-cyclic at
     #     the boundary.
     # In the current parity tests, every fixture that *does*
-    # exercise a state node uses ``bind_within_timeset`` (which is what
+    # exercise a state node uses ``bind_within_timeblock`` (which is what
     # this loader picks up).  ``work_water_pump`` is the only fixture
     # that uses ``bind_forward_only``, and faithful parity there
     # requires modelling the first-timestep exemption — see
     # questions_for_user.md#water_pump.
     sbm_path = sd / "node__storage_binding_method.csv"
-    binding_within_timeset = None
+    binding_within_timeblock = None
     binding_forward_only = None
     binding_within_solve = None
     if _provider_has(provider, "solve_data/node__storage_binding_method", sbm_path):
@@ -2471,7 +2471,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             sbm = sbm.pipe(rename_to_axis, {"node":"n","storage_binding_method":"method"})
         elif "method" in sbm.columns:
             sbm = sbm.pipe(rename_to_axis, {"node":"n"})
-        binding_within_timeset = (sbm.filter(pl.col("method")=="bind_within_timeset")
+        binding_within_timeblock = (sbm.filter(pl.col("method")=="bind_within_timeblock")
                                      .select("n").unique())
         fo = (sbm.filter(pl.col("method")=="bind_forward_only")
                  .select("n").unique())
@@ -2538,7 +2538,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             .select("n").unique())
         # Filter out nodes with a competing storage method (mod:2806-2811):
         # fix_end / fix_start_end / bind_within_solve / bind_within_period /
-        # bind_within_timeset / bind_intraperiod_blocks.
+        # bind_within_timeblock / bind_intraperiod_blocks.
         # ``nodeStateBlock`` is the set carrying bind_intraperiod_blocks
         # (loaded below; we look it up via the on-disk CSV here to keep
         # ordering simple).  bind_within_period not exercised yet.
@@ -2549,7 +2549,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if nsb_df_local.height > 0:
                 nsb_for_excl = nsb_df_local.pipe(rename_to_axis, {"node": "n"}).select("n")
         for excl in (fix_end, fix_start_end,
-                     binding_within_solve, binding_within_timeset,
+                     binding_within_solve, binding_within_timeblock,
                      nsb_for_excl):
             if excl is not None and excl.height > 0:
                 use_reference_value = use_reference_value.join(
@@ -2612,7 +2612,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     period_block_time = None
     dtttdt_block_interior = None
 
-    # ─── RP-blended-weights (bind_using_blended_weights) sets / params ───
+    # ─── RP-blended-weights (bind_within_solve_blended_weights) sets / params ───
     # Eight per-solve frames driving the .mod's intra-period state-change
     # branch for ``nodeState_rp`` plus the three ``rp_inter_period_*``
     # constraints (.mod:2197-2200, .mod:2965-2997).  Emitted by
@@ -2993,7 +2993,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         p_state_self_discharge = state_self_discharge,
         p_state_start = state_start,
         p_state_existing_capacity = state_existing_capacity,
-        storage_bind_within_timeset = binding_within_timeset,
+        storage_bind_within_timeblock = binding_within_timeblock,
         storage_bind_forward_only = binding_forward_only,
         storage_bind_within_solve = binding_within_solve,
         storage_fix_start = fix_start,

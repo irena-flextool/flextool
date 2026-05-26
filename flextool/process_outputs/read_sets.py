@@ -734,7 +734,7 @@ def read_sets(
     # and the FlexData declarations in ``input.py:579-582``.  Pre-fix this
     # block walked only ``storage_bind_within_solve`` and
     # ``storage_bind_forward_only`` (audit §5.2), which silently dropped the
-    # ``bind_within_timeset`` and ``bind_using_blended_weights`` methods and
+    # ``bind_within_timeblock`` and ``bind_within_solve_blended_weights`` methods and
     # broke ``calc_storage_vre.py`` for nodes carrying them.
     #
     # Orthogonal gap (per audit §4): the v54 value list also accepts
@@ -747,8 +747,8 @@ def read_sets(
     bind_projections: tuple[tuple[str, str], ...] = (
         ("storage_bind_within_solve", "bind_within_solve"),
         ("storage_bind_forward_only", "bind_forward_only"),
-        ("storage_bind_within_timeset", "bind_within_timeset"),
-        ("storage_bind_using_blended_weights", "bind_using_blended_weights"),
+        ("storage_bind_within_timeblock", "bind_within_timeblock"),
+        ("storage_bind_within_solve_blended_weights", "bind_within_solve_blended_weights"),
     )
     for attr_name, method_string in bind_projections:
         frame = getattr(flex_data, attr_name, None)

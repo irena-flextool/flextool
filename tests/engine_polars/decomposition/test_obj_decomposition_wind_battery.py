@@ -1,6 +1,6 @@
 """Tier-8 closed-form decomposition test #22 — ``wind_battery`` fixture.
 
-Active features: slack + nodeBalance.state_change (bind_within_timeset)
+Active features: slack + nodeBalance.state_change (bind_within_timeblock)
 + self_discharge.  No commodity, no co2, no invest.  The state cycling
 itself doesn't have an obj term unless ``use_reference_price`` is set;
 it influences obj only via the slack values it pins.

@@ -363,7 +363,7 @@ def derive_node_state_subset(
 ) -> pl.DataFrame:
     """Filter nodeState by a specific storage_binding_method.
 
-    ``binding_method`` is one of ``"bind_using_blended_weights"`` (→
+    ``binding_method`` is one of ``"bind_within_solve_blended_weights"`` (→
     nodeState_rp) or ``"bind_intraperiod_blocks"`` (→ nodeStateBlock).
     """
     state = _read_csv(solve_data_dir / "nodeState.csv", ["node"],
@@ -546,7 +546,7 @@ def emit_enable_optional_outputs(solve_data_dir: Path,
 def emit_node_state_subsets(solve_data_dir: Path,
                              *, provider) -> None:
     """Emit ``node_state_subsets`` to the Provider."""
-    rp = derive_node_state_subset(solve_data_dir, "bind_using_blended_weights",
+    rp = derive_node_state_subset(solve_data_dir, "bind_within_solve_blended_weights",
                                   provider=provider)
     block = derive_node_state_subset(solve_data_dir, "bind_intraperiod_blocks",
                                      provider=provider)

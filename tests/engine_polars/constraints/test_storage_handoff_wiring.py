@@ -77,7 +77,7 @@ def _wiring_overlay(toy_storage_2t, *, with_ref_price: bool):
 
     fields = dict(
         p_inflow=p_inflow_zero,
-        storage_bind_within_timeset=storage_bind,
+        storage_bind_within_timeblock=storage_bind,
         period_last=period_last,
     )
     if with_ref_price:

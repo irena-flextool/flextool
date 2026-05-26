@@ -47,7 +47,7 @@ def _create_minimal_db_with_array_value(db_path: Path) -> str:
         db.commit_session("init schema")
 
     bad_value = Array(
-        ["bind_using_blended_weights", "bind_within_period"],
+        ["bind_within_solve_blended_weights", "bind_within_period"],
         value_type=str,
         index_name="i",
     )
@@ -72,7 +72,7 @@ def test_array_valued_storage_binding_method_is_rejected(
     """Array-typed ``node.storage_binding_method`` must raise
     :class:`FlexToolConfigError` with a message that names the
     entity, lists the array contents, and mentions the single-string
-    contract plus ``bind_using_blended_weights`` as the recommended
+    contract plus ``bind_within_solve_blended_weights`` as the recommended
     pick for representative-period blended-weights nodes.
     """
     url = _create_minimal_db_with_array_value(tmp_path / "guard.sqlite")
@@ -93,7 +93,7 @@ def test_array_valued_storage_binding_method_is_rejected(
         + msg
     )
     # Array contents surfaced.
-    assert "bind_using_blended_weights" in msg, msg
+    assert "bind_within_solve_blended_weights" in msg, msg
     assert "bind_within_period" in msg, msg
     # Single-string contract messaging.
     assert "single" in msg.lower(), (
@@ -101,4 +101,4 @@ def test_array_valued_storage_binding_method_is_rejected(
         + msg
     )
     # Recommended pick called out explicitly.
-    assert "bind_using_blended_weights" in msg, msg
+    assert "bind_within_solve_blended_weights" in msg, msg

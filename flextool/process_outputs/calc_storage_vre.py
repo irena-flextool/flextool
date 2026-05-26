@@ -63,7 +63,7 @@ def compute_storage_and_vre(par, s, v, r) -> None:
         if (n, 'bind_within_period') in s.node__storage_binding_method:
             state_change += (v_current - v_prev_period) * unitsize[n]
 
-        if (n, 'bind_within_timeset') in s.node__storage_binding_method:
+        if (n, 'bind_within_timeblock') in s.node__storage_binding_method:
             state_change += (v_current - v_prev_timeblock) * unitsize[n]
 
         r_state_change[n] = state_change

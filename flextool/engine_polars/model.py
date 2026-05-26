@@ -655,10 +655,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # so a future projection bug or a manual CSV insertion cannot silently
     # solve the wrong LP by emitting two residuals for the same node.
     _storage_bind_frames = [
-        ("bind_within_timeset", d.storage_bind_within_timeset),
+        ("bind_within_timeblock", d.storage_bind_within_timeblock),
         ("bind_forward_only", d.storage_bind_forward_only),
         ("bind_within_solve", d.storage_bind_within_solve),
-        ("bind_using_blended_weights", d.storage_bind_using_blended_weights),
+        ("bind_within_solve_blended_weights", d.storage_bind_within_solve_blended_weights),
     ]
     _storage_bind_active = [
         (name, frame) for name, frame in _storage_bind_frames
@@ -733,13 +733,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 d, dc_pf_vars, d.p_unitsize, d.p_step_duration))
 
     # Each node lands in exactly one storage_bind_* frame (v54 contract — see disjointness assertion above).
-    if has_storage and d.storage_bind_within_timeset is not None:
+    if has_storage and d.storage_bind_within_timeblock is not None:
         # nodeBalance with our sign convention puts +sink, -source on the
         # LHS and -inflow on the RHS, so the cycle-correct sign for the
         # state-change term is (v_state[t-1] - v_state[t]).  Then
         #   (state[t-1] - state[t]) + sink - source = -inflow
         #   ⇒ state[t] - state[t-1] = sink - source + inflow      ✓
-        bind_set = d.storage_bind_within_timeset
+        bind_set = d.storage_bind_within_timeblock
         v_state_now = Where(v_state, bind_set)
         v_state_lag = Where(Lag(v_state, d.dtttdt, "t", "t_previous_within_timeset"),
                             bind_set)
@@ -750,7 +750,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         bind_within_solve terms reference v_state[n, d_previous,
         t_previous_within_solve], where d_previous can differ from d at
         period boundaries.  The stock ``Lag`` joins on the var's
-        own ``d`` — correct for bind_within_timeset (which wraps within
+        own ``d`` — correct for bind_within_timeblock (which wraps within
         the same period) but wrong for cross-period lookups.  We do the
         rename-and-join manually using a virtual v_state__back over
         (n, d_back, t_back), then collapse the back dims via Sum.
@@ -794,7 +794,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # ``bind_within_solve`` — cyclic within solve, uses
         # ``t_previous_within_solve`` (which wraps the very first timestep
         # of the first period back to the last timestep of the last period
-        # — like bind_within_timeset for single-block fixtures, but
+        # — like bind_within_timeblock for single-block fixtures, but
         # crosses period boundaries on multi-period solves).  Used by
         # ``dr_shift_demand``'s dr_storage node.
         bind_set_ws = d.storage_bind_within_solve
@@ -805,16 +805,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
     if (has_storage
             and has_rp
-            and d.storage_bind_using_blended_weights is not None
-            and d.storage_bind_using_blended_weights.height > 0):
-        # ``bind_using_blended_weights`` — intra-period state tracking
+            and d.storage_bind_within_solve_blended_weights is not None
+            and d.storage_bind_within_solve_blended_weights.height > 0):
+        # ``bind_within_solve_blended_weights`` — intra-period state tracking
         # (flextool.mod:2197-2200).  Within each RP block the
         # state-change uses the ordinary within-timeset lag (mirrors
-        # ``bind_within_timeset``); at the first step of each RP block
+        # ``bind_within_timeblock``); at the first step of each RP block
         # the lag is replaced by ``v_state_rp_start`` so each block has
         # a free starting state (Phase 5 variable).  Cross-block /
         # inter-period coupling lives in Phases 7-9.
-        bind_set_rp = d.storage_bind_using_blended_weights
+        bind_set_rp = d.storage_bind_within_solve_blended_weights
         # Interior: dtttdt restricted to (d, t) NOT in rp_block_first.
         dtttdt_interior = d.dtttdt.join(
             d.rp_block_first.select("d", "t"),
@@ -860,8 +860,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # (b, d, t) cohort built from rp_base__rep ⨝ rp_block_first.
     if (has_storage
             and has_rp
-            and d.storage_bind_using_blended_weights is not None
-            and d.storage_bind_using_blended_weights.height > 0
+            and d.storage_bind_within_solve_blended_weights is not None
+            and d.storage_bind_within_solve_blended_weights.height > 0
             and d.rp_base_chain is not None
             and d.rp_base_chain.height > 0
             and d.rp_base__rep is not None
@@ -869,7 +869,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             and d.rp_block_first.height > 0
             and d.p_rp_last_step is not None
             and d.p_rp_last_step.height > 0):
-        bind_set_rp = d.storage_bind_using_blended_weights
+        bind_set_rp = d.storage_bind_within_solve_blended_weights
         # LHS index: (n, b, b_prev).
         # Align b_prev dtype against v_state_inter's b dtype so the
         # renamed-axis Var view composes cleanly.
@@ -994,8 +994,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # commit warrants.
     if (has_storage
             and has_rp
-            and d.storage_bind_using_blended_weights is not None
-            and d.storage_bind_using_blended_weights.height > 0
+            and d.storage_bind_within_solve_blended_weights is not None
+            and d.storage_bind_within_solve_blended_weights.height > 0
             and d.rp_base_first is not None
             and d.rp_base_first.height > 0
             and d.rp_base_last is not None
@@ -1005,7 +1005,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             and d.rp_block_first.height > 0
             and d.p_rp_last_step is not None
             and d.p_rp_last_step.height > 0):
-        bind_set_rp = d.storage_bind_using_blended_weights
+        bind_set_rp = d.storage_bind_within_solve_blended_weights
         # LHS index: nodeState_rp × rp_base_first × rp_base_last.
         # Cast b_first / b_last to v_state_inter's b dtype so the
         # renamed-axis Var views compose cleanly.
@@ -1127,9 +1127,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # constraints want the same (n, d) tightening; maxState itself stays
     # untouched to keep this commit narrow.
     if (has_storage and has_rp
-            and d.storage_bind_using_blended_weights is not None
-            and d.storage_bind_using_blended_weights.height > 0):
-        bind_set_rp = d.storage_bind_using_blended_weights
+            and d.storage_bind_within_solve_blended_weights is not None
+            and d.storage_bind_within_solve_blended_weights.height > 0):
+        bind_set_rp = d.storage_bind_within_solve_blended_weights
 
         def _rp_state_id_tighten() -> dict:
             """Build ``{"divest": ..., "invest_neg": ...}`` (n,d)-keyed.
@@ -1354,7 +1354,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # Gate: ``n in nodeState`` (matches .mod:2201's `n in nodeState`),
     # NOT ``n in storage_bind_forward_only``.  The handoff applies to
     # every storage node on continuation rolls regardless of binding
-    # method — bind_within_timeset / bind_within_period nodes get this
+    # method — bind_within_timeblock / bind_within_period nodes get this
     # term in addition to their cyclic state-change term, which
     # together fix v_state at t_first to the handed-off value (v3.32.0
     # adds both terms at t_first; cyclic state_change uses
@@ -2962,7 +2962,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         #     == state_start * existing / unitsize.
         # The .mod has TWO routes to the same numerical pinning depending
         # on the binding method:
-        #   * ``bind_within_timeset`` (and the default fall-through): a
+        #   * ``bind_within_timeblock`` (and the default fall-through): a
         #     dedicated ``storage_state_start_binding`` constraint at
         #     (n, period_first, time_first) — flextool.mod:2725-2740.
         #   * ``bind_forward_only`` + fix_start: an in-balance term added
@@ -2991,7 +2991,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             #     the first; not currently emitted (no fixture exercises
             #     it).
             # Only fix_start nodes that fall through to the default
-            # bind_within_timeset path get the separate equality
+            # bind_within_timeblock path get the separate equality
             # (mod:2725-2740).
             fix_start_filtered = d.storage_fix_start
             for excl in (d.storage_bind_forward_only,
@@ -3060,7 +3060,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         #   The cyclic wrap of the bind means t_last "==" the implicit
         #   pre-t0001 state, which is what state_start represents.
         #   For bind_forward_only this is handled inline in nodeBalance.
-        #   For bind_within_timeset / bind_intraperiod_blocks the per-
+        #   For bind_within_timeblock / bind_intraperiod_blocks the per-
         #   block cycle prefers the first-row pin (handled above).
         if (is_solve_first
             and d.storage_fix_start is not None and d.storage_fix_start.height > 0
