@@ -3,9 +3,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flextool"
-# 4.0.0 semantic bump is held until the new engine demonstrates full
-# parity with the old one across the test suite.
-version = "3.45.0"
+# First v4 alpha — engine swap, output overhaul and storage-binding
+# restructure are in.  4.0.0 final follows after the remaining
+# minor-functionality additions, cleanup and testing land.  PEP 440
+# pre-release suffix: 4.0.0a1, 4.0.0a2, ... 4.0.0b1, 4.0.0rc1, then 4.0.0.
+version = "4.0.0a1"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
@@ -37,8 +39,11 @@ classifiers = [
 ]
 dependencies = [
     # Solver backend — pure-Python; replaces the retired glpsol pipeline.
-    "polar-high>=1.4.0",
-    "highspy>=1.14",
+    "polar-high>=2.0.2",
+    # Cap pins the install default to 1.14.0 (the highest tested
+    # version) while leaving room for users to downgrade to older
+    # 1.x releases that have been validated against their setup.
+    "highspy<=1.14.0",
     "polars",
     # Core data + I/O.
     "pandas",

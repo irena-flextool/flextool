@@ -1,3 +1,81 @@
+## Release 4.0.0a1 (26.5.2026) — first v4 alpha
+
+First public alpha of the v4 line.  The 3.x series ended at 3.47.0
+on 24.5.2026; the v4 clean-slate orphan-root commit (`5b8225a3`,
+25.5.2026) was the version-identity break.  This alpha gathers the
+v4 engine swap, the output overhaul, and the recent
+storage_binding_method restructure into a single PEP-440-tagged
+pre-release so downstream users can pull `4.0.0a1` from pip /
+TestPyPI for trial integration.
+
+Parity with the 3.x line is expected (modulo bugs surfacing
+during alpha testing).  4.0.0 final follows after the remaining
+minor-functionality additions, cleanup, and broader testing land.
+Subsequent alphas / betas / release candidates follow PEP 440
+(`4.0.0a2`, `4.0.0b1`, `4.0.0rc1`, `4.0.0`).
+
+**What v4 brings (recap from the orphan-root commit `5b8225a3`)**
+
+- Engine: polar_high + highspy in-process; legacy GMPL pipeline,
+  glpsol bundling, flextoolrunner package retired entirely.
+- Input API: SpineDBBackend as the single Spine DB → polars layer;
+  input_derivation/ as the per-solve preprocessing successor to
+  flextoolrunner/preprocessing.
+- Cascade transport: FlexDataProvider (in-memory) is the contract;
+  CSV mirrors only emit under --csv-dump (debug flag).
+- Outputs: canonical parquet under output_parquet/<scenario>/;
+  intermediate output_raw/ deleted automatically on successful run
+  unless --csv-dump preserves it.
+- CLI: --engine flag retired (polar_high is the only engine);
+  --highs-threads wired through to HiGHS; bin/ relocated to
+  solver_config/.
+- Tests: 521 MB of tracked fixture data reduced to ~5 KB; the
+  scenario_workdir fixture builds workdirs on demand via the live
+  cascade.
+
+**What lands on top in this alpha**
+
+- **storage_binding_method restructure (six-phase migration, May
+  2026)** — the parameter was previously list-valued with additive
+  semantics in `nodeBalance_eq`, which silently double-counted
+  state-change residuals for any node carrying multiple methods.
+  Reverted to single-valued; the value_list is now an eight-member
+  enum (seven cycle-scope methods plus `bind_intraperiod_blocks`
+  as an orthogonal aggregation method); the three legacy names
+  (`bind_within_timeset`, `bind_using_blended_weights`,
+  `bind_within_model`) are migrated by DB schema v55 to their new
+  names; the two new RP variants
+  (`bind_within_period_blended_weights`,
+  `bind_forward_only_blended_weights`) are fully implemented.
+  Same storage entity can now drive an RP investment solve and a
+  chronological dispatch solve back-to-back without parameter
+  changes (per-solve silent degrade replaces the earlier strict
+  check).  See the `storage_binding_method Phase A-F` commits.
+- **DB schema v55** — migration auto-runs on DB load via
+  `migrate_database(path)`; bumps `FLEXTOOL_DB_VERSION` 54 → 55.
+  Refreshes both the value_list members and the parameter
+  description on existing DBs to match the new schema template.
+- **autoscale package** (commits `92b98efd` through `d4a4d9df`) —
+  semantic per-type scaling layer between the cascade and HiGHS;
+  the legacy `scaling.py` is fully retired.  `--auto-scale` /
+  `--scaling` CLI flag is on by default; HiGHS-native bound +
+  objective scaling driven from polar-high.
+
+**Known caveats for alpha users**
+
+- This is an alpha — bugs are expected.  Reports against any
+  scenario that worked under 3.47.0 but misbehaves under 4.0.0a1
+  are especially welcome and feed directly into the cleanup
+  before the 4.0.0 final.
+- One known parity-tolerance gap remains
+  (`tests/engine_polars/test_phase_e_g_multi_roll.py::test_fullYear_roll_matches_v3320_golden`,
+  rel 1e-6); pre-existing, orthogonal to the alpha-cycle changes.
+- Pre-v55 DBs that carried array-valued `storage_binding_method`
+  parameter values must be migrated before use; see the v52→v55
+  migration chain in `flextool/update_flextool/db_migration.py`.
+
+---
+
 ## Release 3.47.0 (24.5.2026) — JSON-fixture architecture + Stage 4 test migration
 
 Minor release on top of 3.46.0.  Closes nine latent test failures
