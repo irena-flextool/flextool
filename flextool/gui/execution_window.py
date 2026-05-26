@@ -36,6 +36,20 @@ def _format_status_text(status: dict) -> str:
     return base
 
 
+def _limit_status_color(status: dict, theme: str) -> str | None:
+    """Return a foreground colour when pending jobs are being held back.
+
+    ``theme`` is the user's selected theme ("dark" / "light" / "os"); "os"
+    is treated as dark to match ``main_window``'s sv_ttk fallback.  Returns
+    ``None`` when no limit is active so the caller can clear the override.
+    """
+    if status.get('pending', 0) <= 0:
+        return None
+    if not (status.get('thread_limited') or status.get('memory_limited')):
+        return None
+    return "#c62828" if theme == "light" else "#ff6b6b"
+
+
 class ExecutionWindow(tk.Toplevel):
     """Non-modal window for monitoring and controlling scenario executions.
 
@@ -534,7 +548,15 @@ class ExecutionWindow(tk.Toplevel):
 
         try:
             status = self._mgr.get_execution_status()
-            self._status_label.config(text=_format_status_text(status))
+            theme = (
+                self._global_settings.theme
+                if self._global_settings is not None else "dark"
+            )
+            color = _limit_status_color(status, theme)
+            self._status_label.config(
+                text=_format_status_text(status),
+                foreground=color if color is not None else "",
+            )
         except (tk.TclError, AttributeError):
             pass  # window may be tearing down
 
