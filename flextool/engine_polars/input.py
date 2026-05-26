@@ -2691,11 +2691,16 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             provider, _K_rp.SOLVE_DATA_RP_BASE_CHAIN, rpbc_path,
         )
         if df_rpbc.height > 0:
-            # Emitter columns: ``(base_start, prev_base_start)``.
-            rp_base_chain = (df_rpbc
-                             .rename({"base_start": "b",
-                                      "prev_base_start": "b_prev"})
-                             .select("b", "b_prev").unique())
+            # Emitter columns: ``(base_start, prev_base_start)`` for the
+            # within_solve variant; Phase E adds an optional ``period``
+            # column for the within_period variant so the downstream
+            # cyclic constraint can pair endpoints per FlexTool period.
+            _renames = {"base_start": "b", "prev_base_start": "b_prev"}
+            if "period" in df_rpbc.columns:
+                _renames["period"] = "d"
+            df_rpbc = df_rpbc.rename(_renames)
+            _keep = ["b", "b_prev"] + (["d"] if "d" in df_rpbc.columns else [])
+            rp_base_chain = df_rpbc.select(_keep).unique()
             if rp_base_chain.height == 0:
                 rp_base_chain = None
 
@@ -2706,9 +2711,14 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             provider, _K_rp.SOLVE_DATA_RP_BASE_FIRST, rpbf_path,
         )
         if df_rpbf.height > 0:
-            rp_base_first = (df_rpbf
-                             .rename({"base_start": "b"})
-                             .select("b").unique())
+            # Phase E — preserve the optional ``period`` column (within
+            # period variant emits one row per FlexTool period).
+            _renames = {"base_start": "b"}
+            if "period" in df_rpbf.columns:
+                _renames["period"] = "d"
+            df_rpbf = df_rpbf.rename(_renames)
+            _keep = ["b"] + (["d"] if "d" in df_rpbf.columns else [])
+            rp_base_first = df_rpbf.select(_keep).unique()
             if rp_base_first.height == 0:
                 rp_base_first = None
 
@@ -2719,9 +2729,13 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             provider, _K_rp.SOLVE_DATA_RP_BASE_LAST, rpbl_path,
         )
         if df_rpbl.height > 0:
-            rp_base_last = (df_rpbl
-                            .rename({"base_start": "b"})
-                            .select("b").unique())
+            # Phase E — preserve the optional ``period`` column.
+            _renames = {"base_start": "b"}
+            if "period" in df_rpbl.columns:
+                _renames["period"] = "d"
+            df_rpbl = df_rpbl.rename(_renames)
+            _keep = ["b"] + (["d"] if "d" in df_rpbl.columns else [])
+            rp_base_last = df_rpbl.select(_keep).unique()
             if rp_base_last.height == 0:
                 rp_base_last = None
 

@@ -483,6 +483,11 @@ def _build_region_data(
         getattr(src, "storage_bind_forward_only_blended_weights", None),
         "n", keep_nodes,
     )
+    # Phase E — per-period cyclic-closure variant.
+    new.storage_bind_within_period_blended_weights = _filter_frame(
+        getattr(src, "storage_bind_within_period_blended_weights", None),
+        "n", keep_nodes,
+    )
     new.storage_fix_start = _filter_frame(src.storage_fix_start, "n", keep_nodes)
     new.nodeStateBlock = _filter_frame(src.nodeStateBlock, "n", keep_nodes)
     new.nodeState_rp = _filter_frame(

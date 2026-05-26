@@ -438,12 +438,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # Phase D unblocked ``bind_forward_only_blended_weights`` (same RP
     # machinery as ``bind_within_solve_blended_weights`` minus the
     # ``rp_inter_period_cyclic`` end-to-start closure constraint).
-    # ``bind_within_period_blended_weights`` remains blocked here until
-    # Phase E lands its inter-period coupling.
-    _NOT_YET_IMPLEMENTED_SBM = (
-        ("bind_within_period_blended_weights",
-         getattr(d, "storage_bind_within_period_blended_weights", None)),
-    )
+    # Phase E unblocked ``bind_within_period_blended_weights`` (per-period
+    # cyclic closure topology — each FlexTool period closes its own
+    # blended-weights chain independently of the others).  The
+    # ``_NOT_YET_IMPLEMENTED_SBM`` tuple is now empty; the loop is kept in
+    # place so future RP variants that ship a v55+ value-list entry
+    # before their constraint wiring lands can plug into the existing
+    # error-reporting surface with a one-line tuple extension.
+    _NOT_YET_IMPLEMENTED_SBM: tuple = ()
     for _method_name, _frame in _NOT_YET_IMPLEMENTED_SBM:
         if _frame is not None and _frame.height > 0:
             _nodes = _frame.get_column("n").to_list()
@@ -455,15 +457,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 f"Node(s) {_node_list} carry storage_binding_method = "
                 f"'{_method_name}', which is recognized by the v55 "
                 f"value_list but its constraint implementation has "
-                f"not landed yet (scheduled for Phase E of the "
-                f"storage-binding-methods-restructure migration).  "
-                f"For now, change these nodes to one of the "
-                f"implemented RP variants "
-                f"(bind_within_solve_blended_weights / "
-                f"bind_forward_only_blended_weights) or to a non-RP "
-                f"method (bind_within_solve / bind_within_period / "
-                f"bind_within_timeblock / bind_forward_only) using a "
-                f"scenario alternative override."
+                f"not landed yet.  For now, change these nodes to one "
+                f"of the implemented methods using a scenario "
+                f"alternative override."
             )
 
     has_proc      = d.process_source_sink is not None and d.process_source_sink.height > 0
@@ -701,17 +697,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # Defensive contract assertion (v54 storage_binding_method single-valued).
     # Phases 1-3 enforce single-valued storage_binding_method per node upstream
     # (ingestion guard, DB migration, _emit_mid_sets assertion).  Here we
-    # additionally verify that the five storage_bind_* projections feeding
+    # additionally verify that the six storage_bind_* projections feeding
     # nodeBalance_eq are PAIRWISE DISJOINT on the ``n`` column at the use site,
     # so a future projection bug or a manual CSV insertion cannot silently
-    # solve the wrong LP by emitting two residuals for the same node.  Phase D
-    # added ``bind_forward_only_blended_weights`` — the fifth partition.
+    # solve the wrong LP by emitting two residuals for the same node.
+    # Phase D added ``bind_forward_only_blended_weights`` — the fifth partition.
+    # Phase E added ``bind_within_period_blended_weights`` — the sixth partition.
     _storage_bind_frames = [
         ("bind_within_timeblock", d.storage_bind_within_timeblock),
         ("bind_forward_only", d.storage_bind_forward_only),
         ("bind_within_solve", d.storage_bind_within_solve),
         ("bind_within_solve_blended_weights", d.storage_bind_within_solve_blended_weights),
         ("bind_forward_only_blended_weights", d.storage_bind_forward_only_blended_weights),
+        ("bind_within_period_blended_weights",
+         getattr(d, "storage_bind_within_period_blended_weights", None)),
     ]
     _storage_bind_active = [
         (name, frame) for name, frame in _storage_bind_frames
@@ -1049,10 +1048,26 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # Phase 7's ~50-line RHS into a helper would require lifting it
     # out of its own ``if``-block, more cross-phase churn than this
     # commit warrants.
+    # Phase E: cyclic-closure fires for the UNION of
+    # ``bind_within_solve_blended_weights`` and
+    # ``bind_within_period_blended_weights`` — both variants close their
+    # chain, the only difference is the SCOPE of the closure (whole solve
+    # vs. each FlexTool period).  ``bind_forward_only_blended_weights``
+    # is the third RP variant and is intentionally omitted (no closure).
+    # Per-period pairing is encoded by an optional ``d`` column on
+    # ``rp_base_first`` / ``rp_base_last``; when both carry it the cross-
+    # join is replaced by an inner join on ``d`` so each period's first
+    # base closes against its OWN last base.  When the ``d`` column is
+    # absent both frames are singletons (today's within_solve emit) and
+    # the cross-join collapses to a single pair — semantically unchanged.
+    _bs_ws = d.storage_bind_within_solve_blended_weights
+    _bs_wp = getattr(d, "storage_bind_within_period_blended_weights", None)
+    _bind_cyc_pieces = [
+        f for f in (_bs_ws, _bs_wp) if f is not None and f.height > 0
+    ]
     if (has_storage
             and has_rp
-            and d.storage_bind_within_solve_blended_weights is not None
-            and d.storage_bind_within_solve_blended_weights.height > 0
+            and _bind_cyc_pieces
             and d.rp_base_first is not None
             and d.rp_base_first.height > 0
             and d.rp_base_last is not None
@@ -1062,14 +1077,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             and d.rp_block_first.height > 0
             and d.p_rp_last_step is not None
             and d.p_rp_last_step.height > 0):
-        # Phase D: cyclic-closure is the ONE constraint that distinguishes
-        # ``bind_within_solve_blended_weights`` from
-        # ``bind_forward_only_blended_weights`` — only the within_solve
-        # variant forces end_state == start_state at the solve boundary.
-        # Filter back to the within_solve subset; the forward_only subset
-        # is intentionally omitted so the LP is free to pick any terminal
-        # inter-period state.
-        bind_set_rp = d.storage_bind_within_solve_blended_weights
+        bind_set_rp = pl.concat(_bind_cyc_pieces, how="vertical").unique()
         # LHS index: nodeState_rp × rp_base_first × rp_base_last.
         # Cast b_first / b_last to v_state_inter's b dtype so the
         # renamed-axis Var views compose cleanly.
@@ -1080,9 +1088,21 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         rp_last = (d.rp_base_last
                    .rename({"b": "b_last"})
                    .with_columns(pl.col("b_last").cast(_b_dt, strict=False)))
-        nbfl_idx = (bind_set_rp
-                    .join(rp_first, how="cross")
-                    .join(rp_last, how="cross"))
+        # Phase E per-period pairing: when both frames carry the ``d``
+        # (period) column the cross-join is replaced by an inner join on
+        # ``d`` so each period's first base closes against its OWN last
+        # base.  ``d`` is then dropped from the pair frame because the
+        # RHS sum's d-axis flows in through the rep cohort
+        # (rp_block_first ⨝ p_rp_last_step) which already restricts d
+        # naturally when (b, r) labels are unique per period.
+        if "d" in rp_first.columns and "d" in rp_last.columns:
+            rp_fl_pair = (rp_first
+                          .join(rp_last, on="d", how="inner")
+                          .select("b_first", "b_last"))
+        else:
+            rp_fl_pair = (rp_first.select("b_first")
+                          .join(rp_last.select("b_last"), how="cross"))
+        nbfl_idx = bind_set_rp.join(rp_fl_pair, how="cross")
         # LHS term 1: + v_state_inter[n, b_first] — rename Var's b → b_first.
         v_inter_at_bfirst = Var(
             name=v_state_inter.name + "__bfirst",

@@ -931,6 +931,12 @@ def _compute_rp_frames(
     timeset_duration_entries: list[tuple[str, float]],
     period_name: str,
     timeline_steps: list[str],
+    *,
+    variant: str = "within_solve",
+    per_period_inputs: (
+        "list[tuple[str, dict[str, dict[str, float]], "
+        "list[tuple[str, float]], list[str]]] | None"
+    ) = None,
 ) -> dict[str, pl.DataFrame]:
     """Shared compute for the eight representative-period CSVs.
 
@@ -947,7 +953,118 @@ def _compute_rp_frames(
     this timeset belongs to; it anchors ``(start, count)`` block entries
     to real step labels (e.g. ``2050-01-01T00:00:00``) rather than the
     synthetic ``t####`` form.
+
+    Phase E — ``variant`` toggles the RP chain TOPOLOGY:
+
+    * ``"within_solve"`` (default, back-compat): one base-period chain
+      spanning every base period in the solve.  ``rp_base_first`` /
+      ``rp_base_last`` are singletons (head/tail of the single chain).
+      Used by ``bind_within_solve_blended_weights`` (cyclic closure
+      across the entire chain) and ``bind_forward_only_blended_weights``
+      (no closure).
+    * ``"within_period"``: each FlexTool period has its own independent
+      chain that closes within itself.  ``per_period_inputs`` carries
+      one entry per RP-bearing FlexTool period;
+      ``rp_base_chain`` accumulates only WITHIN-period predecessor
+      edges, and ``rp_base_first`` / ``rp_base_last`` carry one row per
+      period plus a ``period`` column so the downstream cyclic-closure
+      constraint (``model.py``'s ``rp_inter_period_cyclic``) can pair
+      each period's first base against its OWN period's last base.
+
+    ``per_period_inputs`` is required when ``variant == "within_period"``
+    and ignored otherwise; the legacy single-period args
+    (``rp_weights`` / ``timeset_duration_entries`` / ``period_name`` /
+    ``timeline_steps``) drive the within_solve path.
     """
+    if variant not in ("within_solve", "within_period"):
+        raise ValueError(
+            f"_compute_rp_frames: variant must be 'within_solve' or "
+            f"'within_period', got {variant!r}."
+        )
+    if variant == "within_period":
+        if not per_period_inputs:
+            raise ValueError(
+                "_compute_rp_frames: variant='within_period' requires a "
+                "non-empty per_period_inputs list (one entry per "
+                "RP-bearing FlexTool period)."
+            )
+        # Per-period assembly: each entry yields a chain segment fully
+        # contained within its FlexTool period.  Cross-period edges are
+        # omitted by construction (we never concatenate cross-segment
+        # predecessor edges).
+        wp_chain_rows: list[tuple[Any, ...]] = []
+        wp_first_rows: list[tuple[Any, ...]] = []
+        wp_last_rows: list[tuple[Any, ...]] = []
+        wp_block_first_rows: list[tuple[Any, ...]] = []
+        wp_block_last_rows: list[tuple[Any, ...]] = []
+        wp_block_sl_rows: list[tuple[Any, ...]] = []
+        wp_base_period_rows: list[tuple[Any, ...]] = []
+        wp_rep_period_rows: list[tuple[Any, ...]] = []
+        wp_weights_rows: list[tuple[Any, ...]] = []
+        wp_cost_rows: list[tuple[Any, ...]] = []
+        for (p_name, p_rp_w, p_ts_dur, p_tl_steps) in per_period_inputs:
+            p_sub = _compute_rp_frames(
+                p_rp_w, p_ts_dur, p_name, p_tl_steps,
+            )
+            # rp_base_chain: rename to add the owning period column.
+            sub_chain = p_sub["rp_base_chain.csv"]
+            for row in sub_chain.iter_rows():
+                wp_chain_rows.append((row[0], row[1], p_name))
+            # rp_base_first / rp_base_last: tag with period.
+            sub_first = p_sub["rp_base_first.csv"]
+            for row in sub_first.iter_rows():
+                wp_first_rows.append((row[0], p_name))
+            sub_last = p_sub["rp_base_last.csv"]
+            for row in sub_last.iter_rows():
+                wp_last_rows.append((row[0], p_name))
+            # Pass through unchanged.
+            wp_block_first_rows.extend(p_sub["rp_block_first.csv"].iter_rows())
+            wp_block_last_rows.extend(p_sub["rp_block_last.csv"].iter_rows())
+            wp_block_sl_rows.extend(
+                p_sub["rp_block_start_last.csv"].iter_rows())
+            wp_base_period_rows.extend(
+                p_sub["rp_base_period_set.csv"].iter_rows())
+            wp_rep_period_rows.extend(
+                p_sub["rp_rep_period_set.csv"].iter_rows())
+            wp_weights_rows.extend(p_sub["rp_weights.csv"].iter_rows())
+            wp_cost_rows.extend(p_sub["rp_cost_weight.csv"].iter_rows())
+        out: dict[str, pl.DataFrame] = {}
+        out["rp_weights.csv"] = _to_utf8_frame(
+            ("base_start", "rep_start", "weight"), wp_weights_rows,
+        )
+        # ``period`` column is the period that owns this chain edge /
+        # endpoint; consumed by the FlexData loader and propagated as
+        # ``d`` so ``model.py``'s ``rp_inter_period_cyclic`` can pair
+        # endpoints per period.
+        out["rp_base_chain.csv"] = _to_utf8_frame(
+            ("base_start", "prev_base_start", "period"), wp_chain_rows,
+        )
+        out["rp_base_first.csv"] = _to_utf8_frame(
+            ("base_start", "period"), wp_first_rows,
+        )
+        out["rp_base_last.csv"] = _to_utf8_frame(
+            ("base_start", "period"), wp_last_rows,
+        )
+        out["rp_block_first.csv"] = _to_utf8_frame(
+            ("period", "step"), wp_block_first_rows,
+        )
+        out["rp_block_last.csv"] = _to_utf8_frame(
+            ("period", "step"), wp_block_last_rows,
+        )
+        out["rp_block_start_last.csv"] = _to_utf8_frame(
+            ("rep_start", "last_step"), wp_block_sl_rows,
+        )
+        out["rp_base_period_set.csv"] = _to_utf8_frame(
+            ("period",), wp_base_period_rows,
+        )
+        out["rp_rep_period_set.csv"] = _to_utf8_frame(
+            ("period",), wp_rep_period_rows,
+        )
+        out["rp_cost_weight.csv"] = _to_utf8_frame(
+            ("period", "time", "weight"), wp_cost_rows,
+        )
+        return out
+
     step_to_idx: dict[str, int] = {s: i for i, s in enumerate(timeline_steps)}
 
     # RP block boundaries from the timeset_duration entries.
@@ -1095,10 +1212,25 @@ def emit_rp_data(
     period_name: str,
     timeline_steps: list[str],
     *, provider,
+    variant: str = "within_solve",
+    per_period_inputs: (
+        "list[tuple[str, dict[str, dict[str, float]], "
+        "list[tuple[str, float]], list[str]]] | None"
+    ) = None,
 ) -> None:
-    """Emit ``rp_data`` to the Provider."""
+    """Emit ``rp_data`` to the Provider.
+
+    Phase E added ``variant`` + ``per_period_inputs`` (see
+    :func:`_compute_rp_frames` for semantics).  The caller in
+    :mod:`flextool.engine_polars._native_run_model` selects the variant
+    based on the binding-method mix of nodes in this solve; mixed
+    within_solve/within_period in a single solve is rejected upstream
+    with ``FlexToolConfigError`` because the per-solve RP frame family
+    can only carry one chain topology.
+    """
     frames = _compute_rp_frames(
         rp_weights, timeset_duration_entries, period_name, timeline_steps,
+        variant=variant, per_period_inputs=per_period_inputs,
     )
     for basename, df in frames.items():
         _emit(provider, _RP_BASENAME_TO_PROVIDER_KEY[basename], df)
