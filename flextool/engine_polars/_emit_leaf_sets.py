@@ -562,15 +562,24 @@ def emit_node_state_subsets(solve_data_dir: Path,
                              *, provider) -> None:
     """Emit ``node_state_subsets`` to the Provider.
 
-    Phase D: ``nodeState_rp`` is the UNION of every node carrying a
-    blended-weights method (``bind_within_solve_blended_weights`` or
-    ``bind_forward_only_blended_weights``).  The shared RP machinery
-    in ``model.py`` fires over this union; only the cyclic-closure
-    constraint further filters back to within_solve.
+    Phase E: ``nodeState_rp`` is the UNION of every node carrying any
+    of the three blended-weights methods —
+    ``bind_within_solve_blended_weights`` (across-solve cyclic
+    closure), ``bind_within_period_blended_weights`` (per-FlexTool-
+    period cyclic closure), and ``bind_forward_only_blended_weights``
+    (no closure).  The shared RP machinery in ``model.py``
+    (intra-period state-change branches in ``nodeBalance_eq``,
+    ``rp_inter_period_balance``, ``rp_inter_period_max_state``,
+    ``maxState_rp_start``) fires over this union; only the
+    ``rp_inter_period_cyclic`` constraint further filters to the
+    within_solve ∪ within_period subset, with per-period pairing on
+    the optional ``d`` column carried on ``rp_base_first`` /
+    ``rp_base_last`` (see ``model.py``'s cyclic-emit block).
     """
     rp = derive_node_state_subset(
         solve_data_dir,
         ("bind_within_solve_blended_weights",
+         "bind_within_period_blended_weights",
          "bind_forward_only_blended_weights"),
         provider=provider,
     )

@@ -3,12 +3,7 @@
 Covers the
 :func:`flextool.engine_polars._native_run_model._downgrade_rp_methods_for_non_rp_solve`
 helper introduced in Phase C of the
-``storage-binding-methods-restructure`` migration, plus the
-``nodeBalance_eq`` not-yet-implemented guard in
-:mod:`flextool.engine_polars.model` for the two methods whose
-constraint implementations land in Phases D / E
-(``bind_within_period_blended_weights`` and
-``bind_forward_only_blended_weights``).
+``storage-binding-methods-restructure`` migration.
 
 What changed vs. Phase 5
 ------------------------
@@ -20,9 +15,14 @@ BOTH an RP investment solve AND a chronological dispatch solve
 back-to-back.  Phase C replaces the strict check with a silent
 per-solve downgrade — the offending method is rewritten to its non-RP
 equivalent in the per-solve provider only, leaving the on-disk DB and
-upstream CSVs untouched.  A second line of defence sits in
-``model.py``'s ``nodeBalance_eq`` for the two methods whose constraint
-implementations are not yet wired.
+upstream CSVs untouched.
+
+Note: Phase C also originally hosted a ``model.py`` not-yet-implemented
+guard for the two RP variants whose constraint implementations were
+still pending.  Phase D landed ``bind_forward_only_blended_weights``
+and Phase E landed ``bind_within_period_blended_weights``; the guard's
+blocked-method tuple is now empty and the
+``test_not_yet_implemented_method_blocked`` case was retired.
 """
 from __future__ import annotations
 
@@ -263,72 +263,13 @@ def test_multi_solve_same_node_drives_both_paths(
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — not-yet-implemented method blocked by the model.py guard.
+# Test 4 — Phase D + Phase E retired the model.py not-yet-implemented guard
+# for the two RP variants whose constraint implementations have now landed:
+#   * Phase D: bind_forward_only_blended_weights
+#   * Phase E: bind_within_period_blended_weights
+# The ``_NOT_YET_IMPLEMENTED_SBM`` tuple is now empty and there is no
+# currently-blocked RP variant to assert against; the case was removed
+# from this file.  If a future RP variant is added at the value-list
+# layer before its constraint wiring lands, reinstate a parallel test
+# here referencing that new method name.
 # ---------------------------------------------------------------------------
-
-
-def test_not_yet_implemented_method_blocked() -> None:
-    """A node carrying ``bind_within_period_blended_weights`` in an
-    RP-active solve must be rejected by the
-    :func:`flextool.engine_polars.model.build_flextool` guard with a
-    :class:`FlexToolConfigError` naming the method and the Phase D/E hint.
-
-    Exercises the actual production guard in ``model.py``'s
-    ``nodeBalance_eq`` block, not a re-implementation.  The minimum
-    :class:`flextool.engine_polars.input.FlexData` shape needed to reach
-    the guard is small: ALWAYS-required fields satisfied by empty
-    polars frames, every feature-flag attribute left at ``None``, and
-    the not-yet-implemented partition pre-loaded with a single offending
-    node.
-    """
-    import flextool.engine_polars.model as _model
-    from polar_high.engine import Problem
-
-    class _StubData:
-        # ALWAYS-required fields per ``model.ALWAYS`` — empty frames
-        # satisfy ``_check`` (None would raise; empty does not).
-        dt = pl.DataFrame({"d": [], "t": []},
-                          schema={"d": pl.Utf8, "t": pl.Utf8})
-        nodeBalance = pl.DataFrame({"n": []}, schema={"n": pl.Utf8})
-        p_step_duration = pl.DataFrame({"d": [], "t": [], "value": []},
-                                       schema={"d": pl.Utf8, "t": pl.Utf8,
-                                               "value": pl.Float64})
-        p_rp_cost_weight = pl.DataFrame({"d": [], "value": []},
-                                        schema={"d": pl.Utf8,
-                                                "value": pl.Float64})
-        p_inflation_op = pl.DataFrame({"d": [], "value": []},
-                                      schema={"d": pl.Utf8,
-                                              "value": pl.Float64})
-        p_period_share = pl.DataFrame({"d": [], "value": []},
-                                      schema={"d": pl.Utf8,
-                                              "value": pl.Float64})
-        p_inflow = pl.DataFrame({"n": [], "d": [], "t": [], "value": []},
-                                schema={"n": pl.Utf8, "d": pl.Utf8,
-                                        "t": pl.Utf8, "value": pl.Float64})
-        p_penalty_up = pl.DataFrame({"n": [], "d": [], "value": []},
-                                    schema={"n": pl.Utf8, "d": pl.Utf8,
-                                            "value": pl.Float64})
-        p_penalty_down = pl.DataFrame({"n": [], "d": [], "value": []},
-                                      schema={"n": pl.Utf8, "d": pl.Utf8,
-                                              "value": pl.Float64})
-        # Trip the guard with two nodes so the truncation branch is
-        # exercised too (covers the 10-node + "more" tail at the same
-        # site).
-        storage_bind_within_period_blended_weights = pl.DataFrame(
-            {"n": ["BAT_001", "BAT_002"]},
-            schema={"n": pl.Utf8},
-        )
-
-        def __getattr__(self, name):
-            # Every other FlexData attribute defaults to None — matches
-            # the loader's "feature disabled" convention.
-            return None
-
-    m = Problem()
-    with pytest.raises(_model.FlexToolConfigError) as exc:
-        _model.build_flextool(m, _StubData())
-    msg = str(exc.value)
-    # Mandated spec tokens.
-    assert "bind_within_period_blended_weights" in msg, msg
-    assert ("not landed yet" in msg or "Phase D/E" in msg), msg
-    assert "BAT_001" in msg, msg

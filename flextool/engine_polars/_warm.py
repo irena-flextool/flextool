@@ -107,6 +107,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "storage_bind_within_solve_blended_weights",
     # Phase D — landed with the new variant's constraint wiring.
     "storage_bind_forward_only_blended_weights",
+    # Phase E — landed with the per-period cyclic-closure variant.
+    "storage_bind_within_period_blended_weights",
     "storage_fix_start",
     "dtttdt", "dtttdt_forward_only",
     "n_fix_storage_quantity", "ndt_fix_storage_quantity",

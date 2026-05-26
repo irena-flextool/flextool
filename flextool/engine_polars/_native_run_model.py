@@ -900,33 +900,138 @@ def native_run_model(state, solver) -> int:
                 state.logger.error(message)
                 raise FlexToolConfigError(message)
 
+        # Phase E — determine the RP chain TOPOLOGY for this solve based
+        # on which blended-weights binding methods appear in the per-solve
+        # ``input/node__storage_binding_method`` frame.  The frame family
+        # emitted to the per-solve provider can carry only ONE chain
+        # topology, so mixing ``bind_within_solve_blended_weights`` (or
+        # ``bind_forward_only_blended_weights`` — same across-solve
+        # topology) with ``bind_within_period_blended_weights`` (per-
+        # FlexTool-period topology) in a single solve is rejected here
+        # with a ``FlexToolConfigError`` listing the conflict and the
+        # canonical fix (separate solves, or pick one variant for the
+        # whole solve).  The downgrade above has already rewritten
+        # blended-weights methods to their non-RP equivalents on non-RP
+        # solves, so this branch only sees genuine RP-active solves.
+        _rp_variant = "within_solve"
+        _wp_nodes: list[str] = []
+        _ws_or_fo_nodes: list[str] = []
+        if sub_solve_provider.has("input/node__storage_binding_method"):
+            _sbm = sub_solve_provider.get(
+                "input/node__storage_binding_method"
+            )
+            if _sbm.height > 0:
+                _mcol = ("storage_binding_method"
+                         if "storage_binding_method" in _sbm.columns
+                         else "method")
+                import polars as _pl
+                _wp_df = _sbm.filter(
+                    _pl.col(_mcol) == "bind_within_period_blended_weights"
+                ).select("node").unique()
+                _ws_df = _sbm.filter(_pl.col(_mcol).is_in([
+                    "bind_within_solve_blended_weights",
+                    "bind_forward_only_blended_weights",
+                ])).select("node").unique()
+                _wp_nodes = _wp_df["node"].to_list() if _wp_df.height else []
+                _ws_or_fo_nodes = (
+                    _ws_df["node"].to_list() if _ws_df.height else []
+                )
+                if _wp_nodes and _ws_or_fo_nodes:
+                    _shown_wp = _wp_nodes[:5]
+                    _shown_ws = _ws_or_fo_nodes[:5]
+                    raise FlexToolConfigError(
+                        f"Solve '{complete_solve[solve]}' mixes "
+                        f"bind_within_period_blended_weights "
+                        f"({len(_wp_nodes)} node(s), e.g. "
+                        f"{', '.join(_shown_wp)}) with "
+                        f"bind_within_solve_blended_weights / "
+                        f"bind_forward_only_blended_weights "
+                        f"({len(_ws_or_fo_nodes)} node(s), e.g. "
+                        f"{', '.join(_shown_ws)}).  The two RP chain "
+                        f"topologies (per-FlexTool-period vs. across-"
+                        f"solve) cannot share the per-solve RP frame "
+                        f"family — split into separate solves, or pick "
+                        f"a single blended-weights variant for every "
+                        f"node in this solve."
+                    )
+                if _wp_nodes:
+                    _rp_variant = "within_period"
+
         rp_written = False
-        for ts_name in active_timeset_names:
-            if ts_name in state.timeline.rp_weights:
+        if _rp_variant == "within_period":
+            # Iterate ALL RP-bearing active timesets (each owning a
+            # distinct FlexTool period) and accumulate per-period inputs.
+            # Cross-period chain edges are dropped by _compute_rp_frames
+            # so each period closes its own cycle independently.
+            per_period_inputs: list = []
+            for ts_name in active_timeset_names:
+                if ts_name not in state.timeline.rp_weights:
+                    continue
                 period_name = None
                 for p, ts in timesets_used:
                     if ts == ts_name:
                         period_name = p
                         break
-                if period_name:
-                    timeline_name = state.timeline.timesets__timeline[ts_name]
-                    timeline_steps = [
-                        step
-                        for step, _dur in state.timeline.timelines.get(
-                            timeline_name, []
-                        )
-                    ]
-                    solve_writers.emit_rp_data(
-                        rp_weights=state.timeline.rp_weights[ts_name],
-                        timeset_duration_entries=state.timeline.timeset_durations[
-                            ts_name
-                        ],
-                        period_name=period_name,
-                        timeline_steps=timeline_steps,
-                        provider=sub_solve_provider,
+                if not period_name:
+                    continue
+                timeline_name = state.timeline.timesets__timeline[ts_name]
+                timeline_steps = [
+                    step
+                    for step, _dur in state.timeline.timelines.get(
+                        timeline_name, []
                     )
-                    rp_written = True
-                    break
+                ]
+                per_period_inputs.append((
+                    period_name,
+                    state.timeline.rp_weights[ts_name],
+                    state.timeline.timeset_durations[ts_name],
+                    timeline_steps,
+                ))
+            if per_period_inputs:
+                # The legacy single-period args are ignored when variant
+                # is within_period (asserted inside _compute_rp_frames),
+                # but pass through harmless placeholders for the
+                # signature; the function reads from per_period_inputs.
+                first_p_name, first_rp_w, first_ts_dur, first_tl = (
+                    per_period_inputs[0]
+                )
+                solve_writers.emit_rp_data(
+                    rp_weights=first_rp_w,
+                    timeset_duration_entries=first_ts_dur,
+                    period_name=first_p_name,
+                    timeline_steps=first_tl,
+                    provider=sub_solve_provider,
+                    variant="within_period",
+                    per_period_inputs=per_period_inputs,
+                )
+                rp_written = True
+        else:
+            for ts_name in active_timeset_names:
+                if ts_name in state.timeline.rp_weights:
+                    period_name = None
+                    for p, ts in timesets_used:
+                        if ts == ts_name:
+                            period_name = p
+                            break
+                    if period_name:
+                        timeline_name = state.timeline.timesets__timeline[ts_name]
+                        timeline_steps = [
+                            step
+                            for step, _dur in state.timeline.timelines.get(
+                                timeline_name, []
+                            )
+                        ]
+                        solve_writers.emit_rp_data(
+                            rp_weights=state.timeline.rp_weights[ts_name],
+                            timeset_duration_entries=state.timeline.timeset_durations[
+                                ts_name
+                            ],
+                            period_name=period_name,
+                            timeline_steps=timeline_steps,
+                            provider=sub_solve_provider,
+                        )
+                        rp_written = True
+                        break
         if not rp_written:
             # Phase C — Phase 5's strict ``_assert_blended_weights_have_rp_weights``
             # check has been retired.  Per-solve downgrade fired earlier
