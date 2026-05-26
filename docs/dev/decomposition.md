@@ -265,7 +265,7 @@ the LP's constraints.
 
 This is structurally different from the Lagrangian path: there is one
 LP, one HiGHS run, no outer loop. The decomposition lives in the LP
-*structure* (which `(entity, block)` rows the writer ports emit).
+*structure* (which `(entity, block)` rows the `_emit_*` modules produce).
 
 ### 3.2 Schema surface
 
@@ -317,12 +317,12 @@ flowchart LR
     B --> G[block_step_duration]
     B --> H[block_step_previous]
     E & F & G & H --> I[BlockBundle]
-    I --> J[block-aware writer ports]
+    I --> J[block-aware _emit_*.py]
 ```
 
 `BlockBundle` (in `_derived_block.py`) wraps the `BlockLayout` with
 cached lazy-frame join helpers (`block_compat_frame`,
-`process_side_block_lf`, …) that the writer ports use to filter and
+`process_side_block_lf`, …) that the `_emit_*` modules use to filter and
 re-project their rows.
 
 ### 3.4 Overlap-set aggregation
@@ -349,10 +349,12 @@ Two structural assumptions:
   integer number of fine steps. Non-aligned configurations raise
   `NotImplementedError` from `_build_overlap_set`.
 
-### 3.5 Block-aware writer ports
+### 3.5 Block-aware emitters
 
-Writer ports in `engine_polars` are block-aware. The major touch
-points:
+The `_emit_*.py` modules in `engine_polars` (formerly `_writer_*.py`,
+renamed in the writer→emitter Phases 1–5; see
+[engine_polars.md § Emitters](engine_polars.md#emitters-formerly-writer-ports))
+are block-aware. The major touch points:
 
 - **Node balance** — built on the block of the node, joined with
   per-side arcs through `overlap_set` (loss-aware when the arc
@@ -369,7 +371,7 @@ points:
 ### 3.6 Output expansion
 
 Coarse-block decision variables are expanded back onto the fine
-timeline before the writer ports emit results, using the same
+timeline before the `_emit_*` modules write results, using the same
 `overlap_set` (read in reverse). Per-fraction attribution stays
 consistent across the solve / write boundary; downstream tooling sees
 the same fine-grained output regardless of which entities ran on
@@ -484,7 +486,7 @@ features. Quick map (full text in
 - **3.29.0** — Flex-temporal decomposition lands. `v50` migration
   moves `new_stepduration` from `timeset` to `solve`. `v51` adds
   group-level `new_stepduration` + `decomposition_method`.
-- **3.30.0–3.32.0** — Block-aware writer ports complete; output
+- **3.30.0–3.32.0** — Block-aware emitters complete (then known as writer ports); output
   expansion stabilises.
 - **3.33.0** — `--decomposition lagrangian` rewired onto the polars
   coordinator (`engine_polars._lagrangian`).
@@ -493,7 +495,7 @@ features. Quick map (full text in
 
 | Combination | Supported | Notes |
 |---|---|---|
-| Lagrangian + flex-temporal | Yes | Each region's `build_flextool` runs through the block-aware writer ports unchanged. |
+| Lagrangian + flex-temporal | Yes | Each region's `build_flextool` runs through the block-aware `_emit_*` modules unchanged. |
 | Lagrangian + rolling | No | One Lagrangian solve is the unit of work for the outer rolling loop. Not currently wired and not on the roadmap; would require per-roll dual warm-start. |
 | Lagrangian + nested | Partial | The outer (parent) solve can be Lagrangian, but the parent's handoff to children does not currently propagate per-region state. Treat as untested. |
 | Flex-temporal + rolling | Yes | The rolling jump is on the fine timeline; coarse blocks honour the jump boundary inside each window. |
