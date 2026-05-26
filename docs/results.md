@@ -15,6 +15,8 @@ The CSV / Excel / plot files are **derived** from the parquets, so deleting or r
 
 All annualized numbers are scaled to **a full year of operation** by dividing through by `complete_period_share_of_year`. All values are returned in user units — auto-scaling (see [LP scaling pipeline](dev/scaling.md)) and time-block aggregation under flex-temporal decomposition are unwound before they reach the parquets, so users always read MW / MWh / [CUR] in the original problem space.
 
+For stochastic models the parquets carry only the **realised branch** of each solve by default. Setting the `model` parameter `output_horizon = yes` adds the forecast-branch rows to the time-series tables (`*_t`, `*_dt`) so the unrealised futures are visible for debugging — note that cost aggregates in that mode mix realised + unrealised contributions and should not be used as final results (see also [How to use stochastics](how_to.md#how-to-use-stochastics-representing-uncertainty)).
+
 - [Costs](#costs)
 - [Prices](#prices)
 - [Energy flows](#energy-flows)
@@ -141,6 +143,8 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
     - *invested* — capacity the model decided to invest in for the period
     - *divested* — capacity the model decided to retire at the start of the period
     - *total* — `existing + invested − divested`
+
+    Period axis covers every period in which an investment **or** a divestment decision occurs (both the invest-eligible and divest-eligible periods feed into `d_realize_invest`), so divest-only periods are visible even when no new capacity is added.
 - `unit`, `connection`, `node` entities `invest_marginal` parameter — [CUR/MW or MWh] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative is not expected and indicates a numerical artefact worth investigating
 
 ## CO2 emissions
