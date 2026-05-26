@@ -930,6 +930,7 @@ def _compute_rp_frames(
     rp_weights: dict[str, dict[str, float]],
     timeset_duration_entries: list[tuple[str, float]],
     period_name: str,
+    timeline_steps: list[str],
 ) -> dict[str, pl.DataFrame]:
     """Shared compute for the eight representative-period CSVs.
 
@@ -941,18 +942,42 @@ def _compute_rp_frames(
     ``rp_block_last.csv``, ``rp_block_start_last.csv``,
     ``rp_base_period_set.csv``, ``rp_rep_period_set.csv``,
     ``rp_cost_weight.csv``.
+
+    ``timeline_steps`` is the ordered list of step IDs for the timeline
+    this timeset belongs to; it anchors ``(start, count)`` block entries
+    to real step labels (e.g. ``2050-01-01T00:00:00``) rather than the
+    synthetic ``t####`` form.
     """
+    step_to_idx: dict[str, int] = {s: i for i, s in enumerate(timeline_steps)}
+
     # RP block boundaries from the timeset_duration entries.
     rp_starts: list[str] = []
     rp_lasts: list[str] = []
+    rp_ranges: list[tuple[int, int]] = []  # inclusive (start_idx, last_idx)
     for start_step, count in timeset_duration_entries:
         start_step = str(start_step)
-        rp_starts.append(start_step)
-        start_idx = int(start_step[1:])  # 't0001' -> 1
+        if start_step not in step_to_idx:
+            raise KeyError(
+                f"Representative-period block start {start_step!r} not "
+                f"found in timeline (period={period_name!r}). Check that "
+                "timeset_duration entries reference real timeline steps."
+            )
+        start_idx = step_to_idx[start_step]
         last_idx = start_idx + int(float(count)) - 1
-        rp_lasts.append(f"t{last_idx:04d}")
+        if last_idx >= len(timeline_steps):
+            raise IndexError(
+                f"Representative-period block {start_step!r} + "
+                f"{int(float(count))} steps overruns timeline length "
+                f"({len(timeline_steps)}) for period={period_name!r}."
+            )
+        rp_starts.append(start_step)
+        rp_lasts.append(timeline_steps[last_idx])
+        rp_ranges.append((start_idx, last_idx))
 
-    base_starts = sorted(rp_weights.keys(), key=lambda s: int(s[1:]))
+    base_starts = sorted(
+        rp_weights.keys(),
+        key=lambda s: step_to_idx.get(s, len(timeline_steps)),
+    )
     n_base = len(base_starts)
     n_rp = len(rp_starts)
 
@@ -1019,12 +1044,12 @@ def _compute_rp_frames(
     for rep in w_r:
         w_r[rep] = w_r[rep] * n_rp / n_base if n_base > 0 else 1.0
     cost_rows: list[tuple[Any, ...]] = []
-    for start, last in zip(rp_starts, rp_lasts):
-        start_idx = int(start[1:])
-        last_idx = int(last[1:])
+    for (start_idx, last_idx), start in zip(rp_ranges, rp_starts):
         weight = w_r[start]
         for t_idx in range(start_idx, last_idx + 1):
-            cost_rows.append((period_name, f"t{t_idx:04d}", str(weight)))
+            cost_rows.append(
+                (period_name, timeline_steps[t_idx], str(weight))
+            )
     out["rp_cost_weight.csv"] = _to_utf8_frame(
         ("period", "time", "weight"), cost_rows,
     )
@@ -1036,10 +1061,11 @@ def derive_rp_weights(
     rp_weights: dict[str, dict[str, float]],
     timeset_duration_entries: list[tuple[str, float]],
     period_name: str,
+    timeline_steps: list[str],
 ) -> pl.DataFrame:
     """Build the ``rp_weights`` frame (base_start, rep_start, weight)."""
     return _compute_rp_frames(
-        rp_weights, timeset_duration_entries, period_name,
+        rp_weights, timeset_duration_entries, period_name, timeline_steps,
     )["rp_weights.csv"]
 
 
@@ -1067,11 +1093,12 @@ def emit_rp_data(
     rp_weights: dict[str, dict[str, float]],
     timeset_duration_entries: list[tuple[str, float]],
     period_name: str,
+    timeline_steps: list[str],
     *, provider,
 ) -> None:
     """Emit ``rp_data`` to the Provider."""
     frames = _compute_rp_frames(
-        rp_weights, timeset_duration_entries, period_name,
+        rp_weights, timeset_duration_entries, period_name, timeline_steps,
     )
     for basename, df in frames.items():
         _emit(provider, _RP_BASENAME_TO_PROVIDER_KEY[basename], df)

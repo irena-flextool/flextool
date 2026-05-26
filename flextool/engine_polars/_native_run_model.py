@@ -898,12 +898,20 @@ def native_run_model(state, solver) -> int:
                         period_name = p
                         break
                 if period_name:
+                    timeline_name = state.timeline.timesets__timeline[ts_name]
+                    timeline_steps = [
+                        step
+                        for step, _dur in state.timeline.timelines.get(
+                            timeline_name, []
+                        )
+                    ]
                     solve_writers.emit_rp_data(
                         rp_weights=state.timeline.rp_weights[ts_name],
                         timeset_duration_entries=state.timeline.timeset_durations[
                             ts_name
                         ],
                         period_name=period_name,
+                        timeline_steps=timeline_steps,
                         provider=sub_solve_provider,
                     )
                     rp_written = True
