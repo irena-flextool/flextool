@@ -61,11 +61,13 @@ class ProjectSettings:
     # Controlled by the "Debug" checkbox in the main window.
     debug: bool = False
 
-    # When True, scenario execution runs with --save-memory: polar-high
-    # drops the LP source and round-trips HiGHS through MPS mid-solve,
-    # trading ~+90 s I/O per sub-solve for ~5-10 GB lower peak RSS.
-    # Also forces cold rebuilds (no warm-LP reuse). Controlled by the
-    # "Save memory" checkbox in the main window, above "Debug".
+    # When True, scenario execution runs with --save-memory: builds the
+    # LP, writes MPS, drops everything Python-side, then spawns a HiGHS
+    # subprocess to solve. Parent and solver memory no longer compound
+    # in the same process address space. Trades ~+30-60 s I/O per
+    # sub-solve and warm-LP reuse for substantial peak RSS relief.
+    # Controlled by the "Save memory" checkbox in the main window,
+    # above "Debug".
     save_memory: bool = False
 
     # Plot settings

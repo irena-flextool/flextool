@@ -157,13 +157,17 @@ def main():
     parser.add_argument('--debug', action='store_true')
     parser.add_argument(
         '--save-memory', action='store_true',
-        help='Trade wall time for peak memory: after the LP matrix is '
-             'built, drop polar-high\'s polars/numpy LP source and '
-             'round-trip the HiGHS instance through a temp MPS file '
-             'before solving. Frees ~5-10 GB on large models at a cost '
-             'of ~+90 s I/O per sub-solve. Also disables warm-LP reuse '
-             'across cascade iterations (each sub-solve cold-rebuilds). '
-             'Off by default.',
+        help='Trade wall time for peak memory: build the LP, write it to '
+             'a temp MPS file, drop everything Python-side AND the live '
+             'HiGHS instance, then spawn a separate subprocess to solve '
+             'the MPS in a clean address space. The parent process '
+             '(holding ~7-11 GB of polars frames + FlexData) sits idle '
+             'while the child does its ~50 GB active-solve work, so the '
+             'two never compound in the same process heap. Adds ~+30-60 s '
+             'I/O per sub-solve. Also disables warm-LP reuse across '
+             'cascade iterations (the Problem is released after MPS '
+             'write). Off by default; use when models OOM on the default '
+             'in-process path.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,

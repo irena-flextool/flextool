@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 from flextool.engine_polars._solve_config import SolverConfig
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from polar_high import Problem
 
 
@@ -129,6 +131,8 @@ def run_one_solve(
     logger: logging.Logger | None = None,
     *,
     save_memory: bool = False,
+    solve_name: str | None = None,
+    work_folder: "Path | None" = None,
 ):
     """Dispatch *problem* to the chosen solver.
 
@@ -156,14 +160,26 @@ def run_one_solve(
         Optional logger.  When provided, the commercial-path error
         messages are also logged at ERROR level before being raised.
     save_memory
-        When True on the HiGHS path, forward ``save_memory=True`` to
-        ``Problem.solve``: the polar-side LP source is dropped and the
-        HiGHS instance is round-tripped through a temp MPS file before
-        ``Highs::run()`` to free ~5-10 GB at the cost of ~+90 s I/O.
-        After such a solve the Problem is in a "released" state — no
-        re-solve, no warm reuse — so callers must cold-rebuild per
-        iteration when this flag is set.  Silently ignored on the
-        commercial path (polar-high-only knob).
+        When True on the HiGHS path, divert to
+        :func:`flextool.engine_polars._subprocess_solve.solve_via_subprocess`:
+        polar-high writes the LP to a temp MPS file via
+        ``Problem.build_only`` and drops everything Python-side, then a
+        ``flextool.cli.cmd_solve_mps`` subprocess solves the MPS in a
+        clean address space.  The parent reads the solution back via a
+        read-only ``highspy.Highs`` and wraps it as a
+        ``polar_high.Solution`` identical in shape to the in-process
+        return.  Trades ~+90 s file I/O for HiGHS' active-solve memory
+        living outside the parent process.  Also disables warm-LP
+        reuse for the cascade — the Problem is in ``_released`` state
+        after the build.  Silently ignored on the commercial path.
+    solve_name
+        Used by the subprocess path to name MPS/options/solution files.
+        Defaults to ``"solve"`` when omitted.
+    work_folder
+        When provided, the subprocess path keeps its MPS/options/sol
+        files under ``<work_folder>/solve_data/subprocess/`` for post-
+        mortem inspection.  ``None`` uses a self-cleaning tempdir.
+        Ignored on the in-process path.
 
     Returns
     -------
@@ -187,10 +203,30 @@ def run_one_solve(
         # ``problem.solve(options=...)`` accepts a dict and routes each
         # key to HiGHS via ``setOptionValue`` (polar-high engine.py).
         highs_options = build_solver_options(solver_config) or None
+        if save_memory:
+            # Subprocess path: build MPS via Problem.build_only, spawn
+            # flextool.cli.cmd_solve_mps, read solution back.  The
+            # effective options are the convenience-knob-translated
+            # ones when present, else whatever was already stored on
+            # the Problem via ``set_solver_options`` upstream (autoscale
+            # Layer 3 may have mutated those).
+            from flextool.engine_polars._subprocess_solve import (
+                solve_via_subprocess,
+            )
+            effective_opts = (
+                highs_options if highs_options is not None
+                else dict(getattr(problem, "_solver_options", {}) or {})
+            )
+            return solve_via_subprocess(
+                problem,
+                effective_opts,
+                solve_name=solve_name or "solve",
+                logger=logger,
+                work_folder=work_folder,
+            )
         return problem.solve(
             options=highs_options,
             keep_solver=True,
-            save_memory=save_memory,
         )
 
     # Commercial path.  Use polar-high's dispatch + normalise the result.

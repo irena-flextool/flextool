@@ -1666,9 +1666,10 @@ def _drive_cascade(
             ):
                 state.logger.warning(
                     "FLEXTOOL_SAVE_MEMORY=1: warm-LP reuse disabled; every "
-                    "sub-solve will cold-rebuild. Expect ~+90 s I/O per "
-                    "sub-solve (MPS round-trip) in exchange for ~5-10 GB "
-                    "lower peak RSS.",
+                    "sub-solve will cold-rebuild, write MPS, and dispatch "
+                    "to a subprocess HiGHS. Expect ~+30-60 s I/O per sub-"
+                    "solve in exchange for HiGHS' active-solve memory "
+                    "living outside this Python process.",
                 )
                 self._warm_disabled_by_save_memory_warned = True
             if _warm_disabled_by_solver and not getattr(
@@ -1839,6 +1840,8 @@ def _drive_cascade(
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,
                     save_memory=_save_memory,
+                    solve_name=complete_solve_name,
+                    work_folder=getattr(state, "work_folder", None),
                 )
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
@@ -2652,6 +2655,8 @@ def run_single_solve_from_db(
     _save_memory = os.environ.get("FLEXTOOL_SAVE_MEMORY") == "1"
     sol = run_one_solve(
         problem, solver_cfg, logger=logger, save_memory=_save_memory,
+        solve_name=scenario_name,
+        work_folder=work_folder,
     )
     # Eager Layer-2 unscale before any output writer touches ``sol``.
     _autoscale_unscale_post_solve(
