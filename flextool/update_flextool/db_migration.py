@@ -1261,6 +1261,16 @@ def migrate_database(database_path, up_to: int | None = None):
                 # method set raise ``SpineDBAPIError`` naming the entity
                 # — surface, don't guess.
                 _migrate_v54_storage_binding_arrays_to_scalar(db)
+            elif next_version == 55:
+                # Storage-binding restructure Phase A — rename the
+                # three legacy method names that v53/v54 left in the
+                # value_list to their clean-set counterparts, drop the
+                # legacy members, and add the four new members the
+                # restructure introduces (two of which gain their
+                # constraint implementations only in later phases).
+                # Touches both parameter_value rows and the
+                # ``storage_binding_methods`` parameter_value_list.
+                _migrate_v55_storage_binding_rename_and_extend(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -2933,6 +2943,331 @@ def _migrate_v54_storage_binding_arrays_to_scalar(db) -> None:
         "parameter_value rows to scalar strings (Phase 2 of the "
         "single-valued storage_binding_method migration).  "
         f"{len(updated)} row(s) rewritten.",
+    )
+
+
+#: Map of legacy ``node.storage_binding_method`` scalar values to the
+#: clean-seven-method names introduced by the storage-binding
+#: restructure (Phase A).  Used by v55 to rewrite parameter_value rows
+#: in-place and to determine which value_list members to drop.
+#:
+#: - ``bind_within_timeset`` becomes ``bind_within_timeblock``: a timeset
+#:   can contain several timeblocks; the binding always operated per
+#:   block, not per set — the old name was misleading.
+#: - ``bind_using_blended_weights`` becomes
+#:   ``bind_within_solve_blended_weights``: makes the cycle-closure
+#:   scope explicit (a solve), in line with the two new variants the
+#:   restructure adds (per-period and forward-only blended weights).
+#: - ``bind_within_model`` becomes ``bind_within_solve``: ``model`` was
+#:   already removed from the v53/v54 value_list, but any stray
+#:   parameter_value rows still using it migrate to the largest in-scope
+#:   binding window we offer.
+_STORAGE_BINDING_RENAMES_V55: dict[str, str] = {
+    "bind_within_timeset": "bind_within_timeblock",
+    "bind_using_blended_weights": "bind_within_solve_blended_weights",
+    "bind_within_model": "bind_within_solve",
+}
+
+#: Members of the ``storage_binding_methods`` value_list to drop in v55
+#: (the three "rename-from" names).  Removed via ``find_list_values`` +
+#: ``remove_item`` because Spine's value_list operations don't
+#: re-validate dependent parameter_value rows; the data-rewrite in step
+#: (a) of the v55 helper has already cleared those references.
+_STORAGE_BINDING_DROPPED_V55: tuple[str, ...] = (
+    "bind_within_timeset",
+    "bind_using_blended_weights",
+    "bind_within_model",
+)
+
+#: Members to add (idempotently) to the ``storage_binding_methods``
+#: value_list in v55.  Two of these (``bind_within_period_blended_weights``
+#: and ``bind_forward_only_blended_weights``) gain their constraint
+#: implementations only in later phases of the restructure — Phase A
+#: only declares them in the value_list so the wired Spine UI can offer
+#: them and so subsequent phases have a stable enum to key off.
+_STORAGE_BINDING_ADDED_V55: tuple[str, ...] = (
+    "bind_within_timeblock",
+    "bind_within_solve_blended_weights",
+    "bind_within_period_blended_weights",
+    "bind_forward_only_blended_weights",
+)
+
+#: Expected exact membership of ``storage_binding_methods`` after the
+#: v55 step completes.  Used by the post-migration verification block
+#: to fail loudly if drops or adds didn't take effect.
+_STORAGE_BINDING_EXPECTED_V55: frozenset[str] = frozenset({
+    "bind_within_period",
+    "bind_within_solve",
+    "bind_within_timeblock",
+    "bind_forward_only",
+    "bind_within_solve_blended_weights",
+    "bind_within_period_blended_weights",
+    "bind_forward_only_blended_weights",
+    "bind_intraperiod_blocks",
+})
+
+# Canonical post-v55 description for ``node.storage_binding_method``.
+# Mirrors ``flextool/schemas/spinedb_schema.json``'s parameter_definition
+# entry verbatim so that DBs migrated through v55 carry the same text in
+# their own ``parameter_definition`` row as freshly-seeded DBs.  When the
+# schema description text changes (Phase F-style scrub or later), update
+# this constant in lockstep so existing-DB migration stays aligned with
+# new-DB seeding.
+_STORAGE_BINDING_METHOD_DESCRIPTION_V55: str = (
+    "Choice how the storage state will be maintained over discontinuous "
+    "timelines. Seven cycle-scope methods (the state-continuity family): "
+    "'bind_within_timeblock' cycles state within each timeblock (cycle "
+    "closes at block boundaries); 'bind_within_period' cycles within each "
+    "FlexTool period and chains blocks inside the period; "
+    "'bind_within_solve' cycles across the whole solve horizon; "
+    "'bind_forward_only' (default) chains state forward across the solve "
+    "with no end-to-start closure; 'bind_within_solve_blended_weights' is "
+    "the representative-period variant of bind_within_solve (RP weighting "
+    "+ solve-level cycle closure); 'bind_within_period_blended_weights' "
+    "is the RP variant of bind_within_period (per-period RP weighting, "
+    "each period closes independently); "
+    "'bind_forward_only_blended_weights' is the RP variant of "
+    "bind_forward_only (RP weighting, no cycle closure). One additional "
+    "value, 'bind_intraperiod_blocks', is structurally an aggregation "
+    "method rather than a cycle-scope method: state is held constant "
+    "within each block and the block-total flow is balanced at the "
+    "boundary. Silent-degrade behaviour: any '*_blended_weights' method "
+    "on a node in a solve whose active timeset has no "
+    "representative_period_weights is automatically downgraded to the "
+    "corresponding non-RP variant for that solve, so the same storage "
+    "entity can drive an RP investment solve and a chronological "
+    "dispatch solve back-to-back. Separate parameters (e.g. "
+    "'storage_state_start') can force additional bindings. By default, "
+    "storage start state is bound to 0."
+)
+
+
+def _migrate_v55_storage_binding_rename_and_extend(db) -> None:
+    """Rename legacy ``storage_binding_method`` scalar values to their
+    clean-seven-method names and refresh the
+    ``storage_binding_methods`` value_list.
+
+    Background
+    ----------
+    Phase A of the storage-binding-methods restructure.  v53/v54 left
+    the value_list carrying three names that the new design replaces:
+
+    - ``bind_within_timeset``         → ``bind_within_timeblock``
+    - ``bind_using_blended_weights``  → ``bind_within_solve_blended_weights``
+    - ``bind_within_model``           → ``bind_within_solve`` (legacy
+      ``bind_within_model`` was already dropped from the value_list in
+      ``update_timestructure``-era history; this step catches any
+      stray parameter_value rows still carrying the string)
+
+    Phase A also seeds the value_list with the two upcoming
+    blended-weights variants (``bind_within_period_blended_weights``
+    and ``bind_forward_only_blended_weights``) whose constraint
+    implementations land in Phases D and E.  Adding them now (with an
+    empty implementation) lets the wired Spine UI surface the
+    enumeration without further schema churn later.
+
+    Behaviour
+    ---------
+    Step (a) — value_list extension.  Add the four new members
+    (idempotent via ``add_value_list_manual``) BEFORE rewriting any
+    parameter_value rows.  Order matters: v53 wired the value_list to
+    ``node.storage_binding_method``, so Spine validates every
+    ``update_parameter_value`` against current list membership.
+    Writing ``bind_within_solve_blended_weights`` to a row before that
+    name exists in the list would raise.
+
+    Step (b) — data rewrite.  For each ``parameter_value`` row of
+    ``node.storage_binding_method`` whose scalar string value is one of
+    :data:`_STORAGE_BINDING_RENAMES_V55`, rewrite the row in-place with
+    the renamed string (same entity, alternative, type).  Other values
+    pass through untouched.  Array-typed rows are not expected at this
+    point (v54 collapsed them to scalars and v52's ingestion guard
+    rejects new arrays); the helper does not iterate them.
+
+    Step (c) — value_list cleanup.  Drop the three rename-from members
+    from the list.  Safe now that step (b) has cleared every
+    parameter_value row referencing them.
+
+    Step (d) — refresh the parameter_definition description.  The
+    schema-template text in ``flextool/schemas/spinedb_schema.json``
+    was rewritten in Phase F to enumerate the seven cycle-scope
+    methods + ``bind_intraperiod_blocks`` (aggregation) + the
+    silent-degrade behaviour.  Fresh DBs seeded from the schema get
+    the new text automatically; existing DBs being migrated up to
+    v55 must have their own ``parameter_definition`` row rewritten
+    so the in-DB help text matches.  Mirrors
+    :data:`_STORAGE_BINDING_METHOD_DESCRIPTION_V55` verbatim.
+
+    Step (e) — in-migration verification.  Re-query
+    ``node.storage_binding_method`` rows and assert no legacy string
+    remains; re-query the value_list and assert exact expected
+    membership.  ``SpineDBAPIError`` is raised with the offending
+    entries if either check fails — surface, don't guess.
+    """
+    # ---- Step (a): extend the storage_binding_methods value_list ----
+    # Add the four new members BEFORE the data rewrite so the v53
+    # wiring on node.storage_binding_method accepts the renamed names.
+    pvl_table = db.mapped_table("parameter_value_list")
+    sbm_list = db.item(pvl_table, name="storage_binding_methods")
+    if sbm_list is None:
+        raise SpineDBAPIError(
+            "v55 migration: parameter_value_list "
+            "'storage_binding_methods' not found.  v30/v31/v53 are "
+            "expected to have populated and wired it before this step; "
+            "cannot extend a list that does not exist."
+        )
+
+    add_value_list_manual(
+        db,
+        [["storage_binding_methods", name]
+         for name in _STORAGE_BINDING_ADDED_V55],
+    )
+
+    # ---- Step (b): rename parameter_value rows ----------------------
+    renamed: list[tuple[tuple[str, ...], str, str, str]] = []
+    for pv in list(db.find_parameter_values(
+        entity_class_name="node",
+        parameter_definition_name="storage_binding_method",
+    )):
+        if pv["type"] != "str":
+            # v54 left every row scalar-str; anything else is a
+            # surprise we refuse to mutate silently.
+            raise SpineDBAPIError(
+                "v55 migration: node.storage_binding_method row for "
+                f"entity {pv['entity_byname']!r} alternative "
+                f"{pv['alternative_name']!r} has unexpected type "
+                f"{pv['type']!r} (expected 'str' post-v54).  Re-run v54 "
+                "first, or fix the source row, before retrying."
+            )
+        old_value = pv["parsed_value"]
+        new_value = _STORAGE_BINDING_RENAMES_V55.get(old_value)
+        if new_value is None:
+            # Pass-through value (already in the clean set).
+            continue
+        new_value_bytes, new_value_type = to_database(new_value)
+        db.update_parameter_value(
+            id=pv["id"],
+            value=new_value_bytes,
+            type=new_value_type,
+        )
+        renamed.append((
+            pv["entity_byname"], pv["alternative_name"], old_value, new_value,
+        ))
+
+    # ---- Step (b) verification: no legacy names remain --------------
+    legacy = set(_STORAGE_BINDING_RENAMES_V55)
+    offenders_a: list[tuple[tuple[str, ...], str, str]] = []
+    for pv in db.find_parameter_values(
+        entity_class_name="node",
+        parameter_definition_name="storage_binding_method",
+    ):
+        if pv["type"] == "str" and pv["parsed_value"] in legacy:
+            offenders_a.append((
+                pv["entity_byname"], pv["alternative_name"], pv["parsed_value"],
+            ))
+    if offenders_a:
+        raise SpineDBAPIError(
+            "v55 migration: post-rewrite verification failed — "
+            "node.storage_binding_method rows still carry legacy "
+            f"names: {offenders_a!r}.  Expected zero rows in "
+            f"{sorted(legacy)!r}."
+        )
+
+    # ---- Step (c): drop the three rename-from value_list members ----
+    # ``find_list_values`` walks the list; we match by encoded value
+    # bytes (same pattern as the v52 ``glpsol`` drop a few hundred
+    # lines above).
+    dropped_lvs: list[str] = []
+    for legacy_name in _STORAGE_BINDING_DROPPED_V55:
+        legacy_bytes, _ = to_database(legacy_name)
+        for lv in list(db.find_list_values(
+            parameter_value_list_name="storage_binding_methods",
+        )):
+            if lv["value"] == legacy_bytes:
+                db.remove_item("list_value", lv["id"])
+                dropped_lvs.append(legacy_name)
+                break
+
+    # ---- Step (d): refresh parameter_definition description ---------
+    # Mirror the Phase F rewrite of the schema-template description so
+    # existing-DB migration emits the same in-DB help text as fresh-DB
+    # seeding from spinedb_schema.json.
+    parameter_definitions = db.mapped_table("parameter_definition")
+    sbm_def = db.item(
+        parameter_definitions,
+        entity_class_name="node",
+        name="storage_binding_method",
+    )
+    if sbm_def is None:
+        raise SpineDBAPIError(
+            "v55 migration: parameter_definition "
+            "'node.storage_binding_method' not found.  v1 schema is "
+            "expected to define it; cannot refresh description."
+        )
+    db.update_parameter_definition(
+        id=sbm_def["id"],
+        description=_STORAGE_BINDING_METHOD_DESCRIPTION_V55,
+    )
+    sbm_def_after = db.item(
+        parameter_definitions,
+        entity_class_name="node",
+        name="storage_binding_method",
+    )
+    if sbm_def_after["description"] != _STORAGE_BINDING_METHOD_DESCRIPTION_V55:
+        raise SpineDBAPIError(
+            "v55 migration: parameter_definition description refresh "
+            "did not take effect for node.storage_binding_method."
+        )
+
+    # ---- Step (e) verification: exact value_list membership ---------
+    members_after = {
+        from_database(lv["value"], lv["type"])
+        for lv in db.find_list_values(
+            parameter_value_list_name="storage_binding_methods",
+        )
+    }
+    if members_after != _STORAGE_BINDING_EXPECTED_V55:
+        missing = sorted(_STORAGE_BINDING_EXPECTED_V55 - members_after)
+        extra = sorted(members_after - _STORAGE_BINDING_EXPECTED_V55)
+        raise SpineDBAPIError(
+            "v55 migration: post-refresh value_list membership "
+            f"mismatch — missing {missing!r}, extra {extra!r}.  "
+            f"Expected exactly {sorted(_STORAGE_BINDING_EXPECTED_V55)!r}; "
+            f"got {sorted(members_after)!r}."
+        )
+
+    if renamed:
+        summary_lines = [
+            f"  {ent} ({alt}): {old} -> {new}"
+            for ent, alt, old, new in renamed
+        ]
+        logging.info(
+            "v55 migration renamed %d node.storage_binding_method "
+            "rows:\n%s",
+            len(renamed),
+            "\n".join(summary_lines),
+        )
+    if dropped_lvs:
+        logging.info(
+            "v55 migration dropped storage_binding_methods members: %s",
+            sorted(dropped_lvs),
+        )
+
+    _commit_step(
+        db,
+        "v55: renamed legacy node.storage_binding_method scalar values "
+        "to the clean-seven-method set (bind_within_timeset -> "
+        "bind_within_timeblock; bind_using_blended_weights -> "
+        "bind_within_solve_blended_weights; bind_within_model -> "
+        "bind_within_solve) and refreshed the storage_binding_methods "
+        "value_list (dropped the three rename-from members, added "
+        "bind_within_timeblock, bind_within_solve_blended_weights, "
+        "bind_within_period_blended_weights, "
+        "bind_forward_only_blended_weights).  Also refreshed the "
+        "node.storage_binding_method parameter_definition description "
+        "to match the post-Phase-F schema-template text.  Phase A of "
+        "the storage-binding restructure.  "
+        f"{len(renamed)} row(s) renamed.",
     )
 
 
