@@ -41,18 +41,22 @@ The autoscaler is **on by default**. Two ways to turn it off:
 
 ```bash
 python run_flextool.py <input.sqlite> <output_info.sqlite> \
-    --scenario-name <name> --auto-scale=off
+    --scenario-name <name> --scaling=off
 ```
 
 Or set the environment variable:
 
 ```bash
-export FLEXTOOL_AUTO_SCALE=0
+export FLEXTOOL_SCALING=off
 ```
 
-With `--auto-scale=off`, Layer 1 still runs (the YAML audit is always
-written) but Layers 2 and 3 are skipped — the LP arrives at HiGHS in
-raw user units.
+`--scaling` takes one of `off`, `solver_only`, `basic`, `full` (default
+`full`). With `--scaling=off`, Layer 1 still runs (the YAML audit is
+always written) but Layers 2 and 3 are skipped — the LP arrives at
+HiGHS in raw user units, and HiGHS' own equilibration is also
+disabled. The intermediate modes are `solver_only` (HiGHS-internal
+equilibration only), `basic` (Layer 1 + Layer 3 bound-scale, no Layer
+2 column rewriting), and `full` (the default — all three layers).
 
 ### Manual `user_bound_scale` override
 

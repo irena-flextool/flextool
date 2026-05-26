@@ -57,6 +57,13 @@ nav:
     - 'Spine database editor': spine_database.md
     - 'Excel as input/output': excel_interface.md
     - 'Terminal / CLI': terminal_workflow.md
+  - Solvers:
+    - 'Solver selection': solvers/index.md
+    - 'HiGHS': solvers/highs.md
+    - 'Gurobi': solvers/gurobi.md
+    - 'CPLEX': solvers/cplex.md
+    - 'Xpress': solvers/xpress.md
+    - 'COPT': solvers/copt.md
   - 'Developer guide':
     - 'Architecture overview': dev/architecture.md
     - 'The engine_polars pipeline': dev/engine_polars.md

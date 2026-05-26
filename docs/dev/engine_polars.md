@@ -724,8 +724,9 @@ runs on every solve and is documented end-to-end in
   power-of-2 column scalers; `autoscale._layer3.apply_layer3`
   (Layer 3) folds the HiGHS-native `user_bound_scale` and the escape
   valve in a single pass.
-- `--auto-scale=off` (or `FLEXTOOL_AUTO_SCALE=0`) disables the whole
-  package; `--user-bound-scale N` pins Layer 3 manually.
+- `--scaling={off,solver_only,basic,full}` (or `FLEXTOOL_SCALING=<mode>`)
+  selects the autoscale strategy; `off` disables the whole package
+  (default is `full`). `--user-bound-scale N` pins Layer 3 manually.
 - `autoscale._report.write_report` writes
   `solve_data/autoscale_<solve>.yaml` after each solve; the same
   module's `format_console_summary` prints a one-liner verdict and
@@ -767,7 +768,7 @@ small. Repeating the table from
 |---|---|---|
 | Add a constraint that uses only existing parameters | `model.py` `build_flextool` body | The closest existing feature block. Wrap your additions in `if has_<feature>:` and skip a new requirement tuple. |
 | Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct_params.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. |
-| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_writer_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `input.py` (slow path) and the topology patch in `_fast_load.py` (fast path, if applicable). |
+| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `input.py` (slow path) and the topology patch in `_fast_load.py` (fast path, if applicable). |
 | Add a new feature block | `model.py` requirement tuples | Declare your `MY_FEATURE = (...)` tuple. Inspect a switch field via `has_my_feature = d.<switch> is not None and d.<switch>.height > 0`. Wrap the variable / constraint / objective additions in `if has_my_feature:`. Add a `_check(d, MY_FEATURE, "my_feature")` call alongside the existing ones. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |
