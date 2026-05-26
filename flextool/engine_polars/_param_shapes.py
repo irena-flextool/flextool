@@ -537,14 +537,17 @@ def _disambiguate_shape_by_value_domain(
                          .get_column("t")
                          .to_list()
         )
-    # All-or-nothing: every observed index value must lie in exactly
-    # one of the two universes (and the corresponding shape must be in
-    # the candidate set).  Mixed → genuinely ambiguous → don't guess.
-    in_periods = bool(periods_set) and idx_set.issubset(periods_set)
-    in_timesteps = bool(timesteps_set) and idx_set.issubset(timesteps_set)
-    if in_periods and not in_timesteps and Shape.MAP_PERIOD in candidates:
+    # Intersects-and-not-the-other: the index must overlap exactly one
+    # universe and not the other.  We use intersection (not subset) so a
+    # Map authored with more periods than the active solve realises still
+    # resolves cleanly — extra (inactive-period) keys are dropped
+    # downstream by ``_filter_param_by_periods``.  Mixed (overlaps both)
+    # or no-overlap → genuinely ambiguous → don't guess.
+    hits_periods   = bool(periods_set)   and bool(idx_set & periods_set)
+    hits_timesteps = bool(timesteps_set) and bool(idx_set & timesteps_set)
+    if hits_periods and not hits_timesteps and Shape.MAP_PERIOD in candidates:
         return Shape.MAP_PERIOD
-    if in_timesteps and not in_periods and Shape.MAP_TIME in candidates:
+    if hits_timesteps and not hits_periods and Shape.MAP_TIME in candidates:
         return Shape.MAP_TIME
     return None
 

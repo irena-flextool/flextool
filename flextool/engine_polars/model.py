@@ -18,9 +18,13 @@ Yet to wire (in user-requested order):
   storage → online + min_load → ramps → investments → multi_period
 """
 
+import logging
+
 import polars as pl
 from polar_high import Sum, Where, Lag, Param
 from polar_high.engine import Var
+
+_LOG = logging.getLogger(__name__)
 
 from . import _group_slack
 from . import _reserve
@@ -445,7 +449,23 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
     if has_proc:      _check(d, PROCESSES, "processes")
     if has_indirect:  _check(d, INDIRECT,  "conversion_indirect")
-    if has_co2_price: _check(d, CO2_PRICE, "co2_price")
+    # co2_price: topology activates the feature whenever a priced commodity
+    # node is wired up, but the data fields (p_co2_price, p_co2_content)
+    # are authored separately.  Missing data is a configuration warning,
+    # not an error — disable the cost term and continue.  Either field
+    # missing → the whole term is unevaluable.
+    if has_co2_price and (d.p_co2_price is None or d.p_co2_content is None):
+        _missing = [f for f in ("p_co2_price", "p_co2_content")
+                    if getattr(d, f, None) is None]
+        _LOG.warning(
+            "CO2 price method is active (flow_from_co2_priced is non-empty) "
+            "but %s is not populated — CO2 emissions will not be priced in "
+            "this solve.  Populate group.co2_price / commodity.co2_content "
+            "to enable the CO2 cost term, or remove the CO2-priced group "
+            "membership to silence this warning.",
+            " and ".join(_missing),
+        )
+        has_co2_price = False
     if has_co2_cap:   _check(d, CO2_CAP,   "co2_max_period")
     if has_co2_cap_total: _check(d, CO2_CAP_TOTAL, "co2_max_total")
     if has_user_cstr: _check(d, USER_CSTR, "user_constraints")

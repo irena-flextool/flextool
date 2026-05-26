@@ -133,6 +133,76 @@ def test_value_domain_mixed_values_returns_none() -> None:
     assert shape is None
 
 
+def test_value_domain_superset_of_periods_still_resolves() -> None:
+    """Cyprus regression: a Map authored with MORE period keys than the
+    active solve realises must still resolve to ``MAP_PERIOD``.
+
+    The Cyprus ``Cyprus_Grid.sqlite`` authors ``group.co2_price`` with
+    keys ``p2024, p2025, ..., p2050`` (annual), but scenarios like
+    ``D 24h 24_30_35_40_45_50`` only realise the subset ``p2024, p2030,
+    p2035, p2040, p2045, p2050``.  Pre-fix the probe required strict
+    ``idx_set ⊆ periods_set`` — the extra keys p2025..p2029 failed the
+    test, the probe returned None, ``p_co2_price`` was silently dropped,
+    and ``build_flextool`` aborted on the CO2_PRICE invariant.  Post-fix
+    we use the looser "intersects-periods, doesn't-touch-timesteps"
+    rule: extra keys are tolerated (they're filtered out downstream by
+    ``_filter_param_by_periods``).
+    """
+    # Map keys = superset of active periods (every other period extra).
+    df = _frame_with_index([
+        "p2024", "p2025", "p2026", "p2027", "p2028", "p2029",
+        "p2030", "p2035", "p2040", "p2045", "p2050",
+    ])
+    period_filter = pl.DataFrame({
+        "d": ["p2024", "p2030", "p2035", "p2040", "p2045", "p2050"],
+        "t": ["t00001"] * 6,
+    })
+    allowed = {Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME,
+               Shape.MAP_PERIOD_TIME}
+    shape = _disambiguate_shape_by_value_domain(
+        df, ent_cols=["name"], resolved_labels=[None],
+        allowed=allowed, period_filter=period_filter,
+    )
+    assert shape == Shape.MAP_PERIOD
+
+
+def test_value_domain_superset_of_timesteps_still_resolves() -> None:
+    """Symmetric counterpart: a timestep Map with extra keys must
+    still resolve to ``MAP_TIME``.  Guards against the rule
+    accidentally being one-sided after the relaxation.
+    """
+    df = _frame_with_index(["t00001", "t00002", "t00003", "t99999"])
+    period_filter = pl.DataFrame({
+        "d": ["y2019", "y2020"],
+        "t": ["t00001", "t00002"],
+    })
+    allowed = {Shape.MAP_PERIOD, Shape.MAP_TIME}
+    shape = _disambiguate_shape_by_value_domain(
+        df, ent_cols=["name"], resolved_labels=[None],
+        allowed=allowed, period_filter=period_filter,
+    )
+    assert shape == Shape.MAP_TIME
+
+
+def test_value_domain_overlap_with_both_universes_returns_none() -> None:
+    """Hard-mode: index values overlap BOTH periods AND timesteps (so
+    we can't tell which axis the author meant).  Must stay ``None`` so
+    the caller falls back — relaxing subset to intersection must not
+    let ambiguity through.
+    """
+    df = _frame_with_index(["y2019", "t00001"])
+    period_filter = pl.DataFrame({
+        "d": ["y2019", "y2020"],
+        "t": ["t00001", "t00002"],
+    })
+    allowed = {Shape.MAP_PERIOD, Shape.MAP_TIME}
+    shape = _disambiguate_shape_by_value_domain(
+        df, ent_cols=["name"], resolved_labels=[None],
+        allowed=allowed, period_filter=period_filter,
+    )
+    assert shape is None
+
+
 # ---------------------------------------------------------------------------
 # B. End-to-end on the Rivendell DB — the S07 regression case.
 # ---------------------------------------------------------------------------
