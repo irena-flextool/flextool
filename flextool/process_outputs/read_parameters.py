@@ -273,6 +273,7 @@ def _pdtX_multi_col(
     col_dims: tuple[str, str, str],
     col_names: tuple[str, str, str],
     densify_col_tuples: "pl.DataFrame | None" = None,
+    flex_data: "FlexData | None" = None,
 ) -> pd.DataFrame:
     """Param ``(*col_dims, d, t)`` → wide pandas with row
     ``(solve, period, time)`` × column MultiIndex over col_dims.
@@ -287,14 +288,30 @@ def _pdtX_multi_col(
     if param is None or param.frame.height == 0:
         out = _empty_pdtX_multi_col(col_names=col_names)
     else:
-        pl_df = with_solve_column(param.frame, solve_name)
-        out = wide_multi_col(
-            pl_df,
-            row_dims=("solve", "d", "t"),
-            col_dims=col_dims,
-            row_names=("solve", "period", "time"),
-            col_names=col_names,
-        )
+        # Phase E.1: Param dims may be narrower than (*col_dims, d, t)
+        # when the source was authored as scalar / 1d_map.  Promote via
+        # flex_data.dt so the pivot below sees explicit d/t columns.
+        if "d" not in param.dims or "t" not in param.dims:
+            from flextool.engine_polars._param_shapes import promote_param_to_dt
+            if flex_data is None or flex_data.dt is None:
+                out = _empty_pdtX_multi_col(col_names=col_names)
+                if densify_col_tuples is None:
+                    return out
+                # Fall through to densify path.
+                pdt_frame = None
+            else:
+                pdt_frame = promote_param_to_dt(param, flex_data.dt).collect()
+        else:
+            pdt_frame = param.frame
+        if pdt_frame is not None:
+            pl_df = with_solve_column(pdt_frame, solve_name)
+            out = wide_multi_col(
+                pl_df,
+                row_dims=("solve", "d", "t"),
+                col_dims=col_dims,
+                row_names=("solve", "period", "time"),
+                col_names=col_names,
+            )
 
     if densify_col_tuples is None:
         return out
@@ -386,17 +403,33 @@ def _build_pssdt_varCost_alwaysProcess(
 
     def _as_lookup_dt(
         param, key_cols: tuple[str, ...],
-    ) -> dict[tuple[str, ...], float]:
-        """Materialise a FlexData Param into a dict ``key → value`` where
-        ``key`` is the ordered tuple of stringified ``key_cols``.
+    ):
+        """Materialise a FlexData Param into a lookup ``f(*full_key) → value``.
+
+        Phase E.1: ``broadcast_to_period_time`` returns Params whose dims
+        depend on the authored Spine shape (SCALAR → ``(p, sink)``,
+        MAP_PERIOD → ``(p, sink, d)``, MAP_PERIOD_TIME → ``(p, sink, d, t)``).
+        Polar_high broadcasts the lower-dim Params lazily at constraint
+        emission, but the output writers consume frames directly — so we
+        key the dict by the Param's actual dim subset of ``key_cols`` and
+        project the requested ``full_key`` onto that subset on lookup.
         """
-        out: dict[tuple[str, ...], float] = {}
         if param is None or param.frame.height == 0:
-            return out
-        for row in param.frame.select(*key_cols, "value").iter_rows():
-            *k, v = row
-            out[tuple(str(x) for x in k)] = float(v)
-        return out
+            return lambda *_args: 0.0
+        present = tuple(c for c in key_cols if c in param.dims)
+        proj_idx = [key_cols.index(c) for c in present]
+        out: dict[tuple[str, ...], float] = {}
+        cols = [*present, "value"] if present else ["value"]
+        for row in param.frame.select(*cols).iter_rows():
+            if present:
+                *k, v = row
+                out[tuple(str(x) for x in k)] = float(v)
+            else:
+                # Pure scalar — single global value.
+                out[()] = float(row[0])
+        def _lookup(*full_key, _out=out, _idx=proj_idx):
+            return _out.get(tuple(full_key[i] for i in _idx), 0.0)
+        return _lookup
 
     src_ooc = _as_lookup_dt(
         flex_data.p_pdt_varCost_source, ("p", "source", "d", "t"),
@@ -436,16 +469,16 @@ def _build_pssdt_varCost_alwaysProcess(
         for (d, t) in dt_pairs:
             v = 0.0
             if (p, src) in proc_src_pairs:
-                v += src_ooc.get((p, src, d, t), 0.0)
+                v += src_ooc(p, src, d, t)
             if (p, snk) in proc_snk_pairs:
-                v += snk_ooc.get((p, snk, d, t), 0.0)
+                v += snk_ooc(p, snk, d, t)
             # alwaysProcess gating for the process-level OOC term:
             # include only when one of the (always-process) endpoints is
             # in process_source ∪ process_sink (matches
             # ``_derive_varCost_pair`` ``if always: ... if (p, snk) in
             # proc_snk or (p, snk) in proc_src``).
             if (p, snk) in proc_snk_pairs or (p, snk) in proc_src_pairs:
-                v += proc_ooc.get((p, d, t), 0.0)
+                v += proc_ooc(p, d, t)
             if v != 0.0:
                 any_nonzero = True
             local_pairs.append((d, t, v))
@@ -1045,6 +1078,7 @@ def read_parameters(
         solve_name=solve_name,
         col_dims=("p", "source", "sink"),
         col_names=("process", "source", "sink"),
+        flex_data=flex_data,
     )
 
     # process_source / process_sink — wide rows-by-param frames.
@@ -1139,6 +1173,7 @@ def read_parameters(
         col_dims=("r", "ud", "g"),
         col_names=("reserve", "upDown", "node_group"),
         densify_col_tuples=getattr(flex_data, "reserve_upDown_group", None),
+        flex_data=flex_data,
     )
 
     # profile — (solve, period, time) × profile.
