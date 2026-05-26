@@ -749,6 +749,9 @@ def read_sets(
         ("storage_bind_forward_only", "bind_forward_only"),
         ("storage_bind_within_timeblock", "bind_within_timeblock"),
         ("storage_bind_within_solve_blended_weights", "bind_within_solve_blended_weights"),
+        # Phase D — added with the constraint wiring.
+        ("storage_bind_forward_only_blended_weights",
+         "bind_forward_only_blended_weights"),
     )
     for attr_name, method_string in bind_projections:
         frame = getattr(flex_data, attr_name, None)
