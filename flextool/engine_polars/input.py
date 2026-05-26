@@ -2767,9 +2767,17 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             _frame = (_field.frame if hasattr(_field, "frame") else _field)
             if _frame is None or _frame.height == 0:
                 raise ValueError(
-                    f"FlexData loader: nodeState_rp is non-empty "
-                    f"({nodeState_rp.height} node(s)) but the tightly-"
-                    f"coupled field `{_name}` is missing or empty.  The "
+                    f"FlexData loader (backstop check): nodeState_rp is "
+                    f"non-empty ({nodeState_rp.height} node(s)) but the "
+                    f"tightly-coupled field `{_name}` is missing or "
+                    f"empty.  This indicates either a direct call into "
+                    f"load_flextool that bypassed the per-solve "
+                    f"RP-weights check in _native_run_model.py "
+                    f"(`_assert_blended_weights_have_rp_weights`), OR "
+                    f"an upstream emitter bug.  The user-facing "
+                    f"scenario-config error normally fires earlier in "
+                    f"_native_run_model.py — if you're seeing THIS "
+                    f"message instead, please report it.  The "
                     f"RP-blended-weights set family (nodeState_rp, "
                     f"rp_base_period_set, rp_base__rep, rp_block_first, "
                     f"p_rp_last_step) must be emitted together — check "

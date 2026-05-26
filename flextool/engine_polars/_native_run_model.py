@@ -73,6 +73,104 @@ from flextool.engine_polars._timeline import (
 )
 
 
+def _nodes_with_blended_weights(input_dir, provider) -> list[str]:
+    """Return nodes carrying ``bind_using_blended_weights`` per input CSV.
+
+    Reads ``input/node__storage_binding_method.csv`` via the seeded
+    Provider (the file may live only in-memory under the per-level
+    Provider's input/ namespace, never written to disk).  Returns a
+    sorted list of node names; empty if the file is absent or has no
+    blended-weights rows.  Path / provider-key conventions mirror
+    :func:`flextool.engine_polars._emit_leaf_sets.derive_node_state_subset`.
+    """
+    from flextool.engine_polars._emit_leaf_sets import _read_csv
+    import polars as pl
+    sbm = _read_csv(
+        input_dir / "node__storage_binding_method.csv",
+        ["node", "storage_binding_method"],
+        provider=provider,
+    )
+    if sbm.height == 0:
+        return []
+    if "storage_binding_method" in sbm.columns:
+        method_col = "storage_binding_method"
+    elif "method" in sbm.columns:
+        method_col = "method"
+    else:
+        return []
+    return sorted(
+        sbm.filter(pl.col(method_col) == "bind_using_blended_weights")
+           .select("node")
+           .unique()
+           .get_column("node")
+           .to_list()
+    )
+
+
+def _assert_blended_weights_have_rp_weights(
+    *, solve, complete_solve_name, roll_index,
+    active_timeset_names, rp_weights_keys,
+    input_dir, provider, logger,
+) -> None:
+    """Strict per-solve precondition: blended-weights nodes need RP weights.
+
+    Fires when at least one node carries
+    ``bind_using_blended_weights`` but none of the solve's active
+    timesets has an entry in ``state.timeline.rp_weights``.  Surfaces
+    the misconfiguration at the solve boundary with full context
+    (solve name, complete-solve name, roll index, active timesets,
+    offending nodes, two concrete fixes), so the user does not have to
+    chase the late ``FlexData loader`` backstop in ``input.py``.
+
+    Raises:
+        FlexToolConfigError: when the precondition is violated.
+    """
+    nodes = _nodes_with_blended_weights(input_dir, provider)
+    if not nodes:
+        return  # no blended-weights nodes — non-RP path is correct
+    # If we got here the caller has already established that
+    # ``rp_written is False`` (no active timeset has RP weights), so we
+    # only need the offending-node list to fail the check.
+    head = nodes[:5]
+    if len(nodes) > 5:
+        node_summary = (
+            f"{', '.join(head)}, ... {len(nodes) - 5} more"
+        )
+    else:
+        node_summary = ', '.join(head)
+    timeset_summary = (
+        ', '.join(active_timeset_names) if active_timeset_names else "(none)"
+    )
+    rp_weights_summary = (
+        ', '.join(sorted(rp_weights_keys)) if rp_weights_keys
+        else "(no timeset has representative_period_weights)"
+    )
+    message = (
+        f"Solve '{solve}' (complete '{complete_solve_name}', roll "
+        f"{roll_index}) has {len(nodes)} node(s) carrying "
+        f"`storage_binding_method = bind_using_blended_weights` "
+        f"({node_summary}) but none of its active timeset(s) "
+        f"[{timeset_summary}] supply `representative_period_weights`. "
+        f"Timesets that DO have RP weights in this run: "
+        f"[{rp_weights_summary}]. Without RP weights the model would "
+        f"silently degrade to the non-RP path and the deep "
+        f"`FlexData loader: nodeState_rp is non-empty ...` invariant "
+        f"would trip later. Either (a) attach an alternative to this "
+        f"scenario that supplies `representative_period_weights` for "
+        f"the active timeset, or (b) change these nodes' "
+        f"`storage_binding_method` to a non-RP value "
+        f"(bind_within_solve / bind_within_period / bind_within_timeset / "
+        f"bind_forward_only) using a scenario alternative override. "
+        f"In Spine DB toolbox: Database editor -> Scenario tree, edit "
+        f"the scenario's alternatives list to include an alternative "
+        f"that defines `representative_period_weights` on the timeset, "
+        f"or override `node.storage_binding_method` per-node via a "
+        f"non-RP alternative."
+    )
+    logger.error(message)
+    raise FlexToolConfigError(message)
+
+
 def native_run_model(state, solver) -> int:
     """Drive the per-solve cascade natively.
 
@@ -811,6 +909,23 @@ def native_run_model(state, solver) -> int:
                     rp_written = True
                     break
         if not rp_written:
+            # Strict precondition: if any node in this solve carries
+            # ``bind_using_blended_weights`` but the active timeset has
+            # no RP weights, surface the misconfiguration here (with
+            # full solve / scenario context) rather than letting the
+            # deep ``FlexData loader`` backstop in ``input.py`` trip on
+            # internal frame names.  Phase 5 of the storage_binding_method
+            # single-valued cleanup.
+            _assert_blended_weights_have_rp_weights(
+                solve=solve,
+                complete_solve_name=complete_solve[solve],
+                roll_index=i,
+                active_timeset_names=active_timeset_names,
+                rp_weights_keys=list(state.timeline.rp_weights.keys()),
+                input_dir=wf / "input",
+                provider=sub_solve_provider,
+                logger=state.logger,
+            )
             solve_writers.emit_empty_rp_data(
                 provider=sub_solve_provider,
             )
