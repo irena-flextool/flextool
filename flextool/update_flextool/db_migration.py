@@ -1239,6 +1239,16 @@ def migrate_database(database_path, up_to: int | None = None):
                 # CPLEX / Xpress / COPT become opt-in via polar-high).
                 # No LP / engine behaviour changes here — schema only.
                 _migrate_v52_solver_selection(db)
+            elif next_version == 53:
+                # Storage-binding single-valued migration, Phase 1.
+                # Wires the existing ``storage_binding_methods``
+                # parameter_value_list to the ``node.storage_binding_method``
+                # parameter_definition so Spine UI enforces the
+                # enumeration and rejects free-form strings at edit
+                # time.  The value-list members themselves were added in
+                # v30 / v31 / ``update_timestructure``; this step only
+                # closes the schema-level wiring.
+                _migrate_v53_storage_binding_value_list(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -2689,6 +2699,94 @@ def _migrate_v46_use_row_scaling(db) -> None:
         )
     except SpineDBAPIError:
         pass
+
+
+def _migrate_v53_storage_binding_value_list(db) -> None:
+    """Wire ``storage_binding_methods`` value list to
+    ``node.storage_binding_method`` parameter_definition.
+
+    Rationale
+    ---------
+    The ``storage_binding_methods`` parameter_value_list was first
+    created in v30 (``bind_using_blended_weights``) and extended in
+    v31 (``bind_intraperiod_blocks``); ``update_timestructure`` (called
+    from the v22 step) further mutates one of its members from
+    ``bind_within_timeblock`` to ``bind_within_timeset``.  However, the
+    ``node.storage_binding_method`` parameter_definition was never
+    bound to this list — its ``parameter_value_list_id`` stayed NULL.
+    The practical effect was that Spine UI cheerfully accepted
+    arbitrary strings (and even ``array``-typed values, see the
+    H2_trade.sqlite case in
+    ``_audit_reports/storage_binding_method_callsites.md`` §9) and the
+    backend silently flattened the array, fueling the 2026-04
+    additive-flag bug now being reverted.
+
+    Phase 1 of the single-valued migration closes the schema gap.
+    Phase 2 ports existing array-valued data onto the new contract.
+    The ingestion guard in ``flextool/spinedb_backend/_backend.py``
+    (see ``parameter_values``) is the runtime safety net that fires
+    if a v52-or-older DB containing array values is opened directly,
+    without running this migration first.
+    """
+    pvl_table = db.mapped_table("parameter_value_list")
+    sbm_list = db.item(pvl_table, name="storage_binding_methods")
+    if sbm_list is None:
+        # Pre-v30 DB that somehow skipped the value-list creation —
+        # surface the issue rather than silently no-op.  v30 / v31 are
+        # idempotent ``add_value_list_manual`` calls so any reasonable
+        # upgrade path will have populated this list before reaching
+        # v53.  If it is genuinely missing we cannot wire anything; the
+        # assertion below will trip and force the operator to look.
+        raise SpineDBAPIError(
+            "v53 migration: parameter_value_list "
+            "'storage_binding_methods' not found.  Re-run the "
+            "migration starting from a version <=31 so the list is "
+            "created, then retry."
+        )
+
+    parameter_definitions = db.mapped_table("parameter_definition")
+    param = db.item(
+        parameter_definitions,
+        entity_class_name="node",
+        name="storage_binding_method",
+    )
+    if param is None:
+        raise SpineDBAPIError(
+            "v53 migration: parameter_definition "
+            "'node.storage_binding_method' not found.  The v1 schema "
+            "is expected to define it; cannot wire value_list."
+        )
+
+    db.update_parameter_definition(
+        id=param["id"],
+        parameter_value_list_name="storage_binding_methods",
+    )
+
+    # In-migration assertion: the wiring actually took effect.  We
+    # re-read the parameter_definition row and compare its
+    # parameter_value_list_id (or _name) against the list we wired.
+    parameter_definitions = db.mapped_table("parameter_definition")
+    param_after = db.item(
+        parameter_definitions,
+        entity_class_name="node",
+        name="storage_binding_method",
+    )
+    wired_id = param_after.get("parameter_value_list_id")
+    wired_name = param_after.get("parameter_value_list_name")
+    if wired_id != sbm_list["id"] and wired_name != "storage_binding_methods":
+        raise SpineDBAPIError(
+            "v53 migration: post-write verification failed — "
+            "node.storage_binding_method.parameter_value_list_id is "
+            f"{wired_id!r} / name {wired_name!r}, expected list id "
+            f"{sbm_list['id']!r} (name 'storage_binding_methods')."
+        )
+
+    _commit_step(
+        db,
+        "v53: wired storage_binding_methods value_list to "
+        "node.storage_binding_method parameter_definition (Phase 1 of "
+        "the single-valued storage_binding_method migration).",
+    )
 
 
 if __name__ == '__main__':

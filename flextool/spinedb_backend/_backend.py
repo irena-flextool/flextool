@@ -710,6 +710,50 @@ class SpineDBBackend:
                             "map_index": idx_path,
                         })
             elif ptype in ("array", "time_series"):
+                # Reject array-valued ``node.storage_binding_method`` at
+                # ingestion.  The 2026-04 list-valued design (now reverted)
+                # silently flattened arrays into one row per element,
+                # which downstream additive logic in
+                # ``calc_storage_vre.py`` and the constraint emitter
+                # turned into double-counted state-change residuals.
+                # Single-valued is the contract; arrays are a hard error
+                # with an actionable message pointing at the v52->v53
+                # migration (added in Phase 2).
+                if (
+                    param["entity_class_name"] == "node"
+                    and pname == "storage_binding_method"
+                ):
+                    try:
+                        arr_values = list(param["parsed_value"].values)
+                    except Exception:
+                        arr_values = []
+                    arr_repr = "[" + ", ".join(
+                        repr(v) for v in arr_values
+                    ) + "]"
+                    allowed = [
+                        "bind_using_blended_weights",
+                        "bind_intraperiod_blocks",
+                        "bind_within_solve",
+                        "bind_within_period",
+                        "bind_within_timeset",
+                        "bind_forward_only",
+                    ]
+                    message = (
+                        "node.storage_binding_method must be a single "
+                        "string, not an array.\n"
+                        f"Offending entity: {ent_str}\n"
+                        f"Array contents: {arr_repr}\n"
+                        f"Allowed single-string values: {allowed}\n"
+                        "Pick `bind_using_blended_weights` if the node "
+                        "uses representative-period blended weights, "
+                        "otherwise pick the dominant non-RP method from "
+                        "your array.\n"
+                        "Run the v52->v53 migration tool (added in "
+                        "Phase 2) to convert existing databases "
+                        "automatically."
+                    )
+                    logging.error(message)
+                    raise FlexToolConfigError(message)
                 for i_arr, v in enumerate(param["parsed_value"].values):
                     rows.append(
                         list(entity_byname)
