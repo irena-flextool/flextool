@@ -594,12 +594,16 @@ names as before for debug inspection:
 | `realized_existing` | `p_entity_period_existing_capacity.csv` (existing column) | Cumulative existing capacity history per `(entity, period)`. |
 | `divest_cumulative` | `p_entity_divested.csv` | Cumulative divest per entity carried forward. |
 | `roll_end_state` / `upward_roll_end_state` | `p_roll_continue_state.csv` | `v_state` at the end of the realized window; pins the next roll's first timestep. |
-| `fix_storage_quantity / price / usage` | `fix_storage_*.csv` | Parent-imposed storage quota at the boundary (any subset of the three metrics). |
-| `fix_storage_timesteps` | `fix_storage_timesteps.csv` | Index set of `(period, step)` where `fix_storage_*` applies. |
+| `fix_storage_quantity / price / usage` | `fix_storage_*.csv` | Parent-imposed storage quota at the boundary (any subset of the three metrics — each carries its own `(node, period, step)` index, so a separate timesteps carrier is not needed). |
 | `cumulative_co2` | `co2_cum_realized_tonnes.csv` | Running CO2 totals across rolls. |
 | `cumulative_commodity` | `commodity_ladder_cumulative.csv` | Per-tier commodity consumption (ladder pricing). |
 | `cum_sim_hours` | `ladder_cum_sim_hours.csv` | Running simulated-hour total per period. |
-| `ed_history_realized_first` / `edd_history` | `ed_history_realized_first.csv` / `edd_history.csv` | Cross-solve invest-period history. |
+
+`fix_storage_timesteps`, `ed_history_realized_first`, and `edd_history`
+used to be `SolveHandoff` fields too, populated only by the now-removed
+`capture_post_solve()` disk-read constructor. They were retired when the
+cascade fell through to Provider/CSV reads in all production paths; see
+the docstring of `_solve_handoff.py` for the history.
 
 ## Solution extraction
 

@@ -66,7 +66,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - *highs_presolve*: HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.
   - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence
   - *timeline_hole_multiplier*: [unitless, default 1.0] Multiplier applied to the inverse-step-duration term in the `nodeBalance_eq` for variable-step timelines. Tunes how strongly an unrepresented gap between two timesteps is amortised into the storage state equation. Leave at the default unless investigating large-step / sparse-timeline numerical issues.
-  - *use_row_scaling*: Per-solve `yes`/`no` flag (default `no`) that toggles the legacy LP row-scaling family (multiplies node-balance and group-balance rows by `node_capacity_for_scaling` / `group_capacity_for_scaling` derived from connected-entity unitsizes). This is **independent** of the `autoscale/` package controlled by `--auto-scale`; enable both for the widest scaling coverage on composite models. See [dev/scaling.md](dev/scaling.md) for details.
+  - *use_row_scaling*: Per-solve `yes`/`no` flag (default `no`) that toggles the legacy LP row-scaling family (multiplies node-balance and group-balance rows by `node_capacity_for_scaling` / `group_capacity_for_scaling` derived from connected-entity unitsizes). This is **independent** of the `autoscale/` package controlled by the `--scaling` CLI flag (env var `FLEXTOOL_SCALING`); enable both for the widest scaling coverage on composite models. See [dev/scaling.md](dev/scaling.md) for details.
   - Rolling window parameters:
 
     - *rolling_solve_jump*: Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Also the output interval. This should be smaller than the horizon
@@ -76,7 +76,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - Nested solve sequence parameters:
 
     - *contains_solve*: Array of solves that are run with after this solve using the realized data of this solve. Read 'How to use Nested Rolling window solves (investments and long term storage)'
-    - *fix_storage_periods*: Array of periods where the last storage value of the long term storage node is passed to the contained solve as a target. (Defined using the node parameter `storage_nested_fix_method`)
+    - *fix_storage_periods*: Array of periods where this solve produces a storage-state handoff for the contained solve at the end of each listed period. The handoff carries any subset of three metrics — `fix_storage_quantity`, `fix_storage_price`, `fix_storage_usage` — selected per node by the node parameter `storage_nested_fix_method`.
   
   - Stochastic parameters:
 
@@ -189,15 +189,14 @@ There are three methods associated with storage start and end values: `storage_b
     - *bind_intraperiod_blocks* — orthogonal aggregation method: state is held constant within each block and the block-total flow is balanced at the boundary (uses a different balance constraint family from the other seven).
   - Silent-degrade behaviour: any `*_blended_weights` method on a node in a solve whose active timeset has no `representative_period_weights` is automatically downgraded to the corresponding non-RP variant for that solve. The same storage entity can therefore drive an RP investment solve and a chronological dispatch solve back-to-back without changing the parameter value.
   - Migration history: DB schema v54 collapsed the previously array-valued parameter to a single scalar (priority-based reduction). v55 then renamed the three legacy members (*bind_within_timeset* → *bind_within_timeblock*, *bind_using_blended_weights* → *bind_within_solve_blended_weights*, *bind_within_model* → *bind_within_solve*) and added the two new blended-weights variants. Users updating older DBs should run `migrate_database` to pick up these renames automatically.
-- `storage_solve_horizon_method` is meant for models that roll forward between solves and have an overlapping temporal window between those solves (e.g. a model with 36 hour horizon rolls forward 24 hours at each solve - those 12 last hours will be overwritten by the next solve). In these cases, the end state of the storage will be replaced by the next solve, but it can be valuable to have some guidance for the end level of storage, since it will affect storage behaviour. There are three methods: *free* is the default and will simply let the model choose where the storage state ends (usually the storage will be emptied, since it would have no monetary value). *use_reference_value* will use the value set by `storage_state_reference_value` to force the end state in each solve to match the reference value. *use_reference_price* will give monetary value for the storage content at the end of the solve horizon set by the `storage_state_reference_price` parameter - the model is free to choose how much it stores at the end of horizon based on this monetary value.
+- `storage_solve_horizon_method` is meant for models that roll forward between solves and have an overlapping temporal window between those solves (e.g. a model with 36 hour horizon rolls forward 24 hours at each solve - those 12 last hours will be overwritten by the next solve). In these cases, the end state of the storage will be replaced by the next solve, but it can be valuable to have some guidance for the end level of storage, since it will affect storage behaviour. There are three methods: *free* is the default and will simply let the model choose where the storage state ends (usually the storage will be emptied, since it would have no monetary value). *use_reference_value* will use the value set by `storage_state_reference_value` to force the end state in each solve to match the reference value. *use_reference_price* assigns a monetary value (in CUR per energy unit, consistent with other commodity prices) to the storage content at the end of the solve horizon — only at the last `(d, t)` of each terminal period, not at every roll boundary or every period boundary — using the `storage_state_reference_price` parameter; the model is then free to choose how much it stores at the end of horizon based on this monetary value. The objective term is **negative** (`−Σ storage_state_reference_price × v_state_end × unitsize × weight_factors`), so a higher terminal state reduces the objective, offsetting the operational cost of leaving energy in storage.
 
   > **Note: reference-price credit is in the solver objective but
-  > not in the calculated cost totals.**  When `use_reference_price`
-  > is active, the storage-state credit `−Σ storage_state_reference_price
-  > × v_state_end × unitsize × weight_factors` influences the solver's
-  > optimization but is **omitted** from the
+  > not in the calculated cost totals.**  The credit above influences the
+  > solver's optimization but is **omitted** from the
   > `costs_discounted_d_p` / `costs_discounted_p_` parquet files and
-  > the `summary_solve.csv` totals.  End-of-horizon storage valuation
+  > the `summary_solve.csv` totals — it is an artificial endogenous
+  > valuation, not a real-world cost. End-of-horizon storage valuation
   > has several valid interpretations and is typically computed as
   > post-analysis rather than as part of the reported cost breakdown.
   > If needed, compute the credit from last-timestep `v_state` values
@@ -216,7 +215,12 @@ There are three methods associated with storage start and end values: `storage_b
 
 -Nested Parameters:
 
-- `storage_nested_fix_method`: Set this storage as a long term storage, which end state is passed to the lower level solves as a target. *Fix_price* requires `storage_state_reference_price`
+- `storage_nested_fix_method`: Sets this storage as a long-term storage whose end state at the period boundary is passed to the contained lower-level solve as a constraint. Available choices:
+    - *fix_nothing* (or *no*) — no handoff for this node (default).
+    - *fix_quantity* — pins the lower solve's storage state at the boundary to the parent-solved level (`v_state` equality at the last `(d, t)` of each `fix_storage_periods` entry, via `node_balance_fix_quantity_eq_lower`).
+    - *fix_price* — gives the lower solve a per-MWh price tier `p_fix_storage_price` (taken from the parent solve's `v_state` dual or from `storage_state_reference_price`); the lower solve then chooses its own boundary state, paying this price for the energy it holds. Uses the same `storage_state_reference_price`-driven objective term described in the `use_reference_price` paragraph.
+    - *fix_usage* — passes the *change* in storage between the solve start and the boundary (i.e. net energy charged or discharged across the dispatch window) as a less-than-or-equal cap `p_fix_storage_usage`, enforced by `node_storage_usage_fix_le`. Useful when the parent solve cares about total throughput rather than the absolute level.
+  A parent solve may set any subset of the three metrics per node — the carriers are independent and each travels as its own `handoff/fix_storage_*` Provider key.
 
 
 ## Units
@@ -428,7 +432,7 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 ### CO2 costs and limits
 
 - `co2_method` - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total.
-- `co2_price` [CUR/ton] CO2 price for a group of nodes. Constant or period.
+- `co2_price` [CUR/ton] CO2 price for a group of nodes. Constant or period. A period-indexed Map may cover *more* periods than the current solve realises — extra entries are silently ignored, so the same shared CO2-price dataset can drive solves with different period subsets. If the active solve activates `co2_price` topology (a priced commodity is wired up) but no `co2_price` or `co2_content` value is supplied for a needed period, the engine logs a warning and skips the CO2 cost term for that period rather than raising an error.
 - `co2_max_period` [tCO2] Annualized maximum limit for emitted CO2 in each period.
 - `co2_max_total` [tCO2] Maximum limit for emitted CO2 in the whole solve.
 
