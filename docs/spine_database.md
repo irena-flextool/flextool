@@ -29,3 +29,13 @@ The database editor menu has options for how to display the data: table view, di
 
 More on Spine Database editor in https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html.
 
+## Parameter groups
+
+Spine's `parameter_definition` table carries an optional `parameter_group_name` field — a lightweight category label that the database editor and other consumers use to group related parameters visually. FlexTool populates this field for every parameter: each `parameter_definition` row in the master template is tagged with one of the ~15 groups (`timeline`, `model`, `basics`, `reserve`, `investment`, `retirement`, `output`, …). The grouping has no semantic meaning to the solver — it is purely metadata.
+
+The full list of groups, the rules for adding new parameters, and the migration mechanics are documented in:
+
+- [Model parameters](reference.md#parameter-groups-metadata) — the user-facing list with one-line descriptions per group.
+- [Database schema and migration](dev/db_schema.md) — how the field is populated and verified.
+
+The FlexTool GUI's *parameter-group picker* (see [FlexTool GUI → Add empty FlexTool input Excel](flextool_gui_interface.md)) uses these groups to let users assemble a partial input Excel by ticking only the groups they need.
