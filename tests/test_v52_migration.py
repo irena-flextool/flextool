@@ -90,9 +90,13 @@ def _find_solve_param(db: DatabaseMapping, name: str):
     return defs[0] if defs else None
 
 
-def test_v52_version_constant_is_52():
-    """Phase 1 hard requirement: the engine reports schema version 52."""
-    assert FLEXTOOL_DB_VERSION == 52
+def test_v52_version_constant_is_at_least_52():
+    """The engine must report a schema version >= 52 — the multi-solver
+    Phase 1 lower bound.  Later phases (storage_binding_method Phase 1
+    bumped to 53, Phase 2 to 54, ...) keep raising the constant; an
+    exact equality assertion would regress every time the chain grows.
+    """
+    assert FLEXTOOL_DB_VERSION >= 52
 
 
 def test_v52_value_lists_present(migrated_db_url: str):

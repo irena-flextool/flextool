@@ -1249,6 +1249,18 @@ def migrate_database(database_path, up_to: int | None = None):
                 # v30 / v31 / ``update_timestructure``; this step only
                 # closes the schema-level wiring.
                 _migrate_v53_storage_binding_value_list(db)
+            elif next_version == 54:
+                # Storage-binding single-valued migration, Phase 2.
+                # Ports existing array-valued
+                # ``node.storage_binding_method`` rows onto the new
+                # single-string contract.  For each array, the highest
+                # priority element present is picked (see
+                # ``_STORAGE_BINDING_PRIORITY`` inside the step).  Rows
+                # that are already scalar strings are left untouched.
+                # Arrays whose contents are entirely outside the known
+                # method set raise ``SpineDBAPIError`` naming the entity
+                # — surface, don't guess.
+                _migrate_v54_storage_binding_arrays_to_scalar(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -2786,6 +2798,141 @@ def _migrate_v53_storage_binding_value_list(db) -> None:
         "v53: wired storage_binding_methods value_list to "
         "node.storage_binding_method parameter_definition (Phase 1 of "
         "the single-valued storage_binding_method migration).",
+    )
+
+
+#: Priority order (highest first) used by the v54 migration to collapse
+#: array-valued ``node.storage_binding_method`` rows down to a single
+#: string.  Mirrors the audit's H2_trade.sqlite recommendation
+#: (see ``_audit_reports/storage_binding_method_callsites.md`` §9):
+#: when multiple methods coexist in a single array, the RP-aware
+#: ``bind_using_blended_weights`` wins because it carries the most
+#: state-tracking machinery; ``bind_forward_only`` loses because it is
+#: the silent default and should only surface when nothing else asked
+#: for richer semantics.
+_STORAGE_BINDING_PRIORITY: tuple[str, ...] = (
+    "bind_using_blended_weights",
+    "bind_intraperiod_blocks",
+    "bind_within_solve",
+    "bind_within_period",
+    "bind_within_timeset",
+    "bind_forward_only",
+)
+
+
+def _migrate_v54_storage_binding_arrays_to_scalar(db) -> None:
+    """Rewrite every array-valued ``node.storage_binding_method`` row
+    as a single string per :data:`_STORAGE_BINDING_PRIORITY`.
+
+    Background
+    ----------
+    The 2026-04 list-valued design (now being reverted) silently
+    flattened array-typed ``storage_binding_method`` values into one
+    row per array element, which downstream additive logic in
+    ``calc_storage_vre.py`` turned into double-counted state-change
+    residuals.  v52 ingestion guard (Phase 1) now rejects arrays at
+    load time; this v54 step is the data-side counterpart that ports
+    pre-existing databases (e.g. H2_trade.sqlite, with 15 array-valued
+    entries — see ``_audit_reports/storage_binding_method_callsites.md``
+    §9) onto the new single-string contract.
+
+    Behaviour
+    ---------
+    For each ``parameter_value`` row of
+    ``node.storage_binding_method``:
+
+    - If ``type != "array"`` (scalar string or other): leave untouched.
+    - If ``type == "array"``: pick the highest-priority element from
+      :data:`_STORAGE_BINDING_PRIORITY` that appears in the array's
+      values, then overwrite the row in-place with that single string.
+      Preserves ``entity_id`` / ``alternative_id`` / ``entity_byname``;
+      only ``value`` and ``type`` change.
+    - If the array contains *only* strings that are not in the priority
+      list (i.e. nothing matched), raise ``SpineDBAPIError`` naming
+      the entity and the unknown contents.  We refuse to guess.
+
+    Post-migration assertion: every remaining row for
+    ``node.storage_binding_method`` is verified to have ``type == "str"``.
+    """
+    priority_set = set(_STORAGE_BINDING_PRIORITY)
+
+    updated: list[tuple[tuple[str, ...], str, list, str]] = []
+    for pv in list(db.find_parameter_values(
+        entity_class_name="node",
+        parameter_definition_name="storage_binding_method",
+    )):
+        if pv["type"] != "array":
+            continue
+
+        entity_byname = pv["entity_byname"]
+        alt_name = pv["alternative_name"]
+        parsed = pv["parsed_value"]
+        try:
+            members = list(parsed.values)
+        except AttributeError as exc:
+            raise SpineDBAPIError(
+                "v54 migration: node.storage_binding_method row for "
+                f"entity {entity_byname!r} alternative {alt_name!r} "
+                f"has type='array' but parsed_value {parsed!r} does "
+                "not expose a .values list — cannot port to scalar."
+            ) from exc
+
+        picked: str | None = None
+        for candidate in _STORAGE_BINDING_PRIORITY:
+            if candidate in members:
+                picked = candidate
+                break
+        if picked is None:
+            raise SpineDBAPIError(
+                "v54 migration: node.storage_binding_method array for "
+                f"entity {entity_byname!r} (alternative {alt_name!r}) "
+                f"contains only unknown methods {members!r}.  Expected "
+                "at least one of "
+                f"{list(_STORAGE_BINDING_PRIORITY)!r}.  Refusing to "
+                "guess; fix the source data and retry."
+            )
+
+        new_value, new_type = to_database(picked)
+        db.update_parameter_value(
+            id=pv["id"],
+            value=new_value,
+            type=new_type,
+        )
+        updated.append((entity_byname, alt_name, members, picked))
+
+    # Post-write verification: every remaining row must be scalar str.
+    for pv in db.find_parameter_values(
+        entity_class_name="node",
+        parameter_definition_name="storage_binding_method",
+    ):
+        if pv["type"] != "str":
+            raise SpineDBAPIError(
+                "v54 migration: post-write verification failed — "
+                "node.storage_binding_method row for entity "
+                f"{pv['entity_byname']!r} alternative "
+                f"{pv['alternative_name']!r} still has type "
+                f"{pv['type']!r} (expected 'str').  Migration is "
+                "incomplete; aborting before commit."
+            )
+
+    if updated:
+        summary_lines = [
+            f"  {ent} ({alt}): {arr} -> {pick}"
+            for ent, alt, arr, pick in updated
+        ]
+        logging.info(
+            "v54 migration ported %d array-valued "
+            "node.storage_binding_method rows to scalar strings:\n%s",
+            len(updated),
+            "\n".join(summary_lines),
+        )
+
+    _commit_step(
+        db,
+        "v54: ported array-valued node.storage_binding_method "
+        "parameter_value rows to scalar strings (Phase 2 of the "
+        "single-valued storage_binding_method migration).  "
+        f"{len(updated)} row(s) rewritten.",
     )
 
 
