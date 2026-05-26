@@ -155,6 +155,16 @@ def main():
     parser.add_argument('--settings-db-url', help='Settings for post-processing')
     parser.add_argument('--scenario-name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument(
+        '--save-memory', action='store_true',
+        help='Trade wall time for peak memory: after the LP matrix is '
+             'built, drop polar-high\'s polars/numpy LP source and '
+             'round-trip the HiGHS instance through a temp MPS file '
+             'before solving. Frees ~5-10 GB on large models at a cost '
+             'of ~+90 s I/O per sub-solve. Also disables warm-LP reuse '
+             'across cascade iterations (each sub-solve cold-rebuilds). '
+             'Off by default.',
+    )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
                         choices=['plot', 'parquet', 'excel', 'csv'],
@@ -334,6 +344,11 @@ def main():
     # the env-fallback contract.
     if args.scaling is not None:
         os.environ['FLEXTOOL_SCALING'] = args.scaling
+    # ``--save-memory`` — opt-in peak-RSS reduction at solve time.
+    # Plumbed via env var so the orchestrator picks it up without an
+    # extra kwarg on ``run_chain_from_db`` / ``_drive_cascade``.
+    if args.save_memory:
+        os.environ['FLEXTOOL_SAVE_MEMORY'] = '1'
 
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url

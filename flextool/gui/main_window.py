@@ -288,6 +288,8 @@ class MainWindow(tk.Tk):
         self._theme_var = tk.StringVar(value=initial_theme)
         self.debug_var = tk.BooleanVar(value=False)
         self.debug_var.trace_add("write", self._on_auto_gen_toggled)
+        self.save_memory_var = tk.BooleanVar(value=False)
+        self.save_memory_var.trace_add("write", self._on_auto_gen_toggled)
 
         # ── Row 1: Section headers ───────────────────────────────────
         from flextool.gui.hover_tooltip import attach_tooltip
@@ -525,12 +527,29 @@ class MainWindow(tk.Tk):
         side_menu.grid(
             row=2, column=2, rowspan=7, sticky="nsew", padx=(20, 0), pady=2,
         )
-        side_menu.rowconfigure(3, weight=1)  # stretch spacer
+        side_menu.rowconfigure(4, weight=1)  # stretch spacer
+
+        self.save_memory_cb = ttk.Checkbutton(
+            side_menu, text="Save memory", variable=self.save_memory_var,
+        )
+        self.save_memory_cb.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        _attach_tip(self.save_memory_cb, (
+            "Run scenarios with --save-memory.\n"
+            "\n"
+            "Trades ~+90 s I/O per sub-solve for ~5-10 GB lower peak\n"
+            "RSS: after the LP is built, polar-high's polars/numpy LP\n"
+            "source is dropped and the HiGHS instance is round-tripped\n"
+            "through a temp MPS file before HiGHS solves.\n"
+            "\n"
+            "Also disables warm-LP reuse across cascade iterations —\n"
+            "every sub-solve cold-rebuilds. Use on memory-constrained\n"
+            "machines or for models that would otherwise OOM."
+        ))
 
         self.debug_cb = ttk.Checkbutton(
             side_menu, text="Debug", variable=self.debug_var,
         )
-        self.debug_cb.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.debug_cb.grid(row=1, column=0, sticky="w", pady=(0, 4))
         _attach_tip(self.debug_cb, (
             "Run scenarios with --debug and --csv-dump.\n"
             "\n"
@@ -540,7 +559,7 @@ class MainWindow(tk.Tk):
         ))
 
         theme_frame = ttk.Frame(side_menu)
-        theme_frame.grid(row=1, column=0, sticky="w", pady=(0, 8))
+        theme_frame.grid(row=2, column=0, sticky="w", pady=(0, 8))
         for text, value in [("OS theme", "os"), ("Dark", "dark"), ("Light", "light")]:
             ttk.Radiobutton(
                 theme_frame, text=text, variable=self._theme_var,
@@ -551,14 +570,14 @@ class MainWindow(tk.Tk):
             side_menu, text="Png settings", width=22,
             command=self._on_plot_menu,
         )
-        self.plot_menu_btn.grid(row=2, column=0, sticky="w", pady=2)
+        self.plot_menu_btn.grid(row=3, column=0, sticky="w", pady=2)
 
-        # Row 3 is the stretch spacer; bottom group lives in rows 4-5.
+        # Row 4 is the stretch spacer; bottom group lives in rows 5-6.
         self.execution_menu_btn = ttk.Button(
             side_menu, text="Execution jobs", width=22,
             command=self._on_execution_menu,
         )
-        self.execution_menu_btn.grid(row=4, column=0, sticky="sw", pady=2)
+        self.execution_menu_btn.grid(row=5, column=0, sticky="sw", pady=2)
 
         # Width 22 to fit the alternate label "Update view scenarios"
         # when the viewer is already open.
@@ -566,7 +585,7 @@ class MainWindow(tk.Tk):
             side_menu, text="Results viewer", width=22,
             command=self._on_view_results,
         )
-        self.view_results_btn.grid(row=5, column=0, sticky="sw", pady=(2, 0))
+        self.view_results_btn.grid(row=6, column=0, sticky="sw", pady=(2, 0))
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -1226,6 +1245,7 @@ class MainWindow(tk.Tk):
                 self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
                 self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
                 self.project_settings.debug = self.debug_var.get()
+                self.project_settings.save_memory = self.save_memory_var.get()
 
                 # Persist scenario order
                 if self.avail_scenario_mgr:
@@ -3799,6 +3819,7 @@ class MainWindow(tk.Tk):
         self.auto_comp_plots_var.set(s.auto_generate_comp_plots)
         self.auto_comp_excel_var.set(s.auto_generate_comp_excel)
         self.debug_var.set(s.debug)
+        self.save_memory_var.set(s.save_memory)
 
     def _on_auto_gen_toggled(self, *_args: object) -> None:
         """Save auto-generate settings when any checkbox is toggled."""
@@ -3808,6 +3829,7 @@ class MainWindow(tk.Tk):
         self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
         self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
         self.project_settings.debug = self.debug_var.get()
+        self.project_settings.save_memory = self.save_memory_var.get()
 
         if self.current_project:
             project_path = get_projects_dir() / self.current_project

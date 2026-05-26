@@ -127,6 +127,8 @@ def run_one_solve(
     problem: "Problem",
     solver_config: SolverConfig,
     logger: logging.Logger | None = None,
+    *,
+    save_memory: bool = False,
 ):
     """Dispatch *problem* to the chosen solver.
 
@@ -153,6 +155,15 @@ def run_one_solve(
     logger
         Optional logger.  When provided, the commercial-path error
         messages are also logged at ERROR level before being raised.
+    save_memory
+        When True on the HiGHS path, forward ``save_memory=True`` to
+        ``Problem.solve``: the polar-side LP source is dropped and the
+        HiGHS instance is round-tripped through a temp MPS file before
+        ``Highs::run()`` to free ~5-10 GB at the cost of ~+90 s I/O.
+        After such a solve the Problem is in a "released" state — no
+        re-solve, no warm reuse — so callers must cold-rebuild per
+        iteration when this flag is set.  Silently ignored on the
+        commercial path (polar-high-only knob).
 
     Returns
     -------
@@ -176,7 +187,11 @@ def run_one_solve(
         # ``problem.solve(options=...)`` accepts a dict and routes each
         # key to HiGHS via ``setOptionValue`` (polar-high engine.py).
         highs_options = build_solver_options(solver_config) or None
-        return problem.solve(options=highs_options, keep_solver=True)
+        return problem.solve(
+            options=highs_options,
+            keep_solver=True,
+            save_memory=save_memory,
+        )
 
     # Commercial path.  Use polar-high's dispatch + normalise the result.
     from polar_high.solvers import (

@@ -1652,6 +1652,25 @@ def _drive_cascade(
             _warm_disabled_by_solver = (
                 warm and _active_solver_cfg.name != "highs"
             )
+            # ``FLEXTOOL_SAVE_MEMORY=1`` opts into polar-high's
+            # ``save_memory=True`` solve path, which drops the polar-side
+            # LP source and round-trips the HiGHS instance through MPS
+            # mid-solve.  The Problem is then in a "released" state and
+            # can no longer be warm-reused, so every iteration must
+            # cold-rebuild.  Resolve once per sub-solve (cheap) so the
+            # knob can be toggled between runs of the same cascade.
+            _save_memory = os.environ.get("FLEXTOOL_SAVE_MEMORY") == "1"
+            _warm_disabled_by_save_memory = warm and _save_memory
+            if _warm_disabled_by_save_memory and not getattr(
+                self, "_warm_disabled_by_save_memory_warned", False
+            ):
+                state.logger.warning(
+                    "FLEXTOOL_SAVE_MEMORY=1: warm-LP reuse disabled; every "
+                    "sub-solve will cold-rebuild. Expect ~+90 s I/O per "
+                    "sub-solve (MPS round-trip) in exchange for ~5-10 GB "
+                    "lower peak RSS.",
+                )
+                self._warm_disabled_by_save_memory_warned = True
             if _warm_disabled_by_solver and not getattr(
                 self, "_warm_disabled_warned", False
             ):
@@ -1663,7 +1682,11 @@ def _drive_cascade(
                 )
                 self._warm_disabled_warned = True
             warm_used = False
-            warm_active = warm and not _warm_disabled_by_solver
+            warm_active = (
+                warm
+                and not _warm_disabled_by_solver
+                and not _warm_disabled_by_save_memory
+            )
             if warm_active:
                 fp = _fingerprint(data)
                 tried_warm = (
@@ -1815,6 +1838,7 @@ def _drive_cascade(
                 )
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,
+                    save_memory=_save_memory,
                 )
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
@@ -2625,7 +2649,10 @@ def run_single_solve_from_db(
         SolverConfig as _SolverConfig,
     )
     solver_cfg = sc.solver_configs.get(scenario_name, _SolverConfig())
-    sol = run_one_solve(problem, solver_cfg, logger=logger)
+    _save_memory = os.environ.get("FLEXTOOL_SAVE_MEMORY") == "1"
+    sol = run_one_solve(
+        problem, solver_cfg, logger=logger, save_memory=_save_memory,
+    )
     # Eager Layer-2 unscale before any output writer touches ``sol``.
     _autoscale_unscale_post_solve(
         sol, _autoscale_layer2_plan, solve_name=scenario_name, logger=logger,

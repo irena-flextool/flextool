@@ -925,6 +925,11 @@ class ExecutionManager:
             cmd.append("--debug")
             cmd.append("--csv-dump")
 
+        # "Save memory" checkbox enables polar-high's save_memory path
+        # (drop polar-side LP source + MPS round-trip pre-solve).
+        if settings.save_memory:
+            cmd.append("--save-memory")
+
         return cmd
 
     # ------------------------------------------------------------------
