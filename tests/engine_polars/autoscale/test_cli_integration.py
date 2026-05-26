@@ -131,3 +131,120 @@ def test_invalid_scaling_value_raises():
     args = Namespace(scaling="banana", user_bound_scale=None)
     with pytest.raises(ValueError):
         resolve_scaling_config(args)
+
+
+# ---------------------------------------------------------------------------
+# Orchestration glue — mode-driven solver-option assembly.
+#
+# The cascade builds its baseline HiGHS option dict via
+# ``_baseline_highs_options`` and threads the scaling mode in so
+# ``--scaling=off`` is the only mode that touches HiGHS' internal
+# matrix equilibration (forces ``simplex_scale_strategy=0``).  The
+# other three modes leave HiGHS' Curtis-Reid equilibration enabled.
+# ---------------------------------------------------------------------------
+
+def test_baseline_options_off_forces_simplex_scale_zero():
+    """``--scaling=off`` must force ``simplex_scale_strategy=0``."""
+    from flextool.engine_polars._orchestration import _baseline_highs_options
+
+    opts = _baseline_highs_options(scaling_mode=ScalingMode.OFF)
+    assert opts["simplex_scale_strategy"] == 0
+
+
+@pytest.mark.parametrize(
+    "mode", [ScalingMode.SOLVER_ONLY, ScalingMode.BASIC, ScalingMode.FULL],
+)
+def test_baseline_options_non_off_keeps_simplex_scale_advanced(mode):
+    """All modes other than OFF leave HiGHS' equilibration on (=2)."""
+    from flextool.engine_polars._orchestration import _baseline_highs_options
+    from flextool.engine_polars._determinism import (
+        SIMPLEX_SCALE_STRATEGY_ADVANCED,
+    )
+
+    opts = _baseline_highs_options(scaling_mode=mode)
+    assert opts["simplex_scale_strategy"] == SIMPLEX_SCALE_STRATEGY_ADVANCED
+
+
+def test_baseline_options_default_mode_keeps_simplex_scale_advanced():
+    """No-mode-supplied call keeps the determinism-pinned advanced value."""
+    from flextool.engine_polars._orchestration import _baseline_highs_options
+    from flextool.engine_polars._determinism import (
+        SIMPLEX_SCALE_STRATEGY_ADVANCED,
+    )
+
+    opts = _baseline_highs_options()
+    assert opts["simplex_scale_strategy"] == SIMPLEX_SCALE_STRATEGY_ADVANCED
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 precedence-respect — caller-set user_bound_scale survives.
+#
+# The cascade hands ``recommend_scaling`` the polar-high ``Problem``
+# instance so the layer can inspect already-set options and skip its
+# own recommendation for any axis the caller has pinned (highs.opt /
+# explicit ``set_solver_options`` / CLI manual override).
+# ---------------------------------------------------------------------------
+
+def test_layer3_precedence_respects_externally_set_user_bound_scale():
+    """When the Problem already carries ``user_bound_scale``, Layer 3 keeps it."""
+    import math
+
+    from polar_high import Problem
+
+    from flextool.engine_polars.autoscale import (
+        RangeReport,
+        ScalingConfig,
+        recommend_scaling,
+    )
+
+    pb = Problem()
+    pb.set_solver_options({"user_bound_scale": 5})
+    # Bound spread that would normally trigger Layer 3's geometric-escape
+    # branch (max_b ≥ 1e+9, naive clamp crushes min): the test must show
+    # the precedence-check beats both the auto path and the escape branch.
+    ranges = RangeReport(
+        matrix=(1e-2, 1e2),
+        cost=(1.0, 1e2),
+        bound=(1e-3, 1e12),
+        rhs=(1e-3, 1e12),
+        cross_group_max_ratio=math.nan,
+        trigger=True,
+    )
+    plan = recommend_scaling(
+        ranges, ScalingConfig(mode=ScalingMode.BASIC), problem=pb,
+    )
+    assert plan.user_bound_scale == 5
+    assert plan.bound_skipped_external is True
+    assert "external user_bound_scale=5" in plan.reasoning
+
+
+def test_layer3_precedence_respects_externally_set_user_objective_scale():
+    """When the Problem carries ``user_objective_scale``, the cost axis is skipped."""
+    import math
+
+    from polar_high import Problem
+
+    from flextool.engine_polars.autoscale import (
+        RangeReport,
+        ScalingConfig,
+        recommend_scaling,
+    )
+
+    pb = Problem()
+    pb.set_solver_options({"user_objective_scale": -3})
+    ranges = RangeReport(
+        matrix=(1e-2, 1e2),
+        # Worst |c| of 1e+7 would normally yield N_obj = -10; precedence
+        # must override that with the caller's -3.
+        cost=(1.0, 1e7),
+        bound=(1e-2, 1e3),
+        rhs=(1e-2, 1e3),
+        cross_group_max_ratio=math.nan,
+        trigger=True,
+    )
+    plan = recommend_scaling(
+        ranges, ScalingConfig(mode=ScalingMode.BASIC), problem=pb,
+    )
+    assert plan.user_objective_scale == -3
+    assert plan.objective_skipped_external is True
+    assert "external user_objective_scale=-3" in plan.reasoning
