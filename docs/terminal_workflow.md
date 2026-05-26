@@ -109,11 +109,11 @@ python execute_flextool_workflow.py INPUT_DB_URL OUTPUT_DB_URL SCENARIO_NAME [op
 | `--csv-directory-path PATH` | Path to directory containing CSV input files |
 | `--output-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv` (default: `plot parquet csv`) |
 | `--output-subdir DIR` | Subdirectory for output files (default: scenario name) |
-| `--output-config PATH` | Path to output configuration YAML (default: `templates/default_plots.yaml`) |
+| `--output-config PATH` | Path to output configuration YAML (default: bundled `flextool/schemas/default_plots.yaml`) |
 | `--skip-input-prep` | Skip input preparation (assumes database already exists) |
 | `--skip-model-run` | Skip model execution (assumes model has already been run) |
 | `--skip-output-write` | Skip output generation |
-| `--debug` | Enable debug output |
+| `--debug` | Forward `--debug` to the model run (enables verbose memory checkpoints and per-solve CSV diagnostics) |
 
 ### Input sources
 
@@ -160,17 +160,51 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 
 ### Options
 
+**Run control and I/O paths:**
+
 | Flag | Description |
 |---|---|
-| `--scenario-name NAME` | Scenario name to execute (if omitted, uses database filter) |
+| `--scenario-name NAME` | Scenario name to execute (if omitted, uses the active DB filter) |
+| `--settings-db-url URL` | Settings DB consulted for post-processing defaults |
+| `--output-spreadsheet PATH` | Save results to a spreadsheet file |
 | `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv` (default: `plot parquet`) |
 | `--output-config PATH` | Path to output configuration YAML (default: `templates/default_plots.yaml`) |
-| `--active-configs NAME [...]` | Which plot configuration sets to use |
-| `--plot-rows START END` | First and last row to plot in time series |
+| `--active-configs NAME [...]` | Which plot configuration sets to use (default: `default`) |
+| `--plot-rows START END` | First and last row to plot in time series (default: `0 167`) |
 | `--output-location DIR` | Override output location path |
-| `--work-folder DIR` | Working directory for intermediate files |
-| `--only-first-file-per-plot` | Only produce the first file for each plot |
-| `--debug` | Enable debug output |
+| `--output-subdir NAME` | Subdirectory under `output_parquet/` etc. (default: scenario name) |
+| `--flextool-location PATH` | Spine Toolbox shim: directs outputs to the FlexTool repo root rather than the work directory |
+| `--work-folder DIR` | Working directory for intermediate files (default: CWD). Enables parallel scenario execution by isolating each run |
+| `--only-first-file-per-plot` | Only produce the first file for each plot (quick overview mode) |
+
+**Debug and diagnostics:**
+
+| Flag | Description |
+|---|---|
+| `--debug` | Enable verbose logging, per-checkpoint memory trace, and a `solve_data/memory_diagnostics.csv` per-solve CSV |
+| `--csv-dump` | Preserve cascade debug artefacts on disk: `input/`, `solve_data/`, `cross_solve/`, and `output_raw/` mirrors. Off by default (these directories are normally cleaned up after the run) |
+
+**Numerical precision and solver tuning:**
+
+| Flag | Description |
+|---|---|
+| `--precision-digits N` | Round every numeric input parameter to N significant figures before writing CSVs (typical: 10). Collapses float noise so HiGHS `mip_detect_symmetry` can aggregate structurally identical coefficients. Overrides `FLEXTOOL_PRECISION_DIGITS`; `0` or unset disables rounding |
+| `--scaling {off,solver_only,basic,full}` | FlexTool autoscaler strategy (see [scaling.md](dev/scaling.md)). `off` disables all scaling including HiGHS' internal equilibration; `solver_only` keeps only HiGHS' default matrix scaling; `basic` adds FlexTool's Layer-1 range detection and Layer-3 `user_*_scale` recommendation without LP mutation; `full` (default) adds Layer-2 semantic per-type column/row/cost scaling. Env fallback: `FLEXTOOL_SCALING` |
+| `--user-bound-scale N` | Pin HiGHS' `user_bound_scale` exponent (multiplies all column bounds and RHS by `2**N`). Use the value HiGHS suggests in its scaling warning; clamped to `[-10, 0]`. Overrides the Layer-3 auto-pick and any DB value |
+| `--presolve {on,off,choose}` | HiGHS `presolve` override. Default keeps the determinism-pinned `on`; `off` disables presolve (slower but useful for memory or numerical diagnostics) |
+| `--highs-threads N` | Number of HiGHS solver threads (default `1`). Values >1 enable HiGHS parallel mode and trade determinism for wall-clock speedup |
+| `--save-memory` | Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source and round-trip the HiGHS instance through a temp MPS file before solving. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See [architecture.md](dev/architecture.md) |
+| `--fast-single-solve` | Experimental cold-start fast path: bypass `flextool.input_derivation` and read inputs directly from Spine via SpineDbReader. Single-solve only; no rolling, no cascade, no warm-LP, no handoff plumbing. Requires `--scenario-name` |
+
+**Decomposition (Lagrangian):**
+
+| Flag | Description |
+|---|---|
+| `--decomposition {none,lagrangian}` | Switch from the monolithic orchestrator to a decomposition scheme. `lagrangian` drives one HiGHS instance per decomposition-region and prices cross-region pipeline flows via a damped subgradient on λ. Requires at least two groups declared with `decomposition_method='lagrangian_region'`. See [decomposition.md](dev/decomposition.md) |
+| `--region GROUP_NAME` | Filter-only entry point: produce a per-region input directory `input_region_<GROUP>/` for Lagrangian decomposition and exit without solving. Cross-region processes are replaced with import/export half-flows; coupling variables are listed in `solve_data/region_coupling.csv` |
+| `--lagrangian-alpha FLOAT` | Base step size for the Lagrangian subgradient loop (default `0.1`). Per-iteration step is `α / √k` |
+| `--lagrangian-max-iter N` | Maximum outer-loop iterations for `--decomposition lagrangian` (default `80`) |
+| `--lagrangian-tolerance FLOAT` | Tail-averaged imbalance threshold (primal units) for declaring Lagrangian convergence (default `1.0`) |
 
 ### Example
 
@@ -199,16 +233,20 @@ All arguments are optional. When run from the terminal, you typically provide `-
 
 | Flag | Description |
 |---|---|
-| `--scenario-name NAME` | Scenario with raw outputs available |
+| `--scenario-name NAME` | Scenario with raw outputs available (when re-plotting a single scenario from the terminal) |
+| `--input-db-url URL` | Input DB with scenario filter (used when `run_flextool.py` chains into this command from Toolbox) |
+| `--output-locations-db-url URL` | Output-locations DB holding paths of existing outputs (re-plotting from Toolbox) |
+| `--settings-db-url URL` | Settings DB consulted for unset parameters |
 | `--read-parquet-dir DIR` | Read from existing parquet files instead of raw CSVs (faster) |
 | `--config-path PATH` | Output configuration YAML (default: `templates/default_plots.yaml`) |
 | `--active-configs NAME [...]` | Which plot configuration sets to use (default: `default`) |
-| `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `db`, `csv` (default: `plot parquet csv`) |
+| `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `db`, `csv` (default: `plot parquet excel`) |
 | `--plot-rows START END` | First and last row to plot in time series (default: `0 167`) |
 | `--subdir DIR` | Subdirectory for outputs (default: scenario name) |
-| `--output-location DIR` | Root directory for input/output locations (default: flextool root) |
-| `--plot-file-format FORMAT` | File format for plots: `png` or `svg` |
-| `--only-first-file-per-plot` | Only produce the first file for each plot |
+| `--output-location DIR` | Root directory for input/output locations (default: flextool root); overridden by `--output-locations-db-url` |
+| `--plot-file-format {png,svg}` | File format for plots (default: `png`) |
+| `--only-first-file-per-plot` | Only produce the first file for each plot (quick overview mode) |
+| `--single-result KEY CSV_NAME PLOT_NAME PLOT_TYPE SUBPLOTS_PER_ROW LEGEND_POSITION` | Process a single result (overrides `--config-path`). Use `"null"` for None values |
 | `--debug` | Enable debug output |
 
 ### Examples
@@ -368,7 +406,7 @@ python -m flextool.cli.cmd_export_to_tabular \
 
 ### Migrate database schema
 
-Upgrades a database to the latest FlexTool schema version using the templates in `version/`.
+Upgrades a database to the latest FlexTool schema version using the templates bundled under `flextool/schemas/`.
 
 ```bash
 python -m flextool.cli.cmd_migrate_database input.sqlite
