@@ -580,6 +580,13 @@ class FlexData:
     storage_bind_forward_only: pl.DataFrame | None = None    # set: (n,)
     storage_bind_within_solve: pl.DataFrame | None = None    # set: (n,)
     storage_bind_within_solve_blended_weights: pl.DataFrame | None = None  # set: (n,)
+    # Phase C — recognised by the v55 value_list but the constraint
+    # implementations land in Phases D / E.  Loaded here so the
+    # ``nodeBalance_eq`` guard in :mod:`flextool.engine_polars.model`
+    # can raise a precise "not yet implemented" error instead of
+    # silently emitting zero state-change residuals.
+    storage_bind_within_period_blended_weights: pl.DataFrame | None = None  # set: (n,)
+    storage_bind_forward_only_blended_weights: pl.DataFrame | None = None   # set: (n,)
     storage_fix_start: pl.DataFrame | None = None
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
@@ -2464,6 +2471,19 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     binding_within_timeblock = None
     binding_forward_only = None
     binding_within_solve = None
+    # Phase C — ``binding_within_solve_blended_weights`` is also derived
+    # here from the per-solve provider so the partition reflects any
+    # cascade-applied silent downgrade (see
+    # :func:`._native_run_model._downgrade_rp_methods_for_non_rp_solve`).
+    # apply_projection_params no longer touches this field — the
+    # per-solve CSV is the single source of truth.
+    binding_within_solve_blended_weights = None
+    # Phase C — not-yet-implemented methods.  Loaded so the model.py
+    # guard can surface a precise error instead of silently emitting
+    # zero state-change residuals.  Constraint wiring lands in Phases
+    # D / E of the storage-binding-methods restructure.
+    binding_within_period_blended_weights = None
+    binding_forward_only_blended_weights = None
     if _provider_has(provider, "solve_data/node__storage_binding_method", sbm_path):
         sbm = _provider_read(provider, "solve_data/node__storage_binding_method", sbm_path)
         # Column names in this file have varied — handle both schemas
@@ -2481,6 +2501,18 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                  .select("n").unique())
         if ws.height > 0:
             binding_within_solve = ws
+        wsbw = (sbm.filter(pl.col("method")=="bind_within_solve_blended_weights")
+                   .select("n").unique())
+        if wsbw.height > 0:
+            binding_within_solve_blended_weights = wsbw
+        wpbw = (sbm.filter(pl.col("method")=="bind_within_period_blended_weights")
+                   .select("n").unique())
+        if wpbw.height > 0:
+            binding_within_period_blended_weights = wpbw
+        fobw = (sbm.filter(pl.col("method")=="bind_forward_only_blended_weights")
+                   .select("n").unique())
+        if fobw.height > 0:
+            binding_forward_only_blended_weights = fobw
 
     # ``bind_forward_only`` mirrors ``bind_within_solve`` (uses the
     # ``t_previous_within_solve`` lag column) BUT the .mod omits the
@@ -2770,20 +2802,19 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     f"FlexData loader (backstop check): nodeState_rp is "
                     f"non-empty ({nodeState_rp.height} node(s)) but the "
                     f"tightly-coupled field `{_name}` is missing or "
-                    f"empty.  This indicates either a direct call into "
-                    f"load_flextool that bypassed the per-solve "
-                    f"RP-weights check in _native_run_model.py "
-                    f"(`_assert_blended_weights_have_rp_weights`), OR "
-                    f"an upstream emitter bug.  The user-facing "
-                    f"scenario-config error normally fires earlier in "
-                    f"_native_run_model.py — if you're seeing THIS "
-                    f"message instead, please report it.  The "
-                    f"RP-blended-weights set family (nodeState_rp, "
-                    f"rp_base_period_set, rp_base__rep, rp_block_first, "
-                    f"p_rp_last_step) must be emitted together — check "
-                    f"_emit_leaf_sets.emit_node_state_subsets, "
-                    f"_emit_per_solve, and "
-                    f"_emit_solve_writers._compute_rp_frames upstream."
+                    f"empty.  Under the storage-binding-methods-restructure "
+                    f"(Phase C onwards), the per-solve downgrade in "
+                    f"_native_run_model._downgrade_rp_methods_for_non_rp_solve "
+                    f"normally strips bind_within_solve_blended_weights "
+                    f"to bind_within_solve when a solve's active "
+                    f"timeset has no representative_period_weights.  "
+                    f"If you are seeing THIS error, the downgrade was "
+                    f"bypassed — either load_flextool was called "
+                    f"directly (not via _native_run_model) or there "
+                    f"is an upstream emitter bug.  Please report this "
+                    f"with the calling code.  Required RP set family: "
+                    f"nodeState_rp, rp_base_period_set, rp_base__rep, "
+                    f"rp_block_first, p_rp_last_step."
                 )
 
     # ─── Multi-resolution block synthesis ───────────────────────────────
@@ -2996,6 +3027,16 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_bind_within_timeblock = binding_within_timeblock,
         storage_bind_forward_only = binding_forward_only,
         storage_bind_within_solve = binding_within_solve,
+        # Phase C — single source of truth for the RP-flavoured partition
+        # is the per-solve CSV; apply_projection_params no longer
+        # contributes here so the cascade's silent-downgrade rewrite
+        # propagates correctly.
+        storage_bind_within_solve_blended_weights = binding_within_solve_blended_weights,
+        # Phase C — not-yet-implemented method partitions; consumed by
+        # the model.py guard which raises FlexToolConfigError when
+        # non-empty.
+        storage_bind_within_period_blended_weights = binding_within_period_blended_weights,
+        storage_bind_forward_only_blended_weights = binding_forward_only_blended_weights,
         storage_fix_start = fix_start,
         storage_use_reference_value = use_reference_value,
         p_storage_state_reference_value = p_ssrv,

@@ -1858,7 +1858,15 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "storage_bind_within_timeblock": storage_bind_within_timeblock,
     "storage_bind_forward_only": storage_bind_forward_only,
     "storage_bind_within_solve": storage_bind_within_solve,
-    "storage_bind_within_solve_blended_weights": storage_bind_within_solve_blended_weights,
+    # Phase C — ``storage_bind_within_solve_blended_weights`` is now
+    # derived authoritatively in ``input._load_storage`` from the
+    # per-solve ``solve_data/node__storage_binding_method`` CSV, so
+    # that the cascade-applied silent downgrade
+    # (``_native_run_model._downgrade_rp_methods_for_non_rp_solve``)
+    # is honoured instead of being overwritten by the DB-source
+    # projection.  The helper :func:`storage_bind_within_solve_blended_weights`
+    # remains exported below for callers that want raw DB-source
+    # projection (e.g. diagnostics), but is no longer wired here.
     "storage_fix_start": storage_fix_start,
     "n_fix_storage_quantity": n_fix_storage_quantity,
     "groupCapacityMargin": groupCapacityMargin,

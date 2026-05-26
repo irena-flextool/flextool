@@ -415,6 +415,54 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # Always required.
     _check(d, ALWAYS, "always")
 
+    # Phase C — not-yet-implemented guard for the two new RP-flavoured
+    # storage-binding methods recognised by the v55 value_list whose
+    # ``nodeBalance_eq`` constraint wiring lands in Phases D / E of the
+    # storage-binding-methods-restructure migration.  A node carrying
+    # one of these in an RP-active solve would silently fall through
+    # every state-change branch (no projection exists for them in the
+    # four-frame storage_bind_* set consumed by nodeBalance_eq), emitting
+    # no residual — a silent LP correctness bug.  In a non-RP solve the
+    # cascade's ``_downgrade_rp_methods_for_non_rp_solve`` (see
+    # :mod:`flextool.engine_polars._native_run_model`) strips the
+    # method to its non-RP equivalent BEFORE FlexData is built, so this
+    # guard only trips when (i) the solve is RP-active AND (ii) the
+    # user explicitly asked for one of the two new methods.  Placed at
+    # the top of build_flextool — before any variable / nodeBalance_eq
+    # scaffolding — so the user sees the precise misconfiguration
+    # message instead of a downstream Var/Cstr KeyError.  Reads
+    # ``d.storage_bind_within_period_blended_weights`` and
+    # ``d.storage_bind_forward_only_blended_weights`` (populated by
+    # :func:`flextool.engine_polars.input._load_storage` from the
+    # per-solve ``solve_data/node__storage_binding_method`` Provider
+    # key) — the canonical, FlexData-attached path.
+    _NOT_YET_IMPLEMENTED_SBM = (
+        ("bind_within_period_blended_weights",
+         getattr(d, "storage_bind_within_period_blended_weights", None)),
+        ("bind_forward_only_blended_weights",
+         getattr(d, "storage_bind_forward_only_blended_weights", None)),
+    )
+    for _method_name, _frame in _NOT_YET_IMPLEMENTED_SBM:
+        if _frame is not None and _frame.height > 0:
+            _nodes = _frame.get_column("n").to_list()
+            _shown = _nodes[:10]
+            _suffix = ("" if len(_nodes) <= 10
+                       else f", ... {len(_nodes) - 10} more")
+            _node_list = ", ".join(str(n) for n in _shown) + _suffix
+            raise FlexToolConfigError(
+                f"Node(s) {_node_list} carry storage_binding_method = "
+                f"'{_method_name}', which is recognized by the v55 "
+                f"value_list but its constraint implementation has "
+                f"not landed yet (scheduled for Phase D/E of the "
+                f"storage-binding-methods-restructure migration).  "
+                f"For now, change these nodes to one of the "
+                f"implemented RP variants "
+                f"(bind_within_solve_blended_weights) or to a non-RP "
+                f"method (bind_within_solve / bind_within_period / "
+                f"bind_within_timeblock / bind_forward_only) using a "
+                f"scenario alternative override."
+            )
+
     has_proc      = d.process_source_sink is not None and d.process_source_sink.height > 0
     has_indirect  = d.process_indirect is not None and d.process_indirect.height > 0
     has_co2_price = d.flow_from_co2_priced is not None and d.flow_from_co2_priced.height > 0
