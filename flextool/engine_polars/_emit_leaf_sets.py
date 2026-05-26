@@ -358,13 +358,22 @@ def derive_enable_optional_outputs(solve_data_dir: Path,
 
 
 def derive_node_state_subset(
-    solve_data_dir: Path, binding_method: str,
+    solve_data_dir: Path, binding_method: "str | tuple[str, ...]",
     *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    """Filter nodeState by a specific storage_binding_method.
+    """Filter nodeState by one or more storage_binding_method values.
 
-    ``binding_method`` is one of ``"bind_within_solve_blended_weights"`` (→
-    nodeState_rp) or ``"bind_intraperiod_blocks"`` (→ nodeStateBlock).
+    ``binding_method`` is either a single string or a tuple of strings.
+    For ``nodeState_rp`` (Phase D onwards) the caller passes the tuple
+    ``("bind_within_solve_blended_weights",
+       "bind_forward_only_blended_weights")`` so the resulting set is
+    the UNION of every node carrying either RP-flavoured method — the
+    SHARED RP machinery in ``model.py`` (``rp_inter_period_balance``,
+    ``rp_inter_period_max_state``, ``maxState_rp_start``, and the
+    intra-period state-change branches in ``nodeBalance_eq``) fires
+    over this union; only ``rp_inter_period_cyclic`` further filters
+    back to the within_solve subset.  For ``nodeStateBlock`` the caller
+    still passes the single string ``"bind_intraperiod_blocks"``.
     """
     state = _read_csv(solve_data_dir / "nodeState.csv", ["node"],
                      provider=provider)
@@ -372,7 +381,13 @@ def derive_node_state_subset(
         solve_data_dir / "node__storage_binding_method.csv",
         ["node", "method"], provider=provider,
     )
-    matching = binding.filter(pl.col("method") == binding_method).select("node")
+    if isinstance(binding_method, str):
+        methods = (binding_method,)
+    else:
+        methods = tuple(binding_method)
+    matching = (binding
+                .filter(pl.col("method").is_in(list(methods)))
+                .select("node"))
     return (
         state.join(matching, on="node", how="inner")
              .select("node")
@@ -545,9 +560,20 @@ def emit_enable_optional_outputs(solve_data_dir: Path,
 
 def emit_node_state_subsets(solve_data_dir: Path,
                              *, provider) -> None:
-    """Emit ``node_state_subsets`` to the Provider."""
-    rp = derive_node_state_subset(solve_data_dir, "bind_within_solve_blended_weights",
-                                  provider=provider)
+    """Emit ``node_state_subsets`` to the Provider.
+
+    Phase D: ``nodeState_rp`` is the UNION of every node carrying a
+    blended-weights method (``bind_within_solve_blended_weights`` or
+    ``bind_forward_only_blended_weights``).  The shared RP machinery
+    in ``model.py`` fires over this union; only the cyclic-closure
+    constraint further filters back to within_solve.
+    """
+    rp = derive_node_state_subset(
+        solve_data_dir,
+        ("bind_within_solve_blended_weights",
+         "bind_forward_only_blended_weights"),
+        provider=provider,
+    )
     block = derive_node_state_subset(solve_data_dir, "bind_intraperiod_blocks",
                                      provider=provider)
     _emit(provider, K.SOLVE_DATA_NODE_STATE_RP, rp)

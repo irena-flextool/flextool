@@ -103,7 +103,11 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     # Storage.
     "nodeState", "nodeState_dt", "nodeState_first_dt",
     "storage_bind_within_timeblock", "storage_bind_forward_only",
-    "storage_bind_within_solve", "storage_fix_start",
+    "storage_bind_within_solve",
+    "storage_bind_within_solve_blended_weights",
+    # Phase D — landed with the new variant's constraint wiring.
+    "storage_bind_forward_only_blended_weights",
+    "storage_fix_start",
     "dtttdt", "dtttdt_forward_only",
     "n_fix_storage_quantity", "ndt_fix_storage_quantity",
     "dtt_timeline_matching", "period_branch", "period_last",

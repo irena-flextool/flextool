@@ -415,32 +415,34 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # Always required.
     _check(d, ALWAYS, "always")
 
-    # Phase C — not-yet-implemented guard for the two new RP-flavoured
+    # Phase C/D — not-yet-implemented guard for any RP-flavoured
     # storage-binding methods recognised by the v55 value_list whose
-    # ``nodeBalance_eq`` constraint wiring lands in Phases D / E of the
-    # storage-binding-methods-restructure migration.  A node carrying
-    # one of these in an RP-active solve would silently fall through
-    # every state-change branch (no projection exists for them in the
-    # four-frame storage_bind_* set consumed by nodeBalance_eq), emitting
+    # ``nodeBalance_eq`` constraint wiring has not landed yet.  A node
+    # carrying one of these in an RP-active solve would silently fall
+    # through every state-change branch (no projection exists for them
+    # in the storage_bind_* set consumed by nodeBalance_eq), emitting
     # no residual — a silent LP correctness bug.  In a non-RP solve the
     # cascade's ``_downgrade_rp_methods_for_non_rp_solve`` (see
     # :mod:`flextool.engine_polars._native_run_model`) strips the
     # method to its non-RP equivalent BEFORE FlexData is built, so this
     # guard only trips when (i) the solve is RP-active AND (ii) the
-    # user explicitly asked for one of the two new methods.  Placed at
-    # the top of build_flextool — before any variable / nodeBalance_eq
+    # user explicitly asked for one of the still-blocked methods.  Placed
+    # at the top of build_flextool — before any variable / nodeBalance_eq
     # scaffolding — so the user sees the precise misconfiguration
     # message instead of a downstream Var/Cstr KeyError.  Reads
-    # ``d.storage_bind_within_period_blended_weights`` and
-    # ``d.storage_bind_forward_only_blended_weights`` (populated by
+    # ``d.storage_bind_within_period_blended_weights`` (populated by
     # :func:`flextool.engine_polars.input._load_storage` from the
     # per-solve ``solve_data/node__storage_binding_method`` Provider
     # key) — the canonical, FlexData-attached path.
+    #
+    # Phase D unblocked ``bind_forward_only_blended_weights`` (same RP
+    # machinery as ``bind_within_solve_blended_weights`` minus the
+    # ``rp_inter_period_cyclic`` end-to-start closure constraint).
+    # ``bind_within_period_blended_weights`` remains blocked here until
+    # Phase E lands its inter-period coupling.
     _NOT_YET_IMPLEMENTED_SBM = (
         ("bind_within_period_blended_weights",
          getattr(d, "storage_bind_within_period_blended_weights", None)),
-        ("bind_forward_only_blended_weights",
-         getattr(d, "storage_bind_forward_only_blended_weights", None)),
     )
     for _method_name, _frame in _NOT_YET_IMPLEMENTED_SBM:
         if _frame is not None and _frame.height > 0:
@@ -453,11 +455,12 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 f"Node(s) {_node_list} carry storage_binding_method = "
                 f"'{_method_name}', which is recognized by the v55 "
                 f"value_list but its constraint implementation has "
-                f"not landed yet (scheduled for Phase D/E of the "
+                f"not landed yet (scheduled for Phase E of the "
                 f"storage-binding-methods-restructure migration).  "
                 f"For now, change these nodes to one of the "
                 f"implemented RP variants "
-                f"(bind_within_solve_blended_weights) or to a non-RP "
+                f"(bind_within_solve_blended_weights / "
+                f"bind_forward_only_blended_weights) or to a non-RP "
                 f"method (bind_within_solve / bind_within_period / "
                 f"bind_within_timeblock / bind_forward_only) using a "
                 f"scenario alternative override."
@@ -698,15 +701,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # Defensive contract assertion (v54 storage_binding_method single-valued).
     # Phases 1-3 enforce single-valued storage_binding_method per node upstream
     # (ingestion guard, DB migration, _emit_mid_sets assertion).  Here we
-    # additionally verify that the four storage_bind_* projections feeding
+    # additionally verify that the five storage_bind_* projections feeding
     # nodeBalance_eq are PAIRWISE DISJOINT on the ``n`` column at the use site,
     # so a future projection bug or a manual CSV insertion cannot silently
-    # solve the wrong LP by emitting two residuals for the same node.
+    # solve the wrong LP by emitting two residuals for the same node.  Phase D
+    # added ``bind_forward_only_blended_weights`` — the fifth partition.
     _storage_bind_frames = [
         ("bind_within_timeblock", d.storage_bind_within_timeblock),
         ("bind_forward_only", d.storage_bind_forward_only),
         ("bind_within_solve", d.storage_bind_within_solve),
         ("bind_within_solve_blended_weights", d.storage_bind_within_solve_blended_weights),
+        ("bind_forward_only_blended_weights", d.storage_bind_forward_only_blended_weights),
     ]
     _storage_bind_active = [
         (name, frame) for name, frame in _storage_bind_frames
@@ -851,18 +856,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             _state_lag_cross_period(d.dtttdt), bind_set_ws)
         nb_terms["state_change_ws"] = (v_state_lag_ws - v_state_now_ws) * d.p_state_unitsize
 
-    if (has_storage
-            and has_rp
-            and d.storage_bind_within_solve_blended_weights is not None
-            and d.storage_bind_within_solve_blended_weights.height > 0):
-        # ``bind_within_solve_blended_weights`` — intra-period state tracking
-        # (flextool.mod:2197-2200).  Within each RP block the
+    if (has_storage and has_rp):
+        # ``bind_within_solve_blended_weights`` /
+        # ``bind_forward_only_blended_weights`` — intra-period state
+        # tracking (flextool.mod:2197-2200).  Within each RP block the
         # state-change uses the ordinary within-timeset lag (mirrors
         # ``bind_within_timeblock``); at the first step of each RP block
         # the lag is replaced by ``v_state_rp_start`` so each block has
-        # a free starting state (Phase 5 variable).  Cross-block /
-        # inter-period coupling lives in Phases 7-9.
-        bind_set_rp = d.storage_bind_within_solve_blended_weights
+        # a free starting state (Phase 5 variable).  Phase D extended
+        # ``nodeState_rp`` to the union of both blended-weights variants
+        # — the intra-period state-change machinery is scope-agnostic
+        # (block-level, not solve-level) and fires identically for both;
+        # only the inter-period cyclic-closure constraint further
+        # filters back to the within_solve subset (see below).
+        bind_set_rp = d.nodeState_rp
         # Interior: dtttdt restricted to (d, t) NOT in rp_block_first.
         dtttdt_interior = d.dtttdt.join(
             d.rp_block_first.select("d", "t"),
@@ -908,8 +915,6 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # (b, d, t) cohort built from rp_base__rep ⨝ rp_block_first.
     if (has_storage
             and has_rp
-            and d.storage_bind_within_solve_blended_weights is not None
-            and d.storage_bind_within_solve_blended_weights.height > 0
             and d.rp_base_chain is not None
             and d.rp_base_chain.height > 0
             and d.rp_base__rep is not None
@@ -917,7 +922,11 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             and d.rp_block_first.height > 0
             and d.p_rp_last_step is not None
             and d.p_rp_last_step.height > 0):
-        bind_set_rp = d.storage_bind_within_solve_blended_weights
+        # Phase D: ``rp_inter_period_balance`` is SHARED across both
+        # blended-weights variants — chains state across base periods.
+        # Filter on ``nodeState_rp`` (the union); ``rp_inter_period_cyclic``
+        # below further restricts to the within_solve subset.
+        bind_set_rp = d.nodeState_rp
         # LHS index: (n, b, b_prev).
         # Align b_prev dtype against v_state_inter's b dtype so the
         # renamed-axis Var view composes cleanly.
@@ -1053,6 +1062,13 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             and d.rp_block_first.height > 0
             and d.p_rp_last_step is not None
             and d.p_rp_last_step.height > 0):
+        # Phase D: cyclic-closure is the ONE constraint that distinguishes
+        # ``bind_within_solve_blended_weights`` from
+        # ``bind_forward_only_blended_weights`` — only the within_solve
+        # variant forces end_state == start_state at the solve boundary.
+        # Filter back to the within_solve subset; the forward_only subset
+        # is intentionally omitted so the LP is free to pick any terminal
+        # inter-period state.
         bind_set_rp = d.storage_bind_within_solve_blended_weights
         # LHS index: nodeState_rp × rp_base_first × rp_base_last.
         # Cast b_first / b_last to v_state_inter's b dtype so the
@@ -1174,10 +1190,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # edd_divest_active.  Factored into a closure since both new
     # constraints want the same (n, d) tightening; maxState itself stays
     # untouched to keep this commit narrow.
-    if (has_storage and has_rp
-            and d.storage_bind_within_solve_blended_weights is not None
-            and d.storage_bind_within_solve_blended_weights.height > 0):
-        bind_set_rp = d.storage_bind_within_solve_blended_weights
+    if (has_storage and has_rp):
+        # Phase D: ``rp_inter_period_max_state`` + ``maxState_rp_start``
+        # are SHARED across both blended-weights variants — they bound
+        # the inter-period state by capacity, a constraint that is
+        # independent of whether the chain closes cyclically.  Filter
+        # on ``nodeState_rp`` (the union of within_solve and forward_only
+        # variants).
+        bind_set_rp = d.nodeState_rp
 
         def _rp_state_id_tighten() -> dict:
             """Build ``{"divest": ..., "invest_neg": ...}`` (n,d)-keyed.

@@ -474,6 +474,15 @@ def _build_region_data(
     new.storage_bind_within_timeblock = _filter_frame(src.storage_bind_within_timeblock, "n", keep_nodes)
     new.storage_bind_forward_only = _filter_frame(src.storage_bind_forward_only, "n", keep_nodes)
     new.storage_bind_within_solve = _filter_frame(src.storage_bind_within_solve, "n", keep_nodes)
+    new.storage_bind_within_solve_blended_weights = _filter_frame(
+        getattr(src, "storage_bind_within_solve_blended_weights", None),
+        "n", keep_nodes,
+    )
+    # Phase D — added with the new variant's constraint wiring.
+    new.storage_bind_forward_only_blended_weights = _filter_frame(
+        getattr(src, "storage_bind_forward_only_blended_weights", None),
+        "n", keep_nodes,
+    )
     new.storage_fix_start = _filter_frame(src.storage_fix_start, "n", keep_nodes)
     new.nodeStateBlock = _filter_frame(src.nodeStateBlock, "n", keep_nodes)
     new.nodeState_rp = _filter_frame(
