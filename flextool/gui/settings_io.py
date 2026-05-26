@@ -137,6 +137,26 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             )
         settings.scenario_resource_history = history
 
+    limits_data = data.get("execution_limits")
+    if isinstance(limits_data, dict):
+        settings.execution_limits = ExecutionLimits(
+            max_cores_per_job=int(limits_data.get(
+                "max_cores_per_job", settings.execution_limits.max_cores_per_job
+            )),
+            memory_cap_per_job_gb=float(limits_data.get(
+                "memory_cap_per_job_gb", settings.execution_limits.memory_cap_per_job_gb
+            )),
+            system_reserve_gb=float(limits_data.get(
+                "system_reserve_gb", settings.execution_limits.system_reserve_gb
+            )),
+            swap_allowance_gb=float(limits_data.get(
+                "swap_allowance_gb", settings.execution_limits.swap_allowance_gb
+            )),
+        )
+    mw = data.get("max_workers")
+    if isinstance(mw, int) and mw > 0:
+        settings.max_workers = mw
+
     return settings
 
 

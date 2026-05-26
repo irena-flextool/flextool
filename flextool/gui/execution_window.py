@@ -122,13 +122,10 @@ class ExecutionWindow(tk.Toplevel):
         ttk.Label(top_frame, text="Max. parallel executions:").pack(side="left", padx=(0, 5))
 
         cpu = os.cpu_count() or 2
-        default_workers = max(1, cpu - 1)
-        # Prefer the persisted value (projects.yaml) if one is stored
-        if self._global_settings and self._global_settings.max_workers > 0:
-            initial = max(1, min(cpu * 2, self._global_settings.max_workers))
-            self._mgr.max_workers = initial
-        else:
-            initial = default_workers
+        # ProjectSettings.max_workers is the source of truth.  The
+        # ExecutionManager already seeds itself from it at construction
+        # time, so just clamp into the spinbox range.
+        initial = max(1, min(cpu * 2, self._mgr.max_workers))
         self._max_workers_var = tk.IntVar(value=initial)
         self._max_workers_spin = ttk.Spinbox(
             top_frame,
@@ -148,8 +145,8 @@ class ExecutionWindow(tk.Toplevel):
         # Cores per job
         ttk.Label(top_frame, text="  Cores per job:").pack(side="left", padx=(15, 5))
 
-        limits = self._global_settings.execution_limits if self._global_settings else None
-        initial_cores = limits.max_cores_per_job if (limits and limits.max_cores_per_job > 0) else 1
+        limits = self._mgr.execution_limits
+        initial_cores = limits.max_cores_per_job if limits.max_cores_per_job > 0 else 1
         self._cores_per_job_var = tk.IntVar(value=initial_cores)
         self._cores_per_job_spin = ttk.Spinbox(
             top_frame,
@@ -167,7 +164,7 @@ class ExecutionWindow(tk.Toplevel):
         mem_label = ttk.Label(top_frame, text="  Memory budget/job (GB, 0=auto):")
         mem_label.pack(side="left", padx=(15, 5))
 
-        initial_cap = limits.memory_cap_per_job_gb if limits else 0.0
+        initial_cap = limits.memory_cap_per_job_gb
         self._mem_cap_var = tk.DoubleVar(value=initial_cap)
         self._mem_cap_spin = ttk.Spinbox(
             top_frame,
@@ -202,7 +199,7 @@ class ExecutionWindow(tk.Toplevel):
         min_free_label = ttk.Label(top_frame, text="  Min free RAM (GB):")
         min_free_label.pack(side="left", padx=(15, 5))
 
-        initial_reserve = limits.system_reserve_gb if limits else 4.0
+        initial_reserve = limits.system_reserve_gb
         self._min_free_var = tk.DoubleVar(value=initial_reserve)
         self._min_free_spin = ttk.Spinbox(
             top_frame,
@@ -234,7 +231,7 @@ class ExecutionWindow(tk.Toplevel):
         swap_label = ttk.Label(top_frame, text="  Allow swap (GB):")
         swap_label.pack(side="left", padx=(15, 5))
 
-        initial_swap = limits.swap_allowance_gb if limits else 0.0
+        initial_swap = limits.swap_allowance_gb
         self._swap_allow_var = tk.DoubleVar(value=initial_swap)
         self._swap_allow_spin = ttk.Spinbox(
             top_frame,
@@ -442,24 +439,31 @@ class ExecutionWindow(tk.Toplevel):
     # Max workers
     # ------------------------------------------------------------------
 
+    def _persist_project_settings(self, field_name: str) -> None:
+        """Write the project's settings.yaml after a spinbox edit."""
+        try:
+            from flextool.gui.settings_io import save_project_settings
+            save_project_settings(self._mgr.project_path, self._mgr.settings)
+        except Exception:
+            logger.warning(
+                "Could not persist %s to settings.yaml", field_name, exc_info=True,
+            )
+
     def _on_max_workers_changed(self) -> None:
         """Sync the spinbox value to the ExecutionManager and persist it."""
         try:
             val = self._max_workers_var.get()
         except tk.TclError:
             return
+        if val < 1:
+            val = 1
+            self._max_workers_var.set(val)
         self._mgr.max_workers = val
-        if self._global_settings is not None and val > 0:
-            self._global_settings.max_workers = val
-            try:
-                from flextool.gui.project_utils import get_projects_dir
-                from flextool.gui.settings_io import save_global_settings
-                save_global_settings(get_projects_dir(), self._global_settings)
-            except Exception:
-                logger.warning("Could not persist max_workers to projects.yaml", exc_info=True)
+        self._mgr.settings.max_workers = val
+        self._persist_project_settings("max_workers")
 
     def _on_cores_per_job_changed(self) -> None:
-        """Sync cores-per-job to global settings."""
+        """Sync cores-per-job to the project settings."""
         try:
             val = self._cores_per_job_var.get()
         except tk.TclError:
@@ -467,18 +471,11 @@ class ExecutionWindow(tk.Toplevel):
         if val < 1:
             val = 1
             self._cores_per_job_var.set(val)
-        if self._global_settings is None:
-            return
-        self._global_settings.execution_limits.max_cores_per_job = val
-        try:
-            from flextool.gui.project_utils import get_projects_dir
-            from flextool.gui.settings_io import save_global_settings
-            save_global_settings(get_projects_dir(), self._global_settings)
-        except Exception:
-            logger.warning("Could not persist max_cores_per_job to projects.yaml", exc_info=True)
+        self._mgr.settings.execution_limits.max_cores_per_job = val
+        self._persist_project_settings("max_cores_per_job")
 
     def _on_mem_cap_changed(self) -> None:
-        """Sync memory budget/job to global settings."""
+        """Sync memory budget/job to the project settings."""
         try:
             val = float(self._mem_cap_var.get())
         except (tk.TclError, ValueError):
@@ -486,18 +483,11 @@ class ExecutionWindow(tk.Toplevel):
         if val < 0:
             val = 0.0
             self._mem_cap_var.set(val)
-        if self._global_settings is None:
-            return
-        self._global_settings.execution_limits.memory_cap_per_job_gb = val
-        try:
-            from flextool.gui.project_utils import get_projects_dir
-            from flextool.gui.settings_io import save_global_settings
-            save_global_settings(get_projects_dir(), self._global_settings)
-        except Exception:
-            logger.warning("Could not persist memory_cap_per_job_gb to projects.yaml", exc_info=True)
+        self._mgr.settings.execution_limits.memory_cap_per_job_gb = val
+        self._persist_project_settings("memory_cap_per_job_gb")
 
     def _on_min_free_changed(self) -> None:
-        """Sync min-free-RAM threshold to global settings."""
+        """Sync min-free-RAM threshold to the project settings."""
         try:
             val = float(self._min_free_var.get())
         except (tk.TclError, ValueError):
@@ -505,22 +495,11 @@ class ExecutionWindow(tk.Toplevel):
         if val < 0:
             val = 0.0
             self._min_free_var.set(val)
-        if self._global_settings is None:
-            return
-        self._global_settings.execution_limits.system_reserve_gb = val
-        try:
-            from flextool.gui.project_utils import get_projects_dir
-            from flextool.gui.settings_io import save_global_settings
-            save_global_settings(get_projects_dir(), self._global_settings)
-        except Exception:
-            logger.warning("Could not persist system_reserve_gb to projects.yaml", exc_info=True)
+        self._mgr.settings.execution_limits.system_reserve_gb = val
+        self._persist_project_settings("system_reserve_gb")
 
     def _on_swap_allow_changed(self) -> None:
-        """Sync swap-allowance threshold to global settings.
-
-        Shows a warning dialog the first time the user raises the allowance
-        above zero in this session.
-        """
+        """Sync swap-allowance threshold to the project settings."""
         try:
             val = float(self._swap_allow_var.get())
         except (tk.TclError, ValueError):
@@ -528,15 +507,8 @@ class ExecutionWindow(tk.Toplevel):
         if val < 0:
             val = 0.0
             self._swap_allow_var.set(val)
-        if self._global_settings is None:
-            return
-        self._global_settings.execution_limits.swap_allowance_gb = val
-        try:
-            from flextool.gui.project_utils import get_projects_dir
-            from flextool.gui.settings_io import save_global_settings
-            save_global_settings(get_projects_dir(), self._global_settings)
-        except Exception:
-            logger.warning("Could not persist swap_allowance_gb to projects.yaml", exc_info=True)
+        self._mgr.settings.execution_limits.swap_allowance_gb = val
+        self._persist_project_settings("swap_allowance_gb")
 
     # ------------------------------------------------------------------
     # Job list display

@@ -326,7 +326,14 @@ class ExecutionManager:
         self._settings_save_lock = threading.Lock()
         self._jobs: list[ExecutionJob] = []
         self._next_id = 0
-        self._max_workers = max(1, (os.cpu_count() or 2) - 1)
+        # Seed max_workers: prefer the per-project value, fall back to the
+        # legacy global preference, finally to the dataclass default of 1.
+        if settings.max_workers > 0:
+            self._max_workers = max(1, settings.max_workers)
+        elif global_settings is not None and global_settings.max_workers > 0:
+            self._max_workers = max(1, global_settings.max_workers)
+        else:
+            self._max_workers = 1
         self._running_count = 0
         self._wind_down = False
         self._stopped = False
@@ -349,10 +356,10 @@ class ExecutionManager:
 
     @property
     def execution_limits(self):
+        """Return the active ExecutionLimits from ProjectSettings."""
         from flextool.gui.data_models import ExecutionLimits
-        if self._global_settings is None:
-            return ExecutionLimits()
-        return self._global_settings.execution_limits
+        proj = getattr(self.settings, "execution_limits", None)
+        return proj if proj is not None else ExecutionLimits()
 
     def set_global_settings(self, gs: GlobalSettings) -> None:
         self._global_settings = gs

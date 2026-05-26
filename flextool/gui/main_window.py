@@ -3607,10 +3607,9 @@ class MainWindow(tk.Tk):
             on_all_finished=self._on_all_jobs_finished,
             global_settings=self.global_settings,
         )
-        # Apply the persisted max-workers preference (from projects.yaml)
-        # so it takes effect even before the execution window is opened.
-        if self.global_settings.max_workers > 0:
-            self.execution_mgr.max_workers = self.global_settings.max_workers
+        # ExecutionManager seeds max_workers from ProjectSettings (with
+        # the legacy GlobalSettings.max_workers as fallback) in its
+        # constructor, so no extra apply step is needed here.
 
     def _open_or_raise_execution_window(self) -> None:
         """Open a new ExecutionWindow or raise an existing one."""

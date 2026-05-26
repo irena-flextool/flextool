@@ -109,6 +109,19 @@ class ProjectSettings:
     # next run gets a learned memory budget instead of the static auto fallback.
     scenario_resource_history: dict[str, ScenarioRun] = field(default_factory=dict)
 
+    # Per-project execution limits — primary source of truth for the
+    # execution manager.  Defaults match the conservative single-job
+    # profile the user prefers as a baseline (1 worker, 1 core, auto
+    # budget, 0.5 GB reserve, no swap).  GlobalSettings still carries
+    # the same fields as a legacy fallback; see ExecutionManager.
+    execution_limits: "ExecutionLimits" = field(
+        default_factory=lambda: ExecutionLimits()
+    )
+    # Last chosen "Max. parallel executions" for this project. 0 means
+    # "use the GlobalSettings fallback"; otherwise an explicit value
+    # honoured by ExecutionManager.
+    max_workers: int = 1
+
     # Transient flag (not persisted): set by execution manager when scenarios
     # finish, cleared by the result viewer when it picks up the changes.
     scenarios_changed: bool = field(default=False, repr=False)
@@ -118,13 +131,15 @@ class ProjectSettings:
 class ExecutionLimits:
     """Per-machine resource limits for FlexTool subprocess execution.
 
-    All fields are persisted in projects/projects.yaml under
-    ``execution_limits``. A value of 0 / 0.0 means "auto" (compute at
+    Primary storage is ``ProjectSettings.execution_limits`` (per-project
+    settings.yaml).  ``GlobalSettings.execution_limits`` is retained as a
+    legacy fallback for projects whose settings.yaml predates the
+    per-project field.  A value of 0 / 0.0 means "auto" (compute at
     dispatch time from system info).
     """
     max_cores_per_job: int = 1            # passed as --highs-threads to each subprocess
     memory_cap_per_job_gb: float = 0.0    # 0 = auto: (system_total - system_reserve_gb) / max_workers
-    system_reserve_gb: float = 4.0        # tier 4: leave at least this much free system RAM
+    system_reserve_gb: float = 0.5        # tier 4: leave at least this much free system RAM
     swap_allowance_gb: float = 0.0        # tier 4: 0 = no swap; >0 allowed but warns user
 
 
@@ -136,9 +151,13 @@ class GlobalSettings:
     exec_jobs_sash: int = 0  # saved Jobs/Progress sash position (0 = default)
     # cw at the time exec_jobs_sash was saved. 0 = unknown / use as-is.
     exec_jobs_layout_cw: int = 0
-    # Last chosen value for "Max. parallel executions" in the execution
-    # window. 0 means "not set yet" → use cpu_count() - 1.
+    # Legacy fallback for projects whose settings.yaml predates the
+    # per-project ``max_workers`` field.  0 means "not set yet".
     max_workers: int = 0
+    # Legacy fallback for projects whose settings.yaml predates the
+    # per-project ``execution_limits`` field.  ExecutionManager reads
+    # ProjectSettings first and only consults this when the project
+    # field is missing / empty.
     execution_limits: ExecutionLimits = field(default_factory=ExecutionLimits)
     font_size_pt: int = 10        # body / menu / heading base size
     code_font_size_pt: int = 0    # TkFixedFont (logs, code views); 0 = auto = body+2
