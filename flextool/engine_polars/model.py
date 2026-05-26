@@ -29,6 +29,7 @@ from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
 from ._axis_enums import alias_to_axis, cast_dim, rename_to_axis, lit_axis
+from ._solve_state import FlexToolConfigError
 from ._param_shapes import promote_param_to_dt
 from ._pdt_join import (
     compute_pss_dt,
@@ -625,6 +626,45 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # ``vq_state_up * block_step_duration`` (mod:2228-2229).
     nb_terms: dict = {"slack_up": vq_up * d.p_step_duration,
                       "slack_down": -vq_down * d.p_step_duration}
+
+    # Defensive contract assertion (v54 storage_binding_method single-valued).
+    # Phases 1-3 enforce single-valued storage_binding_method per node upstream
+    # (ingestion guard, DB migration, _emit_mid_sets assertion).  Here we
+    # additionally verify that the four storage_bind_* projections feeding
+    # nodeBalance_eq are PAIRWISE DISJOINT on the ``n`` column at the use site,
+    # so a future projection bug or a manual CSV insertion cannot silently
+    # solve the wrong LP by emitting two residuals for the same node.
+    _storage_bind_frames = [
+        ("bind_within_timeset", d.storage_bind_within_timeset),
+        ("bind_forward_only", d.storage_bind_forward_only),
+        ("bind_within_solve", d.storage_bind_within_solve),
+        ("bind_using_blended_weights", d.storage_bind_using_blended_weights),
+    ]
+    _storage_bind_active = [
+        (name, frame) for name, frame in _storage_bind_frames
+        if frame is not None and frame.height > 0
+    ]
+    for _i in range(len(_storage_bind_active)):
+        _name_i, _frame_i = _storage_bind_active[_i]
+        for _j in range(_i + 1, len(_storage_bind_active)):
+            _name_j, _frame_j = _storage_bind_active[_j]
+            _overlap = (_frame_i.select("n")
+                        .unique()
+                        .join(_frame_j.select("n").unique(), on="n", how="inner"))
+            if _overlap.height > 0:
+                _nodes = _overlap["n"].to_list()
+                _shown = _nodes[:10]
+                _suffix = ("" if len(_nodes) <= 10
+                           else f", ... {len(_nodes) - 10} more")
+                _node_list = ", ".join(str(n) for n in _shown) + _suffix
+                raise FlexToolConfigError(
+                    "storage_binding_method projections must be pairwise "
+                    "disjoint on node, but the following node(s) appear in "
+                    f"both '{_name_i}' and '{_name_j}': {_node_list}. "
+                    "Run the v54 DB migration (or later, via the v53->v54 "
+                    "migration step) and ensure each node has exactly one "
+                    "storage_binding_method value."
+                )
     if has_proc:
         nb_terms["sink_flow"] = Sum(
             Where(v_flow * d.p_unitsize, d.flow_to_n) * d.p_step_duration,
@@ -672,6 +712,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             nb_terms.update(_dc_power_flow.nodeBalance_back_flow_terms(
                 d, dc_pf_vars, d.p_unitsize, d.p_step_duration))
 
+    # Each node lands in exactly one storage_bind_* frame (v54 contract — see disjointness assertion above).
     if has_storage and d.storage_bind_within_timeset is not None:
         # nodeBalance with our sign convention puts +sink, -source on the
         # LHS and -inflow on the RHS, so the cycle-correct sign for the
