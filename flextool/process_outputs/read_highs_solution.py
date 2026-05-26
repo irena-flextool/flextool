@@ -262,11 +262,18 @@ def _resolve_inv_scale_the_objective(
 
 # Helper — every investment-constraint-dual entry uses the same scale to
 # undo ``scale_the_objective`` and writes its parquet under ``v_dual_<…>``.
-def _invest_dual(mps_name: str, col: str, output_suffix: str) -> VariableSpec:
+def _invest_dual(
+    mps_name: str,
+    col: str,
+    output_suffix: str,
+    *,
+    has_period: bool = True,
+) -> VariableSpec:
     return VariableSpec(
         name=mps_name,
         col_names=(col,),
         has_time=False,
+        has_period=has_period,
         source="row_dual",
         value_scale=_INV_SCALE_THE_OBJECTIVE,
         output_name=f"v_dual_{output_suffix}",
@@ -348,7 +355,11 @@ VARIABLE_SPECS: list[VariableSpec] = [
 
     # -- Investment-cap duals (period-only, simple 1/scale transform) -------
     _invest_dual("maxInvest_entity_period",          "entity", "maxInvest_period"),
-    _invest_dual("maxInvest_entity_total",           "entity", "maxInvest_total"),
+    # ``maxInvest_entity_total`` is emitted in ``model.py:2441-2449`` with
+    # ``over=e_inv_p`` carrying only ``(p,)`` — period is summed out inside
+    # ``Sum(over=("d",))``.  No period component in the constraint name.
+    _invest_dual("maxInvest_entity_total",           "entity", "maxInvest_total",
+                 has_period=False),
     _invest_dual("maxCumulative_capacity",           "entity", "maxCumulative"),
     _invest_dual("maxInvestGroup_entity_period",     "group",  "maxInvestGroup_period"),
     _invest_dual("maxInvestGroup_entity_total",      "group",  "maxInvestGroup_total"),
