@@ -1,75 +1,128 @@
-# IRENA FlexTool workflow shortly explained
+# IRENA FlexTool with Spine Toolbox
 
-IRENA FlexTool uses Spine Toolbox as a workflow and data manager. Open IRENA FlexTool with Spine Toolbox (Open project..., navigate to the IRENA FlexTool and choose Ok). In other words, the IRENA FlexTool repository contains a Spine Toolbox project (in '.spinetoolbox' folder). A regular user is supposed to only change data in the Input_data and Results data stores as well as to choose scenarios to be executed in the arrows leaving these data stores. It is also possible to create your own workflow from the components provided in the '.spinetoolbox/specifications' folder. First, create a new project (in a new, separate, folder) and then, using the '+ From file...' button in the Spine Toolbox toolbar, add the workflow components you want. In this way, you are free to modify the workflow without affecting the git-controlled workflow from the IRENA FlexTool repository (that is modified by the developers). Please note, that the new project will then be in a different folder than the tool specifications, which will remain in the IRENA FlexTool repository folder and can be updated through git.
+Spine Toolbox is the **alternative orchestration interface** for FlexTool. The primary
+interface is the standalone [FlexTool GUI](flextool_gui_interface.md); Spine Toolbox is the
+heavier path that wraps FlexTool as one node in a directed-acyclic-graph (DAG) workflow
+alongside other tools and data stores. Use it when the FlexTool run is part of a larger
+multi-tool pipeline.
 
-If you are using the **IRENA FlexTool browser-interface**, then you will not directly see the Spine Toolbox workflow, but the FlexTool web-server will be executing parts of the workflow in the background as you develop and run the model.
+See [Install with Spine Toolbox](install_toolbox.md) for installation and
+[Choosing an interface](interface_overview.md) for the side-by-side comparison with the
+FlexTool GUI and the terminal CLI.
+
+## When to choose Spine Toolbox
+
+- You are combining FlexTool with **other Spine-based models** in a single workflow.
+- You want a **DAG view** of pre-processing, FlexTool, and post-processing steps, with the
+  scenario filter visible on each connection.
+- You already use Spine Toolbox for other projects and would rather not run a second
+  orchestration GUI alongside it.
+- You want the workflow itself to be **version-controllable** as a `.spinetoolbox/`
+  project alongside your input data.
+
+For FlexTool-centric work (build scenarios, run them, inspect results in one place), the
+[FlexTool GUI](flextool_gui_interface.md) is the recommended choice instead.
+
+## Opening the FlexTool project in Toolbox
+
+The FlexTool repository ships a complete Spine Toolbox project under the `.spinetoolbox/`
+directory at the repo root. After installing FlexTool with the `[toolbox]` extra and
+launching `spinetoolbox`, use **File → Open project…** and select the **FlexTool root
+directory** (not a file inside it). Toolbox reads `.spinetoolbox/project.json` and
+reconstructs the workflow, item positions, and connections.
 
 ![Spine Toolbox showing the FlexTool workflow](./img/toolbox/flextool_toolbox_gui.png)
 
-The panel on the right shows the different `scenarios` that are available in the database. 
-The user can choose which scenarios will be processed by the workflow (until item ***Results***, 
-which combines the results into one database). Spine Toolbox can execute scenarios in parallel 
-(as long as using 'work directories' is defined in ***FlexTool*** item).
+The right-hand panel lists the scenarios discovered in the **Input data** database.
+Ticking scenarios there decides which ones run when you execute the workflow; Toolbox can
+execute several in parallel as long as the **FlexTool** item is configured to use work
+directories.
 
-***Input data*** workflow item points to a sqlite file that needs to have IRENA FlexTool data format 
-(that uses Spine Toolbox database definition). The template file has the right format and contains
-empty object classes corresponding to FlexTool data structure as well as parameters available 
-in each object class. Double clicking the ***Input data*** workflow item will open the database editor. 
-Just selecting the ***Input data*** workflow item allows one to change the file (make a copy of the 
-existing Input_data.sqlite using the file system of your OS and point to the copy).
+## The shipped workflow
 
-***Init*** workflow item points to a sqlite file with predefined data that showcases IRENA FlexTool 
-functionality. Some of the scenarios from there are used in the user guide. ***Initialize*** 
-copies the contents of the ***Init*** database to the ***Input data*** database. The scenario filter in the arrow after the ***Init*** database can be used to choose what data will be copied.
+The v4 workflow has been streamlined from the v3 layout: there is **no longer an
+`Export_to_csv` step**, because the v4 engine builds the LP in memory directly from the
+Spine database. CSV is now an optional output renderer, not a hand-off format inside the
+workflow.
 
-***Export_to_csv*** workflow item is a Spine Toolbox exporter that has been set to write csv files that IRENA FlexTool model code will read.
+The items that actually ship in `.spinetoolbox/project.json` are:
 
-***FlexTool*** workflow item contains a Python script that calls FlexTool model code for each solve 
-and passes data between these solves. FlexTool builds the LP in memory using polars + polar-high 
-and solves with HiGHS via the highspy Python bindings. The outputs are csv files.
+- **Input data** (Data Store) — the working `.sqlite` database that the FlexTool engine
+  reads from. Double-click to open it in the [Spine database editor](spine_database.md).
+  Replace the file (via the OS) or repoint the data store to use a different input
+  database.
+- **Examples** (Data Store) — the read-only `templates/examples.sqlite` shipped with the
+  repository. Holds the example scenarios used in the user guide.
+- **Replace with examples** (Merger) — copies selected example scenarios from
+  **Examples** into **Input data**. The scenario filter on the connection chooses which
+  ones are copied. This replaces the older `Init` / `Initialize` pair.
+- **Migrate database version** (Tool) — runs the `migrate_database` specification against
+  **Input data** to upgrade it to the current FlexTool DB schema version. Use it after
+  pulling a new FlexTool version.
+- **Excel input** (Data Connection) — points at a spreadsheet (`example_input.xlsx` by
+  default) for the spreadsheet-fed flow.
+- **Read input spreadsheet** (Tool) — runs the `Read tabular data` specification to import
+  the contents of **Excel input** into **Input data**. See
+  [Excel interface](excel_interface.md) for the file format.
+- **FlexTool location** (Data Connection) — small text file recording the path to the
+  FlexTool checkout; the **FlexTool** tool resolves its sources through it.
+- **FlexTool** (Tool) — the solve step. Runs `flextool/cli/cmd_run_flextool.py` (the same
+  module as the `flextool-run` console script) as a subprocess. Receives the **Input
+  data**, **Output info**, and **Output settings** database URLs as arguments.
+- **Output info** (Data Store) — `output_info.sqlite`, where the FlexTool run records
+  what it produced (scenario list, output locations).
+- **Output settings** (Data Store) — `output_settings.sqlite`, holding render-side
+  toggles consumed by **FlexTool** and **Re-create results**.
+- **Re-create results** (Tool) — runs the `Process outputs` specification to rebuild
+  CSV / Excel / plot renderings from the parquets without re-solving.
+- **Comparison settings** (Data Store) — `comparison_settings.sqlite`, configuration for
+  the scenario-comparison renderer.
+- **Scenario comparison** (Tool) — runs the `scenario comparison` specification to build
+  cross-scenario dispatch plots and summary tables from the parquets in **Output info**.
 
-***Import_results*** is a Spine Toolbox importer that takes the output csv files and writes them 
-in the Results database.
+## How FlexTool itself runs
 
-***Excel_input_data*** and ***Import_from_Excel*** allow users to use Excel as an interface for the input data. 
-They are optional parts of the workflow.
+The **FlexTool** workflow item is a Spine Toolbox `Tool` whose specification is a thin
+Python entry that calls `flextool/cli/cmd_run_flextool.py` — the same CLI command the
+FlexTool GUI and the `flextool-run` console script invoke. Once it starts, no Spine
+Toolbox code is in the loop:
 
-***To_Excel*** worfklow item will export most scenario results to a simple Excel file. One way to utilize 
-this is by creating another Excel file that draws figures from the result Excel file that is then updated by the workflow.
+- The engine reads inputs from the **Input data** Spine database via `SpineDBBackend`.
+- Per-solve preprocessing produces polars frames in memory.
+- `polar_high` assembles the LP and HiGHS solves it in-process through `highspy`.
+- Solutions are written to parquet under `output_parquet/<scenario>/`, and CSV / Excel /
+  PNG renderings are produced from those parquets on top.
 
-The browser interface of FlexTool also runs part of this same workflow 
-(***Export_to_csv*** --> ***FlexTool*** --> ***Import_results***). The server takes a copy of the workflow (inside the user_projects) 
-folder and uses Spine Toolbox to execute the scenarios.
+There is **no CSV hand-off** between the workflow and the engine. The CSV files in
+`solve_data/` only appear when `--debug --csv-dump` is passed, and they are not
+load-bearing for anything downstream. See [Architecture](dev/architecture.md) for the
+full data-flow diagram.
 
-More instructions for Spine Toolbox in [Toolbox User Guide](https://spine-toolbox.readthedocs.io/en/latest/?badge=latest).
+## Customising the workflow
 
-# Data structure in Spine databases
+To experiment with workflow changes without touching the git-controlled `.spinetoolbox/`
+in the FlexTool checkout, create a **new Toolbox project** in a separate folder, then use
+the toolbar's **+ From file…** button to add the specifications from
+`.spinetoolbox/specifications/` of your FlexTool checkout. The specifications stay in the
+FlexTool repository (and update with `git pull` / `update_flextool.py`), while the new
+project file lives wherever you put it.
 
-Spine databases use Entity-Attribute-Value with Classes and Relationships (EAV-CR). Entity classes define the categories of data. These can be one-dimensional object classes (e.g. `node` or `unit`) or multi-dimensional relationship classes formed from the object classes (e.g. `unit__node`). Spine Toolbox user can define these classes to suit their modelling needs. For FlexTool the entity classes have been pre-defined. Instead, FlexTool user needs to add the entity instances: objects and relationships that define the particular network structure to be modelled (e.g. *coal_plant* `unit` or *west* `node`). Furthermore, each entity class (object or relationship) can hold only parameters that have been defined for that particular class. Again, FlexTool user does not need to add the parameter types - the user should just add needed parameter values for the entities the user has created.
+## Limitations
 
-![EAV data structure](./img/toolbox/eav_cr.png)
+- The shipped workflow is tuned for the **Spine database editor** and the
+  **tabular import** flow. The Excel **export** previously offered as a `To_Excel` item is
+  not part of the v4 workflow; use the FlexTool GUI's Outputs table or
+  `flextool-export-to-tabular` instead.
+- The Spine Toolbox UI itself sees occasional minor graphical glitches on macOS; the
+  underlying FlexTool runs are unaffected.
 
-## Database editor in brief
+## See also
 
-Spine Toolbox database editor can be used to modify data and to build scenarios. 
-The figure below shows an example where parameter data from two `alternatives` 
-have been selected for display (in the data table). The object tree on the left 
-selects two `nodes` ('coal_market' and 'west') as well as one `unit` ('coal_plant'). 
-Consequently, one can use both whole classes and individual entities (members of the classes) as data filters.
-The results of this filter are visualized in the graph on top. The mouse pointer is showing a relationship 
-entity that connects the 'coal_plant' and its output `node` 'west'. The relationship 
-entity is defined in a relationship tree, which is not visible here.
-
-The `scenario` tree (on the right, below the `alternative` tree) shows that 
-the 'coal' `scenario` is formed by taking all data from the 'init' `alternative` 
-and then all data from the 'coal' `alternative`. If there would be same parameter 
-defined for both `scenarios`, then the latter `alternative` would overwrite 
-the first `alternative`.
-
-Whenever data is modified, the data is staged in separate database tables (although not directly visible to user). The changes will be applied only once the user `commits` the changes and leaves a commit message to indicate what has been done. The `commit` can be done with ctrl-enter or from the database editor menu (triple bar at top-right).
-
-The database editor menu has options for how to display the data: table view, different pivot views and a graph view. It also contains a tool to delete data (`purge`) and decrease database size by removing unused allocations (`vacuum`). You can also bring back dock windows that have been closed by the user. `History` will show the history of data changes based on the commits made by the user.
-
-![Database editor](./img/toolbox/database_editor.png)
-
-More on Spine Database editor in [Database Editor User Guide](https://spine-toolbox.readthedocs.io/en/latest/spine_db_editor/index.html).
+- [Install with Spine Toolbox](install_toolbox.md)
+- [Choosing an interface](interface_overview.md) — which interface to pick
+- [FlexTool GUI](flextool_gui_interface.md) — the primary interface
+- [Spine database](spine_database.md) — the SQLite input format
+- [Excel interface](excel_interface.md) — the parallel spreadsheet input flow
+- [Terminal CLI](terminal_workflow.md) — headless / CI usage
+- [Architecture](dev/architecture.md) — what runs under the hood
+- [Spine Toolbox User Guide](https://spine-toolbox.readthedocs.io/en/latest/?badge=latest)
