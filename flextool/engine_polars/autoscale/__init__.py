@@ -1,26 +1,48 @@
 """FlexTool LP autoscaler — public API surface.
 
-The autoscaler runs three layers around the polar-high ``Problem``:
+After Phase R2 the four-range Layer 1 detector and the HiGHS-native
+Layer 3 recommendation live in :mod:`polar_high.autoscale`.  FlexTool
+re-exports them here so the rest of the engine_polars code (and any
+external caller) sees a single stable surface.  Layer 2 (semantic
+per-quantity scaling, gated on ``ScalingMode.FULL``) stays FlexTool-side
+because it depends on FlexTool's parameter taxonomy.
 
-* **Layer 1 (detect):** read the four standard LP coefficient ranges
-  (Matrix / Cost / Bound / RHS) and decide whether the model needs
-  scaling at all.  Detection only — no LP modification.
-* **Layer 2 (semantic per-type scaling):** apply column scalers chosen
-  by ``QuantityType`` so each physical quantity (power, energy, price,
-  …) lives on its own well-conditioned magnitude.  Future phase.
-* **Layer 3 (HiGHS native + bound-scale escape):** set HiGHS'
-  ``user_bound_scale`` to neutralise residual range pressure on
-  variable and row bounds.  Future phase.
+Three layers, run around the polar-high ``Problem``:
 
-This module exposes only the names the rest of FlexTool needs to call.
-The leading-underscore submodules hold the implementation; their public
-names are re-exported here.
+* **Layer 1 (detect, polar-high):** read the four standard LP
+  coefficient ranges (Matrix / Cost / Bound / RHS) and decide whether
+  the model needs scaling at all.  Detection only — no LP modification.
+* **Layer 2 (semantic per-type scaling, FlexTool):** apply column
+  scalers chosen by ``QuantityType`` so each physical quantity (power,
+  energy, price, …) lives on its own well-conditioned magnitude.  Fires
+  only when ``mode == ScalingMode.FULL``.
+* **Layer 3 (HiGHS-native + bound-scale escape, polar-high):** set
+  ``user_bound_scale`` / ``user_objective_scale`` / ``simplex_scale_strategy``
+  to neutralise residual range pressure inside HiGHS.  Honours
+  precedence so a caller-set option survives.
 """
+from polar_high.autoscale import (
+    USER_SCALE_CLAMP_HI,
+    USER_SCALE_CLAMP_LO,
+    Layer3Plan,
+    RangeReport,
+    ScalingConfig,
+    ScalingMode,
+    apply_scaling,
+    detect_ranges,
+    get_explicit_option,
+    has_explicit_option,
+    mode_enables_layer1,
+    mode_enables_layer3,
+    ranges_from_arrays,
+    ranges_from_streamed,
+    recommend_scaling,
+)
+
 from ._config import (
-    AutoScaleConfig,
     USER_BOUND_SCALE_MAX,
     USER_BOUND_SCALE_MIN,
-    resolve_auto_scale_config,
+    resolve_scaling_config,
     resolve_user_bound_scale_override,
 )
 from ._layer2 import (
@@ -39,44 +61,44 @@ from ._layer2_types import (
     lookup_var,
     resolve_cstr_rhs_type,
 )
-from ._layer3 import Layer3Plan, apply_layer3, recommend_layer3
 from ._quantity_types import QuantityType, lookup, resolve_group_capacity_type
-from ._ranges import (
-    RangeReport,
-    compute_ranges,
-    ranges_from_arrays,
-    ranges_from_streamed,
-)
 from ._report import format_console_summary, format_nonoptimal_hint, write_report
 
 __all__ = [
-    "AutoScaleConfig",
     "CONSTRAINT_FAMILIES",
     "CstrFamily",
     "Layer2Plan",
     "Layer3Plan",
     "QuantityType",
     "RangeReport",
+    "ScalingConfig",
+    "ScalingMode",
     "USER_BOUND_SCALE_MAX",
     "USER_BOUND_SCALE_MIN",
+    "USER_SCALE_CLAMP_HI",
+    "USER_SCALE_CLAMP_LO",
     "VARIABLE_FAMILIES",
     "VarFamily",
     "apply_layer2",
-    "apply_layer3",
+    "apply_scaling",
     "bucket_coefficients",
     "choose_scale_powers",
-    "compute_ranges",
+    "detect_ranges",
     "format_console_summary",
     "format_nonoptimal_hint",
+    "get_explicit_option",
+    "has_explicit_option",
     "lookup",
     "lookup_cstr",
     "lookup_var",
+    "mode_enables_layer1",
+    "mode_enables_layer3",
     "ranges_from_arrays",
     "ranges_from_streamed",
-    "recommend_layer3",
-    "resolve_auto_scale_config",
+    "recommend_scaling",
     "resolve_cstr_rhs_type",
     "resolve_group_capacity_type",
+    "resolve_scaling_config",
     "resolve_user_bound_scale_override",
     "unscale_solution",
     "write_report",

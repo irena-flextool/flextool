@@ -7,7 +7,7 @@ exact regression scenario that motivated the whole stack
 
 What we assert:
 
-* **Bit-for-bit objective** — autoscale ON and autoscale OFF must
+* **Bit-for-bit objective** — scaling=full and scaling=solver_only must
   produce the *identical* float for ``step.obj``.  Layer 2 / Layer 3
   exponents are powers of two; Layer 3 uses HiGHS' own
   ``user_*_scale`` (internally unscaled on output), so any drift from
@@ -22,7 +22,7 @@ What we assert:
   ``1e-9`` tolerance.  These are populated only when
   ``keep_solutions=True`` keeps the live :class:`Solution` on the
   :class:`OrchestrationStep`.
-* **Parallel-mode regression check** — autoscale ON with HiGHS
+* **Parallel-mode regression check** — scaling=full with HiGHS
   ``threads=2`` must reach Optimal.  Pre-fix HEAD failed here with
   ``non-optimal for lt_rp`` because polar-high's stream-time
   ``user_bound_scale`` heuristic over-clamped under the parallel
@@ -70,14 +70,14 @@ def _run_chain(
     db_path: Path,
     work_folder: Path,
     *,
-    auto_scale: str,
+    scaling: str,
     highs_threads: int,
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Invoke ``run_chain_from_db`` under a controlled env.
 
-    The orchestration entry point reads the autoscale switch from
-    ``FLEXTOOL_AUTO_SCALE`` and the thread count from
+    The orchestration entry point reads the autoscale mode from
+    ``FLEXTOOL_SCALING`` and the thread count from
     ``FLEXTOOL_HIGHS_THREADS`` (see
     ``flextool/engine_polars/_orchestration.py`` — the CLI mirrors
     its parsed args into these env vars before calling here, so the
@@ -85,7 +85,7 @@ def _run_chain(
     required to retain :class:`Solution` on every step so we can read
     ``col_value`` / ``row_dual`` / ``col_dual`` directly.
     """
-    monkeypatch.setenv("FLEXTOOL_AUTO_SCALE", auto_scale)
+    monkeypatch.setenv("FLEXTOOL_SCALING", scaling)
     monkeypatch.setenv("FLEXTOOL_HIGHS_THREADS", str(highs_threads))
     # Make sure no stray user-bound override leaks in from a parent
     # process — Layer 3 must derive its own recommendation.
@@ -102,33 +102,40 @@ def _run_chain(
     )
 
 
-def test_h2_trade_autoscale_on_matches_off_bit_for_bit(
+def test_h2_trade_autoscale_full_matches_solver_only_bit_for_bit(
     h2_trade_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bit-for-bit objective + primal + dual match between ON and OFF.
+    """Bit-for-bit objective + primal + dual match between full and solver_only.
 
     With serial HiGHS (``--highs-threads 1``) both modes solve to
-    optimality from the same LP arrays (autoscale-ON mutates them
+    optimality from the same LP arrays (full mode mutates them
     deterministically via power-of-two factors that Layer 2 undoes
-    post-solve).  Therefore the objective, the column values, and the
-    row / column duals must agree to within numerical roundoff — we
-    use ``1e-9`` absolute so the test fails loudly if any future
-    change inadvertently introduces non-power-of-two scaling.
+    post-solve, while solver_only mode skips Layer 1/2/3 but keeps
+    HiGHS' internal equilibration on).  Therefore the objective, the
+    column values, and the row / column duals must agree to within
+    numerical roundoff — we use ``1e-9`` absolute so the test fails
+    loudly if any future change inadvertently introduces non-power-of-two
+    scaling.
+
+    We do NOT compare against ``--scaling=off`` here — that mode forces
+    ``simplex_scale_strategy=0`` and HiGHS solves a numerically different
+    LP (no internal matrix equilibration), so an exact match is not
+    guaranteed.
     """
-    on_work = tmp_path / "on"
-    off_work = tmp_path / "off"
+    on_work = tmp_path / "full"
+    off_work = tmp_path / "solver_only"
 
     steps_on = _run_chain(
         h2_trade_db, on_work,
-        auto_scale="on", highs_threads=1, monkeypatch=monkeypatch,
+        scaling="full", highs_threads=1, monkeypatch=monkeypatch,
     )
     steps_off = _run_chain(
         h2_trade_db, off_work,
-        auto_scale="off", highs_threads=1, monkeypatch=monkeypatch,
+        scaling="solver_only", highs_threads=1, monkeypatch=monkeypatch,
     )
 
     assert set(steps_on) == set(steps_off), (
-        "autoscale ON / OFF produced different sub-solve sets: "
+        "scaling full / solver_only produced different sub-solve sets: "
         f"on={list(steps_on)} off={list(steps_off)}"
     )
 
@@ -137,12 +144,12 @@ def test_h2_trade_autoscale_on_matches_off_bit_for_bit(
         s_off = steps_off[solve_name]
         # Status: both must be Optimal.
         assert s_on.optimal is True, (
-            f"autoscale ON sub-solve {solve_name!r} not optimal "
+            f"scaling=full sub-solve {solve_name!r} not optimal "
             f"(obj={s_on.obj!r}).  The autoscaler must not introduce "
             "an infeasibility on a well-conditioned baseline."
         )
         assert s_off.optimal is True, (
-            f"autoscale OFF sub-solve {solve_name!r} not optimal "
+            f"scaling=solver_only sub-solve {solve_name!r} not optimal "
             f"(obj={s_off.obj!r}).  Pre-Layer-3, serial-mode HiGHS "
             "should still solve the H2_trade LP — if this fails, the "
             "baseline itself has regressed."
@@ -172,7 +179,7 @@ def test_h2_trade_autoscale_on_matches_off_bit_for_bit(
             sol_on.col_value, sol_off.col_value, atol=1e-9, rtol=0.0,
             err_msg=(
                 f"sub-solve {solve_name!r}: primal column values "
-                "differ by more than 1e-9 between autoscale ON / OFF."
+                "differ by more than 1e-9 between scaling full / solver_only."
             ),
         )
         # Duals: row_dual and col_dual.
@@ -180,14 +187,14 @@ def test_h2_trade_autoscale_on_matches_off_bit_for_bit(
             sol_on.row_dual, sol_off.row_dual, atol=1e-9, rtol=0.0,
             err_msg=(
                 f"sub-solve {solve_name!r}: row duals differ by more "
-                "than 1e-9 between autoscale ON / OFF."
+                "than 1e-9 between scaling full / solver_only."
             ),
         )
         np.testing.assert_allclose(
             sol_on.col_dual, sol_off.col_dual, atol=1e-9, rtol=0.0,
             err_msg=(
                 f"sub-solve {solve_name!r}: reduced-cost duals differ "
-                "by more than 1e-9 between autoscale ON / OFF."
+                "by more than 1e-9 between scaling full / solver_only."
             ),
         )
 
@@ -211,12 +218,12 @@ def test_h2_trade_autoscale_on_parallel_mode_reaches_optimal(
     work = tmp_path / "parallel"
     steps = _run_chain(
         h2_trade_db, work,
-        auto_scale="on", highs_threads=2, monkeypatch=monkeypatch,
+        scaling="full", highs_threads=2, monkeypatch=monkeypatch,
     )
     assert steps, "no orchestration steps produced — cascade aborted"
     for solve_name, step in steps.items():
         assert step.optimal is True, (
-            f"sub-solve {solve_name!r}: not optimal under autoscale ON "
+            f"sub-solve {solve_name!r}: not optimal under scaling=full "
             f"+ threads=2 (obj={step.obj!r}).  This is the original H2_trade "
             "regression — pre-fix HEAD failed identically here.  The "
             "autoscaler exists so that this case solves; a failure means "

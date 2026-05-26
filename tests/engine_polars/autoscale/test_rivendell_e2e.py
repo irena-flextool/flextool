@@ -59,11 +59,11 @@ def _run_chain(
     db_path: Path,
     work_folder: Path,
     *,
-    auto_scale: str,
+    scaling: str,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Invoke the cascade under the requested autoscale mode."""
-    monkeypatch.setenv("FLEXTOOL_AUTO_SCALE", auto_scale)
+    """Invoke the cascade under the requested ``--scaling`` mode."""
+    monkeypatch.setenv("FLEXTOOL_SCALING", scaling)
     monkeypatch.setenv("FLEXTOOL_HIGHS_THREADS", "1")
     monkeypatch.delenv("FLEXTOOL_USER_BOUND_SCALE", raising=False)
 
@@ -116,7 +116,7 @@ def test_rivendell_s17_autoscale_no_aggressive_clamp(
     """
     work = tmp_path / "on"
     steps = _run_chain(
-        rivendell_db, work, auto_scale="on", monkeypatch=monkeypatch,
+        rivendell_db, work, scaling="full", monkeypatch=monkeypatch,
     )
     assert steps, "no orchestration steps produced — cascade aborted"
 
@@ -149,27 +149,33 @@ def test_rivendell_s17_autoscale_no_aggressive_clamp(
 def test_rivendell_s17_objective_bit_for_bit(
     rivendell_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Objective must match between autoscale ON and OFF.
+    """Objective must match between ``--scaling=full`` and ``--scaling=solver_only``.
 
-    Layer 2 / Layer 3 use power-of-two factors and HiGHS unscales its
-    internal solution back out before reporting ``obj``, so the two
+    Both modes leave HiGHS' internal matrix equilibration on (the only
+    difference is whether Layer 1/2/3 fire), so HiGHS unscales the
+    internal solution back out before reporting ``obj`` and the two
     paths must agree byte-for-byte.  This catches the failure mode
     where Layer 3 silently introduces a non-power-of-two factor (e.g.
     if a future refactor swaps the exponent rounding for a ``log10``
     that happens to land on an integer for some scenarios).
+
+    We do NOT compare against ``--scaling=off`` here — that mode forces
+    ``simplex_scale_strategy=0`` and HiGHS will solve a numerically
+    different LP (the no-matrix-equilibration path), so an exact match
+    is not guaranteed.
     """
-    on_work = tmp_path / "on"
-    off_work = tmp_path / "off"
+    on_work = tmp_path / "full"
+    off_work = tmp_path / "solver_only"
     steps_on = _run_chain(
-        rivendell_db, on_work, auto_scale="on", monkeypatch=monkeypatch,
+        rivendell_db, on_work, scaling="full", monkeypatch=monkeypatch,
     )
     steps_off = _run_chain(
-        rivendell_db, off_work, auto_scale="off", monkeypatch=monkeypatch,
+        rivendell_db, off_work, scaling="solver_only", monkeypatch=monkeypatch,
     )
 
     assert set(steps_on) == set(steps_off), (
-        f"autoscale ON / OFF produced different sub-solve sets: "
-        f"on={list(steps_on)} off={list(steps_off)}"
+        f"--scaling=full / solver_only produced different sub-solve sets: "
+        f"full={list(steps_on)} solver_only={list(steps_off)}"
     )
 
     for solve_name in steps_on:

@@ -173,8 +173,8 @@ def test_layer2_lp_bit_for_bit_roundtrip(register_test_families):
 
     # Layer-2 solve.
     pb = _build_wide_lp()
-    from flextool.engine_polars.autoscale import AutoScaleConfig
-    plan = apply_layer2(pb, AutoScaleConfig())
+    from flextool.engine_polars.autoscale import ScalingConfig
+    plan = apply_layer2(pb, ScalingConfig())
     # Verify power-of-two factors are exact (no fractional bits).
     for f in plan.col_factors:
         assert math.log2(f).is_integer(), f"col_factor {f} not a power of 2"
@@ -246,8 +246,8 @@ def test_layer2_mip_preserves_integrality(register_test_families):
     raw = _solve_and_collect(_build_mip())
 
     pb = _build_mip()
-    from flextool.engine_polars.autoscale import AutoScaleConfig
-    plan = apply_layer2(pb, AutoScaleConfig())
+    from flextool.engine_polars.autoscale import ScalingConfig
+    plan = apply_layer2(pb, ScalingConfig())
 
     # The integer column must not have been column-scaled.
     integer_cols = list(plan.skipped_integer_cols)

@@ -12,9 +12,9 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
+from polar_high.autoscale import Layer3Plan, RangeReport
+
 from ._layer2 import Layer2Plan
-from ._layer3 import Layer3Plan
-from ._ranges import RangeReport
 
 
 def _decades(span: tuple[float, float]) -> Any:
@@ -313,8 +313,8 @@ def format_nonoptimal_hint(ranges_pre: RangeReport) -> str:
         "(set unitsize so quantity/unitsize <= 1e+6)\n"
         "  - Re-run with --highs-threads 1 to bypass parallel-mode "
         "brittleness\n"
-        "  - Re-run with --auto-scale=off if you suspect the autoscaler "
-        "interferes"
+        "  - Re-run with --scaling=solver_only if you suspect the "
+        "autoscaler interferes (HiGHS' internal scaling still runs)"
     )
 
 

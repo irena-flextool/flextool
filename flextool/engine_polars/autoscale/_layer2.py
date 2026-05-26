@@ -62,7 +62,7 @@ user units.
 For a workflow that writes MPS and passes it to a third-party solver,
 the safe defaults are either:
 
-1. Run with ``--auto-scale=off`` so the exported MPS reflects the
+1. Run with ``--scaling=basic`` or ``--scaling=solver_only`` so the exported MPS reflects the
    unscaled problem, or
 2. Read the per-type exponents from the autoscale YAML report and apply
    the inverse transform to the external solver's solution.
@@ -81,7 +81,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
-from ._config import AutoScaleConfig
+from ._config import ScalingConfig
 from ._layer2_types import (
     CONSTRAINT_FAMILIES,
     VarFamily,
@@ -447,7 +447,7 @@ def _rewrite_obj_term_lazy(
 
 def apply_layer2(
     problem: Any,
-    config: AutoScaleConfig,
+    config: ScalingConfig,
 ) -> Layer2Plan:
     """Apply Layer 2 to ``problem`` in place.
 

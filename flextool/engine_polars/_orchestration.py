@@ -68,15 +68,18 @@ from flextool.engine_polars.autoscale import (
     Layer2Plan as _AutoscaleLayer2Plan,
     Layer3Plan as _AutoscaleLayer3Plan,
     RangeReport as _AutoscaleRangeReport,
+    ScalingMode as _AutoscaleScalingMode,
     USER_BOUND_SCALE_MAX as _USER_BOUND_SCALE_MAX,
     USER_BOUND_SCALE_MIN as _USER_BOUND_SCALE_MIN,
     apply_layer2 as _autoscale_apply_layer2,
-    apply_layer3 as _autoscale_apply_layer3,
-    compute_ranges as _autoscale_compute_ranges,
+    apply_scaling as _autoscale_apply_scaling,
+    detect_ranges as _autoscale_compute_ranges,
     format_console_summary as _autoscale_format_console_summary,
     format_nonoptimal_hint as _autoscale_format_nonoptimal_hint,
-    recommend_layer3 as _autoscale_recommend_layer3,
-    resolve_auto_scale_config as _autoscale_resolve_config,
+    mode_enables_layer1 as _autoscale_mode_enables_layer1,
+    mode_enables_layer3 as _autoscale_mode_enables_layer3,
+    recommend_scaling as _autoscale_recommend_scaling,
+    resolve_scaling_config as _autoscale_resolve_config,
     resolve_user_bound_scale_override as _resolve_user_bound_scale_override,
     unscale_solution as _autoscale_unscale_solution,
     write_report as _autoscale_write_report,
@@ -129,34 +132,45 @@ def _resolve_effective_obj_scale(user_value: object | None) -> float:
 def _baseline_highs_options(
     *,
     user_bound_scale_override: int | None = None,
+    scaling_mode: "_AutoscaleScalingMode | None" = None,
 ) -> dict[str, object]:
     """Build the base HiGHS solver-option dict (determinism + matrix scale).
 
     Replaces the retired ``scaling.recommended_highs_options`` helper.
     Sets:
 
-    * :data:`SIMPLEX_SCALE_STRATEGY_ADVANCED` — Curtis-Reid matrix
-      equilibration.  Layer 3's :func:`apply_layer3` will *re-assert* this
-      value when it merges its own options on top, so this is the
-      authoritative source on the warm-rebuild path (which does not run
-      Layer 3) and a redundant-but-consistent pin on the cold path.
+    * ``simplex_scale_strategy`` — defaults to
+      :data:`SIMPLEX_SCALE_STRATEGY_ADVANCED` (Curtis-Reid matrix
+      equilibration).  When ``scaling_mode == ScalingMode.OFF`` we force
+      ``simplex_scale_strategy=0`` so HiGHS' own equilibration is also
+      disabled — that's the only mode in which FlexTool touches the
+      HiGHS-internal scaling knob.  Layer 3's :func:`apply_scaling` may
+      re-assert this value on the cold path; on warm rebuilds the value
+      set here is the authoritative one.
     * :data:`DETERMINISM_OPTIONS` — ``random_seed`` / ``parallel`` /
       ``solver`` / ``presolve`` pins for byte-deterministic LP solutions.
     * ``user_bound_scale`` — only when ``user_bound_scale_override`` is
       a non-zero integer (CLI ``--user-bound-scale N`` / DB
       ``solve.user_bound_scale``).  Clamped to the HiGHS-safe range
       ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.  When unset, the
-      autoscaler's Layer 3 may still emit its own value based on
-      post-Layer-2 ranges; if neither sets it, polar-high's stream-time
-      auto-pick (``Problem(auto_user_bound_scale=True)``) takes over.
+      autoscaler's Layer 3 may still emit its own value based on the
+      coefficient ranges.
 
     ``user_cost_scale`` is intentionally NOT set — costs are already
     multiplied by ``scale_the_objective`` inside ``build_flextool``, and
     Layer 3 may add ``user_objective_scale`` on top; layering a third
     cost-side knob would compound confusingly.
     """
+    if scaling_mode is _AutoscaleScalingMode.OFF:
+        # OFF mode: disable HiGHS' internal equilibration too.  ``parallel``
+        # / ``random_seed`` / ``solver`` / ``presolve`` pins from
+        # DETERMINISM_OPTIONS still apply — OFF is about scaling, not
+        # determinism.
+        simplex_scale = 0
+    else:
+        simplex_scale = SIMPLEX_SCALE_STRATEGY_ADVANCED
     options: dict[str, object] = {
-        "simplex_scale_strategy": SIMPLEX_SCALE_STRATEGY_ADVANCED,
+        "simplex_scale_strategy": simplex_scale,
         **DETERMINISM_OPTIONS,
     }
     if user_bound_scale_override is not None and user_bound_scale_override != 0:
@@ -194,15 +208,15 @@ def _autoscale_emit_layer1(
     debug-level note rather than breaking the solve.
     """
     # ``cli_args=None`` is intentional: the CLI surface
-    # (``cmd_run_flextool``) mirrors ``--auto-scale`` /
-    # ``--user-bound-scale`` into the ``FLEXTOOL_AUTO_SCALE`` /
+    # (``cmd_run_flextool``) mirrors ``--scaling`` /
+    # ``--user-bound-scale`` into the ``FLEXTOOL_SCALING`` /
     # ``FLEXTOOL_USER_BOUND_SCALE`` env vars before invoking the
     # orchestrator, matching the existing env-threading convention
     # documented on the ``run_chain_from_db`` call site.  Cascade-
     # internal hops therefore observe operator intent without
     # plumbing the parsed ``args`` namespace through every helper.
     cfg = _autoscale_resolve_config(None)
-    if not cfg.enabled:
+    if not _autoscale_mode_enables_layer1(cfg.mode):
         return
     if sol is None:
         return
@@ -287,12 +301,13 @@ def _autoscale_apply_layer3_pre_solve(
 
     Layer 2's mutation of the LP arrays is the same the polar-high
     streaming solve sees — Layer 3 just picks exponents from those
-    arrays.  The HiGHS options it sets *override* polar-high's
-    stream-time ``auto_user_bound_scale`` heuristic (polar-high's gate
-    is "caller has NOT set ``user_bound_scale``").
+    arrays.  Precedence-respect: when the caller (highs.opt file,
+    ``set_solver_options`` from elsewhere) has already set
+    ``user_bound_scale`` or ``user_objective_scale``, Layer 3 skips that
+    axis and the caller's value wins.
     """
     cfg = _autoscale_resolve_config(None)
-    if not cfg.enabled:
+    if not _autoscale_mode_enables_layer3(cfg.mode):
         return None
     try:
         ranges_post_l2 = _autoscale_compute_ranges(pb, cfg)
@@ -304,7 +319,7 @@ def _autoscale_apply_layer3_pre_solve(
         )
         return None
     try:
-        plan = _autoscale_recommend_layer3(ranges_post_l2, cfg)
+        plan = _autoscale_recommend_scaling(ranges_post_l2, cfg, problem=pb)
     except Exception:  # pragma: no cover
         logger.exception(
             "autoscale Layer 3 recommendation failed for %s; "
@@ -313,7 +328,7 @@ def _autoscale_apply_layer3_pre_solve(
         )
         return None
     try:
-        _autoscale_apply_layer3(pb, plan)
+        _autoscale_apply_scaling(pb, plan)
     except Exception:  # pragma: no cover
         logger.exception(
             "autoscale Layer 3 option apply failed for %s; HiGHS "
@@ -366,7 +381,11 @@ def _autoscale_apply_layer2_pre_solve(
     LP that HiGHS actually saw.
     """
     cfg = _autoscale_resolve_config(None)
-    if not cfg.enabled:
+    # Layer 2 is FlexTool-side semantic per-quantity scaling: only fires
+    # in ``ScalingMode.FULL``.  In ``BASIC`` we still want Layer 1's
+    # pre-solve ranges to be available for the console summary, so we
+    # compute them when Layer 3 is enabled too.
+    if not _autoscale_mode_enables_layer1(cfg.mode):
         return None, None
     try:
         ranges_pre = _autoscale_compute_ranges(pb, cfg)
@@ -377,6 +396,10 @@ def _autoscale_apply_layer2_pre_solve(
             solve_name,
         )
         return None, None
+    if cfg.mode is not _AutoscaleScalingMode.FULL:
+        # BASIC mode: skip Layer 2's LP-array mutation but still report
+        # the pre-solve ranges so Layer 3 / the console summary see them.
+        return None, ranges_pre
     if not ranges_pre.trigger:
         return None, ranges_pre
     try:
@@ -420,7 +443,7 @@ def _autoscale_emit_console_summary(
     is enabled.
     """
     cfg = _autoscale_resolve_config(None)
-    if not cfg.enabled:
+    if not _autoscale_mode_enables_layer1(cfg.mode):
         return
     if ranges_pre is None:
         return
@@ -1546,11 +1569,9 @@ def _drive_cascade(
             # ``user_bound_scale`` resolution priority:
             # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by
             # ``--user-bound-scale`` CLI flag) > DB ``solve.user_bound_scale``
-            # > autoscale Layer 3's automatic recommendation (off the
-            # post-Layer-2 ranges) > polar-high's stream-time auto-pick
-            # (the cold Problem is built with ``auto_user_bound_scale=True``)
-            # > HiGHS' own internal scaling.  HiGHS' "Consider setting
-            # the user_bound_scale option to <N>" warning still prints a
+            # > autoscale Layer 3's automatic recommendation > HiGHS'
+            # own internal scaling.  HiGHS' "Consider setting the
+            # user_bound_scale option to <N>" warning still prints a
             # value if any case slips through Layer 3; pass it via
             # ``--user-bound-scale``.
             _cli_ubs = os.environ.get("FLEXTOOL_USER_BOUND_SCALE")
@@ -1558,6 +1579,12 @@ def _drive_cascade(
                 _cli_ubs if _cli_ubs is not None
                 else state.solve.user_bound_scale.get(complete_solve_name)
             )
+            # Resolve the autoscaler's mode once for this sub-solve so the
+            # baseline-options builder, the cold/warm LP construction, and
+            # the Layer 2 / Layer 3 helpers all see the same value.  Cascade-
+            # internal call sites read ``FLEXTOOL_SCALING`` from env.
+            _scaling_cfg = _autoscale_resolve_config(None)
+            _scaling_mode = _scaling_cfg.mode
 
             # HiGHS solver options.  ``simplex_scale_strategy`` =
             # advanced (Curtis-Reid) is always-on; ``user_bound_scale``
@@ -1676,6 +1703,7 @@ def _drive_cascade(
                     highs_options = _finalise_highs_options(
                         _baseline_highs_options(
                             user_bound_scale_override=user_bound_scale_override,
+                            scaling_mode=_scaling_mode,
                         )
                     )
                     inner_pb.set_solver_options(highs_options)
@@ -1695,7 +1723,7 @@ def _drive_cascade(
                 self._prior_data = data
                 self._prior_fp = fp
             else:
-                pb = Problem(auto_user_bound_scale=True)
+                pb = Problem()
                 build_flextool(pb, data, scale_the_objective=effective_obj_scale)
                 if _memrec_local is not None and _emit_phase:
                     _memrec_local.checkpoint(
@@ -1709,6 +1737,7 @@ def _drive_cascade(
                 highs_options = _finalise_highs_options(
                     _baseline_highs_options(
                         user_bound_scale_override=user_bound_scale_override,
+                        scaling_mode=_scaling_mode,
                     )
                 )
                 pb.set_solver_options(highs_options)
@@ -2545,19 +2574,25 @@ def run_single_solve_from_db(
         else sc.user_bound_scale.get(scenario_name)
     )
 
+    # Resolve the autoscaler's mode once so the baseline options and the
+    # Layer 2 / Layer 3 helpers all see the same value.
+    _scaling_cfg = _autoscale_resolve_config(None)
+    _scaling_mode = _scaling_cfg.mode
+
     _t0 = _time.perf_counter()
-    problem = Problem(auto_user_bound_scale=True)
+    problem = Problem()
     build_flextool(problem, flex_data, scale_the_objective=effective_obj_scale)
     print(f"Input: LP build: {_time.perf_counter() - _t0:.3f}s")
 
-    # Baseline HiGHS solver options — Curtis-Reid simplex scale, the
-    # determinism pin, and an explicit ``user_bound_scale`` only when
-    # the operator supplied one (CLI / DB).  Layer 3's
-    # :func:`apply_layer3` will merge ``user_objective_scale``,
+    # Baseline HiGHS solver options — Curtis-Reid simplex scale (forced
+    # to 0 in --scaling=off), the determinism pin, and an explicit
+    # ``user_bound_scale`` only when the operator supplied one (CLI / DB).
+    # Layer 3's :func:`apply_scaling` will merge ``user_objective_scale``,
     # ``user_bound_scale`` (when it auto-recommends), and re-assert
     # ``simplex_scale_strategy`` on top of this base.
     highs_options = _baseline_highs_options(
         user_bound_scale_override=user_bound_scale_override,
+        scaling_mode=_scaling_mode,
     )
     # ``FLEXTOOL_HIGHS_PRESOLVE`` env var (set by --presolve CLI flag)
     # overrides DETERMINISM_OPTIONS' baked-in ``presolve = "on"``.

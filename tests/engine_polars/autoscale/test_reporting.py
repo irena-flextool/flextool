@@ -184,7 +184,7 @@ def test_nonoptimal_hint_triggered() -> None:
     assert re.search(r"Cost spans \d+\.\d decades", hint)
     assert "Check unit conventions" in hint
     assert "--highs-threads 1" in hint
-    assert "--auto-scale=off" in hint
+    assert "--scaling=solver_only" in hint
 
 
 def test_nonoptimal_hint_not_triggered_when_well_scaled() -> None:

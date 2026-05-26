@@ -1,7 +1,7 @@
 """Layer 1 (detect) self-test.
 
 Constructs a small LP with hand-picked coefficient magnitudes spanning
-twelve decades and verifies that :func:`compute_ranges` recovers the
+twelve decades and verifies that :func:`detect_ranges` recovers the
 four ranges plus the cross-group ratio, and that ``trigger`` flips at
 the documented 9-decade threshold.
 
@@ -10,11 +10,15 @@ The LP is built three ways to exercise every Layer 1 entry point:
 * :func:`ranges_from_arrays` — the low-level kernel.
 * :func:`ranges_from_streamed` — the polar-high ``Solution`` adapter,
   fed a synthetic dict mirroring ``Solution.streamed_lp_ranges``.
-* :func:`compute_ranges` end-to-end on a small polar-high ``Problem``
+* :func:`detect_ranges` end-to-end on a small polar-high ``Problem``
   (pre-solve, exercising the ``_build_lp_arrays`` fallback path).
 
 The three reports must agree bit-for-bit — same magnitude reduction,
 same trigger.
+
+After Phase R2 these symbols live in :mod:`polar_high.autoscale` and
+are re-exported by FlexTool's ``autoscale`` package; this test imports
+through the FlexTool surface to verify the re-export contract.
 """
 from __future__ import annotations
 
@@ -25,17 +29,18 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars.autoscale import (
-    AutoScaleConfig,
     RangeReport,
-    compute_ranges,
+    ScalingConfig,
+    ScalingMode,
+    detect_ranges,
     ranges_from_arrays,
     ranges_from_streamed,
 )
 
 
-def _config(threshold: float = 9.0) -> AutoScaleConfig:
-    return AutoScaleConfig(
-        enabled=True,
+def _config(threshold: float = 9.0) -> ScalingConfig:
+    return ScalingConfig(
+        mode=ScalingMode.FULL,
         threshold_decades=threshold,
         user_bound_scale=None,
         report_yaml_path=None,
@@ -167,7 +172,7 @@ def test_threshold_decades_controls_trigger() -> None:
     assert doesnt.trigger is False
 
 
-def test_compute_ranges_on_polar_high_problem() -> None:
+def test_detect_ranges_on_polar_high_problem() -> None:
     """End-to-end: build a tiny ``polar_high.Problem``, run Layer 1's
     pre-solve fallback path, and verify the four ranges + trigger.
 
@@ -209,7 +214,7 @@ def test_compute_ranges_on_polar_high_problem() -> None:
         rhs_terms={"k": 10.0},
     )
 
-    report = compute_ranges(pb, _config())
+    report = detect_ranges(pb, _config())
     assert report.matrix == pytest.approx((1e-6, 1e6))
     assert report.cost == pytest.approx((1e-3, 1e2))
     assert report.bound == pytest.approx((2.0, 5e4))
@@ -218,8 +223,8 @@ def test_compute_ranges_on_polar_high_problem() -> None:
     assert report.trigger is True
 
 
-def test_compute_ranges_rejects_unrecognised_input() -> None:
+def test_detect_ranges_rejects_unrecognised_input() -> None:
     """Passing something that's neither a Problem nor a Solution must
     raise — silently degrading would hide wiring bugs."""
     with pytest.raises(TypeError):
-        compute_ranges(object(), _config())
+        detect_ranges(object(), _config())
