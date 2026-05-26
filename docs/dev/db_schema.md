@@ -30,7 +30,7 @@ this file. The GUI's parameter-group picker (see
 used in the Excel layer) reads its categorisation from here.
 
 The current target version is the integer constant `FLEXTOOL_DB_VERSION`
-in [`flextool/update_flextool/__init__.py`](https://github.com/irena-flextool/flextool/blob/master/flextool/update_flextool/__init__.py).
+in [`flextool/update_flextool/__init__.py`](https://github.com/irena-flextool/flextool/blob/main/flextool/update_flextool/__init__.py).
 The same constant is read at write time by
 `flextool/process_inputs/write_to_input_db.py`, so the schema version a
 fresh write announces matches the migration target.
@@ -106,7 +106,7 @@ the v4 single-`node_type` convention takes hold.
 flextool-migrate-database path/to/input_data.sqlite
 ```
 
-Implemented in [`flextool/cli/cmd_migrate_database.py`](https://github.com/irena-flextool/flextool/blob/master/flextool/cli/cmd_migrate_database.py).
+Implemented in [`flextool/cli/cmd_migrate_database.py`](https://github.com/irena-flextool/flextool/blob/main/flextool/cli/cmd_migrate_database.py).
 Runs the migration chain idempotently against the given SQLite file.
 Re-running on an already-current DB is safe — every step is a no-op.
 
@@ -123,7 +123,7 @@ database from a JSON template (defaults to
 ## `update_flextool` / `self_update.py`
 
 The user-facing updater is implemented in
-[`flextool/update_flextool/self_update.py`](https://github.com/irena-flextool/flextool/blob/master/flextool/update_flextool/self_update.py).
+[`flextool/update_flextool/self_update.py`](https://github.com/irena-flextool/flextool/blob/main/flextool/update_flextool/self_update.py).
 On each run it:
 
 1. `git pull` the FlexTool source tree
