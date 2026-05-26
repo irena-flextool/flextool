@@ -1651,31 +1651,27 @@ def write_v_dual_reserve_balance(
         f"v_dual_reserve__upDown__group__period__t__{solve_name}.parquet"
     )
 
-    # reserveBalance_timeseries_eq indices: r, ud, g, r_m, d, t (6).
-    # Include ``r_m`` (method) in col_names then drop it after extraction.
+    # reserveBalance_timeseries_eq indices: r, ud, g, d, t (5).  The
+    # method is implicit in the constraint name prefix — there is no
+    # ``r_m`` column inside the brackets.  Sibling constraints
+    # ``reserveBalance_dynamic_eq`` / ``reserveBalance_*_n_1_eq`` carry
+    # the same (r, ud, g, d, t) axes; the ``max() over methods`` combine
+    # documented above is a future extension.
     df = extract_variable(
         h, "reserveBalance_timeseries_eq",
-        ("reserve", "updown", "node_group", "method"),
+        ("reserve", "updown", "node_group"),
         solve_name=solve_name, has_time=True, source="row_dual",
         realized_dispatch_csv=realized_dispatch_csv,
         flex_data=flex_data,
     )
 
     if df.empty:
-        write_lean_parquet(df.droplevel("method", axis=1) if "method" in (df.columns.names or []) else df, out_path)
+        write_lean_parquet(df, out_path)
         _logger.debug(
             "Wrote v_dual_reserve_balance for solve '%s' → %s (empty)",
             solve_name, out_path,
         )
         return out_path
-
-    # Drop ``method`` level — phase 3 CSV has only
-    # (reserve, updown, node_group).  Each (r, ud, g) typically has at
-    # most one active method in the MPS, so the sum equals the single
-    # non-zero dual.
-    df = (
-        df.T.groupby(level=["reserve", "updown", "node_group"]).sum().T
-    )
 
     # Apply × period_share / inflation per period.
     inflation = _load_inflation_factor(wf, flex_data=flex_data)
