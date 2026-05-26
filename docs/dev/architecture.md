@@ -163,7 +163,9 @@ tests/                             Test suite (single root):
                                        test data; sqlite DBs are built on
                                        demand
   tests/scenarios.yaml + tests/expected/  — the scenario integration suite
-  tests/conftest.py                  — shared fixtures (scenario_workdir, ...)
+  tests/conftest.py                  — shared top-level fixtures
+  tests/engine_polars/conftest.py    — engine-internal fixtures
+                                       (scenario_workdir, ...)
 
 execution_tests/                   Spine Toolbox subprocess execution tests.
 
@@ -555,7 +557,13 @@ options file:
 returns the template; the runtime layer copies it to
 `solver_config/highs.opt` on first run if absent. Users edit the runtime
 copy; `_orchestration._finalise_highs_options` reads it and applies any
-CLI overrides (`--user-bound-scale`, `--presolve`).
+CLI overrides (`--user-bound-scale`, `--presolve`, `--highs-threads`).
+
+`--save-memory` (or `FLEXTOOL_SAVE_MEMORY=1`) is an opt-in peak-RSS
+strategy that disables warm-start and round-trips each sub-solve through
+an on-disk MPS file, trading ~5-10 GB peak RSS for slower per-solve
+build time. The orchestrator emits a one-time warning when it disables
+warm-start because of this flag.
 
 ## Solver outputs: folder layout
 
@@ -631,7 +639,8 @@ slack semantics.
    rounded to 10 significant figures so benign precision artifacts don't
    trip near-duplicate detection.
 5. **Autoscale package** (`engine_polars/autoscale/`). Three layers,
-   on by default (gate via `--auto-scale=off` / `FLEXTOOL_AUTO_SCALE=0`):
+   on by default (gate via `--scaling=off` / `FLEXTOOL_SCALING=off`;
+   intermediate modes are `solver_only`, `basic`, `full`):
    - **Layer 1 — detect** (`_ranges.py`). Walks the assembled LP and
      computes matrix / cost / bound / RHS log10 ranges plus a
      cross-group max-ratio. Always emitted to the YAML audit; the
@@ -701,11 +710,14 @@ tests/
 └── test_*.py                    Top-level unit & integration tests.
 ```
 
-`scenario_workdir(scenario_name, db_fixture="main")` is a session-scoped
-fixture that builds a per-scenario workdir on demand by running the full
-cascade with `csv_dump=True`. It replaces the historical gitignored
-`tests/engine_polars/data/work_*/` snapshot pattern; tests do not depend
-on pre-built fixture directories.
+`scenario_workdir(scenario_name, db_fixture="main")` (defined in
+`tests/engine_polars/conftest.py`) is a session-scoped fixture that
+builds a per-scenario workdir on demand by running the full cascade with
+`csv_dump=True`. It replaced the historical bulky CSV snapshot pattern
+that previously sat under `tests/engine_polars/data/work_*/` (~521 MB
+gitignored); the directories that remain contain only a single
+`golden_obj.json` golden file each. Tests do not depend on pre-built
+fixture directories.
 
 ### Three-tier gate
 
