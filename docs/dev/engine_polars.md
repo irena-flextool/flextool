@@ -26,8 +26,9 @@ pipeline in the order a bug or extension actually traverses it.
 flowchart TD
   src["Spine input DB<br/>(or CsvSource / InMemoryReader)"] --> reader
   reader["SpineDbReader<br/>InMemoryReader"] --> overlay
-  overlay["_apply_db_overrides<br/>(direct + derived ports)"] --> writers
-  writers["_writer_*.py + _derived_*.py<br/>(~150 sets &amp; params)"] --> flex["FlexData<br/>(polars frames + Params)"]
+  overlay["_apply_db_overrides<br/>(direct + derived ports)"] --> emit
+  emit["_emit_*.py + _derived_*.py<br/>(~150 sets &amp; params, Provider-first)"] --> provider["FlexDataProvider<br/>(in-memory transport)"]
+  provider --> flex["FlexData<br/>(polars frames + Params)"]
   flex --> build["build_flextool(m, d)<br/>feature-gated LP build"]
   build --> prob["polar_high.Problem<br/>(or WarmProblem /<br/>LagrangianProblem)"]
   prob --> highs["HiGHS via highspy"]
@@ -174,24 +175,75 @@ walks straight back to one of those four fields: most often `dtttdt`
 or `storage_bind_forward_only`, both populated by the loader and
 inspected here.
 
-## Writer ports
+### RP-blended-weights inter-period coupling
+
+The `RP_BLENDED_WEIGHTS` feature block (gated on
+`d.nodeState_rp.height > 0`, the union of nodes whose
+`storage_binding_method` selects one of the blended-weights variants)
+adds the variables and constraints that close representative-period
+storage state across base periods. The block is structurally an
+extension of `STORAGE` and shares the `v_state` declaration; it adds
+on top:
+
+| Element | Module | Role |
+|---|---|---|
+| `v_state_inter[n, b]` | `model.py` | Long-run state at base-period boundaries, free per `(n, b)`. |
+| `v_state_rp_start[n, d, t]` | `model.py` | Free starting state at the first step of each RP block. |
+| `nodeState_rp_dt` | `_pdt_join.compute_nodeState_rp_dt` | The `(n, d, t)` join used to project `v_state` rows onto the RP cohort. |
+| `nodeState_rp_block_first_dt` | `_pdt_join.compute_nodeState_rp_block_first_dt` | Index set for `v_state_rp_start` — RP-block-first `(d, t)` tuples per RP node. |
+| `state_change_rp_interior` / `state_change_rp_start` | `model.py` `nodeBalance_eq` terms | Intra-period state-change. Interior steps use the ordinary within-timeset lag; the first step of each RP block replaces the lag with `v_state_rp_start` so each block starts free. |
+| `rp_inter_period_balance` | `model.py` | Inter-period balance over `(n, b, b_prev) ∈ nodeState_rp × rp_base_chain`, summing the per-RP-block drift weighted by `p_rp_weight[b, r]` and `p_state_unitsize[n]`. |
+| `rp_inter_period_cyclic` | `model.py` | End-to-start closure for the within-solve / within-period variants, indexed over `nodeState_rp × rp_base_first × rp_base_last`. The forward-only variant skips this constraint. |
+| `rp_inter_period_max_state` | `model.py` | Capacity bound on `v_state_inter[n, b]` over `(n, b, d) ∈ nodeState_rp × rp_base_period × period_in_use`, tightened by cumulative invest/divest exactly as the ordinary `maxState`. |
+| `maxState_rp_start` | `model.py` | Sibling capacity bound on `v_state_rp_start[n, d, t]` over `rp_block_first`. The RP variables don't get per-row `Var.upper` — both bounds are lifted into sibling constraints because `polar_high` doesn't yet support per-row variable bounds. |
+
+The three blended-weights methods that activate the block —
+`bind_within_solve_blended_weights`, `bind_within_period_blended_weights`,
+and `bind_forward_only_blended_weights` — are projected from the user-side
+`storage_binding_method` value list by
+`storage_bind_within_solve_blended_weights` /
+`storage_bind_within_period_blended_weights` /
+`storage_bind_forward_only_blended_weights` in `_projection_params.py`,
+which populate the corresponding `FlexData` fields. `nodeState_rp` is
+the union (the inter-period constraints all share it); the cyclic
+constraint further filters back to the within-solve / within-period
+subset because the forward-only variant deliberately leaves the chain
+open.
+
+The on-disk `rp_weights` carrier is authored as a flat triple
+`(base_start, rep_start, weight)` and decoded by
+`_timeline._decode_rp_weights`, which accepts both the nested Map
+shape and the flattened list-of-Maps shape Spine produces depending on
+import path. Both decode to the same nested
+`{base: {rep: weight}}` dict that
+`_emit_solve_writers.derive_rp_weights` converts into the per-solve
+`rp_weights.csv` frame and that `_emit_solve_writers` derives the
+`rp_base_chain`, `rp_base_first`, `rp_base_last`, and `rp_base__rep`
+companion sets from. See architecture.md
+[Feature blocks in `build_flextool`](architecture.md#feature-blocks-in-build_flextool)
+for the entry in the gating table.
+
+## Emitters (formerly writer ports)
 
 About 150 sets and calculated parameters that used to be `param := ...`
 declarations in the retired `flextool.mod` are now produced in Python
-by the `_writer_*.py` and `_derived_*.py` modules (Writer Phases 1–4
-in `RELEASE.md`). They all share a common shape:
+by the `_emit_*.py` and `_derived_*.py` modules. They all share a
+common shape:
 
 - Input: a `FlexData` populated with the prior phases' fields, plus a
-  source plugin (`InputSource` or workdir path).
-- Output: one or more fields of `FlexData`, written back in place.
-- Purity: every helper either fully populates its target fields or
-  leaves them at `None` — no half-populated state.
+  source plugin (`InputSource` or `FlexDataProvider`).
+- Output: one or more frames published to `FlexDataProvider` under the
+  canonical key declared in `_provider_keys.py`; downstream consumers
+  read by key.
+- Purity: every helper either fully populates its target keys or
+  leaves them absent — no half-populated state.
 
-The split between `_derived_*` and `_writer_*` is historical, not
-semantic. The `_writer_*` family ported the modules that wrote
+The split between `_derived_*` and `_emit_*` is historical, not
+semantic. The `_emit_*` family ported the modules that wrote
 `solve_data/*.csv` in the legacy preprocessing; the `_derived_*`
 family ported the modules that produced computed parameters
-in-process. Both are now just Python functions.
+in-process. Both are now just Python functions writing into the
+Provider.
 
 Representative entries:
 
@@ -203,26 +255,162 @@ Representative entries:
 | `_derived_npv.py` | Annualized investment / divestment carriers feeding the objective. |
 | `_derived_profile.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |
 | `_derived_walks.py` | Backward / forward step lookups (`dtttdt`, `dtttdt_forward_only`, the block-interior variant). |
-| `_writer_arc_unions.py` | Arc set algebra: `flow_to_n`, `flow_from_n`, the commodity-flow joins, the reverse-arc additions for connections. |
-| `_writer_calc_params.py` | The `pdtX` / `pdX` per-step parameter cascade. |
-| `_writer_co2_accumulators.py` | Cumulative-CO2 ladder feeding the CO2-cap constraint. |
-| `_writer_pdt_params.py` | The full `pdt_*` family (online indices, varCost frames, …). |
-| `_writer_period_calc.py` | `p_period_share`, `complete_period_share_of_year`, `p_timeline_duration_in_years`. |
-| `_writer_reserve.py` | Reserve-up / reserve-down set machinery for `_reserve.py`. |
+| `_emit_arc_unions.py` | Arc set algebra: `flow_to_n`, `flow_from_n`, the commodity-flow joins, the reverse-arc additions for connections. |
+| `_emit_calc_params.py` | The `pdtX` / `pdX` per-step parameter cascade. |
+| `_emit_co2_accumulators.py` | Cumulative-CO2 ladder feeding the CO2-cap constraint. |
+| `_emit_pdt_params.py` | The full `pdt_*` family (online indices, varCost frames, …). |
+| `_emit_period_calc.py` | `p_period_share`, `complete_period_share_of_year`, `p_timeline_duration_in_years`. |
+| `_emit_reserve.py` | Reserve-up / reserve-down set machinery for `_reserve.py`. |
+| `_emit_provider_io.py` | The single Provider-funnel (`_emit`, `_provider_key`, `_provider_open`) every emitter routes through. |
+
+### Writer → emitter rename (Phases 1–5)
+
+Every module that used to be `flextool/engine_polars/_writer_*.py`
+is now `_emit_*.py`. The accompanying function-level rename moved
+`write_X(workdir, ...)` to `emit_X(provider, ...)` — emitters publish
+to `FlexDataProvider` first, and any CSV mirror is a side-effect of
+`csv_dump=True` rather than the canonical path. The retired surfaces
+include the `capture_frames` snapshot helper, the `_PATCH_MODULES`
+indirection used by older parity tests, and the transitional
+`write_*` aliases that wrapped `emit_*` during the migration; the
+`emit_*(provider, ...)` signature is now the only call shape and the
+meta-test
+`tests/engine_polars/test_meta_provider_invariants.py` forbids disk
+reads from any cascade module.
+
+The architectural consequence is that there is no longer a disk-side
+hand-off path *inside* the cascade. The Provider is the contract:
+emitters `put` under a canonical key, consumers `get` by the same key,
+and the workdir CSVs that used to mediate cross-phase data flow are
+purely a debug artefact. See architecture.md
+[engine_polars/ — the optimization engine](architecture.md#flextoolengine_polars--the-optimization-engine)
+for the public-surface narrative and
+[Cross-solve state (Provider keys + SolveHandoff)](architecture.md#cross-solve-state-provider-keys--solvehandoff)
+for the handoff-key family.
 
 ### Topological ordering
 
-Writer ports have dependencies — `_derived_existing` reads
+Emitters have dependencies — `_derived_existing` reads
 `realized_invest` from prior solves' handoffs and `pd_invest_set`
-from `_writer_period_params`; `_derived_npv` reads
+from `_emit_period_params`; `_derived_npv` reads
 `ed_lifetime_fixed_cost` which depends on `p_entity_all_existing`;
 `_derived_block`'s overlap sets feed the arc-side block aggregation
-in `_writer_arc_unions`.
+in `_emit_arc_unions`.
 
 The runner does not compute the order. It is encoded in the call
-order of `_apply_db_overrides` (in `input.py`) and the legacy CSV
+order of `_apply_db_overrides` (in `input.py`) and the legacy
 load sequence in `load_flextool`. Adding a new derived field
 typically means appending one call to the right phase.
+
+## FlexDataProvider and override translator
+
+`FlexDataProvider` (`flextool/engine_polars/_flex_data_provider.py`)
+is the in-memory dict-of-frames that every cascade module reads from
+and writes to. Keys are declared in `_provider_keys.py`; the
+convention is `<parent>/<basename>` (e.g. `solve_data/foo`,
+`input/bar`, `handoff/realized_invest`). Bare-basename consumer
+lookups are resolved against the parent-qualified key, so a single
+`put` registers the frame under one canonical name.
+
+Three key families:
+
+| Prefix | Purpose |
+|---|---|
+| `INPUT_*` | Backend-derived rows the cascade re-reads each iteration (CSV-shaped, populated from the input DB). |
+| `SOLVE_DATA_*` | Per-solve sets and parameters that the derivation layer produces (the bulk of the `_emit_*` output). |
+| `HANDOFF_*` / `OVERRIDE_*` | Cross-solve handoff carriers and their override siblings; see below. |
+
+### Override translator
+
+`_provider_translators.py` carries two small layers that let the
+orchestrator inject external state into the live Provider without
+re-running the emit pipeline:
+
+- `translate_handoff_to_provider(handoff, provider)` writes one
+  `HANDOFF_*` key per field of a `SolveHandoff`. Empty fields land as
+  header-only frames so consumers can use a single
+  `provider.get(K.HANDOFF_X).height > 0` check.
+- `translate_overrides_to_provider(overrides, provider)` takes a
+  caller-supplied `{K.HANDOFF_X: pl.DataFrame, ...}` dict and writes
+  each frame under the corresponding `OVERRIDE_X` key. Unknown keys
+  are rejected with `ValueError` so the override surface stays
+  explicit.
+
+Consumers go through `read_handoff_frame(provider, K.HANDOFF_X)`,
+which checks the `OVERRIDE_X` slot first and falls back to the natural
+`HANDOFF_X` carrier. A non-empty override shadows the cascade-produced
+handoff for that key; an empty override frame falls through cleanly,
+so the override layer is opt-in per key.
+
+### Source-tagging and audit dump
+
+`FlexDataProvider.put(key, frame, *, source=None)` accepts an optional
+free-form `source` tag retained alongside the frame and surfaced via
+`get_source(key)`. Natural-cascade emits leave `source` at the default
+`None`; only the override translator currently tags its writes
+(`source="external_override"`). Untagged writes carry no entry in the
+source map, so the audit surface stays minimal.
+
+`dump_provider_sources(provider, path, solve_name)` iterates every
+Provider key whose `get_source(...)` returns non-`None` and appends one
+tab-separated line per `(solve_name, key, source)` to the dump path.
+The orchestrator invokes it at the end of per-iteration preprocessing
+when `FLEXTOOL_AUDIT_SOURCES=1` is set; the log lands at
+`<work_folder>/audit_sources.log` and accumulates across sub-solves.
+This is the recommended trail for answering "who set this value?" on
+override-driven cascades.
+
+## Enum-dtype axis convention
+
+Identity columns in `FlexData` (entity, source, sink, period, time,
+group, commodity, …) carry the `pl.Enum` dtype rather than `pl.Utf8`.
+The Enum vocabulary is built at the `SpineDBBackend` and
+`SpineDbReader` emit boundaries and propagated through the cascade by
+`_axis_enums.cast_flexdata_axes` / `cast_value_axes`.
+
+Three column-axis helpers in `_axis_enums.py` make the Enum
+preservation mechanical at the call sites where polars would otherwise
+drop back to `Utf8`:
+
+- `rename_to_axis(frame, mapping)` — rename columns AND cast to the
+  matching axis Enum in one call. Any rename that introduces a
+  canonical axis column (`"n"`, `"p"`, `"e"`, `"source"`, `"sink"`,
+  `"period"`, …) takes ownership of the dim-column dtype at the rename
+  target.
+- `alias_to_axis(source, target_axis)` — the sibling for
+  `select()`/`with_columns()` projections that rename via alias instead
+  of `.rename(...)`. Accepts either a string column name or an
+  arbitrary `pl.Expr`.
+- `lit_axis(value, axis)` — `pl.lit(value)` that emits the canonical
+  axis Enum dtype, so literal tokens injected into axis-aware columns
+  don't `SchemaError` against neighbouring Enum frames.
+
+For empty-frame fallbacks the same module exports
+`schema_dtype(enums, axis)`, which returns the Enum dtype if a live
+vocabulary is set and `pl.Utf8` otherwise. Every site that previously
+hard-coded `schema={"e": pl.Utf8, "d": pl.Utf8}` now uses
+`schema_dtype(_enums, "e")` so empty frames carry the canonical dtype
+without each helper threading the enum dict through.
+
+### Entity-union axis
+
+Mixed-vocab dimension columns (`"source"`, `"sink"`, and anywhere a
+join needs to land both sides of a heterogeneous arc) resolve through
+the axis-synonym table to the canonical axis `"e"`, a union enum that
+covers every entity vocabulary. The convention is: when joining frames
+whose dim columns hold different vocabulary subsets, use the union
+axis named `"entity"` and cast against the union enum. Never mix
+`Enum` and `Utf8` columns in the same join — the polars caster nulls
+out the mismatched side silently. The `_axis_enums.align_join_dtypes`
+helper normalises both sides before the join in cases where the call
+site cannot use one of the rename helpers.
+
+Cross-link: every parameter known to the engine has its expected
+shape declared in `_param_shapes.py`, and the axis vocabulary the
+parameter's dim columns must satisfy is implicit in the `dims=` tuple
+its loader passes to `polar_high.Param`. The two registries together
+are the schema contract that the emitters obey and the meta-tests
+verify.
 
 ## Solve modes
 
@@ -297,7 +485,8 @@ was `test_24h_shipping`).
 When a solve is part of a cascade (rolling-window, nested, or stochastic
 sub-solves), each completed solve produces a `SolveHandoff` that seeds
 the next solve's preprocessing. The dataclass is in
-`_solve_handoff.py`. Its carriers (eleven fields, all optional):
+`_solve_handoff.py`; its eleven optional carriers are all
+`pl.DataFrame | None`:
 
 | Field | Shape | Meaning |
 |---|---|---|
@@ -305,40 +494,128 @@ the next solve's preprocessing. The dataclass is in
 | `realized_existing` | `[entity, period, value]` | Resolved existing-capacity history per `(entity, period)`. Captures pre-existing decay + divest that `realized_invest` doesn't. |
 | `divest_cumulative` | `[entity, value]` | Cumulative divest per entity. |
 | `roll_end_state` | `[node, value]` | `v_state` at the end of this roll, pinning the next roll's first timestep. |
-| `fix_storage` | `[node, period, time, quantity, price, usage]` | Parent-imposed storage quota at a boundary. The three metrics ride one wide frame; NULL columns mark inactive metrics. |
-| `fix_storage_timesteps` | `[period, step]` | Index set for `fix_storage`. |
+| `upward_roll_end_state` | `[node, value]` | Same shape as `roll_end_state`; dispatch→storage upward feedback in nested cascades. |
+| `fix_storage_quantity` | `[node, period, step, p_fix_storage_quantity]` | Parent-imposed storage quota (hard equality). |
+| `fix_storage_price` | `[node, period, step, p_fix_storage_price]` | Parent's storage dual fed into `p_storage_state_reference_price`. |
+| `fix_storage_usage` | `[node, period, step, p_fix_storage_usage]` | Parent's realized-usage allowance bound on the child via `node_storage_usage_fix_le`. |
 | `cumulative_co2` | `[group, period, value]` | Running CO2 totals across rolls. |
 | `cumulative_commodity` | `[commodity, tier, period, mwh]` | Per-tier commodity consumption ladder. |
 | `cum_sim_hours` | `[period, value]` | Running simulated-hour total per period. |
-| `ed_history_realized_first` | `[entity, period_h]` | Cross-solve invest history (first-realized periods). |
-| `edd_history` | `[entity, period_history, period]` | Period-period invest history matrix feeding `p_entity_previously_invested_capacity`. |
 
-`capture_post_solve(state, solve_name)` populates one `SolveHandoff`
-from the just-completed solve. Each carrier reads the corresponding
-`solve_data/<solve>/*.csv` mirror if present and otherwise leaves the
-slot at `None`. The CSV mirrors are *still written* by the legacy
-post-solve writers — the handoff records the same data in memory for
-in-memory consumers but does not retire the file path.
+`build_handoff_from_solution(sol, work_folder, solve_name, ...)` in
+`input.py` populates one `SolveHandoff` from the just-completed
+solve's `polar_high` Solution plus the per-solve metadata in
+`solve_data/`. The cascade transports the carriers through the
+Provider's `HANDOFF_*` keys (see
+[FlexDataProvider and override translator](#flexdataprovider-and-override-translator));
+the `solve_data/<solve>/*.csv` mirrors only exist under
+`csv_dump=True` and are not load-bearing for any downstream phase.
 
-The handoff flows back into the next solve through
-`_apply_db_overrides` in `input.py`, which translates the carriers
-into the next `FlexData`'s `p_entity_*` parameters and
-`dtt_timeline_matching` / `n_fix_storage_quantity` /
-`p_fix_storage_quantity` sets.
+The handoff flows back into the next solve through the override
+translator + `_apply_db_overrides` chain in `input.py`, which reads
+the `HANDOFF_*` Provider keys and translates each carrier into the
+next `FlexData`'s `p_entity_*` parameters and the corresponding
+`n_*` / `ndt_*` / `p_*` sets (`p_fix_storage_quantity`,
+`p_fix_storage_usage`, `p_storage_state_reference_price`, …).
 
-### Fix-storage semantics
+### Fix-storage semantics (Deferred-B wiring)
 
-The three `fix_storage_*` mirrors translate into a hard equality on
-the child solve's `v_state` at the boundary timesteps:
+The three `fix_storage_*` carriers translate into distinct LP wirings
+on the child solve:
 
-- `quantity` pins `v_state[n, d_upper, t_upper] * p_state_unitsize[n]`
-  to the parent's realized state.
-- `price` and `usage` are dual carriers used by parent solves to value
-  the quota without imposing it as hard equality. They surface on the
-  child as objective terms, not as equality constraints.
+- `fix_storage_quantity` pins
+  `v_state[n, d_upper, t_upper] * p_state_unitsize[n]` to the parent's
+  realized state — a hard equality at the boundary timesteps. The
+  `node_storage_fix` constraint family is gated on
+  `p_fix_storage_quantity` being populated; the supporting sets
+  `n_fix_storage_quantity` and `ndt_fix_storage_quantity` are derived
+  from the Param frame at load time.
+- `fix_storage_price` arrives on the child as a dual carrier folded
+  into `p_storage_state_reference_price`. The objective term added by
+  `use_reference_price` (model.py §10.1) values `v_state` at the last
+  step of every `period_last` by that reference price, so the parent's
+  shadow price on storage at the boundary becomes the child's
+  end-of-period valuation:
 
-`fix_storage_timesteps` is the `(d, t)` index set; without it the
-constraint is dormant even if `fix_storage` rows exist.
+      − Σ_{n ∈ nodeState, (d, t) ∈ period__time_last : d ∈ period_last}
+            p_storage_state_reference_price[n, d]
+            · v_state[n, d, t] · unitsize[n]
+            · rp_cost_weight[d, t] · inflation_op[d] / period_share[d]
+            · pdt_branch_weight[d, t]
+
+  The same parameter is also populated for any node whose
+  `storage_binding_method` is `use_reference_price`, so the routing is
+  unified and the dual carrier merely supplies values for the existing
+  term.
+- `fix_storage_usage` adds the `node_storage_usage_fix_le` constraint
+  (`model.py`, gated on `n_fix_storage_usage` / `ndt_fix_storage_usage`
+  / `p_fix_storage_usage` all being populated). The constraint pins
+  cumulative realized usage at `nodeState_last_dt` to be at most the
+  parent's allowance, indexed over the n_fix_storage_usage subset of
+  nodes.
+
+`build_handoff_from_solution` (in `input.py`, formerly
+`build_handoff_from_flexpy`) is the producer side: it extracts the
+three metrics from the just-completed solution and packs them into the
+`SolveHandoff` carrier. Each metric is sourced independently —
+quantity from `v_state` at fix-storage timesteps, price from the
+`fix_storage_*` row duals, usage from the realised flow integrals —
+so a fixture exercising one metric doesn't force the others to be
+populated. The HANDOFF carriers
+(`HANDOFF_FIX_STORAGE_QUANTITY` / `_PRICE` / `_USAGE` in
+`_provider_keys.py`) are the cross-solve transport surface; the
+`OVERRIDE_*` siblings let the orchestrator inject parent-imposed
+values without re-solving the parent.
+
+### Upward dispatch→storage feedback
+
+The original `SolveHandoff` carried a single `roll_end_state` that
+flowed forward in time within one solve's roll chain. In a nested
+invest+dispatch cascade the dispatch sub-solve also needs to push its
+realised end-of-horizon `v_state` *upward* to the parent storage
+solve's next roll — otherwise the parent keeps running on its own
+previously-predicted state rather than the dispatch sub-solve's
+realised state.
+
+`upward_roll_end_state` (`SolveHandoff` field added by `bb35cd54`) is
+the explicit carrier for that path. The producer at
+`build_handoff_from_solution` copies the same end-of-horizon `v_state`
+into both `roll_end_state` and `upward_roll_end_state` for every
+solve; the consumer in `input.py` reads
+`HANDOFF_UPWARD_ROLL_END_STATE` first and falls back to
+`HANDOFF_ROLL_END_STATE` when the upward key is empty. The carrier is
+always-on for any storage→dispatch nesting; no opt-in flag. See
+architecture.md
+[Solve-to-solve handoff](architecture.md#solve-to-solve-handoff)
+for the carrier table.
+
+## Output-writer shape adaptation
+
+The Phase E.1 work made the post-solve output writers in
+`flextool/process_outputs/read_parameters.py` shape-aware. The
+preprocessing helper `broadcast_to_period_time` returns Params whose
+dims match the *authored* Spine shape — `SCALAR` → `(entity,)`,
+`MAP_PERIOD` → `(entity, d)`, `MAP_PERIOD_TIME` → `(entity, d, t)`.
+`polar_high` broadcasts the lower-dim Params lazily at constraint
+emission so the LP doesn't care, but the parquet writers used to
+assume the canonical `(entity, d, t)` shape and would crash on any
+scalar / period-map authoring.
+
+The fix routes through `_param_shapes.promote_param_to_dt`: every
+writer that pivots a Param checks `param.dims` for the presence of
+`"d"` and `"t"`, and when either is missing it promotes the Param
+against `flex_data.dt` before the pivot. Empty Params take the same
+empty-frame fallback as before.
+
+The same shape-tolerance idea shows up in the loader-side
+`_node_unitsize_lf` helper (`_derived_params.py`): a node parameter
+authored as a Spine `Map` carries the Map's `index_name` on the data
+column, which Spine defaults to `x` rather than `period`. The helper
+treats any non-`(name, value)` column as the period axis and
+`group_by("n").agg(max)` collapses it to one row per node, so a
+user-renamed `Map.index_name` works without code changes. The same
+pattern reappears in `p_entity_all_existing_from_source` for the
+existing-capacity loader.
 
 ## Per-solve sets and PDT lookup
 
@@ -477,9 +754,7 @@ small. Repeating the table from
 | `run_chain_from_db(db_url, work_folder, ...)` | The canonical multi-solve driver. Walks the solve list, calls `_drive_cascade` per solve, threads `SolveHandoff` between iterations. |
 | `run_orchestration(state, work_folder, ...)` | One layer below `run_chain_from_db`. Takes a pre-built `RunnerState` (with `SolveConfig` and `TimelineConfig` already resolved) and drives the cascade. The intended entry point from the GUI / Spine Toolbox layer. |
 | `run_single_solve_from_db(...)` | Surgical fast path. Pairs with `load_flextool_source_only`. |
-| `SolveHandoff` | The carrier dataclass. Eleven fields, all optional. `is_empty()` returns True when nothing fired. |
-| `capture_post_solve(state, solve_name)` | Populates `state.handoffs[solve_name]` from the just-completed solve's CSV mirrors. No-op when `state.handoffs is None` (the opt-in flag is off). |
-| `write_fix_storage_files_from_handoff(...)` | Materialises the three `fix_storage_*.csv` files from a handoff for downstream tooling that still reads the legacy file layout. |
+| `SolveHandoff` | The carrier dataclass. Optional fields covering invest / divest / fix-storage / cumulative ladders / roll-end state (incl. the upward variant). `is_empty()` returns True when nothing fired. Populated by `build_handoff_from_solution` (in `input.py`); the older disk-read `capture_post_solve` constructor was retired when the cascade fell through to Provider/CSV reads in all production paths. |
 | `OrchestrationStep` | Per-solve result. Carries `solve_name`, `solution`, `handoff`, `warm_used`. |
 | `ChainStep` | Per-sub-solve result of the compat shim. Same shape as `OrchestrationStep`. |
 | `FlexInputSource` / `CsvSource` | The CSV-shaped source protocol family. |
@@ -515,15 +790,17 @@ file:
   active" and is the recommended way to opt out. Empty frames mean
   "active but no rows". Helpers that downstream this distinction
   should never silently coerce `None` into an empty frame.
-- **Workdir CSVs are still authoritative on the slow path.** The
-  legacy CSV writers are not retired — they remain the source of
-  truth for the canonical slow path. `engine_polars` reads them
-  through `_read_csv_file` in `_input_source.py`, gated through a
-  single funnel so the per-solve cache hits memory.
-- **One funnel per source.** All workdir CSV reads inside
-  `engine_polars` go through `_input_source._read_csv_file`. All
-  Spine DB reads go through `SpineDbReader.parameter()`. Adding a
-  new reader site is a smell; route through the existing funnel.
+- **Provider is authoritative; CSVs are debug-only.** Cross-phase
+  data inside the cascade moves through `FlexDataProvider`. The
+  `solve_data/<solve>/*.csv` mirrors only exist under `csv_dump=True`
+  and are not load-bearing — the meta-test
+  `tests/engine_polars/test_meta_provider_invariants.py` forbids
+  disk reads from any cascade module.
+- **One funnel per source.** All Provider reads inside emitter
+  modules go through `_emit_provider_io._provider_open` /
+  `_provider_key`. All Spine DB reads go through
+  `SpineDbReader.parameter()`. Adding a new reader site is a smell;
+  route through the existing funnel.
 - **Fail loud on schema surprises.** The codebase prefers
   `FlexToolConfigError` / `ValueError` / `NotImplementedError` over
   silent fallbacks. The retired preprocessor was full of defensive
