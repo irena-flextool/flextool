@@ -73,102 +73,97 @@ from flextool.engine_polars._timeline import (
 )
 
 
-def _nodes_with_blended_weights(input_dir, provider) -> list[str]:
-    """Return nodes carrying ``bind_within_solve_blended_weights`` per input CSV.
+# Map from RP-flavoured storage_binding_method to its non-RP equivalent.
+# Used by :func:`_downgrade_rp_methods_for_non_rp_solve` to strip the
+# ``_blended_weights`` suffix when a solve's active timeset carries no
+# ``representative_period_weights`` entry.  The same storage entity is
+# allowed to drive an RP investment solve AND a chronological dispatch
+# solve back-to-back; per-solve downgrade keeps both paths alive.
+_RP_METHOD_DOWNGRADE: dict[str, str] = {
+    "bind_within_solve_blended_weights":  "bind_within_solve",
+    "bind_within_period_blended_weights": "bind_within_period",
+    "bind_forward_only_blended_weights":  "bind_forward_only",
+}
 
-    Reads ``input/node__storage_binding_method.csv`` via the seeded
-    Provider (the file may live only in-memory under the per-level
-    Provider's input/ namespace, never written to disk).  Returns a
-    sorted list of node names; empty if the file is absent or has no
-    blended-weights rows.  Path / provider-key conventions mirror
-    :func:`flextool.engine_polars._emit_leaf_sets.derive_node_state_subset`.
+
+def _downgrade_rp_methods_for_non_rp_solve(
+    *, solve, complete_solve_name, roll_index,
+    active_timeset_names, rp_weights, provider, logger,
+) -> None:
+    """Silently downgrade RP storage-binding methods on non-RP solves.
+
+    Replaces the Phase 5 strict check.  When the solve's active timeset
+    has NO entry in ``state.timeline.rp_weights``, rewrite the per-solve
+    Provider's ``input/node__storage_binding_method`` frame in place,
+    mapping every ``*_blended_weights`` row to its non-RP equivalent
+    (see :data:`_RP_METHOD_DOWNGRADE`).  When at least one active
+    timeset DOES have RP weights, do nothing — the RP path is correct.
+
+    The rewrite touches ONLY the per-solve provider (in-memory); the
+    on-disk DB and any upstream input CSVs stay unchanged.  Downstream
+    in this same solve, ``preprocessing_solve_time.run`` will derive
+    ``solve_data/node__storage_binding_method`` from the rewritten
+    ``input/...`` key, so all later consumers see the downgraded values
+    for THIS solve only.
+
+    Args:
+        solve: per-iter solve name (used in log line).
+        complete_solve_name: fully-qualified solve name (debug aid).
+        roll_index: integer roll within ``complete_solve_name`` (debug aid).
+        active_timeset_names: list of timeset names active in this solve.
+        rp_weights: ``state.timeline.rp_weights`` dict (timeset -> weights).
+        provider: the per-solve :class:`FlexDataProvider`.
+        logger: solve logger.  One info-level line is emitted per
+            (old, new) downgrade-mapping that fires.
     """
-    from flextool.engine_polars._emit_leaf_sets import _read_csv
+    # Any active timeset has RP weights → RP path is correct, no-op.
+    for ts_name in active_timeset_names:
+        if ts_name in rp_weights:
+            return
+
+    key = "input/node__storage_binding_method"
+    if not provider.has(key):
+        return  # no per-solve binding-method frame at all → nothing to do
     import polars as pl
-    sbm = _read_csv(
-        input_dir / "node__storage_binding_method.csv",
-        ["node", "storage_binding_method"],
-        provider=provider,
-    )
+    sbm = provider.get(key)
     if sbm.height == 0:
-        return []
+        return
     if "storage_binding_method" in sbm.columns:
         method_col = "storage_binding_method"
     elif "method" in sbm.columns:
         method_col = "method"
     else:
-        return []
-    return sorted(
-        sbm.filter(pl.col(method_col) == "bind_within_solve_blended_weights")
-           .select("node")
-           .unique()
-           .get_column("node")
-           .to_list()
+        return  # malformed frame; let downstream loaders surface it
+
+    # Count downgrades per (old, new) pair so the log line is precise.
+    per_pair_counts: dict[tuple[str, str], int] = {}
+    for old, new in _RP_METHOD_DOWNGRADE.items():
+        n = (sbm.filter(pl.col(method_col) == old)
+                .select("node")
+                .unique()
+                .height)
+        if n > 0:
+            per_pair_counts[(old, new)] = n
+    if not per_pair_counts:
+        return  # nothing to downgrade
+
+    # In-place rewrite via a single replace_strict expression.
+    sbm_new = sbm.with_columns(
+        pl.col(method_col).replace_strict(
+            _RP_METHOD_DOWNGRADE, default=pl.col(method_col),
+        ).alias(method_col),
     )
+    provider.put(key, sbm_new)
 
-
-def _assert_blended_weights_have_rp_weights(
-    *, solve, complete_solve_name, roll_index,
-    active_timeset_names, rp_weights_keys,
-    input_dir, provider, logger,
-) -> None:
-    """Strict per-solve precondition: blended-weights nodes need RP weights.
-
-    Fires when at least one node carries
-    ``bind_within_solve_blended_weights`` but none of the solve's active
-    timesets has an entry in ``state.timeline.rp_weights``.  Surfaces
-    the misconfiguration at the solve boundary with full context
-    (solve name, complete-solve name, roll index, active timesets,
-    offending nodes, two concrete fixes), so the user does not have to
-    chase the late ``FlexData loader`` backstop in ``input.py``.
-
-    Raises:
-        FlexToolConfigError: when the precondition is violated.
-    """
-    nodes = _nodes_with_blended_weights(input_dir, provider)
-    if not nodes:
-        return  # no blended-weights nodes — non-RP path is correct
-    # If we got here the caller has already established that
-    # ``rp_written is False`` (no active timeset has RP weights), so we
-    # only need the offending-node list to fail the check.
-    head = nodes[:5]
-    if len(nodes) > 5:
-        node_summary = (
-            f"{', '.join(head)}, ... {len(nodes) - 5} more"
+    ts_summary = (
+        ", ".join(active_timeset_names) if active_timeset_names else "(none)"
+    )
+    for (old, new), n in per_pair_counts.items():
+        logger.info(
+            f"Solve '{solve}' has no representative_period_weights "
+            f"for active timeset {ts_summary}; downgrading {n} node(s) "
+            f"from {old} to {new}."
         )
-    else:
-        node_summary = ', '.join(head)
-    timeset_summary = (
-        ', '.join(active_timeset_names) if active_timeset_names else "(none)"
-    )
-    rp_weights_summary = (
-        ', '.join(sorted(rp_weights_keys)) if rp_weights_keys
-        else "(no timeset has representative_period_weights)"
-    )
-    message = (
-        f"Solve '{solve}' (complete '{complete_solve_name}', roll "
-        f"{roll_index}) has {len(nodes)} node(s) carrying "
-        f"`storage_binding_method = bind_within_solve_blended_weights` "
-        f"({node_summary}) but none of its active timeset(s) "
-        f"[{timeset_summary}] supply `representative_period_weights`. "
-        f"Timesets that DO have RP weights in this run: "
-        f"[{rp_weights_summary}]. Without RP weights the model would "
-        f"silently degrade to the non-RP path and the deep "
-        f"`FlexData loader: nodeState_rp is non-empty ...` invariant "
-        f"would trip later. Either (a) attach an alternative to this "
-        f"scenario that supplies `representative_period_weights` for "
-        f"the active timeset, or (b) change these nodes' "
-        f"`storage_binding_method` to a non-RP value "
-        f"(bind_within_solve / bind_within_period / bind_within_timeblock / "
-        f"bind_forward_only) using a scenario alternative override. "
-        f"In Spine DB toolbox: Database editor -> Scenario tree, edit "
-        f"the scenario's alternatives list to include an alternative "
-        f"that defines `representative_period_weights` on the timeset, "
-        f"or override `node.storage_binding_method` per-node via a "
-        f"non-RP alternative."
-    )
-    logger.error(message)
-    raise FlexToolConfigError(message)
 
 
 def native_run_model(state, solver) -> int:
@@ -874,6 +869,22 @@ def native_run_model(state, solver) -> int:
             complete_solve[solve], []
         )
         active_timeset_names = [ts for _, ts in timesets_used]
+        # Phase C — silent degrade.  Replaces the Phase 5 strict check.
+        # When the active timeset has no representative_period_weights,
+        # rewrite the per-solve provider's node__storage_binding_method
+        # so the three ``*_blended_weights`` variants degrade to their
+        # non-RP equivalents for THIS solve only.  Same storage entity
+        # can now legitimately drive both an RP-active investment solve
+        # and a chronological dispatch solve back-to-back.
+        _downgrade_rp_methods_for_non_rp_solve(
+            solve=solve,
+            complete_solve_name=complete_solve[solve],
+            roll_index=i,
+            active_timeset_names=active_timeset_names,
+            rp_weights=state.timeline.rp_weights,
+            provider=sub_solve_provider,
+            logger=state.logger,
+        )
         for ts_name in active_timeset_names:
             if (
                 ts_name in state.timeline.rp_weights
@@ -917,23 +928,13 @@ def native_run_model(state, solver) -> int:
                     rp_written = True
                     break
         if not rp_written:
-            # Strict precondition: if any node in this solve carries
-            # ``bind_within_solve_blended_weights`` but the active timeset has
-            # no RP weights, surface the misconfiguration here (with
-            # full solve / scenario context) rather than letting the
-            # deep ``FlexData loader`` backstop in ``input.py`` trip on
-            # internal frame names.  Phase 5 of the storage_binding_method
-            # single-valued cleanup.
-            _assert_blended_weights_have_rp_weights(
-                solve=solve,
-                complete_solve_name=complete_solve[solve],
-                roll_index=i,
-                active_timeset_names=active_timeset_names,
-                rp_weights_keys=list(state.timeline.rp_weights.keys()),
-                input_dir=wf / "input",
-                provider=sub_solve_provider,
-                logger=state.logger,
-            )
+            # Phase C — Phase 5's strict ``_assert_blended_weights_have_rp_weights``
+            # check has been retired.  Per-solve downgrade fired earlier
+            # in this iter (see ``_downgrade_rp_methods_for_non_rp_solve``
+            # above), so any blended-weights node has already been
+            # rewritten to its non-RP equivalent in this solve's
+            # provider.  Emit the empty RP scaffolding so downstream
+            # consumers don't see missing keys.
             solve_writers.emit_empty_rp_data(
                 provider=sub_solve_provider,
             )
