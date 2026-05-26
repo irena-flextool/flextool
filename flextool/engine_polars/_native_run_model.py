@@ -74,7 +74,7 @@ from flextool.engine_polars._timeline import (
 
 
 def _nodes_with_blended_weights(input_dir, provider) -> list[str]:
-    """Return nodes carrying ``bind_using_blended_weights`` per input CSV.
+    """Return nodes carrying ``bind_within_solve_blended_weights`` per input CSV.
 
     Reads ``input/node__storage_binding_method.csv`` via the seeded
     Provider (the file may live only in-memory under the per-level
@@ -99,7 +99,7 @@ def _nodes_with_blended_weights(input_dir, provider) -> list[str]:
     else:
         return []
     return sorted(
-        sbm.filter(pl.col(method_col) == "bind_using_blended_weights")
+        sbm.filter(pl.col(method_col) == "bind_within_solve_blended_weights")
            .select("node")
            .unique()
            .get_column("node")
@@ -115,7 +115,7 @@ def _assert_blended_weights_have_rp_weights(
     """Strict per-solve precondition: blended-weights nodes need RP weights.
 
     Fires when at least one node carries
-    ``bind_using_blended_weights`` but none of the solve's active
+    ``bind_within_solve_blended_weights`` but none of the solve's active
     timesets has an entry in ``state.timeline.rp_weights``.  Surfaces
     the misconfiguration at the solve boundary with full context
     (solve name, complete-solve name, roll index, active timesets,
@@ -148,7 +148,7 @@ def _assert_blended_weights_have_rp_weights(
     message = (
         f"Solve '{solve}' (complete '{complete_solve_name}', roll "
         f"{roll_index}) has {len(nodes)} node(s) carrying "
-        f"`storage_binding_method = bind_using_blended_weights` "
+        f"`storage_binding_method = bind_within_solve_blended_weights` "
         f"({node_summary}) but none of its active timeset(s) "
         f"[{timeset_summary}] supply `representative_period_weights`. "
         f"Timesets that DO have RP weights in this run: "
@@ -159,7 +159,7 @@ def _assert_blended_weights_have_rp_weights(
         f"scenario that supplies `representative_period_weights` for "
         f"the active timeset, or (b) change these nodes' "
         f"`storage_binding_method` to a non-RP value "
-        f"(bind_within_solve / bind_within_period / bind_within_timeset / "
+        f"(bind_within_solve / bind_within_period / bind_within_timeblock / "
         f"bind_forward_only) using a scenario alternative override. "
         f"In Spine DB toolbox: Database editor -> Scenario tree, edit "
         f"the scenario's alternatives list to include an alternative "
@@ -918,7 +918,7 @@ def native_run_model(state, solver) -> int:
                     break
         if not rp_written:
             # Strict precondition: if any node in this solve carries
-            # ``bind_using_blended_weights`` but the active timeset has
+            # ``bind_within_solve_blended_weights`` but the active timeset has
             # no RP weights, surface the misconfiguration here (with
             # full solve / scenario context) rather than letting the
             # deep ``FlexData loader`` backstop in ``input.py`` trip on

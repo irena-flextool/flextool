@@ -121,7 +121,7 @@ def compute_nodeState_rp_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     Index frame for the RP-blended-weights ``v_state_inter``-family
     variables (Phase 5+) and the intra-period state-change branch
     (Phase 6).  Mirrors :func:`compute_nodeState_dt` but restricted to
-    nodes participating in ``bind_using_blended_weights``.
+    nodes participating in ``bind_within_solve_blended_weights``.
 
     Returns ``None`` when either constituent is missing / empty.
     """

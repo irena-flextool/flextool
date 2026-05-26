@@ -102,7 +102,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "uptime_lookback", "downtime_lookback",
     # Storage.
     "nodeState", "nodeState_dt", "nodeState_first_dt",
-    "storage_bind_within_timeset", "storage_bind_forward_only",
+    "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_fix_start",
     "dtttdt", "dtttdt_forward_only",
     "n_fix_storage_quantity", "ndt_fix_storage_quantity",
@@ -110,7 +110,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "nodeState_last_dt",
     "nodeStateBlock", "period_block", "period_block_succ",
     "period_block_time", "dtttdt_block_interior",
-    # RP-blended-weights (bind_using_blended_weights) sets / params —
+    # RP-blended-weights (bind_within_solve_blended_weights) sets / params —
     # per-solve constants that don't change across iterations within a
     # level; same carry-over kind as the intraperiod-block family above.
     "nodeState_rp", "rp_base_period_set",

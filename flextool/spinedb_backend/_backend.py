@@ -731,11 +731,11 @@ class SpineDBBackend:
                         repr(v) for v in arr_values
                     ) + "]"
                     allowed = [
-                        "bind_using_blended_weights",
+                        "bind_within_solve_blended_weights",
                         "bind_intraperiod_blocks",
                         "bind_within_solve",
                         "bind_within_period",
-                        "bind_within_timeset",
+                        "bind_within_timeblock",
                         "bind_forward_only",
                     ]
                     message = (
@@ -744,7 +744,7 @@ class SpineDBBackend:
                         f"Offending entity: {ent_str}\n"
                         f"Array contents: {arr_repr}\n"
                         f"Allowed single-string values: {allowed}\n"
-                        "Pick `bind_using_blended_weights` if the node "
+                        "Pick `bind_within_solve_blended_weights` if the node "
                         "uses representative-period blended weights, "
                         "otherwise pick the dominant non-RP method from "
                         "your array.\n"

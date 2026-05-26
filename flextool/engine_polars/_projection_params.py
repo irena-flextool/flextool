@@ -1152,8 +1152,8 @@ def storage_bind_filter(source: "InputSource", method: str) -> pl.DataFrame:
               .collect())
 
 
-def storage_bind_within_timeset(source: "InputSource") -> pl.DataFrame:
-    return storage_bind_filter(source, "bind_within_timeset")
+def storage_bind_within_timeblock(source: "InputSource") -> pl.DataFrame:
+    return storage_bind_filter(source, "bind_within_timeblock")
 
 
 def storage_bind_forward_only(source: "InputSource") -> pl.DataFrame:
@@ -1164,8 +1164,8 @@ def storage_bind_within_solve(source: "InputSource") -> pl.DataFrame:
     return storage_bind_filter(source, "bind_within_solve")
 
 
-def storage_bind_using_blended_weights(source: "InputSource") -> pl.DataFrame:
-    return storage_bind_filter(source, "bind_using_blended_weights")
+def storage_bind_within_solve_blended_weights(source: "InputSource") -> pl.DataFrame:
+    return storage_bind_filter(source, "bind_within_solve_blended_weights")
 
 
 def storage_fix_start(source: "InputSource") -> pl.DataFrame:
@@ -1855,10 +1855,10 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "process_online_linear": process_online_linear,
     "process_online_integer": process_online_integer,
     "process_delayed": process_delayed,
-    "storage_bind_within_timeset": storage_bind_within_timeset,
+    "storage_bind_within_timeblock": storage_bind_within_timeblock,
     "storage_bind_forward_only": storage_bind_forward_only,
     "storage_bind_within_solve": storage_bind_within_solve,
-    "storage_bind_using_blended_weights": storage_bind_using_blended_weights,
+    "storage_bind_within_solve_blended_weights": storage_bind_within_solve_blended_weights,
     "storage_fix_start": storage_fix_start,
     "n_fix_storage_quantity": n_fix_storage_quantity,
     "groupCapacityMargin": groupCapacityMargin,

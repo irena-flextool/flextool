@@ -61,7 +61,7 @@ def test_blank_when_nodeState_absent_or_empty(tmp_path: Path):
     out1 = _load_storage(inp, sd, dt, nb, None, None, None, None)
     # Hand-calc: missing file -> blank dict; every nodeState/storage key None.
     for k in ("nodeState", "nodeState_dt", "nodeState_first_dt",
-              "p_state_upper", "storage_bind_within_timeset",
+              "p_state_upper", "storage_bind_within_timeblock",
               "storage_fix_start", "storage_use_reference_value"):
         assert out1[k] is None, f"{k} not None on missing nodeState.csv"
 
@@ -70,7 +70,7 @@ def test_blank_when_nodeState_absent_or_empty(tmp_path: Path):
     out2 = _load_storage(inp, sd, dt, nb, None, None, None, None)
     # Hand-calc: height==0 short-circuit -> identical blank dict.
     for k in ("nodeState", "nodeState_dt", "p_state_upper",
-              "storage_bind_within_timeset"):
+              "storage_bind_within_timeblock"):
         assert out2[k] is None, f"{k} not None on empty nodeState.csv"
 
 

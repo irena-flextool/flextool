@@ -1,5 +1,5 @@
 """``wind_battery`` scenario — wind plant + battery storage with
-bind_within_timeset cyclic state and fix_start.  First parity test
+bind_within_timeblock cyclic state and fix_start.  First parity test
 for storage features (v_state, state-change in nodeBalance, source-
 side flows in nodeBalance, maxState, storage_state_start_binding,
 self-discharge)."""

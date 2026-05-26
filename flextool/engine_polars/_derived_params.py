@@ -7149,7 +7149,7 @@ def storage_use_reference_value_from_source(source: "InputSource",
     anti-join against:
 
       * ``storage_start_end_method ∈ {fix_end, fix_start_end}``
-      * ``storage_binding_method ∈ {bind_within_solve, bind_within_timeset,
+      * ``storage_binding_method ∈ {bind_within_solve, bind_within_timeblock,
                                       bind_intraperiod_blocks}``
       * ``nodeStateBlock`` (synthesised + explicit).
     """
@@ -7177,7 +7177,7 @@ def storage_use_reference_value_from_source(source: "InputSource",
     if sbm_full is not None:
         b = (sbm_full.lazy()
                   .filter(pl.col("method").is_in([
-                      "bind_within_solve", "bind_within_timeset",
+                      "bind_within_solve", "bind_within_timeblock",
                       "bind_intraperiod_blocks"]))
                   .select("n")
                   .collect())

@@ -268,7 +268,7 @@ def toy_storage_blocks() -> FlexData:
         pl.DataFrame({"n": ["s"], "d": ["d1"], "value": [10.0]}))
 
     # dtttdt: cyclic step_previous over 4 timesteps within d1.  Used by
-    # bind_within_timeset constraints when activated; here we only need
+    # bind_within_timeblock constraints when activated; here we only need
     # the within-block-interior subset for stateConstantWithinBlock.
     dtttdt = pl.DataFrame({
         "d": ["d1"]*4,

@@ -471,7 +471,7 @@ def _build_region_data(
     # materialised (small one-row-per-node slice; see ``_load_storage``).
     new.nodeState_dt = None
     new.nodeState_first_dt = _filter_frame(src.nodeState_first_dt, "n", keep_nodes)
-    new.storage_bind_within_timeset = _filter_frame(src.storage_bind_within_timeset, "n", keep_nodes)
+    new.storage_bind_within_timeblock = _filter_frame(src.storage_bind_within_timeblock, "n", keep_nodes)
     new.storage_bind_forward_only = _filter_frame(src.storage_bind_forward_only, "n", keep_nodes)
     new.storage_bind_within_solve = _filter_frame(src.storage_bind_within_solve, "n", keep_nodes)
     new.storage_fix_start = _filter_frame(src.storage_fix_start, "n", keep_nodes)

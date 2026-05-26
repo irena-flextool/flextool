@@ -110,7 +110,7 @@ def test_profile_state_upper_invest_tightening(toy_storage_2t):
                   .otherwise(2.0)
         ).select("n", "d", "t", "value"))
 
-    # Storage cycling: bind state across timesteps via storage_bind_within_timeset.
+    # Storage cycling: bind state across timesteps via storage_bind_within_timeblock.
     storage_bind = pl.DataFrame({"n": ["s"]})
 
     # Existing capacity = 0; unitsize = 1 so state_change is in MWh
@@ -146,7 +146,7 @@ def test_profile_state_upper_invest_tightening(toy_storage_2t):
     data = dataclasses.replace(
         toy_storage_2t,
         p_inflow=p_inflow_new,
-        storage_bind_within_timeset=storage_bind,
+        storage_bind_within_timeblock=storage_bind,
         p_state_existing_capacity=p_state_existing_zero,
         p_state_upper=p_state_upper_loose,
         p_state_unitsize=p_state_unitsize_one,

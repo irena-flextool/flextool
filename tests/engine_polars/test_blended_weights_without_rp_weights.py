@@ -52,13 +52,13 @@ def _seed_storage_binding_method_provider(
     ``input/node__storage_binding_method`` at the point where the
     strict check runs.
 
-    ``nodes_blended`` are written with ``bind_using_blended_weights``;
+    ``nodes_blended`` are written with ``bind_within_solve_blended_weights``;
     ``nodes_other`` is an optional list of ``(node, method)`` pairs for
     sibling nodes carrying a different (non-RP) method.
     """
     provider = FlexDataProvider()
     rows_n: list[str] = list(nodes_blended)
-    rows_m: list[str] = ["bind_using_blended_weights"] * len(nodes_blended)
+    rows_m: list[str] = ["bind_within_solve_blended_weights"] * len(nodes_blended)
     for n, m in (nodes_other or []):
         rows_n.append(n)
         rows_m.append(m)
@@ -88,11 +88,11 @@ def test_nodes_with_blended_weights_empty_provider(tmp_path: Path) -> None:
 
 
 def test_nodes_with_blended_weights_filters_by_method(tmp_path: Path) -> None:
-    """Only ``bind_using_blended_weights`` rows are returned; sorted."""
+    """Only ``bind_within_solve_blended_weights`` rows are returned; sorted."""
     provider = _seed_storage_binding_method_provider(
         nodes_blended=["beta", "alpha"],
         nodes_other=[("gamma", "bind_within_solve"),
-                     ("delta", "bind_within_timeset")],
+                     ("delta", "bind_within_timeblock")],
     )
     out = _nodes_with_blended_weights(tmp_path / "input", provider)
     assert out == ["alpha", "beta"]
