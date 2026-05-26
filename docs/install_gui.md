@@ -4,9 +4,12 @@ This page describes how to install IRENA FlexTool using the built-in FlexTool GU
 
 For the Spine Toolbox installation path, see [Install with Spine Toolbox](install_toolbox.md).
 
+!!! note "v4 is in alpha"
+    FlexTool v4 is currently in alpha (`4.0.0a1`, released 2026-05-26). The release is published as a PEP 440 pre-release on PyPI, so pip needs the `--pre` flag to resolve it — e.g. `pip install --pre flextool`. Parity with the 3.47.x line is expected; reports against scenarios that worked on 3.47.0 but misbehave on 4.0.0a1 are especially welcome.
+
 ## Requirements
 
-- **Python 3.9–3.13** 
+- **Python ≥ 3.9** (see `requires-python` in `pyproject.toml`)
 - **Git** (optional, but recommended for easy updates)
 
 ## Installation Steps
@@ -15,7 +18,7 @@ For the Spine Toolbox installation path, see [Install with Spine Toolbox](instal
 
 Download and install Python from [python.org](https://www.python.org/downloads/). Make sure to check **"Add Python to PATH"** during installation on Windows.
 
-> **Note:** If you already have Python in your PATH (check with `python --version` in a terminal) and it is not a supported version (3.9–3.13), you need to install a supported version. On Windows, you may need to use the full path to the new Python (e.g. `C:\Python312\python.exe`) unless you update your PATH to point to it.
+> **Note:** If you already have Python in your PATH (check with `python --version` in a terminal) and it is older than 3.9, you need to install a supported version. On Windows, you may need to use the full path to the new Python (e.g. `C:\Python312\python.exe`) unless you update your PATH to point to it.
 
 ### 2. Install Git (optional)
 
@@ -33,7 +36,7 @@ Either clone with Git (recommended):
 git clone https://github.com/irena-flextool/flextool.git
 ```
 
-Or download and unzip from [GitHub](https://github.com/irena-flextool/flextool/archive/refs/heads/master.zip).
+Or download and unzip from [GitHub](https://github.com/irena-flextool/flextool/archive/refs/heads/main.zip).
 
 ### 4. Enter the FlexTool directory
 
@@ -91,6 +94,26 @@ pip install .
 
 This installs FlexTool and the GUI, but without Spine DB Editor. You can run scenarios and view results, but editing `.sqlite` input sources from the GUI requires Spine DB Editor. You can upgrade to the full install at any time by running the recommended command above.
 
+#### Install from PyPI / TestPyPI (pre-release)
+
+If you do not need a clone of the source tree, FlexTool can be installed directly from PyPI. Because v4 is an alpha, pip needs `--pre` to resolve it:
+
+```bash
+pip install --pre flextool                # lean / GUI only
+pip install --pre "flextool[toolbox]"     # with Spine Toolbox
+```
+
+TestPyPI sometimes carries newer alphas than PyPI. To install from there, point pip at the TestPyPI index and keep PyPI as a fallback for dependencies that are not mirrored on TestPyPI:
+
+```bash
+pip install --pre \
+    --index-url https://test.pypi.org/simple/ \
+    --extra-index-url https://pypi.org/simple/ \
+    flextool
+```
+
+The PyPI install does not include the `update_flextool.py` initialization script or the example databases that live alongside it. If you need those — or want the `update_flextool.py` migration workflow described below — install from a clone instead.
+
 ### 7. Initialize FlexTool
 
 Create the necessary database files and templates:
@@ -99,13 +122,25 @@ Create the necessary database files and templates:
 python update_flextool.py --skip-git
 ```
 
-### 8. Launch FlexTool
+### 8. Verify the install
+
+Confirm the CLI is wired up:
+
+```bash
+flextool-run --help
+```
+
+This should print the FlexTool CLI usage. If it does, the venv is healthy.
+
+### 9. Launch FlexTool
 
 Start the FlexTool GUI:
 
 ```bash
-python -m flextool.gui
+flextool-gui
 ```
+
+(Equivalent to `python -m flextool.gui`.)
 
 If you also installed Spine Toolbox, you can launch it with:
 
@@ -136,9 +171,9 @@ python update_flextool.py --skip-git
 
 ## Troubleshooting
 
-### "command not found: flextool-gui"
+### "command not found: flextool-gui" / "flextool-run"
 
-Make sure your virtual environment is activated. The `flextool-gui` command is only available when the virtual environment where FlexTool was installed is active.
+Make sure your virtual environment is activated. The `flextool-gui` and `flextool-run` console scripts are only on PATH when the venv where FlexTool was installed is active.
 
 ### "No module named '_tkinter'" (macOS / Linux)
 
