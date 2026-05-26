@@ -45,6 +45,7 @@ Design choices
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import tempfile
@@ -59,10 +60,457 @@ from flextool.engine_polars._solve_state import (
     PathConfig,
     RunnerState,
 )
-from flextool.engine_polars import scaling as _scaling
+from flextool.engine_polars._determinism import (
+    DETERMINISM_OPTIONS,
+    SIMPLEX_SCALE_STRATEGY_ADVANCED,
+)
+from flextool.engine_polars.autoscale import (
+    Layer2Plan as _AutoscaleLayer2Plan,
+    Layer3Plan as _AutoscaleLayer3Plan,
+    RangeReport as _AutoscaleRangeReport,
+    ScalingMode as _AutoscaleScalingMode,
+    USER_BOUND_SCALE_MAX as _USER_BOUND_SCALE_MAX,
+    USER_BOUND_SCALE_MIN as _USER_BOUND_SCALE_MIN,
+    apply_layer2 as _autoscale_apply_layer2,
+    apply_scaling as _autoscale_apply_scaling,
+    detect_ranges as _autoscale_compute_ranges,
+    format_console_summary as _autoscale_format_console_summary,
+    format_nonoptimal_hint as _autoscale_format_nonoptimal_hint,
+    mode_enables_layer1 as _autoscale_mode_enables_layer1,
+    mode_enables_layer3 as _autoscale_mode_enables_layer3,
+    recommend_scaling as _autoscale_recommend_scaling,
+    resolve_scaling_config as _autoscale_resolve_config,
+    resolve_user_bound_scale_override as _resolve_user_bound_scale_override,
+    unscale_solution as _autoscale_unscale_solution,
+    write_report as _autoscale_write_report,
+)
+
+
+# Legacy ``scale_the_objective`` default — historically the
+# ``flextool_base.dat``'s ``param scale_the_objective default 1e-6`` and the
+# pre-autoscale analyser's fallback when the rough-objective heuristic
+# returned a non-finite value.  Phase 2b drops the legacy data-driven
+# analyser entirely; we keep the build-time cost multiplier so that:
+#
+#   * The MPS export (post-Layer-2, pre-solve) still carries pre-scaled
+#     cost coefficients in the same magnitude as before — handoff to
+#     external solvers continues to see a recognisable objective.
+#   * The output writers' un-scaling path (``_resolve_inv_scale_the_objective``)
+#     continues to find ``solve_data/scale_the_objective.csv`` with a non-1
+#     value; missing-file fallback in that helper is also ``1.0 / 1e-6``,
+#     so the un-scaling round-trip is byte-stable.
+#   * The user can still override per-solve via DB
+#     ``solve.scale_the_objective`` — autoscale Layer 3's
+#     ``user_objective_scale`` is HiGHS-internal and stacks on top
+#     (HiGHS un-scales internally on output, so layering the build-time
+#     scale and the HiGHS-side scale is well-defined).
+_LEGACY_DEFAULT_OBJECTIVE_SCALE = 1e-6
+
+
+def _resolve_effective_obj_scale(user_value: object | None) -> float:
+    """Coerce a raw DB ``solve.scale_the_objective`` value to a float.
+
+    Returns the user value when finite and strictly positive; otherwise
+    falls back to :data:`_LEGACY_DEFAULT_OBJECTIVE_SCALE` (1e-6).  This
+    mirrors the defensive contract the retired
+    ``scaling.resolve_effective_scaling`` had: any malformed user value
+    (None, non-numeric string, 0, NaN, negative) falls back rather than
+    crashing the cascade — the failure mode would be HiGHS's own
+    division by zero on output un-scaling.
+    """
+    if user_value is None:
+        return _LEGACY_DEFAULT_OBJECTIVE_SCALE
+    try:
+        candidate = float(user_value)
+    except (TypeError, ValueError):
+        return _LEGACY_DEFAULT_OBJECTIVE_SCALE
+    if not math.isfinite(candidate) or candidate <= 0.0:
+        return _LEGACY_DEFAULT_OBJECTIVE_SCALE
+    return candidate
+
+
+def _baseline_highs_options(
+    *,
+    user_bound_scale_override: int | None = None,
+    scaling_mode: "_AutoscaleScalingMode | None" = None,
+) -> dict[str, object]:
+    """Build the base HiGHS solver-option dict (determinism + matrix scale).
+
+    Replaces the retired ``scaling.recommended_highs_options`` helper.
+    Sets:
+
+    * ``simplex_scale_strategy`` — defaults to
+      :data:`SIMPLEX_SCALE_STRATEGY_ADVANCED` (Curtis-Reid matrix
+      equilibration).  When ``scaling_mode == ScalingMode.OFF`` we force
+      ``simplex_scale_strategy=0`` so HiGHS' own equilibration is also
+      disabled — that's the only mode in which FlexTool touches the
+      HiGHS-internal scaling knob.  Layer 3's :func:`apply_scaling` may
+      re-assert this value on the cold path; on warm rebuilds the value
+      set here is the authoritative one.
+    * :data:`DETERMINISM_OPTIONS` — ``random_seed`` / ``parallel`` /
+      ``solver`` / ``presolve`` pins for byte-deterministic LP solutions.
+    * ``user_bound_scale`` — only when ``user_bound_scale_override`` is
+      a non-zero integer (CLI ``--user-bound-scale N`` / DB
+      ``solve.user_bound_scale``).  Clamped to the HiGHS-safe range
+      ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.  When unset, the
+      autoscaler's Layer 3 may still emit its own value based on the
+      coefficient ranges.
+
+    ``user_cost_scale`` is intentionally NOT set — costs are already
+    multiplied by ``scale_the_objective`` inside ``build_flextool``, and
+    Layer 3 may add ``user_objective_scale`` on top; layering a third
+    cost-side knob would compound confusingly.
+    """
+    if scaling_mode is _AutoscaleScalingMode.OFF:
+        # OFF mode: disable HiGHS' internal equilibration too.  ``parallel``
+        # / ``random_seed`` / ``solver`` / ``presolve`` pins from
+        # DETERMINISM_OPTIONS still apply — OFF is about scaling, not
+        # determinism.
+        simplex_scale = 0
+    else:
+        simplex_scale = SIMPLEX_SCALE_STRATEGY_ADVANCED
+    options: dict[str, object] = {
+        "simplex_scale_strategy": simplex_scale,
+        **DETERMINISM_OPTIONS,
+    }
+    if user_bound_scale_override is not None and user_bound_scale_override != 0:
+        n = int(user_bound_scale_override)
+        if n > _USER_BOUND_SCALE_MAX:
+            n = _USER_BOUND_SCALE_MAX
+        if n < _USER_BOUND_SCALE_MIN:
+            n = _USER_BOUND_SCALE_MIN
+        options["user_bound_scale"] = n
+    return options
+
+
+def _autoscale_emit_layer1(
+    sol: "Solution | None",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+    work_folder: str | os.PathLike | None,
+    layer2_plan: "_AutoscaleLayer2Plan | None" = None,
+    layer3_plan: "_AutoscaleLayer3Plan | None" = None,
+) -> None:
+    """Layer 1 (detect) post-solve emitter.
+
+    Reads polar-high's already-computed ``Solution.streamed_lp_ranges``
+    (no duplicate matrix walk), runs the autoscaler's Layer 1
+    detection, and logs the four ranges + trigger flag.  Optionally
+    writes a YAML audit report when the config carries a path.
+
+    Phase 1b is detection-only — this function does NOT modify the LP
+    or the solve options.  Layer 2 / Layer 3 will hook in alongside
+    it in later phases.
+
+    Failures here are non-fatal: a missing ``streamed_lp_ranges`` (the
+    commercial-solver / LiteSolution path) skips the layer with a
+    debug-level note rather than breaking the solve.
+    """
+    # ``cli_args=None`` is intentional: the CLI surface
+    # (``cmd_run_flextool``) mirrors ``--scaling`` /
+    # ``--user-bound-scale`` into the ``FLEXTOOL_SCALING`` /
+    # ``FLEXTOOL_USER_BOUND_SCALE`` env vars before invoking the
+    # orchestrator, matching the existing env-threading convention
+    # documented on the ``run_chain_from_db`` call site.  Cascade-
+    # internal hops therefore observe operator intent without
+    # plumbing the parsed ``args`` namespace through every helper.
+    cfg = _autoscale_resolve_config(None)
+    if not _autoscale_mode_enables_layer1(cfg.mode):
+        return
+    if sol is None:
+        return
+    streamed = getattr(sol, "streamed_lp_ranges", None)
+    if not isinstance(streamed, dict):
+        logger.debug(
+            "autoscale Layer 1 skipped for %s: no streamed_lp_ranges on Solution",
+            solve_name,
+        )
+        return
+
+    try:
+        ranges = _autoscale_compute_ranges(sol, cfg)
+    except Exception:  # pragma: no cover — guard against future API drift
+        logger.exception(
+            "autoscale Layer 1 failed for %s; continuing without it", solve_name,
+        )
+        return
+
+    def _fmt(span: tuple[float, float]) -> str:
+        import math as _math
+        if _math.isnan(span[0]) or _math.isnan(span[1]):
+            return "empty"
+        return f"{span[0]:.1e}, {span[1]:.1e}"
+
+    logger.info(
+        "autoscale Layer 1 [%s]: Matrix [%s], Cost [%s], Bound [%s], "
+        "RHS [%s], cross=%s, trigger=%s",
+        solve_name,
+        _fmt(ranges.matrix), _fmt(ranges.cost),
+        _fmt(ranges.bound), _fmt(ranges.rhs),
+        (f"{ranges.cross_group_max_ratio:.1e}"
+         if ranges.cross_group_max_ratio == ranges.cross_group_max_ratio
+         else "n/a"),
+        ranges.trigger,
+    )
+
+    # Default report location next to the existing scaling_report file
+    # when no explicit path is configured — keeps both diagnostics
+    # together for the operator.
+    yaml_path = cfg.report_yaml_path
+    if yaml_path is None and work_folder is not None:
+        yaml_path = Path(work_folder) / "solve_data" / f"autoscale_{solve_name}.yaml"
+    if yaml_path is not None:
+        try:
+            report_tree: dict = {"layer1": ranges}
+            if layer2_plan is not None:
+                from flextool.engine_polars.autoscale._report import (
+                    render_layer2 as _render_l2,
+                )
+                report_tree["layer2"] = _render_l2(layer2_plan)
+            if layer3_plan is not None:
+                from flextool.engine_polars.autoscale._report import (
+                    render_layer3 as _render_l3,
+                )
+                report_tree["layer3"] = _render_l3(layer3_plan)
+            _autoscale_write_report(report_tree, yaml_path)
+        except Exception:  # pragma: no cover — non-fatal
+            logger.exception(
+                "autoscale Layer 1 report write failed (%s)", yaml_path,
+            )
+
+
+def _autoscale_apply_layer3_pre_solve(
+    pb: "Problem",
+    *,
+    layer2_plan: "_AutoscaleLayer2Plan | None",
+    solve_name: str,
+    logger: logging.Logger,
+) -> "_AutoscaleLayer3Plan | None":
+    """Layer 3 (HiGHS-native top-up) pre-solve apply.
+
+    Runs unconditionally when the autoscaler is enabled — Layer 3 is
+    cheap and sets HiGHS options that take effect only when needed
+    (``user_*_scale`` defaults to 0 = no-op).  The recommendation is
+    derived from the *post-Layer-2* coefficient ranges so the residual
+    spread (after Layer 2's per-type rescale) drives the global
+    HiGHS-side scaling.
+
+    Returns ``None`` when the autoscaler is disabled or the readout
+    fails; the caller continues without setting any Layer 3 options.
+
+    Layer 2's mutation of the LP arrays is the same the polar-high
+    streaming solve sees — Layer 3 just picks exponents from those
+    arrays.  Precedence-respect: when the caller (highs.opt file,
+    ``set_solver_options`` from elsewhere) has already set
+    ``user_bound_scale`` or ``user_objective_scale``, Layer 3 skips that
+    axis and the caller's value wins.
+    """
+    cfg = _autoscale_resolve_config(None)
+    if not _autoscale_mode_enables_layer3(cfg.mode):
+        return None
+    try:
+        ranges_post_l2 = _autoscale_compute_ranges(pb, cfg)
+    except Exception:  # pragma: no cover — guard against future API drift
+        logger.exception(
+            "autoscale Layer 3 pre-solve range readout failed for %s; "
+            "skipping Layer 3 (Layer 1 / Layer 2 still applied)",
+            solve_name,
+        )
+        return None
+    try:
+        plan = _autoscale_recommend_scaling(ranges_post_l2, cfg, problem=pb)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 3 recommendation failed for %s; "
+            "skipping (HiGHS internal scaling still applies)",
+            solve_name,
+        )
+        return None
+    try:
+        _autoscale_apply_scaling(pb, plan)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 3 option apply failed for %s; HiGHS "
+            "internal scaling will fill in",
+            solve_name,
+        )
+        return plan  # still return for report visibility
+    logger.info(
+        "autoscale Layer 3 [%s]: user_objective_scale=%d, "
+        "user_bound_scale=%d, simplex_scale_strategy=%d (%s)",
+        solve_name,
+        plan.user_objective_scale,
+        plan.user_bound_scale,
+        plan.simplex_scale_strategy,
+        plan.reasoning,
+    )
+    return plan
+
+
+def _autoscale_apply_layer2_pre_solve(
+    pb: "Problem",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+) -> "tuple[_AutoscaleLayer2Plan | None, _AutoscaleRangeReport | None]":
+    """Layer 2 (semantic per-type scaling) pre-solve apply.
+
+    Runs only when the autoscaler is enabled AND the pre-solve Layer-1
+    detector trips (per ``AutoScaleConfig.threshold_decades``).  When
+    triggered, mutates ``pb`` in place and returns the inverse-plan
+    that ``_autoscale_unscale_post_solve`` consumes immediately after
+    ``pb.solve(...)``.
+
+    Returns ``(plan, ranges_pre)`` where:
+
+    * ``plan`` is ``None`` when Layer 2 was skipped (config off or the
+      Layer-1 trigger did not fire).
+    * ``ranges_pre`` is the pre-Layer-2 :class:`RangeReport` (always
+      present when the autoscaler is enabled and the readout succeeded;
+      ``None`` only when disabled or the readout itself failed).  The
+      caller threads it into the console summary and the non-optimal
+      hint so both reports describe the LP the autoscaler *decided on*
+      rather than re-reading after Layer 2 mutated the arrays.
+
+    The detector here uses :func:`_autoscale_compute_ranges` on the
+    pre-solve ``Problem`` — :mod:`_ranges` falls back to
+    ``Problem._build_lp_arrays`` for that path.  Layer-1 emission
+    after solve still happens via the existing post-solve hook so the
+    operator-facing log line and YAML report describe the *scaled*
+    LP that HiGHS actually saw.
+    """
+    cfg = _autoscale_resolve_config(None)
+    # Layer 2 is FlexTool-side semantic per-quantity scaling: only fires
+    # in ``ScalingMode.FULL``.  In ``BASIC`` we still want Layer 1's
+    # pre-solve ranges to be available for the console summary, so we
+    # compute them when Layer 3 is enabled too.
+    if not _autoscale_mode_enables_layer1(cfg.mode):
+        return None, None
+    try:
+        ranges_pre = _autoscale_compute_ranges(pb, cfg)
+    except Exception:  # pragma: no cover — guard against future API drift
+        logger.exception(
+            "autoscale Layer 2 pre-solve range readout failed for %s; "
+            "skipping Layer 2 (Layer 1 post-solve still fires)",
+            solve_name,
+        )
+        return None, None
+    if cfg.mode is not _AutoscaleScalingMode.FULL:
+        # BASIC mode: skip Layer 2's LP-array mutation but still report
+        # the pre-solve ranges so Layer 3 / the console summary see them.
+        return None, ranges_pre
+    if not ranges_pre.trigger:
+        return None, ranges_pre
+    try:
+        plan = _autoscale_apply_layer2(pb, cfg)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 2 apply failed for %s; reverting solve to "
+            "un-scaled LP (Layer 1 post-solve still fires)",
+            solve_name,
+        )
+        return None, ranges_pre
+    logger.info(
+        "autoscale Layer 2 [%s]: exponents=%s, rows=%d, skipped_rows=%d, "
+        "integer_cols=%d",
+        solve_name,
+        {t.value: e for t, e in plan.type_exponents.items()},
+        plan.row_factors.shape[0],
+        len(plan.skipped_rows),
+        len(plan.skipped_integer_cols),
+    )
+    return plan, ranges_pre
+
+
+def _autoscale_emit_console_summary(
+    *,
+    ranges_pre: "_AutoscaleRangeReport | None",
+    ranges_post: "_AutoscaleRangeReport | None",
+    layer2_plan: "_AutoscaleLayer2Plan | None",
+    layer3_plan: "_AutoscaleLayer3Plan | None",
+    solve_name: str,
+    already_emitted: set[str],
+) -> None:
+    """Emit the one-line user-visible autoscale summary.
+
+    Uses ``print(...)`` rather than ``logger.info`` so the line surfaces
+    at the default log level in the same stream where FlexTool's other
+    phase-progress lines (``Input: …``, the HiGHS banner) appear.  We
+    de-duplicate by solve name so a rolling solve emits the line once
+    per base-solve, not once per roll — Layer 1/2/3 decisions are
+    identical across rolls of the same base solve when the autoscaler
+    is enabled.
+    """
+    cfg = _autoscale_resolve_config(None)
+    if not _autoscale_mode_enables_layer1(cfg.mode):
+        return
+    if ranges_pre is None:
+        return
+    if solve_name in already_emitted:
+        return
+    line = _autoscale_format_console_summary(
+        ranges_pre=ranges_pre,
+        ranges_post=ranges_post,
+        layer2_plan=layer2_plan,
+        layer3_plan=layer3_plan,
+        threshold_decades=cfg.threshold_decades,
+    )
+    print(line, flush=True)
+    already_emitted.add(solve_name)
+
+
+def _autoscale_emit_nonoptimal_hint(
+    *,
+    ranges_pre: "_AutoscaleRangeReport | None",
+    sol: "Solution | None",
+) -> None:
+    """Emit the scaling-related hint when HiGHS reports non-optimal.
+
+    Only fires when (a) the solve genuinely returned non-optimal AND
+    (b) the autoscaler's Layer-1 detector had flagged poor scaling on
+    the pre-solve LP.  Printing scaling advice on a well-conditioned
+    LP that simply happened to be infeasible would be misleading, so
+    we keep the trigger conjunctive.
+    """
+    if sol is None:
+        return
+    if ranges_pre is None:
+        return
+    if sol.optimal:
+        return
+    hint = _autoscale_format_nonoptimal_hint(ranges_pre)
+    if hint:
+        print(hint, flush=True)
+
+
+def _autoscale_unscale_post_solve(
+    sol: "Solution | None",
+    plan: "_AutoscaleLayer2Plan | None",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+) -> None:
+    """Layer 2 unscale guard — invoke immediately after ``pb.solve(...)``.
+
+    Idempotent when ``plan is None`` or ``sol is None``: the eager
+    unscale keeps the rest of the pipeline (output writers, range
+    re-readouts) blind to the Layer-2 substitution.
+    """
+    if plan is None or sol is None:
+        return
+    try:
+        _autoscale_unscale_solution(sol, plan)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 2 unscale failed for %s; downstream output "
+            "values are still in scaled units — re-run with autoscale off",
+            solve_name,
+        )
+
 
 if TYPE_CHECKING:
-    from polar_high import Solution
+    from polar_high import Problem, Solution
 
     from flextool.engine_polars._solve_config import SolveConfig
     from flextool.engine_polars._timeline import TimelineConfig
@@ -685,76 +1133,43 @@ class OrchestrationStep:
 # ---------------------------------------------------------------------------
 
 
-def _write_scale_csv_and_report(
+def _write_scale_csv(
     *,
     solve_data_dir: Path,
-    output_raw_dir: Path,
     solve_name: str,
-    scale_table: "_scaling.ScaleTable",
-    effective_row_scaling: str,
     effective_obj_scale: float,
-    user_row_scaling: object | None,
-    flex_data: "FlexData",
-    solution: "Solution | None",
     logger: logging.Logger,
-    write_csv: bool = True,
-    write_report: bool = True,
 ) -> None:
-    """Emit ``scale_the_objective.csv`` and ``scaling_report.txt``.
+    """Emit ``solve_data/scale_the_objective.csv`` for the given solve.
 
-    The CSV is required by the downstream parquet/CSV writers — they read
-    it via :func:`flextool.process_outputs.read_highs_solution.
-    _resolve_inv_scale_the_objective` to un-scale variable values back to
-    user-facing units.  The TXT report is a human-readable diagnostic.
+    Required by the downstream parquet / CSV writers — they read it via
+    :func:`flextool.process_outputs.read_highs_solution.
+    _resolve_inv_scale_the_objective` to un-scale variable values and
+    duals back to user-facing units.  Best-effort: a write failure logs
+    a warning but does not raise.
 
-    Both writes are best-effort: failures log a warning but do not raise.
-
-    ``write_csv`` / ``write_report`` allow callers to suppress either
-    artifact independently — e.g. the cascade gates the CSV per
-    ``base_solve_name`` (its value is invariant across rolls) and gates
-    the diagnostic report behind ``FLEXTOOL_SCALING_REPORT=1``.
+    The legacy human-readable ``scaling_report.txt`` diagnostic was
+    retired in Phase 2b; the autoscaler's ``solve_data/autoscale_<solve>.yaml``
+    (written from :func:`_autoscale_emit_layer1`) is the new
+    machine-readable audit.  Callers should write the CSV exactly once
+    per base solve — its value is invariant across rolls of the same
+    base solve.
     """
-    if write_csv:
-        try:
-            from flextool.engine_polars._emit_solve_writers import (
-                derive_scale_the_objective,
-            )
-            sd = Path(solve_data_dir)
-            sd.mkdir(parents=True, exist_ok=True)
-            path = sd / "scale_the_objective.csv"
-            derive_scale_the_objective(effective_obj_scale).write_csv(
-                path, line_terminator="\r\n",
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "scale_the_objective.csv write failed for %s: %s",
-                solve_name, exc,
-            )
-
-    if not write_report:
-        return
     try:
-        from flextool.engine_polars.scaling_report import write_scaling_report
-        write_scaling_report(
-            scale_table=scale_table,
-            flex_data=flex_data,
-            solve_data_dir=solve_data_dir,
-            solve_name=solve_name,
-            solution=solution,
-            output_raw_dir=output_raw_dir,
-            applied_row_scaling=effective_row_scaling,
-            applied_obj_scale=effective_obj_scale,
-            override_source=(
-                "user_db_setting"
-                if isinstance(user_row_scaling, str)
-                and user_row_scaling.strip().lower() in ("yes", "no")
-                else None
-            ),
-            stdout_summary=True,
-            logger=logger,
+        from flextool.engine_polars._emit_solve_writers import (
+            derive_scale_the_objective,
+        )
+        sd = Path(solve_data_dir)
+        sd.mkdir(parents=True, exist_ok=True)
+        path = sd / "scale_the_objective.csv"
+        derive_scale_the_objective(effective_obj_scale).write_csv(
+            path, line_terminator="\r\n",
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("scaling report failed for %s: %s", solve_name, exc)
+        logger.warning(
+            "scale_the_objective.csv write failed for %s: %s",
+            solve_name, exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1067,16 +1482,20 @@ def _drive_cascade(
             # :func:`_native_run_model`, which on multi-roll runs is too
             # late (storage→dispatch OOMs).
             self._prev_step_key: "str | None" = None
-            # Per-base-solve gating for the scaling CSV + diagnostic report.
-            # The CSV value (effective_obj_scale) is invariant across rolls
-            # of the same base solve — and the TXT report is diagnostic
-            # only.  We track which base solve names we've already written
-            # each artifact for, so subsequent rolls skip the work.  The
-            # TXT report additionally requires ``FLEXTOOL_SCALING_REPORT=1``
-            # to be set, unless the solve is non-optimal (in which case we
-            # always emit it once for actionable diagnostics).
+            # Per-base-solve gating for the scaling CSV.  The CSV value
+            # (effective_obj_scale) is invariant across rolls of the same
+            # base solve, so we track which base solve names already have
+            # ``scale_the_objective.csv`` written and skip subsequent
+            # rolls.  Phase 2b dropped the legacy diagnostic TXT report
+            # (``FLEXTOOL_SCALING_REPORT=1``); the autoscaler's per-solve
+            # YAML report (``solve_data/autoscale_<solve>.yaml``) is the
+            # replacement and is gated inside
+            # :func:`_autoscale_emit_layer1`.
             self._scale_csv_written: set[str] = set()
-            self._scale_report_written: set[str] = set()
+            # Autoscale console summary dedup: one line per base solve.
+            # Layer 1/2/3 decisions are identical across rolls of the
+            # same base solve, so the operator-facing summary fires once.
+            self._autoscale_summary_emitted: set[str] = set()
         def run(self, complete_solve_name: str) -> int:
             # Optional per-iter phase-timing (opt-in via env var).  Emits
             # `per_iter` rows to the workdir's timings.csv covering
@@ -1137,44 +1556,35 @@ def _drive_cascade(
                 )
 
             # --- LP scaling -------------------------------------------------
-            # The analyser is keyed on the base solve name (the rolling
-            # ``_roll_N`` suffix is stripped) so every iteration of a
-            # rolling cascade reuses the first iteration's ScaleTable
-            # via ``_scale_cache``.  The user's per-solve DB overrides
-            # win when present and well-formed; otherwise we apply the
-            # analyser's recommendation.
+            # Phase 2b — the legacy ``scaling.analyze_solve`` /
+            # ``ScaleTable`` / ``resolve_effective_scaling`` pipeline has
+            # been retired in favour of the autoscale package; the
+            # cascade now resolves the per-solve effective objective
+            # scale directly from the user's DB override (defaulting to
+            # the legacy 1e-6 when absent) and lets autoscale Layer 3
+            # handle residual cost / bound magnitudes inside HiGHS.
             base_solve_name = re.sub(r"_roll_\d+$", "", complete_solve_name)
-            scale_table = _scaling.analyze_solve(
-                solve_name=base_solve_name,
-                flex_data=data,
-                work_folder=self.state.paths.work_folder,
-                logger=self.state.logger,
-                write_json=getattr(self.state, "csv_dump", False),
-            )
-            user_row_scaling = state.solve.use_row_scaling.get(complete_solve_name)
             user_obj_scale = state.solve.scale_the_objective.get(complete_solve_name)
-            effective_row_scaling, effective_obj_scale = (
-                _scaling.resolve_effective_scaling(
-                    scale_table, user_row_scaling, user_obj_scale,
-                )
-            )
+            effective_obj_scale = _resolve_effective_obj_scale(user_obj_scale)
             # ``user_bound_scale`` resolution priority:
             # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by
             # ``--user-bound-scale`` CLI flag) > DB ``solve.user_bound_scale``
-            # > polar-high's stream-time auto-pick (the Problem is built
-            # with ``auto_user_bound_scale=True``) > HiGHS' own internal
-            # scaling.  The legacy input-data and post-build LP-range
-            # heuristics in ``flextool.engine_polars.scaling`` were
-            # deleted once the polar-high stream-time path covered
-            # every real construction site; HiGHS' "Consider setting
-            # the user_bound_scale option to <N>" warning still prints
-            # a value if any case slips through, pass it via
+            # > autoscale Layer 3's automatic recommendation > HiGHS'
+            # own internal scaling.  HiGHS' "Consider setting the
+            # user_bound_scale option to <N>" warning still prints a
+            # value if any case slips through Layer 3; pass it via
             # ``--user-bound-scale``.
             _cli_ubs = os.environ.get("FLEXTOOL_USER_BOUND_SCALE")
-            user_bound_scale_override = _scaling.resolve_user_bound_scale_override(
+            user_bound_scale_override = _resolve_user_bound_scale_override(
                 _cli_ubs if _cli_ubs is not None
                 else state.solve.user_bound_scale.get(complete_solve_name)
             )
+            # Resolve the autoscaler's mode once for this sub-solve so the
+            # baseline-options builder, the cold/warm LP construction, and
+            # the Layer 2 / Layer 3 helpers all see the same value.  Cascade-
+            # internal call sites read ``FLEXTOOL_SCALING`` from env.
+            _scaling_cfg = _autoscale_resolve_config(None)
+            _scaling_mode = _scaling_cfg.mode
 
             # HiGHS solver options.  ``simplex_scale_strategy`` =
             # advanced (Curtis-Reid) is always-on; ``user_bound_scale``
@@ -1291,9 +1701,9 @@ def _drive_cascade(
                         print("", flush=True)
                     inner_pb = self._warm_problem.problem
                     highs_options = _finalise_highs_options(
-                        _scaling.recommended_highs_options(
-                            scale_table,
+                        _baseline_highs_options(
                             user_bound_scale_override=user_bound_scale_override,
+                            scaling_mode=_scaling_mode,
                         )
                     )
                     inner_pb.set_solver_options(highs_options)
@@ -1313,7 +1723,7 @@ def _drive_cascade(
                 self._prior_data = data
                 self._prior_fp = fp
             else:
-                pb = Problem(auto_user_bound_scale=True)
+                pb = Problem()
                 build_flextool(pb, data, scale_the_objective=effective_obj_scale)
                 if _memrec_local is not None and _emit_phase:
                     _memrec_local.checkpoint(
@@ -1325,12 +1735,71 @@ def _drive_cascade(
                     # the LP-build phase summary above.
                     print("", flush=True)
                 highs_options = _finalise_highs_options(
-                    _scaling.recommended_highs_options(
-                        scale_table,
+                    _baseline_highs_options(
                         user_bound_scale_override=user_bound_scale_override,
+                        scaling_mode=_scaling_mode,
                     )
                 )
                 pb.set_solver_options(highs_options)
+                # autoscale Layer 2 (semantic per-type) pre-solve apply.
+                # Trigger gate is the same Layer-1 four-range readout —
+                # see ``_autoscale_apply_layer2_pre_solve``.  Plan is
+                # consumed by ``_autoscale_unscale_post_solve`` once the
+                # solve returns so downstream output writers see the
+                # un-scaled solution.
+                (
+                    _autoscale_layer2_plan,
+                    _autoscale_ranges_pre,
+                ) = _autoscale_apply_layer2_pre_solve(
+                    pb,
+                    solve_name=complete_solve_name,
+                    logger=self.state.logger,
+                )
+                # Layer 3 (HiGHS-native top-up): set user_objective_scale,
+                # user_bound_scale, and simplex_scale_strategy from the
+                # post-Layer-2 ranges so HiGHS sees a final LP that is
+                # already inside its comfort zone.  Layer 3 is HiGHS-
+                # internal (no inverse transform on the solution); the
+                # writeModel MPS export remains unscaled.
+                _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
+                    pb,
+                    layer2_plan=_autoscale_layer2_plan,
+                    solve_name=complete_solve_name,
+                    logger=self.state.logger,
+                )
+                # Console summary: one user-visible line per base solve
+                # describing the autoscaler's pre/post ranges and the
+                # Layer 2 / Layer 3 decisions.  Read post-Layer-2 ranges
+                # from the (mutated) Problem so the "after" view reflects
+                # what HiGHS will see; Layer 3 acts inside HiGHS so its
+                # values are surfaced separately in the same line.
+                _autoscale_ranges_post: "_AutoscaleRangeReport | None" = None
+                if (
+                    _autoscale_ranges_pre is not None
+                    and _autoscale_ranges_pre.trigger
+                ):
+                    try:
+                        _autoscale_cfg_for_post = _autoscale_resolve_config(
+                            None,
+                        )
+                        _autoscale_ranges_post = _autoscale_compute_ranges(
+                            pb, _autoscale_cfg_for_post,
+                        )
+                    except Exception:  # pragma: no cover — non-fatal
+                        self.state.logger.exception(
+                            "autoscale post-Layer-2 range readout failed "
+                            "for %s; console summary will omit the "
+                            "'ranges post' segment",
+                            complete_solve_name,
+                        )
+                _autoscale_emit_console_summary(
+                    ranges_pre=_autoscale_ranges_pre,
+                    ranges_post=_autoscale_ranges_post,
+                    layer2_plan=_autoscale_layer2_plan,
+                    layer3_plan=_autoscale_layer3_plan,
+                    solve_name=base_solve_name,
+                    already_emitted=self._autoscale_summary_emitted,
+                )
                 # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
                 # ``pb.solve(keep_solver=True)`` for the default HiGHS path
                 # (byte-identical to the pre-Phase-3 behaviour); routes to
@@ -1350,6 +1819,27 @@ def _drive_cascade(
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                # Eager unscale — restore primal / duals / reduced costs
+                # to the un-scaled coordinate so output writers and
+                # subsequent rolling iterations see physical values.
+                _autoscale_unscale_post_solve(
+                    sol, _autoscale_layer2_plan,
+                    solve_name=complete_solve_name,
+                    logger=self.state.logger,
+                )
+            # autoscale Layer 1 (detect) — log the four LP coefficient
+            # ranges + trigger flag now that ``streamed_lp_ranges`` is
+            # populated.  Detection-only in Phase 1b; Layer 2 / Layer 3
+            # actions land in later phases.
+            _autoscale_emit_layer1(
+                sol,
+                solve_name=complete_solve_name,
+                logger=self.state.logger,
+                work_folder=self.state.paths.work_folder
+                if self.state.paths is not None else None,
+                layer2_plan=locals().get("_autoscale_layer2_plan"),
+                layer3_plan=locals().get("_autoscale_layer3_plan"),
+            )
             # Memory checkpoint after the solve completes.  Fires on
             # level-boundary iters only; on within-group rolling iters
             # the suppressed deltas accumulate into the next emitted
@@ -1389,46 +1879,27 @@ def _drive_cascade(
             _t_handoff_start = (
                 time.perf_counter() if _phase_timing else 0.0
             )
-            # Write scaling diagnostic (CSV + report incl. section 8.5)
-            # BEFORE the optimality check, so a non-optimal / time-limited
-            # solve still produces actionable scaling info.
+            # Write the ``scale_the_objective.csv`` (consumed by the
+            # output writers' un-scaling path) BEFORE the optimality
+            # check, so a non-optimal / time-limited solve still leaves
+            # behind a coherent solve_data/ directory.
             #
             # Per-base-solve gating: the CSV value is invariant across
             # rolls of the same base solve, so emit it only on the first
-            # roll.  The diagnostic TXT is gated behind
-            # ``FLEXTOOL_SCALING_REPORT=1`` (also once per base solve),
-            # except for non-optimal solves which always force one emit
-            # for actionable diagnostics.
+            # roll.  The legacy ``scaling_report.txt`` diagnostic (and
+            # its ``FLEXTOOL_SCALING_REPORT=1`` gate) was retired in
+            # Phase 2b — the autoscaler's per-solve YAML report (written
+            # from ``_autoscale_emit_layer1``) is the replacement.
             _t_scale_start = time.perf_counter() if _phase_timing else 0.0
-            _report_env = os.environ.get("FLEXTOOL_SCALING_REPORT") == "1"
-            _force_report = not sol.optimal
             _write_csv = base_solve_name not in self._scale_csv_written
-            _write_report = (
-                _force_report
-                or (
-                    _report_env
-                    and base_solve_name not in self._scale_report_written
-                )
-            )
-            if _write_csv or _write_report:
-                _write_scale_csv_and_report(
+            if _write_csv:
+                _write_scale_csv(
                     solve_data_dir=self.state.paths.work_folder / "solve_data",
-                    output_raw_dir=self.state.paths.work_folder / "output_raw",
                     solve_name=complete_solve_name,
-                    scale_table=scale_table,
-                    effective_row_scaling=effective_row_scaling,
                     effective_obj_scale=effective_obj_scale,
-                    user_row_scaling=user_row_scaling,
-                    flex_data=data,
-                    solution=sol,
                     logger=self.state.logger,
-                    write_csv=_write_csv,
-                    write_report=_write_report,
                 )
-                if _write_csv:
-                    self._scale_csv_written.add(base_solve_name)
-                if _write_report:
-                    self._scale_report_written.add(base_solve_name)
+                self._scale_csv_written.add(base_solve_name)
             if _phase_timing:
                 _tr.record(
                     "handoff_part",
@@ -1441,6 +1912,14 @@ def _drive_cascade(
             if not sol.optimal:
                 self.state.logger.error(
                     f"non-optimal solve for {complete_solve_name}"
+                )
+                # When poor scaling was detected on the pre-solve LP,
+                # surface an actionable hint explaining the suspected
+                # cause and three concrete remediation paths (unit
+                # conventions, single-thread HiGHS, disable autoscaler).
+                _autoscale_emit_nonoptimal_hint(
+                    ranges_pre=locals().get("_autoscale_ranges_pre"),
+                    sol=sol,
                 )
                 return 1
 
@@ -2078,44 +2557,42 @@ def run_single_solve_from_db(
     from flextool.engine_polars.model import build_flextool
 
     # --- LP scaling -------------------------------------------------------
-    # Single-solve has no rolling cascade, so the cache key equals the
-    # scenario name.  Resolve user overrides defensively (helper handles
-    # malformed / non-finite / non-positive DB values).
-    scale_table = _scaling.analyze_solve(
-        solve_name=scenario_name,
-        flex_data=flex_data,
-        work_folder=work_folder,
-        logger=logger,
-        write_json=csv_dump,
-    )
-    user_row_scaling = sc.use_row_scaling.get(scenario_name)
+    # Phase 2b — the legacy ``scaling.analyze_solve`` /
+    # ``resolve_effective_scaling`` pipeline was retired in favour of the
+    # autoscale package; the single-solve path now resolves the
+    # effective objective scale directly from the user's DB override
+    # (defaulting to the legacy 1e-6 when absent) and lets autoscale
+    # Layer 2 / Layer 3 (applied below) handle residual cost / bound
+    # magnitudes.
     user_obj_scale = sc.scale_the_objective.get(scenario_name)
-    effective_row_scaling, effective_obj_scale = (
-        _scaling.resolve_effective_scaling(
-            scale_table, user_row_scaling, user_obj_scale,
-        )
-    )
+    effective_obj_scale = _resolve_effective_obj_scale(user_obj_scale)
     # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by --user-bound-scale CLI
     # flag) takes priority over the DB ``solve.user_bound_scale`` value.
     _cli_ubs = os.environ.get("FLEXTOOL_USER_BOUND_SCALE")
-    user_bound_scale_override = _scaling.resolve_user_bound_scale_override(
+    user_bound_scale_override = _resolve_user_bound_scale_override(
         _cli_ubs if _cli_ubs is not None
         else sc.user_bound_scale.get(scenario_name)
     )
 
+    # Resolve the autoscaler's mode once so the baseline options and the
+    # Layer 2 / Layer 3 helpers all see the same value.
+    _scaling_cfg = _autoscale_resolve_config(None)
+    _scaling_mode = _scaling_cfg.mode
+
     _t0 = _time.perf_counter()
-    problem = Problem(auto_user_bound_scale=True)
+    problem = Problem()
     build_flextool(problem, flex_data, scale_the_objective=effective_obj_scale)
     print(f"Input: LP build: {_time.perf_counter() - _t0:.3f}s")
 
-    # HiGHS solver options (always-on advanced row scaling + explicit
-    # ``user_bound_scale`` override when present).  Stream-time
-    # col_bound-only auto-scaling lives inside polar-high's
-    # ``Problem(auto_user_bound_scale=True)`` — no flextool-side
-    # LP-range introspection needed.
-    highs_options = _scaling.recommended_highs_options(
-        scale_table,
+    # Baseline HiGHS solver options — Curtis-Reid simplex scale (forced
+    # to 0 in --scaling=off), the determinism pin, and an explicit
+    # ``user_bound_scale`` only when the operator supplied one (CLI / DB).
+    # Layer 3's :func:`apply_scaling` will merge ``user_objective_scale``,
+    # ``user_bound_scale`` (when it auto-recommends), and re-assert
+    # ``simplex_scale_strategy`` on top of this base.
+    highs_options = _baseline_highs_options(
         user_bound_scale_override=user_bound_scale_override,
+        scaling_mode=_scaling_mode,
     )
     # ``FLEXTOOL_HIGHS_PRESOLVE`` env var (set by --presolve CLI flag)
     # overrides DETERMINISM_OPTIONS' baked-in ``presolve = "on"``.
@@ -2124,6 +2601,19 @@ def run_single_solve_from_db(
         highs_options["presolve"] = _cli_presolve
 
     problem.set_solver_options(highs_options)
+
+    # autoscale Layer 2 (semantic per-type) pre-solve apply — see the
+    # cascade path's wire-in for the rationale.  None when the
+    # autoscaler is disabled or the Layer-1 trigger does not fire.
+    _autoscale_layer2_plan = _autoscale_apply_layer2_pre_solve(
+        problem, solve_name=scenario_name, logger=logger,
+    )
+    _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
+        problem,
+        layer2_plan=_autoscale_layer2_plan,
+        solve_name=scenario_name,
+        logger=logger,
+    )
 
     # 5. Solve.  Phase 3 — dispatch through ``run_one_solve`` so the
     # commercial-solver path works end-to-end.  The default HiGHS path
@@ -2136,6 +2626,15 @@ def run_single_solve_from_db(
     )
     solver_cfg = sc.solver_configs.get(scenario_name, _SolverConfig())
     sol = run_one_solve(problem, solver_cfg, logger=logger)
+    # Eager Layer-2 unscale before any output writer touches ``sol``.
+    _autoscale_unscale_post_solve(
+        sol, _autoscale_layer2_plan, solve_name=scenario_name, logger=logger,
+    )
+    _autoscale_emit_layer1(
+        sol, solve_name=scenario_name, logger=logger, work_folder=work_folder,
+        layer2_plan=_autoscale_layer2_plan,
+        layer3_plan=_autoscale_layer3_plan,
+    )
     if not sol.optimal:
         logger.error(
             "fast single-solve: HiGHS returned non-optimal status "
@@ -2184,18 +2683,15 @@ def run_single_solve_from_db(
             csv_dump=csv_dump,
         )
 
-    # Always emit the scaling CSV + report (even on non-optimal solves —
-    # the diagnostic report is most useful when the solve is degenerate).
-    _write_scale_csv_and_report(
+    # Always emit ``scale_the_objective.csv`` (even on non-optimal solves —
+    # downstream un-scaling needs it for any partial output the writer
+    # produced).  The legacy TXT diagnostic was retired in Phase 2b; the
+    # autoscaler's YAML report (``solve_data/autoscale_<solve>.yaml``,
+    # written from ``_autoscale_emit_layer1`` above) is the replacement.
+    _write_scale_csv(
         solve_data_dir=Path(work_folder) / "solve_data",
-        output_raw_dir=Path(work_folder) / "output_raw",
         solve_name=scenario_name,
-        scale_table=scale_table,
-        effective_row_scaling=effective_row_scaling,
         effective_obj_scale=effective_obj_scale,
-        user_row_scaling=user_row_scaling,
-        flex_data=flex_data,
-        solution=sol,
         logger=logger,
     )
 

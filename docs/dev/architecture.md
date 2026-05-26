@@ -327,7 +327,7 @@ _stochastic.py                    Stochastic branch handler
 _timeline.py                      Timeline / timeset construction
 _block_layout.py / _blocks.py     Multi-resolution period-block layout
 _solver_base.py                   Solver invocation surface
-scaling.py / scaling_report.py    Auto-scaling pipeline + diagnostic report
+autoscale/                        Auto-scaling pipeline + YAML audit report
 _derived_*.py                     Calculated-parameter helpers (NPV, branch,
                                   walks, profile, block, ...)
 _emit_*.py                        Set/parameter emitters (period_params,
@@ -630,21 +630,40 @@ slack semantics.
 4. **Precision cleanup (`--precision-digits`).** Every numeric value is
    rounded to 10 significant figures so benign precision artifacts don't
    trip near-duplicate detection.
-5. **`ScaleAnalyzer`** (`engine_polars/scaling.py`). Walks the cost / flow
-   / unitsize / penalty families, computes per-family log10 spread, and
-   recommends `use_row_scaling` and `scale_the_objective`. Result lands in
-   `solve_data/scaling_analysis.json`.
-6. **`--auto-scale` application.** When set (or `FLEXTOOL_AUTO_SCALE=1`),
-   the row-scaling recommendation is applied iff the user hasn't set
-   `solve.use_row_scaling`; the objective scalar recommendation is never
-   auto-applied.
-7. **Output un-scaling** (`process_outputs/read_highs_solution.py`).
-   Every `VariableSpec` carries an `unscale_by` field so downstream
-   consumers see absolute units regardless of whether row scaling was
-   active.
-8. **Diagnostic report** (`engine_polars/scaling_report.py`). Writes
-   `solve_data/scaling_report.txt` and echoes a 3-10 line verdict to
-   stdout.
+5. **Autoscale package** (`engine_polars/autoscale/`). Three layers,
+   on by default (gate via `--auto-scale=off` / `FLEXTOOL_AUTO_SCALE=0`):
+   - **Layer 1 — detect** (`_ranges.py`). Walks the assembled LP and
+     computes matrix / cost / bound / RHS log10 ranges plus a
+     cross-group max-ratio. Always emitted to the YAML audit; the
+     `trigger` flag tells the orchestrator whether Layers 2/3 should
+     run.
+   - **Layer 2 — semantic per-type scaling** (`_layer2.py`,
+     `_quantity_types.py`). Buckets matrix columns by quantity-type
+     (energy, capacity, monetary, …) and applies a power-of-2 scaler
+     per type to compress the median-of-type onto O(1). Has structural
+     limits: cannot compress within-type spread, and the Rivendell
+     guard prevents over-shrinking columns with mixed-magnitude
+     coefficients on a single row.
+   - **Layer 3 — HiGHS native + bound-scale folding** (`_layer3.py`).
+     Picks an integer `user_bound_scale` exponent (within HiGHS's safe
+     range) and folds D's escape-tier valve into the same pass, so the
+     LP arriving at HiGHS is comfortably within the solver's
+     conditioning sweet spot.
+6. **YAML audit** (`engine_polars/autoscale/_report.py`). After every
+   solve, writes `solve_data/autoscale_<solve>.yaml` covering Layer 1
+   ranges, the Layer 2 plan (per-type exponents + post-L2 ranges),
+   and the Layer 3 plan (`user_bound_scale`, escape-tier).
+   A 1-line console summary echoes via `format_console_summary`; the
+   non-optimal hint (`format_nonoptimal_hint`) fires only when HiGHS
+   returns non-optimal on a poorly-scaled LP.
+7. **Manual override.** `--user-bound-scale N` (or DB
+   `solve.user_bound_scale`) pins Layer 3's bound-scale exponent and
+   disables the auto-pick. Useful when the audit hints at a value the
+   recommender did not lock in.
+8. **Output un-scaling** (`process_outputs/read_highs_solution.py`).
+   Every `VariableSpec` carries an `unscale_by` field; the Layer 2 +
+   Layer 3 reverse maps are applied in the writer so downstream
+   consumers see absolute units regardless of which layers fired.
 
 ## Test layout and fixture architecture
 

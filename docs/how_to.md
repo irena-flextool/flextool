@@ -1272,26 +1272,25 @@ The parameter is a flat Map on the `timeset` entity: index is the timestep name,
 
 ## How to read the LP scaling diagnostic report
 
-Every solve runs an auto-scaling pass before handing the LP to the solver and writes two diagnostic artefacts into `solve_data/<solve>/`:
+Every solve runs the auto-scaling pipeline before handing the LP to the solver and writes a single audit artefact into `solve_data/`:
 
-- `scaling_report.txt` — human-readable summary
-- `scaling_analysis.json` — machine-readable companion (same data, structured)
+- `autoscale_<solve>.yaml` — YAML audit (Layer 1 ranges, Layer 2 per-quantity-type plan, Layer 3 `user_bound_scale` + escape-tier plan)
 
-The text report covers (in order):
+A 1-line console verdict is also printed after each solve. The YAML covers (in order):
 
-- matrix / cost / bound coefficient ranges per family
-- bimodal-coefficient detection — flags coefficient families whose log10 distribution splits into two clusters separated by a wide gap (often a sign of mixing units, e.g. MW and kW values for the same parameter)
-- composite-scale mismatches — large unitsize-ratio jumps between directly-connected entities (a 1 GW plant feeding a 1 kW node, for example)
-- near-duplicate parameter clusters — coefficients that differ only by float noise and could be aggregated for symmetry detection
+- **Layer 1** — matrix / cost / bound / RHS log10 ranges and the cross-group max-ratio that gates whether Layers 2/3 fire
+- **Layer 2** — per-quantity-type power-of-2 column scalers (energy, capacity, monetary, …) with post-Layer-2 ranges
+- **Layer 3** — the `user_bound_scale` exponent HiGHS receives and any escape-valve folding
 
-Auto-scaling never changes the LP optimum: every variable and constraint is unscaled back to the user's units before the solution is written out. The report is purely diagnostic. Read it when:
+Auto-scaling never changes the LP optimum: every variable and constraint is unscaled back to the user's units before the solution is written out. The audit is purely diagnostic. Read it when:
 
 - the solver runs slowly or hits its time limit
 - HiGHS reports numerical trouble (ill-conditioning warnings, suspect infeasibility)
-- you are about to file a bug — attaching the report saves a round-trip
+- you are about to file a bug — attaching the YAML saves a round-trip
 - you are tuning a freshly-converted model and want to spot unit-mix mistakes early
+- a non-optimal hint pointed you at a poorly-scaled LP — the YAML shows which layer (or which quantity type) could not compress the spread
 
-Generators live in `flextool/engine_polars/scaling.py` (`write_scaling_analysis_json`) and `flextool/engine_polars/scaling_report.py` (`write_scaling_report`). For the user-facing guide and section-by-section interpretation tips, see [dev/scaling.md](dev/scaling.md).
+The autoscale package lives at `flextool/engine_polars/autoscale/` (`_ranges.py` / `_layer2.py` / `_layer3.py` / `_report.py`). For the user-facing guide and tuning tips, see [dev/scaling.md](dev/scaling.md).
 
 ## How to export a partial Excel template (parameter-group picker)
 

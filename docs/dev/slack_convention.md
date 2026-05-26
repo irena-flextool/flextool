@@ -82,8 +82,10 @@ headers, row structure, and numerical scale are identical to the
 pre-scaling-project output so downstream pandas readers
 (`process_outputs/read_variables.py`, scenario analysis, plotting)
 work unchanged.  Row scaling un-scaling (`× node_cap` or `× group_cap`)
-is applied by the writer when `use_row_scaling=yes`; in Mode A the
-scaler defaults to 1 so the factor is a no-op.
+is applied by the writer when the DB-level `solve.use_row_scaling=yes`
+(the legacy LP row-scaling family — independent of the
+`autoscale/` package); in Mode A the scaler defaults to 1 so the
+factor is a no-op.
 
 ## Editing checklist when adding a new slack
 

@@ -440,18 +440,23 @@ runs on every solve and is documented end-to-end in
 [scaling.md](scaling.md); the slack-variable side is documented in
 [slack_convention.md](slack_convention.md). One-line summary:
 
-- `scaling.ScaleAnalyzer` reads cost / flow / unitsize / penalty
-  Param families, computes log10 spread stats, recommends row
-  scaling and an objective scalar.
-- `--auto-scale` (or `FLEXTOOL_AUTO_SCALE=1`) applies the row-scaling
-  recommendation when the user hasn't pinned
-  `solve.use_row_scaling`. Objective scalar is user-controlled only.
-- `scaling_report.py` writes `solve_data/<solve>/scaling_report.txt`
-  next to `scaling_analysis.json` after each solve.
+- `autoscale._ranges.compute_ranges` (Layer 1) walks the assembled
+  LP and reports matrix / cost / bound / RHS log10 ranges and the
+  cross-group max-ratio that gates whether Layers 2/3 fire.
+- `autoscale._layer2.apply_layer2` (Layer 2) applies per-quantity-type
+  power-of-2 column scalers; `autoscale._layer3.apply_layer3`
+  (Layer 3) folds the HiGHS-native `user_bound_scale` and the escape
+  valve in a single pass.
+- `--auto-scale=off` (or `FLEXTOOL_AUTO_SCALE=0`) disables the whole
+  package; `--user-bound-scale N` pins Layer 3 manually.
+- `autoscale._report.write_report` writes
+  `solve_data/autoscale_<solve>.yaml` after each solve; the same
+  module's `format_console_summary` prints a one-liner verdict and
+  `format_nonoptimal_hint` triggers only on HiGHS non-optimal.
 - Output un-scaling happens in
   `flextool/process_outputs/read_highs_solution.py` via the
-  `unscale_by` field on each `VariableSpec`. Downstream consumers see
-  user units regardless of whether row scaling was active.
+  `unscale_by` field on each `VariableSpec`, applying both the
+  Layer 2 and Layer 3 reverse maps.
 
 The scaling pipeline never changes the LP optimum — every transform
 is reversible and the reverse is wired into the output writer.
@@ -489,7 +494,7 @@ small. Repeating the table from
 | Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct_params.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. |
 | Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_writer_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `input.py` (slow path) and the topology patch in `_fast_load.py` (fast path, if applicable). |
 | Add a new feature block | `model.py` requirement tuples | Declare your `MY_FEATURE = (...)` tuple. Inspect a switch field via `has_my_feature = d.<switch> is not None and d.<switch>.height > 0`. Wrap the variable / constraint / objective additions in `if has_my_feature:`. Add a `_check(d, MY_FEATURE, "my_feature")` call alongside the existing ones. |
-| Trace a numerical issue | `solve_data/<solve>/scaling_report.txt` | The diagnostic verdict points at the offending family. If row scaling is active and the issue is in node balance, check `p_node_capacity_for_scaling`. Cross-link: [scaling.md](scaling.md). |
+| Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |
 | Add a new decomposition mode | `_lagrangian.py` for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
 | Speed up a single-solve scenario | `_fast_load.load_flextool_source_only` | If `FastLoadError` fires, either teach the missing helper to read directly from `InputSource`, or fall back to `run_chain_from_db`. |

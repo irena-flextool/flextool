@@ -229,6 +229,43 @@ def main():
                              'determinism for wall-clock speedup; goldens are '
                              'not guaranteed to reproduce across runs in that '
                              'mode.')
+    parser.add_argument(
+        '--scaling',
+        choices=['off', 'solver_only', 'basic', 'full'],
+        default=None,
+        help=(
+            "Choose FlexTool's autoscaler strategy. HiGHS' internal matrix "
+            "equilibration (simplex_scale_strategy) is unaffected by this "
+            "flag EXCEPT when --scaling=off, where it is forced to 0. To "
+            "tune HiGHS-internal options, use the solver config file.\n"
+            "\n"
+            "  off          Disable ALL scaling, including HiGHS' internal "
+            "matrix equilibration (forces simplex_scale_strategy=0). Use "
+            "this if you want raw numerics or to export the truly unscaled "
+            "LP. Expect HiGHS warnings.\n"
+            "  solver_only  Disable the FlexTool autoscaler. HiGHS still "
+            "scales the matrix internally per its own default "
+            "(simplex_scale_strategy=2, equilibration). Useful when "
+            "exporting MPS for an external solver.\n"
+            "  basic        Compute LP ranges (Layer 1) and recommend "
+            "power-of-two user_objective_scale + user_bound_scale to HiGHS "
+            "(Layer 3). No LP-array mutation; MPS exports reflect the "
+            "unscaled model. HiGHS' own matrix equilibration runs per its "
+            "default.\n"
+            "  full         The full autoscaler: range detection (Layer 1), "
+            "semantic per-type column/row/cost scaling of the LP arrays "
+            "(Layer 2), and HiGHS user_*_scale recommendation (Layer 3). "
+            "Produces the most robust conditioning. Default.\n"
+            "\n"
+            "Precedence for user_objective_scale and user_bound_scale:\n"
+            "  1. --user-bound-scale N (CLI override)\n"
+            "  2. user_*_scale set via solver config file\n"
+            "  3. Layer 3 autoscaler recommendation\n"
+            "  4. HiGHS default (0)\n"
+            "\n"
+            "Env fallback: FLEXTOOL_SCALING."
+        ),
+    )
     parser.add_argument('--user-bound-scale', type=int, default=None,
                         metavar='N',
                         help='HiGHS ``user_bound_scale`` override (power of '
@@ -288,6 +325,15 @@ def main():
         os.environ['FLEXTOOL_HIGHS_PRESOLVE'] = args.presolve
     if args.highs_threads is not None and args.highs_threads >= 1:
         os.environ['FLEXTOOL_HIGHS_THREADS'] = str(args.highs_threads)
+    # ``--scaling`` (off/solver_only/basic/full) — CLI > env > default-full.
+    # Surfacing via the same ``FLEXTOOL_SCALING`` env var that
+    # ``resolve_scaling_config`` already consults keeps the threading
+    # shallow (no new kwargs on run_chain_from_db / run_orchestration /
+    # _drive_cascade).  When the flag is unset (``args.scaling is None``)
+    # the existing env value — if any — survives untouched, preserving
+    # the env-fallback contract.
+    if args.scaling is not None:
+        os.environ['FLEXTOOL_SCALING'] = args.scaling
 
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url
