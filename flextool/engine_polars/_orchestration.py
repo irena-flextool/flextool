@@ -2672,6 +2672,14 @@ def run_single_solve_from_db(
     _fast_cli_overrides: dict[str, object] = {}
     if _cli_presolve in ("on", "off", "choose"):
         _fast_cli_overrides["presolve"] = _cli_presolve
+    # Batch C.8 — --solver-time-limit (env-var-plumbed via the existing
+    # FLEXTOOL_HIGHS_TIME_LIMIT name) layered on top.
+    _fast_cli_tlim = os.environ.get("FLEXTOOL_HIGHS_TIME_LIMIT")
+    if _fast_cli_tlim:
+        try:
+            _fast_cli_overrides["time_limit"] = float(_fast_cli_tlim)
+        except ValueError:
+            pass
     # Batch C.7 — --solver-log-level (env-var-plumbed) layered on top.
     _fast_cli_log_level = os.environ.get("FLEXTOOL_SOLVER_LOG_LEVEL")
     if _fast_cli_log_level == "silent":

@@ -1502,6 +1502,14 @@ def migrate_database(database_path, up_to: int | None = None):
                 # Also removes the dedicated ``solver_log_levels``
                 # parameter_value_list.
                 _migrate_v56_remove_solver_log_level(db)
+                # Batch C.8 — drop ``solver_time_limit`` parameter.
+                # User-stored value DROPPED.  Use the new
+                # --solver-time-limit CLI flag (plumbed via the
+                # existing FLEXTOOL_HIGHS_TIME_LIMIT env var that the
+                # orchestrator's CLI-overrides builder already
+                # consults — maps to HiGHS ``time_limit`` key); GUI
+                # control deferred to v56 follow-up PR (task #26).
+                _migrate_v56_remove_solver_time_limit(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4683,6 +4691,30 @@ def _migrate_v56_remove_solver_threads(db) -> None:
     accepts a Python int there but FlexTool no longer authors it.
     """
     remove_parameters_manual(db, [["solve", "solver_threads"]])
+
+
+def _migrate_v56_remove_solver_time_limit(db) -> None:
+    """Remove ``solve.solver_time_limit`` parameter definition + values.
+
+    Batch C.8 — drop the GUI/CLI-only knob's DB axis.  User-stored
+    values are intentionally NOT migrated (per Q-C-2).  Equivalent
+    control is exposed via the new ``--solver-time-limit SECONDS``
+    CLI flag, plumbed via the existing ``FLEXTOOL_HIGHS_TIME_LIMIT``
+    env var into the engine-side
+    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`
+    resolver as a CLI override on the HiGHS ``time_limit`` key
+    (CLI > solver_arguments > highs.opt precedence).  GUI controls
+    for the DB-stored equivalent are deferred to the v56 follow-up
+    PR (task #26).
+
+    The engine read site in :mod:`flextool.engine_polars._solve_config`
+    (where it fed :class:`SolverConfig.time_limit` →
+    ``build_solver_options``) is dropped in the same commit.
+    ``SolverConfig.time_limit`` stays as a None-default field — the
+    commercial-solver path still accepts a Python float there but
+    FlexTool no longer authors it.
+    """
+    remove_parameters_manual(db, [["solve", "solver_time_limit"]])
 
 
 def _migrate_v56_remove_solver_log_level(db) -> None:

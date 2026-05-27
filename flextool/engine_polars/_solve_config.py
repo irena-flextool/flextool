@@ -392,13 +392,12 @@ class SolveConfig:
         # --solver-log-level CLI flag (silent / normal / verbose →
         # HiGHS output_flag + log_dev_level).
         solver_log_level: dict = {}
-        # solver_time_limit / solver_mip_gap come back as the stringified
-        # float that ``params_to_dict`` produces for scalar floats
-        # (see line ~141).  Batch C.6 dropped the ``solver_threads``
-        # DB axis (use --highs-threads CLI flag instead).
-        solver_time_limit_raw: dict = params_to_dict(
-            db=db, cl="solve", par="solver_time_limit", mode=DictMode.DICT
-        )
+        # solver_mip_gap comes back as the stringified float that
+        # ``params_to_dict`` produces for scalar floats (see line
+        # ~141).  Batches C.6 and C.8 dropped the ``solver_threads``
+        # and ``solver_time_limit`` DB axes (use --highs-threads and
+        # --solver-time-limit CLI flags instead).
+        solver_time_limit_raw: dict = {}
         solver_mip_gap_raw: dict = params_to_dict(
             db=db, cl="solve", par="solver_mip_gap", mode=DictMode.DICT
         )

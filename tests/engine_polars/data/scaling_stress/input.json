@@ -4155,17 +4155,6 @@
     ],
     [
       "solve",
-      "solver_time_limit",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "Wall-clock time limit for the solver in seconds. Normalised across solvers by polar-high. None = no limit.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "stochastic_branches",
       [
         "bnVsbA==",
@@ -6057,12 +6046,6 @@
       "solve",
       "solver_precommand",
       "str",
-      0
-    ],
-    [
-      "solve",
-      "solver_time_limit",
-      "float",
       0
     ],
     [

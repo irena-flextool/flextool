@@ -323,6 +323,16 @@ def main():
                              'iteration solver telemetry.  Replaces '
                              'the v55-era DB-stored solver_log_level '
                              'knob (removed in Batch C.7).')
+    parser.add_argument('--solver-time-limit', type=float, default=None,
+                        metavar='SECONDS',
+                        help='HiGHS wall-clock time limit '
+                             '(``time_limit`` option, seconds).  '
+                             'Unset (default) means no limit.  '
+                             'Replaces the v55-era DB-stored '
+                             'solver_time_limit knob (removed in '
+                             'Batch C.8).  Routed through the '
+                             'effective-options resolver as a CLI '
+                             'override (highest precedence).')
     parser.add_argument('--csv-dump', action='store_true',
                         default=False,
                         help='Debug visibility for cascade-internal '
@@ -366,6 +376,12 @@ def main():
         os.environ['FLEXTOOL_HIGHS_THREADS'] = str(args.highs_threads)
     if args.solver_log_level is not None:
         os.environ['FLEXTOOL_SOLVER_LOG_LEVEL'] = args.solver_log_level
+    if args.solver_time_limit is not None:
+        # Use the existing FLEXTOOL_HIGHS_TIME_LIMIT env var which the
+        # orchestrator's CLI-overrides builder already consults; the
+        # name is a historical artefact from the diagnostic shim that
+        # predated the resolver but the semantics are identical.
+        os.environ['FLEXTOOL_HIGHS_TIME_LIMIT'] = str(args.solver_time_limit)
     # ``--scaling`` (off/solver_only/basic/full) — CLI > env > default-full.
     # Surfacing via the same ``FLEXTOOL_SCALING`` env var that
     # ``resolve_scaling_config`` already consults keeps the threading
