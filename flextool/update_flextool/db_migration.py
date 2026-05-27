@@ -1415,6 +1415,15 @@ def migrate_database(database_path, up_to: int | None = None):
                 # autoscale quantity-type row and export_settings.yaml
                 # params list entry are stripped in the same commit.
                 _migrate_v56_remove_output_unit__node_ramp_t(db)
+                # Drop ``model.output_connection__node__node_flow_t``.
+                # Dead toggle: plumbed into ``optional_outputs.csv`` but
+                # nothing on the engine side reads its row.  Schema row,
+                # input_derivation cl_pars entry, SET_LIKE_NAMES entry,
+                # autoscale quantity-type row, export_settings.yaml
+                # params list entry and the legacy
+                # regen_lh2_three_region.py ``yes`` override are
+                # stripped in the same commit.
+                _migrate_v56_remove_output_connection__node__node_flow_t(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4036,6 +4045,28 @@ def _migrate_v56_remove_output_unit__node_ramp_t(db) -> None:
     ``parameter_definition``.
     """
     remove_parameters_manual(db, [["model", "output_unit__node_ramp_t"]])
+
+
+def _migrate_v56_remove_output_connection__node__node_flow_t(db) -> None:
+    """Drop the ``model.output_connection__node__node_flow_t`` parameter
+    from the schema.
+
+    Dead toggle: the flag was plumbed into the multi-param
+    ``optional_outputs.csv`` emitter but nothing on the engine side
+    reads its row from ``enable_optional_outputs`` — only
+    ``output_horizon`` is consulted.  Any value users set was silently
+    dropped.
+
+    Sibling edits in the same commit strip it from the input_derivation
+    cl_pars, the SET_LIKE_NAMES table, the autoscale quantity-type
+    table, the export_settings.yaml params list and the legacy
+    ``tests/fixtures/regen_lh2_three_region.py`` ``yes`` override.
+
+    Side effects: every ``parameter_value`` row referencing
+    ``model.output_connection__node__node_flow_t`` is dropped alongside
+    the ``parameter_definition``.
+    """
+    remove_parameters_manual(db, [["model", "output_connection__node__node_flow_t"]])
 
 
 if __name__ == '__main__':

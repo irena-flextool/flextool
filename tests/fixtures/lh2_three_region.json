@@ -4437,17 +4437,6 @@
     ],
     [
       "model",
-      "output_connection__node__node_flow_t",
-      [
-        null,
-        null
-      ],
-      "optional_output",
-      " The flows between the nodes for each timestep.",
-      "output"
-    ],
-    [
-      "model",
       "output_connection_flow_separate",
       [
         null,
@@ -6655,12 +6644,6 @@
     ],
     [
       "model",
-      "output_connection__node__node_flow_t",
-      "str",
-      0
-    ],
-    [
-      "model",
       "output_connection_flow_separate",
       "str",
       0
@@ -8046,16 +8029,6 @@
         "float"
       ],
       "invest_solveSequence_5weeks"
-    ],
-    [
-      "model",
-      "flexTool",
-      "output_connection__node__node_flow_t",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "lh2_three_region"
     ],
     [
       "model",

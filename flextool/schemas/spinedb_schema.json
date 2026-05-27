@@ -1567,14 +1567,6 @@
     ],
     [
       "model",
-      "output_connection__node__node_flow_t",
-      "yes",
-      "optional_output",
-      " The flows between the nodes for each timestep.",
-      "output"
-    ],
-    [
-      "model",
       "output_connection_flow_separate",
       "no",
       "optional_output",
@@ -3369,12 +3361,6 @@
       "model",
       "max_flow_for_unconstrained_variables",
       "float",
-      0
-    ],
-    [
-      "model",
-      "output_connection__node__node_flow_t",
-      "str",
       0
     ],
     [

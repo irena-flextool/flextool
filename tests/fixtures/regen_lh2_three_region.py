@@ -392,12 +392,6 @@ def _build_payload() -> dict[str, list]:
         entities.append(("group__connection", ("daily_group", pipe)))
         entities.append(("group__connection", (f"region_{src_r}", pipe)))
 
-    # ------------------------------------------------------------------
-    # Output flags
-    # ------------------------------------------------------------------
-    parameter_values.append(("model", "flexTool", "output_connection__node__node_flow_t",
-                             "yes", ALT))
-
     # Entity alternatives: every entity we created must be marked
     # active under the LH2 alternative so the scenario filter exposes
     # it.

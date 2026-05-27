@@ -862,8 +862,7 @@ _PARAMETER_SPECS: list[dict] = [
     },
     # --- optional outputs ---
     {
-        "cl_pars": [("model", "output_connection__node__node_flow_t"),
-                    ("model", "output_connection_flow_separate"),
+        "cl_pars": [("model", "output_connection_flow_separate"),
                     ("model", "output_horizon")],
         "header": "output,value",
         "filename": "input/optional_outputs.csv",

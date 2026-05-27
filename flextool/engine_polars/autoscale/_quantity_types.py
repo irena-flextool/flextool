@@ -302,8 +302,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.
     ('other_operational_cost', 'unit__outputNode'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.
-    ('output_connection__node__node_flow_t', 'model'): QuantityType.DIMENSIONLESS,
-    # The flows between the nodes for each timestep.
     ('output_connection_flow_separate', 'model'): QuantityType.DIMENSIONLESS,
     # Produces the connection flows separately for both directions.
     ('output_flowGroup_indicators', 'group'): QuantityType.DIMENSIONLESS,
