@@ -1283,6 +1283,16 @@ def migrate_database(database_path, up_to: int | None = None):
                 # parameter_definition AND any parameter_value rows
                 # carrying it.
                 _migrate_v56_remove_model_debug(db)
+                # Backfill the missing ``description`` field on
+                # ``group.cumulative_max_capacity`` and
+                # ``group.cumulative_min_capacity``.  Both
+                # parameter_definitions exist in the schema since v22
+                # but only ``node``/``connection``/``unit`` got their
+                # descriptions populated in the v22 migration block —
+                # the ``group`` rows were left with NULL/empty text.
+                # The schema-template JSON already carries the canonical
+                # phrasing; this brings legacy databases in line.
+                _migrate_v56_add_group_cumulative_capacity_descriptions(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3311,6 +3321,50 @@ def _migrate_v56_remove_model_debug(db) -> None:
     (cascading delete is handled by spinedb_api).
     """
     remove_parameters_manual(db, [["model", "debug"]])
+
+
+def _migrate_v56_add_group_cumulative_capacity_descriptions(db) -> None:
+    """Populate the missing description text on the two
+    ``group.cumulative_*_capacity`` parameter_definitions.
+
+    Both parameters have existed in the schema since the v22 migration
+    that introduced cumulative-capacity bounds across
+    ``node``/``connection``/``unit``/``group``.  That migration block
+    seeded ``description`` for the first three entity classes but not
+    for ``group``, so any database initialised before this helper ran
+    carries NULL/empty description text on those two rows.  The
+    canonical phrasing already lives in
+    ``flextool/schemas/spinedb_schema.json`` (and is mirrored in the
+    quantity-type comments under
+    ``flextool/engine_polars/autoscale/_quantity_types.py``); this
+    helper brings legacy databases in line.
+    """
+    db.update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="cumulative_max_capacity",
+        description=(
+            "[MW or MWh] Maximum cumulative capacity for a group of "
+            "entities (considers existing, invested and retired "
+            "capacity). Constant or period."
+        ),
+    )
+    db.update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="cumulative_min_capacity",
+        description=(
+            "[MW or MWh] Minimum cumulative capacity for a group of "
+            "entities (considers existing, invested and retired "
+            "capacity). Constant or period."
+        ),
+    )
+    _commit_step(
+        db,
+        "Populated description text on group.cumulative_max_capacity "
+        "and group.cumulative_min_capacity (left blank by the v22 "
+        "migration that introduced them).",
+    )
 
 
 if __name__ == '__main__':
