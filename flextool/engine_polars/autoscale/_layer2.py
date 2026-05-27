@@ -668,6 +668,17 @@ def apply_layer2(
     # Lock AFTER writing both arrays — otherwise the writes themselves
     # could trip future guards if they touch any locked code path.
     problem._layer2_locked = True
+    # Invalidate any cached canonical matrix on the Problem (polar-high
+    # B1, commit a3dd35f).  The side vectors above are baked into
+    # ``_matrix.val`` at ``canonicalise()`` time, so an existing cached
+    # matrix built BEFORE this call is stale.  No current call path
+    # triggers the stale-cache scenario (canonicalise is normally first
+    # reached AFTER apply_layer2 via write_mps / _build_lp_arrays), but
+    # B2's _build_lp_arrays migration would route every non-streaming
+    # solve through canonicalise(), making a sequence like
+    # ``write_mps → apply_layer2 → solve`` produce silently wrong
+    # results without this flag.
+    problem._canonical_dirty = True
 
     # Per-type bucket-range reporting.  The accumulators carry
     # (log_sum, count, abs_min, abs_max); to combine min/max across
