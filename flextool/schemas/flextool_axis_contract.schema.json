@@ -74,6 +74,28 @@
       },
       "additionalProperties": false
     },
+    "parameter_value_dtypes": {
+      "type": "object",
+      "required": ["default", "overrides"],
+      "properties": {
+        "_comment": { "type": "string" },
+        "default": {
+          "type": "string",
+          "enum": ["Float64", "Utf8", "Boolean"]
+        },
+        "overrides": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*(__[A-Za-z_][A-Za-z0-9_]*)*\\.[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string",
+              "enum": ["Float64", "Utf8", "Boolean"]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "_review_notes": {
       "type": "array",
       "items": {
