@@ -393,17 +393,15 @@ class SolveConfig:
         )
         # solver_time_limit / solver_mip_gap come back as the stringified
         # float that ``params_to_dict`` produces for scalar floats
-        # (see line ~141); ``solver_threads`` is an int default-None scalar
-        # but Spine stores integer parameters as floats — coerce to int.
+        # (see line ~141).  Batch C.6 dropped the ``solver_threads``
+        # DB axis (use --highs-threads CLI flag instead).
         solver_time_limit_raw: dict = params_to_dict(
             db=db, cl="solve", par="solver_time_limit", mode=DictMode.DICT
         )
         solver_mip_gap_raw: dict = params_to_dict(
             db=db, cl="solve", par="solver_mip_gap", mode=DictMode.DICT
         )
-        solver_threads_raw: dict = params_to_dict(
-            db=db, cl="solve", par="solver_threads", mode=DictMode.DICT
-        )
+        solver_threads_raw: dict = {}
         # Batch C.2 — ``solver_options`` was folded into
         # ``solver_arguments`` (now the canonical 1d-map) and the
         # parameter_definition was removed.  ``SolverConfig.options``

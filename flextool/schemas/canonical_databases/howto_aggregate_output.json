@@ -2168,14 +2168,6 @@
     ],
     [
       "solve",
-      "solver_threads",
-      null,
-      null,
-      "Maximum number of solver worker threads. Normalised across solvers by polar-high. None = solver default (usually all available cores).",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "solver_time_limit",
       null,
       null,
@@ -4020,12 +4012,6 @@
       "solve",
       "solver_precommand",
       "str",
-      0
-    ],
-    [
-      "solve",
-      "solver_threads",
-      "float",
       0
     ],
     [

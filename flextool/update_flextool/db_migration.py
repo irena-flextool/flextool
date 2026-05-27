@@ -1483,6 +1483,15 @@ def migrate_database(database_path, up_to: int | None = None):
                 # sole consumer of these overrides.
                 _migrate_v56_fold_highs_presolve_into_solver_arguments(db)
                 _migrate_v56_remove_highs_presolve(db)
+                # Batch C.6 — drop ``solver_threads`` parameter.
+                # User-stored value DROPPED (per the Q-C-2 design:
+                # GUI-bound knobs were rarely scenario-relevant and
+                # the break is acceptable).  Use --highs-threads CLI
+                # flag (or the GUI's max_cores_per_job, which plumbs
+                # it automatically); the GUI control for the DB-
+                # stored equivalent is deferred to the v56 follow-up
+                # PR (task #26).
+                _migrate_v56_remove_solver_threads(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4640,6 +4649,30 @@ def _migrate_v56_remove_highs_presolve(db) -> None:
             _commit_step(db, "v56 removed solve.highs_presolve parameter_value_list")
         except SpineDBAPIError:
             pass
+
+
+def _migrate_v56_remove_solver_threads(db) -> None:
+    """Remove ``solve.solver_threads`` parameter definition + values.
+
+    Batch C.6 — drop the GUI/CLI-only knob's DB axis.  User-stored
+    values are intentionally NOT migrated: per the Q-C-2 design
+    decision, GUI-bound knobs were rarely scenario-relevant and the
+    break is acceptable.  Equivalent control remains available via
+    the existing ``--highs-threads N`` CLI flag (CLI > solver_arguments
+    > highs.opt precedence inside
+    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`)
+    and via the GUI's per-job ``max_cores_per_job`` setting which
+    plumbs the flag automatically.  GUI controls for this knob's
+    DB-stored equivalent are deferred to the v56 follow-up PR
+    (task #26).
+
+    The engine read site in :mod:`flextool.engine_polars._solve_config`
+    (where it fed :class:`SolverConfig.threads` → ``build_solver_options``)
+    is dropped in the same commit.  After this commit ``SolverConfig.threads``
+    stays as a None-default field — the commercial-solver path still
+    accepts a Python int there but FlexTool no longer authors it.
+    """
+    remove_parameters_manual(db, [["solve", "solver_threads"]])
 
 
 if __name__ == '__main__':
