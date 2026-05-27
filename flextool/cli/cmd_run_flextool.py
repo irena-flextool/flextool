@@ -154,7 +154,24 @@ def main():
     parser.add_argument('output_db_url', metavar='DB_URL', nargs='?', default=None, help='Save information about result location to database for post-processing')
     parser.add_argument('--settings-db-url', help='Settings for post-processing')
     parser.add_argument('--scenario-name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
-    parser.add_argument('--debug', action='store_true')
+    parser.add_argument(
+        '--debug',
+        nargs='?',
+        const='basic',
+        default='off',
+        choices=['off', 'basic', 'full'],
+        metavar='LEVEL',
+        help='Diagnostic verbosity level (default: off).  '
+             '``off``  — quiet; only user-facing INFO and WARNING. '
+             '``basic`` — verbose memory checkpoint trace + DEBUG log '
+             'level; no tracemalloc, no perf overhead beyond extra '
+             'stdout.  Bare ``--debug`` selects this level.  '
+             '``full`` — basic plus tracemalloc-backed memory '
+             'diagnostics CSV.  Tracemalloc instruments every Python '
+             'allocation and typically slows allocation-heavy phases '
+             '(input_derivation, cascade rolls) by 2-5×; use only '
+             'when investigating Python-side allocation regressions.',
+    )
     parser.add_argument(
         '--save-memory', action='store_true',
         help='Trade wall time for peak memory: after the LP matrix is '
@@ -353,14 +370,19 @@ def main():
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url
     scenario_name = args.scenario_name
-    DEBUG = args.debug
-    # ``--debug`` widens stdout to also include the full per-checkpoint
+    debug_level = args.debug  # 'off' | 'basic' | 'full'
+    DEBUG = debug_level != 'off'
+    # ``--debug=basic`` widens stdout to include the full per-checkpoint
     # phase-progress trace (every memory recorder event, not just the
-    # six whitelisted phase labels) and writes the per-checkpoint CSV
-    # to ``solve_data/memory_diagnostics.csv``.  Both env vars are only
-    # set when not already provided so a caller can still override.
-    if DEBUG:
+    # six whitelisted phase labels).  ``--debug=full`` additionally
+    # enables tracemalloc-backed diagnostics that write the
+    # per-checkpoint CSV to ``solve_data/memory_diagnostics.csv`` — the
+    # tracemalloc instrumentation typically slows allocation-heavy
+    # phases by 2-5×, so it is gated to the explicit ``full`` opt-in.
+    # ``setdefault`` lets a caller still override either env var.
+    if debug_level in ('basic', 'full'):
         os.environ.setdefault('FLEXTOOL_MEMORY_VERBOSE', '1')
+    if debug_level == 'full':
         os.environ.setdefault('FLEXTOOL_MEMORY_DIAGNOSTICS', '1')
     # Legacy: Spine Toolbox passed ``--flextool-location <repo>/template/flextool_location.txt``
     # so the output dir resolved to the repo root via ``.parent.parent``.

@@ -52,7 +52,17 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     settings.auto_generate_comp_excel = data.get(
         "auto_generate_comp_excel", settings.auto_generate_comp_excel
     )
-    settings.debug = data.get("debug", settings.debug)
+    # Legacy compat: pre-tiered ``debug: bool`` settings.yaml entries
+    # map True→"full" (preserves their old behaviour: tracemalloc +
+    # csv-dump) and False→"off".  New entries use ``debug_level``
+    # directly.
+    if "debug_level" in data:
+        _level = data.get("debug_level", settings.debug_level)
+        if _level not in ("off", "basic", "full"):
+            _level = "off"
+        settings.debug_level = _level
+    elif "debug" in data:
+        settings.debug_level = "full" if bool(data["debug"]) else "off"
     settings.save_memory = bool(data.get("save_memory", settings.save_memory))
     settings.input_source_numbers = data.get(
         "input_source_numbers", settings.input_source_numbers

@@ -1271,6 +1271,18 @@ def migrate_database(database_path, up_to: int | None = None):
                 # Touches both parameter_value rows and the
                 # ``storage_binding_methods`` parameter_value_list.
                 _migrate_v55_storage_binding_rename_and_extend(db)
+            elif next_version == 56:
+                # Drop ``model.debug`` from the schema.  The parameter
+                # was a leftover from the legacy flextoolrunner / GAMS
+                # path that emitted ``input/debug.csv``; no
+                # engine_polars module reads it.  Debug control now
+                # lives purely on the CLI (``--debug={off,basic,full}``)
+                # and in the GUI's ProjectSettings.debug_level — see
+                # ``flextool/cli/cmd_run_flextool.py`` and
+                # ``flextool/gui/data_models.py``.  Removes the
+                # parameter_definition AND any parameter_value rows
+                # carrying it.
+                _migrate_v56_remove_model_debug(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3269,6 +3281,36 @@ def _migrate_v55_storage_binding_rename_and_extend(db) -> None:
         "the storage-binding restructure.  "
         f"{len(renamed)} row(s) renamed.",
     )
+
+
+def _migrate_v56_remove_model_debug(db) -> None:
+    """Drop the ``model.debug`` parameter from the schema.
+
+    The parameter dates back to the legacy flextoolrunner / GAMS path
+    that emitted ``input/debug.csv`` for the .mod file to consume.  In
+    the engine_polars rewrite (FlexTool v4) nothing reads it: the
+    cl_pars emitter in :mod:`flextool.input_derivation._specs` still
+    produced the CSV, but no downstream module touched the file.
+
+    Debug-level control is now purely a runtime concern, exposed
+    through:
+
+    * ``flextool/cli/cmd_run_flextool.py`` — the tri-valued
+      ``--debug={off,basic,full}`` flag, default ``off``, bare
+      ``--debug`` → ``basic``.
+    * ``flextool/gui/data_models.py`` — ``ProjectSettings.debug_level``
+      persisted in ``settings.yaml`` and surfaced as a dropdown in the
+      main window.
+
+    Removing the DB parameter eliminates a silently-broken contract
+    (any value users set was discarded) and reduces schema noise.
+
+    Side effects: every ``parameter_value`` row referencing
+    ``model.debug`` is dropped alongside the ``parameter_definition``
+    when ``remove_parameters_manual`` invokes ``db.remove_items``
+    (cascading delete is handled by spinedb_api).
+    """
+    remove_parameters_manual(db, [["model", "debug"]])
 
 
 if __name__ == '__main__':

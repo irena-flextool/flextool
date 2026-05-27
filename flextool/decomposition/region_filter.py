@@ -336,7 +336,7 @@ def _build_column_specs() -> dict[str, list[tuple[int, str]]]:
     """Per-CSV column spec for filtering.
 
     Returns {filename: [(col_index, kind), ...]}.  Files not listed are
-    copied verbatim (e.g. solver config, timeline, default_values, debug).
+    copied verbatim (e.g. solver config, timeline, default_values).
     """
     specs: dict[str, list[tuple[int, str]]] = {}
 
@@ -425,7 +425,7 @@ def _infer_column_spec_from_header(
     * header[0] == "reserve"       → leave alone
     * header[0] == "constraint"    → leave alone
     * header[0] == "timeline"/"timeset"/"period"/"solve"/"model"/
-                   "version"/"debug"/"class" → leave alone
+                   "version"/"class" → leave alone
     """
     if filename in _EXPLICIT_SPECS:
         return _EXPLICIT_SPECS[filename]

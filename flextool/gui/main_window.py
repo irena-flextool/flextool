@@ -286,7 +286,10 @@ class MainWindow(tk.Tk):
         # Project popup can refer to it, but the radio buttons themselves
         # are placed inside the side menu.
         self._theme_var = tk.StringVar(value=initial_theme)
-        self.debug_var = tk.BooleanVar(value=False)
+        # Tri-state debug verbosity: "off" | "basic" | "full".  Legacy
+        # boolean settings.yaml entries are normalised to one of these
+        # by ``settings_io.load_project_settings``.
+        self.debug_var = tk.StringVar(value="off")
         self.debug_var.trace_add("write", self._on_auto_gen_toggled)
         self.save_memory_var = tk.BooleanVar(value=False)
         self.save_memory_var.trace_add("write", self._on_auto_gen_toggled)
@@ -546,16 +549,38 @@ class MainWindow(tk.Tk):
             "machines or for models that would otherwise OOM."
         ))
 
-        self.debug_cb = ttk.Checkbutton(
-            side_menu, text="Debug", variable=self.debug_var,
-        )
-        self.debug_cb.grid(row=1, column=0, sticky="w", pady=(0, 4))
-        _attach_tip(self.debug_cb, (
-            "Run scenarios with --debug and --csv-dump.\n"
+        # Debug: tri-state radio group (Off / Basic / Full).  The
+        # values map 1:1 to the ``--debug={off,basic,full}`` CLI flag in
+        # ``cmd_run_flextool``; ExecutionManager appends ``--csv-dump``
+        # only when "Full" is selected so the heavy intermediate-CSV
+        # I/O stays opt-in.
+        debug_frame = ttk.Frame(side_menu)
+        debug_frame.grid(row=1, column=0, sticky="w", pady=(0, 4))
+        debug_label = ttk.Label(debug_frame, text="Debug:")
+        debug_label.pack(side="left", padx=(0, 4))
+        debug_radios: list[ttk.Radiobutton] = []
+        for _text, _value in (("Off", "off"), ("Basic", "basic"), ("Full", "full")):
+            rb = ttk.Radiobutton(
+                debug_frame, text=_text, variable=self.debug_var,
+                value=_value,
+            )
+            rb.pack(side="left", padx=(0, 4))
+            debug_radios.append(rb)
+        self.debug_cb = debug_frame  # retained name for external refs
+        _attach_tip(debug_frame, (
+            "Diagnostic verbosity for scenario execution.\n"
             "\n"
-            "  • --debug enables verbose engine logging.\n"
-            "  • --csv-dump writes the cascade's processed inputs\n"
-            "    to disk after the last sub-solve for inspection."
+            "  • Off    — no extra flags.\n"
+            "  • Basic  — --debug=basic: verbose memory checkpoints\n"
+            "             and DEBUG-level engine logging. No tracemalloc;\n"
+            "             negligible runtime overhead.\n"
+            "  • Full   — --debug=full + --csv-dump: Basic plus\n"
+            "             tracemalloc-backed memory diagnostics CSV\n"
+            "             and retained intermediate input CSVs.\n"
+            "             Tracemalloc instruments every Python\n"
+            "             allocation and typically slows allocation-\n"
+            "             heavy phases by 2-5×. Use only for\n"
+            "             allocation-regression investigations."
         ))
 
         theme_frame = ttk.Frame(side_menu)
@@ -1244,7 +1269,7 @@ class MainWindow(tk.Tk):
                 self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()
                 self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
                 self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
-                self.project_settings.debug = self.debug_var.get()
+                self.project_settings.debug_level = self.debug_var.get()
                 self.project_settings.save_memory = self.save_memory_var.get()
 
                 # Persist scenario order
@@ -3818,7 +3843,7 @@ class MainWindow(tk.Tk):
         self.auto_scen_csvs_var.set(s.auto_generate_scen_csvs)
         self.auto_comp_plots_var.set(s.auto_generate_comp_plots)
         self.auto_comp_excel_var.set(s.auto_generate_comp_excel)
-        self.debug_var.set(s.debug)
+        self.debug_var.set(s.debug_level)
         self.save_memory_var.set(s.save_memory)
 
     def _on_auto_gen_toggled(self, *_args: object) -> None:
@@ -3828,7 +3853,7 @@ class MainWindow(tk.Tk):
         self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()
         self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
         self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
-        self.project_settings.debug = self.debug_var.get()
+        self.project_settings.debug_level = self.debug_var.get()
         self.project_settings.save_memory = self.save_memory_var.get()
 
         if self.current_project:

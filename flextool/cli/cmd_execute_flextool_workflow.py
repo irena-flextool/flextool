@@ -67,8 +67,16 @@ Examples:
                         help='Skip output generation phase')
 
     # Additional options
-    parser.add_argument('--debug', action='store_true',
-                        help='Enable debug output for model run')
+    parser.add_argument('--debug',
+                        nargs='?',
+                        const='basic',
+                        default='off',
+                        choices=['off', 'basic', 'full'],
+                        metavar='LEVEL',
+                        help='Diagnostic verbosity level passed through '
+                             'to cmd_run_flextool.  Bare ``--debug`` '
+                             'selects ``basic``.  See cmd_run_flextool '
+                             '--help for level semantics.')
 
     args = parser.parse_args()
 
@@ -134,8 +142,8 @@ Examples:
 
         cmd = [sys.executable, '-m', 'flextool.cli.cmd_run_flextool',
                args.input_db_url, args.output_db_url, args.scenario_name]
-        if args.debug:
-            cmd.append('--debug')
+        if args.debug != 'off':
+            cmd.append(f'--debug={args.debug}')
 
         result = subprocess.run(cmd)
         if result.returncode != 0:

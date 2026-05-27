@@ -920,9 +920,15 @@ class ExecutionManager:
 
         cmd.extend(["--highs-threads", str(self.execution_limits.max_cores_per_job)])
 
-        # "Debug" checkbox in the main window enables both engine flags.
-        if settings.debug:
-            cmd.append("--debug")
+        # "Debug" radio group in the main window: Off / Basic / Full.
+        # Basic → --debug=basic only (verbose checkpoints, no tracemalloc).
+        # Full  → --debug=full + --csv-dump (tracemalloc + retained
+        #         intermediate CSVs; the heavy I/O path).
+        debug_level = getattr(settings, "debug_level", "off")
+        if debug_level == "basic":
+            cmd.append("--debug=basic")
+        elif debug_level == "full":
+            cmd.append("--debug=full")
             cmd.append("--csv-dump")
 
         # "Save memory" checkbox enables polar-high's save_memory path

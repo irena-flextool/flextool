@@ -57,9 +57,17 @@ class ProjectSettings:
     auto_generate_comp_plots: bool = True
     auto_generate_comp_excel: bool = False
 
-    # When True, scenario execution runs with --debug and --csv-dump.
-    # Controlled by the "Debug" checkbox in the main window.
-    debug: bool = False
+    # Diagnostic verbosity for scenario execution.  Controlled by the
+    # "Debug" radio group in the main window.  Values mirror the CLI
+    # ``--debug`` flag in ``flextool/cli/cmd_run_flextool.py``:
+    #
+    #   "off"   — no extra flags appended.
+    #   "basic" — appends ``--debug=basic`` (verbose memory checkpoints
+    #             + DEBUG log level; no tracemalloc overhead).
+    #   "full"  — appends ``--debug=full --csv-dump`` (basic + tracemalloc
+    #             diagnostics CSV + retained intermediate CSVs).  Slow;
+    #             reserved for allocation-regression investigations.
+    debug_level: str = "off"
 
     # When True, scenario execution runs with --save-memory: polar-high
     # drops the LP source and round-trips HiGHS through MPS mid-solve,

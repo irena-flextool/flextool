@@ -92,7 +92,7 @@ _STRUCTURAL_PARAM_NAMES: frozenset[str] = frozenset({
     "solves", "contains_solves", "model",
     "realized_periods", "realized_invest_periods",
     "fix_storage_periods", "invest_periods", "periods_available",
-    "debug", "version",
+    "version",
 })
 
 

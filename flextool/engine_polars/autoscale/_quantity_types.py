@@ -112,8 +112,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
     ('cumulative_min_capacity', 'unit'): QuantityType.POWER,
     # [MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
-    ('debug', 'model'): QuantityType.DIMENSIONLESS,
-    # Instruction set for performing model debugging and testing.
     ('decomposition_method', 'group'): QuantityType.DIMENSIONLESS,
     # Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solve...
     ('delay', 'connection'): QuantityType.DURATION,

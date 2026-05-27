@@ -94,12 +94,6 @@ _PARAMETER_SPECS: list[dict] = [
         "header": "constraint,p_constraint_constant",
         "filename": "input/p_constraint_constant.csv",
     },
-    # --- model (debug) ---
-    {
-        "cl_pars": [("model", "debug")],
-        "header": "debug",
-        "filename": "input/debug.csv",
-    },
     # --- entity invest/lifetime methods ---
     {
         "cl_pars": [("node", "invest_method"), ("unit", "invest_method"), ("connection", "invest_method")],
