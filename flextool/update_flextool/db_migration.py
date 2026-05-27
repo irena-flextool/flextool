@@ -1361,6 +1361,25 @@ def migrate_database(database_path, up_to: int | None = None):
                 # ``p_process_source_capacity_min_coeff.csv`` and sink),
                 # and docs are renamed in lock-step.
                 _migrate_v56_rename_min_capacity_coefficient_to_capacity_min_coeff(db)
+                # Drop ``model.exclude_entity_outputs``.  The parameter
+                # was a gate on the three per-period capacity dumps
+                # (``unit_capacity.csv``, ``connection_capacity.csv``,
+                # ``node_capacity.csv``) emitted by
+                # :mod:`flextool.process_outputs.handoff_writers`.  The
+                # schema's ``"yes"`` default made "exclude" silently the
+                # default for every database — which inverts the
+                # parameter name's apparent intent ("exclude" reads as
+                # opt-in, behaved as opt-out).  Per-entity capacity rows
+                # now always emit; aggregated/group outputs continue to
+                # be controlled by the three ``group.output_*`` set
+                # selectors (unaffected).  The gate site in
+                # ``handoff_writers``, the cl_pars emitter in
+                # ``input_derivation/_specs.py``, the SET_LIKE_NAMES
+                # entry in ``spinedb_backend/_backend.py``, the autoscale
+                # quantity-type row, the ``export_settings.yaml`` params
+                # listing and the v44 parameter_group membership map are
+                # all stripped in the same commit.
+                _migrate_v56_remove_exclude_entity_outputs(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3853,6 +3872,43 @@ def _migrate_v56_rename_min_capacity_coefficient_to_capacity_min_coeff(db) -> No
         "unit__inputNode.min_capacity_coefficient → capacity_min_coeff; "
         "unit__outputNode.min_capacity_coefficient → capacity_min_coeff.",
     )
+
+
+def _migrate_v56_remove_exclude_entity_outputs(db) -> None:
+    """Drop the ``model.exclude_entity_outputs`` parameter from the schema.
+
+    The parameter was the single gate behind
+    :func:`flextool.process_outputs.handoff_writers._exclude_entity_outputs_active`
+    which short-circuited the three per-period capacity dumps
+    (``unit_capacity.csv``, ``connection_capacity.csv``,
+    ``node_capacity.csv``) whenever its value resolved to ``"yes"``.  The
+    schema's default of ``"yes"`` made "exclude" the silent default for
+    every database that did not override it explicitly, which inverted
+    the intent of the parameter name ("exclude" reads as an opt-in but
+    behaved as an opt-out).
+
+    The user-facing semantic is now simply "always emit per-entity
+    capacity rows".  Aggregated/group-level outputs continue to be
+    controlled by the three ``group.output_*`` set selectors
+    (``output_nodeGroup_dispatch``, ``output_nodeGroup_indicators``,
+    ``output_flowGroup_indicators``) — those are unaffected.
+
+    The gate site in :mod:`flextool.process_outputs.handoff_writers` is
+    deleted in the same commit, along with the cl_pars emitter in
+    :mod:`flextool.input_derivation._specs` (which produced
+    ``input/exclude_entity_outputs.csv``, the only file the gate read),
+    and the bookkeeping rows in
+    :data:`flextool.spinedb_backend._backend.SET_LIKE_NAMES`,
+    :mod:`flextool.engine_polars.autoscale._quantity_types`,
+    :mod:`flextool.export_to_tabular.export_settings` and the v44
+    parameter_group membership map above.
+
+    Side effects: every ``parameter_value`` row referencing
+    ``model.exclude_entity_outputs`` is dropped alongside the
+    ``parameter_definition`` when ``remove_parameters_manual`` invokes
+    ``db.remove_items`` (cascading delete is handled by spinedb_api).
+    """
+    remove_parameters_manual(db, [["model", "exclude_entity_outputs"]])
 
 
 if __name__ == '__main__':

@@ -159,11 +159,6 @@ _PARAMETER_SPECS: list[dict] = [
     },
     # --- model parameters ---
     {
-        "cl_pars": [("model", "exclude_entity_outputs")],
-        "header": "value",
-        "filename": "input/exclude_entity_outputs.csv",
-    },
-    {
         "cl_pars": [("model", "solves")],
         "header": "model,solve",
         "filename": "input/model__solve.csv",
@@ -867,8 +862,7 @@ _PARAMETER_SPECS: list[dict] = [
     },
     # --- optional outputs ---
     {
-        "cl_pars": [("model", "exclude_entity_outputs"),
-                    ("model", "output_connection__node__node_flow_t"),
+        "cl_pars": [("model", "output_connection__node__node_flow_t"),
                     ("model", "output_connection_flow_separate"),
                     ("model", "output_horizon"),
                     ("model", "output_ramp_envelope"),

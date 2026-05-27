@@ -1261,19 +1261,6 @@ def _load_years_map(work_folder: Path, roll: str) -> dict[str, float]:
     return dict(zip(df["period"].astype(str), df["value"].astype(float)))
 
 
-def _exclude_entity_outputs_active(work_folder: Path) -> bool:
-    """True iff ``yes`` is in ``input/exclude_entity_outputs.csv`` — the
-    guard that disables the per-period capacity dumps."""
-    path = work_folder / "input" / "exclude_entity_outputs.csv"
-    if not path.exists():
-        return False
-    df = pd.read_csv(path)
-    if df.empty:
-        return False
-    col = df.columns[0]
-    return "yes" in df[col].astype(str).tolist()
-
-
 def _append_period_capacity(
     work_folder: Path, new_periods: list[str],
     writer_state: "OutputWriterState | None" = None,
@@ -1380,16 +1367,6 @@ def _write_capacity_per_period(
     """
     out_path = work_folder / "output_raw" / csv_filename
     roll = _actual_solve_name(work_folder, solve_name)
-
-    if _exclude_entity_outputs_active(work_folder):
-        # ``'yes' not in exclude_entity_outputs`` short-circuits every
-        # row.  Still write the header on first solve so downstream
-        # readers don't trip on a missing file.
-        if _resolve_is_first_solve(work_folder, is_first_solve):
-            out_path.write_text(
-                f"{first_header_col},solve,period,existing,invested,divested,total\n"
-            )
-        return out_path
 
     entities = _load_entity_class_set(work_folder, entity_class_set)
     # Phase G — prefer the in-memory ``writer_state.periods_already_emitted``

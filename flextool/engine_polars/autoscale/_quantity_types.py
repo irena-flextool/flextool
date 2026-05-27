@@ -142,8 +142,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [factor] Efficiency of a unit. Constant or time.
     ('efficiency_at_min_load', 'unit'): QuantityType.FRACTION,
     # [e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.
-    ('exclude_entity_outputs', 'model'): QuantityType.DIMENSIONLESS,
-    # Excludes results on node, unit and connection level, but preserves group level results
     ('existing', 'connection'): QuantityType.POWER,
     # [MW] Existing capacity. Constant or Period
     ('existing', 'node'): QuantityType.ENERGY,

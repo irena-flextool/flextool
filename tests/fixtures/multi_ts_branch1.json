@@ -2448,17 +2448,6 @@
     ],
     [
       "model",
-      "exclude_entity_outputs",
-      [
-        null,
-        null
-      ],
-      "optional_output",
-      "Excludes results on node, unit and connection level, but preserves group level results",
-      "output"
-    ],
-    [
-      "model",
       "inflation_offset_investment",
       [
         "MC4w",
@@ -4771,12 +4760,6 @@
     [
       "group",
       "transfer_method",
-      "str",
-      0
-    ],
-    [
-      "model",
-      "exclude_entity_outputs",
       "str",
       0
     ],
