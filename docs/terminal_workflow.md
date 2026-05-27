@@ -78,13 +78,12 @@ After `pip install -e .` or `pip install .`, these commands are available direct
 
 ## `execute_flextool_workflow.py` &mdash; full workflow
 
-This is the recommended entry point. It orchestrates three phases:
+This is the recommended entry point. It runs two phases:
 
-1. **Input preparation** &mdash; convert tabular data (Excel/ODS/CSV) into a Spine database
-2. **Model execution** &mdash; run the FlexTool optimization model
-3. **Output generation** &mdash; process results into plots, parquet files, CSV, or Excel
+1. **Input preparation** (optional) &mdash; convert tabular data (Excel/ODS/CSV) into a Spine database. Runs only when `--tabular-file-path` or `--csv-directory-path` is provided; otherwise the existing input database is used as-is.
+2. **Model execution + output write** &mdash; run the FlexTool optimisation model and write results in the requested formats. The optimisation results are kept in memory and written out at the end of the same process; there is no separate "write outputs" subprocess. Parquet is always produced; `--write-methods` selects which additional formats (plot, csv, excel) to generate alongside.
 
-Phase 1 (input preparation) runs only when `--tabular-file-path` or `--csv-directory-path` is provided; otherwise the existing input database is used as-is. Phases 2 and 3 can be skipped explicitly.
+To re-plot existing results without rerunning the model, call `cmd_write_outputs` directly with `--read-parquet-dir` (see the `write_outputs.py` section below).
 
 ### Usage
 
@@ -106,11 +105,9 @@ python execute_flextool_workflow.py INPUT_DB_URL OUTPUT_DB_URL SCENARIO_NAME [op
 |---|---|
 | `--tabular-file-path PATH` | Path to Excel/ODS input file (triggers Phase 1; mutually exclusive with `--csv-directory-path`) |
 | `--csv-directory-path PATH` | Path to directory containing CSV input files (triggers Phase 1) |
-| `--output-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv` (default: `plot parquet csv`) |
+| `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv` (default: `plot parquet csv`). Parquet is the canonical output and is produced whenever this flag is left at its default. |
 | `--output-subdir DIR` | Subdirectory for output files (default: scenario name) |
-| `--output-config PATH` | Path to output configuration YAML (default: `templates/default_plots.yaml`) |
-| `--skip-model-run` | Skip model execution (assumes model has already been run) |
-| `--skip-output-write` | Skip output generation |
+| `--output-config PATH` | Path to output configuration YAML (default: bundled `schemas/default_plots.yaml`) |
 | `--debug` | Enable debug output |
 
 ### Input sources
