@@ -68,7 +68,7 @@ def _make_minimal_state(model_solve: dict | None = None) -> RunnerState:
         rolling_times=defaultdict(list),
         highs=HiGHSConfig(presolve={}, method={}, parallel={}),
         solver_settings=SolverSettings(
-            solvers={}, precommand={}, arguments=defaultdict(list),
+            solvers={}, precommand={}, arguments={},
         ),
         solve_period_years_represented=defaultdict(list),
         hole_multipliers=defaultdict(list),

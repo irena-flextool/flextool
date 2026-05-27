@@ -4234,7 +4234,7 @@
         null
       ],
       null,
-      "Array of text commands for passing command line arguments to a solver. Can be used to set additional solver parameters.",
+      "Map of HiGHS solver options (option name -> value), layered on top of the floor values in solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap, solver_precommand).",
       "solve_advanced"
     ],
     [
@@ -6206,7 +6206,7 @@
     [
       "solve",
       "solver_arguments",
-      "array",
+      "map",
       1
     ],
     [

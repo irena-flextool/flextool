@@ -1606,28 +1606,48 @@ def _drive_cascade(
             # "global scheduler already initialised" rejection path.
             _cli_threads = os.environ.get("FLEXTOOL_HIGHS_THREADS")
 
-            def _finalise_highs_options(opts: dict) -> dict:
+            def _build_cli_overrides() -> dict[str, object]:
+                """Translate CLI env-var-plumbed flags into a HiGHS
+                options dict that the effective-options resolver layers
+                on top of ``solver_arguments`` and ``highs.opt``.
+                """
+                cli: dict[str, object] = {}
                 if _diag_tlim:
                     try:
-                        opts["time_limit"] = float(_diag_tlim)
+                        cli["time_limit"] = float(_diag_tlim)
                     except ValueError:
                         pass
                 if _cli_presolve in ("on", "off", "choose"):
-                    opts["presolve"] = _cli_presolve
+                    cli["presolve"] = _cli_presolve
                 if _cli_threads is not None:
                     try:
                         n = int(_cli_threads)
                     except ValueError:
                         n = 1
                     if n > 1:
-                        opts["threads"] = n
+                        cli["threads"] = n
                         # User opted out of the determinism pin; HiGHS
                         # needs ``parallel="on"`` before it will actually
                         # use the threads.
-                        opts["parallel"] = "on"
+                        cli["parallel"] = "on"
                     # n == 1 (or n <= 0) keeps the deterministic defaults
                     # from DETERMINISM_OPTIONS — no override needed.
-                return opts
+                return cli
+
+            # Per-solve ``solver_arguments`` 1d-map (Batch C.1).  Empty
+            # dict when no entry authored on the active solve.
+            _solver_args_map = state.solve.solver_settings.arguments.get(
+                complete_solve_name, {}
+            )
+            # ``solver_config/highs.opt`` floor parsed by the resolver.
+            # ``state.paths.solver_config_dir`` is None on direct native
+            # callers (the file is only present on the CLI path); the
+            # resolver treats that as an empty floor.
+            _highs_opt_path = (
+                state.paths.solver_config_dir / "highs.opt"
+                if state.paths.solver_config_dir is not None
+                else None
+            )
 
             # --- LP build & solve ------------------------------------------
             # Δ.12d — warm-LP per-iteration decision.  When ``warm`` is
@@ -1723,11 +1743,17 @@ def _drive_cascade(
                         # LP-build summary.
                         print("", flush=True)
                     inner_pb = self._warm_problem.problem
-                    highs_options = _finalise_highs_options(
-                        _baseline_highs_options(
+                    from flextool.engine_polars._solver_dispatch import (
+                        _resolve_effective_highs_options,
+                    )
+                    highs_options = _resolve_effective_highs_options(
+                        solver_arguments_map=_solver_args_map,
+                        highs_opt_path=_highs_opt_path,
+                        cli_overrides=_build_cli_overrides(),
+                        baseline=_baseline_highs_options(
                             user_bound_scale_override=user_bound_scale_override,
                             scaling_mode=_scaling_mode,
-                        )
+                        ),
                     )
                     inner_pb.set_solver_options(highs_options)
                 # ``WarmProblem.solve`` always keeps the HiGHS instance
@@ -1757,11 +1783,17 @@ def _drive_cascade(
                     # its scaling-warning block visually separate from
                     # the LP-build phase summary above.
                     print("", flush=True)
-                highs_options = _finalise_highs_options(
-                    _baseline_highs_options(
+                from flextool.engine_polars._solver_dispatch import (
+                    _resolve_effective_highs_options,
+                )
+                highs_options = _resolve_effective_highs_options(
+                    solver_arguments_map=_solver_args_map,
+                    highs_opt_path=_highs_opt_path,
+                    cli_overrides=_build_cli_overrides(),
+                    baseline=_baseline_highs_options(
                         user_bound_scale_override=user_bound_scale_override,
                         scaling_mode=_scaling_mode,
-                    )
+                    ),
                 )
                 pb.set_solver_options(highs_options)
                 # autoscale Layer 2 (semantic per-type) pre-solve apply.
@@ -2614,15 +2646,29 @@ def run_single_solve_from_db(
     # Layer 3's :func:`apply_scaling` will merge ``user_objective_scale``,
     # ``user_bound_scale`` (when it auto-recommends), and re-assert
     # ``simplex_scale_strategy`` on top of this base.
-    highs_options = _baseline_highs_options(
-        user_bound_scale_override=user_bound_scale_override,
-        scaling_mode=_scaling_mode,
-    )
-    # ``FLEXTOOL_HIGHS_PRESOLVE`` env var (set by --presolve CLI flag)
-    # overrides DETERMINISM_OPTIONS' baked-in ``presolve = "on"``.
+    #
+    # Batch C.1 — route through the effective-options resolver so the
+    # per-solve ``solver_arguments`` 1d-map and the
+    # ``solver_config/highs.opt`` floor are layered the same way the
+    # cascade path does it.  ``FLEXTOOL_HIGHS_PRESOLVE`` becomes a CLI
+    # override key the resolver tops the chain with.
     _cli_presolve = os.environ.get("FLEXTOOL_HIGHS_PRESOLVE")
+    _fast_cli_overrides: dict[str, object] = {}
     if _cli_presolve in ("on", "off", "choose"):
-        highs_options["presolve"] = _cli_presolve
+        _fast_cli_overrides["presolve"] = _cli_presolve
+    _fast_solver_args = sc.solver_settings.arguments.get(scenario_name, {})
+    from flextool.engine_polars._solver_dispatch import (
+        _resolve_effective_highs_options,
+    )
+    highs_options = _resolve_effective_highs_options(
+        solver_arguments_map=_fast_solver_args,
+        highs_opt_path=None,
+        cli_overrides=_fast_cli_overrides,
+        baseline=_baseline_highs_options(
+            user_bound_scale_override=user_bound_scale_override,
+            scaling_mode=_scaling_mode,
+        ),
+    )
 
     problem.set_solver_options(highs_options)
 

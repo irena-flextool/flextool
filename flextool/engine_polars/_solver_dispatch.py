@@ -18,12 +18,110 @@ rationale and the canonical _PARAM_MAP table.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Mapping
 
 from flextool.engine_polars._solve_config import SolverConfig
 
 if TYPE_CHECKING:
     from polar_high import Problem
+
+
+# ---------------------------------------------------------------------------
+# Effective HiGHS-options resolver (Batch C.1)
+# ---------------------------------------------------------------------------
+
+
+def _parse_highs_opt_file(path: Path | None) -> dict[str, str]:
+    """Parse a HiGHS-style ``key=value`` options file into a flat dict.
+
+    HiGHS' ``highs.opt`` syntax is one ``key = value`` line per option
+    with optional surrounding whitespace; lines starting with ``#`` and
+    blank lines are comments and skipped.  Unknown / malformed lines
+    are also skipped (HiGHS itself tolerates them) so the floor never
+    fails the engine; the user sees the misparse in HiGHS' own warning
+    output when it loads the file.
+
+    Returns an empty dict when *path* is None or does not exist — that
+    is the steady state for in-process engine runs (the file is read
+    by HiGHS on the CLI path only).  The resolver still calls this
+    helper so a future change to wire the file through
+    ``set_solver_options`` is a one-call edit.
+    """
+    if path is None or not path.is_file():
+        return {}
+    options: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, _, val = stripped.partition("=")
+        options[key.strip()] = val.strip()
+    return options
+
+
+def _resolve_effective_highs_options(
+    *,
+    solver_arguments_map: Mapping[str, Any] | None,
+    highs_opt_path: Path | None,
+    cli_overrides: Mapping[str, Any] | None,
+    baseline: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve the effective HiGHS solver options for one solve.
+
+    Precedence (lowest → highest):
+
+    1. ``baseline`` — engine-pinned defaults from
+       :func:`flextool.engine_polars._orchestration._baseline_highs_options`
+       (Curtis-Reid simplex scale + the four determinism keys from
+       :data:`flextool.engine_polars._determinism.DETERMINISM_OPTIONS`).
+       Each higher layer may overwrite these — operator intent wins.
+    2. ``highs.opt`` — floor parsed from ``solver_config/highs.opt``
+       via :func:`_parse_highs_opt_file`.  Project-level defaults the
+       user has committed to disk.
+    3. ``solver_arguments`` — the 1d-map authored on the active
+       solve's ``solver_arguments`` parameter (Batch C.1+).
+    4. ``cli_overrides`` — keys injected by CLI flags
+       (``--highs-threads``, ``--solver-time-limit``, …) via
+       :func:`flextool.engine_polars._orchestration._finalise_highs_options`.
+       Highest precedence; the operator's command-line intent is
+       authoritative.
+
+    Empty / ``None`` layers are skipped cleanly.
+
+    Parameters
+    ----------
+    solver_arguments_map
+        The 1d-map dict authored on the solve's ``solver_arguments``
+        parameter.  ``None`` and ``{}`` are equivalent.
+    highs_opt_path
+        Path to ``solver_config/highs.opt`` (or any equivalent).
+        ``None`` skips this layer.
+    cli_overrides
+        Dict of HiGHS option-keys → values to apply at the top of the
+        precedence chain.  ``None`` and ``{}`` are equivalent.
+    baseline
+        Optional engine-pinned floor below all other layers.  When
+        ``None`` an empty dict is used (callers that want the
+        determinism + scale floor pass it explicitly).
+
+    Returns
+    -------
+    dict[str, Any]
+        The final option dict ready to forward to
+        ``polar_high.Problem.set_solver_options``.
+    """
+    options: dict[str, Any] = dict(baseline) if baseline else {}
+    options.update(_parse_highs_opt_file(highs_opt_path))
+    if solver_arguments_map:
+        for key, value in solver_arguments_map.items():
+            options[str(key)] = value
+    if cli_overrides:
+        for key, value in cli_overrides.items():
+            options[str(key)] = value
+    return options
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +445,8 @@ def probe_solver_licenses() -> dict[str, str]:
 __all__ = [
     "_PARAM_MAP",
     "FlexToolUserError",
+    "_parse_highs_opt_file",
+    "_resolve_effective_highs_options",
     "build_solver_options",
     "probe_solver_licenses",
     "run_one_solve",

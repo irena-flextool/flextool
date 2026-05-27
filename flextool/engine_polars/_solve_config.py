@@ -149,13 +149,17 @@ class HiGHSConfig:
 class SolverSettings:
     """Solver selection + invocation settings, keyed by solve name.
 
-    *arguments* uses :class:`collections.defaultdict[list]` to mirror
-    flextool's per-solve argument list shape.
+    *arguments* is the per-solve HiGHS option overrides Map authored
+    on the ``solver_arguments`` parameter (1d-map of HiGHS option name
+    → value).  Read into the effective-options resolver via
+    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`
+    where it is overlaid on top of ``solver_config/highs.opt`` and
+    below the CLI overrides.  Empty when no solve authored an entry.
     """
 
     solvers: dict[str, str]
     precommand: dict[str, str]
-    arguments: defaultdict[str, list]
+    arguments: dict[str, dict[str, str]]
 
 
 @dataclass
@@ -343,12 +347,30 @@ class SolveConfig:
         solver_precommand: dict = params_to_dict(
             db=db, cl="solve", par="solver_precommand", mode=DictMode.DICT
         )
-        solver_arguments: defaultdict = params_to_dict(
-            db=db,
-            cl="solve",
-            par="solver_arguments",
-            mode=DictMode.DEFAULTDICT,
-        )
+        # Batch C.1 — ``solver_arguments`` retyped from array to 1d-map
+        # at v56 schema; read directly via the Spine API the same way
+        # ``solver_options`` is read below so we get a dict-of-dicts
+        # (solve name → option-key → value) ready for the
+        # effective-options resolver in ``_solver_dispatch``.
+        solver_arguments: dict[str, dict[str, str]] = {}
+        for param in db.find_parameter_values(
+            entity_class_name="solve", parameter_definition_name="solver_arguments"
+        ):
+            pv = api.from_database(param["value"], param["type"])
+            if isinstance(pv, api.Map):
+                solver_arguments[param["entity_name"]] = {
+                    str(k): str(v)
+                    for k, v in zip(list(pv.indexes), list(pv.values))
+                }
+            elif pv is None:
+                continue
+            else:
+                logger.warning(
+                    "solve.%s.solver_arguments is not a 1d-map (%r) — "
+                    "ignoring; expected a Map of HiGHS option name -> value",
+                    param["entity_name"],
+                    type(pv).__name__,
+                )
         # v52 multi-solver dispatch params.  Each per-solve value is
         # rolled up into one :class:`SolverConfig` keyed by solve name
         # (see ``specs/flextool-multi-solver-handoff.md`` Steps 1-3).

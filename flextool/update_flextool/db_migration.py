@@ -1,7 +1,7 @@
 import json
 import os
 import argparse
-from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database
+from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database, Map
 from spinedb_api.exception import NothingToCommit
 import logging
 
@@ -1431,6 +1431,20 @@ def migrate_database(database_path, up_to: int | None = None):
                 # ``output_horizon`` — the one flag actually consumed
                 # by ``_emit_per_solve``.
                 _migrate_v56_remove_output_connection_flow_separate(db)
+                # Batch C.1 — first commit of the solver-knob
+                # consolidation.  Retype ``solve.solver_arguments`` from
+                # ``array`` to ``1d_map`` so it can hold the HiGHS
+                # solver options the engine layers on top of
+                # ``solver_config/highs.opt``.  Subsequent commits
+                # (C.2-C.5) fold the sibling ``solver_options`` Map and
+                # the three ``highs_method`` / ``highs_parallel`` /
+                # ``highs_presolve`` shortcut parameters into this
+                # canonical home before removing them.  Existing
+                # parameter_value rows carrying Array values are
+                # parsed entry-by-entry as ``key=value`` HiGHS option
+                # lines and converted to Map entries; unparseable
+                # entries raise so the user can inspect their data.
+                _migrate_v56_retype_solver_arguments_to_1d_map(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4097,6 +4111,130 @@ def _migrate_v56_remove_output_connection_flow_separate(db) -> None:
     ``parameter_definition``.
     """
     remove_parameters_manual(db, [["model", "output_connection_flow_separate"]])
+
+
+def _migrate_v56_retype_solver_arguments_to_1d_map(db) -> None:
+    """Retype ``solve.solver_arguments`` from ``array`` to ``1d_map``.
+
+    Batch C.1 — first commit of the solver-knob consolidation.  The
+    parameter changes role from "list of raw command-line arguments to
+    pass to the legacy flextoolrunner / GAMS solver invocation" to
+    "key→value map of HiGHS solver options layered on top of
+    ``solver_config/highs.opt``".  In subsequent C.2-C.5 commits the
+    sibling Map ``solver_options`` and the three ``highs_method`` /
+    ``highs_parallel`` / ``highs_presolve`` shortcut parameters fold
+    their content into this canonical home before being removed.
+
+    Schema retype: the parameter_definition's ``parameter_type_list`` is
+    flipped from ``("array",)`` to ``("1d_map",)`` and the description
+    is rewritten to reflect the new role.
+
+    Value translation: every existing ``solver_arguments`` parameter
+    value with the legacy Array shape is converted to an equivalent
+    1d-map.  Each Array entry is parsed as a HiGHS ``key=value`` option
+    line (the format ``solver_config/highs.opt`` uses) and becomes one
+    Map entry.  Entries that do not parse cleanly cause a
+    ``SpineDBAPIError`` to be raised — silent lossy conversion is
+    intentionally not allowed because the legacy semantics differed
+    enough (raw CLI args for flextoolrunner vs HiGHS option keys) that
+    the user must inspect any non-empty array on a per-DB basis.  None
+    of the in-repo fixtures or canonical databases carry a non-null
+    ``solver_arguments`` value at v55 (audited 2026-05-27), so the
+    no-real-data fast path is the only one exercised by the gate.
+
+    Engine consumption: the new 1d-map values are read by the resolver
+    in :mod:`flextool.engine_polars._solver_dispatch` and merged with
+    ``solver_config/highs.opt`` (floor) and the CLI flags (top) into
+    the final HiGHS options dict.  See
+    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`.
+    """
+    parameter_definitions = db.mapped_table("parameter_definition")
+    try:
+        param = db.item(parameter_definitions,
+                        entity_class_name="solve", name="solver_arguments")
+    except SpineDBAPIError:
+        param = None
+    if param is None:
+        # Steady-state once the schema template is in sync; helper must
+        # be safe to re-run.
+        return
+
+    # Translate existing Array values to 1d-map.  In-repo fixtures all
+    # carry null values for this parameter at v55 but a user's DB may
+    # carry author-supplied arrays — convert them on a best-effort
+    # basis and STOP on the first unparseable entry.
+    new_description = (
+        "Map of HiGHS solver options (option name -> value), layered on "
+        "top of the floor values in ``solver_config/highs.opt`` and "
+        "below any CLI overrides (e.g. ``--solver-time-limit``).  Use "
+        "this for ad-hoc HiGHS knobs that do not have a dedicated "
+        "FlexTool parameter (``solver_mip_gap``, ``solver_precommand``)."
+    )
+    existing = list(db.find_parameter_values(
+        entity_class_name="solve",
+        parameter_definition_name="solver_arguments",
+    ))
+    for pv in existing:
+        try:
+            raw_value = from_database(pv["value"], pv["type"])
+        except Exception:  # pragma: no cover — best-effort
+            raw_value = None
+        if raw_value is None:
+            continue
+        # Already a Map?  Idempotent path — leave alone.
+        if isinstance(raw_value, Map):
+            continue
+        # Legacy Array path.  Parse each "key=value" entry.
+        from spinedb_api import Array as _Array
+        if not isinstance(raw_value, _Array):
+            raise SpineDBAPIError(
+                f"solver_arguments on {pv['entity_byname']!r} has "
+                f"unexpected type {type(raw_value).__name__!r}; cannot "
+                "convert to 1d-map.  Inspect the value manually before "
+                "re-running the migration."
+            )
+        entries: list[tuple[str, str]] = []
+        for entry in raw_value.values:
+            text = str(entry).strip()
+            if not text:
+                continue
+            # Accept both "key=value" (highs.opt format) and "key value"
+            # (legacy CLI-arg style); reject anything else.
+            if "=" in text:
+                key, _, val = text.partition("=")
+            elif " " in text:
+                key, _, val = text.partition(" ")
+            else:
+                raise SpineDBAPIError(
+                    f"solver_arguments on {pv['entity_byname']!r} "
+                    f"carries entry {text!r} that does not match the "
+                    "expected 'key=value' or 'key value' form; cannot "
+                    "convert to 1d-map.  Edit the value to the new map "
+                    "shape manually before re-running the migration."
+                )
+            entries.append((key.strip(), val.strip()))
+        new_map = Map([k for k, _ in entries], [v for _, v in entries])
+        new_value, new_type = to_database(new_map)
+        db.update_item(
+            "parameter_value",
+            id=pv["id"],
+            value=new_value, type=new_type,
+        )
+
+    # Flip the parameter_definition's type list.
+    db.update_parameter_definition(
+        id=param["id"],
+        name="solver_arguments",
+        parameter_type_list=("1d_map",),
+        description=new_description,
+    )
+    _commit_step(
+        db,
+        "v56 retype solve.solver_arguments array → 1d-map: canonical "
+        "home for HiGHS solver-option overrides; values layered on top "
+        "of solver_config/highs.opt by the engine's effective-options "
+        "resolver (Batch C.1).",
+    )
 
 
 if __name__ == '__main__':
