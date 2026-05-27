@@ -354,6 +354,19 @@ def main():
     if args.save_memory:
         os.environ['FLEXTOOL_SAVE_MEMORY'] = '1'
 
+    # Accept either a SQLAlchemy URL ("sqlite:///path") or a bare
+    # filesystem path ("path/to.sqlite") for any DB argument. Downstream
+    # readers (SpineDbReader) already do this, but DatabaseMapping calls
+    # in this file consume the args directly, so normalise once here.
+    def _as_db_url(value):
+        if value is None:
+            return None
+        return value if "://" in value else f"sqlite:///{value}"
+
+    args.input_db_url = _as_db_url(args.input_db_url)
+    args.output_db_url = _as_db_url(args.output_db_url)
+    args.settings_db_url = _as_db_url(args.settings_db_url)
+
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url
     scenario_name = args.scenario_name

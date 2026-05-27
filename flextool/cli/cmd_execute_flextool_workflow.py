@@ -32,11 +32,11 @@ Examples:
   # Full workflow with CSV input
   python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --csv-directory-path input_data/
 
-  # Skip input prep if database already exists
-  python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --skip-input-prep
+  # Use an existing input database (no tabular/csv source → input prep is skipped)
+  python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario
 
-  # Run only model (skip both input and output phases)
-  python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --skip-input-prep --skip-output-write
+  # Run only model (skip output phase)
+  python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --skip-output-write
         """
     )
 
@@ -45,7 +45,9 @@ Examples:
     parser.add_argument('output_db_url', help='Output database URL for storing result metadata')
     parser.add_argument('scenario_name', help='Name of the scenario to execute')
 
-    # Input phase arguments
+    # Input phase arguments. Presence of either flag triggers Phase 1
+    # (input preparation); when neither is given, the existing input
+    # database is used as-is.
     input_group = parser.add_mutually_exclusive_group()
     input_group.add_argument('--tabular-file-path', help='Path to Excel/ODS input file')
     input_group.add_argument('--csv-directory-path', help='Path to directory containing CSV input files')
@@ -58,9 +60,9 @@ Examples:
     parser.add_argument('--output-config', default=None,
                         help='Path to output configuration YAML file (default: bundled schemas/default_plots.yaml)')
 
-    # Skip flags for individual phases
-    parser.add_argument('--skip-input-prep', action='store_true',
-                        help='Skip input preparation phase (assumes input database already exists)')
+    # Skip flags for individual phases. Phase 1 (input prep) is skipped
+    # implicitly when neither --tabular-file-path nor --csv-directory-path
+    # is provided, so there's no separate --skip-input-prep flag.
     parser.add_argument('--skip-model-run', action='store_true',
                         help='Skip model execution phase (assumes model has already run)')
     parser.add_argument('--skip-output-write', action='store_true',
@@ -82,15 +84,15 @@ Examples:
         except Exception as _exc:
             logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
 
-    # Validate arguments
-    if not args.skip_input_prep and not (args.tabular_file_path or args.csv_directory_path):
-        parser.error("Must provide either --tabular-file-path or --csv-directory-path unless --skip-input-prep is used")
+    # Phase 1 runs only when a tabular/csv source is provided; otherwise
+    # the existing input database is used as-is.
+    run_input_prep = bool(args.tabular_file_path or args.csv_directory_path)
 
     # Set default output subdirectory to scenario name if not specified
     output_subdir = args.output_subdir if args.output_subdir else args.scenario_name
 
     # Phase 1: Input Preparation
-    if not args.skip_input_prep:
+    if run_input_prep:
         print(f"\n{'='*70}")
         print("PHASE 1: PREPARING INPUT DATA")
         print(f"{'='*70}")
@@ -133,7 +135,8 @@ Examples:
         print()
 
         cmd = [sys.executable, '-m', 'flextool.cli.cmd_run_flextool',
-               args.input_db_url, args.output_db_url, args.scenario_name]
+               args.input_db_url, args.output_db_url,
+               '--scenario-name', args.scenario_name]
         if args.debug:
             cmd.append('--debug')
 
@@ -173,9 +176,10 @@ Examples:
         print()
 
         cmd = [sys.executable, '-m', 'flextool.cli.cmd_write_outputs',
-               args.scenario_name,
-               '--config_path', output_config,
-               '--methods'] + args.output_methods + ['--subdir', output_subdir]
+               '--scenario-name', args.scenario_name,
+               '--config-path', output_config,
+               '--subdir', output_subdir,
+               '--write-methods'] + args.output_methods
 
         result = subprocess.run(cmd)
         if result.returncode != 0:

@@ -23,11 +23,10 @@ Run the example scenario `base` from the bundled example database:
 python execute_flextool_workflow.py \
     templates/examples.sqlite \
     output_info.sqlite \
-    base \
-    --skip-input-prep
+    base
 ```
 
-This skips the input preparation phase (the database already exists) and runs the model followed by output generation. Results are written to `output_plots/base/` and `output_parquet/base/`.
+No tabular/CSV source is given, so the input preparation phase is skipped automatically and the existing database is used as-is. The model runs followed by output generation. Results are written to `output_plots/base/` and `output_parquet/base/`.
 
 ## Scripts overview
 
@@ -85,7 +84,7 @@ This is the recommended entry point. It orchestrates three phases:
 2. **Model execution** &mdash; run the FlexTool optimization model
 3. **Output generation** &mdash; process results into plots, parquet files, CSV, or Excel
 
-Each phase can be skipped independently.
+Phase 1 (input preparation) runs only when `--tabular-file-path` or `--csv-directory-path` is provided; otherwise the existing input database is used as-is. Phases 2 and 3 can be skipped explicitly.
 
 ### Usage
 
@@ -105,12 +104,11 @@ python execute_flextool_workflow.py INPUT_DB_URL OUTPUT_DB_URL SCENARIO_NAME [op
 
 | Flag | Description |
 |---|---|
-| `--tabular-file-path PATH` | Path to Excel/ODS input file (mutually exclusive with `--csv-directory-path`) |
-| `--csv-directory-path PATH` | Path to directory containing CSV input files |
+| `--tabular-file-path PATH` | Path to Excel/ODS input file (triggers Phase 1; mutually exclusive with `--csv-directory-path`) |
+| `--csv-directory-path PATH` | Path to directory containing CSV input files (triggers Phase 1) |
 | `--output-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv` (default: `plot parquet csv`) |
 | `--output-subdir DIR` | Subdirectory for output files (default: scenario name) |
 | `--output-config PATH` | Path to output configuration YAML (default: `templates/default_plots.yaml`) |
-| `--skip-input-prep` | Skip input preparation (assumes database already exists) |
 | `--skip-model-run` | Skip model execution (assumes model has already been run) |
 | `--skip-output-write` | Skip output generation |
 | `--debug` | Enable debug output |
@@ -133,12 +131,11 @@ python execute_flextool_workflow.py \
     --csv-directory-path input_data/
 ```
 
-**From an existing Spine database** (skip input prep):
+**From an existing Spine database** (no source flag → input prep is skipped automatically):
 
 ```bash
 python execute_flextool_workflow.py \
-    sqlite:///input.sqlite output_info.sqlite my_scenario \
-    --skip-input-prep
+    sqlite:///input.sqlite output_info.sqlite my_scenario
 ```
 
 ## `run_flextool.py` &mdash; model execution
@@ -399,8 +396,7 @@ These examples use the bundled `templates/examples.sqlite` database and the `bas
 python execute_flextool_workflow.py \
     templates/examples.sqlite \
     output_info.sqlite \
-    base \
-    --skip-input-prep
+    base
 
 # Output plots are saved to output_plots/base/
 # Parquet files are saved to output_parquet/base/
@@ -434,13 +430,11 @@ First, run two scenarios to populate the output database:
 ```bash
 # Run first scenario
 python execute_flextool_workflow.py \
-    templates/examples.sqlite output_info.sqlite base \
-    --skip-input-prep
+    templates/examples.sqlite output_info.sqlite base
 
 # Run second scenario
 python execute_flextool_workflow.py \
-    templates/examples.sqlite output_info.sqlite network_all_tech \
-    --skip-input-prep
+    templates/examples.sqlite output_info.sqlite network_all_tech
 ```
 
 Then compare them:
@@ -462,8 +456,7 @@ python -m flextool.cli.cmd_read_old_flextool old_model.xlsm sqlite:///converted.
 
 # Run a scenario from the converted database
 python execute_flextool_workflow.py \
-    converted.sqlite output_info.sqlite my_scenario \
-    --skip-input-prep
+    converted.sqlite output_info.sqlite my_scenario
 ```
 
 ### 6. Export a database to Excel and re-import
