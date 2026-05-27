@@ -8973,17 +8973,6 @@
     ],
     [
       "model",
-      "output_ramp_envelope",
-      [
-        "Im5vIg==",
-        "str"
-      ],
-      "optional_output",
-      "Includes seven parameters that form the ramp room envelope (how much there is additional ramping capability in a given node).",
-      "output"
-    ],
-    [
-      "model",
       "output_unit__node_flow_t",
       [
         "InllcyI=",
@@ -11219,12 +11208,6 @@
     [
       "model",
       "output_horizon",
-      "str",
-      0
-    ],
-    [
-      "model",
-      "output_ramp_envelope",
       "str",
       0
     ],

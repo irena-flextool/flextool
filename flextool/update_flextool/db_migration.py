@@ -1389,6 +1389,15 @@ def migrate_database(database_path, up_to: int | None = None):
                 # quantity-type table row and the export_settings.yaml
                 # params list entry are stripped in the same commit.
                 _migrate_v56_remove_output_node_balance_t(db)
+                # Drop ``model.output_ramp_envelope``.  Dead toggle:
+                # the flag is plumbed into the ``optional_outputs.csv``
+                # multi-emitter but nothing on the engine side reads
+                # its row from ``enable_optional_outputs`` (only
+                # ``output_horizon`` is consulted).  Schema row,
+                # input_derivation cl_pars entry, SET_LIKE_NAMES entry,
+                # autoscale quantity-type row and export_settings.yaml
+                # params list entry are stripped in the same commit.
+                _migrate_v56_remove_output_ramp_envelope(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3941,6 +3950,30 @@ def _migrate_v56_remove_output_node_balance_t(db) -> None:
     ``db.remove_items`` (cascading delete is handled by spinedb_api).
     """
     remove_parameters_manual(db, [["model", "output_node_balance_t"]])
+
+
+def _migrate_v56_remove_output_ramp_envelope(db) -> None:
+    """Drop the ``model.output_ramp_envelope`` parameter from the schema.
+
+    Dead toggle: the flag IS plumbed into the multi-param
+    ``optional_outputs.csv`` emitter in
+    :mod:`flextool.input_derivation._specs`, but nothing on the engine
+    side reads its row from the resulting ``enable_optional_outputs``
+    set — only ``output_horizon`` is checked in
+    :mod:`flextool.engine_polars._emit_per_solve`.  Any value users set
+    has been silently dropped.
+
+    This helper removes the schema row; sibling edits in the same
+    commit strip it from the input_derivation cl_pars, the
+    SET_LIKE_NAMES table, the autoscale quantity-type table and the
+    export_settings.yaml params list.
+
+    Side effects: every ``parameter_value`` row referencing
+    ``model.output_ramp_envelope`` is dropped alongside the
+    ``parameter_definition`` when ``remove_parameters_manual`` invokes
+    ``db.remove_items``.
+    """
+    remove_parameters_manual(db, [["model", "output_ramp_envelope"]])
 
 
 if __name__ == '__main__':

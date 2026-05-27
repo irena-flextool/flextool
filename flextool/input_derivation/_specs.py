@@ -865,7 +865,6 @@ _PARAMETER_SPECS: list[dict] = [
         "cl_pars": [("model", "output_connection__node__node_flow_t"),
                     ("model", "output_connection_flow_separate"),
                     ("model", "output_horizon"),
-                    ("model", "output_ramp_envelope"),
                     ("model", "output_unit__node_flow_t"),
                     ("model", "output_unit__node_ramp_t")],
         "header": "output,value",
