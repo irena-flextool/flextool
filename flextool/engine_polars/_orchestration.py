@@ -1496,6 +1496,16 @@ def _drive_cascade(
             # Layer 1/2/3 decisions are identical across rolls of the
             # same base solve, so the operator-facing summary fires once.
             self._autoscale_summary_emitted: set[str] = set()
+            # Warm-path autoscale plan cache: Layer 2 rewrites the
+            # WarmProblem's lazy constraint plans once at first-build;
+            # the plan stays valid across subsequent ``_apply_warm_updates``
+            # reuses because the polars join-based rewrite at
+            # ``_layer2._rewrite_term_lazy`` is itself lazy and re-evaluates
+            # with the updated Params.  The plan is needed on every
+            # warm solve so :func:`_autoscale_unscale_post_solve` can
+            # restore the solution to physical coordinates.  Cleared
+            # whenever ``self._warm_problem`` is dropped.
+            self._autoscale_warm_layer2_plan: "_AutoscaleLayer2Plan | None" = None
         def run(self, complete_solve_name: str) -> int:
             # Optional per-iter phase-timing (opt-in via env var).  Emits
             # `per_iter` rows to the workdir's timings.csv covering
@@ -1702,8 +1712,11 @@ def _drive_cascade(
                         warm_used = True
                     except _IncompatibleUpdate:
                         # Drop the stale warm problem so the next
-                        # branch builds a fresh one.
+                        # branch builds a fresh one.  The cached Layer 2
+                        # plan dies with it — the next first-build will
+                        # regenerate it from the fresh LP.
                         self._warm_problem = None
+                        self._autoscale_warm_layer2_plan = None
                 if not warm_used:
                     # Build the warm problem first WITHOUT solver
                     # options so we can inspect LP ranges, then push the
@@ -1731,6 +1744,45 @@ def _drive_cascade(
                         )
                     )
                     inner_pb.set_solver_options(highs_options)
+                    # Autoscale Layer 2 + Layer 3 on the warm-active
+                    # first-build branch.  Same call sequence as the
+                    # cold path below — see the longer-form comment
+                    # there for the rationale.  Skipping these on warm
+                    # solves used to leave HiGHS staring at an unscaled
+                    # LP, costing both numerical health and ~tens of GB
+                    # of internal simplex working set on
+                    # poorly-conditioned LPs.
+                    #
+                    # First-build only: the Layer 2 polars rewrite at
+                    # :func:`_layer2._rewrite_term_lazy` is lazy, so
+                    # subsequent ``_apply_warm_updates`` Param mutations
+                    # flow through the scaled LHS without re-applying
+                    # Layer 2.  ``self._autoscale_warm_layer2_plan``
+                    # caches the plan for use by
+                    # :func:`_autoscale_unscale_post_solve` after every
+                    # warm solve (first build AND reuses).
+                    (
+                        self._autoscale_warm_layer2_plan,
+                        _autoscale_ranges_pre,
+                    ) = _autoscale_apply_layer2_pre_solve(
+                        inner_pb,
+                        solve_name=complete_solve_name,
+                        logger=self.state.logger,
+                    )
+                    _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
+                        inner_pb,
+                        layer2_plan=self._autoscale_warm_layer2_plan,
+                        solve_name=complete_solve_name,
+                        logger=self.state.logger,
+                    )
+                    _autoscale_emit_console_summary(
+                        ranges_pre=_autoscale_ranges_pre,
+                        ranges_post=None,
+                        layer2_plan=self._autoscale_warm_layer2_plan,
+                        layer3_plan=_autoscale_layer3_plan,
+                        solve_name=base_solve_name,
+                        already_emitted=self._autoscale_summary_emitted,
+                    )
                 # ``WarmProblem.solve`` always keeps the HiGHS instance
                 # alive on ``Solution.highs`` — that's the whole point
                 # of warm reuse — so the output writer adapter
@@ -1744,6 +1796,17 @@ def _drive_cascade(
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                # Eager unscale on every warm solve (first-build AND
+                # reuses) so output writers see physical-coordinate
+                # primal / duals / reduced costs.  No-op when the
+                # cached plan is None (Layer 2 was off or didn't
+                # trigger at first-build).
+                if self._autoscale_warm_layer2_plan is not None:
+                    _autoscale_unscale_post_solve(
+                        sol, self._autoscale_warm_layer2_plan,
+                        solve_name=complete_solve_name,
+                        logger=self.state.logger,
+                    )
                 self._prior_data = data
                 self._prior_fp = fp
             else:
