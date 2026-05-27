@@ -4470,17 +4470,6 @@
     ],
     [
       "model",
-      "output_unit__node_flow_t",
-      [
-        null,
-        null
-      ],
-      "optional_output",
-      "The flows from units to the nodes for each timestep.",
-      "output"
-    ],
-    [
-      "model",
       "output_unit__node_ramp_t",
       [
         null,
@@ -6695,12 +6684,6 @@
     ],
     [
       "model",
-      "output_unit__node_flow_t",
-      "str",
-      0
-    ],
-    [
-      "model",
       "output_unit__node_ramp_t",
       "str",
       0
@@ -8085,16 +8068,6 @@
       "model",
       "flexTool",
       "output_connection__node__node_flow_t",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "lh2_three_region"
-    ],
-    [
-      "model",
-      "flexTool",
-      "output_unit__node_flow_t",
       [
         "InllcyI=",
         "str"

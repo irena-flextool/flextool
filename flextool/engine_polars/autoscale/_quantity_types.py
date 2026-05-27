@@ -314,8 +314,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.
     ('output_nodeGroup_indicators', 'group'): QuantityType.DIMENSIONLESS,
     # Flag to output node-group indicator results for groups whose members are nodes (group__node).
-    ('output_unit__node_flow_t', 'model'): QuantityType.DIMENSIONLESS,
-    # The flows from units to the nodes for each timestep.
     ('output_unit__node_ramp_t', 'model'): QuantityType.DIMENSIONLESS,
     # Produces the ramps of individual units for all timesteps.
     ('peak_inflow', 'node'): QuantityType.ENERGY,

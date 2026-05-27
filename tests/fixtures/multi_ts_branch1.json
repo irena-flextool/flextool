@@ -2525,17 +2525,6 @@
     ],
     [
       "model",
-      "output_unit__node_flow_t",
-      [
-        null,
-        null
-      ],
-      "optional_output",
-      "The flows from units to the nodes for each timestep.",
-      "output"
-    ],
-    [
-      "model",
       "output_unit__node_ramp_t",
       [
         null,
@@ -4780,12 +4769,6 @@
     [
       "model",
       "output_horizon",
-      "str",
-      0
-    ],
-    [
-      "model",
-      "output_unit__node_flow_t",
       "str",
       0
     ],
