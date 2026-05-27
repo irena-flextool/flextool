@@ -918,7 +918,7 @@
       "availability",
       1.0,
       null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.",
+      "[e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant, period, time or period+time.",
       "basics"
     ],
     [
@@ -982,7 +982,7 @@
       "existing",
       null,
       null,
-      "[MW] Existing capacity. Constant or Period",
+      "[MW] Existing capacity. Constant or period.",
       "basics"
     ],
     [
@@ -1070,7 +1070,7 @@
       "other_operational_cost",
       null,
       null,
-      "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.",
+      "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or period+time.",
       "basics"
     ],
     [
@@ -1238,7 +1238,7 @@
       "co2_price",
       null,
       null,
-      "[CUR/ton] CO2 price for a group of nodes. Constant, period or time.",
+      "[CUR/ton] CO2 price for a group of nodes. Constant, period, time or period+time.",
       "emission"
     ],
     [
@@ -1366,7 +1366,7 @@
       "max_instant_flow",
       null,
       null,
-      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.",
+      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
       "flow_limit"
     ],
     [
@@ -1382,7 +1382,7 @@
       "min_instant_flow",
       null,
       null,
-      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.",
+      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
       "flow_limit"
     ],
     [
@@ -1550,7 +1550,7 @@
       "availability",
       1.0,
       null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.",
+      "[e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -1606,7 +1606,7 @@
       "existing",
       null,
       null,
-      "[MWh] Existing storage capacity. Constant or Period",
+      "[MWh] Existing storage capacity. Constant or period.",
       "basics"
     ],
     [
@@ -1622,7 +1622,7 @@
       "inflow",
       null,
       null,
-      "[MWh] Inflow into the node (negative is outflow). Constant or time.",
+      "[MWh] Inflow into the node (negative is outflow). Constant, time or stochastic time.",
       "basics"
     ],
     [
@@ -1838,7 +1838,7 @@
       "storage_state_reference_value",
       null,
       null,
-      "[0-1] Relative state of storage at then end of each solve (can be overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant.",
+      "[0-1] Relative state of storage at then end of each solve (can be overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant, period, time or period+time.",
       "storage"
     ],
     [
@@ -1870,7 +1870,7 @@
       "profile",
       null,
       null,
-      "[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time.",
+      "[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time or stochastic time.",
       "basics"
     ],
     [
@@ -1926,7 +1926,7 @@
       "reservation",
       null,
       null,
-      "[MW] Amount of reserve to be reserved. Constant or time.",
+      "[MW] Amount of reserve to be reserved. Constant, period, time, period+time or stochastic time.",
       "reserve"
     ],
     [
@@ -2150,7 +2150,7 @@
       "availability",
       1.0,
       null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.",
+      "[e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2214,7 +2214,7 @@
       "efficiency",
       1.0,
       null,
-      "[factor] Efficiency of a unit. Constant or time.",
+      "[factor] Efficiency of a unit. Constant, time or stochastic time.",
       "basics"
     ],
     [
@@ -2230,7 +2230,7 @@
       "existing",
       null,
       null,
-      "[MW] Existing capacity. Constant or Period",
+      "[MW] Existing capacity. Constant or period.",
       "basics"
     ],
     [
@@ -2318,7 +2318,7 @@
       "min_load",
       null,
       null,
-      "[0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.",
+      "[0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant, time or stochastic time.",
       "basics"
     ],
     [
@@ -2454,7 +2454,7 @@
       "other_operational_cost",
       null,
       null,
-      "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.",
+      "[CUR/MWh] Other operational variable cost for energy flows. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2550,7 +2550,7 @@
       "other_operational_cost",
       null,
       null,
-      "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.",
+      "[CUR/MWh] Other operational variable cost for energy flows. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
