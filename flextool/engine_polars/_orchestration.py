@@ -1856,6 +1856,50 @@ def _drive_cascade(
                     )
                 )
                 pb.set_solver_options(highs_options)
+                # ── DIAGNOSTIC: per-substep RSS in the pre-write_mps gap ──
+                # OOM in this gap (post "Matrix built", pre write_mps) is
+                # invisible to both ``_MemoryRecorder`` (single checkpoint
+                # for "Matrix built") and ``POLAR_HIGH_WRITE_MPS_PROFILE``
+                # (only fires inside write_mps).  This closure samples
+                # ``psutil.Process().memory_info().rss`` at each substep
+                # below and writes to stderr in the same format as the
+                # polar-high profile.  Activate with
+                # ``FLEXTOOL_AUTOSCALE_PROFILE=1``; zero overhead when off.
+                _autoscale_profile = (
+                    os.environ.get("FLEXTOOL_AUTOSCALE_PROFILE") == "1"
+                )
+                if _autoscale_profile:
+                    try:
+                        import psutil as _psutil
+                        _ap_proc = _psutil.Process()
+                        _ap_t0 = time.monotonic()
+                        _ap_prev = _ap_proc.memory_info().rss / (1024 ** 3)
+                        import sys as _sys
+                        def _ap(phase: str, **extras) -> None:
+                            nonlocal _ap_prev
+                            rss = _ap_proc.memory_info().rss / (1024 ** 3)
+                            delta = rss - _ap_prev
+                            wall = time.monotonic() - _ap_t0
+                            sign = "+" if delta >= 0 else ""
+                            extras_str = "\t".join(
+                                f"{k}={v}" for k, v in extras.items()
+                            )
+                            print(
+                                f"[autoscale profile]\tphase={phase}\t"
+                                f"rss_gb={rss:.2f}\tdelta_gb={sign}{delta:.2f}"
+                                f"\twall_s={wall:.2f}"
+                                + (f"\t{extras_str}" if extras_str else ""),
+                                file=_sys.stderr, flush=True,
+                            )
+                            _ap_prev = rss
+                        _ap("enter")
+                    except ImportError:
+                        _autoscale_profile = False
+                        print(
+                            "FLEXTOOL_AUTOSCALE_PROFILE=1 but psutil not "
+                            "installed; profiling disabled.",
+                            file=__import__("sys").stderr, flush=True,
+                        )
                 # autoscale Layer 2 (semantic per-type) pre-solve apply.
                 # Trigger gate is the same Layer-1 four-range readout —
                 # see ``_autoscale_apply_layer2_pre_solve``.  Plan is
@@ -1870,6 +1914,10 @@ def _drive_cascade(
                     solve_name=complete_solve_name,
                     logger=self.state.logger,
                 )
+                if _autoscale_profile:
+                    _ap("layer2_applied",
+                        n_cstrs=len(pb._cstrs),
+                        n_vars=len(pb._vars))
                 # Layer 3 (HiGHS-native top-up): set user_objective_scale,
                 # user_bound_scale, and simplex_scale_strategy from the
                 # post-Layer-2 ranges so HiGHS sees a final LP that is
@@ -1882,6 +1930,8 @@ def _drive_cascade(
                     solve_name=complete_solve_name,
                     logger=self.state.logger,
                 )
+                if _autoscale_profile:
+                    _ap("layer3_applied")
                 # Console summary: one user-visible line per base solve
                 # describing the autoscaler's pre/post ranges and the
                 # Layer 2 / Layer 3 decisions.  Read post-Layer-2 ranges
@@ -1907,6 +1957,9 @@ def _drive_cascade(
                             "'ranges post' segment",
                             complete_solve_name,
                         )
+                if _autoscale_profile:
+                    _ap("ranges_post_computed",
+                        ranges_post_ran=str(_autoscale_ranges_post is not None))
                 _autoscale_emit_console_summary(
                     ranges_pre=_autoscale_ranges_pre,
                     ranges_post=_autoscale_ranges_post,
@@ -1915,6 +1968,8 @@ def _drive_cascade(
                     solve_name=base_solve_name,
                     already_emitted=self._autoscale_summary_emitted,
                 )
+                if _autoscale_profile:
+                    _ap("console_summary_done")
                 # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
                 # ``pb.solve(keep_solver=True)`` for the default HiGHS path
                 # (byte-identical to the pre-Phase-3 behaviour); routes to

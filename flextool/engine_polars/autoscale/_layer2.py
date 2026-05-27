@@ -75,6 +75,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -413,7 +414,29 @@ def bucket_coefficients(
             _merge_into_accumulator(cost_acc, agg)
 
     # ── Matrix: per-family walk of the expression terms.
+    #
+    # Family-size guard: families above ``POLAR_HIGH_RANGES_MAX_FAMILY_ROWS``
+    # are skipped in the matrix bucket walk for the same reason
+    # ``polar_high.autoscale._ranges._ranges_via_streaming`` skips them —
+    # polars' streaming engine intermittently fails to push the row-key
+    # semi-join into deep multi-Param product chains, so a single term
+    # collect can allocate >30 GB before failing on very large families
+    # (the FlexTool DES LP's ``profile_flow_upper_limit`` is the canonical
+    # offender).  Skipping means the Layer 2 buckets are based on the
+    # families they could read; the per-quantity exponent decisions
+    # ride on the included families' magnitudes.  Override with the
+    # same env var that drives Layer 1's skip — set to ``0`` to disable.
+    try:
+        _max_family_rows = int(
+            os.environ.get("POLAR_HIGH_RANGES_MAX_FAMILY_ROWS", "1000000")
+        )
+    except (ValueError, TypeError):
+        _max_family_rows = 1_000_000
+
     for cname, proto, over in problem._cstrs:
+        row_count = 0 if over is None else int(over.height)
+        if _max_family_rows > 0 and row_count > _max_family_rows:
+            continue
         try:
             rhs_t = resolve_cstr_rhs_type(cname)
         except KeyError as exc:
