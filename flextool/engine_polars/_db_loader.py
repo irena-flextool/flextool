@@ -93,10 +93,12 @@ class FlexToolRunner:
             # HiGHS thread count (CLI override; solver_runner defaults to 4 when None).
             self.state.highs_threads = highs_threads
             # Agent 8 (LP-scaling) — opt-in flag that lets the Python
-            # ScaleAnalyzer overwrite the DB's ``use_row_scaling`` setting
-            # whenever the user has not explicitly chosen "yes" / "no".
-            # Analysis itself runs unconditionally (writes JSON); this
-            # flag only gates auto-application.
+            # ScaleAnalyzer enable row scaling.  Batch C.10 removed
+            # the DB-stored ``use_row_scaling`` setting; the per-solve
+            # row-scaling toggle is now driven by ``--scaling`` CLI +
+            # this auto-scale flag (or the FLEXTOOL_FORCE_ROW_SCALING
+            # env-var test hook).  Analysis itself runs unconditionally
+            # (writes JSON); this flag only gates auto-application.
             self.state.auto_scale = auto_scale
             # Phase-timing recorder.  The CLI constructs one earlier and
             # passes it in; direct callers (tests) get a fresh recorder

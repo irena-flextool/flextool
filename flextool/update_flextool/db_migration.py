@@ -1520,6 +1520,18 @@ def migrate_database(database_path, up_to: int | None = None):
                 # Also removes the dedicated ``solver_io_apis``
                 # parameter_value_list.
                 _migrate_v56_remove_solver_io_api(db)
+                # Batch C.10 — drop ``use_row_scaling`` parameter.
+                # User-stored value DROPPED.  Use --scaling CLI flag
+                # (already exists from the autoscale work); the
+                # FLEXTOOL_FORCE_ROW_SCALING env-var test hook also
+                # remains.  Engine side hard-wires the per-solve dict
+                # to {} so every solve emits p_use_row_scaling=0 (the
+                # default branch), preserving the Mode A
+                # pre-scaling behaviour.  After this commit only the
+                # five intended solver params remain on the solve
+                # entity class: solver, solve_mode, solver_arguments,
+                # solver_mip_gap, solver_precommand.
+                _migrate_v56_remove_use_row_scaling(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4701,6 +4713,29 @@ def _migrate_v56_remove_solver_threads(db) -> None:
     accepts a Python int there but FlexTool no longer authors it.
     """
     remove_parameters_manual(db, [["solve", "solver_threads"]])
+
+
+def _migrate_v56_remove_use_row_scaling(db) -> None:
+    """Remove ``solve.use_row_scaling`` parameter definition + values.
+
+    Batch C.10 (last commit of the solver-knob consolidation) — drop
+    the DB-level row-scaling opt-in.  User-stored values are
+    intentionally NOT migrated (per Q-C-2).  Equivalent control is
+    already exposed via the ``--scaling {off,solver_only,basic,full}``
+    CLI flag (from the autoscale work); the env-var test hook
+    ``FLEXTOOL_FORCE_ROW_SCALING=1`` also remains in place for the
+    Mode B un-scaling benchmark harness.
+
+    Engine cleanup: the per-solve dict read in
+    :meth:`SolveConfig.load_from_db` is hard-wired to ``{}`` so
+    every solve emits ``p_use_row_scaling=0`` (the
+    ``use_row_scaling.get(solve, "no")`` default branch) and the
+    Mode A pre-scaling behaviour is preserved.  The autoscaler's
+    Layer 2 + Layer 3 (driven by ``--scaling``) are unaffected and
+    continue to compress LP coefficient ranges in the cold and warm
+    paths the same way.
+    """
+    remove_parameters_manual(db, [["solve", "use_row_scaling"]])
 
 
 def _migrate_v56_remove_solver_io_api(db) -> None:

@@ -442,9 +442,16 @@ class SolveConfig:
         # absent / "no" leaves AMPL behaviour as pre-Agent-5; the
         # native engine consumes this flag during preprocessing the
         # same way.
-        use_row_scaling: dict = params_to_dict(
-            db=db, cl="solve", par="use_row_scaling", mode=DictMode.DICT
-        )
+        # Batch C.10 — DB-level ``use_row_scaling`` removed; use the
+        # --scaling CLI flag (autoscale; off/solver_only/basic/full).
+        # The per-solve dict is hard-wired to {} so every solve
+        # emits p_use_row_scaling=0 (the
+        # ``use_row_scaling.get(solve, "no")`` default branch in
+        # _emit_solve_writers.derive_p_use_row_scaling), preserving
+        # the Mode A pre-scaling behaviour for the row-scaling
+        # capacity-proxy emitter.  The autoscaler's Layer 2 + Layer
+        # 3 (driven by --scaling) are unaffected.
+        use_row_scaling: dict = {}
         scale_the_objective: dict = params_to_dict(
             db=db, cl="solve", par="scale_the_objective", mode=DictMode.DICT
         )

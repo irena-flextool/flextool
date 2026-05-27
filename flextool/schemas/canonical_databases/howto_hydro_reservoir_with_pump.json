@@ -1821,17 +1821,6 @@
     ],
     [
       "solve",
-      "use_row_scaling",
-      [
-        "\"no\"",
-        "str"
-      ],
-      "yes_no",
-      "Enable automatic row scaling (experimental): derive node_capacity_for_scaling / group_capacity_for_scaling from connected-unit unitsizes (rounded to nearest power of 10) so HiGHS sees matrix coefficients on a narrower range.  Default 'no' preserves pre-scaling behaviour exactly.  See flextool/SLACK_CONVENTION.md.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "years_represented",
       null,
       null,

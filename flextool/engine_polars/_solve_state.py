@@ -106,8 +106,10 @@ class RunnerState:
     # into the import graph.
     timeline: object | None = None
     # Agent 8 (LP-scaling): opt-in flag — when True the Python
-    # ScaleAnalyzer's recommendations are auto-applied (currently only
-    # to ``solve.use_row_scaling`` when the user hasn't set it).
+    # ScaleAnalyzer's recommendations are auto-applied.  Batch C.10
+    # removed the DB-stored ``use_row_scaling`` knob; the per-solve
+    # row-scaling toggle is now driven entirely by --scaling CLI +
+    # this auto_scale flag (or FLEXTOOL_FORCE_ROW_SCALING test hook).
     # Always-False in the default path preserves pre-Agent-8 behaviour.
     auto_scale: bool = False
     # Roll-loop scratch — set by the orchestration loop just before
