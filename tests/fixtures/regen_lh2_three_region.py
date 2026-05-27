@@ -193,12 +193,10 @@ def _build_payload() -> dict[str, list]:
     entities.append(("solve", "lh2_week"))
     parameter_values.extend([
         ("solve", "lh2_week", "solve_mode", "single_solve", ALT),
-        # Batches C.3-C.4 retired ``highs_method`` and
-        # ``highs_parallel`` (folded into ``solver_arguments`` and
-        # resolved via the engine-side
-        # _resolve_effective_highs_options).  C.5 will retire
-        # ``highs_presolve`` next.
-        ("solve", "lh2_week", "highs_presolve", "on", ALT),
+        # Batches C.3-C.5 retired the three string ``highs_*``
+        # shortcuts entirely; per-solve HiGHS option overrides now
+        # live on ``solver_arguments`` and are routed through the
+        # engine-side _resolve_effective_highs_options.
         ("solve", "lh2_week", "period_timeset",
          _period_timeset_map([("y2030", "week168")]), ALT),
         ("solve", "lh2_week", "realized_periods",

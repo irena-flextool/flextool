@@ -14,12 +14,15 @@ test framing alludes to ("solve_mode.csv parsing & application"):
 * Reads ``input/solve_mode.csv`` (or falls back to ``solve_data/``).
 * Selects the row matching ``solve_data/solve_current.csv`` when
   multiple solves are present.
-* Translates flextool param names (``highs_presolve`` plus an
-  extensible numeric set) to HiGHS canonical option names
-  (``presolve``).  Batches C.3-C.4 retired the ``highs_method`` and
-  ``highs_parallel`` shortcuts — those overrides are now authored on
-  ``solver_arguments`` (keys ``solver`` / ``parallel``) and resolved
-  through ``_resolve_effective_highs_options`` instead.
+* Translates the forward-compatibility numeric flextool param names
+  (``highs_time_limit`` / ``highs_threads`` / ``highs_mip_rel_gap`` /
+  ``highs_random_seed`` / ``highs_output_flag`` / …) to HiGHS
+  canonical option names (``time_limit``, ``threads``, …).  Batches
+  C.3-C.5 retired the three string shortcuts ``highs_method`` /
+  ``highs_parallel`` / ``highs_presolve`` — those overrides are now
+  authored on ``solver_arguments`` (keys ``solver`` / ``parallel`` /
+  ``presolve``) and resolved through
+  ``_resolve_effective_highs_options`` instead.
 * Coerces the ``value`` column to the right Python type per
   ``_HIGHS_PARAM_MAP``.
 * Returns ``None`` when the CSV is missing / empty / has no
@@ -58,20 +61,23 @@ def _write_solve_current(sd: Path, solve: str) -> None:
 class TestSolveModeParsing:
     """Parsing layer: ``solve_mode.csv`` → flextool params."""
 
-    def test_canonical_remaining_highs_param(self, tmp_path: Path) -> None:
-        """The one remaining canonical flextool HiGHS shortcut key
-        (``highs_presolve``) translates to its HiGHS option name with
-        a str value.  Batches C.3-C.4 removed ``highs_method`` and
-        ``highs_parallel`` (folded into ``solver_arguments`` and read
-        through the effective-options resolver instead).
+    def test_forward_compat_numeric_param(self, tmp_path: Path) -> None:
+        """The forward-compat numeric flextool params still translate
+        to their HiGHS option names with coerced values.  Batches
+        C.3-C.5 removed all three string shortcuts (``highs_method`` /
+        ``highs_parallel`` / ``highs_presolve``) — those overrides are
+        now authored on ``solver_arguments`` and read through the
+        effective-options resolver instead.  The forward-compat
+        numeric set in ``_HIGHS_PARAM_MAP`` remains in case flextool
+        ever emits these rows into ``solve_mode.csv``.
         """
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_presolve", "S", "on"),
+            ("highs_time_limit", "S", "120.5"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "on"}
+        assert opts == {"time_limit": pytest.approx(120.5)}
 
     def test_solve_mode_param_is_ignored(self, tmp_path: Path) -> None:
         """flextool's solve framework param ``solve_mode`` (single_solve /
@@ -80,13 +86,13 @@ class TestSolveModeParsing:
         unknown option)."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_presolve", "S", "on"),
+            ("highs_time_limit", "S", "60"),
             ("solve_mode", "S", "single_solve"),
             ("solve_mode", "S", "rolling_window"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "on"}, (
+        assert opts == {"time_limit": pytest.approx(60.0)}, (
             f"solve_mode rows must be filtered out; got {opts}"
         )
 
@@ -96,12 +102,12 @@ class TestSolveModeParsing:
         without crashing on legacy fixtures)."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_presolve", "S", "on"),
+            ("highs_time_limit", "S", "60"),
             ("future_unknown_param", "S", "whatever"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "on"}
+        assert opts == {"time_limit": pytest.approx(60.0)}
 
     def test_numeric_options_get_coerced(self, tmp_path: Path) -> None:
         """The ``_HIGHS_PARAM_MAP`` declares a forward-compatible set of
@@ -151,11 +157,11 @@ class TestSolveModeParsing:
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
             ("highs_time_limit", "S", "not_a_float"),
-            ("highs_presolve", "S", "on"),
+            ("highs_threads", "S", "4"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "on"}
+        assert opts == {"threads": 4}
 
     def test_missing_csv_returns_none(self, tmp_path: Path) -> None:
         """No ``input/solve_mode.csv`` AND no ``solve_data/solve_mode.csv``
@@ -186,12 +192,12 @@ class TestSolveModeParsing:
         sd.mkdir()
         # No input/solve_mode.csv; only solve_data/solve_mode.csv.
         pl.DataFrame(
-            [("highs_presolve", "S", "on")],
+            [("highs_time_limit", "S", "60")],
             schema=["param", "solve", "value"], orient="row",
         ).write_csv(sd / "solve_mode.csv")
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "on"}
+        assert opts == {"time_limit": pytest.approx(60.0)}
 
 
 class TestSolveModeApplication:
@@ -202,13 +208,13 @@ class TestSolveModeApplication:
         one (per ``solve_data/solve_current.csv``) is selected."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_presolve", "S1", "on"),
-            ("highs_presolve", "S2", "off"),
-            ("highs_presolve", "S3", "choose"),
+            ("highs_time_limit", "S1", "60"),
+            ("highs_time_limit", "S2", "120"),
+            ("highs_time_limit", "S3", "300"),
         ])
         _write_solve_current(sd, "S2")
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "off"}, (
+        assert opts == {"time_limit": pytest.approx(120.0)}, (
             f"expected S2 row to win; got {opts}"
         )
 
@@ -218,15 +224,15 @@ class TestSolveModeApplication:
         param."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_presolve", "S1", "off"),
-            ("highs_time_limit", "S1", "120"),
-            ("highs_presolve", "S2", "on"),
-            # No highs_time_limit for S2 — must NOT inherit S1's "120".
+            ("highs_time_limit", "S1", "60"),
+            ("highs_threads", "S1", "8"),
+            ("highs_time_limit", "S2", "120"),
+            # No highs_threads for S2 — must NOT inherit S1's "8".
         ])
         _write_solve_current(sd, "S2")
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "on"}, (
-            f"S2 must not inherit S1.time_limit; got {opts}"
+        assert opts == {"time_limit": pytest.approx(120.0)}, (
+            f"S2 must not inherit S1.threads; got {opts}"
         )
 
     def test_missing_solve_current_picks_any_row(self, tmp_path: Path) -> None:
@@ -235,11 +241,11 @@ class TestSolveModeApplication:
         sd = tmp_path / "solve_data"
         sd.mkdir()
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_presolve", "ANY", "choose"),
+            ("highs_time_limit", "ANY", "60"),
         ])
         # No solve_current.csv.
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "choose"}
+        assert opts == {"time_limit": pytest.approx(60.0)}
 
     def test_solve_not_in_csv_falls_back(self, tmp_path: Path) -> None:
         """solve_current names a solve absent from solve_mode.csv — the
@@ -248,28 +254,27 @@ class TestSolveModeApplication:
         rows exist" so the loader doesn't wedge on a typo."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_presolve", "S1", "on"),
+            ("highs_time_limit", "S1", "60"),
         ])
         _write_solve_current(sd, "TYPO_SOLVE")
         opts = _load_solver_options(sd)
-        assert opts == {"presolve": "on"}
+        assert opts == {"time_limit": pytest.approx(60.0)}
 
 
 class TestRealFixture:
     """End-to-end against the real ``work_base_weighted`` fixture flextool
-    emits.  Pin the typical shape: one remaining highs_* key
-    (``highs_method`` + ``highs_parallel`` were removed in Batches
-    C.3-C.4), one solve_mode row (ignored), one active solve."""
+    emits.  After Batches C.3-C.5 the regenerated ``solve_mode.csv``
+    carries only the (ignored) ``solve_mode`` row, so the loader
+    returns ``None`` and HiGHS-side defaults stand."""
 
     def test_work_base_weighted(self, scenario_workdir) -> None:
         work = scenario_workdir("base_weighted", db_fixture="main")
         sd = work / "solve_data"
         opts = _load_solver_options(sd)
-        # solve_mode.csv has: highs_presolve=off, plus
-        # solve_mode=single_solve (ignored).  ``highs_method`` and
-        # ``highs_parallel`` rows were retired in Batches C.3-C.4
-        # (folded into solver_arguments and read through the
-        # engine-side resolver instead).
-        assert opts == {
-            "presolve": "off",
-        }
+        # solve_mode.csv has only the ``solve_mode`` framework rows
+        # (ignored by the HiGHS-option loader) — Batches C.3-C.5
+        # retired ``highs_method`` / ``highs_parallel`` /
+        # ``highs_presolve``; those overrides are now authored on
+        # ``solver_arguments`` and read through the engine-side
+        # ``_resolve_effective_highs_options``.
+        assert opts is None

@@ -678,27 +678,6 @@
       ]
     ],
     [
-      "highs_presolve",
-      [
-        "Im9uIg==",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "Im9mZiI=",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "ImNob29zZSI=",
-        "str"
-      ]
-    ],
-    [
       "inflow_methods",
       [
         "Im5vX2luZmxvdyI=",
@@ -3143,17 +3122,6 @@
     ],
     [
       "solve",
-      "highs_presolve",
-      [
-        null,
-        null
-      ],
-      "highs_presolve",
-      "HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "invest_periods",
       [
         "bnVsbA==",
@@ -5149,12 +5117,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_presolve",
-      "str",
-      0
     ],
     [
       "solve",

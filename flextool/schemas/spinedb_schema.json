@@ -347,18 +347,6 @@
       "yes"
     ],
     [
-      "highs_presolve",
-      "on"
-    ],
-    [
-      "highs_presolve",
-      "off"
-    ],
-    [
-      "highs_presolve",
-      "choose"
-    ],
-    [
       "inflow_methods",
       "no_inflow"
     ],
@@ -2019,14 +2007,6 @@
       null,
       null,
       "Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "highs_presolve",
-      "on",
-      "highs_presolve",
-      "HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.",
       "solve_advanced"
     ],
     [
@@ -3810,12 +3790,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_presolve",
-      "str",
-      0
     ],
     [
       "solve",

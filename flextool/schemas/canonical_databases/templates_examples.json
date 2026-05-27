@@ -2940,14 +2940,6 @@
     ],
     [
       "solve",
-      "highs_presolve",
-      null,
-      "highs_presolve",
-      "HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "invest_periods",
       null,
       null,
@@ -4807,12 +4799,6 @@
     ],
     [
       "solve",
-      "highs_presolve",
-      "str",
-      0
-    ],
-    [
-      "solve",
       "invest_periods",
       "array",
       1
@@ -5542,27 +5528,6 @@
       "has_non_synchronous",
       [
         "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "\"on\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "\"off\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "\"choose\"",
         "str"
       ]
     ],
@@ -8734,16 +8699,6 @@
     [
       "solve",
       "y2020_2035_5week",
-      "highs_presolve",
-      [
-        "\"on\"",
-        "str"
-      ],
-      "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2035_5week",
       "invest_periods",
       [
         "{\"value_type\": \"str\", \"data\": [\"p2020\", \"p2025\", \"p2030\", \"p2035\"], \"index_name\": \"period\"}",
@@ -8790,26 +8745,6 @@
         "map"
       ],
       "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_presolve",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_presolve",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "retire"
     ],
     [
       "solve",
@@ -8864,16 +8799,6 @@
     [
       "solve",
       "y2020_5week",
-      "highs_presolve",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_5week",
       "invest_periods",
       [
         "{\"value_type\": \"str\", \"data\": [\"p2020\", \"p2025\"], \"index_name\": \"period\"}",
@@ -8924,16 +8849,6 @@
     [
       "solve",
       "y2020_fullYear_dispatch",
-      "highs_presolve",
-      [
-        "\"on\"",
-        "str"
-      ],
-      "fullYear"
-    ],
-    [
-      "solve",
-      "y2020_fullYear_dispatch",
       "invest_periods",
       [
         "{\"value_type\": \"str\", \"data\": [\"p2020\"], \"index_name\": \"period\"}",
@@ -8970,16 +8885,6 @@
         "str"
       ],
       "fullYear"
-    ],
-    [
-      "solve",
-      "y2025_5week",
-      "highs_presolve",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
     ],
     [
       "solve",
@@ -9034,16 +8939,6 @@
     [
       "solve",
       "y2030_5week",
-      "highs_presolve",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2030_5week",
       "invest_periods",
       [
         "{\"value_type\": \"str\", \"data\": [\"p2030\", \"p2035\"], \"index_name\": \"period\"}",
@@ -9088,16 +8983,6 @@
       [
         "{\"index_type\": \"str\", \"data\": [[\"p2030\", 5.0], [\"p2035\", 5.0]], \"index_name\": \"period\"}",
         "map"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2035_5week",
-      "highs_presolve",
-      [
-        "\"off\"",
-        "str"
       ],
       "invest_solveSequence_5weeks"
     ],

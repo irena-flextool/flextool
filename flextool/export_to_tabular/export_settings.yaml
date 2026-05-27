@@ -82,7 +82,7 @@ split_params:
   solve:
     solve:
       params: ["solve_mode", "solver",
-               "highs_presolve", "contains_solves", "solver_precommand",
+               "contains_solves", "solver_precommand",
                "solver_arguments", "new_stepduration", "use_row_scaling",
                "solver_io_api", "solver_log_level", "solver_mip_gap",
                "solver_threads", "solver_time_limit",

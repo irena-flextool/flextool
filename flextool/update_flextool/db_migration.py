@@ -1473,6 +1473,16 @@ def migrate_database(database_path, up_to: int | None = None):
                 # on collision (logged).
                 _migrate_v56_fold_highs_parallel_into_solver_arguments(db)
                 _migrate_v56_remove_highs_parallel(db)
+                # Batch C.5 — fold ``highs_presolve`` into
+                # ``solver_arguments['presolve']`` (HiGHS' own option
+                # name for presolve control) and drop the shortcut +
+                # its value list.  Existing ``solver_arguments``
+                # entries for ``presolve`` win on collision (logged).
+                # After this commit all three legacy ``highs_*``
+                # shortcuts are gone and the new resolver is the
+                # sole consumer of these overrides.
+                _migrate_v56_fold_highs_presolve_into_solver_arguments(db)
+                _migrate_v56_remove_highs_presolve(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4584,6 +4594,50 @@ def _migrate_v56_remove_highs_parallel(db) -> None:
         db.remove_items("parameter_value_list", vl["id"])
         try:
             _commit_step(db, "v56 removed solve.highs_parallel parameter_value_list")
+        except SpineDBAPIError:
+            pass
+
+
+def _migrate_v56_fold_highs_presolve_into_solver_arguments(db) -> None:
+    """Fold ``solve.highs_presolve`` values into
+    ``solver_arguments['presolve']`` (HiGHS' own option name for
+    presolve control, per ``DETERMINISM_OPTIONS`` and the
+    ``input.py:_HIGHS_PARAM_MAP`` table).
+
+    Batch C.5 — third (and last) of the ``highs_*`` shortcut folds.
+    Fixture values (``"on"``, ``"off"``, ``"choose"``) are
+    HiGHS-canonical so no value translation is needed; only the key
+    name flips.
+
+    Sibling :func:`_migrate_v56_remove_highs_presolve` strips the
+    parameter_definition + the dedicated value list.  Collision
+    policy matches C.3-C.4: explicit ``solver_arguments['presolve']``
+    wins on collision (logged).
+    """
+    _fold_highs_shortcut_into_solver_arguments(
+        db, shortcut_param="highs_presolve",
+        highs_key="presolve", label="highs_presolve",
+    )
+
+
+def _migrate_v56_remove_highs_presolve(db) -> None:
+    """Remove ``solve.highs_presolve`` parameter definition + value list.
+
+    Companion to
+    :func:`_migrate_v56_fold_highs_presolve_into_solver_arguments`
+    (Batch C.5).  Same shape as C.3-C.4's removal helpers.
+    """
+    remove_parameters_manual(db, [["solve", "highs_presolve"]])
+    try:
+        vl = db.item(
+            db.mapped_table("parameter_value_list"), name="highs_presolve",
+        )
+    except SpineDBAPIError:
+        vl = None
+    if vl:
+        db.remove_items("parameter_value_list", vl["id"])
+        try:
+            _commit_step(db, "v56 removed solve.highs_presolve parameter_value_list")
         except SpineDBAPIError:
             pass
 

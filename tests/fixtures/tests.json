@@ -1638,27 +1638,6 @@
       ]
     ],
     [
-      "highs_presolve",
-      [
-        "Im9uIg==",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "Im9mZiI=",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "ImNob29zZSI=",
-        "str"
-      ]
-    ],
-    [
       "inflow_methods",
       [
         "Im5vX2luZmxvdyI=",
@@ -4043,17 +4022,6 @@
     ],
     [
       "solve",
-      "highs_presolve",
-      [
-        null,
-        null
-      ],
-      "highs_presolve",
-      "HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "invest_periods",
       [
         "bnVsbA==",
@@ -6031,12 +5999,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_presolve",
-      "str",
-      0
     ],
     [
       "solve",
@@ -9150,16 +9112,6 @@
     [
       "solve",
       "y2020_2035_5week",
-      "highs_presolve",
-      [
-        "Im9uIg==",
-        "str"
-      ],
-      "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2035_5week",
       "invest_periods",
       [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCIsICJwMjAyNSIsICJwMjAzMCIsICJwMjAzNSJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
@@ -9260,26 +9212,6 @@
     [
       "solve",
       "y2020_2day_dispatch",
-      "highs_presolve",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_presolve",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "retire"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
       "invest_periods",
       [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
@@ -9350,16 +9282,6 @@
     [
       "solve",
       "y2020_5week",
-      "highs_presolve",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_5week",
       "invest_periods",
       [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCIsICJwMjAyNSJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
@@ -9406,16 +9328,6 @@
         "map"
       ],
       "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_fullYear_dispatch",
-      "highs_presolve",
-      [
-        "Im9uIg==",
-        "str"
-      ],
-      "fullYear"
     ],
     [
       "solve",
@@ -9510,16 +9422,6 @@
     [
       "solve",
       "y2025_5week",
-      "highs_presolve",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2025_5week",
       "invest_periods",
       [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyNSIsICJwMjAzMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
@@ -9570,16 +9472,6 @@
     [
       "solve",
       "y2030_5week",
-      "highs_presolve",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2030_5week",
       "invest_periods",
       [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzMCIsICJwMjAzNSJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
@@ -9624,16 +9516,6 @@
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzAiLCA1LjBdLCBbInAyMDM1IiwgNS4wXV0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
         "map"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2035_5week",
-      "highs_presolve",
-      [
-        "Im9mZiI=",
-        "str"
       ],
       "invest_solveSequence_5weeks"
     ],

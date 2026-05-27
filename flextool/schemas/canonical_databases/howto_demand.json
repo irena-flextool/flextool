@@ -1593,14 +1593,6 @@
     ],
     [
       "solve",
-      "highs_presolve",
-      null,
-      "highs_presolve",
-      "HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "invest_periods",
       null,
       null,
@@ -3494,12 +3486,6 @@
     ],
     [
       "solve",
-      "highs_presolve",
-      "str",
-      0
-    ],
-    [
-      "solve",
       "invest_periods",
       "array",
       1
@@ -4193,27 +4179,6 @@
       "has_non_synchronous",
       [
         "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "\"on\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "\"off\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_presolve",
-      [
-        "\"choose\"",
         "str"
       ]
     ],
