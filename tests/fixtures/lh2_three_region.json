@@ -3141,27 +3141,6 @@
       ]
     ],
     [
-      "solver_log_levels",
-      [
-        "InNpbGVudCI=",
-        "str"
-      ]
-    ],
-    [
-      "solver_log_levels",
-      [
-        "Im5vcm1hbCI=",
-        "str"
-      ]
-    ],
-    [
-      "solver_log_levels",
-      [
-        "InZlcmJvc2Ui",
-        "str"
-      ]
-    ],
-    [
       "solvers",
       [
         "ImhpZ2hzIg==",
@@ -5188,17 +5167,6 @@
     ],
     [
       "solve",
-      "solver_log_level",
-      [
-        "Im5vcm1hbCI=",
-        "str"
-      ],
-      "solver_log_levels",
-      "Verbosity of the solver log: 'silent' (suppress), 'normal' (default summary output), 'verbose' (detailed per-iteration output).",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "solver_mip_gap",
       [
         "bnVsbA==",
@@ -7110,12 +7078,6 @@
     [
       "solve",
       "solver_io_api",
-      "str",
-      0
-    ],
-    [
-      "solve",
-      "solver_log_level",
       "str",
       0
     ],

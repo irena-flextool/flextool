@@ -311,6 +311,18 @@ def main():
                              '``DETERMINISM_OPTIONS``.  ``off`` disables '
                              'presolve entirely (much slower but useful '
                              'for memory or numerical diagnostics).')
+    parser.add_argument('--solver-log-level',
+                        choices=['silent', 'normal', 'verbose'],
+                        default=None,
+                        help='HiGHS log verbosity.  ``silent`` sets '
+                             '``output_flag=false`` (suppress HiGHS '
+                             'console output).  ``normal`` (default) '
+                             'and ``verbose`` both set '
+                             '``output_flag=true``; ``verbose`` also '
+                             'bumps ``log_dev_level=2`` for per-'
+                             'iteration solver telemetry.  Replaces '
+                             'the v55-era DB-stored solver_log_level '
+                             'knob (removed in Batch C.7).')
     parser.add_argument('--csv-dump', action='store_true',
                         default=False,
                         help='Debug visibility for cascade-internal '
@@ -352,6 +364,8 @@ def main():
         os.environ['FLEXTOOL_HIGHS_PRESOLVE'] = args.presolve
     if args.highs_threads is not None and args.highs_threads >= 1:
         os.environ['FLEXTOOL_HIGHS_THREADS'] = str(args.highs_threads)
+    if args.solver_log_level is not None:
+        os.environ['FLEXTOOL_SOLVER_LOG_LEVEL'] = args.solver_log_level
     # ``--scaling`` (off/solver_only/basic/full) — CLI > env > default-full.
     # Surfacing via the same ``FLEXTOOL_SCALING`` env var that
     # ``resolve_scaling_config`` already consults keeps the threading

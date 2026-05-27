@@ -388,9 +388,10 @@ class SolveConfig:
         solver_io_api: dict = params_to_dict(
             db=db, cl="solve", par="solver_io_api", mode=DictMode.DICT
         )
-        solver_log_level: dict = params_to_dict(
-            db=db, cl="solve", par="solver_log_level", mode=DictMode.DICT
-        )
+        # Batch C.7 — ``solver_log_level`` shortcut removed; use the
+        # --solver-log-level CLI flag (silent / normal / verbose →
+        # HiGHS output_flag + log_dev_level).
+        solver_log_level: dict = {}
         # solver_time_limit / solver_mip_gap come back as the stringified
         # float that ``params_to_dict`` produces for scalar floats
         # (see line ~141).  Batch C.6 dropped the ``solver_threads``

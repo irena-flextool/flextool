@@ -631,18 +631,6 @@
       "lp"
     ],
     [
-      "solver_log_levels",
-      "silent"
-    ],
-    [
-      "solver_log_levels",
-      "normal"
-    ],
-    [
-      "solver_log_levels",
-      "verbose"
-    ],
-    [
       "solvers",
       "highs"
     ],
@@ -2103,14 +2091,6 @@
       "direct",
       "solver_io_apis",
       "How the model is handed to the solver: 'direct' (in-process API, fastest), 'mps' or 'lp' (file fallback for solvers or environments without a direct binding).",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "solver_log_level",
-      "normal",
-      "solver_log_levels",
-      "Verbosity of the solver log: 'silent' (suppress), 'normal' (default summary output), 'verbose' (detailed per-iteration output).",
       "solve_advanced"
     ],
     [
@@ -3870,12 +3850,6 @@
     [
       "solve",
       "solver_io_api",
-      "str",
-      0
-    ],
-    [
-      "solve",
-      "solver_log_level",
       "str",
       0
     ],

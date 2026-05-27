@@ -1492,6 +1492,16 @@ def migrate_database(database_path, up_to: int | None = None):
                 # stored equivalent is deferred to the v56 follow-up
                 # PR (task #26).
                 _migrate_v56_remove_solver_threads(db)
+                # Batch C.7 — drop ``solver_log_level`` parameter.
+                # User-stored value DROPPED.  Audit confirmed the
+                # field was loaded into SolverConfig.log_level but
+                # never consumed by any engine module.  Use the new
+                # --solver-log-level CLI flag (silent / normal /
+                # verbose → HiGHS output_flag + log_dev_level); GUI
+                # control deferred to v56 follow-up PR (task #26).
+                # Also removes the dedicated ``solver_log_levels``
+                # parameter_value_list.
+                _migrate_v56_remove_solver_log_level(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4673,6 +4683,43 @@ def _migrate_v56_remove_solver_threads(db) -> None:
     accepts a Python int there but FlexTool no longer authors it.
     """
     remove_parameters_manual(db, [["solve", "solver_threads"]])
+
+
+def _migrate_v56_remove_solver_log_level(db) -> None:
+    """Remove ``solve.solver_log_level`` parameter definition + value list.
+
+    Batch C.7 — drop the GUI/CLI-only knob's DB axis.  User-stored
+    values are intentionally NOT migrated.  Audit (2026-05-27) found
+    no engine module consuming ``SolverConfig.log_level`` — the field
+    was loaded into the dataclass but never read by any solver-
+    dispatch / autoscale / writer site, so the v55 schema knob was
+    fully dead.  Equivalent control is now exposed via the new
+    ``--solver-log-level {silent,normal,verbose}`` CLI flag, plumbed
+    via the ``FLEXTOOL_SOLVER_LOG_LEVEL`` env var into the engine-side
+    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`
+    resolver (CLI > solver_arguments > highs.opt precedence).
+    ``silent`` maps to HiGHS ``output_flag=false``; ``verbose`` maps
+    to ``output_flag=true`` plus ``log_dev_level=2``; ``normal`` maps
+    to ``output_flag=true`` (default).  GUI controls for the DB-
+    stored equivalent are deferred to the v56 follow-up PR (task #26).
+
+    The ``solver_log_levels`` parameter_value_list (``silent``,
+    ``normal``, ``verbose``) is also removed since the parameter was
+    its sole referent.
+    """
+    remove_parameters_manual(db, [["solve", "solver_log_level"]])
+    try:
+        vl = db.item(
+            db.mapped_table("parameter_value_list"), name="solver_log_levels",
+        )
+    except SpineDBAPIError:
+        vl = None
+    if vl:
+        db.remove_items("parameter_value_list", vl["id"])
+        try:
+            _commit_step(db, "v56 removed solve.solver_log_levels parameter_value_list")
+        except SpineDBAPIError:
+            pass
 
 
 if __name__ == '__main__':

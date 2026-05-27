@@ -1605,6 +1605,12 @@ def _drive_cascade(
             # the process sees the same value, sidestepping HiGHS'
             # "global scheduler already initialised" rejection path.
             _cli_threads = os.environ.get("FLEXTOOL_HIGHS_THREADS")
+            # ``--solver-log-level {silent,normal,verbose}`` CLI flag,
+            # env-var-plumbed.  Replaces the v55-era ``solve.solver_log_level``
+            # DB knob removed in Batch C.7.  ``silent`` flips HiGHS'
+            # ``output_flag`` off; ``verbose`` additionally bumps
+            # ``log_dev_level=2`` for per-iteration solver telemetry.
+            _cli_log_level = os.environ.get("FLEXTOOL_SOLVER_LOG_LEVEL")
 
             def _build_cli_overrides() -> dict[str, object]:
                 """Translate CLI env-var-plumbed flags into a HiGHS
@@ -1632,6 +1638,16 @@ def _drive_cascade(
                         cli["parallel"] = "on"
                     # n == 1 (or n <= 0) keeps the deterministic defaults
                     # from DETERMINISM_OPTIONS — no override needed.
+                if _cli_log_level == "silent":
+                    cli["output_flag"] = False
+                elif _cli_log_level == "verbose":
+                    cli["output_flag"] = True
+                    cli["log_dev_level"] = 2
+                elif _cli_log_level == "normal":
+                    cli["output_flag"] = True
+                # Anything else (None, unknown) leaves HiGHS defaults
+                # standing — same as the pre-C.7 behaviour where the
+                # DB-side knob fed nothing.
                 return cli
 
             # Per-solve ``solver_arguments`` 1d-map (Batch C.1).  Empty
@@ -2656,6 +2672,15 @@ def run_single_solve_from_db(
     _fast_cli_overrides: dict[str, object] = {}
     if _cli_presolve in ("on", "off", "choose"):
         _fast_cli_overrides["presolve"] = _cli_presolve
+    # Batch C.7 — --solver-log-level (env-var-plumbed) layered on top.
+    _fast_cli_log_level = os.environ.get("FLEXTOOL_SOLVER_LOG_LEVEL")
+    if _fast_cli_log_level == "silent":
+        _fast_cli_overrides["output_flag"] = False
+    elif _fast_cli_log_level == "verbose":
+        _fast_cli_overrides["output_flag"] = True
+        _fast_cli_overrides["log_dev_level"] = 2
+    elif _fast_cli_log_level == "normal":
+        _fast_cli_overrides["output_flag"] = True
     _fast_solver_args = sc.solver_settings.arguments.get(scenario_name, {})
     from flextool.engine_polars._solver_dispatch import (
         _resolve_effective_highs_options,

@@ -1797,17 +1797,6 @@
     ],
     [
       "solve",
-      "solver_log_level",
-      [
-        "\"normal\"",
-        "str"
-      ],
-      "solver_log_levels",
-      "Verbosity of the solver log: 'silent' (suppress), 'normal' (default summary output), 'verbose' (detailed per-iteration output).",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "solver_mip_gap",
       null,
       null,
@@ -3670,12 +3659,6 @@
     ],
     [
       "solve",
-      "solver_log_level",
-      "str",
-      0
-    ],
-    [
-      "solve",
       "solver_mip_gap",
       "float",
       0
@@ -4743,27 +4726,6 @@
       "solver_io_apis",
       [
         "\"lp\"",
-        "str"
-      ]
-    ],
-    [
-      "solver_log_levels",
-      [
-        "\"silent\"",
-        "str"
-      ]
-    ],
-    [
-      "solver_log_levels",
-      [
-        "\"normal\"",
-        "str"
-      ]
-    ],
-    [
-      "solver_log_levels",
-      [
-        "\"verbose\"",
         "str"
       ]
     ],
