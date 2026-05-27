@@ -1968,7 +1968,7 @@
     [
       "node",
       "storage_state_start",
-      0.0,
+      null,
       null,
       "[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant.",
       "storage"
@@ -2008,7 +2008,7 @@
     [
       "reserve__upDown__connection__node",
       "large_failure_ratio",
-      "",
+      null,
       null,
       "[factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.",
       "reserve"
@@ -2016,7 +2016,7 @@
     [
       "reserve__upDown__connection__node",
       "max_share",
-      0.0,
+      null,
       null,
       "[factor] Maximum ratio for the transfer of reserve to this node. Constant.",
       "reserve"
@@ -2040,7 +2040,7 @@
     [
       "reserve__upDown__group",
       "penalty_reserve",
-      5000.0,
+      null,
       null,
       "[CUR/MW] Penalty for violating a reserve constraint. Constant.",
       "reserve"
@@ -2072,7 +2072,7 @@
     [
       "reserve__upDown__unit__node",
       "large_failure_ratio",
-      "",
+      null,
       null,
       "[factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.",
       "reserve"

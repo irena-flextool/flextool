@@ -1293,6 +1293,15 @@ def migrate_database(database_path, up_to: int | None = None):
                 # The schema-template JSON already carries the canonical
                 # phrasing; this brings legacy databases in line.
                 _migrate_v56_add_group_cumulative_capacity_descriptions(db)
+                # Clear ``default_value`` on five parameter_definition
+                # rows whose schema-declared default disagrees with how
+                # the engine actually consumes the parameter.  The
+                # rationale per row lives in
+                # ``_audit_reports/v56_default_audit.md`` and in the
+                # helper's docstring.  Only ``high``-confidence rows are
+                # patched here; ``medium`` / ``surface`` rows are left
+                # for user review.
+                _migrate_v56_fix_wrong_defaults(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3364,6 +3373,81 @@ def _migrate_v56_add_group_cumulative_capacity_descriptions(db) -> None:
         "Populated description text on group.cumulative_max_capacity "
         "and group.cumulative_min_capacity (left blank by the v22 "
         "migration that introduced them).",
+    )
+
+
+def _migrate_v56_fix_wrong_defaults(db) -> None:
+    """Clear ``default_value`` on five ``parameter_definition`` rows
+    whose schema-declared default disagrees with how the engine actually
+    consumes the parameter.
+
+    Audit: ``_audit_reports/v56_default_audit.md``.  Each row below was
+    classified ``high`` (engine clearly treats the default as
+    "feature disabled / use sentinel"); ``medium`` / ``surface`` rows in
+    the audit are deliberately untouched and left for user review.
+
+    * ``reserve__upDown__connection__node.large_failure_ratio`` and
+      ``reserve__upDown__unit__node.large_failure_ratio`` — currently
+      carry an empty-string default (``""``).  The N-1 reserve consumer
+      in :func:`flextool.engine_polars._emit_reserve._compute_reserve_filters`
+      gates each ``(p, r, ud, n)`` on
+      ``p_prn.get((..., "large_failure_ratio"), 0.0) > 0`` — any
+      non-zero enables the constraint, so the contract is "absent /
+      0 / null = disabled, explicit positive value = enabled".  The
+      empty string is a corrupt artefact for a ``float``-typed
+      parameter; the sister rows ``increase_reserve_ratio`` on the
+      same two classes already carry ``null, null``.
+
+    * ``reserve__upDown__group.penalty_reserve`` — currently ``5000.0``.
+      :func:`flextool.engine_polars._direct_params.p_reserve_upDown_group_penalty_reserve_from_source`
+      reads via ``parameter_explicit`` and drops the broadcast default
+      on the floor (the function's own docstring claims "None default
+      — explicit rows only").  Soft-reserve violations enter the
+      objective as ``vq_reserve * reservation * penalty * op_factor``
+      (``_reserve.py``); the schema default of 5000 misleads users
+      into thinking a soft-slack term is enabled by default when in
+      fact no explicit row → no penalty term emitted.
+
+    * ``reserve__upDown__connection__node.max_share`` — currently
+      ``0.0``.  The consumer
+      :func:`flextool.engine_polars._direct_params._process_reserve_node_param`
+      also uses ``parameter_explicit``; the sister row on
+      ``reserve__upDown__unit__node`` already has ``null, null``.
+
+    * ``node.storage_state_start`` — currently ``0.0``.
+      :func:`flextool.engine_polars._direct_params.p_state_start_from_source`
+      reads explicit rows only; the docstring already claims
+      "Default ``None`` (schema).".  If the schema default were
+      actually honoured every storage node would be force-pinned to
+      state 0 at the start of each rolling solve under the (also
+      default) ``fix_start`` binding — a silent LP perturbation.
+
+    The matching schema-template rows in
+    ``flextool/schemas/spinedb_schema.json`` are updated in the same
+    commit so a fresh v55 init lands on the corrected contract.
+    """
+    rows_to_clear: tuple[tuple[str, str], ...] = (
+        ("reserve__upDown__connection__node", "large_failure_ratio"),
+        ("reserve__upDown__unit__node",       "large_failure_ratio"),
+        ("reserve__upDown__group",            "penalty_reserve"),
+        ("reserve__upDown__connection__node", "max_share"),
+        ("node",                              "storage_state_start"),
+    )
+    for entity_class_name, name in rows_to_clear:
+        db.update_item(
+            "parameter_definition",
+            entity_class_name=entity_class_name,
+            name=name,
+            default_value=None,
+            default_type=None,
+        )
+    _commit_step(
+        db,
+        "v56 wrong-default cleanup: cleared default_value/default_type on "
+        "reserve__upDown__{connection,unit}__node.large_failure_ratio, "
+        "reserve__upDown__group.penalty_reserve, "
+        "reserve__upDown__connection__node.max_share, and "
+        "node.storage_state_start.  See _audit_reports/v56_default_audit.md.",
     )
 
 
