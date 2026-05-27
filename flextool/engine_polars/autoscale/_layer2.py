@@ -666,6 +666,24 @@ def apply_layer2(
     row_factors_list: list[float] = []
     skipped_rows: list[str] = []
 
+    # Family-size guard for the row-factor rewrite — mirrors the one in
+    # ``bucket_coefficients``.  When ``rf != 1.0`` we would otherwise call
+    # ``_scale_rhs`` which, on a Param RHS, evaluates ``rhs.frame``
+    # (eager ``lazy.collect()`` on the multi-Param chain).  For families
+    # like FlexTool's ``profile_flow_upper_limit`` (1.5M rows × deep
+    # Param chain) that collect intermittently materialises a >30 GB
+    # intermediate and OOMs a 64 GB box.  Forcing ``rf = 1.0`` here
+    # bypasses ``_scale_rhs`` for the family while still letting
+    # column scaling flow through ``_rewrite_term_lazy`` (lazy join,
+    # cheap).  Override with the same env var that drives Layer 1's
+    # skip; set to ``0`` to disable.
+    try:
+        _max_family_rows = int(
+            os.environ.get("POLAR_HIGH_RANGES_MAX_FAMILY_ROWS", "1000000")
+        )
+    except (ValueError, TypeError):
+        _max_family_rows = 1_000_000
+
     new_cstrs: list[tuple[str, Any, Any]] = []
     for cname, proto, over in problem._cstrs:
         rhs_t = resolve_cstr_rhs_type(cname)
@@ -676,6 +694,13 @@ def apply_layer2(
             rf = float(2 ** exp) if exp is not None else 1.0
         # Row count for this family.
         row_count = 1 if over is None else int(over.height)
+        if (
+            rf != 1.0
+            and _max_family_rows > 0
+            and row_count > _max_family_rows
+        ):
+            rf = 1.0
+            skipped_rows.append(f"{cname}:row_scale_size_skip")
         if rhs_t is None and row_count > 0:
             skipped_rows.append(cname)
         row_factors_list.extend([rf] * row_count)
@@ -802,14 +827,15 @@ def _scale_rhs(
     from polar_high.engine import Expr, Param, Var, _Term  # noqa: WPS433
 
     if isinstance(rhs, Param):
-        # Build a new Param with rescaled value column.
-        old = rhs.frame
-        if "value" not in old.columns:
-            raise ValueError(
-                f"Layer 2: Param frame missing 'value' column ({old.columns})"
-            )
-        new_frame = old.with_columns(value=pl.col("value") * float(row_factor))
-        return Param(rhs.dims, new_frame)
+        # Stay lazy: ``Param.__mul__`` with a scalar appends a lazy
+        # ``with_columns(value=value*float(other))`` and propagates
+        # ``_sources``.  The earlier implementation read ``rhs.frame``
+        # (eager ``lazy.collect()``) which materialised the entire
+        # multi-Param chain here, bypassing the semi-join + streaming
+        # path that ``write_mps`` / ``_solve_streaming`` apply when they
+        # eventually consume this family — on DES-scale chains that was
+        # a >30 GB allocation and the proximate OOM.
+        return rhs * float(row_factor)
 
     if isinstance(rhs, Var):
         rhs = rhs.to_expr()
