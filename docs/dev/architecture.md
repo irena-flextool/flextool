@@ -76,7 +76,7 @@ packages. Every CLI command also has an installed entry point in
 | `cmd_read_matpower` | `flextool-read-matpower` | Import a MATPOWER case → Spine DB. |
 | `cmd_import_sensitivities` | `flextool-import-sensitivities` | Import FlexTool v2 sensitivity scenarios. |
 | `cmd_export_to_tabular` | `flextool-export-to-tabular` | Export Spine DB → Excel (`.xlsx`). |
-| `cmd_execute_flextool_workflow` | `flextool-execute-workflow` | Three-phase workflow runner (input → solve → output) as a subprocess pipeline. |
+| `cmd_execute_flextool_workflow` | `flextool-execute-workflow` | Two-phase workflow runner: optional input-prep (auto-triggered by `--tabular-file-path` / `--csv-directory-path`) followed by the fused model-run + output-write phase. |
 | `cmd_migrate_database` | `flextool-migrate-database` | Upgrade an input DB to the current schema version. |
 | `cmd_update_flextool` | `flextool-update` | `git pull` + project-side migration in one step. |
 | `cmd_gui` (via `flextool.gui.__main__`) | `flextool-gui` | Launch the Tkinter desktop application. |
