@@ -9,7 +9,7 @@ Most users do not need this path. If your work is centred on FlexTool itself —
 
 ## Requirements
 
-- **Python ≥ 3.9** (see `requires-python` in `pyproject.toml`)
+- **Python ≥ 3.11** (see `requires-python` in `pyproject.toml` for up-to-date requirement)
 - **Git** (optional, but recommended for easy updates)
 
 ## Installation Steps

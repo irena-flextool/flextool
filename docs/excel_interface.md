@@ -14,12 +14,13 @@ number of times.
 
 ## When to choose Excel over the database editor
 
-- You already keep your scenario data in spreadsheets.
-- You want a single, self-contained file for version-controlled review and
+- You like to keep your scenario data in spreadsheets.
+- You want a single, self-contained file for review and
   for sharing.
 - You are doing bulk edits — copy/paste, fill-down, find-and-replace — that
-  are awkward in the relational editor.
-- You need to hand the file to a collaborator who does not have FlexTool
+  are awkward in the relational editor (although you can copy paste from
+  spreadsheet to the Spine DB editor)
+- You need to hand the file to a collaborator who does not have Spine Toolbox
   installed.
 
 If none of these apply, stay in the Spine database editor: edits are
@@ -175,7 +176,7 @@ as a meaningful diff. That makes Excel a reasonable medium for PR-based
 review of model data — reviewers can open the workbook, flip through the
 sheets, and compare two checked-in versions side by side.
 
-## Limitations and gotchas
+## Limitations
 
 - Very large time-series sheets (tens of thousands of rows) render slowly
   in both Excel and LibreOffice. Consider editing them as CSV or keeping

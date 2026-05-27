@@ -20,7 +20,7 @@ flowchart TD
     Q[Execution queue]
     X[Executed scenarios<br/>parquet on disk]
     O[Outputs table<br/>pngs / Excel / CSV / comparison]
-    R[Result viewer<br/>live, no pre-render]
+    R[Result viewer<br/>to browse directly]
 
     P --> I --> A
     A -- Add checked --> Q

@@ -31,7 +31,7 @@ The capacity margin penalty is different from the others: it represents the cost
 
 FlexTool minimizes total system cost over a planning horizon. The economic framework uses two key rates:
 
-- **`inflation_rate`** (model-level): Adjusts for general price level changes over time
+- **`inflation_rate`** (model-level): Adjusts for general price level changes over time. Whether to use inlfation_rate depends on whether you use real or nominal values elsewhere in the input data - be consistent.
 - **`discount_rate`** (per technology): Reflects the financing cost and risk of each investment
 
 ### Real vs nominal values

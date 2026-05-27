@@ -9,7 +9,7 @@ For the Spine Toolbox installation path, see [Install with Spine Toolbox](instal
 
 ## Requirements
 
-- **Python ≥ 3.9** (see `requires-python` in `pyproject.toml`)
+- **Python ≥ 3.11** (see `requires-python` in `pyproject.toml` for up-to-date requirements)
 - **Git** (optional, but recommended for easy updates)
 
 ## Installation Steps

@@ -1,10 +1,13 @@
 # IRENA FlexTool with Spine Toolbox
 
-Spine Toolbox is the **alternative orchestration interface** for FlexTool. The primary
+Spine Toolbox is an **alternative orchestration interface** for FlexTool. The other, simpler,
 interface is the standalone [FlexTool GUI](flextool_gui_interface.md); Spine Toolbox is the
 heavier path that wraps FlexTool as one node in a directed-acyclic-graph (DAG) workflow
-alongside other tools and data stores. Use it when the FlexTool run is part of a larger
-multi-tool pipeline.
+alongside other tools and data stores. It allows not just to run FlexTool, but also to wrap it 
+in more complex workflows (e.g. input data preparation or multi-tool pipeline) - when doing 
+that, best to make a separate Spine Toolbox project in another folder or then freeze particular
+FlexTool installation to the purpose. The default workflow is part of FlexTool repository 
+and you will get merge conflicts if you edit it and then try to pull repository updates.
 
 See [Install with Spine Toolbox](install_toolbox.md) for installation and
 [Choosing an interface](interface_overview.md) for the side-by-side comparison with the
@@ -17,8 +20,6 @@ FlexTool GUI and the terminal CLI.
   scenario filter visible on each connection.
 - You already use Spine Toolbox for other projects and would rather not run a second
   orchestration GUI alongside it.
-- You want the workflow itself to be **version-controllable** as a `.spinetoolbox/`
-  project alongside your input data.
 
 For FlexTool-centric work (build scenarios, run them, inspect results in one place), the
 [FlexTool GUI](flextool_gui_interface.md) is the recommended choice instead.
@@ -109,10 +110,9 @@ project file lives wherever you put it.
 
 ## Limitations
 
-- The shipped workflow is tuned for the **Spine database editor** and the
-  **tabular import** flow. The Excel **export** previously offered as a `To_Excel` item is
-  not part of the v4 workflow; use the FlexTool GUI's Outputs table or
-  `flextool-export-to-tabular` instead.
+- The shipped workflow is tuned for the **Spine database editor**. One can use the 
+  **tabular importer** flow (imports Excel or LibreOffice that use specific format), but be 
+  careful to edit only in one place. 
 - The Spine Toolbox UI itself sees occasional minor graphical glitches on macOS; the
   underlying FlexTool runs are unaffected.
 

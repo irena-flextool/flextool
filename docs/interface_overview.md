@@ -15,13 +15,13 @@ terminal workflow can be layered on top of either combination for batches and au
 | Keep editing data in spreadsheets | **FlexTool GUI** + **Excel / LibreOffice** |
 | Build multi-tool DAG workflows (FlexTool combined with other models) | **Spine Toolbox** + **Spine database editor** |
 | Run batches on a server or in CI | **Terminal CLI** (data editor irrelevant once the input DB is built) |
-| You're an experienced FlexTool v2 user / already use Spine Toolbox | **Spine Toolbox** + **Spine database editor** |
+| You're an experienced FlexTool v3 user / already use Spine Toolbox | **Spine Toolbox** + **Spine database editor** |
 
 The rest of this page explains each choice and links to the installation and usage guides.
 
 ## Execution / orchestration GUI
 
-### FlexTool GUI (default)
+### FlexTool GUI
 
 A standalone Tkinter application launched with `python -m flextool.gui`. It is the recommended
 starting point for new users and for anyone whose workflow centres on FlexTool itself.
@@ -46,7 +46,7 @@ When to choose FlexTool GUI:
 See [Install with FlexTool GUI](install_gui.md) and the
 [FlexTool GUI reference](flextool_gui_interface.md).
 
-### Spine Toolbox (alternative)
+### Spine Toolbox
 
 Spine Toolbox is a separate workflow manager that runs FlexTool as one node in a directed
 acyclic graph (DAG) of tools and data stores.
@@ -57,6 +57,7 @@ When to choose Spine Toolbox:
   another model downstream).
 - You need to integrate FlexTool with other Spine-based models.
 - You already use Spine Toolbox and don't want a second orchestration GUI.
+- You are more comfortable with the visual workflow than predefined options
 
 See [Install with Spine Toolbox](install_toolbox.md) and the
 [Spine Toolbox interface guide](spine_toolbox.md).
