@@ -101,6 +101,10 @@
       ""
     ],
     [
+      "delay_source_coef_on",
+      "Phase 3d: override unit__inputNode.(water_pump, water_source).flow_coefficient from 1.0 to 2.0 for test_flex_delay_source_coef.py."
+    ],
+    [
       "dispatch_fullYear_roll",
       ""
     ],
@@ -141,6 +145,10 @@
       ""
     ],
     [
+      "inflation_2pct",
+      "Phase 3d: override model.inflation_rate to 0.02 for test_db_direct_inflation_2pct.py"
+    ],
+    [
       "init",
       ""
     ],
@@ -167,6 +175,14 @@
     [
       "invest_twoYears4Times_5weeks",
       ""
+    ],
+    [
+      "ladder_ann_on",
+      "Phase 3d: enable coal annual price ladder."
+    ],
+    [
+      "ladder_cum_on",
+      "Phase 3d: enable coal cumulative price ladder."
     ],
     [
       "lifetime_choice",
@@ -1763,12 +1779,9 @@
     [
       "commodity",
       "unitsize",
-      [
-        "1.0",
-        "float"
-      ],
       null,
-      "Numeric scaling for the v_trade variable column (analogous to virtual_unitsize on process/node entities).  The variable is in user-MWh divided by this value.  Pick so the largest tier sits at O(10) in the scaled LP.",
+      null,
+      "Per-commodity scaling coefficient applied to the v_trade tier variable when the commodity uses the price-ladder feature (gated by commodity.price_method = price_ladder_annual or price_ladder_cumulative).  When set, v_trade is expressed in user-MWh divided by this value; pick the unitsize so the largest tier quantity sits at O(10) in the scaled LP.  The coefficient multiplies v_trade in the commodity_ladder_balance LHS, the per-tier cap LHS, and the per-tier objective term.  When absent (the default), the price-ladder consumer substitutes 1.0 internally so v_trade is in user-MWh (identity scaling).  Ignored entirely when commodity.price_method is not a price_ladder_* value.",
       "basics"
     ],
     [
@@ -1784,7 +1797,7 @@
     ],
     [
       "connection",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
@@ -1792,7 +1805,7 @@
     ],
     [
       "connection",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
@@ -2022,7 +2035,7 @@
     ],
     [
       "connection__node",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
@@ -2119,7 +2132,7 @@
       "cumulative_max_capacity",
       null,
       null,
-      null,
+      "[MW or MWh] Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period.",
       "investment"
     ],
     [
@@ -2127,7 +2140,7 @@
       "cumulative_min_capacity",
       null,
       null,
-      null,
+      "[MW or MWh] Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period.",
       "investment"
     ],
     [
@@ -2360,14 +2373,6 @@
     ],
     [
       "model",
-      "debug",
-      null,
-      null,
-      "Instruction set for performing model debugging and testing.",
-      "output"
-    ],
-    [
-      "model",
       "exclude_entity_outputs",
       null,
       "optional_output",
@@ -2378,7 +2383,7 @@
       "model",
       "inflation_offset_investment",
       [
-        "1",
+        "0.0",
         "float"
       ],
       null,
@@ -2491,7 +2496,7 @@
       "model",
       "version",
       [
-        "52",
+        "56",
         "float"
       ],
       null,
@@ -2519,7 +2524,7 @@
     ],
     [
       "node",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
@@ -2527,7 +2532,7 @@
     ],
     [
       "node",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage capacity in user-defined constraints. [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
@@ -2535,7 +2540,7 @@
     ],
     [
       "node",
-      "constraint_state_coefficient",
+      "constraint_state_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined constraints. [state x coefficient] will be on the left side of the equation.",
@@ -2769,7 +2774,7 @@
       "storage_binding_method",
       null,
       "storage_binding_methods",
-      "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0.",
+      "Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0.",
       "storage"
     ],
     [
@@ -2823,10 +2828,7 @@
     [
       "node",
       "storage_state_start",
-      [
-        "0",
-        "float"
-      ],
+      null,
       null,
       "[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant.",
       "storage"
@@ -2874,10 +2876,7 @@
     [
       "reserve__upDown__connection__node",
       "large_failure_ratio",
-      [
-        "1.0",
-        "float"
-      ],
+      null,
       null,
       "[factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.",
       "reserve"
@@ -2885,10 +2884,7 @@
     [
       "reserve__upDown__connection__node",
       "max_share",
-      [
-        "0",
-        "float"
-      ],
+      null,
       null,
       "[factor] Maximum ratio for the transfer of reserve to this node. Constant.",
       "reserve"
@@ -2915,10 +2911,7 @@
     [
       "reserve__upDown__group",
       "penalty_reserve",
-      [
-        "5000",
-        "float"
-      ],
+      null,
       null,
       "[CUR/MW] Penalty for violating a reserve constraint. Constant.",
       "reserve"
@@ -2961,10 +2954,7 @@
     [
       "reserve__upDown__unit__node",
       "large_failure_ratio",
-      [
-        "1.0",
-        "float"
-      ],
+      null,
       null,
       "[factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.",
       "reserve"
@@ -3264,7 +3254,7 @@
     ],
     [
       "unit",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
@@ -3272,7 +3262,7 @@
     ],
     [
       "unit",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the unit capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
@@ -3518,7 +3508,7 @@
     ],
     [
       "unit__inputNode",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
@@ -3623,7 +3613,7 @@
     ],
     [
       "unit__outputNode",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
@@ -3859,13 +3849,13 @@
     ],
     [
       "connection",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       "map",
       1
     ],
     [
       "connection",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       "map",
       1
     ],
@@ -4093,7 +4083,7 @@
     ],
     [
       "connection__node",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       "map",
       1
     ],
@@ -4363,12 +4353,6 @@
     ],
     [
       "model",
-      "debug",
-      "str",
-      0
-    ],
-    [
-      "model",
       "exclude_entity_outputs",
       "str",
       0
@@ -4489,19 +4473,19 @@
     ],
     [
       "node",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       "map",
       1
     ],
     [
       "node",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       "map",
       1
     ],
     [
       "node",
-      "constraint_state_coefficient",
+      "constraint_state_coeff",
       "map",
       1
     ],
@@ -5149,13 +5133,13 @@
     ],
     [
       "unit",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       "map",
       1
     ],
     [
       "unit",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       "map",
       1
     ],
@@ -5413,7 +5397,7 @@
     ],
     [
       "unit__inputNode",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       "map",
       1
     ],
@@ -5497,7 +5481,7 @@
     ],
     [
       "unit__outputNode",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       "map",
       1
     ],
@@ -6313,13 +6297,6 @@
     [
       "storage_binding_methods",
       [
-        "\"bind_within_timeset\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
         "\"bind_within_period\"",
         "str"
       ]
@@ -6334,13 +6311,6 @@
     [
       "storage_binding_methods",
       [
-        "\"bind_within_model\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
         "\"bind_forward_only\"",
         "str"
       ]
@@ -6349,6 +6319,34 @@
       "storage_binding_methods",
       [
         "\"bind_intraperiod_blocks\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_within_timeblock\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_within_solve_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_within_period_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_forward_only_blended_weights\"",
         "str"
       ]
     ],
@@ -6525,9 +6523,49 @@
       "coal"
     ],
     [
+      "commodity",
+      "coal",
+      "price_ladder_annual",
+      [
+        "{\"index_type\": \"str\", \"rank\": 3, \"data\": [[\"p2020\", {\"type\": \"map\", \"index_type\": \"str\", \"rank\": 2, \"data\": [[\"1\", {\"type\": \"map\", \"index_type\": \"str\", \"rank\": 1, \"data\": [[\"price\", 20.0], [\"quantity\", 1.0]]}], [\"2\", {\"type\": \"map\", \"index_type\": \"str\", \"rank\": 1, \"data\": [[\"price\", 30.0], [\"quantity\", Infinity]]}]], \"index_name\": \"tier\"}]], \"index_name\": \"period\"}",
+        "map"
+      ],
+      "ladder_ann_on"
+    ],
+    [
+      "commodity",
+      "coal",
+      "price_ladder_cumulative",
+      [
+        "{\"index_type\": \"str\", \"rank\": 2, \"data\": [[\"1\", {\"type\": \"map\", \"index_type\": \"str\", \"rank\": 1, \"data\": [[\"price\", 20.0], [\"quantity\", 1.0]]}], [\"2\", {\"type\": \"map\", \"index_type\": \"str\", \"rank\": 1, \"data\": [[\"price\", 30.0], [\"quantity\", Infinity]]}]], \"index_name\": \"tier\"}",
+        "map"
+      ],
+      "ladder_cum_on"
+    ],
+    [
+      "commodity",
+      "coal",
+      "price_method",
+      [
+        "\"price_ladder_annual\"",
+        "str"
+      ],
+      "ladder_ann_on"
+    ],
+    [
+      "commodity",
+      "coal",
+      "price_method",
+      [
+        "\"price_ladder_cumulative\"",
+        "str"
+      ],
+      "ladder_cum_on"
+    ],
+    [
       "connection",
       "battery_inverter",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       [
         "{\"index_type\": \"str\", \"data\": [[\"battery_tie_kW_kWh\", -8.0]], \"index_name\": \"constraint\"}",
         "map"
@@ -7079,6 +7117,16 @@
       "flexTool",
       "inflation_rate",
       [
+        "0.02",
+        "float"
+      ],
+      "inflation_2pct"
+    ],
+    [
+      "model",
+      "flexTool",
+      "inflation_rate",
+      [
         "0.04",
         "float"
       ],
@@ -7247,7 +7295,7 @@
     [
       "node",
       "battery",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       [
         "{\"index_type\": \"str\", \"data\": [[\"battery_tie_kW_kWh\", 1.0]], \"index_name\": \"constraint\"}",
         "map"
@@ -7399,7 +7447,7 @@
       "battery",
       "storage_binding_method",
       [
-        "\"bind_within_timeset\"",
+        "\"bind_within_timeblock\"",
         "str"
       ],
       "battery"
@@ -7769,7 +7817,7 @@
       "ev_battery",
       "storage_binding_method",
       [
-        "\"bind_within_timeset\"",
+        "\"bind_within_timeblock\"",
         "str"
       ],
       "ev"
@@ -10198,7 +10246,7 @@
     [
       "unit",
       "wind_plant",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       [
         "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"wind_growth_cap\", -0.1]], \"index_name\": \"constraint\"}",
         "map"
@@ -10208,7 +10256,7 @@
     [
       "unit",
       "wind_plant",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       [
         "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"wind_growth_cap\", 1.0]], \"index_name\": \"constraint\"}",
         "map"
@@ -10364,12 +10412,25 @@
         "water_pump",
         "water_source"
       ],
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       [
         "{\"index_type\": \"str\", \"data\": [[\"water_pump_fix\", -1.0]], \"index_name\": \"constraint\"}",
         "map"
       ],
       "water_pump"
+    ],
+    [
+      "unit__inputNode",
+      [
+        "water_pump",
+        "water_source"
+      ],
+      "flow_coefficient",
+      [
+        "2.0",
+        "float"
+      ],
+      "delay_source_coef_on"
     ],
     [
       "unit__inputNode",
@@ -10390,7 +10451,7 @@
         "water_pump",
         "west"
       ],
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       [
         "{\"index_type\": \"str\", \"data\": [[\"water_pump_fix\", 1.0]], \"index_name\": \"constraint\"}",
         "map"
@@ -10457,7 +10518,7 @@
         "coal_chp",
         "heat"
       ],
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       [
         "{\"index_type\": \"str\", \"data\": [[\"coal_chp_fix\", -0.5]], \"index_name\": \"constraint\"}",
         "map"
@@ -10496,7 +10557,7 @@
         "coal_chp",
         "west"
       ],
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       [
         "{\"index_type\": \"str\", \"data\": [[\"coal_chp_fix\", 1.0]], \"index_name\": \"constraint\"}",
         "map"
@@ -10960,6 +11021,46 @@
       null
     ],
     [
+      "coal_ladder_annual",
+      "init",
+      "west"
+    ],
+    [
+      "coal_ladder_annual",
+      "west",
+      "coal"
+    ],
+    [
+      "coal_ladder_annual",
+      "coal",
+      "ladder_ann_on"
+    ],
+    [
+      "coal_ladder_annual",
+      "ladder_ann_on",
+      null
+    ],
+    [
+      "coal_ladder_cumulative",
+      "init",
+      "west"
+    ],
+    [
+      "coal_ladder_cumulative",
+      "west",
+      "coal"
+    ],
+    [
+      "coal_ladder_cumulative",
+      "coal",
+      "ladder_cum_on"
+    ],
+    [
+      "coal_ladder_cumulative",
+      "ladder_cum_on",
+      null
+    ],
+    [
       "coal_min_load",
       "init",
       "west"
@@ -11237,6 +11338,36 @@
     [
       "coal_wind_min_uptime_MIP",
       "coal_min_updowntime",
+      null
+    ],
+    [
+      "delay_source_coef",
+      "init",
+      "west"
+    ],
+    [
+      "delay_source_coef",
+      "west",
+      "coal"
+    ],
+    [
+      "delay_source_coef",
+      "coal",
+      "water_pump"
+    ],
+    [
+      "delay_source_coef",
+      "water_pump",
+      "water_pump_delayed"
+    ],
+    [
+      "delay_source_coef",
+      "water_pump_delayed",
+      "delay_source_coef_on"
+    ],
+    [
+      "delay_source_coef",
+      "delay_source_coef_on",
       null
     ],
     [
@@ -12945,6 +13076,66 @@
       null
     ],
     [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "init",
+      "west"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "west",
+      "wind"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "wind",
+      "wind_invest"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "wind_invest",
+      "battery"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "battery",
+      "battery_invest"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "battery_invest",
+      "5weeks"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "5weeks",
+      "lifetime_choice"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "lifetime_choice",
+      "invest_solveSequence_5weeks"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "invest_solveSequence_5weeks",
+      "invest_allYears_5weeks"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "invest_allYears_5weeks",
+      "lifetime_renew"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "lifetime_renew",
+      "inflation_2pct"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "inflation_2pct",
+      null
+    ],
+    [
       "y2020_2029_1x10y",
       "init",
       "west"
@@ -13077,6 +13268,16 @@
       ""
     ],
     [
+      "coal_ladder_annual",
+      false,
+      null
+    ],
+    [
+      "coal_ladder_cumulative",
+      false,
+      null
+    ],
+    [
       "coal_min_load",
       false,
       ""
@@ -13125,6 +13326,11 @@
       "coal_wind_min_uptime_MIP",
       false,
       ""
+    ],
+    [
+      "delay_source_coef",
+      false,
+      null
     ],
     [
       "dr_decrease_demand",
@@ -13305,6 +13511,11 @@
       "wind_battery_invest_lifetime_renew_4solve",
       false,
       ""
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      false,
+      null
     ],
     [
       "y2020_2029_1x10y",

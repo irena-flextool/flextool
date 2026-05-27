@@ -292,34 +292,34 @@ It is given parameters `constant`, `sense` and `is_active` (if Toolbox 0.7, befo
 Both *battery_inverter* and *battery* need a coefficient to tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
 
 ```
-sum_i(`constraint_invested_capacity_coefficient` * `v_invest`) = `constant`
+sum_i(`constraint_invested_capacity_coeff` * `v_invest`) = `constant`
       where i is any unit, connection or node that is part of the constraint
 ```
 
-When the `constraint_invested_capacity_coefficient` for *battery* is set at 1 and for the *battery_inverter* at -8, then the equation will force *battery_inverter* `v_invest` to be 8 times smaller than the *battery* `v_invest`. The negative term can be arranged to the right side of the equation, which yields:
+When the `constraint_invested_capacity_coeff` for *battery* is set at 1 and for the *battery_inverter* at -8, then the equation will force *battery_inverter* `v_invest` to be 8 times smaller than the *battery* `v_invest`. The negative term can be arranged to the right side of the equation, which yields:
 
 ```1 x *battery* = 8 x *battery_inverter*, which can be true only if *battery_inverter* is 1/8 of *battery*```
 
-`constraint_invested_capacity_coefficient` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the entity to participate in multiple constraints. (This parameter was previously named `constraint_capacity_coefficient`; migration v32 renames existing DBs automatically. The old expression summed `v_invest` once per active investment period — incorrect in multi-period models — and has been fixed to emit just the current period's `v_invest`.)
+`constraint_invested_capacity_coeff` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the entity to participate in multiple constraints. (This parameter was previously named `constraint_capacity_coefficient`; migration v32 renames existing DBs automatically. The old expression summed `v_invest` once per active investment period — incorrect in multi-period models — and has been fixed to emit just the current period's `v_invest`.)
 
-To tie cumulative, built-up capacity rather than the current period's new build, use `constraint_cumulative_pre_built_capacity_coefficient`. It takes data-baseline capacity plus every `v_invest` made in periods strictly BEFORE the current one, ignoring retirements (learning-effect semantics). Paired with `constraint_invested_capacity_coefficient`, it expresses period-over-period growth limits:
+To tie cumulative, built-up capacity rather than the current period's new build, use `constraint_cumulative_pre_built_capacity_coeff`. It takes data-baseline capacity plus every `v_invest` made in periods strictly BEFORE the current one, ignoring retirements (learning-effect semantics). Paired with `constraint_invested_capacity_coeff`, it expresses period-over-period growth limits:
 
 ```
 v_invest[e, d] <= growth_rate * pre_built[e, d]
 ```
 
-is written as: `constraint_invested_capacity_coefficient = { c: 1.0 }` and `constraint_cumulative_pre_built_capacity_coefficient = { c: -growth_rate }` on entity `e`, with constraint `c` having `sense = less_than` and `constant = 0`. A 10% growth cap starting from 1000 MW of existing wind would allow 100 MW in period 1, 110 in period 2, 121 in period 3, and so on.
+is written as: `constraint_invested_capacity_coeff = { c: 1.0 }` and `constraint_cumulative_pre_built_capacity_coeff = { c: -growth_rate }` on entity `e`, with constraint `c` having `sense = less_than` and `constant = 0`. A 10% growth cap starting from 1000 MW of existing wind would allow 100 MW in period 1, 110 in period 2, 121 in period 3, and so on.
 
-Finally, FlexTool can mix several types of constraint coefficients: `constraint_invested_capacity_coefficient`, `constraint_cumulative_pre_built_capacity_coefficient`, `constraint_state_coefficient` and `constraint_flow_coefficient` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state* as well as *invest*). So, the equation above is in full form:
+Finally, FlexTool can mix several types of constraint coefficients: `constraint_invested_capacity_coeff`, `constraint_cumulative_pre_built_capacity_coeff`, `constraint_state_coeff` and `constraint_flow_coeff` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state* as well as *invest*). So, the equation above is in full form:
 
 ```
-  + sum_i [constraint_invested_capacity_coefficient(i) * v_invest]
+  + sum_i [constraint_invested_capacity_coeff(i) * v_invest]
            where i contains [node, unit, connection] belonging to the constraint
-  + sum_i [constraint_cumulative_pre_built_capacity_coefficient(i) * pre_built]
+  + sum_i [constraint_cumulative_pre_built_capacity_coeff(i) * pre_built]
            where pre_built = existing baseline + Σ v_invest from earlier periods
-  + sum_j [constraint_flow_coefficient(j) * capacity]
+  + sum_j [constraint_flow_coeff(j) * capacity]
            where j contains [unit--node, connection--node] belonging to the constraint
-  + sum_k [constraint_state_coefficient(k) * capacity]
+  + sum_k [constraint_state_coeff(k) * capacity]
            where k contains [node] belonging to the constraint
   =
   constant
@@ -354,7 +354,7 @@ This CHP plant is an another example where the user defined `constraint` (see th
 
 For extraction CHP specifically, the three `unit__inputNode` / `unit__outputNode` coefficients interact. `flow_coefficient` multiplies into the edge's contribution in the fuel balance (`conversion_indirect`) — higher coefficient means more fuel consumed per unit of that edge's output, so a premium electricity output might use `flow_coefficient = 2` while a byproduct heat output uses `0.2`. `max_capacity_coefficient` and `min_capacity_coefficient` then set the per-edge upper and lower caps independently. A typical extraction CHP with efficiency 0.9 and elec / heat flow coefficients of 2 and 0.2 can reach pure-condensing mode (heat=0) by setting `min_capacity_coefficient = 0` on the heat output, and pure-heat mode by setting `max_capacity_coefficient = 1` on the heat output. Without the capacity-coefficient split, each output would be capped individually at `flow_coefficient × capacity`, which prevents the model from using the full operating envelope.
 
-Electricity and heat outputs are fixed by adding a new `constraint` *coal_chp_fix* where the heat and power co-efficients are fixed. You need to create the two entities `unit__outputNode`, for *coal_chp--heat* and *coal_chp--west*. As can be seen in the bottom part of the figure below, the `constraint_flow_coefficient` parameter for the *coal_chp--heat* and *coal_chp--west* is set as a map value where the `constraint` name matches with the *coal_chp_fix* `constraint` entity name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output.
+Electricity and heat outputs are fixed by adding a new `constraint` *coal_chp_fix* where the heat and power co-efficients are fixed. You need to create the two entities `unit__outputNode`, for *coal_chp--heat* and *coal_chp--west*. As can be seen in the bottom part of the figure below, the `constraint_flow_coeff` parameter for the *coal_chp--heat* and *coal_chp--west* is set as a map value where the `constraint` name matches with the *coal_chp_fix* `constraint` entity name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output.
 
 Create constraint *coal_chp_fix*, add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and add parameters:
 
@@ -364,11 +364,11 @@ Create constraint *coal_chp_fix*, add it to an alternative in the `Entity Altern
 
 Create `unit_outputNode` (coal_chp|heat):
 
-- `constraint_flow_coefficient` : *coal_chp_fix*, -0.5
+- `constraint_flow_coeff` : *coal_chp_fix*, -0.5
 
 Create `unit_outputNode` (coal_chp|west):
 
-- `constraint_flow_coefficient` : *coal_chp_fix*, 2
+- `constraint_flow_coeff` : *coal_chp_fix*, 2
 
 
 Again, the negative value can be turned positive by arranging it to the right side of the equality, creating this:
@@ -458,10 +458,10 @@ The constraint needs parameters:
 - `constant`: 0
 -  `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
-As we are fixing the output flows, the we need to add the flows with their coefficients to this constraint. This is done with the unit_outputNode parameter `constraint_flow_coefficient`:
+As we are fixing the output flows, the we need to add the flows with their coefficients to this constraint. This is done with the unit_outputNode parameter `constraint_flow_coeff`:
 
-- `unit_outputNode`(*hydro_plant*|*downriver*): `constraint_flow_coefficient`: Map (hydro_split| 0.57)  
-- `unit_outputNode`(*hydro_plant*|*demand_node*): `constraint_flow_coefficient`: Map (hydro_split| -1)
+- `unit_outputNode`(*hydro_plant*|*downriver*): `constraint_flow_coeff`: Map (hydro_split| 0.57)  
+- `unit_outputNode`(*hydro_plant*|*demand_node*): `constraint_flow_coeff`: Map (hydro_split| -1)
 
 These create the constraint: 
 ```
@@ -578,8 +578,8 @@ Create a new constraint (here *plant_storage_nodeA_split*), add it to an alterna
 
 And for the `unit_outputNodes`:
 
-- (hydro_plant | nodeA) `constraint_flow_coefficient` Map: plant_storage_nodeA_split , 1
-- (hydro_plant | pump_storage) `constraint_flow_coefficient` Map: plant_storage_nodeA_split , -1
+- (hydro_plant | nodeA) `constraint_flow_coeff` Map: plant_storage_nodeA_split , 1
+- (hydro_plant | pump_storage) `constraint_flow_coeff` Map: plant_storage_nodeA_split , -1
 - Meaning: 
 ```
 flow to nodeA - flow to pump_storage = 0
@@ -603,15 +603,15 @@ We still have to make the unit to consume electricity even though it does not af
 
 And setting parameters for `unit_inputNode`:
 
-- (hydro_pump | nodeA) `constraint_flow_coefficient` Map: *pump_storage_nodeA_fix* , 2
-- (hydro_pump | pump_storage) `constraint_flow_coefficient` Map: *pump_storage_nodeA_fix* , -1
+- (hydro_pump | nodeA) `constraint_flow_coeff` Map: *pump_storage_nodeA_fix* , 2
+- (hydro_pump | pump_storage) `constraint_flow_coeff` Map: *pump_storage_nodeA_fix* , -1
 
 ```
 2 * flow_from_nodeA - flow_from_pump_storage = 0
 ```
-Note that here the (`constraint_flow_coefficient ` Map: plant_storage_nodeA_split , 2) actually sets the efficiency of the pump. 
+Note that here the (`constraint_flow_coeff ` Map: plant_storage_nodeA_split , 2) actually sets the efficiency of the pump. 
 This means that here only half of the electricity used by the pump can be recovered when that amount of water is used by the hydro_plant. (Two units of energy are used to move 1 unit of water_energy)
-The `constraint_flow_coefficient` for pump_input should therefore be (1/efficiency)
+The `constraint_flow_coeff` for pump_input should therefore be (1/efficiency)
 
 ![Hydro pump parameters](./img/concept/hydro_pump_parameters.png)
 ![Hydro pump relation](./img/concept/hydro_pump_relations.png)

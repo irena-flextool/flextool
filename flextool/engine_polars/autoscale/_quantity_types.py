@@ -72,25 +72,25 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.
     # User constraints aggregate LHS terms whose units depend on the user's coefficient choices; the RHS constant lives
     # in that same composite coordinate. Layer-2 does not apply a per-row factor — column scalers propagate via the LHS.
-    ('constraint_cumulative_pre_built_capacity_coefficient', 'connection'): QuantityType.DIMENSIONLESS,
+    ('constraint_cumulative_pre_built_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline...
-    ('constraint_cumulative_pre_built_capacity_coefficient', 'node'): QuantityType.DIMENSIONLESS,
+    ('constraint_cumulative_pre_built_capacity_coeff', 'node'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline...
-    ('constraint_cumulative_pre_built_capacity_coefficient', 'unit'): QuantityType.DIMENSIONLESS,
+    ('constraint_cumulative_pre_built_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline...
-    ('constraint_flow_coefficient', 'connection__node'): QuantityType.DIMENSIONLESS,
+    ('constraint_flow_coeff', 'connection__node'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node ...
-    ('constraint_flow_coefficient', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
+    ('constraint_flow_coeff', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-...
-    ('constraint_flow_coefficient', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
+    ('constraint_flow_coeff', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-...
-    ('constraint_invested_capacity_coefficient', 'connection'): QuantityType.DIMENSIONLESS,
+    ('constraint_invested_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current pe...
-    ('constraint_invested_capacity_coefficient', 'node'): QuantityType.DIMENSIONLESS,
+    ('constraint_invested_capacity_coeff', 'node'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current pe...
-    ('constraint_invested_capacity_coefficient', 'unit'): QuantityType.DIMENSIONLESS,
+    ('constraint_invested_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current pe...
-    ('constraint_state_coefficient', 'node'): QuantityType.DIMENSIONLESS,
+    ('constraint_state_coeff', 'node'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined const...
     ('contains_solves', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences

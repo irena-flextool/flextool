@@ -567,16 +567,16 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     entity_set = _read_singles(input_dir / "entity.csv", provider=provider)
 
     pcc_inv = _read_pairs(
-        input_dir / "p_process_constraint_invested_capacity_coefficient.csv", provider=provider
+        input_dir / "p_process_constraint_invested_capacity_coeff.csv", provider=provider
     )
     pcc_pre = _read_pairs(
-        input_dir / "p_process_constraint_pre_built_capacity_coefficient.csv", provider=provider
+        input_dir / "p_process_constraint_pre_built_capacity_coeff.csv", provider=provider
     )
     ncc_inv = _read_pairs(
-        input_dir / "p_node_constraint_invested_capacity_coefficient.csv", provider=provider
+        input_dir / "p_node_constraint_invested_capacity_coeff.csv", provider=provider
     )
     ncc_pre = _read_pairs(
-        input_dir / "p_node_constraint_pre_built_capacity_coefficient.csv", provider=provider
+        input_dir / "p_node_constraint_pre_built_capacity_coeff.csv", provider=provider
     )
     has_capacity_constraint = (
         frozenset(p for p, _ in pcc_inv)

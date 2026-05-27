@@ -968,9 +968,9 @@
     [
       "commodity",
       "unitsize",
-      1.0,
       null,
-      "Numeric scaling for the v_trade variable column (analogous to virtual_unitsize on process/node entities).  The variable is in user-MWh divided by this value.  Pick so the largest tier sits at O(10) in the scaled LP.",
+      null,
+      "Per-commodity scaling coefficient applied to the v_trade tier variable when the commodity uses the price-ladder feature (gated by commodity.price_method = price_ladder_annual or price_ladder_cumulative).  When set, v_trade is expressed in user-MWh divided by this value; pick the unitsize so the largest tier quantity sits at O(10) in the scaled LP.  The coefficient multiplies v_trade in the commodity_ladder_balance LHS, the per-tier cap LHS, and the per-tier objective term.  When absent (the default), the price-ladder consumer substitutes 1.0 internally so v_trade is in user-MWh (identity scaling).  Ignored entirely when commodity.price_method is not a price_ladder_* value.",
       "basics"
     ],
     [
@@ -983,7 +983,7 @@
     ],
     [
       "connection",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
@@ -991,7 +991,7 @@
     ],
     [
       "connection",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
@@ -1215,7 +1215,7 @@
     ],
     [
       "connection__node",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
@@ -1535,14 +1535,6 @@
     ],
     [
       "model",
-      "debug",
-      null,
-      null,
-      "Instruction set for performing model debugging and testing.",
-      "output"
-    ],
-    [
-      "model",
       "exclude_entity_outputs",
       "yes",
       "optional_output",
@@ -1552,7 +1544,7 @@
     [
       "model",
       "inflation_offset_investment",
-      1.0,
+      0.0,
       null,
       "[years] Offset for when investment costs occur within a year. Default 0 (beginning of year).",
       "model"
@@ -1656,7 +1648,7 @@
     [
       "model",
       "version",
-      55.0,
+      56.0,
       null,
       "Contains database version information.",
       "model"
@@ -1679,7 +1671,7 @@
     ],
     [
       "node",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
@@ -1687,7 +1679,7 @@
     ],
     [
       "node",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
@@ -1695,7 +1687,7 @@
     ],
     [
       "node",
-      "constraint_state_coefficient",
+      "constraint_state_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined constraints. [state x coefficient] will be on the left side of the equation.",
@@ -2351,7 +2343,7 @@
     ],
     [
       "unit",
-      "constraint_cumulative_pre_built_capacity_coefficient",
+      "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
@@ -2359,7 +2351,7 @@
     ],
     [
       "unit",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
@@ -2599,7 +2591,7 @@
     ],
     [
       "unit__inputNode",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
@@ -2695,7 +2687,7 @@
     ],
     [
       "unit__outputNode",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       null,
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-defined constraints. [flow x coefficient] will be on the left side of the equation.",
@@ -2845,7 +2837,7 @@
     ],
     [
       "connection",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       "map",
       1
     ],
@@ -3079,7 +3071,7 @@
     ],
     [
       "connection__node",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       "map",
       1
     ],
@@ -3397,12 +3389,6 @@
     ],
     [
       "model",
-      "debug",
-      "str",
-      0
-    ],
-    [
-      "model",
       "exclude_entity_outputs",
       "str",
       0
@@ -3523,13 +3509,13 @@
     ],
     [
       "node",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       "map",
       1
     ],
     [
       "node",
-      "constraint_state_coefficient",
+      "constraint_state_coeff",
       "map",
       1
     ],
@@ -4165,7 +4151,7 @@
     ],
     [
       "unit",
-      "constraint_invested_capacity_coefficient",
+      "constraint_invested_capacity_coeff",
       "map",
       1
     ],
@@ -4423,7 +4409,7 @@
     ],
     [
       "unit__inputNode",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       "map",
       1
     ],
@@ -4495,7 +4481,7 @@
     ],
     [
       "unit__outputNode",
-      "constraint_flow_coefficient",
+      "constraint_flow_coeff",
       "map",
       1
     ],

@@ -52,23 +52,23 @@ unpack_map_params:
   unit_node_constraint:
     source_classes: ["unit__inputNode", "unit__outputNode"]
     direction_column: "input_output"
-    params: ["constraint_flow_coefficient"]
+    params: ["constraint_flow_coeff"]
     index_column: "constraint"
   connection_node_constraint:
     source_classes: ["connection__node"]
-    params: ["constraint_flow_coefficient"]
+    params: ["constraint_flow_coeff"]
     index_column: "constraint"
   node_constraint:
     source_classes: ["node"]
-    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient", "constraint_state_coefficient"]
+    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff", "constraint_state_coeff"]
     index_column: "constraint"
   unit_constraint:
     source_classes: ["unit"]
-    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient"]
+    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff"]
     index_column: "constraint"
   connection_constraint:
     source_classes: ["connection"]
-    params: ["constraint_invested_capacity_coefficient", "constraint_cumulative_pre_built_capacity_coefficient"]
+    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff"]
     index_column: "constraint"
 
 # Add columns from a related multi-dim entity class to a sheet.
@@ -299,9 +299,9 @@ data_type_overrides:
 # usable on both _p and _t sheets.
 period_only_params:
   node:
-    - constraint_invested_capacity_coefficient
-    - constraint_cumulative_pre_built_capacity_coefficient
-    - constraint_state_coefficient
+    - constraint_invested_capacity_coeff
+    - constraint_cumulative_pre_built_capacity_coeff
+    - constraint_state_coeff
     - annual_flow
     - cumulative_max_capacity
     - cumulative_min_capacity
@@ -323,8 +323,8 @@ period_only_params:
     - storage_state_reference_price
     - storage_state_reference_value
   unit:
-    - constraint_invested_capacity_coefficient
-    - constraint_cumulative_pre_built_capacity_coefficient
+    - constraint_invested_capacity_coeff
+    - constraint_cumulative_pre_built_capacity_coeff
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing
@@ -338,8 +338,8 @@ period_only_params:
     - retire_min_period
     - salvage_value
   connection:
-    - constraint_invested_capacity_coefficient
-    - constraint_cumulative_pre_built_capacity_coefficient
+    - constraint_invested_capacity_coeff
+    - constraint_cumulative_pre_built_capacity_coeff
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing
@@ -368,8 +368,8 @@ period_only_params:
   solve:
     - years_represented
   unit__inputNode:
-    - constraint_flow_coefficient
+    - constraint_flow_coeff
   unit__outputNode:
-    - constraint_flow_coefficient
+    - constraint_flow_coeff
   connection__node:
-    - constraint_flow_coefficient
+    - constraint_flow_coeff

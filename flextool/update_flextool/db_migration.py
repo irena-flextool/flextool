@@ -1302,6 +1302,18 @@ def migrate_database(database_path, up_to: int | None = None):
                 # patched here; ``medium`` / ``surface`` rows are left
                 # for user review.
                 _migrate_v56_fix_wrong_defaults(db)
+                # Shorten the ``_coefficient`` suffix on the four user-
+                # constraint coefficient parameters to ``_coeff`` across
+                # every entity class that declares them
+                # (connection / connection__node / node / unit /
+                # unit__inputNode / unit__outputNode).  Pure name change
+                # — descriptions, default values, value-list bindings
+                # and engine semantics are untouched.  The schema
+                # template JSON is updated in the same commit so a
+                # fresh v55 init lands on the shortened names; the
+                # engine, input_derivation, autoscale and export
+                # modules are renamed in lock-step.
+                _migrate_v56_rename_constraint_coefficient_to_coeff(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3377,14 +3389,34 @@ def _migrate_v56_add_group_cumulative_capacity_descriptions(db) -> None:
 
 
 def _migrate_v56_fix_wrong_defaults(db) -> None:
-    """Clear ``default_value`` on five ``parameter_definition`` rows
+    """Fix ``default_value`` on seven ``parameter_definition`` rows
     whose schema-declared default disagrees with how the engine actually
     consumes the parameter.
 
-    Audit: ``_audit_reports/v56_default_audit.md``.  Each row below was
-    classified ``high`` (engine clearly treats the default as
-    "feature disabled / use sentinel"); ``medium`` / ``surface`` rows in
-    the audit are deliberately untouched and left for user review.
+    Audit: ``_audit_reports/v56_default_audit.md``.  Five of the rows
+    (the ``rows_to_clear`` tuple below) were classified ``high`` and are
+    cleared to ``(None, None)`` because the engine reads them via
+    ``parameter_explicit`` (schema default silently dropped) or because
+    the current default is a corrupt artefact.  The remaining two rows
+    were originally classified ``medium`` and have since been resolved
+    by user approval (see audit "high-confidence (resolved)" section):
+
+    * ``model.inflation_offset_investment`` — current default ``1.0``,
+      patched to ``0.0`` to match the engine fallback in
+      :func:`flextool.engine_polars._derived_npv._inflation_scalars`
+      (line 355) and the symmetric fallback in ``_emit_period_calc.py``
+      (line 295).
+
+    * ``commodity.unitsize`` — current default ``1.0``, patched to
+      ``None``.  The engine reads via
+      :func:`flextool.engine_polars._direct_params.p_commodity_unitsize_from_source`
+      (``_entity_scalar_explicit``) so the schema default is dropped;
+      the price-ladder consumer in
+      :func:`flextool.engine_polars._commodity_ladder._commodity_unitsize_param`
+      substitutes ``1.0`` internally when the explicit Param is absent.
+      The description is rewritten to name the gating feature
+      (``commodity.price_method = price_ladder_*``) and explain the
+      absent → identity behaviour.
 
     * ``reserve__upDown__connection__node.large_failure_ratio`` and
       ``reserve__upDown__unit__node.large_failure_ratio`` — currently
@@ -3441,13 +3473,156 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
             default_value=None,
             default_type=None,
         )
+
+    # model.inflation_offset_investment — engine fallback is 0.0, not
+    # the schema's 1.0.  Use to_database() per CONTRIBUTING.md to
+    # encode the float default safely.
+    inflation_default_value, inflation_default_type = to_database(0.0)
+    db.update_item(
+        "parameter_definition",
+        entity_class_name="model",
+        name="inflation_offset_investment",
+        default_value=inflation_default_value,
+        default_type=inflation_default_type,
+    )
+
+    # commodity.unitsize — clear the silently-dropped 1.0 default and
+    # rewrite the description to name the price-ladder gate
+    # (commodity.price_method = price_ladder_annual /
+    # price_ladder_cumulative) and the absent → identity semantics.
+    commodity_unitsize_description = (
+        "Per-commodity scaling coefficient applied to the v_trade tier "
+        "variable when the commodity uses the price-ladder feature "
+        "(gated by commodity.price_method = price_ladder_annual or "
+        "price_ladder_cumulative).  When set, v_trade is expressed in "
+        "user-MWh divided by this value; pick the unitsize so the "
+        "largest tier quantity sits at O(10) in the scaled LP.  The "
+        "coefficient multiplies v_trade in the commodity_ladder_balance "
+        "LHS, the per-tier cap LHS, and the per-tier objective term.  "
+        "When absent (the default), the price-ladder consumer "
+        "substitutes 1.0 internally so v_trade is in user-MWh "
+        "(identity scaling).  Ignored entirely when "
+        "commodity.price_method is not a price_ladder_* value."
+    )
+    db.update_item(
+        "parameter_definition",
+        entity_class_name="commodity",
+        name="unitsize",
+        default_value=None,
+        default_type=None,
+        description=commodity_unitsize_description,
+    )
+
     _commit_step(
         db,
         "v56 wrong-default cleanup: cleared default_value/default_type on "
         "reserve__upDown__{connection,unit}__node.large_failure_ratio, "
         "reserve__upDown__group.penalty_reserve, "
-        "reserve__upDown__connection__node.max_share, and "
-        "node.storage_state_start.  See _audit_reports/v56_default_audit.md.",
+        "reserve__upDown__connection__node.max_share, "
+        "node.storage_state_start, and commodity.unitsize (the latter "
+        "also gets a rewritten description naming the price-ladder "
+        "gate); set model.inflation_offset_investment default to 0.0 "
+        "to match the engine fallback.  See "
+        "_audit_reports/v56_default_audit.md.",
+    )
+
+
+def _migrate_v56_rename_constraint_coefficient_to_coeff(db) -> None:
+    """Rename the four user-constraint ``*_coefficient`` parameters to
+    ``*_coeff`` on every entity class that declares them.
+
+    The four parameters and their per-class footprint match the
+    schema-template snapshot under
+    ``flextool/schemas/spinedb_schema.json``:
+
+    * ``constraint_flow_coefficient`` →
+      ``constraint_flow_coeff`` on
+      ``connection__node`` / ``unit__inputNode`` / ``unit__outputNode``.
+    * ``constraint_cumulative_pre_built_capacity_coefficient`` →
+      ``constraint_cumulative_pre_built_capacity_coeff`` on
+      ``connection`` / ``node`` / ``unit``.
+    * ``constraint_invested_capacity_coefficient`` →
+      ``constraint_invested_capacity_coeff`` on
+      ``connection`` / ``node`` / ``unit``.
+    * ``constraint_state_coefficient`` →
+      ``constraint_state_coeff`` on ``node``.
+
+    Pure name change: every other column on the
+    ``parameter_definition`` row (description, default value,
+    parameter_value_list, parameter_group, valid types) is preserved
+    by passing ``description`` through unchanged.  Existing
+    ``parameter_value`` rows that reference the old name follow the
+    rename automatically because spinedb_api tracks the link by id,
+    not by name.
+
+    The engine_polars frame attributes, autoscale quantity-type
+    table, input_derivation cl_pars specs, export_to_tabular
+    settings, and the docs are renamed in the same commit so the
+    pipeline stays internally consistent.
+    """
+    renames: tuple[tuple[str, str, str], ...] = (
+        ("connection",       "constraint_cumulative_pre_built_capacity_coefficient",
+                             "constraint_cumulative_pre_built_capacity_coeff"),
+        ("connection",       "constraint_invested_capacity_coefficient",
+                             "constraint_invested_capacity_coeff"),
+        ("connection__node", "constraint_flow_coefficient",
+                             "constraint_flow_coeff"),
+        ("node",             "constraint_cumulative_pre_built_capacity_coefficient",
+                             "constraint_cumulative_pre_built_capacity_coeff"),
+        ("node",             "constraint_invested_capacity_coefficient",
+                             "constraint_invested_capacity_coeff"),
+        ("node",             "constraint_state_coefficient",
+                             "constraint_state_coeff"),
+        ("unit",             "constraint_cumulative_pre_built_capacity_coefficient",
+                             "constraint_cumulative_pre_built_capacity_coeff"),
+        ("unit",             "constraint_invested_capacity_coefficient",
+                             "constraint_invested_capacity_coeff"),
+        ("unit__inputNode",  "constraint_flow_coefficient",
+                             "constraint_flow_coeff"),
+        ("unit__outputNode", "constraint_flow_coefficient",
+                             "constraint_flow_coeff"),
+    )
+    parameter_definitions = db.mapped_table("parameter_definition")
+    for cls, old_name, new_name in renames:
+        # ``db.item()`` raises ``SpineDBAPIError`` (not None) when the
+        # row doesn't exist; that's the steady-state once the schema
+        # template JSON has been re-synced to the renamed names and a
+        # fresh DB is bootstrapped from it.  Treat "row already renamed"
+        # as idempotent — the helper must be safe to re-run.
+        try:
+            param = db.item(parameter_definitions,
+                            entity_class_name=cls, name=old_name)
+        except SpineDBAPIError:
+            param = None
+        if param:
+            db.update_parameter_definition(
+                id=param["id"],
+                name=new_name,
+                description=param.get("description"),
+            )
+    _commit_step(
+        db,
+        "v56 rename constraint_*_coefficient → constraint_*_coeff: "
+        "connection.constraint_cumulative_pre_built_capacity_coefficient → "
+        "constraint_cumulative_pre_built_capacity_coeff; "
+        "connection.constraint_invested_capacity_coefficient → "
+        "constraint_invested_capacity_coeff; "
+        "connection__node.constraint_flow_coefficient → "
+        "constraint_flow_coeff; "
+        "node.constraint_cumulative_pre_built_capacity_coefficient → "
+        "constraint_cumulative_pre_built_capacity_coeff; "
+        "node.constraint_invested_capacity_coefficient → "
+        "constraint_invested_capacity_coeff; "
+        "node.constraint_state_coefficient → "
+        "constraint_state_coeff; "
+        "unit.constraint_cumulative_pre_built_capacity_coefficient → "
+        "constraint_cumulative_pre_built_capacity_coeff; "
+        "unit.constraint_invested_capacity_coefficient → "
+        "constraint_invested_capacity_coeff; "
+        "unit__inputNode.constraint_flow_coefficient → "
+        "constraint_flow_coeff; "
+        "unit__outputNode.constraint_flow_coefficient → "
+        "constraint_flow_coeff.",
     )
 
 

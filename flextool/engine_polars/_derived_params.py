@@ -2216,7 +2216,7 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
 
     Algorithm (audit §3.5.1, input.py:1005-1019):
       1. Pull unit__inputNode / unit__outputNode /
-         connection__node.constraint_flow_coefficient.  Each row carries
+         connection__node.constraint_flow_coeff.  Each row carries
          ``(process, node, constraint, coef)``.
       2. Inner-join with pss on (p, n=source) → source-leg rows.
       3. Inner-join with pss on (p, n=sink) → sink-leg rows.
@@ -2233,11 +2233,11 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
     parts: list[pl.LazyFrame] = []
     for entity_class in ("unit__inputNode", "unit__outputNode",
                           "connection__node"):
-        df = _try_param(source, entity_class, "constraint_flow_coefficient")
+        df = _try_param(source, entity_class, "constraint_flow_coeff")
         if df is None:
             continue
         # Schema: <process_col>, <node_col>, <constraint_index_col>, value.
-        # constraint_flow_coefficient is a 1d_map[constraint] → coef.
+        # constraint_flow_coeff is a 1d_map[constraint] → coef.
         cols = df.columns
         # Disambiguate process / node columns by entity_class layout.
         p_col = ("unit" if entity_class.startswith("unit")
@@ -3044,15 +3044,15 @@ def _entity_invest_filter(source: "InputSource",
 
 def _has_capacity_constraint_invest_set(source: "InputSource"
                                           ) -> pl.LazyFrame:
-    """Set of entities with any ``constraint_invested_capacity_coefficient``
-    or ``constraint_pre_built_capacity_coefficient`` row.  Mirrors
+    """Set of entities with any ``constraint_invested_capacity_coeff``
+    or ``constraint_pre_built_capacity_coeff`` row.  Mirrors
     flextool's ``_has_capacity_constraint_invest`` predicate
     (``invest_divest_sets.py:172-174``).  Returns a lazy frame ``[e]``.
     """
     parts: list[pl.LazyFrame] = []
     for ec in ("unit", "node", "connection"):
-        for pname in ("constraint_invested_capacity_coefficient",
-                       "constraint_pre_built_capacity_coefficient"):
+        for pname in ("constraint_invested_capacity_coeff",
+                       "constraint_pre_built_capacity_coeff"):
             df = _try_param(source, ec, pname)
             if df is None:
                 continue

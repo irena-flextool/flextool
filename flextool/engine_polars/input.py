@@ -491,11 +491,11 @@ class FlexData:
     cdt_eq: pl.DataFrame | None = None  # (cn, d, t)
     cdt_le: pl.DataFrame | None = None  # (cn, d, t)
     cdt_ge: pl.DataFrame | None = None  # (cn, d, t)
-    p_node_constraint_invested_capacity_coefficient: Param | None = None  # (n, cn)
-    p_process_constraint_invested_capacity_coefficient: Param | None = None  # (p, cn)
-    p_node_constraint_state_coefficient: Param | None = None  # (n, cn) — user-cstr v_state coefficient
-    p_node_constraint_prebuilt_capacity_coefficient: Param | None = None  # (n, cn)
-    p_process_constraint_prebuilt_capacity_coefficient: Param | None = None  # (p, cn)
+    p_node_constraint_invested_capacity_coeff: Param | None = None  # (n, cn)
+    p_process_constraint_invested_capacity_coeff: Param | None = None  # (p, cn)
+    p_node_constraint_state_coeff: Param | None = None  # (n, cn) — user-cstr v_state coefficient
+    p_node_constraint_prebuilt_capacity_coeff: Param | None = None  # (n, cn)
+    p_process_constraint_prebuilt_capacity_coeff: Param | None = None  # (p, cn)
 
     # ─── Profiles ─────────────────────────────────────────────────────────
     process_profile_upper: pl.DataFrame | None = None    # (p, source, sink, f)
@@ -1648,10 +1648,10 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     n_prebuilt_cstr_coef, p_prebuilt_cstr_coef, has_user_cstr.
 
     The ``*_inv_cstr_coef`` Params carry
-    ``p_<entity>_constraint_invested_capacity_coefficient`` data;
-    ``n_state_cstr_coef`` carries ``p_node_constraint_state_coefficient``
+    ``p_<entity>_constraint_invested_capacity_coeff`` data;
+    ``n_state_cstr_coef`` carries ``p_node_constraint_state_coeff``
     (user-cstr v_state contribution); the ``*_prebuilt_cstr_coef`` Params
-    carry ``p_<entity>_constraint_prebuilt_capacity_coefficient``
+    carry ``p_<entity>_constraint_prebuilt_capacity_coeff``
     (existing + prior-period invest)."""
     if pss is None: return [None]*12
     cs_path = inp / "constraint__sense.csv"
@@ -1659,7 +1659,7 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
         return [None]*12
     cs = _provider_read(provider, "input/constraint__sense", cs_path).pipe(rename_to_axis, {"constraint":"cn"})
     if cs.height == 0: return [None]*12
-    coef_path = inp / "p_process_node_constraint_flow_coefficient.csv"
+    coef_path = inp / "p_process_node_constraint_flow_coeff.csv"
     flow_cstr_idx = None
     # Δ.12-drop: ``p_flow_constraint_coef`` produced authoritatively by
     # ``apply_derived_b.p_flow_constraint_coef_from_source`` when pss is
@@ -1671,14 +1671,14 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
     # ``schemas/flextool_axis_contract.json``.
     flow_cstr_coef = None
     if _provider_has(provider,
-                      "input/p_process_node_constraint_flow_coefficient",
+                      "input/p_process_node_constraint_flow_coeff",
                       coef_path):
         coef_long = (_provider_read(
                 provider,
-                "input/p_process_node_constraint_flow_coefficient",
+                "input/p_process_node_constraint_flow_coeff",
                 coef_path)
             .pipe(rename_to_axis, {"process":"p","node":"n","constraint":"cn",
-                     "p_process_node_constraint_flow_coefficient":"coef"})
+                     "p_process_node_constraint_flow_coeff":"coef"})
             .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
             .select("p","n","cn","coef"))
         # Cross-axis join: pss carries ``source``/``sink`` (e-axis) joined
@@ -1703,11 +1703,11 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
                         .group_by(["p","source","sink","cn"])
                         .agg(pl.col("coef").sum()))
             flow_cstr_idx  = joined.select("p","source","sink","cn")
-    # Δ.12-drop: ``p_node_constraint_invested_capacity_coefficient`` /
-    # ``p_process_constraint_invested_capacity_coefficient`` /
-    # ``p_node_constraint_state_coefficient`` /
-    # ``p_node_constraint_prebuilt_capacity_coefficient`` /
-    # ``p_process_constraint_prebuilt_capacity_coefficient`` and
+    # Δ.12-drop: ``p_node_constraint_invested_capacity_coeff`` /
+    # ``p_process_constraint_invested_capacity_coeff`` /
+    # ``p_node_constraint_state_coeff`` /
+    # ``p_node_constraint_prebuilt_capacity_coeff`` /
+    # ``p_process_constraint_prebuilt_capacity_coeff`` and
     # ``p_constraint_constant`` produced authoritatively by
     # ``apply_direct_params``.  Seeds dropped.
     n_inv_cstr_coef = None
@@ -4343,11 +4343,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
             cdt_eq = cdt_eq,
             cdt_le = cdt_le,
             cdt_ge = cdt_ge,
-            p_node_constraint_invested_capacity_coefficient = n_inv_coef,
-            p_process_constraint_invested_capacity_coefficient = p_inv_coef,
-            p_node_constraint_state_coefficient = n_state_coef,
-            p_node_constraint_prebuilt_capacity_coefficient = n_prebuilt_coef,
-            p_process_constraint_prebuilt_capacity_coefficient = p_prebuilt_coef,
+            p_node_constraint_invested_capacity_coeff = n_inv_coef,
+            p_process_constraint_invested_capacity_coeff = p_inv_coef,
+            p_node_constraint_state_coeff = n_state_coef,
+            p_node_constraint_prebuilt_capacity_coeff = n_prebuilt_coef,
+            p_process_constraint_prebuilt_capacity_coeff = p_prebuilt_coef,
 
             process_profile_upper = p_up,
             process_profile_lower = p_lo,

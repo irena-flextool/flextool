@@ -272,11 +272,11 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     "p_profile_value",
     # User constraints.
     "p_flow_constraint_coef", "p_constraint_constant",
-    "p_node_constraint_invested_capacity_coefficient",
-    "p_process_constraint_invested_capacity_coefficient",
-    "p_node_constraint_state_coefficient",
-    "p_node_constraint_prebuilt_capacity_coefficient",
-    "p_process_constraint_prebuilt_capacity_coefficient",
+    "p_node_constraint_invested_capacity_coeff",
+    "p_process_constraint_invested_capacity_coeff",
+    "p_node_constraint_state_coeff",
+    "p_node_constraint_prebuilt_capacity_coeff",
+    "p_process_constraint_prebuilt_capacity_coeff",
     # Variable cost partitions.
     "p_pssdt_varCost", "p_pdt_varCost_source",
     "p_pdt_varCost_sink", "p_pdt_varCost_process",
@@ -477,15 +477,15 @@ _WARM_PARAM_GATES: dict[str, tuple[str, ...]] = {
     # User constraints.
     "p_flow_constraint_coef":         ("flow_constraint_idx",),
     "p_constraint_constant":          ("cdt_eq", "cdt_le", "cdt_ge"),
-    "p_node_constraint_invested_capacity_coefficient":
+    "p_node_constraint_invested_capacity_coeff":
         ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-    "p_process_constraint_invested_capacity_coefficient":
+    "p_process_constraint_invested_capacity_coeff":
         ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-    "p_node_constraint_state_coefficient":
+    "p_node_constraint_state_coeff":
         ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-    "p_node_constraint_prebuilt_capacity_coefficient":
+    "p_node_constraint_prebuilt_capacity_coeff":
         ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-    "p_process_constraint_prebuilt_capacity_coefficient":
+    "p_process_constraint_prebuilt_capacity_coeff":
         ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
 }
 

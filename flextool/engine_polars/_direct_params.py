@@ -1819,18 +1819,18 @@ def apply_direct_params_a(source: "InputSource",
     flex_data.p_constraint_constant = p_constraint_constant_from_source(source)
 
     # ─── §5.2.3 relationship 1d_map (constraint coefficients) ───────────
-    flex_data.p_node_constraint_invested_capacity_coefficient = (
-        _node_constraint_coef(source, "constraint_invested_capacity_coefficient"))
-    flex_data.p_process_constraint_invested_capacity_coefficient = (
-        _process_constraint_coef(source, "constraint_invested_capacity_coefficient"))
-    flex_data.p_node_constraint_state_coefficient = (
-        _node_constraint_coef(source, "constraint_state_coefficient"))
-    flex_data.p_node_constraint_prebuilt_capacity_coefficient = (
+    flex_data.p_node_constraint_invested_capacity_coeff = (
+        _node_constraint_coef(source, "constraint_invested_capacity_coeff"))
+    flex_data.p_process_constraint_invested_capacity_coeff = (
+        _process_constraint_coef(source, "constraint_invested_capacity_coeff"))
+    flex_data.p_node_constraint_state_coeff = (
+        _node_constraint_coef(source, "constraint_state_coeff"))
+    flex_data.p_node_constraint_prebuilt_capacity_coeff = (
         _node_constraint_coef(source,
-                              "constraint_cumulative_pre_built_capacity_coefficient"))
-    flex_data.p_process_constraint_prebuilt_capacity_coefficient = (
+                              "constraint_cumulative_pre_built_capacity_coeff"))
+    flex_data.p_process_constraint_prebuilt_capacity_coeff = (
         _process_constraint_coef(source,
-                                 "constraint_cumulative_pre_built_capacity_coefficient"))
+                                 "constraint_cumulative_pre_built_capacity_coeff"))
 
     # ─── §5.2.1 invest/divest total caps (entity-unioned) ───────────────
     # Max variants: keyed on entityInvest (resp. entityDivest), one row

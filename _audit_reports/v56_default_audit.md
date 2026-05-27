@@ -40,12 +40,17 @@ Column key
 | `reserve__upDown__connection__node` | `max_share` | `0.0` | `None` | Engine reads via `parameter_explicit` in `_process_reserve_node_param` (`_direct_params.py:1487`) — schema default is dropped.  Sister row on `reserve__upDown__unit__node` already uses `null, null` (schema inconsistency).  No LP impact today because the default of 0 happens to be the no-op value, but the schema contract is wrong. | **high** |
 | `node` | `storage_state_start` | `0.0` | `None` | Engine reads via `_entity_scalar_explicit` (`_direct_params.py:469`) — explicit rows only.  Docstring already declares the schema contract as "Default ``None`` (schema)." (line 467), but the actual schema row carries `0.0`.  If the schema default were actually honoured (via `parameter`), every storage node would be forced to start at state 0 under the `fix_start` method (which is itself the schema default for `storage_start_end_method`) — a major silent LP perturbation.  Aligning the schema to None matches what the engine already does and what the engine doc already promises. | **high** |
 
-## Medium-confidence rows — left for user review
+## High-confidence (resolved) — promoted from medium with user approval
 
-| Class | Parameter | Current default | Proposed default | Rationale | Confidence |
+These two rows were originally classified ``medium`` and have since been
+promoted to ``high`` with explicit user approval; both are patched by
+``_migrate_v56_fix_wrong_defaults`` in the same v56 commit as the five
+rows above.
+
+| Class | Parameter | Current default | Applied fix | Rationale | Confidence |
 |---|---|---|---|---|---|
-| `model` | `inflation_offset_investment` | `1.0` | `0.0` (engine fallback) **or** `None` | Engine fallback in `_derived_npv.py:355` and `_emit_period_calc.py:295` uses `0.0`, not `1.0`.  Engine has a "collapse trick" (`_derived_npv.py:337-347`) that detects "all rows equal the spine default" and substitutes the engine default — so the schema default is silently overridden whenever the user accepts it.  Either drop to `None` (cleanest) or change to `0.0` to match the engine.  Not bundled here because it would change observable output on every fixture that currently inherits the schema default. | **medium** |
-| `commodity` | `unitsize` | `1.0` | `None` | Engine reads via `_entity_scalar_explicit` (`_direct_params.py:501`) — explicit rows only.  Schema default 1.0 ignored.  The parameter is only consulted when the commodity uses the price-ladder feature; without an explicit row that feature breaks.  Engine docstring at `_direct_params.py:497` declares the schema default as 1.0 — so the engine "remembers" the schema default for documentation but doesn't materialise it.  Leaving 1.0 is defensible (= identity scaling), so this is medium not high. | **medium** |
+| `model` | `inflation_offset_investment` | `1.0` | `0.0` (set via `to_database(0.0)`) | Engine fallback in `_derived_npv.py:355` and `_emit_period_calc.py:295` uses `0.0`, not `1.0`.  Engine has a "collapse trick" (`_derived_npv.py:337-347`) that detects "all rows equal the spine default" and substitutes the engine default — so the schema default of 1.0 was silently overridden whenever the user accepted it.  Patched to `0.0` to make the schema default match the engine fallback verbatim. | **high (resolved)** |
+| `commodity` | `unitsize` | `1.0` | `None` + rewritten description | Engine reads via `_entity_scalar_explicit` (`_direct_params.py:501`) — explicit rows only; schema default 1.0 ignored.  Only consulted when the commodity uses the price-ladder feature (gated by `commodity.price_method = price_ladder_annual` or `price_ladder_cumulative`).  Inside the gate, `_commodity_unitsize_param` in `_commodity_ladder.py` substitutes `1.0` per commodity when the explicit Param is absent — so absent → identity, explicit-and-non-1.0 → real LP scaling on `v_trade` (balance LHS, per-tier cap LHS, objective term).  Description rewritten to name the feature, the price_method gate, and the absent → identity semantics. | **high (resolved)** |
 
 ## Surface / out-of-scope
 

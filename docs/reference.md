@@ -166,9 +166,9 @@ Input data is set with the following parameters:
 - `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
 - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
 - `invest_forced` - Used by the investment planner to force a specific investment volume in a given period (overrides `invest_max_period` / `invest_min_period` for that entry).
-- `constraint_state_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the storage state variable on the left side of a user-defined `constraint`.
-- `constraint_invested_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build storage capacity `v_invest[node, d]` on the left side of a user-defined `constraint`. Not multiplied by unitsize.
-- `constraint_cumulative_pre_built_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built storage capacity at period d on the left side of a user-defined `constraint`. Not multiplied by unitsize.
+- `constraint_state_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the storage state variable on the left side of a user-defined `constraint`.
+- `constraint_invested_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build storage capacity `v_invest[node, d]` on the left side of a user-defined `constraint`. Not multiplied by unitsize.
+- `constraint_cumulative_pre_built_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built storage capacity at period d on the left side of a user-defined `constraint`. Not multiplied by unitsize.
 
 
 ### Using nodes as storages
@@ -272,8 +272,8 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 - `cumulative_min_capacity` - [MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `fixed_cost` - [CUR/kW] Annual fixed cost for capacity. Constant or period. 
 - `delay` - [hours] A time delay between the input nodes and the output nodes of the unit. Either a constant or a period value. Used when modelling process delays (e.g. heat-storage charge cycles or production lag).
-- `constraint_invested_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing this unit's current-period new-build capacity `v_invest[unit, d]` on the left side of a user-defined `constraint`. Not multiplied by unitsize.
-- `constraint_cumulative_pre_built_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built capacity at period d (baseline plus investments in periods strictly before d, retirements ignored) on the left side of a user-defined `constraint`. Not multiplied by unitsize.
+- `constraint_invested_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing this unit's current-period new-build capacity `v_invest[unit, d]` on the left side of a user-defined `constraint`. Not multiplied by unitsize.
+- `constraint_cumulative_pre_built_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built capacity at period d (baseline plus investments in periods strictly before d, retirements ignored) on the left side of a user-defined `constraint`. Not multiplied by unitsize.
 - `virtual_unitsize` - [MW] Size of a single unit — used for integer investments (lumped investments) and, in conjunction with `startup_method = binary`, for unit commitment granularity.  **Set this to the actual physical sub-unit size** (e.g. the size of one boiler, turbine, string or module inside the modeled entity).  If not given, the value of `existing` is used, which means every commitment decision moves the full plant — correct only when the modeled entity is inherently a single indivisible unit.
     - FlexTool represents unit commitment with a single general-integer variable per process per timestep, counting how many sub-units are online.  Its upper bound is `capacity / unit_size_for_commitment`, where `unit_size_for_commitment` is `virtual_unitsize` if set, otherwise the physical `existing` capacity.  So a plant with `existing = 1000` MW and `virtual_unitsize = 200` MW is literally the same MIP as a plant with `existing = 1000` MW built from five physical 200 MW units (commitment variable ∈ [0, 5]).
     - **`virtual_unitsize` is not a free tuning knob.**  Picking a value smaller than the real sub-unit size (e.g. 50 MW for a plant whose boilers are actually 200 MW) lets the solver commit fractions that don't physically exist, mis-representing minimum load, startup fuel use and minimum-uptime/downtime behavior.  Pick the value that reflects reality.  If reality genuinely is a single 1 GW boiler, accept the slower MIP or use `startup_method = linear`; see [How to make the Flextool run faster](./how_to.md) for the trade-offs.
@@ -327,7 +327,7 @@ Note that in the case of unit--outputNode the `flow_coefficient` affects *after*
 - `ramp_cost` - [CUR/MW] Cost of ramping the unit. Constant.
 - `ramp_speed_up` - [per unit / minute] Maximum ramp up speed. Constant.
 - `ramp_speed_down` - [per unit / minute] Maximum ramp down speed. Constant.
-- `constraint_flow_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing this flow variable on the left side of a user-defined `constraint`. Applied per timestep to the directional flow between the unit and the node.
+- `constraint_flow_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing this flow variable on the left side of a user-defined `constraint`. Applied per timestep to the directional flow between the unit and the node.
 
 ### Units constrained by profiles
 
@@ -355,8 +355,8 @@ Connections can transfer energy between two nodes. Parameters for the connection
 - `delay` - [hours] A time delay between the input node and the output node of the connection. Works only with `transfer_method = no_losses_no_variable_cost`.
 - `startup_cost` - [CUR/MW] Cost of starting up one MW of virtual capacity (used when `startup_method` activates online variables on the connection).
 - `reactance` - [p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the enclosing `group__node` has `transfer_method = dc_power_flow_with_angles`.
-- `constraint_invested_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build capacity `v_invest[e, d]` on the left side of the user-defined constraint. Not multiplied by unitsize. Renamed from `constraint_capacity_coefficient`; the old expression summed `v_invest` once per active investment period, giving incorrect results in multi-period models — this one emits just `v_invest[e, d]`.
-- `constraint_cumulative_pre_built_capacity_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built capacity at period d — data baseline plus every `v_invest` made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits (pair with `constraint_invested_capacity_coefficient` on the same constraint). Not multiplied by unitsize.
+- `constraint_invested_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build capacity `v_invest[e, d]` on the left side of the user-defined constraint. Not multiplied by unitsize. Renamed from `constraint_capacity_coefficient`; the old expression summed `v_invest` once per active investment period, giving incorrect results in multi-period models — this one emits just `v_invest[e, d]`.
+- `constraint_cumulative_pre_built_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built capacity at period d — data baseline plus every `v_invest` made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits (pair with `constraint_invested_capacity_coeff` on the same constraint). Not multiplied by unitsize.
 - `other_operational_cost` - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period or time.
 - `fixed_cost` - [CUR/kW] Annual fixed cost. Constant or period.
 - `invest_cost` - [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.
@@ -375,7 +375,7 @@ These are the same as for units, see [here](#investment-parameters-for-capacity-
 
 On the membership entity between a `connection` and one of its endpoint `node`s:
 
-- `constraint_flow_coefficient` - A map of coefficients (Index: constraint name, value: coefficient) placing this connection-to-node flow variable on the left side of a user-defined `constraint`. Applied per timestep.
+- `constraint_flow_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing this connection-to-node flow variable on the left side of a user-defined `constraint`. Applied per timestep.
 
 ## Commodities
 
@@ -551,7 +551,7 @@ The groups are organised in three informal tiers — **asset physics** (what the
 
 ### Convention for new parameters
 
-When you add a new parameter definition, also assign it a `parameter_group_name`. Use the table above to pick the group — err on the side of matching *why the user sets the parameter*, not where it is mathematically consumed (e.g. `constraint_state_coefficient` on `node` belongs to `constraint`, because the user writes it to participate in a user-defined constraint, not to configure storage).
+When you add a new parameter definition, also assign it a `parameter_group_name`. Use the table above to pick the group — err on the side of matching *why the user sets the parameter*, not where it is mathematically consumed (e.g. `constraint_state_coeff` on `node` belongs to `constraint`, because the user writes it to participate in a user-defined constraint, not to configure storage).
 
 Both the group definition and the tag are set inside the same db_migration step:
 
@@ -570,7 +570,7 @@ After editing the migration, run `python -m flextool.update_flextool.sync_master
 
 ## Additional entities for further functionality
 
-- `constraint`: a user-defined linear constraint between flow, state, and capacity variables on nodes, units and connections. The left-hand side is assembled by tagging the relevant entities with the matching coefficient parameter (`constraint_flow_coefficient` on `unit__inputNode` / `unit__outputNode` / `connection__node`, `constraint_state_coefficient` on `node`, `constraint_invested_capacity_coefficient` / `constraint_cumulative_pre_built_capacity_coefficient` on `node` / `unit` / `connection`); the constraint entity itself carries:
+- `constraint`: a user-defined linear constraint between flow, state, and capacity variables on nodes, units and connections. The left-hand side is assembled by tagging the relevant entities with the matching coefficient parameter (`constraint_flow_coeff` on `unit__inputNode` / `unit__outputNode` / `connection__node`, `constraint_state_coeff` on `node`, `constraint_invested_capacity_coeff` / `constraint_cumulative_pre_built_capacity_coeff` on `node` / `unit` / `connection`); the constraint entity itself carries:
 
     - `sense` - The sense of the constraint: `greater_than`, `less_than`, or `equal`.
     - `constant` - A constant offset placed on the right-hand side of the constraint (typically zero). Constant or period.

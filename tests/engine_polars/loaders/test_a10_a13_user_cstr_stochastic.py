@@ -3,7 +3,7 @@ A.13 (stochastic-branching loader) tests.
 
 A.10 covers ``flextool.engine_polars.input._load_user_constraints`` —
 the helper that turns ``constraint__sense.csv`` +
-``p_process_node_constraint_flow_coefficient.csv`` into the (cdt_eq,
+``p_process_node_constraint_flow_coeff.csv`` into the (cdt_eq,
 cdt_le, cdt_ge) constraint-axis triple plus the ``flow_cstr_idx``
 index frame.  Tests pin the blank-shortcut gates, the dt-cardinality
 cross join and the source/sink dedup that drives ``flow_cstr_idx``.
@@ -111,8 +111,8 @@ def test_flow_cstr_idx_source_plus_sink_dedup(tmp_path: Path):
     dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
     pss = pl.DataFrame({"p": ["p1"], "source": ["n_x"], "sink": ["n_y"]})
     _write(inp / "constraint__sense.csv", "constraint,sense\nc1,equal\n")
-    _write(inp / "p_process_node_constraint_flow_coefficient.csv",
-           "process,node,constraint,p_process_node_constraint_flow_coefficient\n"
+    _write(inp / "p_process_node_constraint_flow_coeff.csv",
+           "process,node,constraint,p_process_node_constraint_flow_coeff\n"
            "p1,n_x,c1,2.0\n"
            "p1,n_y,c1,3.0\n")
 
@@ -129,7 +129,7 @@ def test_flow_cstr_idx_source_plus_sink_dedup(tmp_path: Path):
 
 
 def test_flow_cstr_idx_via_provider_utf8_coef_column(tmp_path: Path):
-    """Regression: A2 / Rivendell-2 — ``p_process_node_constraint_flow_coefficient``
+    """Regression: A2 / Rivendell-2 — ``p_process_node_constraint_flow_coeff``
     arrives from the Provider with an all-Utf8 schema (the canonical
     ``_rows_to_frame`` output of :class:`SpineDBBackend`).  The loader
     must cast ``coef`` to Float64 before ``group_by(...).agg(coef.sum())``
@@ -153,17 +153,17 @@ def test_flow_cstr_idx_via_provider_utf8_coef_column(tmp_path: Path):
             "process": ["p1", "p1"],
             "node": ["n_x", "n_y"],
             "constraint": ["c1", "c1"],
-            "p_process_node_constraint_flow_coefficient": ["2.0", "3.0"],
+            "p_process_node_constraint_flow_coeff": ["2.0", "3.0"],
         },
         schema={
             "process": pl.Utf8,
             "node": pl.Utf8,
             "constraint": pl.Utf8,
-            "p_process_node_constraint_flow_coefficient": pl.Utf8,
+            "p_process_node_constraint_flow_coeff": pl.Utf8,
         },
     )
     provider = FlexDataProvider()
-    provider.put("input/p_process_node_constraint_flow_coefficient", coef_frame)
+    provider.put("input/p_process_node_constraint_flow_coeff", coef_frame)
 
     out = _load_user_constraints(inp, pss=pss, dt=dt, provider=provider)
     # Hand-calc: with the cast in place, group_by on (p,source,sink,c)
@@ -185,8 +185,8 @@ def test_flow_cstr_idx_none_when_no_match(tmp_path: Path):
     dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
     pss = pl.DataFrame({"p": ["p1"], "source": ["n_src"], "sink": ["n_snk"]})
     _write(inp / "constraint__sense.csv", "constraint,sense\nc1,equal\n")
-    _write(inp / "p_process_node_constraint_flow_coefficient.csv",
-           "process,node,constraint,p_process_node_constraint_flow_coefficient\n"
+    _write(inp / "p_process_node_constraint_flow_coeff.csv",
+           "process,node,constraint,p_process_node_constraint_flow_coeff\n"
            "p1,n_other,c1,2.0\n")
 
     out = _load_user_constraints(inp, pss=pss, dt=dt)

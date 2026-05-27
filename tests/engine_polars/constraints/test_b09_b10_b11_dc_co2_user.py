@@ -21,8 +21,8 @@
 
 * ``test_b11_user_cstr_state_and_prebuilt_coefs`` — covers **B11-3**,
   **B11-4**, **B11-5** in one fixture: storage node with
-  ``p_node_constraint_state_coefficient``, a process with
-  ``p_process_constraint_prebuilt_capacity_coefficient`` (pre-summed
+  ``p_node_constraint_state_coeff``, a process with
+  ``p_process_constraint_prebuilt_capacity_coeff`` (pre-summed
   constant) AND ``edd_invest_lookback_set`` so the cumulative-invest
   variable contribution is exercised on the lookback period.
 
@@ -522,14 +522,14 @@ def _add_user_constraint_storage_invest(d: FlexData) -> FlexData:
     p_constraint_constant = Param(("cn",),
         pl.DataFrame({"cn": ["c1"], "value": [20.0]}))
     # State coef: 1.0 on (s, c1).  Contributes v_state[s,d2,t01] * 3 * 1.
-    p_node_constraint_state_coefficient = Param(("n", "cn"),
+    p_node_constraint_state_coeff = Param(("n", "cn"),
         pl.DataFrame({"n": ["s"], "cn": ["c1"], "value": [1.0]}))
     # Prebuilt process coef: 1.0 on (p, c1).
     # Pre-summed constant = existing_count[p,d2] * unitsize[p] * coef
     #                     = 1 * 2 * 1 = 2  → adds to LHS.
     # Cumulative invest contribution = v_invest_p[p, d_invest=d1] * unitsize * 1
     #                                = v_invest_p[p, d1] * 2.
-    p_process_constraint_prebuilt_capacity_coefficient = Param(("p", "cn"),
+    p_process_constraint_prebuilt_capacity_coeff = Param(("p", "cn"),
         pl.DataFrame({"p": ["p"], "cn": ["c1"], "value": [1.0]}))
 
     return FlexData(
@@ -565,9 +565,9 @@ def _add_user_constraint_storage_invest(d: FlexData) -> FlexData:
         ed_lifetime_fixed_cost=ed_lifetime_fixed_cost,
         cdt_le=cdt_le,
         p_constraint_constant=p_constraint_constant,
-        p_node_constraint_state_coefficient=p_node_constraint_state_coefficient,
-        p_process_constraint_prebuilt_capacity_coefficient=
-            p_process_constraint_prebuilt_capacity_coefficient,
+        p_node_constraint_state_coeff=p_node_constraint_state_coeff,
+        p_process_constraint_prebuilt_capacity_coeff=
+            p_process_constraint_prebuilt_capacity_coeff,
     )
 
 

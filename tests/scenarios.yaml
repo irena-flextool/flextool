@@ -536,7 +536,7 @@
     - summary_solve.csv
   time_budget_seconds: 4.0
 
-# --- constraint_cumulative_pre_built_capacity_coefficient + invested ---
+# --- constraint_cumulative_pre_built_capacity_coeff + invested ---
 # Multi-year wind with a period-over-period growth cap:
 #   v_invest[wind_plant, d] <= 0.1 * pre_built[wind_plant, d]
 # Exercises the new pre-built coefficient together with the fixed
