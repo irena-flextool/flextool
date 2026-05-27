@@ -100,7 +100,7 @@ split_params:
                "inflation_offset_investment", "inflation_offset_operations",
                "max_flow_for_unconstrained_variables",
                "output_horizon",
-               "output_node_balance_t", "output_unit__node_flow_t",
+               "output_unit__node_flow_t",
                "output_unit__node_ramp_t", "output_connection__node__node_flow_t",
                "output_ramp_envelope", "output_connection_flow_separate"]
     model_solve_sequence:

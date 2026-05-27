@@ -3436,17 +3436,6 @@
     ],
     [
       "model",
-      "output_node_balance_t",
-      [
-        null,
-        null
-      ],
-      "optional_output",
-      "Produces detailed inflows and outflows for all the nodes for all timesteps. Mainly useful to diagnose what is wrong with the model.",
-      "output"
-    ],
-    [
-      "model",
       "output_ramp_envelope",
       [
         null,
@@ -5678,12 +5667,6 @@
     [
       "model",
       "output_horizon",
-      "str",
-      0
-    ],
-    [
-      "model",
-      "output_node_balance_t",
       "str",
       0
     ],

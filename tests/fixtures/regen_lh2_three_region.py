@@ -397,8 +397,6 @@ def _build_payload() -> dict[str, list]:
     # ------------------------------------------------------------------
     parameter_values.append(("model", "flexTool", "output_unit__node_flow_t",
                              "yes", ALT))
-    parameter_values.append(("model", "flexTool", "output_node_balance_t",
-                             "yes", ALT))
     parameter_values.append(("model", "flexTool", "output_connection__node__node_flow_t",
                              "yes", ALT))
 

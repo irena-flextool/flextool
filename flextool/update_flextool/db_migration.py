@@ -1380,6 +1380,15 @@ def migrate_database(database_path, up_to: int | None = None):
                 # listing and the v44 parameter_group membership map are
                 # all stripped in the same commit.
                 _migrate_v56_remove_exclude_entity_outputs(db)
+                # Drop ``model.output_node_balance_t``.  Dead toggle:
+                # nothing in ``engine_polars`` reads its row from the
+                # ``optional_outputs.csv`` set, and the ``enable_set``
+                # check in :mod:`flextool.engine_polars._emit_per_solve`
+                # only looks for ``output_horizon``.  Schema row, the
+                # SET_LIKE_NAMES bookkeeping entry, the autoscale
+                # quantity-type table row and the export_settings.yaml
+                # params list entry are stripped in the same commit.
+                _migrate_v56_remove_output_node_balance_t(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3909,6 +3918,29 @@ def _migrate_v56_remove_exclude_entity_outputs(db) -> None:
     ``db.remove_items`` (cascading delete is handled by spinedb_api).
     """
     remove_parameters_manual(db, [["model", "exclude_entity_outputs"]])
+
+
+def _migrate_v56_remove_output_node_balance_t(db) -> None:
+    """Drop the ``model.output_node_balance_t`` parameter from the schema.
+
+    Dead toggle: no module in :mod:`flextool.engine_polars` reads the
+    ``optional_outputs.csv`` row for this flag and no per-flag branch
+    exists in the per-solve emitter
+    (:mod:`flextool.engine_polars._emit_per_solve`).  Only
+    ``output_horizon`` is checked from the ``enable_optional_outputs``
+    set.  The remaining cl_pars entry in
+    :mod:`flextool.input_derivation._specs` (the ``optional_outputs.csv``
+    multi-param emitter) already does NOT include
+    ``output_node_balance_t`` — this helper just clears the schema row,
+    the SET_LIKE_NAMES bookkeeping entry, the autoscale quantity-type
+    table row and the ``export_settings.yaml`` params list entry.
+
+    Side effects: every ``parameter_value`` row referencing
+    ``model.output_node_balance_t`` is dropped alongside the
+    ``parameter_definition`` when ``remove_parameters_manual`` invokes
+    ``db.remove_items`` (cascading delete is handled by spinedb_api).
+    """
+    remove_parameters_manual(db, [["model", "output_node_balance_t"]])
 
 
 if __name__ == '__main__':
