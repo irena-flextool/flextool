@@ -3503,17 +3503,6 @@
     ],
     [
       "model",
-      "output_unit__node_ramp_t",
-      [
-        "Im5vIg==",
-        "str"
-      ],
-      "optional_output",
-      "Produces the ramps of individual units for all timesteps.",
-      "output"
-    ],
-    [
-      "model",
       "periods_available",
       [
         "bnVsbA==",
@@ -5678,12 +5667,6 @@
     [
       "model",
       "output_horizon",
-      "str",
-      0
-    ],
-    [
-      "model",
-      "output_unit__node_ramp_t",
       "str",
       0
     ],

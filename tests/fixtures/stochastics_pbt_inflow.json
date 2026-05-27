@@ -2517,17 +2517,6 @@
     ],
     [
       "model",
-      "output_unit__node_ramp_t",
-      [
-        null,
-        null
-      ],
-      "optional_output",
-      "Produces the ramps of individual units for all timesteps.",
-      "output"
-    ],
-    [
-      "model",
       "periods_available",
       [
         null,
@@ -4761,12 +4750,6 @@
     [
       "model",
       "output_horizon",
-      "str",
-      0
-    ],
-    [
-      "model",
-      "output_unit__node_ramp_t",
       "str",
       0
     ],
