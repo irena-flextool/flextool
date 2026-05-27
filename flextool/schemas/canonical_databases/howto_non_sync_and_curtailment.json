@@ -1804,17 +1804,6 @@
     ],
     [
       "solve",
-      "solver_io_api",
-      [
-        "\"direct\"",
-        "str"
-      ],
-      "solver_io_apis",
-      "How the model is handed to the solver: 'direct' (in-process API, fastest), 'mps' or 'lp' (file fallback for solvers or environments without a direct binding).",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "solver_mip_gap",
       null,
       null,
@@ -3663,12 +3652,6 @@
     ],
     [
       "solve",
-      "solver_io_api",
-      "str",
-      0
-    ],
-    [
-      "solve",
       "solver_mip_gap",
       "float",
       0
@@ -4709,27 +4692,6 @@
       "solve_mode",
       [
         "\"single_solve\"",
-        "str"
-      ]
-    ],
-    [
-      "solver_io_apis",
-      [
-        "\"direct\"",
-        "str"
-      ]
-    ],
-    [
-      "solver_io_apis",
-      [
-        "\"mps\"",
-        "str"
-      ]
-    ],
-    [
-      "solver_io_apis",
-      [
-        "\"lp\"",
         "str"
       ]
     ],

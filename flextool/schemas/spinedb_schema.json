@@ -619,18 +619,6 @@
       "cplex"
     ],
     [
-      "solver_io_apis",
-      "direct"
-    ],
-    [
-      "solver_io_apis",
-      "mps"
-    ],
-    [
-      "solver_io_apis",
-      "lp"
-    ],
-    [
       "solvers",
       "highs"
     ],
@@ -2083,14 +2071,6 @@
       null,
       null,
       "Map of HiGHS solver options (option name -> value), layered on top of the floor values in solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap, solver_precommand).",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "solver_io_api",
-      "direct",
-      "solver_io_apis",
-      "How the model is handed to the solver: 'direct' (in-process API, fastest), 'mps' or 'lp' (file fallback for solvers or environments without a direct binding).",
       "solve_advanced"
     ],
     [
@@ -3838,12 +3818,6 @@
       "solver_arguments",
       "map",
       1
-    ],
-    [
-      "solve",
-      "solver_io_api",
-      "str",
-      0
     ],
     [
       "solve",

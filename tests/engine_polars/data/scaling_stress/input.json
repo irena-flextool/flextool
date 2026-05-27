@@ -2086,27 +2086,6 @@
       ]
     ],
     [
-      "solver_io_apis",
-      [
-        "ImRpcmVjdCI=",
-        "str"
-      ]
-    ],
-    [
-      "solver_io_apis",
-      [
-        "Im1wcyI=",
-        "str"
-      ]
-    ],
-    [
-      "solver_io_apis",
-      [
-        "ImxwIg==",
-        "str"
-      ]
-    ],
-    [
       "solvers",
       [
         "ImhpZ2hzIg==",
@@ -4122,17 +4101,6 @@
     ],
     [
       "solve",
-      "solver_io_api",
-      [
-        "ImRpcmVjdCI=",
-        "str"
-      ],
-      "solver_io_apis",
-      "How the model is handed to the solver: 'direct' (in-process API, fastest), 'mps' or 'lp' (file fallback for solvers or environments without a direct binding).",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "solver_mip_gap",
       [
         "bnVsbA==",
@@ -6029,12 +5997,6 @@
       "solver_arguments",
       "map",
       1
-    ],
-    [
-      "solve",
-      "solver_io_api",
-      "str",
-      0
     ],
     [
       "solve",

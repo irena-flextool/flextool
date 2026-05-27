@@ -333,6 +333,19 @@ def main():
                              'Batch C.8).  Routed through the '
                              'effective-options resolver as a CLI '
                              'override (highest precedence).')
+    parser.add_argument('--solver-io-api',
+                        choices=['direct', 'mps', 'lp'],
+                        default=None,
+                        help='Commercial-solver dispatch transport: '
+                             '``direct`` (in-process binding, fastest; '
+                             'default), ``mps`` or ``lp`` (file '
+                             'fallback for solvers / environments '
+                             'without a direct binding).  Only the '
+                             'commercial-solver path (gurobi / cplex '
+                             '/ xpress / copt) consults this — the '
+                             'HiGHS path is always direct.  Replaces '
+                             'the v55-era DB-stored solver_io_api '
+                             'knob (removed in Batch C.9).')
     parser.add_argument('--csv-dump', action='store_true',
                         default=False,
                         help='Debug visibility for cascade-internal '
@@ -382,6 +395,8 @@ def main():
         # name is a historical artefact from the diagnostic shim that
         # predated the resolver but the semantics are identical.
         os.environ['FLEXTOOL_HIGHS_TIME_LIMIT'] = str(args.solver_time_limit)
+    if args.solver_io_api is not None:
+        os.environ['FLEXTOOL_SOLVER_IO_API'] = args.solver_io_api
     # ``--scaling`` (off/solver_only/basic/full) — CLI > env > default-full.
     # Surfacing via the same ``FLEXTOOL_SCALING`` env var that
     # ``resolve_scaling_config`` already consults keeps the threading

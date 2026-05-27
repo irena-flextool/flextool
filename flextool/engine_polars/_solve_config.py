@@ -385,9 +385,16 @@ class SolveConfig:
         # variable above for the legacy :class:`SolverSettings` dataclass
         # (which downstream callers still consume); we reuse that dict
         # here rather than re-querying.
-        solver_io_api: dict = params_to_dict(
-            db=db, cl="solve", par="solver_io_api", mode=DictMode.DICT
-        )
+        # Batch C.9 — ``solver_io_api`` DB axis removed.  Replaced by
+        # the ``--solver-io-api`` CLI flag, env-var-plumbed via
+        # ``FLEXTOOL_SOLVER_IO_API``.  When the env var is set its
+        # value applies uniformly to every solve in the chain
+        # (commercial-solver path only — the HiGHS path is always
+        # direct).  Unset preserves the SolverConfig.io_api default
+        # of "direct".
+        import os as _os_c9
+        _cli_io_api = _os_c9.environ.get("FLEXTOOL_SOLVER_IO_API")
+        solver_io_api: dict = {}
         # Batch C.7 — ``solver_log_level`` shortcut removed; use the
         # --solver-log-level CLI flag (silent / normal / verbose →
         # HiGHS output_flag + log_dev_level).
@@ -511,11 +518,14 @@ class SolveConfig:
             v = raw.get(key)
             return int(float(v)) if v is not None else None
 
+        # Batch C.9 — the CLI ``--solver-io-api`` env var override (when
+        # set) wins over the per-solve default for every solve.
+        _io_api_default = _cli_io_api if _cli_io_api in ("direct", "mps", "lp") else "direct"
         solver_configs: dict[str, SolverConfig] = {}
         for key in solver_config_keys:
             solver_configs[key] = SolverConfig(
                 name=solvers.get(key, "highs"),
-                io_api=solver_io_api.get(key, "direct"),
+                io_api=solver_io_api.get(key, _io_api_default),
                 options=dict(solver_arguments.get(key, {})),
                 time_limit=_opt_float(solver_time_limit_raw, key),
                 mip_gap=_opt_float(solver_mip_gap_raw, key),

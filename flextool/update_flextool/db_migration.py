@@ -1510,6 +1510,16 @@ def migrate_database(database_path, up_to: int | None = None):
                 # consults — maps to HiGHS ``time_limit`` key); GUI
                 # control deferred to v56 follow-up PR (task #26).
                 _migrate_v56_remove_solver_time_limit(db)
+                # Batch C.9 — drop ``solver_io_api`` parameter.
+                # User-stored value DROPPED.  Use the new
+                # --solver-io-api {direct,mps,lp} CLI flag (plumbed
+                # via FLEXTOOL_SOLVER_IO_API env var into
+                # SolveConfig.load_from_db, overriding the per-solve
+                # SolverConfig.io_api default).  Only the commercial-
+                # solver path consumes this — HiGHS is always direct.
+                # Also removes the dedicated ``solver_io_apis``
+                # parameter_value_list.
+                _migrate_v56_remove_solver_io_api(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4691,6 +4701,37 @@ def _migrate_v56_remove_solver_threads(db) -> None:
     accepts a Python int there but FlexTool no longer authors it.
     """
     remove_parameters_manual(db, [["solve", "solver_threads"]])
+
+
+def _migrate_v56_remove_solver_io_api(db) -> None:
+    """Remove ``solve.solver_io_api`` parameter definition + value list.
+
+    Batch C.9 — drop the GUI/CLI-only knob's DB axis.  User-stored
+    values are intentionally NOT migrated (per Q-C-2).  Equivalent
+    control is exposed via the new ``--solver-io-api {direct,mps,lp}``
+    CLI flag, plumbed via the ``FLEXTOOL_SOLVER_IO_API`` env var into
+    :meth:`SolveConfig.load_from_db` where it overrides the per-solve
+    :class:`SolverConfig.io_api` default for every solve.  Only the
+    commercial-solver dispatch path consumes this — the HiGHS path
+    is always direct in-process.  GUI controls for the DB-stored
+    equivalent are deferred to the v56 follow-up PR (task #26).
+
+    The ``solver_io_apis`` parameter_value_list (``direct``, ``mps``,
+    ``lp``) is also removed since the parameter was its sole referent.
+    """
+    remove_parameters_manual(db, [["solve", "solver_io_api"]])
+    try:
+        vl = db.item(
+            db.mapped_table("parameter_value_list"), name="solver_io_apis",
+        )
+    except SpineDBAPIError:
+        vl = None
+    if vl:
+        db.remove_items("parameter_value_list", vl["id"])
+        try:
+            _commit_step(db, "v56 removed solve.solver_io_apis parameter_value_list")
+        except SpineDBAPIError:
+            pass
 
 
 def _migrate_v56_remove_solver_time_limit(db) -> None:

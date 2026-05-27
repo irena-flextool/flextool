@@ -84,7 +84,7 @@ split_params:
       params: ["solve_mode", "solver",
                "contains_solves", "solver_precommand",
                "solver_arguments", "new_stepduration", "use_row_scaling",
-               "solver_io_api", "solver_mip_gap",
+               "solver_mip_gap",
                "timeline_hole_multiplier"]
     solve_period:
       params: ["period_timeset", "years_represented", "realized_periods",
