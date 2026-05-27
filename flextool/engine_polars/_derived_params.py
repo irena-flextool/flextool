@@ -4211,11 +4211,11 @@ def p_section_from_source(source: "InputSource",
 #                else pdtProcess_slope[p,d,t]
 #              )
 #              * (p_entity_dispatch_capacity_max[p,d] / p_entity_unitsize[p])
-#              / p_process_source_max_capacity_coefficient[p, source]
+#              / p_process_source_capacity_max_coeff[p, source]
 #         else (p_entity_dispatch_capacity_max[p,d] / p_entity_unitsize[p])
 #       )
 #       * (if (p, sink) in process_sink
-#          then p_process_sink_max_capacity_coefficient[p, sink] else 1)
+#          then p_process_sink_capacity_max_coeff[p, sink] else 1)
 #
 # Slow-path consumer: ``input.py::_load_process_topology`` reads
 # ``solve_data/p_flow_max.csv`` (preprocessed CSV).  Δ.26 ports the
@@ -4227,15 +4227,15 @@ def p_section_from_source(source: "InputSource",
 def _arc_max_capacity_coef_lf(source: "InputSource",
                                   side: str,
                                   ) -> pl.LazyFrame:
-    """Per-(p, node) ``max_capacity_coefficient`` from the relationship-class
+    """Per-(p, node) ``capacity_max_coeff`` from the relationship-class
     parameter on ``unit__inputNode`` / ``unit__outputNode``.
 
-    ``side='source'`` → reads ``unit__inputNode.max_capacity_coefficient``
+    ``side='source'`` → reads ``unit__inputNode.capacity_max_coeff``
     and returns ``[p, source, coef]``; ``side='sink'`` → reads
-    ``unit__outputNode.max_capacity_coefficient`` and returns
+    ``unit__outputNode.capacity_max_coeff`` and returns
     ``[p, sink, coef]``.
 
-    Connections don't carry a ``max_capacity_coefficient`` parameter in
+    Connections don't carry a ``capacity_max_coeff`` parameter in
     the canonical Spine schema (the .mod's per-arc coef is unit-only;
     connections always default to 1 on the Coefficient cascade — see
     flextool.mod L686-687).  We mirror that by emitting only unit-arc
@@ -4247,7 +4247,7 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
     else:
         ec = "unit__outputNode"
         node_alias = "sink"
-    df = _try_param(source, ec, "max_capacity_coefficient")
+    df = _try_param(source, ec, "capacity_max_coeff")
     if df is None or df.height == 0:
         return pl.LazyFrame(
             schema={"p": schema_dtype(_enums, "p"),
@@ -4315,7 +4315,7 @@ def _process_source_sink_coeff_zero_lf(source: "InputSource",
                                             pss: pl.DataFrame,
                                             ) -> pl.LazyFrame:
     """``process_source_sink_coeff_zero`` set: rows of pss whose source-
-    or sink-side ``max_capacity_coefficient`` is explicitly zero.
+    or sink-side ``capacity_max_coeff`` is explicitly zero.
 
     Mirrors flextool.mod L2219-2220 +
     ``preprocessing/process_arc_unions.py:write_process_source_sink_coeff_zero``
@@ -4497,12 +4497,12 @@ def p_flow_upper_from_source(source: "InputSource",
                 on="p", how="left")
         .with_columns(
             _has_min_load=pl.col("_has_min_load").fill_null(False))
-        # Source-side max_capacity_coefficient (default 1.0).
+        # Source-side capacity_max_coeff (default 1.0).
         .join(src_coef_lf.rename({"coef": "src_coef"}),
                 on=["p", "source"], how="left")
         .with_columns(
             src_coef=pl.col("src_coef").fill_null(1.0))
-        # Sink-side max_capacity_coefficient (default 1.0); also tag
+        # Sink-side capacity_max_coeff (default 1.0); also tag
         # (p, sink) ∈ process_sink (the .mod multiplies by sink_coef
         # only when (p, sink) ∈ process_sink, defaulting to 1 outside).
         .join(process_sink_lf.with_columns(_has_sink=pl.lit(True)),

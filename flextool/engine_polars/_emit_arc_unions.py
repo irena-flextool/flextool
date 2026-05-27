@@ -2438,7 +2438,7 @@ def derive_p_flow_max(
                             continue
 
     src_max_coef: dict[tuple[str, str], float] = {}
-    pms_path = input_dir / "p_process_source_max_capacity_coefficient.csv"
+    pms_path = input_dir / "p_process_source_capacity_max_coeff.csv"
     _fh = _provider_open(provider, _provider_key(pms_path), pms_path)
     if _fh is not None:
         with _fh as fh:
@@ -2451,7 +2451,7 @@ def derive_p_flow_max(
                     except ValueError:
                         continue
     sink_max_coef: dict[tuple[str, str], float] = {}
-    pmk_path = input_dir / "p_process_sink_max_capacity_coefficient.csv"
+    pmk_path = input_dir / "p_process_sink_capacity_max_coeff.csv"
     _fh = _provider_open(provider, _provider_key(pmk_path), pmk_path)
     if _fh is not None:
         with _fh as fh:

@@ -1329,6 +1329,22 @@ def migrate_database(database_path, up_to: int | None = None):
                 # autoscale quantity types, pandas accessors and the
                 # docs are renamed in lock-step.
                 _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db)
+                # Rename ``max_capacity_coefficient`` →
+                # ``capacity_max_coeff`` on ``unit__inputNode`` /
+                # ``unit__outputNode``.  Same ``_coeff`` suffix as the
+                # earlier batches; the noun ``capacity`` now leads and
+                # the qualifier ``max`` follows so the parameter sorts
+                # alphabetically with the other capacity-related rows
+                # (``capacity``, ``capacity_existing``, ``capacity_max``
+                # invest cap, …).  Pure name change — description,
+                # default value (1.0), parameter_value_list and engine
+                # semantics are untouched.  Engine_polars derived
+                # params, autoscale quantity types, input_derivation
+                # cl_pars, CSV filename suffixes
+                # (``p_process_source_max_capacity_coefficient.csv`` →
+                # ``p_process_source_capacity_max_coeff.csv`` and sink),
+                # and docs are renamed in lock-step.
+                _migrate_v56_rename_max_capacity_coefficient_to_capacity_max_coeff(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3700,6 +3716,66 @@ def _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db) -> None:
         "v56 rename flow_coefficient → conversion_flow_coeff: "
         "unit__inputNode.flow_coefficient → conversion_flow_coeff; "
         "unit__outputNode.flow_coefficient → conversion_flow_coeff.",
+    )
+
+
+def _migrate_v56_rename_max_capacity_coefficient_to_capacity_max_coeff(db) -> None:
+    """Rename ``max_capacity_coefficient`` to ``capacity_max_coeff`` on
+    every entity class that declares it.
+
+    Footprint matches the schema-template snapshot under
+    ``flextool/schemas/spinedb_schema.json`` — ``unit__inputNode`` and
+    ``unit__outputNode``.  The shortened ``_coeff`` suffix aligns with
+    the v56 convention introduced by
+    :func:`_migrate_v56_rename_constraint_coefficient_to_coeff` and
+    :func:`_migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff`.
+    Reordering puts the noun ``capacity`` first and the qualifier
+    ``max`` second, which groups the parameter alphabetically with the
+    other capacity-related parameters on these classes.
+
+    Pure name change: every other column on the
+    ``parameter_definition`` row (description, default value of 1.0,
+    parameter_value_list, parameter_group ``basics``, valid types) is
+    preserved.  Existing ``parameter_value`` rows that reference the
+    old name follow the rename automatically because spinedb_api
+    tracks the link by id, not by name.
+
+    The engine_polars derived-param helpers
+    (``_arc_max_capacity_coef_lf`` / ``_process_source_sink_coeff_zero_lf``),
+    autoscale quantity-type table, input_derivation cl_pars specs,
+    the CSV filename suffixes
+    (``p_process_source_max_capacity_coefficient.csv`` →
+    ``p_process_source_capacity_max_coeff.csv`` and sink), and the
+    docs are renamed in the same commit so the pipeline stays
+    internally consistent.
+    """
+    renames: tuple[tuple[str, str, str], ...] = (
+        ("unit__inputNode",  "max_capacity_coefficient", "capacity_max_coeff"),
+        ("unit__outputNode", "max_capacity_coefficient", "capacity_max_coeff"),
+    )
+    parameter_definitions = db.mapped_table("parameter_definition")
+    for cls, old_name, new_name in renames:
+        # ``db.item()`` raises ``SpineDBAPIError`` (not None) when the
+        # row doesn't exist; that's the steady-state once the schema
+        # template JSON has been re-synced to the renamed names and a
+        # fresh DB is bootstrapped from it.  Treat "row already renamed"
+        # as idempotent — the helper must be safe to re-run.
+        try:
+            param = db.item(parameter_definitions,
+                            entity_class_name=cls, name=old_name)
+        except SpineDBAPIError:
+            param = None
+        if param:
+            db.update_parameter_definition(
+                id=param["id"],
+                name=new_name,
+                description=param.get("description"),
+            )
+    _commit_step(
+        db,
+        "v56 rename max_capacity_coefficient → capacity_max_coeff: "
+        "unit__inputNode.max_capacity_coefficient → capacity_max_coeff; "
+        "unit__outputNode.max_capacity_coefficient → capacity_max_coeff.",
     )
 
 

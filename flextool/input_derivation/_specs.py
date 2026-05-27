@@ -297,9 +297,9 @@ _PARAMETER_SPECS: list[dict] = [
         "filter_in_type": ["float", "str", "bool"],
     },
     {
-        "cl_pars": [("unit__outputNode", "max_capacity_coefficient")],
-        "header": "process,sink,p_process_sink_max_capacity_coefficient",
-        "filename": "input/p_process_sink_max_capacity_coefficient.csv",
+        "cl_pars": [("unit__outputNode", "capacity_max_coeff")],
+        "header": "process,sink,p_process_sink_capacity_max_coeff",
+        "filename": "input/p_process_sink_capacity_max_coeff.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {
@@ -309,9 +309,9 @@ _PARAMETER_SPECS: list[dict] = [
         "filter_in_type": ["float", "str", "bool"],
     },
     {
-        "cl_pars": [("unit__inputNode", "max_capacity_coefficient")],
-        "header": "process,source,p_process_source_max_capacity_coefficient",
-        "filename": "input/p_process_source_max_capacity_coefficient.csv",
+        "cl_pars": [("unit__inputNode", "capacity_max_coeff")],
+        "header": "process,source,p_process_source_capacity_max_coeff",
+        "filename": "input/p_process_source_capacity_max_coeff.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {

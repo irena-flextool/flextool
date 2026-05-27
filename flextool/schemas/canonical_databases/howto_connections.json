@@ -1143,7 +1143,7 @@
         "float"
       ],
       null,
-      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose max_capacity_coefficient is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
+      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose capacity_max_coeff is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
       "model"
     ],
     [
@@ -2245,6 +2245,17 @@
     ],
     [
       "unit__inputNode",
+      "capacity_max_coeff",
+      [
+        "1.0",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
+      "basics"
+    ],
+    [
+      "unit__inputNode",
       "constraint_flow_coeff",
       null,
       null,
@@ -2277,17 +2288,6 @@
       null,
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__inputNode",
-      "max_capacity_coefficient",
-      [
-        "1.0",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
-      "basics"
     ],
     [
       "unit__inputNode",
@@ -2358,6 +2358,17 @@
     ],
     [
       "unit__outputNode",
+      "capacity_max_coeff",
+      [
+        "1.0",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
+      "basics"
+    ],
+    [
+      "unit__outputNode",
       "constraint_flow_coeff",
       null,
       null,
@@ -2390,17 +2401,6 @@
       null,
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__outputNode",
-      "max_capacity_coefficient",
-      [
-        "1.0",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
-      "basics"
     ],
     [
       "unit__outputNode",

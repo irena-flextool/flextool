@@ -5,7 +5,7 @@ back-pressure user constraint is *deactivated* (``constraint__sense.csv``
 has no row for ``coal_chp_fix``) and the iso-fuel tradeoff between heat
 and electricity is encoded entirely through non-default values of
 ``p_process_sink_conversion_flow_coeff`` ({heat: 0.2, west: 2.0}) and
-``p_process_sink_max_capacity_coefficient`` ({heat: 1.0, west: 0.8}).
+``p_process_sink_capacity_max_coeff`` ({heat: 1.0, west: 0.8}).
 
 The .mod's ``conversion_indirect`` (flextool.mod:2557-2580) multiplies
 each sink term by ``p_process_sink_conversion_flow_coeff[p, sink]``;

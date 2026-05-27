@@ -3476,7 +3476,7 @@
         "float"
       ],
       null,
-      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose max_capacity_coefficient is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
+      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose capacity_max_coeff is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
       "model"
     ],
     [
@@ -4856,7 +4856,7 @@
     ],
     [
       "unit__inputNode",
-      "max_capacity_coefficient",
+      "capacity_max_coeff",
       [
         "MS4w",
         "float"
@@ -4988,7 +4988,7 @@
     ],
     [
       "unit__outputNode",
-      "max_capacity_coefficient",
+      "capacity_max_coeff",
       [
         "MS4w",
         "float"

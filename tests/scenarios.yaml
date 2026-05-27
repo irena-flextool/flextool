@@ -103,9 +103,9 @@
     - costs__dt.csv
   time_budget_seconds: 4.0
 
-# Extraction CHP with conversion_flow_coeff / max_capacity_coefficient
+# Extraction CHP with conversion_flow_coeff / capacity_max_coeff
 # split.  efficiency = 0.9, flow_coef {elec: 2, heat: 0.2},
-# max_capacity_coef {elec: 0.8, heat: 1.0}. The backpressure fix
+# capacity_max_coeff {elec: 0.8, heat: 1.0}. The backpressure fix
 # constraint is deactivated so the model has extraction freedom. The
 # golden captures dispatch shares in the operating envelope; a
 # regression that re-introduces conversion_flow_coeff into maxToSink

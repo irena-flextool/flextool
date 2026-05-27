@@ -902,7 +902,7 @@ def derive_process_source_coeff_zero(input_dir: Path,
                                        ) -> pl.DataFrame:
     return _derive_coeff_zero(
         input_dir / "process__source.csv",
-        input_dir / "p_process_source_max_capacity_coefficient.csv",
+        input_dir / "p_process_source_capacity_max_coeff.csv",
         "source", provider=provider,
     )
 
@@ -912,7 +912,7 @@ def derive_process_sink_coeff_zero(input_dir: Path,
                                      ) -> pl.DataFrame:
     return _derive_coeff_zero(
         input_dir / "process__sink.csv",
-        input_dir / "p_process_sink_max_capacity_coefficient.csv",
+        input_dir / "p_process_sink_capacity_max_coeff.csv",
         "sink", provider=provider,
     )
 

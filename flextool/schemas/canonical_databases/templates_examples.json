@@ -2417,7 +2417,7 @@
         "float"
       ],
       null,
-      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose max_capacity_coefficient is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
+      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose capacity_max_coeff is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
       "model"
     ],
     [
@@ -3508,6 +3508,17 @@
     ],
     [
       "unit__inputNode",
+      "capacity_max_coeff",
+      [
+        "1.0",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap.",
+      "basics"
+    ],
+    [
+      "unit__inputNode",
       "constraint_flow_coeff",
       null,
       null,
@@ -3540,17 +3551,6 @@
       "is_non_synchronous",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__inputNode",
-      "max_capacity_coefficient",
-      [
-        "1.0",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap.",
-      "basics"
     ],
     [
       "unit__inputNode",
@@ -3613,6 +3613,17 @@
     ],
     [
       "unit__outputNode",
+      "capacity_max_coeff",
+      [
+        "1.0",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap.",
+      "basics"
+    ],
+    [
+      "unit__outputNode",
       "constraint_flow_coeff",
       null,
       null,
@@ -3645,17 +3656,6 @@
       "is_non_synchronous",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__outputNode",
-      "max_capacity_coefficient",
-      [
-        "1.0",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap.",
-      "basics"
     ],
     [
       "unit__outputNode",
@@ -5397,6 +5397,12 @@
     ],
     [
       "unit__inputNode",
+      "capacity_max_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
       "constraint_flow_coeff",
       "map",
       1
@@ -5417,12 +5423,6 @@
       "unit__inputNode",
       "is_non_synchronous",
       "str",
-      0
-    ],
-    [
-      "unit__inputNode",
-      "max_capacity_coefficient",
-      "float",
       0
     ],
     [
@@ -5481,6 +5481,12 @@
     ],
     [
       "unit__outputNode",
+      "capacity_max_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
       "constraint_flow_coeff",
       "map",
       1
@@ -5501,12 +5507,6 @@
       "unit__outputNode",
       "is_non_synchronous",
       "str",
-      0
-    ],
-    [
-      "unit__outputNode",
-      "max_capacity_coefficient",
-      "float",
       0
     ],
     [
@@ -10518,6 +10518,19 @@
         "coal_chp",
         "heat"
       ],
+      "capacity_max_coeff",
+      [
+        "1.0",
+        "float"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_chp",
+        "heat"
+      ],
       "constraint_flow_coeff",
       [
         "{\"index_type\": \"str\", \"data\": [[\"coal_chp_fix\", -0.5]], \"index_name\": \"constraint\"}",
@@ -10542,11 +10555,11 @@
       "unit__outputNode",
       [
         "coal_chp",
-        "heat"
+        "west"
       ],
-      "max_capacity_coefficient",
+      "capacity_max_coeff",
       [
-        "1.0",
+        "0.8",
         "float"
       ],
       "coal_chp_extraction"
@@ -10589,19 +10602,6 @@
         "float"
       ],
       "inertia"
-    ],
-    [
-      "unit__outputNode",
-      [
-        "coal_chp",
-        "west"
-      ],
-      "max_capacity_coefficient",
-      [
-        "0.8",
-        "float"
-      ],
-      "coal_chp_extraction"
     ],
     [
       "unit__outputNode",
