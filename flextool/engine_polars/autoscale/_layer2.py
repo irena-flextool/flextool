@@ -550,58 +550,6 @@ def choose_scale_powers(
 
 
 # ---------------------------------------------------------------------------
-# Lazy-term rewriter
-
-
-def _rewrite_term_lazy(
-    term_lazy: pl.LazyFrame,
-    *,
-    inv_col_factor_df: pl.DataFrame,
-    row_factor: float | None,
-) -> pl.LazyFrame:
-    """Rewrite ``term.lazy`` so its ``coef`` column carries the Layer-2
-    multiplicative adjustments.
-
-    Two stages:
-
-    * Per-column: left-join ``inv_col_factor_df`` (columns
-      ``col_id``, ``__l2_inv_cf``) on ``col_id``, then multiply
-      ``coef *= __l2_inv_cf``.
-    * Per-row (constant across the family): multiply ``coef *=
-      row_factor`` if not None.
-
-    The join is left so any col_id absent from the table (shouldn't
-    happen — every variable's columns are bucketed) gets a null
-    multiplier; we coalesce to 1.0 to avoid silent NULL coef rows.
-    """
-    plan = term_lazy.join(inv_col_factor_df.lazy(), on="col_id", how="left")
-    plan = plan.with_columns(
-        coef=(
-            pl.col("coef")
-            * pl.col("__l2_inv_cf").fill_null(1.0)
-        ),
-    ).drop("__l2_inv_cf")
-    if row_factor is not None and row_factor != 1.0:
-        plan = plan.with_columns(coef=pl.col("coef") * float(row_factor))
-    return plan
-
-
-def _rewrite_obj_term_lazy(
-    term_lazy: pl.LazyFrame,
-    *,
-    inv_col_factor_df: pl.DataFrame,
-) -> pl.LazyFrame:
-    plan = term_lazy.join(inv_col_factor_df.lazy(), on="col_id", how="left")
-    plan = plan.with_columns(
-        coef=(
-            pl.col("coef")
-            * pl.col("__l2_inv_cf").fill_null(1.0)
-        ),
-    ).drop("__l2_inv_cf")
-    return plan
-
-
-# ---------------------------------------------------------------------------
 # Public API
 
 
@@ -611,11 +559,20 @@ def apply_layer2(
 ) -> Layer2Plan:
     """Apply Layer 2 to ``problem`` in place.
 
-    Mutates ``problem._vars`` (bound rescale on non-integer columns),
-    ``problem._cstrs`` (each term's lazy plan + each proto's rhs),
-    and ``problem._obj_terms`` (lazy plan rewrite for the cost
-    vector).  Returns a :class:`Layer2Plan` carrying the inverse
-    transform for :func:`unscale_solution`.
+    Mutates ``problem._vars`` (bound rescale on non-integer columns)
+    and writes the two side vectors
+    ``problem._layer2_col_factor`` / ``problem._layer2_row_factor``
+    that the polar-high consumers (``write_mps``, ``_build_lp_arrays``,
+    ``_solve_streaming``, ``WarmProblem._initial_build``,
+    ``LpView.from_problem``) multiply into the emitted LHS / cost /
+    RHS at consumption time.  Also sets ``problem._layer2_locked =
+    True`` to prevent post-Layer-2 structural changes that would
+    invalidate the side-vector sizes.
+
+    Does NOT mutate ``problem._cstrs`` or ``problem._obj_terms`` —
+    the GLPK-style "scaling lives as metadata, coefficients are
+    immutable" property.  Returns a :class:`Layer2Plan` carrying the
+    inverse transform for :func:`unscale_solution`.
     """
     matrix_acc, cost_acc, bound_acc, col_id_to_type = bucket_coefficients(problem)
     exponents = choose_scale_powers(matrix_acc, cost_acc, bound_acc)
@@ -641,6 +598,9 @@ def apply_layer2(
 
     # Variable bound mutation — multiply finite bounds by col_factor.
     # Skip integer columns (col_factors[j] == 1.0 there by construction).
+    # This is the one place Layer 2 mutates state that's not behind the
+    # side vectors; intentional because Var.lower/upper are scalar per
+    # family and the cost is O(n_var_families), no peak-memory concern.
     for name, var in problem._vars.items():
         if var.integer:
             continue
@@ -653,38 +613,13 @@ def apply_layer2(
         if math.isfinite(var.upper):
             var.upper = float(var.upper) * f
 
-    # Build the inv_col_factor DataFrame once.  ``inv_cf = 1 / cf``;
-    # since cf is a power of two, inv_cf is exact in IEEE.
-    inv_col_factor_df = pl.DataFrame(
-        {
-            "col_id": pl.Series(np.arange(n_cols, dtype=np.int64)),
-            "__l2_inv_cf": pl.Series(1.0 / col_factors),
-        }
-    )
-
-    # ── Row factors + per-family LHS rewrite ---------------------------
+    # ── Row factors ----------------------------------------------------
+    # Walk ``_cstrs`` in the same order consumers do; ``row_factors_list``
+    # is built 0-based per constraint row.  The cost row is NOT in this
+    # vector (objective gets column scaling only — GLPK convention).
     row_factors_list: list[float] = []
     skipped_rows: list[str] = []
 
-    # Family-size guard for the row-factor rewrite — mirrors the one in
-    # ``bucket_coefficients``.  When ``rf != 1.0`` we would otherwise call
-    # ``_scale_rhs`` which, on a Param RHS, evaluates ``rhs.frame``
-    # (eager ``lazy.collect()`` on the multi-Param chain).  For families
-    # like FlexTool's ``profile_flow_upper_limit`` (1.5M rows × deep
-    # Param chain) that collect intermittently materialises a >30 GB
-    # intermediate and OOMs a 64 GB box.  Forcing ``rf = 1.0`` here
-    # bypasses ``_scale_rhs`` for the family while still letting
-    # column scaling flow through ``_rewrite_term_lazy`` (lazy join,
-    # cheap).  Override with the same env var that drives Layer 1's
-    # skip; set to ``0`` to disable.
-    try:
-        _max_family_rows = int(
-            os.environ.get("POLAR_HIGH_RANGES_MAX_FAMILY_ROWS", "1000000")
-        )
-    except (ValueError, TypeError):
-        _max_family_rows = 1_000_000
-
-    new_cstrs: list[tuple[str, Any, Any]] = []
     for cname, proto, over in problem._cstrs:
         rhs_t = resolve_cstr_rhs_type(cname)
         if rhs_t is None:
@@ -692,65 +627,47 @@ def apply_layer2(
         else:
             exp = exponents.get(rhs_t)
             rf = float(2 ** exp) if exp is not None else 1.0
-        # Row count for this family.
         row_count = 1 if over is None else int(over.height)
-        if (
-            rf != 1.0
-            and _max_family_rows > 0
-            and row_count > _max_family_rows
-        ):
-            rf = 1.0
-            skipped_rows.append(f"{cname}:row_scale_size_skip")
         if rhs_t is None and row_count > 0:
             skipped_rows.append(cname)
         row_factors_list.extend([rf] * row_count)
 
-        # Rewrite each LHS term.
-        new_terms = []
-        for term in proto.expr.terms:
-            new_lazy = _rewrite_term_lazy(
-                term.lazy,
-                inv_col_factor_df=inv_col_factor_df,
-                row_factor=rf if rf != 1.0 else None,
-            )
-            # Construct new _Term preserving dims/param_sources.
-            new_term = type(term)(
-                new_lazy, term.dims,
-                param_sources=getattr(term, "param_sources", None),
-            )
-            new_terms.append(new_term)
-        new_expr = type(proto.expr)(new_terms)
-
-        # Rewrite RHS.  May be (int, float) | Param | Var | Expr.
-        new_rhs = proto.rhs
-        if rf != 1.0:
-            new_rhs = _scale_rhs(proto.rhs, rf, inv_col_factor_df)
-        # ALSO must rewrite Var/Expr RHS for column factors (the rhs
-        # variable becomes part of the matrix via _solve_streaming's
-        # negation step).  Even if rf == 1.0, we must apply col
-        # scaling to any Var/Expr RHS.
-        elif _rhs_has_vars(proto.rhs):
-            new_rhs = _scale_rhs(proto.rhs, 1.0, inv_col_factor_df)
-
-        new_proto = type(proto)(new_expr, proto.sense, new_rhs)
-        new_cstrs.append((cname, new_proto, over))
-
-    problem._cstrs[:] = new_cstrs
-
-    # ── Objective rewrite ---------------------------------------------
-    new_obj_terms = []
-    for term in problem._obj_terms:
-        new_lazy = _rewrite_obj_term_lazy(
-            term.lazy, inv_col_factor_df=inv_col_factor_df,
-        )
-        new_term = type(term)(
-            new_lazy, term.dims,
-            param_sources=getattr(term, "param_sources", None),
-        )
-        new_obj_terms.append(new_term)
-    problem._obj_terms[:] = new_obj_terms
-
     row_factors = np.asarray(row_factors_list, dtype=np.float64)
+
+    # ── Install side vectors on the Problem ---------------------------
+    # Size assertion: col_factors must be exactly n_cols.  row_factors
+    # is indexed 0-based by constraint row in the order consumers walk
+    # ``_cstrs`` (the cost row is not in this vector).
+    #
+    # IMPORTANT — convention asymmetry.  The math (see module docstring):
+    #
+    #   x_scaled[j] = col_factor[j] * x[j]
+    #   matrix_scaled[i,j] = matrix[i,j] * row_factor[i] / col_factor[j]
+    #   cost_scaled[j]     = cost[j] / col_factor[j]
+    #   rhs_scaled[i]      = rhs[i] * row_factor[i]
+    #
+    # Consumers (write_mps, _build_lp_arrays, _solve_streaming,
+    # WarmProblem._initial_build, LpView.from_problem) multiply emitted
+    # values by ``_layer2_row_factor[i]`` and ``_layer2_col_factor[j]``
+    # *directly* — no inversion.  For matrix and cost that means the
+    # value we install in ``_layer2_col_factor`` is ``1 / col_factor``
+    # (the inverse of the math ``cf``), so that ``vals * _cf[j]`` yields
+    # the math-correct ``vals / cf[j]``.  ``_layer2_row_factor`` is the
+    # forward ``rf`` — applied unchanged to matrix LHS and RHS.
+    #
+    # ``Layer2Plan.col_factors`` keeps the FORWARD ``cf`` (used by
+    # ``unscale_solution`` as ``cv / cf``); only the side vector on the
+    # Problem is inverted.  Since every ``cf`` is a power of two,
+    # ``1/cf`` is exact in IEEE.
+    assert col_factors.shape[0] == problem._next_col, (
+        f"Layer 2: col_factors length {col_factors.shape[0]} != "
+        f"problem._next_col {problem._next_col}"
+    )
+    problem._layer2_col_factor = 1.0 / col_factors
+    problem._layer2_row_factor = row_factors
+    # Lock AFTER writing both arrays — otherwise the writes themselves
+    # could trip future guards if they touch any locked code path.
+    problem._layer2_locked = True
 
     # Per-type bucket-range reporting.  The accumulators carry
     # (log_sum, count, abs_min, abs_max); to combine min/max across
@@ -787,78 +704,6 @@ def apply_layer2(
         skipped_integer_cols=integer_cols,
     )
     return plan
-
-
-def _rhs_has_vars(rhs: Any) -> bool:
-    # Var or Expr RHS will become matrix entries.  Param and scalars
-    # become row bounds.
-    cls_name = type(rhs).__name__
-    return cls_name in ("Var", "Expr")
-
-
-def _scale_rhs(
-    rhs: Any,
-    row_factor: float,
-    inv_col_factor_df: pl.DataFrame,
-) -> Any:
-    """Multiply an RHS by ``row_factor``.
-
-    Cases:
-
-    * scalar (int / float): multiply directly.
-    * Param: multiply the underlying frame's ``value`` column by
-      ``row_factor`` by building a new Param wrapping the rescaled
-      frame.
-    * Var: convert to Expr; recurse.
-    * Expr: apply col-factor join + ``coef *= row_factor`` to every
-      term, then return a new Expr.
-
-    The mutation is *out-of-place* — we never modify the caller's
-    objects beyond what apply_layer2 explicitly does in
-    ``problem._cstrs``.
-    """
-    cls_name = type(rhs).__name__
-    if isinstance(rhs, (int, float)):
-        if rhs == 0:
-            return rhs
-        return float(rhs) * row_factor
-    # polar_high types — import lazily so this module doesn't drag the
-    # polar-high import chain when only the registries are needed.
-    from polar_high.engine import Expr, Param, Var, _Term  # noqa: WPS433
-
-    if isinstance(rhs, Param):
-        # Stay lazy: ``Param.__mul__`` with a scalar appends a lazy
-        # ``with_columns(value=value*float(other))`` and propagates
-        # ``_sources``.  The earlier implementation read ``rhs.frame``
-        # (eager ``lazy.collect()``) which materialised the entire
-        # multi-Param chain here, bypassing the semi-join + streaming
-        # path that ``write_mps`` / ``_solve_streaming`` apply when they
-        # eventually consume this family — on DES-scale chains that was
-        # a >30 GB allocation and the proximate OOM.
-        return rhs * float(row_factor)
-
-    if isinstance(rhs, Var):
-        rhs = rhs.to_expr()
-
-    if isinstance(rhs, Expr):
-        new_terms = []
-        for term in rhs.terms:
-            new_lazy = _rewrite_term_lazy(
-                term.lazy,
-                inv_col_factor_df=inv_col_factor_df,
-                row_factor=row_factor if row_factor != 1.0 else None,
-            )
-            new_terms.append(
-                _Term(
-                    new_lazy, term.dims,
-                    param_sources=getattr(term, "param_sources", None),
-                )
-            )
-        return Expr(new_terms)
-
-    raise TypeError(
-        f"Layer 2 _scale_rhs: unsupported rhs type {cls_name}"
-    )
 
 
 # ---------------------------------------------------------------------------
