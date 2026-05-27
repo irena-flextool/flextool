@@ -1314,6 +1314,21 @@ def migrate_database(database_path, up_to: int | None = None):
                 # engine, input_derivation, autoscale and export
                 # modules are renamed in lock-step.
                 _migrate_v56_rename_constraint_coefficient_to_coeff(db)
+                # Rename ``flow_coefficient`` → ``conversion_flow_coeff``
+                # on ``unit__inputNode`` / ``unit__outputNode``.  Same
+                # suffix shape as the four constraint-coefficient
+                # renames immediately above (``_coeff``), with the
+                # ``conversion_`` prefix making the parameter's role
+                # explicit: it scales the conversion of input → output
+                # energy in unit dispatch (the node-balance and
+                # ``conversion_indirect`` equations).  Pure name
+                # change — description, default value (1.0), value-
+                # list bindings and engine semantics are untouched.
+                # The schema template JSON, engine_polars frame attrs,
+                # CSV filename suffixes, input_derivation cl_pars,
+                # autoscale quantity types, pandas accessors and the
+                # docs are renamed in lock-step.
+                _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3623,6 +3638,68 @@ def _migrate_v56_rename_constraint_coefficient_to_coeff(db) -> None:
         "constraint_flow_coeff; "
         "unit__outputNode.constraint_flow_coefficient → "
         "constraint_flow_coeff.",
+    )
+
+
+def _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db) -> None:
+    """Rename ``flow_coefficient`` to ``conversion_flow_coeff`` on
+    every entity class that declares it.
+
+    Footprint matches the schema-template snapshot under
+    ``flextool/schemas/spinedb_schema.json`` — ``unit__inputNode`` and
+    ``unit__outputNode``.  The new name shares the ``_coeff`` suffix
+    with the four user-constraint coefficients renamed by
+    :func:`_migrate_v56_rename_constraint_coefficient_to_coeff` and
+    keeps the ``conversion_`` prefix that signals the parameter's
+    role: it scales the conversion of input → output energy in the
+    unit dispatch / node-balance / ``conversion_indirect`` equations
+    (see flextool.mod:2557-2580 and the engine_polars dispatch path
+    in ``model.py`` §F.4).
+
+    Pure name change: every other column on the
+    ``parameter_definition`` row (description, default value of 1.0,
+    parameter_value_list, parameter_group ``basics``, valid types) is
+    preserved.  Existing ``parameter_value`` rows that reference the
+    old name follow the rename automatically because spinedb_api
+    tracks the link by id, not by name.
+
+    The engine_polars frame attributes (``p_process_source_flow_coef``
+    → ``p_process_source_conversion_flow_coeff`` and the sink
+    counterpart), autoscale quantity-type table, input_derivation
+    cl_pars specs, the CSV filename suffixes
+    (``p_process_source_flow_coefficient.csv`` →
+    ``p_process_source_conversion_flow_coeff.csv`` and sink), the
+    pandas accessor names in ``process_outputs/read_parameters.py``,
+    and the docs are renamed in the same commit so the pipeline stays
+    internally consistent.
+    """
+    renames: tuple[tuple[str, str, str], ...] = (
+        ("unit__inputNode",  "flow_coefficient", "conversion_flow_coeff"),
+        ("unit__outputNode", "flow_coefficient", "conversion_flow_coeff"),
+    )
+    parameter_definitions = db.mapped_table("parameter_definition")
+    for cls, old_name, new_name in renames:
+        # ``db.item()`` raises ``SpineDBAPIError`` (not None) when the
+        # row doesn't exist; that's the steady-state once the schema
+        # template JSON has been re-synced to the renamed names and a
+        # fresh DB is bootstrapped from it.  Treat "row already renamed"
+        # as idempotent — the helper must be safe to re-run.
+        try:
+            param = db.item(parameter_definitions,
+                            entity_class_name=cls, name=old_name)
+        except SpineDBAPIError:
+            param = None
+        if param:
+            db.update_parameter_definition(
+                id=param["id"],
+                name=new_name,
+                description=param.get("description"),
+            )
+    _commit_step(
+        db,
+        "v56 rename flow_coefficient → conversion_flow_coeff: "
+        "unit__inputNode.flow_coefficient → conversion_flow_coeff; "
+        "unit__outputNode.flow_coefficient → conversion_flow_coeff.",
     )
 
 

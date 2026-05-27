@@ -663,7 +663,7 @@ def toy_2node_chp() -> FlexData:
     process_indirect_dt = process_indirect.join(dt, how="cross")
     # Sink coefficients: heat 0.5, elec 1.0 (non-default to exercise the
     # multiplier path).
-    p_process_sink_flow_coef = Param(("p", "sink"),
+    p_process_sink_conversion_flow_coeff = Param(("p", "sink"),
         pl.DataFrame({"p": ["chp"]*2, "sink": ["heat", "elec"],
                       "value": [0.5, 1.0]}))
 
@@ -683,7 +683,7 @@ def toy_2node_chp() -> FlexData:
         process_input_flows=process_input_flows,
         process_output_flows=process_output_flows,
         process_indirect_dt=process_indirect_dt,
-        p_process_sink_flow_coef=p_process_sink_flow_coef,
+        p_process_sink_conversion_flow_coeff=p_process_sink_conversion_flow_coeff,
     )
 
 

@@ -2271,7 +2271,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "1",
         "float"
@@ -2384,7 +2384,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "1",
         "float"
@@ -4180,7 +4180,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],
@@ -4252,7 +4252,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],
@@ -5754,7 +5754,7 @@
         "hydro_pump",
         "nodeA"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "0",
         "float"
@@ -5806,7 +5806,7 @@
         "hydro_pump",
         "pump_storage"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "1",
         "float"

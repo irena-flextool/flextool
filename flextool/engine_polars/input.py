@@ -476,13 +476,14 @@ class FlexData:
     # Per-arc multipliers on the source / sink side of the
     # ``conversion_indirect`` equation (.mod:2557-2580).  Both default to
     # 1.0 (the absent-Param convention) and are only populated when at
-    # least one row in the corresponding ``input/p_process_*_flow_coefficient.csv``
-    # has a non-default, non-zero value.  When populated, the Param covers
-    # *all* relevant (p, source) / (p, sink) rows of the indirect inputs /
-    # outputs (filled to 1.0 where the CSV is silent), so multiplying
+    # least one row in the corresponding
+    # ``input/p_process_*_conversion_flow_coeff.csv`` has a non-default,
+    # non-zero value.  When populated, the Param covers *all* relevant
+    # (p, source) / (p, sink) rows of the indirect inputs / outputs
+    # (filled to 1.0 where the CSV is silent), so multiplying
     # ``v_flow * unitsize * Param`` won't drop any flows.
-    p_process_source_flow_coef: Param | None = None  # (p, source)
-    p_process_sink_flow_coef: Param | None = None    # (p, sink)
+    p_process_source_conversion_flow_coeff: Param | None = None  # (p, source)
+    p_process_sink_conversion_flow_coeff: Param | None = None    # (p, sink)
 
     # ─── User-defined flow constraints ────────────────────────────────────
     flow_constraint_idx: pl.DataFrame | None = None  # (p, source, sink, cn)
@@ -1563,31 +1564,32 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
     outputs = pss.filter((pl.col("p").is_in(indirect["p"])) & (pl.col("source") == cast_dim(pl.col("p"), None, "e")))
 
     # The .mod's conversion_indirect LHS multiplies each source-side
-    # v_flow by ``p_process_source_flow_coefficient[p, source]`` and the
-    # RHS sum by ``p_process_sink_flow_coefficient[p, sink]`` (.mod:2557-2580).
-    # Most scenarios have all coefs = 1 (the default); a zero coefficient
-    # effectively drops that flow from the conversion equation; the
-    # ``coal_chp_extraction`` scenario uses non-default sink coefficients
-    # ({heat: 0.2, west: 2.0}) to encode the iso-fuel relationship via the
-    # source-side capacity bound.  Build optional Params restricted to the
-    # indirect inputs / outputs sets — only when non-default coefficients
-    # are present — and let model.py multiply them into the conversion
-    # equation.  Zero-coefficient rows are still anti-joined out (so they
-    # don't survive into ``inputs`` / ``outputs``).
+    # v_flow by ``p_process_source_conversion_flow_coeff[p, source]`` and
+    # the RHS sum by ``p_process_sink_conversion_flow_coeff[p, sink]``
+    # (.mod:2557-2580).  Most scenarios have all coefs = 1 (the default);
+    # a zero coefficient effectively drops that flow from the conversion
+    # equation; the ``coal_chp_extraction`` scenario uses non-default
+    # sink coefficients ({heat: 0.2, west: 2.0}) to encode the iso-fuel
+    # relationship via the source-side capacity bound.  Build optional
+    # Params restricted to the indirect inputs / outputs sets — only
+    # when non-default coefficients are present — and let model.py
+    # multiply them into the conversion equation.  Zero-coefficient
+    # rows are still anti-joined out (so they don't survive into
+    # ``inputs`` / ``outputs``).
     p_source_flow_coef = None
     p_sink_flow_coef = None
     if inp is not None:
-        src_path = inp / "p_process_source_flow_coefficient.csv"
+        src_path = inp / "p_process_source_conversion_flow_coeff.csv"
         if _provider_has(provider,
-                          "input/p_process_source_flow_coefficient",
+                          "input/p_process_source_conversion_flow_coeff",
                           src_path):
             srcdf = _provider_read(provider,
-                                     "input/p_process_source_flow_coefficient",
+                                     "input/p_process_source_conversion_flow_coeff",
                                      src_path)
-            if srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
+            if srcdf.height > 0 and "p_process_source_conversion_flow_coeff" in srcdf.columns:
                 src_long = (srcdf
                     .pipe(rename_to_axis, {"process": "p", "source": "source",
-                             "p_process_source_flow_coefficient": "coef"})
+                             "p_process_source_conversion_flow_coeff": "coef"})
                     .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
                     .select("p", "source", "coef"))
                 zero_src = src_long.filter(pl.col("coef") == 0.0).select("p", "source")
@@ -1607,17 +1609,17 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
                                           .with_columns(pl.col("coef").fill_null(1.0))
                                           .rename({"coef": "value"}))
                         p_source_flow_coef = Param(("p", "source"), merged)
-        sink_path = inp / "p_process_sink_flow_coefficient.csv"
+        sink_path = inp / "p_process_sink_conversion_flow_coeff.csv"
         if _provider_has(provider,
-                          "input/p_process_sink_flow_coefficient",
+                          "input/p_process_sink_conversion_flow_coeff",
                           sink_path):
             sinkdf = _provider_read(provider,
-                                      "input/p_process_sink_flow_coefficient",
+                                      "input/p_process_sink_conversion_flow_coeff",
                                       sink_path)
-            if sinkdf.height > 0 and "p_process_sink_flow_coefficient" in sinkdf.columns:
+            if sinkdf.height > 0 and "p_process_sink_conversion_flow_coeff" in sinkdf.columns:
                 sink_long = (sinkdf
                     .pipe(rename_to_axis, {"process": "p", "sink": "sink",
-                             "p_process_sink_flow_coefficient": "coef"})
+                             "p_process_sink_conversion_flow_coeff": "coef"})
                     .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
                     .select("p", "sink", "coef"))
                 zero_sink = sink_long.filter(pl.col("coef") == 0.0).select("p", "sink")
@@ -4334,8 +4336,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
             process_input_flows = indir_in,
             process_output_flows = indir_out,
             process_indirect_dt = indir_dt,
-            p_process_source_flow_coef = p_source_flow_coef,
-            p_process_sink_flow_coef = p_sink_flow_coef,
+            p_process_source_conversion_flow_coeff = p_source_flow_coef,
+            p_process_sink_conversion_flow_coeff = p_sink_flow_coef,
 
             flow_constraint_idx = fc_idx,
             p_flow_constraint_coef = fc_coef,

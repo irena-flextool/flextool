@@ -56,9 +56,10 @@ Deferred (require feature stack outside this module's scope):
     complete_period_share_of_year`` per (d, t); we use the simpler
     ``step_duration`` integration since current scenarios run with
     ``p_years_represented_d = 1`` and a single representative year).
-  * ``p_process_sink_flow_coefficient / p_process_source_flow_coefficient``
-    factor on eff source-flow contributions to the cumulative/instant
-    flow LHS — same gap as the existing ``nodeBalance_eq``.
+  * ``p_process_sink_conversion_flow_coeff /
+    p_process_source_conversion_flow_coeff`` factor on eff source-flow
+    contributions to the cumulative/instant flow LHS — same gap as the
+    existing ``nodeBalance_eq``.
   * ``p_entity_previously_invested_capacity`` and ``p_entity_divested``
     history terms on the per-entity-total and group-total constraints
     — only relevant for multi-solve handoffs.

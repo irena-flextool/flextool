@@ -53,15 +53,16 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
                 orig_source == always_source and orig_sink != always_sink):
             flow_val = flow_val.mul(slope[p], axis=0)
             if p in s.process_unit:
-                # FlexData only populates ``p_process_{sink,source}_flow_coef``
-                # when a non-default value is present (default = 1.0).  Use a
-                # safe lookup so direct-method units without explicit
-                # coefficients (the common case) divide by 1.0 instead of
-                # raising KeyError.
-                sink_coef = par.process_sink_flow_coefficient.get(
+                # FlexData only populates
+                # ``p_process_{sink,source}_conversion_flow_coeff`` when a
+                # non-default value is present (default = 1.0).  Use a safe
+                # lookup so direct-method units without explicit coefficients
+                # (the common case) divide by 1.0 instead of raising
+                # KeyError.
+                sink_coef = par.process_sink_conversion_flow_coeff.get(
                     (p, orig_sink), 1.0,
                 )
-                src_coef = par.process_source_flow_coefficient.get(
+                src_coef = par.process_source_conversion_flow_coeff.get(
                     (p, orig_source), 1.0,
                 )
                 flow_val /= (sink_coef * src_coef)

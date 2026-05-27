@@ -10348,7 +10348,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -10480,7 +10480,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -12236,7 +12236,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],
@@ -12308,7 +12308,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],
@@ -21697,7 +21697,7 @@
         "ARG_H2toMeOH",
         "ARG_CO2"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21710,7 +21710,7 @@
         "ARG_H2toMeOH",
         "ARG_H2"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -21723,7 +21723,7 @@
         "ARG_H2toMeOH",
         "ARG_elec"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21749,7 +21749,7 @@
         "AUS_H2toMeOH",
         "AUS_CO2"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21762,7 +21762,7 @@
         "AUS_H2toMeOH",
         "AUS_H2"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -21775,7 +21775,7 @@
         "AUS_H2toMeOH",
         "AUS_elec"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21801,7 +21801,7 @@
         "AUS_oretoHBI",
         "AUS_H2"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21827,7 +21827,7 @@
         "AUS_oretoHBI",
         "AUS_Ore"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -21853,7 +21853,7 @@
         "AUS_oretoHBI",
         "AUS_elec"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21879,7 +21879,7 @@
         "CHI_H2toMeOH",
         "CHI_CO2"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21892,7 +21892,7 @@
         "CHI_H2toMeOH",
         "CHI_H2"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -21905,7 +21905,7 @@
         "CHI_H2toMeOH",
         "CHI_elec"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21931,7 +21931,7 @@
         "CHI_oretoHBI",
         "CHI_H2"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -21957,7 +21957,7 @@
         "CHI_oretoHBI",
         "CHI_Ore"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -21983,7 +21983,7 @@
         "CHI_oretoHBI",
         "CHI_elec"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4w",
         "float"
@@ -22555,7 +22555,7 @@
         "ARG_H2toMeOH",
         "ARG_MeOH"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -22581,7 +22581,7 @@
         "AUS_H2toMeOH",
         "AUS_MeOH"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -22594,7 +22594,7 @@
         "AUS_oretoHBI",
         "AUS_HBI"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -22620,7 +22620,7 @@
         "CHI_H2toMeOH",
         "CHI_MeOH"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -22633,7 +22633,7 @@
         "CHI_oretoHBI",
         "CHI_HBI"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"

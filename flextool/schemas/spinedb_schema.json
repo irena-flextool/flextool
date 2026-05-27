@@ -2599,7 +2599,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       1.0,
       null,
       "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from capacity / ramp / min-load constraints entirely (hydro-pass-through pattern).",
@@ -2695,7 +2695,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       1.0,
       null,
       "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from capacity / ramp / min-load constraints entirely (hydro-pass-through pattern).",
@@ -4415,7 +4415,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],
@@ -4487,7 +4487,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],

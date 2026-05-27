@@ -15,8 +15,9 @@ Cluster F coverage:
 * ``p_unitsize``                — per-process unitsize cascade.
 * ``p_state_unitsize``          — per-node unitsize cascade.
 * ``p_penalty_up`` / ``p_penalty_down`` — node penalty broadcast.
-* ``p_process_source_flow_coef`` / ``p_process_sink_flow_coef`` —
-  indirect flow coefficient.
+* ``p_process_source_conversion_flow_coeff`` /
+  ``p_process_sink_conversion_flow_coeff`` — indirect conversion-flow
+  coefficient.
 * ``p_slope``                   — efficiency-curve slope (verified).
 * ``p_section``                 — min_load_efficiency y-intercept.
 * ``p_flow_upper_existing``     — existing/unitsize per arc.
@@ -237,20 +238,20 @@ def test_p_penalty_down_parity(work_name: str, scenario: str, db_fixture: str, s
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_process_source_flow_coef_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for ``p_process_source_flow_coef`` (cluster F)."""
+def test_p_process_source_conversion_flow_coeff_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
+    """Per-fixture parity for ``p_process_source_conversion_flow_coeff`` (cluster F)."""
     work = scenario_workdir(scenario, db_fixture=db_fixture)
     sqlite = work / "tests.sqlite"
     csv_data = load_flextool(work)
     reader = SpineDbReader(sqlite, scenario)
     db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_process_source_flow_coef)
-    b = _param_frame(db_data.p_process_source_flow_coef)
+    a = _param_frame(csv_data.p_process_source_conversion_flow_coeff)
+    b = _param_frame(db_data.p_process_source_conversion_flow_coeff)
     if a is None and b is None:
-        pytest.skip("p_process_source_flow_coef None on both paths")
+        pytest.skip("p_process_source_conversion_flow_coeff None on both paths")
     ok, msg = _frames_equal(a, b, ("p", "source"))
     assert ok, (
-        f"p_process_source_flow_coef mismatch on {work_name}: {msg}\n"
+        f"p_process_source_conversion_flow_coeff mismatch on {work_name}: {msg}\n"
         f"  csv:\n{a}\n  db:\n{b}"
     )
 
@@ -259,20 +260,20 @@ def test_p_process_source_flow_coef_parity(work_name: str, scenario: str, db_fix
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_process_sink_flow_coef_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for ``p_process_sink_flow_coef`` (cluster F)."""
+def test_p_process_sink_conversion_flow_coeff_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
+    """Per-fixture parity for ``p_process_sink_conversion_flow_coeff`` (cluster F)."""
     work = scenario_workdir(scenario, db_fixture=db_fixture)
     sqlite = work / "tests.sqlite"
     csv_data = load_flextool(work)
     reader = SpineDbReader(sqlite, scenario)
     db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_process_sink_flow_coef)
-    b = _param_frame(db_data.p_process_sink_flow_coef)
+    a = _param_frame(csv_data.p_process_sink_conversion_flow_coeff)
+    b = _param_frame(db_data.p_process_sink_conversion_flow_coeff)
     if a is None and b is None:
-        pytest.skip("p_process_sink_flow_coef None on both paths")
+        pytest.skip("p_process_sink_conversion_flow_coeff None on both paths")
     ok, msg = _frames_equal(a, b, ("p", "sink"))
     assert ok, (
-        f"p_process_sink_flow_coef mismatch on {work_name}: {msg}\n"
+        f"p_process_sink_conversion_flow_coeff mismatch on {work_name}: {msg}\n"
         f"  csv:\n{a}\n  db:\n{b}"
     )
 
@@ -547,7 +548,7 @@ def test_p_penalty_up_inmemory_no_param_returns_none():
     assert ar.p_penalty_up_from_source(src, nb, dt) is None
 
 
-def test_p_process_source_flow_coef_inmemory_zero_drop():
+def test_p_process_source_conversion_flow_coeff_inmemory_zero_drop():
     """Zero-coef row is reported in zero_pairs; non-default non-zero
     triggers a Param keyed on the surviving (p, source) set.
     """
@@ -561,7 +562,7 @@ def test_p_process_source_flow_coef_inmemory_zero_drop():
             }),
         },
         parameters={
-            ("unit__inputNode", "flow_coefficient"): pl.DataFrame({
+            ("unit__inputNode", "conversion_flow_coeff"): pl.DataFrame({
                 "unit": ["u_chp", "u_chp"],
                 "node": ["n_fuel", "n_zero"],
                 "value": [2.0, 0.0],
@@ -573,7 +574,7 @@ def test_p_process_source_flow_coef_inmemory_zero_drop():
         "source": ["n_fuel", "n_zero"],
         "sink": ["u_chp", "u_chp"],
     })
-    z, p = ar.p_process_source_flow_coef_from_source(src, indirect_pairs)
+    z, p = ar.p_process_source_conversion_flow_coeff_from_source(src, indirect_pairs)
     assert z is not None
     assert dict(z.iter_rows()) == {"u_chp": "n_zero"}
     assert p is not None
@@ -590,7 +591,7 @@ def test_p_process_source_flow_coef_inmemory_zero_drop():
     assert rows[("u_chp", "n_zero")] == 0.0  # the zero is the actual coef
 
 
-def test_p_process_source_flow_coef_inmemory_all_default_returns_none():
+def test_p_process_source_conversion_flow_coeff_inmemory_all_default_returns_none():
     """When every coefficient equals 1.0, the helper emits no Param —
     model.py's gate falls through.
     """
@@ -603,7 +604,7 @@ def test_p_process_source_flow_coef_inmemory_all_default_returns_none():
             }),
         },
         parameters={
-            ("unit__inputNode", "flow_coefficient"): pl.DataFrame({
+            ("unit__inputNode", "conversion_flow_coeff"): pl.DataFrame({
                 "unit": ["u"], "node": ["n_x"], "value": [1.0],
             }),
         },
@@ -611,14 +612,14 @@ def test_p_process_source_flow_coef_inmemory_all_default_returns_none():
     indirect_pairs = pl.DataFrame({
         "p": ["u"], "source": ["n_x"], "sink": ["u"],
     })
-    z, p = ar.p_process_source_flow_coef_from_source(src, indirect_pairs)
+    z, p = ar.p_process_source_conversion_flow_coeff_from_source(src, indirect_pairs)
     assert z is None
     assert p is None
 
 
-def test_p_process_sink_flow_coef_inmemory_smoke():
-    """``p_process_sink_flow_coef`` is symmetric to source — same
-    contract on ``unit__outputNode``.
+def test_p_process_sink_conversion_flow_coeff_inmemory_smoke():
+    """``p_process_sink_conversion_flow_coeff`` is symmetric to source —
+    same contract on ``unit__outputNode``.
     """
     src = InMemoryReader(
         entities={
@@ -629,7 +630,7 @@ def test_p_process_sink_flow_coef_inmemory_smoke():
             }),
         },
         parameters={
-            ("unit__outputNode", "flow_coefficient"): pl.DataFrame({
+            ("unit__outputNode", "conversion_flow_coeff"): pl.DataFrame({
                 "unit": ["u", "u"],
                 "node": ["heat", "elec"],
                 "value": [0.2, 2.0],
@@ -639,7 +640,7 @@ def test_p_process_sink_flow_coef_inmemory_smoke():
     indirect_pairs = pl.DataFrame({
         "p": ["u", "u"], "source": ["u", "u"], "sink": ["heat", "elec"],
     })
-    z, p = ar.p_process_sink_flow_coef_from_source(src, indirect_pairs)
+    z, p = ar.p_process_sink_conversion_flow_coeff_from_source(src, indirect_pairs)
     assert z is None  # neither coef is zero
     assert p is not None
     rows = {(r["p"], r["sink"]): r["value"]

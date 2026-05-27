@@ -1806,9 +1806,9 @@ def process_indirect_set(source: "InputSource",
 def _zero_flow_coef_pairs(source: "InputSource",
                               kind: str
                               ) -> pl.DataFrame:
-    """Read ``unit__inputNode.flow_coefficient`` (kind='source') or
-    ``unit__outputNode.flow_coefficient`` (kind='sink') and return the
-    ``(p, source)`` / ``(p, sink)`` pairs whose coefficient is zero.
+    """Read ``unit__inputNode.conversion_flow_coeff`` (kind='source') or
+    ``unit__outputNode.conversion_flow_coeff`` (kind='sink') and return
+    the ``(p, source)`` / ``(p, sink)`` pairs whose coefficient is zero.
     flextool drops these from the conversion_indirect LHS / RHS
     (``input.py:_load_indirect`` lines 942-944 / 968-970).
     """
@@ -1818,7 +1818,7 @@ def _zero_flow_coef_pairs(source: "InputSource",
     else:
         ec = "unit__outputNode"
         col = "sink"
-    df = _try_param(source, ec, "flow_coefficient")
+    df = _try_param(source, ec, "conversion_flow_coeff")
     if df is None or df.height == 0:
         return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
                                      col: schema_dtype(_enums, col)})
@@ -1843,7 +1843,7 @@ def process_input_flows(source: "InputSource",
     """Indirect-process input arcs.
 
     pss filtered to ``sink == p AND p ∈ process_indirect``.  Drops arcs
-    whose ``flow_coefficient == 0`` (mirrors
+    whose ``conversion_flow_coeff == 0`` (mirrors
     ``input.py:_load_indirect:942-944``).  Schema ``[p, source, sink]``.
     """
     pi = process_indirect_set(source, classified)
@@ -1868,7 +1868,7 @@ def process_output_flows(source: "InputSource",
                            ) -> pl.DataFrame:
     """Indirect-process output arcs (mirror of input).
 
-    Drops arcs whose ``flow_coefficient == 0`` (mirror of
+    Drops arcs whose ``conversion_flow_coeff == 0`` (mirror of
     ``input.py:_load_indirect:968-970``).
     """
     pi = process_indirect_set(source, classified)
@@ -2208,7 +2208,7 @@ def _broadcast_existing_to_pd(df: pl.DataFrame,
 def p_flow_constraint_coef_from_source(source: "InputSource",
                                           pss: pl.DataFrame,
                                           ) -> "Param | None":
-    """User-defined per-arc (p, source, sink, cn) flow_coefficient.
+    """User-defined per-arc (p, source, sink, cn) ``constraint_flow_coeff``.
 
     The constraint axis column is ``cn`` (not ``c``) to avoid collision
     with the commodity axis — see the c_collision review note in
@@ -2222,7 +2222,7 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
       3. Inner-join with pss on (p, n=sink) → sink-leg rows.
       4. Concat + group_by(p, source, sink, cn).sum.
 
-    Returns ``None`` when no flow_coefficient rows exist.
+    Returns ``None`` when no ``constraint_flow_coeff`` rows exist.
     """
     if pss is None or pss.height == 0:
         return None
@@ -2786,7 +2786,8 @@ def apply_derived_b(
         from polar_high import Param as _Param
         flex_data.p_all_entity_unitsize = _Param(("e",), _all_us_df)
 
-    # ─── §F.4 p_process_source_flow_coef / p_process_sink_flow_coef ────
+    # ─── §F.4 p_process_source_conversion_flow_coeff /
+    # p_process_sink_conversion_flow_coeff ─────────────────────────────
     # (Δ.10 cluster F).  Mirrors ``input.py:_load_indirect`` lines
     # 950-1002.  Anti-joins zero-coef rows out of the indirect-process
     # input/output flow sets and emits a Param keyed on (p, source) /
@@ -2794,34 +2795,37 @@ def apply_derived_b(
     # Δ.12b: helper exceptions propagate; the anti-join inner gate
     # (only when zero-rows exist) is preserved as a structural filter.
     from ._derived_arithmetic import (
-        p_process_source_flow_coef_from_source,
-        p_process_sink_flow_coef_from_source,
+        p_process_source_conversion_flow_coeff_from_source,
+        p_process_sink_conversion_flow_coeff_from_source,
     )
     pif = getattr(flex_data, "process_input_flows", None)
     pof = getattr(flex_data, "process_output_flows", None)
-    z_src, p_src_coef = p_process_source_flow_coef_from_source(source, pif)
+    z_src, p_src_coef = p_process_source_conversion_flow_coeff_from_source(
+        source, pif)
     if z_src is not None and z_src.height > 0 and pif is not None \
             and pif.height > 0:
         new_pif = pif.join(z_src, on=["p", "source"], how="anti")
         if new_pif.height < pif.height:
             flex_data.process_input_flows = new_pif
-    # TODO(Δ.12b helper-fix): p_process_source_flow_coef_from_source
-    # returns None when no zero-coef rows exist in the source — but the
-    # seed-side _load_indirect builds the coefficient Param from a
-    # different code path (process__commodity__node_flow_coefficient.csv).
-    # Keep the conditional assignment until the helpers converge on a
-    # single producer.
+    # TODO(Δ.12b helper-fix):
+    # p_process_source_conversion_flow_coeff_from_source returns None when
+    # no zero-coef rows exist in the source — but the seed-side
+    # _load_indirect builds the coefficient Param from a different code
+    # path (process__commodity__node_conversion_flow_coeff.csv).  Keep
+    # the conditional assignment until the helpers converge on a single
+    # producer.
     if p_src_coef is not None:
-        flex_data.p_process_source_flow_coef = p_src_coef
+        flex_data.p_process_source_conversion_flow_coeff = p_src_coef
 
-    z_sink, p_sink_coef = p_process_sink_flow_coef_from_source(source, pof)
+    z_sink, p_sink_coef = p_process_sink_conversion_flow_coeff_from_source(
+        source, pof)
     if z_sink is not None and z_sink.height > 0 and pof is not None \
             and pof.height > 0:
         new_pof = pof.join(z_sink, on=["p", "sink"], how="anti")
         if new_pof.height < pof.height:
             flex_data.process_output_flows = new_pof
     if p_sink_coef is not None:
-        flex_data.p_process_sink_flow_coef = p_sink_coef
+        flex_data.p_process_sink_conversion_flow_coeff = p_sink_coef
 
 
 # ===========================================================================

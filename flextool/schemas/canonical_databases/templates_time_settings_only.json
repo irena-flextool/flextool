@@ -2116,7 +2116,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "1",
         "float"
@@ -2221,7 +2221,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "1",
         "float"
@@ -4009,7 +4009,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],
@@ -4081,7 +4081,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],

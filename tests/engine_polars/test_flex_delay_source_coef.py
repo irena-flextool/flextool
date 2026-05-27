@@ -2,7 +2,7 @@
 
 Scenario ``delay_source_coef`` = ``water_pump_delayed`` + alt
 ``delay_source_coef_on``, which sets
-``unit__inputNode.(water_pump, water_source).flow_coefficient = 2.0``
+``unit__inputNode.(water_pump, water_source).conversion_flow_coeff = 2.0``
 (default is 1.0).  This exercises the .mod's source-coefficient
 multiplier on delayed source flows (flextool.mod:2573) — a code path
 that no other fixture combines with delays.  Without the matching
@@ -28,7 +28,7 @@ SCENARIO = "delay_source_coef"
 def test_delay_source_coef_parity(scenario_workdir):
     """Build the scenario workdir and solve the LP — the elevated source
     coefficient (=2.0) must flow through ``load_flextool`` into
-    ``data.p_process_source_flow_coef``, and the LP must still solve to
+    ``data.p_process_source_conversion_flow_coeff``, and the LP must still solve to
     optimality.
 
     Note: in the ``water_pump_delayed`` scenario the source node
@@ -44,8 +44,8 @@ def test_delay_source_coef_parity(scenario_workdir):
 
     # Sanity: the elevated coefficient flowed through into the loaded
     # data structure.
-    fr = data.p_process_source_flow_coef
-    assert fr is not None, "p_process_source_flow_coef missing"
+    fr = data.p_process_source_conversion_flow_coeff
+    assert fr is not None, "p_process_source_conversion_flow_coeff missing"
     row = fr.frame.filter(
         (pl.col("p") == "water_pump") & (pl.col("source") == "water_source")
     )

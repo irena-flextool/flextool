@@ -285,15 +285,15 @@ _PARAMETER_SPECS: list[dict] = [
     },
     # --- process parameters ---
     {
-        "cl_pars": [("unit__outputNode", "flow_coefficient")],
-        "header": "process,sink,p_process_sink_flow_coefficient",
-        "filename": "input/p_process_sink_flow_coefficient.csv",
+        "cl_pars": [("unit__outputNode", "conversion_flow_coeff")],
+        "header": "process,sink,p_process_sink_conversion_flow_coeff",
+        "filename": "input/p_process_sink_conversion_flow_coeff.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {
-        "cl_pars": [("unit__inputNode", "flow_coefficient")],
-        "header": "process,source,p_process_source_flow_coefficient",
-        "filename": "input/p_process_source_flow_coefficient.csv",
+        "cl_pars": [("unit__inputNode", "conversion_flow_coeff")],
+        "header": "process,source,p_process_source_conversion_flow_coeff",
+        "filename": "input/p_process_source_conversion_flow_coeff.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {

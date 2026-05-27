@@ -928,7 +928,7 @@ def _write_units(
                 coeff = unit.output2_max_capacity / existing
                 _add_param(db, "unit__outputNode",
                            (unit_name, unit.output2_node),
-                           "flow_coefficient", coeff, alt_name, counters)
+                           "conversion_flow_coeff", coeff, alt_name, counters)
 
         # -- unit__outputNode parameters (on primary output) --
         om_cost = _get_unit_type_param(data, unit, "o&m cost/mwh")

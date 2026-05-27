@@ -94,6 +94,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined const...
     ('contains_solves', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences
+    ('conversion_flow_coeff', 'unit__inputNode'): QuantityType.FRACTION,
+    # [factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from...
+    ('conversion_flow_coeff', 'unit__outputNode'): QuantityType.FRACTION,
+    # [factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from...
     ('conversion_method', 'unit'): QuantityType.DIMENSIONLESS,
     # Choice of conversion method.
     ('cumulative_max_capacity', 'connection'): QuantityType.POWER,
@@ -148,10 +152,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/kW] Annual fixed cost. Constant or period.
     ('flow_aggregator', 'group'): QuantityType.DIMENSIONLESS,
     # Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from out...
-    ('flow_coefficient', 'unit__inputNode'): QuantityType.FRACTION,
-    # [factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from...
-    ('flow_coefficient', 'unit__outputNode'): QuantityType.FRACTION,
-    # [factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from...
     ('has_capacity_margin', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has a capacity margin constraint in the investment mode.
     ('has_inertia', 'group'): QuantityType.DIMENSIONLESS,

@@ -20,7 +20,7 @@ Augmentations
     ``wind_battery_invest_lifetime_renew_inflation_2pct`` =
     ``wind_battery_invest_lifetime_renew`` + ``inflation_2pct``.
   * alt ``delay_source_coef_on`` — sets
-    ``unit__inputNode.(water_pump, water_source).flow_coefficient = 2.0``
+    ``unit__inputNode.(water_pump, water_source).conversion_flow_coeff = 2.0``
     on top of ``water_pump_delayed`` so the .mod source-coef multiplier
     on delayed flows is exercised (flextool.mod:2573).
   * scenario ``delay_source_coef`` = ``water_pump_delayed`` +
@@ -112,7 +112,7 @@ def _augment_tests_db(db_path: Path) -> None:
                 "test_db_direct_inflation_2pct.py"),
             ("delay_source_coef_on",
                 "Phase 3d: override unit__inputNode."
-                "(water_pump, water_source).flow_coefficient from 1.0 to "
+                "(water_pump, water_source).conversion_flow_coeff from 1.0 to "
                 "2.0 for test_flex_delay_source_coef.py."),
         ):
             db.add_alternative_item(name=alt_name, description=desc)
@@ -167,12 +167,12 @@ def _augment_tests_db(db_path: Path) -> None:
         )
 
         # delay_source_coef_on: override
-        # unit__inputNode.(water_pump, water_source).flow_coefficient
+        # unit__inputNode.(water_pump, water_source).conversion_flow_coeff
         db_val, db_type = to_database(2.0)
         db.add_parameter_value_item(
             entity_class_name="unit__inputNode",
             entity_byname=("water_pump", "water_source"),
-            parameter_definition_name="flow_coefficient",
+            parameter_definition_name="conversion_flow_coeff",
             alternative_name="delay_source_coef_on",
             value=db_val,
             type=db_type,

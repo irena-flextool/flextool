@@ -1007,34 +1007,36 @@ def read_parameters(
             index=pd.Index([], name="commodity"),
         )
 
-    # process_sink_flow_coefficient / process_source_flow_coefficient —
-    # Series with MultiIndex (process, sink|source).  FlexData carries
-    # these as ``p_process_sink_flow_coef`` / ``p_process_source_flow_coef``
-    # (dims ``(p, sink)`` / ``(p, source)``).
-    if (flex_data.p_process_sink_flow_coef is not None
-            and flex_data.p_process_sink_flow_coef.frame.height > 0):
-        p.process_sink_flow_coefficient = series_with_multi_index(
-            flex_data.p_process_sink_flow_coef.frame,
+    # process_sink_conversion_flow_coeff /
+    # process_source_conversion_flow_coeff — Series with MultiIndex
+    # (process, sink|source).  FlexData carries these as
+    # ``p_process_sink_conversion_flow_coeff`` /
+    # ``p_process_source_conversion_flow_coeff`` (dims ``(p, sink)`` /
+    # ``(p, source)``).
+    if (flex_data.p_process_sink_conversion_flow_coeff is not None
+            and flex_data.p_process_sink_conversion_flow_coeff.frame.height > 0):
+        p.process_sink_conversion_flow_coeff = series_with_multi_index(
+            flex_data.p_process_sink_conversion_flow_coeff.frame,
             dims=("p", "sink"),
             names=["process", "sink"],
         )
     else:
-        p.process_sink_flow_coefficient = pd.Series(
+        p.process_sink_conversion_flow_coeff = pd.Series(
             dtype=float,
             index=pd.MultiIndex.from_arrays(
                 [[], []], names=["process", "sink"]
             ),
         )
 
-    if (flex_data.p_process_source_flow_coef is not None
-            and flex_data.p_process_source_flow_coef.frame.height > 0):
-        p.process_source_flow_coefficient = series_with_multi_index(
-            flex_data.p_process_source_flow_coef.frame,
+    if (flex_data.p_process_source_conversion_flow_coeff is not None
+            and flex_data.p_process_source_conversion_flow_coeff.frame.height > 0):
+        p.process_source_conversion_flow_coeff = series_with_multi_index(
+            flex_data.p_process_source_conversion_flow_coeff.frame,
             dims=("p", "source"),
             names=["process", "source"],
         )
     else:
-        p.process_source_flow_coefficient = pd.Series(
+        p.process_source_conversion_flow_coeff = pd.Series(
             dtype=float,
             index=pd.MultiIndex.from_arrays(
                 [[], []], names=["process", "source"]

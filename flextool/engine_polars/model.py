@@ -2641,11 +2641,11 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 d.process_delayed, on="p", how="anti")
 
         input_expr = v_flow * d.p_unitsize
-        if d.p_process_source_flow_coef is not None:
-            input_expr = input_expr * d.p_process_source_flow_coef
+        if d.p_process_source_conversion_flow_coeff is not None:
+            input_expr = input_expr * d.p_process_source_conversion_flow_coeff
         output_expr = v_flow * d.p_unitsize * d.p_slope
-        if d.p_process_sink_flow_coef is not None:
-            output_expr = output_expr * d.p_process_sink_flow_coef
+        if d.p_process_sink_conversion_flow_coeff is not None:
+            output_expr = output_expr * d.p_process_sink_conversion_flow_coeff
 
         lhs_terms = {
             "input": Sum(Where(input_expr, in_flows_undelayed),

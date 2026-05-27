@@ -19,10 +19,10 @@ unitsize cascade.
 * :func:`p_penalty_up_from_source` /
   :func:`p_penalty_down_from_source`        — ``(n, d, t)`` sentinel-
   default scalar broadcast over the node × dt grid.
-* :func:`p_process_source_flow_coef_from_source` /
-  :func:`p_process_sink_flow_coef_from_source` — ``(p, source)`` /
-  ``(p, sink)`` flow coefficients with zero-drop semantics on the
-  caller's input/output sets.
+* :func:`p_process_source_conversion_flow_coeff_from_source` /
+  :func:`p_process_sink_conversion_flow_coeff_from_source` —
+  ``(p, source)`` / ``(p, sink)`` conversion-flow coefficients with
+  zero-drop semantics on the caller's input/output sets.
 
 Architecture invariants (per the Δ.10 hand-off):
 
@@ -246,12 +246,14 @@ def p_penalty_down_from_source(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §F.4 — p_process_source_flow_coef / p_process_sink_flow_coef
+# §F.4 — p_process_source_conversion_flow_coeff /
+# p_process_sink_conversion_flow_coeff
 # ---------------------------------------------------------------------------
 #
 # Mirrors input.py:950-1002.  The CSV path reads
-# p_process_source_flow_coefficient.csv / p_process_sink_flow_coefficient.csv
-# (always emitted by flextool's input writer for indirect units), then:
+# p_process_source_conversion_flow_coeff.csv /
+# p_process_sink_conversion_flow_coeff.csv (always emitted by flextool's
+# input writer for indirect units), then:
 #
 #   1. Anti-joins zero-coef rows out of the inputs / outputs sets.
 #   2. If any non-default (≠ 1.0) non-zero coef remains on a surviving
@@ -262,9 +264,9 @@ def p_penalty_down_from_source(source: "InputSource",
 #   3. If every coef is 1.0 (the trivial CHP-base case), the Param is
 #      ``None`` — model.py's gate falls through to the no-coef path.
 #
-# Spine source: ``unit__inputNode.coefficient`` /
-# ``unit__outputNode.coefficient``.  The default value on the schema is
-# 1.0; values are stored on the relationship class.
+# Spine source: ``unit__inputNode.conversion_flow_coeff`` /
+# ``unit__outputNode.conversion_flow_coeff``.  The default value on
+# the schema is 1.0; values are stored on the relationship class.
 
 
 def _flow_coef_from_source(source: "InputSource",
@@ -290,7 +292,7 @@ def _flow_coef_from_source(source: "InputSource",
         *every* surviving pair (default-fill 1.0) iff any non-default,
         non-zero coef is present; otherwise ``None``.
     """
-    df = _try_param(source, relationship_class, "flow_coefficient")
+    df = _try_param(source, relationship_class, "conversion_flow_coeff")
     if df is None or df.height == 0:
         return None, None
     cols = df.columns
@@ -331,16 +333,16 @@ def _flow_coef_from_source(source: "InputSource",
     return zero, Param(("p", node_role), merged)
 
 
-def p_process_source_flow_coef_from_source(
+def p_process_source_conversion_flow_coeff_from_source(
     source: "InputSource",
     process_input_flows: pl.DataFrame | None,
 ) -> tuple[pl.DataFrame | None, Param | None]:
-    """``p_process_source_flow_coefficient`` for indirect units.
+    """``p_process_source_conversion_flow_coeff`` for indirect units.
 
     Returns ``(zero_pairs, coef_param)`` mirroring
     ``input.py:_load_indirect``'s contract (lines 950-978).  The
     caller anti-joins ``zero_pairs`` from its inputs set and assigns
-    ``coef_param`` to ``flex_data.p_process_source_flow_coef``.
+    ``coef_param`` to ``flex_data.p_process_source_conversion_flow_coeff``.
 
     *process_input_flows* — the caller's surviving (p, source) set
     (post upstream zero-drop / classifier filter).  Empty / None →
@@ -350,15 +352,15 @@ def p_process_source_flow_coef_from_source(
         source, "unit__inputNode", "source", process_input_flows)
 
 
-def p_process_sink_flow_coef_from_source(
+def p_process_sink_conversion_flow_coeff_from_source(
     source: "InputSource",
     process_output_flows: pl.DataFrame | None,
 ) -> tuple[pl.DataFrame | None, Param | None]:
-    """``p_process_sink_flow_coefficient`` for indirect units.
+    """``p_process_sink_conversion_flow_coeff`` for indirect units.
 
     Symmetric counterpart to
-    :func:`p_process_source_flow_coef_from_source` — see that helper's
-    docstring for the contract.
+    :func:`p_process_source_conversion_flow_coeff_from_source` — see
+    that helper's docstring for the contract.
     """
     return _flow_coef_from_source(
         source, "unit__outputNode", "sink", process_output_flows)

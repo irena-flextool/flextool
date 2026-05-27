@@ -189,7 +189,7 @@ def series_with_multi_index(
 
     The legacy CSV path produced these for parameters with
     ``header=[0, 1, 2], index_col=0`` and a single ``value`` row that
-    pandas exposed as a Series — e.g. ``process_sink_flow_coefficient``,
+    pandas exposed as a Series — e.g. ``process_sink_conversion_flow_coeff``,
     ``reserve_upDown_group_penalty``.  The Series's index carries the
     multi-key tuple per cell; the in-memory equivalent is a Series with
     a MultiIndex.

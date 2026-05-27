@@ -213,15 +213,15 @@ def reserve_upDown_group_set_from_source(source: "InputSource") -> pl.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# §5.2.3 — relationship 1d_map / scalar (flow_coefficient, etc.)
+# §5.2.3 — relationship 1d_map / scalar (conversion_flow_coeff, etc.)
 
 
-def unit_input_flow_coefficient_from_source(source: "InputSource") -> Param | None:
-    """``unit__inputNode.flow_coefficient`` → ``Param(("p","source"), …)``.
+def unit_input_conversion_flow_coeff_from_source(source: "InputSource") -> Param | None:
+    """``unit__inputNode.conversion_flow_coeff`` → ``Param(("p","source"), …)``.
 
     Default 1.0 — broadcast over all (unit, node) entities.
     """
-    df = source.parameter("unit__inputNode", "flow_coefficient")
+    df = source.parameter("unit__inputNode", "conversion_flow_coeff")
     if df.height == 0:
         return None
     return Param(("p", "source"),
@@ -229,9 +229,9 @@ def unit_input_flow_coefficient_from_source(source: "InputSource") -> Param | No
                           .select("p", "source", "value"))
 
 
-def unit_output_flow_coefficient_from_source(source: "InputSource") -> Param | None:
-    """``unit__outputNode.flow_coefficient`` → ``Param(("p","sink"), …)``."""
-    df = source.parameter("unit__outputNode", "flow_coefficient")
+def unit_output_conversion_flow_coeff_from_source(source: "InputSource") -> Param | None:
+    """``unit__outputNode.conversion_flow_coeff`` → ``Param(("p","sink"), …)``."""
+    df = source.parameter("unit__outputNode", "conversion_flow_coeff")
     if df.height == 0:
         return None
     return Param(("p", "sink"),

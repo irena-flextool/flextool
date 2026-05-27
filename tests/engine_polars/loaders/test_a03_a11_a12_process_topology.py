@@ -80,11 +80,11 @@ def test_chp_2in_2out_indirect_with_zero_coef_and_nondefault_sink_coef(tiny_work
         "process,method\nu1,method_indirect\n")
     _write(tiny_workdir, "input/commodity__node.csv",
         "commodity,node\nelec,west\n")
-    _write(tiny_workdir, "input/p_process_source_flow_coefficient.csv",
-        "process,source,p_process_source_flow_coefficient\n"
+    _write(tiny_workdir, "input/p_process_source_conversion_flow_coeff.csv",
+        "process,source,p_process_source_conversion_flow_coeff\n"
         "u1,gas,0.0\nu1,coal,1.5\n")
-    _write(tiny_workdir, "input/p_process_sink_flow_coefficient.csv",
-        "process,sink,p_process_sink_flow_coefficient\n"
+    _write(tiny_workdir, "input/p_process_sink_conversion_flow_coeff.csv",
+        "process,sink,p_process_sink_conversion_flow_coeff\n"
         "u1,heat,0.2\nu1,west,2.0\n")
     # p_flow_max is empty header-only in the seed; provide ≥1 row so the
     # downstream Param init doesn't trip on a None frame.
@@ -110,12 +110,12 @@ def test_chp_2in_2out_indirect_with_zero_coef_and_nondefault_sink_coef(tiny_work
         pl.DataFrame({"p": ["u1", "u1"], "source": ["u1", "u1"],
                       "sink": ["heat", "west"]}))
     # A.12 source-coef Param: only coal survives (gas dropped); coef 1.5.
-    src_coef = d.p_process_source_flow_coef.frame.sort("source")
+    src_coef = d.p_process_source_conversion_flow_coeff.frame.sort("source")
     assert src_coef["value"].to_list() == pytest.approx([1.5], rel=1e-7)
     assert src_coef["source"].to_list() == ["coal"]
     # A.12 sink-coef Param: both surviving outputs carry their listed coef.
     # Hand-calc: sink_long has both heat=0.2 and west=2.0 (no fill_null).
-    sink_coef = d.p_process_sink_flow_coef.frame.sort("sink")
+    sink_coef = d.p_process_sink_conversion_flow_coeff.frame.sort("sink")
     assert sink_coef["value"].to_list() == pytest.approx([0.2, 2.0], rel=1e-7)
     assert sink_coef["sink"].to_list() == ["heat", "west"]
     # A.3 flow_to_n keys n=sink; flow_from_n keys n=source — pure projection.

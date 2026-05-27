@@ -284,8 +284,8 @@ _FIXTURE_OBJ_TOLERANCE: dict[str, float] = {
 # so the obj cannot match.
 #
 # E.g. ``work_delay_source_coef`` patches
-# ``input/p_process_source_flow_coefficient.csv`` from 1.0 to 2.0 after
-# preprocessing (see ``tests/_gen_delay_source_coef.py``).  The DB
+# ``input/p_process_source_conversion_flow_coeff.csv`` from 1.0 to 2.0
+# after preprocessing (see ``tests/_gen_delay_source_coef.py``).  The DB
 # scenario (``water_pump_delayed``) carries the unpatched 1.0 value, so
 # native obj reproduces the unpatched LP, not the patched reference.
 _FIXTURES_DERIVATIVE_PATCH: set[str] = {

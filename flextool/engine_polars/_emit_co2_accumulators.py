@@ -189,11 +189,11 @@ def compute_co2_rolling_accumulator(
     ).select("p", "d", "t", pl.col("value").alias("slope"))
 
     fc_source = _param_frame(
-        getattr(flex_data, "p_process_source_flow_coef", None),
+        getattr(flex_data, "p_process_source_conversion_flow_coeff", None),
         "p", "source",
     ).select("p", "source", pl.col("value").alias("fc_source"))
     fc_sink = _param_frame(
-        getattr(flex_data, "p_process_sink_flow_coef", None),
+        getattr(flex_data, "p_process_sink_conversion_flow_coeff", None),
         "p", "sink",
     ).select("p", "sink", pl.col("value").alias("fc_sink"))
 

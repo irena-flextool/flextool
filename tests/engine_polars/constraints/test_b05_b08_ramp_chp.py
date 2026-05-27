@@ -142,8 +142,9 @@ def test_no_ramp_load_constraint_emitted(toy_uc_3t):
 # B.8.3 — Two-input source_flow_coef tradeoff.
 
 def test_indirect_two_input_source_flow_coef_tradeoff(toy_2node_chp):
-    """Covers B.8.3 — non-default ``p_process_source_flow_coef`` on a
-    two-input indirect process picks the cheaper specific fuel.
+    """Covers B.8.3 — non-default
+    ``p_process_source_conversion_flow_coeff`` on a two-input indirect
+    process picks the cheaper specific fuel.
 
     Setup: extend ``toy_2node_chp`` with TWO fuel inputs:
         coal:    price=2.0,  source_flow_coef = 1.0   ⇒ specific = 2.0/1.0 = 2.0
@@ -182,7 +183,7 @@ def test_indirect_two_input_source_flow_coef_tradeoff(toy_2node_chp):
     process_input_flows = pl.DataFrame({
         "p": ["chp", "chp"], "source": ["coal", "biomass"],
         "sink": ["chp", "chp"]})
-    p_process_source_flow_coef = Param(("p", "source"),
+    p_process_source_conversion_flow_coeff = Param(("p", "source"),
         pl.DataFrame({"p": ["chp", "chp"], "source": ["coal", "biomass"],
                       "value": [1.0, 2.0]}))
     # Single-timestep demand: zero out t02 to keep hand-calc tight.
@@ -198,7 +199,7 @@ def test_indirect_two_input_source_flow_coef_tradeoff(toy_2node_chp):
         flow_from_commodity_eff=flow_from_commodity_eff,
         p_flow_upper=p_flow_upper, p_commodity_price=p_commodity_price,
         process_input_flows=process_input_flows,
-        p_process_source_flow_coef=p_process_source_flow_coef,
+        p_process_source_conversion_flow_coeff=p_process_source_conversion_flow_coeff,
         p_inflow=p_inflow,
     )
     pb, sol = _solve(data)

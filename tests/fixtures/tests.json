@@ -4844,7 +4844,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -4976,7 +4976,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MS4w",
         "float"
@@ -6702,7 +6702,7 @@
     ],
     [
       "unit__inputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],
@@ -6786,7 +6786,7 @@
     ],
     [
       "unit__outputNode",
-      "flow_coefficient",
+      "conversion_flow_coeff",
       "float",
       0
     ],
@@ -10991,7 +10991,7 @@
         "water_pump",
         "water_source"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "Mi4w",
         "float"
@@ -11004,7 +11004,7 @@
         "water_pump",
         "water_source"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MQ==",
         "float"
@@ -11030,7 +11030,7 @@
         "water_pump",
         "west"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MA==",
         "float"
@@ -11097,7 +11097,7 @@
         "coal_chp",
         "heat"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "MC4y",
         "float"
@@ -11136,7 +11136,7 @@
         "coal_chp",
         "west"
       ],
-      "flow_coefficient",
+      "conversion_flow_coeff",
       [
         "Mi4w",
         "float"
@@ -11338,7 +11338,7 @@
     ],
     [
       "delay_source_coef_on",
-      "Phase 3d: override unit__inputNode.(water_pump, water_source).flow_coefficient from 1.0 to 2.0 for test_flex_delay_source_coef.py."
+      "Phase 3d: override unit__inputNode.(water_pump, water_source).conversion_flow_coeff from 1.0 to 2.0 for test_flex_delay_source_coef.py."
     ],
     [
       "dispatch_fullYear_roll",

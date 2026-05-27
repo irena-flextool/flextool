@@ -204,21 +204,23 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
     psse_delayed   = _read_psse("process_source_sink_delayed")
     psse_undelayed = _read_psse("process_source_sink_undelayed")
 
-    # Filter out (p, source) pairs where p_process_source_flow_coefficient == 0:
-    # the .mod's conversion_indirect LHS multiplies each source-side flow by
-    # this coefficient, so a zero coef effectively drops the row from the
-    # input balance.  Mirror that filter on the delayed side — _load_indirect
-    # already does the same on the undelayed side.  Without this, water_pump's
-    # west→water_pump delayed input is double-counted in conversion_indirect,
-    # forcing the LP to dispatch extra battery/coal to compensate (visible
-    # as a ~0.099% gap on test_a_lot's multi-period parity).
+    # Filter out (p, source) pairs where
+    # p_process_source_conversion_flow_coeff == 0: the .mod's
+    # conversion_indirect LHS multiplies each source-side flow by this
+    # coefficient, so a zero coef effectively drops the row from the
+    # input balance.  Mirror that filter on the delayed side —
+    # _load_indirect already does the same on the undelayed side.
+    # Without this, water_pump's west→water_pump delayed input is
+    # double-counted in conversion_indirect, forcing the LP to dispatch
+    # extra battery/coal to compensate (visible as a ~0.099% gap on
+    # test_a_lot's multi-period parity).
     inp = Path(inp_dir)
-    src_path = inp / "p_process_source_flow_coefficient.csv"
+    src_path = inp / "p_process_source_conversion_flow_coeff.csv"
     srcdf = _provider_get(provider, src_path)
-    if srcdf is not None and srcdf.height > 0 and "p_process_source_flow_coefficient" in srcdf.columns:
+    if srcdf is not None and srcdf.height > 0 and "p_process_source_conversion_flow_coeff" in srcdf.columns:
         zero_src = (srcdf
             .rename({"process": "p",
-                     "p_process_source_flow_coefficient": "coef"})
+                     "p_process_source_conversion_flow_coeff": "coef"})
             .with_columns(pl.col("coef").cast(pl.Float64, strict=False))
             .filter(pl.col("coef") == 0.0)
             .select("p", "source"))
@@ -371,16 +373,17 @@ def delayed_input_expr(d, v_flow):
     # Multiply by unitsize[p] and delay weight[p, td].
     expr = expr * d.p_unitsize * d.p_process_delay_weight
     # Per flextool.mod:2573, the delayed source-side term also carries the
-    # ``p_process_source_flow_coefficient[p, source]`` multiplier — same
-    # factor that the undelayed source-side term in ``conversion_indirect``
-    # applies (model.py:1424-1425).  When the Param is None (every coef=1
-    # default) the multiplication is skipped to keep the Expr's open dims
-    # unchanged; when present it covers all surviving (p, source) pairs
-    # (defaulted to 1.0 by the loader where the CSV is silent).  Without
-    # this, fixtures combining a delay with a non-default source coefficient
-    # diverge from flextool — see ``tests/test_flex_delay_source_coef.py``.
-    if getattr(d, "p_process_source_flow_coef", None) is not None:
-        expr = expr * d.p_process_source_flow_coef
+    # ``p_process_source_conversion_flow_coeff[p, source]`` multiplier —
+    # same factor that the undelayed source-side term in
+    # ``conversion_indirect`` applies (model.py:1424-1425).  When the
+    # Param is None (every coef=1 default) the multiplication is skipped
+    # to keep the Expr's open dims unchanged; when present it covers all
+    # surviving (p, source) pairs (defaulted to 1.0 by the loader where
+    # the CSV is silent).  Without this, fixtures combining a delay with
+    # a non-default source coefficient diverge from flextool — see
+    # ``tests/test_flex_delay_source_coef.py``.
+    if getattr(d, "p_process_source_conversion_flow_coeff", None) is not None:
+        expr = expr * d.p_process_source_conversion_flow_coeff
 
     # Sum over source, sink, td, t_source → leaves (p, d, t).
     # NOTE: original version listed only ("source", "sink", "td") — but
