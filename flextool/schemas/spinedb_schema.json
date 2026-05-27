@@ -2649,6 +2649,12 @@
     ],
     [
       "connection",
+      "constraint_cumulative_pre_built_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "connection",
       "constraint_invested_capacity_coeff",
       "map",
       1
@@ -3279,6 +3285,12 @@
     ],
     [
       "node",
+      "constraint_cumulative_pre_built_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "node",
       "constraint_invested_capacity_coeff",
       "map",
       1
@@ -3860,6 +3872,12 @@
       1
     ],
     [
+      "timeset",
+      "timeset_weights",
+      "map",
+      1
+    ],
+    [
       "unit",
       "availability",
       "float",
@@ -3876,6 +3894,12 @@
       "availability",
       "map",
       3
+    ],
+    [
+      "unit",
+      "constraint_cumulative_pre_built_capacity_coeff",
+      "map",
+      1
     ],
     [
       "unit",
@@ -4137,6 +4161,18 @@
     ],
     [
       "unit__inputNode",
+      "capacity_max_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "capacity_min_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
       "constraint_flow_coeff",
       "map",
       1
@@ -4205,6 +4241,18 @@
       "unit__node__profile",
       "profile_method",
       "str",
+      0
+    ],
+    [
+      "unit__outputNode",
+      "capacity_max_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
+      "capacity_min_coeff",
+      "float",
       0
     ],
     [
