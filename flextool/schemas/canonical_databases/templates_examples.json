@@ -2414,14 +2414,6 @@
     ],
     [
       "model",
-      "output_connection_flow_separate",
-      null,
-      "optional_output",
-      "Produces the connection flows separately for both directions.",
-      "output"
-    ],
-    [
-      "model",
       "output_horizon",
       null,
       "yes_no",
@@ -4325,12 +4317,6 @@
       "model",
       "max_flow_for_unconstrained_variables",
       "float",
-      0
-    ],
-    [
-      "model",
-      "output_connection_flow_separate",
-      "str",
       0
     ],
     [

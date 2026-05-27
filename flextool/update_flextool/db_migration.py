@@ -1424,6 +1424,13 @@ def migrate_database(database_path, up_to: int | None = None):
                 # regen_lh2_three_region.py ``yes`` override are
                 # stripped in the same commit.
                 _migrate_v56_remove_output_connection__node__node_flow_t(db)
+                # Drop ``model.output_connection_flow_separate``.  Last
+                # of the Batch-B dead-toggle removals; same shape as the
+                # other six.  After this commit the
+                # ``optional_outputs.csv`` cl_pars emitter holds only
+                # ``output_horizon`` — the one flag actually consumed
+                # by ``_emit_per_solve``.
+                _migrate_v56_remove_output_connection_flow_separate(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4067,6 +4074,29 @@ def _migrate_v56_remove_output_connection__node__node_flow_t(db) -> None:
     the ``parameter_definition``.
     """
     remove_parameters_manual(db, [["model", "output_connection__node__node_flow_t"]])
+
+
+def _migrate_v56_remove_output_connection_flow_separate(db) -> None:
+    """Drop the ``model.output_connection_flow_separate`` parameter
+    from the schema.
+
+    Dead toggle and the last of the Batch-B output flag removals: the
+    parameter was plumbed into the multi-param ``optional_outputs.csv``
+    emitter but nothing on the engine side reads its row from
+    ``enable_optional_outputs`` — only ``output_horizon`` is consulted.
+    Any value users set was silently dropped.
+
+    Sibling edits in the same commit strip it from the input_derivation
+    cl_pars (which leaves only ``output_horizon`` in the
+    ``optional_outputs.csv`` emitter — the parameter that IS actually
+    consumed), the SET_LIKE_NAMES table, the autoscale quantity-type
+    table and the export_settings.yaml params list.
+
+    Side effects: every ``parameter_value`` row referencing
+    ``model.output_connection_flow_separate`` is dropped alongside the
+    ``parameter_definition``.
+    """
+    remove_parameters_manual(db, [["model", "output_connection_flow_separate"]])
 
 
 if __name__ == '__main__':

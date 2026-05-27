@@ -84,7 +84,7 @@ _STRUCTURAL_PARAM_NAMES: frozenset[str] = frozenset({
     "has_inertia", "has_non_synchronous", "include_stochastics",
     "output_nodeGroup_dispatch", "output_nodeGroup_indicators",
     "output_flowGroup_indicators", "flow_aggregator",
-    "output_connection_flow_separate", "output_horizon",
+    "output_horizon",
     # set membership / name references
     "solves", "contains_solves", "model",
     "realized_periods", "realized_invest_periods",

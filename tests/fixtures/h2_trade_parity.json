@@ -8940,17 +8940,6 @@
     ],
     [
       "model",
-      "output_connection_flow_separate",
-      [
-        "Im5vIg==",
-        "str"
-      ],
-      "optional_output",
-      "Produces the connection flows separately for both directions.",
-      "output"
-    ],
-    [
-      "model",
       "output_horizon",
       [
         "Im5vIg==",
@@ -11158,12 +11147,6 @@
       "model",
       "max_flow_for_unconstrained_variables",
       "float",
-      0
-    ],
-    [
-      "model",
-      "output_connection_flow_separate",
-      "str",
       0
     ],
     [
