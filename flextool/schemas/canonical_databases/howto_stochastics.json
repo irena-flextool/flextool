@@ -1794,14 +1794,6 @@
     ],
     [
       "solve",
-      "highs_parallel",
-      null,
-      "highs_parallel",
-      "HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "highs_presolve",
       null,
       "highs_presolve",
@@ -3687,12 +3679,6 @@
     ],
     [
       "solve",
-      "highs_parallel",
-      "str",
-      0
-    ],
-    [
-      "solve",
       "highs_presolve",
       "str",
       0
@@ -4392,27 +4378,6 @@
       "has_non_synchronous",
       [
         "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "\"on\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "\"choose\"",
         "str"
       ]
     ],

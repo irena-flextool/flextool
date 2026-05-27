@@ -347,18 +347,6 @@
       "yes"
     ],
     [
-      "highs_parallel",
-      "on"
-    ],
-    [
-      "highs_parallel",
-      "off"
-    ],
-    [
-      "highs_parallel",
-      "choose"
-    ],
-    [
       "highs_presolve",
       "on"
     ],
@@ -2031,14 +2019,6 @@
       null,
       null,
       "Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "highs_parallel",
-      "off",
-      "highs_parallel",
-      "HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.",
       "solve_advanced"
     ],
     [
@@ -3830,12 +3810,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_parallel",
-      "str",
-      0
     ],
     [
       "solve",

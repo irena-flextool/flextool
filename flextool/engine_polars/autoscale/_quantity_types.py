@@ -164,8 +164,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # A flag whether the group of nodes has an inertia constraint active.
     ('has_non_synchronous', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has the non-synchronous share constraint active.
-    ('highs_parallel', 'solve'): QuantityType.DIMENSIONLESS,
-    # HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in pa...
     ('highs_presolve', 'solve'): QuantityType.DIMENSIONLESS,
     # HiGHS uses presolve ('on') or not ('off'). Can have a large impact on solution time when solves are large.
     ('include_stochastics', 'group'): QuantityType.DIMENSIONLESS,

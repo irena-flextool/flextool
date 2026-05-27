@@ -1638,27 +1638,6 @@
       ]
     ],
     [
-      "highs_parallel",
-      [
-        "Im9uIg==",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "ImNob29zZSI=",
-        "str"
-      ]
-    ],
-    [
       "highs_presolve",
       [
         "Im9uIg==",
@@ -4064,17 +4043,6 @@
     ],
     [
       "solve",
-      "highs_parallel",
-      [
-        null,
-        null
-      ],
-      "highs_parallel",
-      "HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "highs_presolve",
       [
         null,
@@ -6063,12 +6031,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_parallel",
-      "str",
-      0
     ],
     [
       "solve",
@@ -9188,16 +9150,6 @@
     [
       "solve",
       "y2020_2035_5week",
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2035_5week",
       "highs_presolve",
       [
         "Im9uIg==",
@@ -9308,26 +9260,6 @@
     [
       "solve",
       "y2020_2day_dispatch",
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "retire"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
       "highs_presolve",
       [
         "Im9mZiI=",
@@ -9418,16 +9350,6 @@
     [
       "solve",
       "y2020_5week",
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_5week",
       "highs_presolve",
       [
         "Im9mZiI=",
@@ -9484,16 +9406,6 @@
         "map"
       ],
       "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_fullYear_dispatch",
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "fullYear"
     ],
     [
       "solve",
@@ -9598,16 +9510,6 @@
     [
       "solve",
       "y2025_5week",
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2025_5week",
       "highs_presolve",
       [
         "Im9mZiI=",
@@ -9668,16 +9570,6 @@
     [
       "solve",
       "y2030_5week",
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2030_5week",
       "highs_presolve",
       [
         "Im9mZiI=",
@@ -9732,16 +9624,6 @@
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzAiLCA1LjBdLCBbInAyMDM1IiwgNS4wXV0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
         "map"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2035_5week",
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
       ],
       "invest_solveSequence_5weeks"
     ],

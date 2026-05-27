@@ -2940,14 +2940,6 @@
     ],
     [
       "solve",
-      "highs_parallel",
-      null,
-      "highs_parallel",
-      "HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "highs_presolve",
       null,
       "highs_presolve",
@@ -4815,12 +4807,6 @@
     ],
     [
       "solve",
-      "highs_parallel",
-      "str",
-      0
-    ],
-    [
-      "solve",
       "highs_presolve",
       "str",
       0
@@ -5556,27 +5542,6 @@
       "has_non_synchronous",
       [
         "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "\"on\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "\"choose\"",
         "str"
       ]
     ],
@@ -8769,16 +8734,6 @@
     [
       "solve",
       "y2020_2035_5week",
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2035_5week",
       "highs_presolve",
       [
         "\"on\"",
@@ -8835,26 +8790,6 @@
         "map"
       ],
       "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "retire"
     ],
     [
       "solve",
@@ -8929,16 +8864,6 @@
     [
       "solve",
       "y2020_5week",
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_5week",
       "highs_presolve",
       [
         "\"off\"",
@@ -8999,16 +8924,6 @@
     [
       "solve",
       "y2020_fullYear_dispatch",
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "fullYear"
-    ],
-    [
-      "solve",
-      "y2020_fullYear_dispatch",
       "highs_presolve",
       [
         "\"on\"",
@@ -9055,16 +8970,6 @@
         "str"
       ],
       "fullYear"
-    ],
-    [
-      "solve",
-      "y2025_5week",
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
     ],
     [
       "solve",
@@ -9129,16 +9034,6 @@
     [
       "solve",
       "y2030_5week",
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2030_5week",
       "highs_presolve",
       [
         "\"off\"",
@@ -9193,16 +9088,6 @@
       [
         "{\"index_type\": \"str\", \"data\": [[\"p2030\", 5.0], [\"p2035\", 5.0]], \"index_name\": \"period\"}",
         "map"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2035_5week",
-      "highs_parallel",
-      [
-        "\"off\"",
-        "str"
       ],
       "invest_solveSequence_5weeks"
     ],

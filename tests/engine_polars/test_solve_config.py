@@ -14,12 +14,12 @@ test framing alludes to ("solve_mode.csv parsing & application"):
 * Reads ``input/solve_mode.csv`` (or falls back to ``solve_data/``).
 * Selects the row matching ``solve_data/solve_current.csv`` when
   multiple solves are present.
-* Translates flextool param names (``highs_parallel``,
-  ``highs_presolve``, plus an extensible numeric set) to HiGHS
-  canonical option names (``parallel``, ``presolve``).  Batch C.3
-  retired the ``highs_method`` shortcut — that override is now
-  authored on ``solver_arguments['solver']`` and resolved through
-  ``_resolve_effective_highs_options`` instead.
+* Translates flextool param names (``highs_presolve`` plus an
+  extensible numeric set) to HiGHS canonical option names
+  (``presolve``).  Batches C.3-C.4 retired the ``highs_method`` and
+  ``highs_parallel`` shortcuts — those overrides are now authored on
+  ``solver_arguments`` (keys ``solver`` / ``parallel``) and resolved
+  through ``_resolve_effective_highs_options`` instead.
 * Coerces the ``value`` column to the right Python type per
   ``_HIGHS_PARAM_MAP``.
 * Returns ``None`` when the CSV is missing / empty / has no
@@ -58,20 +58,20 @@ def _write_solve_current(sd: Path, solve: str) -> None:
 class TestSolveModeParsing:
     """Parsing layer: ``solve_mode.csv`` → flextool params."""
 
-    def test_canonical_two_highs_params(self, tmp_path: Path) -> None:
-        """The two remaining canonical flextool HiGHS shortcut keys
-        translate to their HiGHS option names with str values.  Batch
-        C.3 removed ``highs_method`` (folded into ``solver_arguments``
-        and read through the effective-options resolver instead).
+    def test_canonical_remaining_highs_param(self, tmp_path: Path) -> None:
+        """The one remaining canonical flextool HiGHS shortcut key
+        (``highs_presolve``) translates to its HiGHS option name with
+        a str value.  Batches C.3-C.4 removed ``highs_method`` and
+        ``highs_parallel`` (folded into ``solver_arguments`` and read
+        through the effective-options resolver instead).
         """
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_parallel", "S", "off"),
             ("highs_presolve", "S", "on"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"parallel": "off", "presolve": "on"}
+        assert opts == {"presolve": "on"}
 
     def test_solve_mode_param_is_ignored(self, tmp_path: Path) -> None:
         """flextool's solve framework param ``solve_mode`` (single_solve /
@@ -219,14 +219,14 @@ class TestSolveModeApplication:
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
             ("highs_presolve", "S1", "off"),
-            ("highs_parallel", "S1", "on"),
+            ("highs_time_limit", "S1", "120"),
             ("highs_presolve", "S2", "on"),
-            # No highs_parallel for S2 — must NOT inherit S1's "on".
+            # No highs_time_limit for S2 — must NOT inherit S1's "120".
         ])
         _write_solve_current(sd, "S2")
         opts = _load_solver_options(sd)
         assert opts == {"presolve": "on"}, (
-            f"S2 must not inherit S1.parallel; got {opts}"
+            f"S2 must not inherit S1.time_limit; got {opts}"
         )
 
     def test_missing_solve_current_picks_any_row(self, tmp_path: Path) -> None:
@@ -257,19 +257,19 @@ class TestSolveModeApplication:
 
 class TestRealFixture:
     """End-to-end against the real ``work_base_weighted`` fixture flextool
-    emits.  Pin the typical shape: two remaining highs_* keys
-    (``highs_method`` was removed in Batch C.3), one solve_mode row
-    (ignored), one active solve."""
+    emits.  Pin the typical shape: one remaining highs_* key
+    (``highs_method`` + ``highs_parallel`` were removed in Batches
+    C.3-C.4), one solve_mode row (ignored), one active solve."""
 
     def test_work_base_weighted(self, scenario_workdir) -> None:
         work = scenario_workdir("base_weighted", db_fixture="main")
         sd = work / "solve_data"
         opts = _load_solver_options(sd)
-        # solve_mode.csv has: highs_parallel=off, highs_presolve=off,
-        # plus solve_mode=single_solve (ignored).  ``highs_method``
-        # row was retired in Batch C.3 (folded into solver_arguments
-        # and read through the engine-side resolver instead).
+        # solve_mode.csv has: highs_presolve=off, plus
+        # solve_mode=single_solve (ignored).  ``highs_method`` and
+        # ``highs_parallel`` rows were retired in Batches C.3-C.4
+        # (folded into solver_arguments and read through the
+        # engine-side resolver instead).
         assert opts == {
-            "parallel": "off",
             "presolve": "off",
         }

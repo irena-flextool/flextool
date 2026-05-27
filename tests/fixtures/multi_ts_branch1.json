@@ -678,27 +678,6 @@
       ]
     ],
     [
-      "highs_parallel",
-      [
-        "Im9uIg==",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "Im9mZiI=",
-        "str"
-      ]
-    ],
-    [
-      "highs_parallel",
-      [
-        "ImNob29zZSI=",
-        "str"
-      ]
-    ],
-    [
       "highs_presolve",
       [
         "Im9uIg==",
@@ -3164,17 +3143,6 @@
     ],
     [
       "solve",
-      "highs_parallel",
-      [
-        null,
-        null
-      ],
-      "highs_parallel",
-      "HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "highs_presolve",
       [
         null,
@@ -5181,12 +5149,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_parallel",
-      "str",
-      0
     ],
     [
       "solve",

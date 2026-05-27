@@ -1465,6 +1465,14 @@ def migrate_database(database_path, up_to: int | None = None):
                 # entries for ``solver`` win on collision (logged).
                 _migrate_v56_fold_highs_method_into_solver_arguments(db)
                 _migrate_v56_remove_highs_method(db)
+                # Batch C.4 — fold ``highs_parallel`` into
+                # ``solver_arguments['parallel']`` (HiGHS' own option
+                # name for parallelism control) and drop the
+                # shortcut + its value list.  Existing
+                # ``solver_arguments`` entries for ``parallel`` win
+                # on collision (logged).
+                _migrate_v56_fold_highs_parallel_into_solver_arguments(db)
+                _migrate_v56_remove_highs_parallel(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4533,6 +4541,49 @@ def _migrate_v56_remove_highs_method(db) -> None:
         db.remove_items("parameter_value_list", vl["id"])
         try:
             _commit_step(db, "v56 removed solve.highs_method parameter_value_list")
+        except SpineDBAPIError:
+            pass
+
+
+def _migrate_v56_fold_highs_parallel_into_solver_arguments(db) -> None:
+    """Fold ``solve.highs_parallel`` values into
+    ``solver_arguments['parallel']`` (HiGHS' own option name for
+    parallelism control, per ``DETERMINISM_OPTIONS`` and the
+    ``input.py:_HIGHS_PARAM_MAP`` table).
+
+    Batch C.4 — second of the three ``highs_*`` shortcut folds.
+    Fixture values (``"on"``, ``"off"``) are HiGHS-canonical so no
+    value translation is needed; only the key name flips.
+
+    Sibling :func:`_migrate_v56_remove_highs_parallel` strips the
+    parameter_definition + the dedicated value list.  Collision
+    policy matches C.3: explicit ``solver_arguments['parallel']``
+    wins on collision (logged).
+    """
+    _fold_highs_shortcut_into_solver_arguments(
+        db, shortcut_param="highs_parallel",
+        highs_key="parallel", label="highs_parallel",
+    )
+
+
+def _migrate_v56_remove_highs_parallel(db) -> None:
+    """Remove ``solve.highs_parallel`` parameter definition + value list.
+
+    Companion to
+    :func:`_migrate_v56_fold_highs_parallel_into_solver_arguments`
+    (Batch C.4).  Same shape as C.3's removal helper.
+    """
+    remove_parameters_manual(db, [["solve", "highs_parallel"]])
+    try:
+        vl = db.item(
+            db.mapped_table("parameter_value_list"), name="highs_parallel",
+        )
+    except SpineDBAPIError:
+        vl = None
+    if vl:
+        db.remove_items("parameter_value_list", vl["id"])
+        try:
+            _commit_step(db, "v56 removed solve.highs_parallel parameter_value_list")
         except SpineDBAPIError:
             pass
 

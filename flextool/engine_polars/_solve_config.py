@@ -334,9 +334,9 @@ class SolveConfig:
         # override is now keyed as ``solver`` inside
         # ``solver_arguments``.
         highs_method: dict = {}
-        highs_parallel: dict = params_to_dict(
-            db=db, cl="solve", par="highs_parallel", mode=DictMode.DICT
-        )
+        # Batch C.4 — ``highs_parallel`` shortcut removed; override
+        # is now keyed as ``parallel`` inside ``solver_arguments``.
+        highs_parallel: dict = {}
         solve_period_years_represented: defaultdict = params_to_dict(
             db=db,
             cl="solve",
