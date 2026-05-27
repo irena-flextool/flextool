@@ -163,15 +163,17 @@ def run_one_solve(
         When True on the HiGHS path, divert to
         :func:`flextool.engine_polars._subprocess_solve.solve_via_subprocess`:
         polar-high writes the LP to a temp MPS file via
-        ``Problem.build_only`` and drops everything Python-side, then a
-        ``flextool.cli.cmd_solve_mps`` subprocess solves the MPS in a
-        clean address space.  The parent reads the solution back via a
-        read-only ``highspy.Highs`` and wraps it as a
-        ``polar_high.Solution`` identical in shape to the in-process
-        return.  Trades ~+90 s file I/O for HiGHS' active-solve memory
-        living outside the parent process.  Also disables warm-LP
-        reuse for the cascade — the Problem is in ``_released`` state
-        after the build.  Silently ignored on the commercial path.
+        ``Problem.write_mps(release=True)`` (a direct polars→MPS writer
+        that never builds a ``highspy.Highs`` instance, peaking at
+        ~2-3 GB on the largest LPs vs ~45 GB for HiGHS' own
+        ``writeModel``), then a ``flextool.cli.cmd_solve_mps``
+        subprocess solves the MPS in a clean address space.  The
+        parent reads the solution back via a read-only ``highspy.Highs``
+        and wraps it as a ``polar_high.Solution`` identical in shape
+        to the in-process return.  Trades file I/O for HiGHS' active-
+        solve memory living outside the parent process.  Also disables
+        warm-LP reuse for the cascade — the Problem is in ``_released``
+        state after the write.  Silently ignored on the commercial path.
     solve_name
         Used by the subprocess path to name MPS/options/solution files.
         Defaults to ``"solve"`` when omitted.
@@ -204,11 +206,14 @@ def run_one_solve(
         # key to HiGHS via ``setOptionValue`` (polar-high engine.py).
         highs_options = build_solver_options(solver_config) or None
         if save_memory:
-            # Subprocess path: build MPS via Problem.build_only, spawn
-            # flextool.cli.cmd_solve_mps, read solution back.  The
-            # effective options are the convenience-knob-translated
-            # ones when present, else whatever was already stored on
-            # the Problem via ``set_solver_options`` upstream (autoscale
+            # Subprocess path: write MPS via Problem.write_mps directly
+            # from polars frames, spawn flextool.cli.cmd_solve_mps, read
+            # solution back.  The effective options are forwarded to the
+            # subprocess through the .opt file written by solve_via_
+            # subprocess (write_mps itself runs no solver and takes no
+            # options).  Source: convenience-knob-translated options
+            # when present, else whatever was already stored on the
+            # Problem via ``set_solver_options`` upstream (autoscale
             # Layer 3 may have mutated those).
             from flextool.engine_polars._subprocess_solve import (
                 solve_via_subprocess,

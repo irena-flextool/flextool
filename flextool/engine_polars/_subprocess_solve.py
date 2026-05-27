@@ -3,10 +3,14 @@
 The default HiGHS path in :mod:`flextool.engine_polars._solver_dispatch`
 runs in-process via ``highspy``.  For large models that don't fit in
 RAM when stacked alongside FlexTool's preprocessing state, this module
-offers an opt-in alternative: build the LP into a temp MPS file via
-:meth:`polar_high.Problem.build_only`, drop everything polar-side AND
-the live HiGHS instance, then spawn :mod:`flextool.cli.cmd_solve_mps`
-as a subprocess to actually solve.
+offers an opt-in alternative: write the LP to a temp MPS file directly
+from polar-high's polars frames via :meth:`polar_high.Problem.write_mps`
+(no ``highspy.Highs`` instance built in this process), drop the polar-
+side LP source, then spawn :mod:`flextool.cli.cmd_solve_mps` as a
+subprocess to actually solve.  ``write_mps`` peaks at ~2-3 GB on a
+9.9M-row LP vs HiGHS' own ``writeModel`` which takes ~45 GB — the
+latter is what made the prior ``build_only``-based design OOM at the
+write step before any solve started.
 
 The child process has a clean address space — none of FlexTool's
 ~7-11 GB of polars frames, no glibc fragmentation from upstream
@@ -16,9 +20,9 @@ storage + the produced solution arrays) and wraps it in a
 ``polar_high.Solution`` that downstream output writers consume
 identically to an in-process solve.
 
-Loses warm-LP reuse for the cascade — the Problem is in ``_released``
-state after ``build_only`` and can't be resolved.  Already documented
-on the ``--save-memory`` flag.
+Loses warm-LP reuse for the cascade — ``write_mps(release=True)``
+puts the Problem in ``_released`` state and it can't be resolved.
+Already documented on the ``--save-memory`` flag.
 """
 from __future__ import annotations
 
@@ -105,12 +109,15 @@ def solve_via_subprocess(
                 solve_name, mps_path,
             )
 
-        # Build LP into HiGHS, write MPS, release polar-side AND the
-        # live HiGHS instance.  The Problem is in _released state from
-        # here on — warm-LP reuse is impossible.  Var.col_id frames
-        # survive on problem._vars so we can construct a Solution
-        # below from the subprocess's col_value array.
-        problem.build_only(str(mps_path), options=opts)
+        # Write MPS directly from polar-high's polars frames (no
+        # highspy.Highs instance built here) and release polar-side
+        # LP source.  The Problem is in _released state from here on —
+        # warm-LP reuse is impossible.  Var.col_id frames survive on
+        # problem._vars so we can construct a Solution below from the
+        # subprocess's col_value array.  HiGHS solver options are
+        # applied in the subprocess via the .opt file written above —
+        # write_mps does not run HiGHS, so it takes no options kwarg.
+        problem.write_mps(str(mps_path), release=True)
 
         cmd = [
             sys.executable, "-m", "flextool.cli.cmd_solve_mps",
@@ -188,8 +195,8 @@ def solve_via_subprocess(
         # The Solution carries:
         # - col_value / duals → from the subprocess via the fresh h
         # - vars=problem._vars → Var.frame col_id maps survived
-        #   build_only's _release_python_lp_inputs (see polar-high
-        #   engine.py)
+        #   write_mps(release=True)'s _release_python_lp_inputs call
+        #   (see polar-high engine.py)
         # - highs=h → the fresh, read-only Highs handle for output
         #   writers (handoff_writers, read_highs_solution) that
         #   consume .getLp() / .allVariableNames() / .getSolution()
