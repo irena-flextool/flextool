@@ -9787,17 +9787,6 @@
     ],
     [
       "solve",
-      "solver_options",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "Map of solver-specific option name -> value, forwarded raw to the chosen solver. Use the convenience parameters (solver_time_limit, solver_mip_gap, solver_threads) for the common cases; this map is for anything else.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "solver_precommand",
       [
         "bnVsbA==",
@@ -11772,12 +11761,6 @@
       "solver_mip_gap",
       "float",
       0
-    ],
-    [
-      "solve",
-      "solver_options",
-      "map",
-      1
     ],
     [
       "solve",

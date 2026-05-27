@@ -1445,6 +1445,17 @@ def migrate_database(database_path, up_to: int | None = None):
                 # lines and converted to Map entries; unparseable
                 # entries raise so the user can inspect their data.
                 _migrate_v56_retype_solver_arguments_to_1d_map(db)
+                # Batch C.2 — fold the legacy ``solver_options`` Map
+                # into the freshly retyped ``solver_arguments`` 1d-map
+                # (existing solver_arguments entries win on key
+                # collision; collisions logged to stdout) and drop the
+                # now-duplicate ``solver_options`` parameter
+                # definition.  All in-repo fixtures carry null values
+                # for ``solver_options`` at v55 so the fold path is
+                # exercised only by user databases that authored
+                # entries.
+                _migrate_v56_fold_solver_options_into_solver_arguments(db)
+                _migrate_v56_remove_solver_options(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4235,6 +4246,144 @@ def _migrate_v56_retype_solver_arguments_to_1d_map(db) -> None:
         "of solver_config/highs.opt by the engine's effective-options "
         "resolver (Batch C.1).",
     )
+
+
+def _migrate_v56_fold_solver_options_into_solver_arguments(db) -> None:
+    """Fold the legacy ``solve.solver_options`` Map into the
+    ``solve.solver_arguments`` 1d-map and remove ``solver_options``.
+
+    Batch C.2 — second commit of the solver-knob consolidation.  The
+    ``solver_options`` Map covered the same surface as the just-retyped
+    ``solver_arguments`` 1d-map (free-form HiGHS option key → value
+    overrides); collapsing both into one canonical home eliminates the
+    "which one wins?" ambiguity and the redundant DB axis.
+
+    Collision policy: where a key appears in both Maps on the same
+    (solve, alternative), the existing ``solver_arguments`` value
+    wins — it was the more explicit / more recently introduced home
+    (v52+) and we treat the migration as a no-op for that key.  The
+    helper logs collisions to stdout so a user reviewing the
+    migration log can spot drifted values; no user data is silently
+    overwritten.
+
+    All in-repo fixtures carry null values for ``solver_options`` at
+    v55 (audited 2026-05-27), so the fold path is exercised only by
+    user databases that authored entries.
+
+    Engine consumption: ``_resolve_effective_highs_options`` in
+    :mod:`flextool.engine_polars._solver_dispatch` already reads the
+    1d-map ``solver_arguments`` via the resolver; after this commit
+    every override the user authored is routed through that single
+    path.  ``solver_options`` is no longer read from the DB.
+
+    Side effects: every ``parameter_value`` row referencing
+    ``solver_options`` is dropped alongside the
+    ``parameter_definition`` by the companion
+    :func:`_migrate_v56_remove_solver_options` call in the
+    elif block.
+    """
+    parameter_values = db.mapped_table("parameter_value")  # noqa: F841 — touch the table cache
+    options_rows = list(db.find_parameter_values(
+        entity_class_name="solve", parameter_definition_name="solver_options",
+    ))
+    if not options_rows:
+        # Nothing to fold; the companion removal helper handles the
+        # idempotent definition strip.
+        return
+
+    # Build an (entity_name, alternative_name) -> existing solver_arguments
+    # row index so we can merge in place when the user authored both.
+    args_rows = list(db.find_parameter_values(
+        entity_class_name="solve", parameter_definition_name="solver_arguments",
+    ))
+    args_index: dict[tuple[str, str], dict] = {}
+    for pv in args_rows:
+        args_index[(pv["entity_name"], pv["alternative_name"])] = pv
+
+    for opt_pv in options_rows:
+        try:
+            opt_value = from_database(opt_pv["value"], opt_pv["type"])
+        except Exception:  # pragma: no cover — best-effort
+            opt_value = None
+        if opt_value is None:
+            continue
+        if not isinstance(opt_value, Map):
+            print(
+                f"v56 fold solver_options → solver_arguments: solve."
+                f"{opt_pv['entity_byname']!r}.solver_options is not a "
+                f"Map ({type(opt_value).__name__!r}); skipping fold."
+            )
+            continue
+        opt_dict: dict[str, str] = {
+            str(k): str(v)
+            for k, v in zip(list(opt_value.indexes), list(opt_value.values))
+        }
+        existing = args_index.get(
+            (opt_pv["entity_name"], opt_pv["alternative_name"])
+        )
+        existing_map: dict[str, str] = {}
+        if existing is not None:
+            try:
+                cur = from_database(existing["value"], existing["type"])
+            except Exception:  # pragma: no cover — best-effort
+                cur = None
+            if isinstance(cur, Map):
+                existing_map = {
+                    str(k): str(v)
+                    for k, v in zip(list(cur.indexes), list(cur.values))
+                }
+        merged: dict[str, str] = dict(existing_map)
+        collisions: list[str] = []
+        for key, val in opt_dict.items():
+            if key in merged and merged[key] != val:
+                collisions.append(
+                    f"{key}: solver_arguments={merged[key]!r} wins over "
+                    f"solver_options={val!r}"
+                )
+                continue
+            merged[key] = val
+        if collisions:
+            print(
+                "v56 fold solver_options → solver_arguments collisions on "
+                f"solve.{opt_pv['entity_byname']!r} "
+                f"(alt={opt_pv['alternative_name']!r}): "
+                + "; ".join(collisions)
+            )
+        new_map = Map(list(merged.keys()), list(merged.values()))
+        new_value, new_type = to_database(new_map)
+        if existing is not None:
+            db.update_item(
+                "parameter_value",
+                id=existing["id"],
+                value=new_value, type=new_type,
+            )
+        else:
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name="solve",
+                entity_byname=opt_pv["entity_byname"],
+                parameter_definition_name="solver_arguments",
+                alternative_name=opt_pv["alternative_name"],
+                value=new_value, type=new_type,
+            )
+
+    _commit_step(
+        db,
+        "v56 fold solve.solver_options → solver_arguments: existing "
+        "solver_arguments entries win on key collision (Batch C.2).",
+    )
+
+
+def _migrate_v56_remove_solver_options(db) -> None:
+    """Remove the ``solve.solver_options`` parameter definition.
+
+    Companion to :func:`_migrate_v56_fold_solver_options_into_solver_arguments`
+    (Batch C.2).  After the fold helper has copied every Map entry
+    into ``solver_arguments``, this helper drops the now-duplicate
+    parameter_definition.  ``parameter_value`` rows referencing the
+    definition cascade-delete alongside it via spinedb_api.
+    """
+    remove_parameters_manual(db, [["solve", "solver_options"]])
 
 
 if __name__ == '__main__':

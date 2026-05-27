@@ -164,7 +164,7 @@ def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
     2. The raw ``solver_config.options`` dict is merged on top of the
        translated knobs — **raw options win** on key collisions.  The
        user knows what they're doing; if they hand-write
-       ``solver_options = {"TimeLimit": 30}`` and also set
+       ``solver_arguments = {"TimeLimit": 30}`` and also set
        ``solver_time_limit = 60``, the raw value (30) wins.
 
     Parameters
@@ -186,7 +186,7 @@ def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
         If ``solver_config.name`` is not in :data:`_PARAM_MAP` AND at
         least one convenience knob is set.  Raw-options-only with an
         unknown solver passes through silently so users can plug a
-        future solver via ``solver_options`` before
+        future solver via ``solver_arguments`` before
         :data:`_PARAM_MAP` is updated.
     """
     has_convenience_knob = (
@@ -280,7 +280,7 @@ def run_one_solve(
     if solver_config.name == "highs":
         # Default path: keep ``Problem.solve()`` (preserves streaming +
         # ``Solution.highs`` for the output writer adapter).  Forward
-        # ``solver_options`` and the convenience-knob translations so
+        # ``solver_arguments`` and the convenience-knob translations so
         # HiGHS-side users get the same surface as commercial users —
         # ``problem.solve(options=...)`` accepts a dict and routes each
         # key to HiGHS via ``setOptionValue`` (polar-high engine.py).

@@ -184,8 +184,9 @@ class SolverConfig:
         fallback).  Default ``"direct"``.
     options
         Free-form key→value dict forwarded raw to the solver.  Empty
-        by default; user populates via the ``solver_options`` Map
-        parameter.
+        by default; user populates via the ``solver_arguments``
+        1d-map parameter (Batch C.2: the legacy ``solver_options``
+        Map was folded into ``solver_arguments`` and removed).
     time_limit
         Wall-clock seconds; ``None`` means no limit.  Translated to
         each solver's native parameter name by
@@ -402,30 +403,10 @@ class SolveConfig:
         solver_threads_raw: dict = params_to_dict(
             db=db, cl="solve", par="solver_threads", mode=DictMode.DICT
         )
-        # ``solver_options`` is a Map of str→str|float, read directly via
-        # the Spine API.  ``params_to_dict`` would return a list of
-        # (index, value) tuples — convert to a dict here so the
-        # :class:`SolverConfig.options` field stays a dict (raw
-        # pass-through to the solver).
-        solver_options: dict[str, dict[str, Any]] = {}
-        for param in db.find_parameter_values(
-            entity_class_name="solve", parameter_definition_name="solver_options"
-        ):
-            pv = api.from_database(param["value"], param["type"])
-            if isinstance(pv, api.Map):
-                solver_options[param["entity_name"]] = dict(
-                    zip(list(pv.indexes), list(pv.values))
-                )
-            elif pv is None:
-                continue
-            else:
-                # Defensive: a user could mis-author solver_options as a
-                # scalar.  Treat as empty rather than crash, but log.
-                logger.warning(
-                    "solve.%s.solver_options is not a Map (%r) — ignoring",
-                    param["entity_name"],
-                    type(pv).__name__,
-                )
+        # Batch C.2 — ``solver_options`` was folded into
+        # ``solver_arguments`` (now the canonical 1d-map) and the
+        # parameter_definition was removed.  ``SolverConfig.options``
+        # is sourced from ``solver_arguments`` below.
         stochastic_branches: defaultdict = params_to_dict(
             db=db,
             cl="solve",
@@ -509,10 +490,14 @@ class SolveConfig:
         # seven dicts — a solve that authors *any* solver_* param gets
         # an explicit entry; solves with no override remain absent and
         # callers fall back to ``SolverConfig()`` defaults.
+        # Batch C.2 — ``solver_options`` removed; the per-solve free-form
+        # option dict for the commercial-solver path is sourced from
+        # ``solver_arguments`` (the same 1d-map the HiGHS-side resolver
+        # consumes).
         solver_config_keys = (
             set(solvers)
             | set(solver_io_api)
-            | set(solver_options)
+            | set(solver_arguments)
             | set(solver_time_limit_raw)
             | set(solver_mip_gap_raw)
             | set(solver_threads_raw)
@@ -532,7 +517,7 @@ class SolveConfig:
             solver_configs[key] = SolverConfig(
                 name=solvers.get(key, "highs"),
                 io_api=solver_io_api.get(key, "direct"),
-                options=dict(solver_options.get(key, {})),
+                options=dict(solver_arguments.get(key, {})),
                 time_limit=_opt_float(solver_time_limit_raw, key),
                 mip_gap=_opt_float(solver_mip_gap_raw, key),
                 threads=_opt_int(solver_threads_raw, key),
