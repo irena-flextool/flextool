@@ -1345,6 +1345,22 @@ def migrate_database(database_path, up_to: int | None = None):
                 # ``p_process_source_capacity_max_coeff.csv`` and sink),
                 # and docs are renamed in lock-step.
                 _migrate_v56_rename_max_capacity_coefficient_to_capacity_max_coeff(db)
+                # Rename ``min_capacity_coefficient`` →
+                # ``capacity_min_coeff`` on ``unit__inputNode`` /
+                # ``unit__outputNode``.  Mirror of the immediately
+                # preceding ``capacity_max_coeff`` rename: same
+                # ``_coeff`` suffix, same noun-leads-qualifier-follows
+                # ordering so the parameter sorts alphabetically with
+                # the other capacity-related rows
+                # (``capacity_max_coeff``, ``capacity_min_coeff``, …).
+                # Pure name change — description, default value (1.0),
+                # parameter_value_list and engine semantics are
+                # untouched.  Autoscale quantity types,
+                # input_derivation cl_pars, CSV filename suffixes
+                # (``p_process_source_min_capacity_coefficient.csv`` →
+                # ``p_process_source_capacity_min_coeff.csv`` and sink),
+                # and docs are renamed in lock-step.
+                _migrate_v56_rename_min_capacity_coefficient_to_capacity_min_coeff(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -3776,6 +3792,66 @@ def _migrate_v56_rename_max_capacity_coefficient_to_capacity_max_coeff(db) -> No
         "v56 rename max_capacity_coefficient → capacity_max_coeff: "
         "unit__inputNode.max_capacity_coefficient → capacity_max_coeff; "
         "unit__outputNode.max_capacity_coefficient → capacity_max_coeff.",
+    )
+
+
+def _migrate_v56_rename_min_capacity_coefficient_to_capacity_min_coeff(db) -> None:
+    """Rename ``min_capacity_coefficient`` to ``capacity_min_coeff`` on
+    every entity class that declares it.
+
+    Footprint matches the schema-template snapshot under
+    ``flextool/schemas/spinedb_schema.json`` — ``unit__inputNode`` and
+    ``unit__outputNode``.  The shortened ``_coeff`` suffix aligns with
+    the v56 convention introduced by
+    :func:`_migrate_v56_rename_constraint_coefficient_to_coeff` and
+    :func:`_migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff`.
+    Reordering puts the noun ``capacity`` first and the qualifier
+    ``min`` second, which groups the parameter alphabetically with the
+    other capacity-related parameters on these classes — directly
+    after ``capacity_max_coeff`` (renamed by the sibling helper
+    :func:`_migrate_v56_rename_max_capacity_coefficient_to_capacity_max_coeff`).
+
+    Pure name change: every other column on the
+    ``parameter_definition`` row (description, default value of 1.0,
+    parameter_value_list, parameter_group ``basics``, valid types) is
+    preserved.  Existing ``parameter_value`` rows that reference the
+    old name follow the rename automatically because spinedb_api
+    tracks the link by id, not by name.
+
+    The autoscale quantity-type table, input_derivation cl_pars
+    specs, the CSV filename suffixes
+    (``p_process_source_min_capacity_coefficient.csv`` →
+    ``p_process_source_capacity_min_coeff.csv`` and sink), and the
+    docs are renamed in the same commit so the pipeline stays
+    internally consistent.
+    """
+    renames: tuple[tuple[str, str, str], ...] = (
+        ("unit__inputNode",  "min_capacity_coefficient", "capacity_min_coeff"),
+        ("unit__outputNode", "min_capacity_coefficient", "capacity_min_coeff"),
+    )
+    parameter_definitions = db.mapped_table("parameter_definition")
+    for cls, old_name, new_name in renames:
+        # ``db.item()`` raises ``SpineDBAPIError`` (not None) when the
+        # row doesn't exist; that's the steady-state once the schema
+        # template JSON has been re-synced to the renamed names and a
+        # fresh DB is bootstrapped from it.  Treat "row already renamed"
+        # as idempotent — the helper must be safe to re-run.
+        try:
+            param = db.item(parameter_definitions,
+                            entity_class_name=cls, name=old_name)
+        except SpineDBAPIError:
+            param = None
+        if param:
+            db.update_parameter_definition(
+                id=param["id"],
+                name=new_name,
+                description=param.get("description"),
+            )
+    _commit_step(
+        db,
+        "v56 rename min_capacity_coefficient → capacity_min_coeff: "
+        "unit__inputNode.min_capacity_coefficient → capacity_min_coeff; "
+        "unit__outputNode.min_capacity_coefficient → capacity_min_coeff.",
     )
 
 

@@ -10348,6 +10348,17 @@
     ],
     [
       "unit__inputNode",
+      "capacity_min_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
+      "basics"
+    ],
+    [
+      "unit__inputNode",
       "constraint_flow_coeff",
       [
         "bnVsbA==",
@@ -10389,17 +10400,6 @@
       "is_non_synchronous",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__inputNode",
-      "min_capacity_coefficient",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
-      "basics"
     ],
     [
       "unit__inputNode",
@@ -10480,6 +10480,17 @@
     ],
     [
       "unit__outputNode",
+      "capacity_min_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
+      "basics"
+    ],
+    [
+      "unit__outputNode",
       "constraint_flow_coeff",
       [
         "bnVsbA==",
@@ -10521,17 +10532,6 @@
       "is_non_synchronous",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__outputNode",
-      "min_capacity_coefficient",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
-      "basics"
     ],
     [
       "unit__outputNode",

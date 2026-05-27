@@ -4867,7 +4867,7 @@
     ],
     [
       "unit__inputNode",
-      "min_capacity_coefficient",
+      "capacity_min_coeff",
       [
         "MS4w",
         "float"
@@ -4999,7 +4999,7 @@
     ],
     [
       "unit__outputNode",
-      "min_capacity_coefficient",
+      "capacity_min_coeff",
       [
         "MS4w",
         "float"

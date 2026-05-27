@@ -4844,6 +4844,17 @@
     ],
     [
       "unit__inputNode",
+      "capacity_min_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
+      "basics"
+    ],
+    [
+      "unit__inputNode",
       "constraint_flow_coeff",
       [
         "bnVsbA==",
@@ -4885,17 +4896,6 @@
       "is_non_synchronous",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__inputNode",
-      "min_capacity_coefficient",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
-      "basics"
     ],
     [
       "unit__inputNode",
@@ -4976,6 +4976,17 @@
     ],
     [
       "unit__outputNode",
+      "capacity_min_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
+      "basics"
+    ],
+    [
+      "unit__outputNode",
       "constraint_flow_coeff",
       [
         null,
@@ -5017,17 +5028,6 @@
       "is_non_synchronous",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__outputNode",
-      "min_capacity_coefficient",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
-      "basics"
     ],
     [
       "unit__outputNode",
@@ -6702,6 +6702,12 @@
     ],
     [
       "unit__inputNode",
+      "capacity_min_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
       "constraint_flow_coeff",
       "map",
       1
@@ -6722,12 +6728,6 @@
       "unit__inputNode",
       "is_non_synchronous",
       "str",
-      0
-    ],
-    [
-      "unit__inputNode",
-      "min_capacity_coefficient",
-      "float",
       0
     ],
     [
@@ -6786,6 +6786,12 @@
     ],
     [
       "unit__outputNode",
+      "capacity_min_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
       "constraint_flow_coeff",
       "map",
       1
@@ -6806,12 +6812,6 @@
       "unit__outputNode",
       "is_non_synchronous",
       "str",
-      0
-    ],
-    [
-      "unit__outputNode",
-      "min_capacity_coefficient",
-      "float",
       0
     ],
     [
