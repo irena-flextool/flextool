@@ -204,8 +204,9 @@ def _autoscale_emit_layer1(
     it in later phases.
 
     Failures here are non-fatal: a missing ``streamed_lp_ranges`` (the
-    commercial-solver / LiteSolution path) skips the layer with a
-    debug-level note rather than breaking the solve.
+    subprocess path — polar-high streams ranges during the in-process
+    solve, which the subprocess child does not share back) skips the
+    layer with a debug-level note rather than breaking the solve.
     """
     # ``cli_args=None`` is intentional: the CLI surface
     # (``cmd_run_flextool``) mirrors ``--scaling`` /
@@ -1692,6 +1693,33 @@ def _drive_cascade(
                     _active_solver_cfg.name,
                 )
                 self._warm_disabled_warned = True
+            # HiGHS soft-promote: warm=False on HiGHS without
+            # FLEXTOOL_SAVE_MEMORY=1 used to fall through to an in-
+            # process cold rebuild that built a fresh ``highspy.Highs``
+            # inside this Python process — undoing the entire reason
+            # warm reuse exists in the first place (peak RSS).  Retired
+            # path: route every HiGHS cold solve through the same
+            # ``cmd_solve_mps`` subprocess the save-memory branch uses,
+            # bounding peak RSS to ``write_mps``'s footprint.  Mutate
+            # only the local ``_save_memory`` — do NOT touch the env
+            # var, which would leak to sibling solves.
+            if (
+                (not warm)
+                and _active_solver_cfg.name == "highs"
+                and not _save_memory
+            ):
+                if not getattr(
+                    self, "_warm_disabled_softpromote_warned", False,
+                ):
+                    state.logger.warning(
+                        "Warm reuse disabled (warm=False); HiGHS solve "
+                        "will route through the cmd_solve_mps subprocess "
+                        "to bound memory footprint.  Set "
+                        "FLEXTOOL_SAVE_MEMORY=1 explicitly to silence "
+                        "this warning.",
+                    )
+                    self._warm_disabled_softpromote_warned = True
+                _save_memory = True
             warm_used = False
             warm_active = (
                 warm
@@ -1890,9 +1918,11 @@ def _drive_cascade(
                 # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
                 # ``pb.solve(keep_solver=True)`` for the default HiGHS path
                 # (byte-identical to the pre-Phase-3 behaviour); routes to
-                # ``polar_high.solvers.solve`` + LiteSolution wrapping on
-                # the commercial path.  The cascade-level SolverConfig
-                # lookup uses the active solve name with the standard
+                # ``solve_via_subprocess`` (HiGHS CLI / commercial CLI) on
+                # every cold path, which always returns a real
+                # ``polar_high.Solution`` with the HiGHS instance read back
+                # from the MPS.  The cascade-level SolverConfig lookup uses
+                # the active solve name with the standard
                 # default-when-absent fallback.
                 from flextool.engine_polars._solver_dispatch import (
                     run_one_solve,
@@ -1900,6 +1930,16 @@ def _drive_cascade(
                 _t_solve_start = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                # Pre-solve range capture: every cold path now goes
+                # subprocess, and the subprocess Solution carries no
+                # ``streamed_lp_ranges`` (polar-high populates that
+                # during its in-process streaming solve, which the
+                # subprocess child doesn't share with us).  Re-use the
+                # post-Layer-2 RangeReport already computed above to
+                # synthesize the dict :func:`_autoscale_emit_layer1`
+                # consumes, so the per-solve ``autoscale_<solve>.yaml``
+                # still lands under ``solve_data/``.
+                _ranges_for_l1 = _autoscale_ranges_post or _autoscale_ranges_pre
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,
                     save_memory=_save_memory,
@@ -1909,6 +1949,27 @@ def _drive_cascade(
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                # Attach the pre-solve ranges as
+                # ``streamed_lp_ranges`` on the Solution so the L1
+                # emit hook (which expects a dict per polar-high's
+                # in-process contract) sees the four (min, max) pairs
+                # the solver actually saw — matrix / cost / col_bound /
+                # row_bound, matching ``ranges_from_streamed``'s key
+                # contract.
+                if (
+                    _ranges_for_l1 is not None
+                    and getattr(sol, "streamed_lp_ranges", None) is None
+                ):
+                    try:
+                        sol.streamed_lp_ranges = {
+                            "matrix": _ranges_for_l1.matrix,
+                            "cost": _ranges_for_l1.cost,
+                            "col_bound": _ranges_for_l1.bound,
+                            "row_bound": _ranges_for_l1.rhs,
+                        }
+                    except Exception:  # pragma: no cover — Solution may
+                        # forbid the assignment in a future polar-high
+                        pass
                 # Eager unscale — restore primal / duals / reduced costs
                 # to the un-scaled coordinate so output writers and
                 # subsequent rolling iterations see physical values.
@@ -2716,6 +2777,19 @@ def run_single_solve_from_db(
     )
     solver_cfg = sc.solver_configs.get(scenario_name, _SolverConfig())
     _save_memory = os.environ.get("FLEXTOOL_SAVE_MEMORY") == "1"
+    # HiGHS soft-promote (single-solve path): the in-process HiGHS cold
+    # path has been retired; force the subprocess route to bound peak
+    # RSS to ``Problem.write_mps``'s footprint.  ``run_one_solve``
+    # silently ignores ``save_memory`` on the commercial path (those
+    # are already always subprocess).
+    if solver_cfg.name == "highs" and not _save_memory:
+        logger.warning(
+            "Single-solve HiGHS path: routing through cmd_solve_mps "
+            "subprocess to bound memory footprint (in-process HiGHS "
+            "cold path retired).  Set FLEXTOOL_SAVE_MEMORY=1 explicitly "
+            "to silence this warning.",
+        )
+        _save_memory = True
     sol = run_one_solve(
         problem, solver_cfg, logger=logger, save_memory=_save_memory,
         solve_name=scenario_name,

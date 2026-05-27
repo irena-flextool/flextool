@@ -66,7 +66,7 @@ Unspecified parameters take their defaults.
 | Parameter            | Type   | Default     | Description                                                                                              |
 |----------------------|--------|-------------|----------------------------------------------------------------------------------------------------------|
 | `solver`             | str    | `"highs"`   | Solver name. Must be one of `highs`, `gurobi`, `cplex`, `xpress`, `copt`.                                |
-| `solver_io_api`      | str    | `"direct"`  | `direct` (in-process Python API, the fast path), `mps` (write MPS file, run solver CLI), or `lp` (LP format). Not every solver supports every mode — see its solver page. |
+| `solver_io_api`      | str    | `"direct"`  | Historically `direct` (in-process Python API) vs `mps` (file-based subprocess); after the in-process cold-solve retirement this knob is effectively informational — non-HiGHS solvers are always dispatched through the subprocess MPS path regardless of value. HiGHS still picks `direct` when warm reuse is active and falls back to subprocess otherwise. |
 | `solver_options`     | map    | empty       | Map of key → value pairs passed verbatim to the underlying solver. Use this for any solver-native option that is not one of the three convenience knobs below. Raw options always override the convenience knobs on key collision. |
 | `solver_time_limit`  | float  | unset       | Wall-clock time limit in seconds. FlexTool translates this to the right native parameter name per solver (`TimeLimit` / `timelimit` / `maxtime` / `TimeLimit` / `time_limit`). |
 | `solver_mip_gap`     | float  | unset       | Relative MIP optimality gap (e.g. `0.01` for 1 %). Translated to each solver's native parameter (`MIPGap` / `mip.tolerances.mipgap` / `miprelstop` / `RelGap` / `mip_rel_gap`). |
@@ -90,6 +90,45 @@ solver_options:
 
 These are passed through untouched; misspelt keys raise a solver error which
 FlexTool surfaces as a `FlexToolUserError` with the vendor's text.
+
+### Per-solver baseline `.opt` files
+
+Every solver gets a baseline parameter file shipped in the FlexTool repo
+under `solver_config/`:
+
+| Solver  | Baseline file                | Native format                                       |
+|---------|------------------------------|-----------------------------------------------------|
+| HiGHS   | `solver_config/highs.opt`    | `key=value` per line, `#` comments                  |
+| Gurobi  | `solver_config/gurobi.opt`   | `ParamName value` per line, `#` comments            |
+| CPLEX   | `solver_config/cplex.opt`    | `name value` per line; `name` uses interactive `set` syntax (e.g. `mip tolerances mipgap`) |
+| Xpress  | `solver_config/xpress.opt`   | `CONTROL value` per line                            |
+| COPT    | `solver_config/copt.opt`     | `ParamName value` per line                          |
+
+These files are user-editable.  FlexTool reads each solver's baseline at
+solve time, overlays the scenario's `solver_options` Map (plus the
+convenience-knob translations from `solver_time_limit` / `solver_mip_gap`
+/ `solver_threads`) **line-by-line**, writes the merged result to a temp
+file alongside the MPS, and feeds it to the solver via the per-solver
+mechanism:
+
+| Solver  | How FlexTool feeds the merged file to the CLI                                                  |
+|---------|------------------------------------------------------------------------------------------------|
+| HiGHS   | `--options=<file>` argv flag on the `flextool.cli.cmd_solve_mps` subprocess                    |
+| Gurobi  | `gurobi_cl ReadParams=<file> ResultFile=<sol> <mps>` (Gurobi's native parameter-file slot)     |
+| CPLEX   | Each line emitted as `set <name> <value>` on the interactive optimizer's stdin before `read`   |
+| Xpress  | Each line emitted as `setControl <NAME> <value>` on the optimizer console's stdin before `readprob` |
+| COPT    | Each line emitted as `set <ParamName> <value>` on `copt_cmd`'s stdin before `read`             |
+
+**Override precedence** (highest wins):
+
+1. Raw `solver_options` entries on the scenario / solve.
+2. Translated convenience knobs (`solver_time_limit` / `solver_mip_gap` /
+   `solver_threads`).
+3. The baseline file under `solver_config/<solver>.opt`.
+
+Override `solver_config/` location with the `FLEXTOOL_SOLVER_CONFIG_DIR`
+environment variable when running outside the standard project layout
+(for example in CI).
 
 ## Warm-start caveat
 
@@ -148,9 +187,12 @@ per-solver page for the licence setup.
   to a different solver, but every solve needs its own `solver` parameter
   if you want anything other than HiGHS. Unset solves stay on HiGHS.
 - **Using `io_api = "mps"` for very large models.** The MPS fallback writes
-  the full model to disk and shells out to the solver's CLI; it works but
-  is slower than the in-process API. Use `direct` unless you specifically
-  need an MPS dump for debugging.
+  the full model to disk and shells out to the solver's CLI. After the
+  in-process cold-solve retirement this is the only path for non-HiGHS
+  solvers; `direct` is silently treated as a synonym for `mps` at the
+  orchestrator level. The trade-off is bounded peak RSS (the
+  `Problem.write_mps` writer caps ~2-3 GB on the largest LPs) at the cost
+  of file I/O plus a fresh solver process per sub-solve.
 - **Hand-writing `solver_options` and the convenience knobs together.** Raw
   options win on key collisions. If you set both `solver_time_limit = 60`
   and `solver_options = {TimeLimit: 30}` on a Gurobi solve, Gurobi sees
