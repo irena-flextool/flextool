@@ -14,10 +14,12 @@ test framing alludes to ("solve_mode.csv parsing & application"):
 * Reads ``input/solve_mode.csv`` (or falls back to ``solve_data/``).
 * Selects the row matching ``solve_data/solve_current.csv`` when
   multiple solves are present.
-* Translates flextool param names (``highs_method``,
-  ``highs_parallel``, ``highs_presolve``, plus an extensible numeric
-  set) to HiGHS canonical option names (``solver``, ``parallel``,
-  ``presolve``).
+* Translates flextool param names (``highs_parallel``,
+  ``highs_presolve``, plus an extensible numeric set) to HiGHS
+  canonical option names (``parallel``, ``presolve``).  Batch C.3
+  retired the ``highs_method`` shortcut — that override is now
+  authored on ``solver_arguments['solver']`` and resolved through
+  ``_resolve_effective_highs_options`` instead.
 * Coerces the ``value`` column to the right Python type per
   ``_HIGHS_PARAM_MAP``.
 * Returns ``None`` when the CSV is missing / empty / has no
@@ -56,18 +58,20 @@ def _write_solve_current(sd: Path, solve: str) -> None:
 class TestSolveModeParsing:
     """Parsing layer: ``solve_mode.csv`` → flextool params."""
 
-    def test_canonical_three_highs_params(self, tmp_path: Path) -> None:
-        """All three canonical flextool HiGHS keys translate to their
-        HiGHS option names with str values."""
+    def test_canonical_two_highs_params(self, tmp_path: Path) -> None:
+        """The two remaining canonical flextool HiGHS shortcut keys
+        translate to their HiGHS option names with str values.  Batch
+        C.3 removed ``highs_method`` (folded into ``solver_arguments``
+        and read through the effective-options resolver instead).
+        """
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_method", "S", "choose"),
             ("highs_parallel", "S", "off"),
             ("highs_presolve", "S", "on"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "choose", "parallel": "off", "presolve": "on"}
+        assert opts == {"parallel": "off", "presolve": "on"}
 
     def test_solve_mode_param_is_ignored(self, tmp_path: Path) -> None:
         """flextool's solve framework param ``solve_mode`` (single_solve /
@@ -76,13 +80,13 @@ class TestSolveModeParsing:
         unknown option)."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_method", "S", "ipm"),
+            ("highs_presolve", "S", "on"),
             ("solve_mode", "S", "single_solve"),
             ("solve_mode", "S", "rolling_window"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "ipm"}, (
+        assert opts == {"presolve": "on"}, (
             f"solve_mode rows must be filtered out; got {opts}"
         )
 
@@ -92,12 +96,12 @@ class TestSolveModeParsing:
         without crashing on legacy fixtures)."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_method", "S", "simplex"),
+            ("highs_presolve", "S", "on"),
             ("future_unknown_param", "S", "whatever"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "simplex"}
+        assert opts == {"presolve": "on"}
 
     def test_numeric_options_get_coerced(self, tmp_path: Path) -> None:
         """The ``_HIGHS_PARAM_MAP`` declares a forward-compatible set of
@@ -147,11 +151,11 @@ class TestSolveModeParsing:
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
             ("highs_time_limit", "S", "not_a_float"),
-            ("highs_method", "S", "simplex"),
+            ("highs_presolve", "S", "on"),
         ])
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "simplex"}
+        assert opts == {"presolve": "on"}
 
     def test_missing_csv_returns_none(self, tmp_path: Path) -> None:
         """No ``input/solve_mode.csv`` AND no ``solve_data/solve_mode.csv``
@@ -182,12 +186,12 @@ class TestSolveModeParsing:
         sd.mkdir()
         # No input/solve_mode.csv; only solve_data/solve_mode.csv.
         pl.DataFrame(
-            [("highs_method", "S", "ipm")],
+            [("highs_presolve", "S", "on")],
             schema=["param", "solve", "value"], orient="row",
         ).write_csv(sd / "solve_mode.csv")
         _write_solve_current(sd, "S")
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "ipm"}
+        assert opts == {"presolve": "on"}
 
 
 class TestSolveModeApplication:
@@ -198,13 +202,13 @@ class TestSolveModeApplication:
         one (per ``solve_data/solve_current.csv``) is selected."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_method", "S1", "ipm"),
-            ("highs_method", "S2", "simplex"),
-            ("highs_method", "S3", "choose"),
+            ("highs_presolve", "S1", "on"),
+            ("highs_presolve", "S2", "off"),
+            ("highs_presolve", "S3", "choose"),
         ])
         _write_solve_current(sd, "S2")
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "simplex"}, (
+        assert opts == {"presolve": "off"}, (
             f"expected S2 row to win; got {opts}"
         )
 
@@ -214,14 +218,14 @@ class TestSolveModeApplication:
         param."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_method", "S1", "ipm"),
+            ("highs_presolve", "S1", "off"),
             ("highs_parallel", "S1", "on"),
-            ("highs_method", "S2", "simplex"),
+            ("highs_presolve", "S2", "on"),
             # No highs_parallel for S2 — must NOT inherit S1's "on".
         ])
         _write_solve_current(sd, "S2")
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "simplex"}, (
+        assert opts == {"presolve": "on"}, (
             f"S2 must not inherit S1.parallel; got {opts}"
         )
 
@@ -231,11 +235,11 @@ class TestSolveModeApplication:
         sd = tmp_path / "solve_data"
         sd.mkdir()
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_method", "ANY", "choose"),
+            ("highs_presolve", "ANY", "choose"),
         ])
         # No solve_current.csv.
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "choose"}
+        assert opts == {"presolve": "choose"}
 
     def test_solve_not_in_csv_falls_back(self, tmp_path: Path) -> None:
         """solve_current names a solve absent from solve_mode.csv — the
@@ -244,26 +248,28 @@ class TestSolveModeApplication:
         rows exist" so the loader doesn't wedge on a typo."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
-            ("highs_method", "S1", "simplex"),
+            ("highs_presolve", "S1", "on"),
         ])
         _write_solve_current(sd, "TYPO_SOLVE")
         opts = _load_solver_options(sd)
-        assert opts == {"solver": "simplex"}
+        assert opts == {"presolve": "on"}
 
 
 class TestRealFixture:
     """End-to-end against the real ``work_base_weighted`` fixture flextool
-    emits.  Pin the typical shape: three highs_* keys, one solve_mode row
+    emits.  Pin the typical shape: two remaining highs_* keys
+    (``highs_method`` was removed in Batch C.3), one solve_mode row
     (ignored), one active solve."""
 
     def test_work_base_weighted(self, scenario_workdir) -> None:
         work = scenario_workdir("base_weighted", db_fixture="main")
         sd = work / "solve_data"
         opts = _load_solver_options(sd)
-        # solve_mode.csv has: highs_method=choose, highs_parallel=off,
-        # highs_presolve=off, plus solve_mode=single_solve (ignored).
+        # solve_mode.csv has: highs_parallel=off, highs_presolve=off,
+        # plus solve_mode=single_solve (ignored).  ``highs_method``
+        # row was retired in Batch C.3 (folded into solver_arguments
+        # and read through the engine-side resolver instead).
         assert opts == {
-            "solver": "choose",
             "parallel": "off",
             "presolve": "off",
         }

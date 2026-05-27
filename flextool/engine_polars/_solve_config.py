@@ -330,9 +330,10 @@ class SolveConfig:
         highs_presolve: dict = params_to_dict(
             db=db, cl="solve", par="highs_presolve", mode=DictMode.DICT
         )
-        highs_method: dict = params_to_dict(
-            db=db, cl="solve", par="highs_method", mode=DictMode.DICT
-        )
+        # Batch C.3 — ``highs_method`` shortcut removed; the equivalent
+        # override is now keyed as ``solver`` inside
+        # ``solver_arguments``.
+        highs_method: dict = {}
         highs_parallel: dict = params_to_dict(
             db=db, cl="solve", par="highs_parallel", mode=DictMode.DICT
         )

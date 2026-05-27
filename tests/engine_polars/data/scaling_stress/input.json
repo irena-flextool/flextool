@@ -1638,27 +1638,6 @@
       ]
     ],
     [
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "ImlwbSI=",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "ImNob29zZSI=",
-        "str"
-      ]
-    ],
-    [
       "highs_parallel",
       [
         "Im9uIg==",
@@ -4085,17 +4064,6 @@
     ],
     [
       "solve",
-      "highs_method",
-      [
-        null,
-        null
-      ],
-      "highs_method",
-      "HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "highs_parallel",
       [
         null,
@@ -6095,12 +6063,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_method",
-      "str",
-      0
     ],
     [
       "solve",
@@ -9226,16 +9188,6 @@
     [
       "solve",
       "y2020_2035_5week",
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
-      ],
-      "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2035_5week",
       "highs_parallel",
       [
         "Im9mZiI=",
@@ -9356,26 +9308,6 @@
     [
       "solve",
       "y2020_2day_dispatch",
-      "highs_method",
-      [
-        "ImNob29zZSI=",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
-      ],
-      "retire"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
       "highs_parallel",
       [
         "Im9mZiI=",
@@ -9486,16 +9418,6 @@
     [
       "solve",
       "y2020_5week",
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
-      ],
-      "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_5week",
       "highs_parallel",
       [
         "Im9mZiI=",
@@ -9562,16 +9484,6 @@
         "map"
       ],
       "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_fullYear_dispatch",
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
-      ],
-      "fullYear"
     ],
     [
       "solve",
@@ -9686,16 +9598,6 @@
     [
       "solve",
       "y2025_5week",
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2025_5week",
       "highs_parallel",
       [
         "Im9mZiI=",
@@ -9766,16 +9668,6 @@
     [
       "solve",
       "y2030_5week",
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2030_5week",
       "highs_parallel",
       [
         "Im9mZiI=",
@@ -9840,16 +9732,6 @@
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzAiLCA1LjBdLCBbInAyMDM1IiwgNS4wXV0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
         "map"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2035_5week",
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
       ],
       "invest_solveSequence_5weeks"
     ],

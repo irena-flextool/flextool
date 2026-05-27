@@ -193,7 +193,9 @@ def _build_payload() -> dict[str, list]:
     entities.append(("solve", "lh2_week"))
     parameter_values.extend([
         ("solve", "lh2_week", "solve_mode", "single_solve", ALT),
-        ("solve", "lh2_week", "highs_method", "choose", ALT),
+        # Batch C.3 retired ``highs_method`` (folded into
+        # ``solver_arguments`` and resolved via the engine-side
+        # _resolve_effective_highs_options).  C.4/C.5 will follow.
         ("solve", "lh2_week", "highs_parallel", "off", ALT),
         ("solve", "lh2_week", "highs_presolve", "on", ALT),
         ("solve", "lh2_week", "period_timeset",

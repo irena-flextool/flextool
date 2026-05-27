@@ -467,8 +467,7 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/solver_arguments.csv",
     },
     {
-        "cl_pars": [("solve", "highs_method"),
-                    ("solve", "highs_parallel"),
+        "cl_pars": [("solve", "highs_parallel"),
                     ("solve", "highs_presolve"),
                     ("solve", "solve_mode")],
         "header": "param,solve,value",

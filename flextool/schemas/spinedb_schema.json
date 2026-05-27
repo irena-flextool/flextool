@@ -347,18 +347,6 @@
       "yes"
     ],
     [
-      "highs_method",
-      "simplex"
-    ],
-    [
-      "highs_method",
-      "ipm"
-    ],
-    [
-      "highs_method",
-      "choose"
-    ],
-    [
       "highs_parallel",
       "on"
     ],
@@ -2043,14 +2031,6 @@
       null,
       null,
       "Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "highs_method",
-      "choose",
-      "highs_method",
-      "HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.",
       "solve_advanced"
     ],
     [
@@ -3850,12 +3830,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_method",
-      "str",
-      0
     ],
     [
       "solve",

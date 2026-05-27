@@ -1540,14 +1540,6 @@
     ],
     [
       "solve",
-      "highs_method",
-      null,
-      "highs_method",
-      "HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "highs_parallel",
       null,
       "highs_parallel",
@@ -3441,12 +3433,6 @@
     ],
     [
       "solve",
-      "highs_method",
-      "str",
-      0
-    ],
-    [
-      "solve",
       "highs_parallel",
       "str",
       0
@@ -4152,27 +4138,6 @@
       "has_non_synchronous",
       [
         "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "\"ipm\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "\"choose\"",
         "str"
       ]
     ],

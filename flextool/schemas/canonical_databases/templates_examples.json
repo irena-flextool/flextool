@@ -2940,14 +2940,6 @@
     ],
     [
       "solve",
-      "highs_method",
-      null,
-      "highs_method",
-      "HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "highs_parallel",
       null,
       "highs_parallel",
@@ -4823,12 +4815,6 @@
     ],
     [
       "solve",
-      "highs_method",
-      "str",
-      0
-    ],
-    [
-      "solve",
       "highs_parallel",
       "str",
       0
@@ -5570,27 +5556,6 @@
       "has_non_synchronous",
       [
         "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "\"ipm\"",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "\"choose\"",
         "str"
       ]
     ],
@@ -8804,16 +8769,6 @@
     [
       "solve",
       "y2020_2035_5week",
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
-      ],
-      "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2035_5week",
       "highs_parallel",
       [
         "\"off\"",
@@ -8880,26 +8835,6 @@
         "map"
       ],
       "invest_allYears_5weeks"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_method",
-      [
-        "\"choose\"",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "y2020_2day_dispatch",
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
-      ],
-      "retire"
     ],
     [
       "solve",
@@ -8994,16 +8929,6 @@
     [
       "solve",
       "y2020_5week",
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
-      ],
-      "5weeks"
-    ],
-    [
-      "solve",
-      "y2020_5week",
       "highs_parallel",
       [
         "\"off\"",
@@ -9074,16 +8999,6 @@
     [
       "solve",
       "y2020_fullYear_dispatch",
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
-      ],
-      "fullYear"
-    ],
-    [
-      "solve",
-      "y2020_fullYear_dispatch",
       "highs_parallel",
       [
         "\"off\"",
@@ -9140,16 +9055,6 @@
         "str"
       ],
       "fullYear"
-    ],
-    [
-      "solve",
-      "y2025_5week",
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
     ],
     [
       "solve",
@@ -9224,16 +9129,6 @@
     [
       "solve",
       "y2030_5week",
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2030_5week",
       "highs_parallel",
       [
         "\"off\"",
@@ -9298,16 +9193,6 @@
       [
         "{\"index_type\": \"str\", \"data\": [[\"p2030\", 5.0], [\"p2035\", 5.0]], \"index_name\": \"period\"}",
         "map"
-      ],
-      "invest_solveSequence_5weeks"
-    ],
-    [
-      "solve",
-      "y2035_5week",
-      "highs_method",
-      [
-        "\"simplex\"",
-        "str"
       ],
       "invest_solveSequence_5weeks"
     ],

@@ -164,8 +164,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # A flag whether the group of nodes has an inertia constraint active.
     ('has_non_synchronous', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has the non-synchronous share constraint active.
-    ('highs_method', 'solve'): QuantityType.DIMENSIONLESS,
-    # HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will ...
     ('highs_parallel', 'solve'): QuantityType.DIMENSIONLESS,
     # HiGHS parallelises single solves or not ('on' or 'off'). It can be better to turn HiGHS parallel off when executing multiple scnearios in pa...
     ('highs_presolve', 'solve'): QuantityType.DIMENSIONLESS,

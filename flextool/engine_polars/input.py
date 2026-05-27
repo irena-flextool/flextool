@@ -3483,9 +3483,9 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
 # ---------------------------------------------------------------------------
 # HiGHS solver options (input/solve_mode.csv)
 #
-# flextool's ``solve_mode.csv`` is keyed (param, solve, value).  Three
-# ``param`` rows feed HiGHS directly:
-#   * ``highs_method``   → HiGHS option ``solver``    (str: simplex/ipm/choose)
+# flextool's ``solve_mode.csv`` is keyed (param, solve, value).  Two
+# ``param`` rows feed HiGHS directly (Batch C.3 dropped ``highs_method``;
+# the canonical home for those overrides is now ``solver_arguments``):
 #   * ``highs_parallel`` → HiGHS option ``parallel``  (str: on/off)
 #   * ``highs_presolve`` → HiGHS option ``presolve``  (str: on/off/choose)
 # Other ``param`` rows (notably ``solve_mode``) describe the flextool
@@ -3498,7 +3498,6 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
 
 # flextool param → HiGHS canonical option name + coercion
 _HIGHS_PARAM_MAP: dict[str, tuple[str, type]] = {
-    "highs_method":   ("solver",   str),
     "highs_parallel": ("parallel", str),
     "highs_presolve": ("presolve", str),
     # Numeric / boolean HiGHS options that flextool *may* emit in the

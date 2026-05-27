@@ -7126,27 +7126,6 @@
       ]
     ],
     [
-      "highs_method",
-      [
-        "InNpbXBsZXgi",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "ImlwbSI=",
-        "str"
-      ]
-    ],
-    [
-      "highs_method",
-      [
-        "ImNob29zZSI=",
-        "str"
-      ]
-    ],
-    [
       "highs_parallel",
       [
         "Im9uIg==",
@@ -9600,17 +9579,6 @@
     ],
     [
       "solve",
-      "highs_method",
-      [
-        "ImNob29zZSI=",
-        "str"
-      ],
-      "highs_method",
-      "HiGHS solver method ('simplex' or 'ipm' which is interior point method). Should use 'choose' for MIP models, since 'simplex' and 'ipm' will not work.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "highs_parallel",
       [
         "Im9mZiI=",
@@ -11641,12 +11609,6 @@
       "fix_storage_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "highs_method",
-      "str",
-      0
     ],
     [
       "solve",

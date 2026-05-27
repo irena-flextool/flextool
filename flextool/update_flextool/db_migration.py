@@ -1456,6 +1456,15 @@ def migrate_database(database_path, up_to: int | None = None):
                 # entries.
                 _migrate_v56_fold_solver_options_into_solver_arguments(db)
                 _migrate_v56_remove_solver_options(db)
+                # Batch C.3 — fold ``highs_method`` into
+                # ``solver_arguments['solver']`` (HiGHS' own name for
+                # the LP-method selection option, verified against
+                # ``DETERMINISM_OPTIONS`` and the
+                # ``input.py:_HIGHS_PARAM_MAP`` table) and drop the
+                # shortcut parameter.  Existing ``solver_arguments``
+                # entries for ``solver`` win on collision (logged).
+                _migrate_v56_fold_highs_method_into_solver_arguments(db)
+                _migrate_v56_remove_highs_method(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4384,6 +4393,148 @@ def _migrate_v56_remove_solver_options(db) -> None:
     definition cascade-delete alongside it via spinedb_api.
     """
     remove_parameters_manual(db, [["solve", "solver_options"]])
+
+
+def _fold_highs_shortcut_into_solver_arguments(
+    db, *, shortcut_param: str, highs_key: str, label: str,
+) -> None:
+    """Shared helper for the three ``highs_*`` shortcut folds (C.3-C.5).
+
+    Walks every ``solve.<shortcut_param>`` parameter_value, injects
+    ``solver_arguments[<highs_key>] = <value>`` on the same
+    (solve, alternative).  When the user already authored the same
+    key in ``solver_arguments``, the explicit ``solver_arguments``
+    value wins (logged); we treat the migration as a no-op for that
+    key.  Mirrors :func:`_migrate_v56_fold_solver_options_into_solver_arguments`
+    semantics for consistency across the C-batch.
+
+    *label* appears in the migration commit message and the
+    collision-log lines so the source shortcut is identifiable.
+    """
+    shortcut_rows = list(db.find_parameter_values(
+        entity_class_name="solve", parameter_definition_name=shortcut_param,
+    ))
+    if not shortcut_rows:
+        return
+    args_rows = list(db.find_parameter_values(
+        entity_class_name="solve", parameter_definition_name="solver_arguments",
+    ))
+    args_index: dict[tuple[str, str], dict] = {}
+    for pv in args_rows:
+        args_index[(pv["entity_name"], pv["alternative_name"])] = pv
+
+    for sh_pv in shortcut_rows:
+        try:
+            sh_value = from_database(sh_pv["value"], sh_pv["type"])
+        except Exception:  # pragma: no cover — best-effort
+            sh_value = None
+        if sh_value is None:
+            continue
+        if not isinstance(sh_value, str):
+            print(
+                f"v56 fold {label} → solver_arguments[{highs_key!r}]: "
+                f"solve.{sh_pv['entity_byname']!r}.{shortcut_param} is "
+                f"not a str ({type(sh_value).__name__!r}); skipping fold."
+            )
+            continue
+        existing = args_index.get(
+            (sh_pv["entity_name"], sh_pv["alternative_name"])
+        )
+        existing_map: dict[str, str] = {}
+        if existing is not None:
+            try:
+                cur = from_database(existing["value"], existing["type"])
+            except Exception:  # pragma: no cover — best-effort
+                cur = None
+            if isinstance(cur, Map):
+                existing_map = {
+                    str(k): str(v)
+                    for k, v in zip(list(cur.indexes), list(cur.values))
+                }
+        if highs_key in existing_map and existing_map[highs_key] != sh_value:
+            print(
+                f"v56 fold {label} → solver_arguments[{highs_key!r}] "
+                f"collision on solve.{sh_pv['entity_byname']!r} "
+                f"(alt={sh_pv['alternative_name']!r}): "
+                f"solver_arguments[{highs_key!r}]={existing_map[highs_key]!r} "
+                f"wins over {shortcut_param}={sh_value!r}"
+            )
+            continue
+        merged = dict(existing_map)
+        merged[highs_key] = sh_value
+        new_map = Map(list(merged.keys()), list(merged.values()))
+        new_value, new_type = to_database(new_map)
+        if existing is not None:
+            db.update_item(
+                "parameter_value",
+                id=existing["id"],
+                value=new_value, type=new_type,
+            )
+        else:
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name="solve",
+                entity_byname=sh_pv["entity_byname"],
+                parameter_definition_name="solver_arguments",
+                alternative_name=sh_pv["alternative_name"],
+                value=new_value, type=new_type,
+            )
+
+    _commit_step(
+        db,
+        f"v56 fold solve.{shortcut_param} → "
+        f"solver_arguments[{highs_key!r}]: shortcut value injected "
+        "into the canonical HiGHS option-overrides Map (existing "
+        f"solver_arguments[{highs_key!r}] wins on collision).",
+    )
+
+
+def _migrate_v56_fold_highs_method_into_solver_arguments(db) -> None:
+    """Fold ``solve.highs_method`` values into
+    ``solver_arguments['solver']`` (HiGHS' name for the method-
+    selection option, per ``DETERMINISM_OPTIONS`` and the
+    ``input.py:_HIGHS_PARAM_MAP`` table).
+
+    Batch C.3 — first of the three ``highs_*`` shortcut folds.  The
+    parameter values in flextool fixtures (``"simplex"``,
+    ``"choose"``) are the exact HiGHS-side spelling so no value
+    translation is needed; only the key name flips
+    (``highs_method`` → ``solver``).
+
+    Sibling :func:`_migrate_v56_remove_highs_method` strips the
+    parameter_definition + every value row.  Collision policy
+    matches :func:`_migrate_v56_fold_solver_options_into_solver_arguments`:
+    explicit ``solver_arguments`` entry wins, collision logged.
+    """
+    _fold_highs_shortcut_into_solver_arguments(
+        db, shortcut_param="highs_method",
+        highs_key="solver", label="highs_method",
+    )
+
+
+def _migrate_v56_remove_highs_method(db) -> None:
+    """Remove the ``solve.highs_method`` parameter definition + value list.
+
+    Companion to
+    :func:`_migrate_v56_fold_highs_method_into_solver_arguments`
+    (Batch C.3).  After the fold helper has injected every value as
+    ``solver_arguments['solver']``, this helper drops the now-
+    duplicate parameter_definition AND its dedicated
+    ``highs_method`` parameter_value_list (which the parameter is the
+    sole referent of).  ``parameter_value`` rows cascade-delete
+    alongside the definition via spinedb_api.
+    """
+    remove_parameters_manual(db, [["solve", "highs_method"]])
+    try:
+        vl = db.item(db.mapped_table("parameter_value_list"), name="highs_method")
+    except SpineDBAPIError:
+        vl = None
+    if vl:
+        db.remove_items("parameter_value_list", vl["id"])
+        try:
+            _commit_step(db, "v56 removed solve.highs_method parameter_value_list")
+        except SpineDBAPIError:
+            pass
 
 
 if __name__ == '__main__':
