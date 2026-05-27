@@ -1,14 +1,27 @@
+import os
+# glibc malloc arena cap — set BEFORE any C-extension import that
+# allocates via malloc.  glibc defaults to up to 8 × ncores arenas
+# (≈256 on a 32-core workstation); each arena holds its own
+# freed-but-not-returned-to-OS pages, so worst-case fragmentation
+# scales with core count.  Capping to 4 is a precautionary middle
+# ground: ~64× reduction vs the default, while still allowing up to
+# four concurrent allocators (HiGHS parallel presolve, Lagrangian
+# scenario runs) without serialising every malloc through one heap.
+# No measured benefit on the FlexTool cascade workload as of this
+# writing — FlexTool's hot path is essentially single-threaded
+# (polars pinned to 1 thread, --highs-threads typically 1).  Kept
+# only as a cheap precaution against future workloads where arena
+# growth could matter.  ``setdefault`` so the shell wins.
+os.environ.setdefault("MALLOC_ARENA_MAX", "4")
+
 import argparse
 import sys
 import logging
 import shutil
 import traceback
-from typing import Callable
-from functools import wraps
 from pathlib import Path
 from datetime import datetime
 import time
-import os
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.cli._timing import TimingRecorder
 from flextool.common_utils.precision import resolve_precision_digits

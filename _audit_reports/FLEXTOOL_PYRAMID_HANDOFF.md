@@ -2,7 +2,9 @@
 
 **Target repo:** `flextool-engine` (`/home/jkiviluo/sources/flextool-engine/`)
 **Related work:** polar-high `write_mps` — **shipped in v2.1.1** (see `POLAR_HIGH_WRITE_MPS_HANDOFF.md`).
-**Related work:** FlexTool Layer 2 autoscale rewrite — **shipped on `main`** (commit `d48f416f`, see `LAYER2_POLARS_NATIVE_PLAN.md`). That fix removed ~45 GB from the pre-`write_mps` phase; pyramid measurements below should be **re-validated** before this work starts, since the numerator has shifted.
+**Related work:** FlexTool Layer 2 autoscale rewrite — **shipped on `main`** (commit `d48f416f`, see `LAYER2_POLARS_NATIVE_PLAN.md`). That fix removed ~45 GB from the pre-`write_mps` phase.
+**Related work:** Layer 2/3 wired into the warm-active path too (commit `868d6510`) — warm solves now also see scaled LPs.
+**Related work:** in-process cold solve path retired (task #15) — HiGHS without warm reuse now auto-promotes to the `cmd_solve_mps` subprocess, and non-HiGHS solvers always run via subprocess. There is no longer any in-process HiGHS cold path.
 **Status:** scoped, **re-profile required before implementation** (this-session fixes invalidated the prior measurements).
 **Estimated effort:** investigation 1-2 days; fix 2-5 days depending on findings
 
@@ -114,7 +116,7 @@ Before adding any instrumentation: re-run DES with **`MALLOC_ARENA_MAX=2`** prep
 ### Phase A — Localize the peak (0.5 day)
 
 1. Add `state._memory_recorder.checkpoint(f"emit_solve_time.{name}_done")` after each `_*.emit_*` call in `_emit_solve_time.run` (~70 call sites). Use non-whitelisted labels so they only emit under `FLEXTOOL_MEMORY_VERBOSE=1`. (Or follow the polar-high precedent and add a dedicated `FLEXTOOL_PYRAMID_PROFILE=1` env var per §4-bis lesson 3 for a tighter on/off without flooding all the existing verbose-mode lines.)
-2. Reproduce: run DES with `MALLOC_ARENA_MAX=2`, `--save-memory off` (so no concurrent write_mps work masks the signal), `--debug`, and `FLEXTOOL_MEMORY_VERBOSE=1`. Watch the verbose trace and the system monitor side-by-side. **Use the post-Layer-2-fix baseline as the comparison point** — the prior ~35 GB pyramid number was measured before commit `d48f416f` and may have shrunk substantially.
+2. Reproduce: run DES with `MALLOC_ARENA_MAX=2`, `--debug`, and `FLEXTOOL_MEMORY_VERBOSE=1`. Watch the verbose trace and the system monitor side-by-side. **Use the post-Layer-2-fix baseline as the comparison point** — the prior ~35 GB pyramid number was measured before commit `d48f416f` and may have shrunk substantially. To keep HiGHS in-process during pyramid investigation (so the eventual solve doesn't fork away into a subprocess and mask the signal), use the warm-active default: don't pass `warm=False` and don't set `FLEXTOOL_SAVE_MEMORY=1`. After task #15, those are the only ways to keep the solve in the same address space as the rest of the cascade.
 3. Identify which 2-3 batches together account for the remaining transient.
 
 ### Phase B — Drill into the worst offenders (0.5-1 day)
