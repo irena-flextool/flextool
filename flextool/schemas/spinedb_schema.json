@@ -2649,6 +2649,12 @@
     ],
     [
       "connection",
+      "availability",
+      "map",
+      2
+    ],
+    [
+      "connection",
       "constraint_cumulative_pre_built_capacity_coeff",
       "map",
       1
@@ -2823,6 +2829,12 @@
     ],
     [
       "connection",
+      "other_operational_cost",
+      "map",
+      2
+    ],
+    [
+      "connection",
       "reactance",
       "float",
       0
@@ -2967,6 +2979,12 @@
     ],
     [
       "group",
+      "co2_price",
+      "map",
+      2
+    ],
+    [
+      "group",
       "cumulative_max_capacity",
       "float",
       0
@@ -3093,6 +3111,12 @@
     ],
     [
       "group",
+      "max_instant_flow",
+      "map",
+      2
+    ],
+    [
+      "group",
       "min_cumulative_flow",
       "float",
       0
@@ -3114,6 +3138,12 @@
       "min_instant_flow",
       "map",
       1
+    ],
+    [
+      "group",
+      "min_instant_flow",
+      "map",
+      2
     ],
     [
       "group",
@@ -3276,6 +3306,12 @@
       "availability",
       "map",
       1
+    ],
+    [
+      "node",
+      "availability",
+      "map",
+      2
     ],
     [
       "node",
@@ -3603,6 +3639,12 @@
     ],
     [
       "node",
+      "storage_state_reference_value",
+      "map",
+      2
+    ],
+    [
+      "node",
       "storage_state_start",
       "float",
       0
@@ -3678,6 +3720,12 @@
       "reservation",
       "map",
       1
+    ],
+    [
+      "reserve__upDown__group",
+      "reservation",
+      "map",
+      2
     ],
     [
       "reserve__upDown__group",
@@ -3888,6 +3936,12 @@
       "availability",
       "map",
       1
+    ],
+    [
+      "unit",
+      "availability",
+      "map",
+      2
     ],
     [
       "unit",
@@ -4211,6 +4265,12 @@
       "unit__inputNode",
       "other_operational_cost",
       "map",
+      2
+    ],
+    [
+      "unit__inputNode",
+      "other_operational_cost",
+      "map",
       3
     ],
     [
@@ -4290,6 +4350,12 @@
       "other_operational_cost",
       "map",
       1
+    ],
+    [
+      "unit__outputNode",
+      "other_operational_cost",
+      "map",
+      2
     ],
     [
       "unit__outputNode",
