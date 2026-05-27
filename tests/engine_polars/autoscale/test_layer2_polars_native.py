@@ -435,15 +435,8 @@ def test_mixed_zero_and_nonzero_term(register_test_families):
     # Four columns; only two will carry a nonzero coefficient.
     v = pb.add_var("v_test_mix", "i", pl.DataFrame({"i": [0, 1, 2, 3]}),
                    lower=0.0, upper=1.0)
-    # Build a lazy where only indices 0 and 1 carry coef 8.0; 2 and 3
-    # carry 0.0.  Easiest: build via pl.when.
-    coefs = pl.LazyFrame(
-        {"i": [0, 1, 2, 3], "extra": [8.0, 8.0, 0.0, 0.0]},
-    )
-
-    # Easier: just multiply by a Param-equivalent via a tiny constraint.
-    # Use ``Sum(v * 8.0, ...)`` filtered down — but Sum doesn't easily
-    # accept a per-row mask without a Param.  Use two separate terms.
+    # Two separate terms: one all-zero, one all-eights — sum decomposes
+    # into the union, which is what bucket_coefficients should see.
     pb.add_cstr(
         "test_mix_cap", sense="<=",
         lhs_terms={

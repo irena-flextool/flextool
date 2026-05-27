@@ -83,9 +83,7 @@ import polars as pl
 
 from ._config import ScalingConfig
 from ._layer2_types import (
-    CONSTRAINT_FAMILIES,
     VarFamily,
-    lookup_cstr,
     lookup_var,
     resolve_cstr_rhs_type,
 )
