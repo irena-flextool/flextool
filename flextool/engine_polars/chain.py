@@ -132,7 +132,7 @@ def _resolve_native_scenario(db_path: Path, work: Path) -> str | None:
 def run_chain(
     work_folder: Path | str,
     *,
-    warm: bool = False,
+    warm: bool = True,
     scenario: str | None = None,
 ) -> dict[str, ChainStep]:
     """Run a flextool multi-solve scenario end-to-end via the native

@@ -1251,7 +1251,7 @@ def run_orchestration(
     runner_factory=None,
     db_url: str | None = None,
     scenario_name: str | None = None,
-    warm: bool = False,
+    warm: bool = True,
     keep_solutions: bool = False,
     csv_dump: bool = False,
 ) -> dict[str, OrchestrationStep]:
@@ -1352,7 +1352,7 @@ def _drive_cascade(
     db_url: str | None = None,
     scenario_name: str | None = None,
     keep_solutions: bool = False,
-    warm: bool = False,
+    warm: bool = True,
 ) -> dict[str, OrchestrationStep]:
     """Drive the flextool master loop with a polar_high cascade solver.
 
@@ -2650,7 +2650,7 @@ def run_chain_from_db(
     flextool_dir: Path | str | None = None,
     solver_config_dir: Path | str | None = None,
     logger: logging.Logger | None = None,
-    warm: bool = False,
+    warm: bool = True,
     keep_solutions: bool = False,
     csv_dump: bool = False,
     override_provider: "Callable[[], dict[str, pl.DataFrame]] | None" = None,
