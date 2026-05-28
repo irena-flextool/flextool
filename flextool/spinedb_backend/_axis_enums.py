@@ -44,6 +44,13 @@ from typing import Any, Iterable, Sequence
 import polars as pl
 
 
+_DTYPE_BY_NAME: dict[str, pl.DataType] = {
+    "Float64": pl.Float64,
+    "Utf8": pl.Utf8,
+    "Boolean": pl.Boolean,
+}
+
+
 # ---------------------------------------------------------------------------
 # Contract path resolution
 # ---------------------------------------------------------------------------
@@ -133,6 +140,26 @@ class AxisContract:
     synthetic_token_allowlist: tuple[dict, ...]
     mixed_vocab_columns: dict
     non_dim_columns: dict
+    parameter_value_dtypes: dict = field(default_factory=dict)
+
+    def value_dtype_for(
+        self, entity_class: str, parameter: str,
+    ) -> pl.DataType:
+        """Return the leaf polars dtype declared for a parameter's value
+        column.  Falls back to the contract's ``default`` (``Float64``
+        when the section is absent).
+
+        The dtype names in the contract (``"Float64"``, ``"Utf8"``,
+        ``"Boolean"``) are mapped here to polars types.  An unknown
+        name in the contract raises ``ValueError`` — caller bug,
+        not user data.
+        """
+        section = self.parameter_value_dtypes or {}
+        overrides = section.get("overrides", {})
+        name = overrides.get(f"{entity_class}.{parameter}")
+        if name is None:
+            name = section.get("default", "Float64")
+        return _DTYPE_BY_NAME[name]
 
     def by_name(self, name: str) -> AxisSpec:
         """Look up an axis by its short name.
@@ -224,6 +251,7 @@ def load_axis_contract(path: Path | None = None) -> AxisContract:
         ),
         mixed_vocab_columns=dict(raw.get("mixed_vocab_columns", {})),
         non_dim_columns=dict(raw.get("non_dim_columns", {})),
+        parameter_value_dtypes=dict(raw.get("parameter_value_dtypes", {})),
     )
 
 

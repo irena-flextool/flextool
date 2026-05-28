@@ -210,6 +210,18 @@
     "_comment": "String columns that look like dim columns by name but hold data values (method discriminators, scenario labels, etc). Leave as pl.Utf8 — do NOT cast.",
     "confirmed": ["method", "scenario", "model", "solve", "value", "paramName", "class", "ts", "default_value"]
   },
+  "parameter_value_dtypes": {
+    "_comment": "Inner-leaf dtype for Map/Array parameter VALUES. SpineDB does not enforce types inside Maps (e.g. a numeric coefficient may be authored as the string '1' instead of 1.0). This registry pins the expected leaf dtype per (entity_class, parameter) so SpineDBReader._unroll_rows casts the value column to a stable dtype instead of sniffing the first sample. Lenient cast (strict=False) parses 'looks-numeric' strings; values that fail to parse become null and are surfaced as FlexDataIntegrityError with an entity/index breadcrumb. Default = Float64; overrides list only parameters whose leaf is genuinely non-numeric.",
+    "default": "Float64",
+    "overrides": {
+      "solve.invest_periods":          "Utf8",
+      "solve.realized_invest_periods": "Utf8",
+      "solve.realized_periods":        "Utf8",
+      "solve.fix_storage_periods":     "Utf8",
+      "solve.period_timeset":          "Utf8",
+      "solve.stochastic_branches":     "Utf8"
+    }
+  },
   "_review_notes": [
     {
       "id": "c_collision",

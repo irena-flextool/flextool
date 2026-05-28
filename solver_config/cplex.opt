@@ -1,0 +1,25 @@
+# CPLEX baseline parameter file (FlexTool default).
+#
+# Format: one "<name> <value>" per line using CPLEX' interactive ``set``
+# command names (e.g. ``threads``, ``timelimit``, ``mip tolerances mipgap``).
+# Lines starting with "#" are comments.
+#
+# Consumed by FlexTool's commercial-solver subprocess driver
+# (flextool/engine_polars/_subprocess_solve.py): each non-comment line is
+# translated to ``set <name> <value>`` and piped on stdin to the
+# ``cplex`` interactive optimizer before ``read <mps>`` / ``optimize``.
+#
+# Why not a real CPLEX .prm file?  The CPLEX PRM format requires a
+# version header (e.g. ``CPLEX Parameter File Version 22.1.0.0``) that
+# the optimizer rejects when it doesn't match the installed binary's
+# version exactly.  Piping ``set`` commands is portable across CPLEX
+# 12.x / 20.x / 22.x.
+#
+# Any value set here is overridden line-by-line by the scenario's
+# ``solver_options`` Map (and by the translated convenience knobs).
+#
+# Reference: https://www.ibm.com/docs/en/icos/22.1.0?topic=cplex-list-parameters
+#
+# Conservative defaults — edit to suit your model.
+threads 1
+mip tolerances mipgap 0.002

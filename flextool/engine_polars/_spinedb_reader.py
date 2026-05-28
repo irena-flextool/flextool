@@ -127,7 +127,12 @@ class SpineDbReader:
         # pre-Phase-2 behaviour (Utf8 dim columns) so callers that
         # haven't opted in yet see no change.
         self._axis_enums = axis_enums
-        if contract is None and axis_enums is not None:
+        # The contract is needed unconditionally now: even when callers
+        # don't opt into the Phase-2 axis-enum cast on dim columns, the
+        # value-column dtype contract (parameter_value_dtypes) still
+        # applies so Map leaves can be normalised to Float64 / Utf8 /
+        # Boolean regardless of how the cells were authored in Spine.
+        if contract is None:
             contract = load_axis_contract()
         self._contract = contract
 
@@ -459,7 +464,7 @@ class SpineDbReader:
         ent_cols = self._entity_columns(cls_id)
         rows = self._param_rows.get((cls_id, pdef["id"]), [])
         columns, index_cols, leaf_dtype = self._unroll_rows(
-            rows, ent_cols, parameter_name,
+            rows, ent_cols, parameter_name, entity_class=entity_class,
         )
         if not columns or not columns["value"]:
             schema_in = {c: pl.Utf8 for c in ent_cols}
@@ -505,7 +510,7 @@ class SpineDbReader:
         # / Array).  We don't know up-front whether the parameter is
         # "scalar across all rows"; we infer per-row.
         columns, index_cols, leaf_dtype = self._unroll_rows(
-            rows, ent_cols, parameter_name,
+            rows, ent_cols, parameter_name, entity_class=entity_class,
         )
 
         # Step 2 — assemble the per-parameter LazyFrame.  Empty rows
@@ -705,6 +710,8 @@ class SpineDbReader:
         rows: list[tuple[int, Any]],
         ent_cols: list[str],
         parameter_name: str,
+        *,
+        entity_class: str,
     ) -> tuple[dict[str, list], list[str], pl.DataType | None]:
         """Walk each (entity_id, parsed_value) pair and emit a columnar
         dict of per-column lists ready for ``pl.DataFrame``.
@@ -757,17 +764,153 @@ class SpineDbReader:
                 v, index_cols, columns, ent_cols, ent_values, idx_path,
             )
 
-        # Infer leaf dtype from the first non-None value.
-        leaf_dtype: pl.DataType | None = None
-        sample = next((x for x in columns["value"] if x is not None), None)
-        if isinstance(sample, bool):
-            leaf_dtype = pl.Boolean
-        elif isinstance(sample, (int, float)):
-            leaf_dtype = pl.Float64
-        elif isinstance(sample, str):
-            leaf_dtype = pl.Utf8
+        # Apply the contract dtype only to parameters that contain at
+        # least one Spine Map row.  Map is the only shape where Spine
+        # silently drops type information (cells may be authored as
+        # the string "1" instead of the float 1.0), so this is the
+        # only path that needs the contract's lenient coerce.
+        #
+        # Other shapes bypass the contract:
+        #
+        # * Scalars (``str`` / ``float`` / ``bool``) — spinedb-api
+        #   returns them with the correct native Python type.  Forcing
+        #   the contract default of ``Float64`` here would reject every
+        #   scalar string parameter (e.g. ``node.node_type``).
+        # * ``TimeSeries`` — binary float arrays; no string-leaf risk.
+        # * ``Array`` — every FlexTool Array parameter holds Utf8
+        #   leaves (period names, solve names, CLI args).  None are
+        #   numeric, so the contract default would reject them
+        #   (e.g. ``model.solves`` = ``["y2020_2day_dispatch", ...]``).
+        from spinedb_api.parameter_value import Map
+        has_map = any(isinstance(v, Map) for _, v in rows)
+        if has_map:
+            leaf_dtype = self._contract.value_dtype_for(
+                entity_class, parameter_name,
+            )
+            self._coerce_value_column(
+                columns, ent_cols, index_cols,
+                leaf_dtype=leaf_dtype,
+                entity_class=entity_class,
+                parameter_name=parameter_name,
+            )
+        else:
+            leaf_dtype = None
+            sample = next(
+                (x for x in columns["value"] if x is not None), None,
+            )
+            if isinstance(sample, bool):
+                leaf_dtype = pl.Boolean
+            elif isinstance(sample, (int, float)):
+                leaf_dtype = pl.Float64
+            elif isinstance(sample, str):
+                leaf_dtype = pl.Utf8
 
         return columns, index_cols, leaf_dtype
+
+    def _coerce_value_column(
+        self,
+        columns: dict[str, list],
+        ent_cols: list[str],
+        index_cols: list[str],
+        *,
+        leaf_dtype: pl.DataType,
+        entity_class: str,
+        parameter_name: str,
+    ) -> None:
+        """In-place coerce ``columns["value"]`` to the contract dtype.
+
+        Spine does not enforce types inside Map values, so the same
+        parameter may carry float ``1.0`` and string ``"1"`` in
+        different cells.  ``pl.DataFrame(..., schema_overrides=...)``
+        with a strict cast would either reject the column outright or
+        silently null the str leaves under ``strict=False``.  Neither
+        is what we want — we want lenient parsing (Spine reality)
+        plus a loud, breadcrumb-rich error for genuinely unparseable
+        cells.
+
+        For ``Float64``: replace every ``str`` leaf with ``float(s)``
+        and raise :class:`FlexDataIntegrityError` on the first
+        unparseable token, with the offending entity name / map
+        index path / raw value embedded in the message.
+
+        For ``Boolean``: similar, with ``"yes"`` / ``"no"`` / ``"true"``
+        / ``"false"`` (case-insensitive) accepted.
+
+        For ``Utf8``: no-op.
+        """
+        if leaf_dtype == pl.Utf8:
+            return
+        vals = columns["value"]
+        if leaf_dtype == pl.Float64:
+            for i, v in enumerate(vals):
+                if v is None or isinstance(v, (int, float)) and not isinstance(v, bool):
+                    continue
+                if isinstance(v, str):
+                    s = v.strip()
+                    try:
+                        vals[i] = float(s)
+                        continue
+                    except ValueError:
+                        pass
+                self._raise_value_dtype_error(
+                    columns, ent_cols, index_cols,
+                    bad_index=i,
+                    entity_class=entity_class,
+                    parameter_name=parameter_name,
+                    expected="Float64 (number)",
+                    raw_value=v,
+                )
+        elif leaf_dtype == pl.Boolean:
+            for i, v in enumerate(vals):
+                if v is None or isinstance(v, bool):
+                    continue
+                if isinstance(v, str):
+                    s = v.strip().lower()
+                    if s in ("yes", "true", "1"):
+                        vals[i] = True
+                        continue
+                    if s in ("no", "false", "0"):
+                        vals[i] = False
+                        continue
+                self._raise_value_dtype_error(
+                    columns, ent_cols, index_cols,
+                    bad_index=i,
+                    entity_class=entity_class,
+                    parameter_name=parameter_name,
+                    expected="Boolean (yes/no/true/false)",
+                    raw_value=v,
+                )
+
+    def _raise_value_dtype_error(
+        self,
+        columns: dict[str, list],
+        ent_cols: list[str],
+        index_cols: list[str],
+        *,
+        bad_index: int,
+        entity_class: str,
+        parameter_name: str,
+        expected: str,
+        raw_value: Any,
+    ) -> None:
+        """Raise :class:`FlexDataIntegrityError` describing one bad cell.
+
+        Reconstructs the entity name tuple and the map-index path from
+        the parallel ``columns`` lists so the message points at the
+        exact Spine cell to fix.
+        """
+        entity = tuple(columns[c][bad_index] for c in ent_cols)
+        idx_path = tuple(columns[c][bad_index] for c in index_cols)
+        idx_repr = " / ".join(str(x) for x in idx_path) if idx_path else "(scalar)"
+        raise FlexDataIntegrityError(
+            f"Parameter value type mismatch for "
+            f"{entity_class}.{parameter_name}: "
+            f"expected {expected} but cell "
+            f"entity={entity}, index_path={idx_repr} "
+            f"has value {raw_value!r} ({type(raw_value).__name__}). "
+            f"Edit the Spine database to store this cell as a number "
+            f"(not as text)."
+        )
 
     def _entity_dim_values(self, class_id: int, ent_name: str) -> list[str]:
         """Return the dim-element values for *ent_name* in class

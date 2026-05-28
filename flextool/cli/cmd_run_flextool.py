@@ -1,14 +1,28 @@
+import os
+# glibc malloc arena cap — set BEFORE any C-extension import that
+# allocates via malloc.  glibc defaults to up to 8 × ncores arenas
+# (≈256 on a 32-core workstation); each arena holds its own
+# freed-but-not-returned-to-OS pages, so worst-case fragmentation
+# scales with core count.  Capping to 4 is a precautionary middle
+# ground: ~64× reduction vs the default, while still allowing up to
+# four concurrent allocators (HiGHS parallel presolve, Lagrangian
+# scenario runs) without serialising every malloc through one heap.
+# No measured benefit on the FlexTool cascade workload as of this
+# writing — FlexTool's hot path is essentially single-threaded
+# (polars pinned to 1 thread, --highs-threads typically 1).  Kept
+# only as a cheap precaution against future workloads where arena
+# growth could matter.  ``setdefault`` so the shell wins.
+os.environ.setdefault("MALLOC_ARENA_MAX", "4")
+
 import argparse
 import sys
 import logging
 import shutil
 import traceback
-from typing import Callable
-from functools import wraps
 from pathlib import Path
 from datetime import datetime
 import time
-import os
+from flextool._mem_sampler import start_mem_sampler
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.cli._timing import TimingRecorder
 from flextool.common_utils.precision import resolve_precision_digits
@@ -16,6 +30,13 @@ from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database, DateTime
 from spinedb_api.exception import NothingToCommit
+
+# Start the memory sampler as the first statement after imports.  The
+# few hundred ms of import-cascade RSS that precede this point are not
+# captured; the workload-level RSS curve (what the sampler exists to
+# measure) is fully captured.  Gated by FLEXTOOL_MEM_SAMPLER=1; no-op
+# when the env var is unset.
+start_mem_sampler()
 
 class FlushingStream:
     def __init__(self, stream):
@@ -174,13 +195,17 @@ def main():
     )
     parser.add_argument(
         '--save-memory', action='store_true',
-        help='Trade wall time for peak memory: after the LP matrix is '
-             'built, drop polar-high\'s polars/numpy LP source and '
-             'round-trip the HiGHS instance through a temp MPS file '
-             'before solving. Frees ~5-10 GB on large models at a cost '
-             'of ~+90 s I/O per sub-solve. Also disables warm-LP reuse '
-             'across cascade iterations (each sub-solve cold-rebuilds). '
-             'Off by default.',
+        help='Trade wall time for peak memory: build the LP, write it to '
+             'a temp MPS file, drop everything Python-side AND the live '
+             'HiGHS instance, then spawn a separate subprocess to solve '
+             'the MPS in a clean address space. The parent process '
+             '(holding ~7-11 GB of polars frames + FlexData) sits idle '
+             'while the child does its ~50 GB active-solve work, so the '
+             'two never compound in the same process heap. Adds ~+30-60 s '
+             'I/O per sub-solve. Also disables warm-LP reuse across '
+             'cascade iterations (the Problem is released after MPS '
+             'write). Off by default; use when models OOM on the default '
+             'in-process path.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
@@ -199,8 +224,8 @@ def main():
                         help='Subdirectory name under output_parquet/ (and the '
                              'other output dirs). Defaults to the scenario '
                              'name for backward compatibility.')
-    parser.add_argument('--flextool-location', default=None,
-                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories). Defaults to the user\'s current working directory.')
+    parser.add_argument('--flextool-location', nargs='?', default=None, const=None,
+                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories). Defaults to the user\'s current working directory. The value may be omitted (Spine Toolbox sometimes passes the bare flag) — in that case the default is used.')
     parser.add_argument('--work-folder', metavar='PATH', default=None,
                         help='Working directory for intermediate files (default: current directory). '
                              'Enables parallel scenario execution by isolating each run.')
@@ -417,6 +442,19 @@ def main():
     # extra kwarg on ``run_chain_from_db`` / ``_drive_cascade``.
     if args.save_memory:
         os.environ['FLEXTOOL_SAVE_MEMORY'] = '1'
+
+    # Accept either a SQLAlchemy URL ("sqlite:///path") or a bare
+    # filesystem path ("path/to.sqlite") for any DB argument. Downstream
+    # readers (SpineDbReader) already do this, but DatabaseMapping calls
+    # in this file consume the args directly, so normalise once here.
+    def _as_db_url(value):
+        if value is None:
+            return None
+        return value if "://" in value else f"sqlite:///{value}"
+
+    args.input_db_url = _as_db_url(args.input_db_url)
+    args.output_db_url = _as_db_url(args.output_db_url)
+    args.settings_db_url = _as_db_url(args.settings_db_url)
 
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url

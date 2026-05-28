@@ -567,14 +567,15 @@ class MainWindow(tk.Tk):
         _attach_tip(self.save_memory_cb, (
             "Run scenarios with --save-memory.\n"
             "\n"
-            "Trades ~+90 s I/O per sub-solve for ~5-10 GB lower peak\n"
-            "RSS: after the LP is built, polar-high's polars/numpy LP\n"
-            "source is dropped and the HiGHS instance is round-tripped\n"
-            "through a temp MPS file before HiGHS solves.\n"
+            "Builds the LP, writes it to a temp MPS file, drops\n"
+            "everything Python-side, then spawns a separate HiGHS\n"
+            "subprocess to actually solve. The parent (FlexTool +\n"
+            "polars data) sits idle while the child does its active-\n"
+            "solve work, so the two never compound in the same process.\n"
             "\n"
-            "Also disables warm-LP reuse across cascade iterations —\n"
-            "every sub-solve cold-rebuilds. Use on memory-constrained\n"
-            "machines or for models that would otherwise OOM."
+            "Adds ~+30-60 s I/O per sub-solve. Disables warm-LP reuse\n"
+            "across cascade iterations (each sub-solve cold-rebuilds).\n"
+            "Use when models OOM on the default in-process path."
         ))
 
         # ── Solver options launcher (modal dialog) ─────────────────

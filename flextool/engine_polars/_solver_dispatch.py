@@ -5,10 +5,12 @@ This module owns:
 * :func:`build_solver_options` — translate :class:`SolverConfig` into
   the option dict polar-high's ``solve()`` consumes (Phase 2).
 * :func:`run_one_solve` — dispatch a single :class:`polar_high.Problem`
-  to either ``Problem.solve()`` (HiGHS, default — preserves streaming
-  + ``Solution.highs``) or :func:`polar_high.solvers.solve` (commercial
-  solvers, normalised through
-  :class:`flextool.engine_polars._solver_result_to_solution.LiteSolution`).
+  to either ``Problem.solve()`` (in-process HiGHS, default — preserves
+  streaming + ``Solution.highs``) or
+  :func:`flextool.engine_polars._subprocess_solve.solve_via_subprocess`
+  (every cold path — HiGHS via ``cmd_solve_mps`` and commercial solvers
+  via their CLI binaries; both return real ``polar_high.Solution``
+  objects with the HiGHS instance read back from the MPS).
 * :class:`FlexToolUserError` — surface user-facing errors from the
   commercial path with actionable hints.
 
@@ -24,6 +26,8 @@ from typing import TYPE_CHECKING, Any, Mapping
 from flextool.engine_polars._solve_config import SolverConfig
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from polar_high import Problem
 
 
@@ -227,6 +231,8 @@ def run_one_solve(
     logger: logging.Logger | None = None,
     *,
     save_memory: bool = False,
+    solve_name: str | None = None,
+    work_folder: "Path | None" = None,
 ):
     """Dispatch *problem* to the chosen solver.
 
@@ -236,12 +242,13 @@ def run_one_solve(
     writer adapter), and the established option-resolution chain.
 
     The commercial path (gurobi / cplex / xpress / copt) routes through
-    :func:`polar_high.solvers.solve`, then wraps the
-    :class:`polar_high.solvers.SolverResult` into a
-    :class:`flextool.engine_polars._solver_result_to_solution.LiteSolution`
-    so downstream consumers (``input.py``,
-    ``_emit_co2_accumulators.py``, ``process_outputs/read_parameters.py``)
-    treat both shapes identically.
+    :func:`flextool.engine_polars._subprocess_solve.solve_via_subprocess`,
+    which spawns the solver's CLI binary against an MPS written by
+    ``Problem.write_mps`` and reads the .sol back through a read-only
+    ``highspy.Highs`` populated via ``setSolution``.  Downstream consumers
+    (``input.py``, ``_emit_co2_accumulators.py``,
+    ``process_outputs/read_parameters.py``) see a uniform
+    :class:`polar_high.Solution` shape regardless of which solver ran.
 
     Parameters
     ----------
@@ -254,22 +261,36 @@ def run_one_solve(
         Optional logger.  When provided, the commercial-path error
         messages are also logged at ERROR level before being raised.
     save_memory
-        When True on the HiGHS path, forward ``save_memory=True`` to
-        ``Problem.solve``: the polar-side LP source is dropped and the
-        HiGHS instance is round-tripped through a temp MPS file before
-        ``Highs::run()`` to free ~5-10 GB at the cost of ~+90 s I/O.
-        After such a solve the Problem is in a "released" state — no
-        re-solve, no warm reuse — so callers must cold-rebuild per
-        iteration when this flag is set.  Silently ignored on the
-        commercial path (polar-high-only knob).
+        When True on the HiGHS path, divert to
+        :func:`flextool.engine_polars._subprocess_solve.solve_via_subprocess`:
+        polar-high writes the LP to a temp MPS file via
+        ``Problem.write_mps(release=True)`` (a direct polars→MPS writer
+        that never builds a ``highspy.Highs`` instance, peaking at
+        ~2-3 GB on the largest LPs vs ~45 GB for HiGHS' own
+        ``writeModel``), then a ``flextool.cli.cmd_solve_mps``
+        subprocess solves the MPS in a clean address space.  The
+        parent reads the solution back via a read-only ``highspy.Highs``
+        and wraps it as a ``polar_high.Solution`` identical in shape
+        to the in-process return.  Trades file I/O for HiGHS' active-
+        solve memory living outside the parent process.  Also disables
+        warm-LP reuse for the cascade — the Problem is in ``_released``
+        state after the write.  Silently ignored on the commercial path.
+    solve_name
+        Used by the subprocess path to name MPS/options/solution files.
+        Defaults to ``"solve"`` when omitted.
+    work_folder
+        When provided, the subprocess path keeps its MPS/options/sol
+        files under ``<work_folder>/solve_data/subprocess/`` for post-
+        mortem inspection.  ``None`` uses a self-cleaning tempdir.
+        Ignored on the in-process path.
 
     Returns
     -------
-    polar_high.Solution | LiteSolution
-        Either the native polar-high Solution (HiGHS path) or a
-        LiteSolution wrapping the SolverResult (commercial path).  Both
-        expose ``.value()`` / ``._vars`` / ``.obj`` / ``.optimal`` /
-        ``.highs``.
+    polar_high.Solution
+        The native polar-high Solution.  On the cold/subprocess paths
+        the contained ``highs`` instance is a read-only
+        ``highspy.Highs`` reconstructed from the MPS with the primal /
+        dual injected via ``setSolution``.
 
     Raises
     ------
@@ -285,65 +306,102 @@ def run_one_solve(
         # ``problem.solve(options=...)`` accepts a dict and routes each
         # key to HiGHS via ``setOptionValue`` (polar-high engine.py).
         highs_options = build_solver_options(solver_config) or None
+        if save_memory:
+            # Subprocess path: write MPS via Problem.write_mps directly
+            # from polars frames, spawn flextool.cli.cmd_solve_mps, read
+            # solution back.  The effective options are forwarded to the
+            # subprocess through the .opt file written by solve_via_
+            # subprocess (write_mps itself runs no solver and takes no
+            # options).  Source: convenience-knob-translated options
+            # when present, else whatever was already stored on the
+            # Problem via ``set_solver_options`` upstream (autoscale
+            # Layer 3 may have mutated those).
+            from flextool.engine_polars._subprocess_solve import (
+                solve_via_subprocess,
+            )
+            effective_opts = (
+                highs_options if highs_options is not None
+                else dict(getattr(problem, "_solver_options", {}) or {})
+            )
+            return solve_via_subprocess(
+                problem,
+                "highs",
+                effective_opts,
+                solve_name=solve_name or "solve",
+                logger=logger,
+                work_folder=work_folder,
+            )
         return problem.solve(
             options=highs_options,
             keep_solver=True,
-            save_memory=save_memory,
         )
 
-    # Commercial path.  Use polar-high's dispatch + normalise the result.
-    from polar_high.solvers import (
-        LicenseError,
-        SolverError,
-        SolverNotAvailableError,
+    # Commercial path.  Always subprocess: write MPS via the cheap
+    # ``Problem.write_mps`` (polars→MPS, no LpView), spawn the solver's
+    # CLI binary, parse the .sol.  The in-process commercial-solver
+    # dispatch was retired alongside the in-process cold-HiGHS path —
+    # the goal is a single hard memory bound (~2-3 GB for write_mps on
+    # the largest LPs) for every cold solve regardless of solver.
+    #
+    # Convenience-knob translations are honoured but most commercial
+    # knobs (and the raw ``solver_options`` dict) are not yet plumbed
+    # into the CLI scripts — see :mod:`_subprocess_solve` for the
+    # current contract.  ``time_limit`` flows through as the subprocess
+    # timeout.
+    from flextool.engine_polars._subprocess_solve import (
+        _BINARY_NAMES,
+        solve_via_subprocess,
     )
-    from polar_high.solvers import solve as polar_solve
-
-    options = build_solver_options(solver_config)
-
-    try:
-        result = polar_solve(
-            problem,
-            solver_name=solver_config.name,
-            io_api=solver_config.io_api,
-            **options,
-        )
-    except SolverNotAvailableError as e:
+    if solver_config.name not in _BINARY_NAMES and solver_config.name != "highs":
+        # Unknown solver name — fail clean before we try anything else.
         from polar_high.solvers import available_solvers
-
         msg = (
-            f"Solver {solver_config.name!r} is not installed on this "
-            f"system.  Installed solvers: {available_solvers}.  See "
-            f"docs/solvers/{solver_config.name}.md for installation "
-            f"instructions."
+            f"Unknown solver {solver_config.name!r}.  Supported solvers: "
+            f"highs, gurobi, cplex, xpress, copt.  Installed wrappers: "
+            f"{available_solvers}."
         )
         if logger is not None:
             logger.error(msg)
-        raise FlexToolUserError(msg) from e
-    except LicenseError as e:
-        msg = (
-            f"Solver {solver_config.name!r} is installed but its license "
-            f"check failed.  Details: {e}.  See "
-            f"docs/solvers/{solver_config.name}.md#licensing for help."
+        raise FlexToolUserError(msg)
+    options = build_solver_options(solver_config)
+    try:
+        return solve_via_subprocess(
+            problem,
+            solver_config.name,
+            options,
+            solve_name=solve_name or "solve",
+            logger=logger,
+            work_folder=work_folder,
         )
+    except RuntimeError as e:
+        msg = str(e)
+        if msg.startswith("LICENSE: "):
+            user_msg = (
+                f"Solver {solver_config.name!r} subprocess failed a "
+                f"license check.  Details: {msg[len('LICENSE: '):]}.  "
+                f"See docs/solvers/{solver_config.name}.md#licensing "
+                f"for help."
+            )
+            if logger is not None:
+                logger.error(user_msg)
+            raise FlexToolUserError(user_msg) from e
+        if "was not found on $PATH" in msg:
+            user_msg = (
+                f"Solver {solver_config.name!r} CLI binary is not "
+                f"installed on this system.  {msg}  See "
+                f"docs/solvers/{solver_config.name}.md for installation "
+                f"instructions."
+            )
+            if logger is not None:
+                logger.error(user_msg)
+            raise FlexToolUserError(user_msg) from e
         if logger is not None:
             logger.error(msg)
-        raise FlexToolUserError(msg) from e
-    except SolverError as e:
-        msg = (
-            f"Solver {solver_config.name!r} returned an error: {e}.  This "
-            f"is usually a model issue (numerics, scaling, infeasibility), "
-            f"not a solver-install issue."
-        )
-        if logger is not None:
-            logger.error(msg)
-        raise FlexToolUserError(msg) from e
-
-    # Normalise SolverResult → LiteSolution.  Local import keeps the
-    # ``_solver_dispatch`` import surface narrow on the HiGHS path.
-    from flextool.engine_polars._solver_result_to_solution import LiteSolution
-
-    return LiteSolution.from_solver_result(result, problem)
+        raise FlexToolUserError(
+            f"Solver {solver_config.name!r} subprocess returned an "
+            f"error: {msg}.  This is usually a model issue (numerics, "
+            f"scaling, infeasibility) or a CLI invocation problem."
+        ) from e
 
 
 _LICENSE_PROBE_CACHE: dict[str, str] | None = None

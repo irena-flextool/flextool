@@ -7,7 +7,20 @@ programming, and quadratic programming solver developed at the University of
 Edinburgh. It is the **default solver in FlexTool** and the only one that
 ships with the FlexTool installation — no separate setup, no licence, no
 environment variables. Every FlexTool scenario that does not explicitly set
-the `solver` parameter runs on HiGHS via the in-process Python API.
+the `solver` parameter runs on HiGHS.
+
+Internally FlexTool runs HiGHS via one of two paths:
+
+- **Warm-active path** — the default for cascade runs. Keeps a single live
+  `highspy.Highs` instance across structurally-compatible sub-solves so each
+  iteration's right-hand-side updates flow into the same in-memory model.
+- **Subprocess path** — for cold solves, `--save-memory`, and single-solve
+  invocations. FlexTool writes the LP to a temporary MPS via the polar-high
+  polars→MPS writer, then runs `python -m flextool.cli.cmd_solve_mps` in a
+  clean child process so HiGHS' simplex/IPM working set lives outside the
+  FlexTool address space. The retired in-process cold-HiGHS path is no
+  longer reachable from the orchestrator — set `FLEXTOOL_SAVE_MEMORY=1`
+  explicitly to silence the soft-promote warning on the cold path.
 
 Official site: <https://highs.dev/>
 

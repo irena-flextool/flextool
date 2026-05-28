@@ -1,3 +1,221 @@
+## Release 4.0.0a4 (28.5.2026) — cross-solve memory hygiene + diagnostics
+
+Follow-on to 4.0.0a3.  The Stage A+B refactor exposed (but did not
+fix) a pre-existing cross-solve memory accumulation in the
+orchestration: each completed solve's `OrchestrationStep` held a
+full parent-side `highspy.Highs` instance plus per-variable polars
+frames plus the per-solve `FlexData` and `FlexDataProvider`,
+released only at the START of the iter-after-next (a one-iter lag)
+or — for the per-step provider/flex_data — only after the WHOLE
+cascade.  On DES this meant the parent reached 47-48 GB by solve 8,
+and solve 9 froze the machine under swap pressure.
+
+This release lands the targeted fixes plus the diagnostic
+infrastructure used to find them.
+
+**Cross-solve memory hygiene**
+
+- `flextool/engine_polars/_subprocess_solve.py` — the cold-path
+  (`--save-memory`) read-back from the subprocess `.sol` file no
+  longer re-loads the entire MPS into a parent-side `highspy.Highs`
+  instance just to extract column names and dual arrays.  A new
+  `_parse_highs_sol` parser plus a duck-typed `_SolHighsShim`
+  expose only what the downstream writers consume (`getSolution`,
+  `getLp().row_names_`, `passColName`, `getObjectiveValue`).  On
+  DES this was the +33 GB sidecar per solve.  As a side effect, a
+  pre-existing latent bug is fixed: `_v_obj__{solve}.parquet` on
+  cold runs used to write `0.0` for the objective (the prior
+  `getObjectiveValue()` call had no value to read); the shim
+  returns the value parsed from the `.sol`'s `Objective:` line.
+  **If you have analysis built on `v_obj` parquets from any prior
+  cold (`--save-memory`) run, those parquets are wrong.**  Warm-path
+  runs are unaffected.
+
+- `flextool/engine_polars/_orchestration.py` — the slim of the
+  prior step's solution state moved from "start of next iter's
+  handoff" to "end of current iter, immediately after `Outputs
+  written`" (kills the one-iter retention lag).  Extended to also
+  null `flex_data`, `flex_data_provider`, and `solution._vars` on
+  the cold path.  The just-parked step survives so the LAST iter's
+  outputs still write correctly.
+
+- `flextool/engine_polars/_native_run_model.py` +
+  `_orchestration.py` — on the warm path the slim is *per-level*:
+  the most-recent `Solution.highs` and `flex_data_provider` of
+  each level (`solve_hydro`, `solve_dispatch`, ...) survive until
+  either (a) a fresher same-level step supersedes them, or (b) the
+  pipeline has no more upcoming iterations of that level.  Earlier
+  same-level Highs instances and unrelated-level state are dropped.
+  `solution._vars` and `flex_data` are dropped unconditionally on
+  every prior step (warm-restart uses HiGHS' basis, not these
+  frames).
+
+- `FLEXTOOL_COLD_KEEP_PROVIDER=1` — opt-in env knob.  Cold path
+  drops `flex_data_provider` by default (each cold solve re-reads
+  the Spine DB).  Set this to retain the provider across cold
+  iterations — trades higher parent RSS for skipping the per-iter
+  DB re-read.  Useful for workloads where Spine DB re-read
+  dominates wall time on large input DBs.
+
+**Diagnostics**
+
+- `flextool/_mem_sampler.py` (new module) — opt-in daemon-thread
+  RSS / available / swap sampler.  Activated by
+  `FLEXTOOL_MEM_SAMPLER=1`.  Writes timestamped TSV-ish lines to
+  `/tmp/flextool_mem_sampler_<pid>.log` (override with
+  `FLEXTOOL_MEM_SAMPLER_LOG=path`) at 100 ms cadence (override with
+  `FLEXTOOL_MEM_SAMPLER_INTERVAL_MS=N`, clamped 20-10000).  Per-
+  sample explicit flush so the last samples before SIGKILL reach
+  disk.  Zero-overhead when off.  Falls back to `/proc` parsing
+  when psutil is unavailable on Linux.
+
+- Memory/timer table redesigned in `_MemoryRecorder`: 4-column
+  layout (`time | RSS memory | system memory | system swap`) where
+  each cell renders `<absolute> (<±delta>)` in a unit consistent
+  with the absolute value.  Swap now reports a delta (previously
+  swap_prev_mb was not tracked).
+
+- "Solve cleanup" checkpoint row emitted at level-group boundaries
+  (between consecutive solves in the cascade).  Δrss vs.
+  `Outputs written` makes any retained-across-the-boundary memory
+  obvious in the standard log table — no separate diagnostic tool
+  required.
+
+- Textual log messages (autoscale console summary, save-memory /
+  warm-disabled / soft-promote warnings) now wrap at 100 chars via
+  a `textwrap.fill` helper so multi-sentence prose stays readable
+  in narrow terminals.
+
+**Documentation**
+
+- `docs/dev/env_vars.md` (new) — comprehensive reference for every
+  env var the flextool code actually reads.  Grouped by Functional
+  toggles / HiGHS tuning / Memory diagnostics / Memory tuning /
+  Precision cleanup / Niche-test hooks.  Cross-linked with
+  polar-high's `docs/guide/env-vars.md` for the `POLAR_HIGH_*`
+  side.
+
+- `docs/dev/inject_between_solves.md` (new) — developer guide for
+  the `run_chain_from_db(..., override_provider=callable)`
+  parameter-injection mechanism.  Covers the 11 whitelisted
+  handoff carrier keys, lifecycle (per-iter, after handoff
+  translation, before preprocessing), warm-path interaction (warm
+  reuse happens BEFORE the override fires), audit hook
+  (`FLEXTOOL_AUDIT_SOURCES=1`), security note, and a working
+  Python wrapper example.
+
+- `docs/dev/scaling.md`, `engine_polars.md`, `architecture.md` —
+  fixed stale `FLEXTOOL_AUTO_SCALE=0` references; the real
+  variable is `FLEXTOOL_SCALING=off`.
+
+- Two stale `_orchestration.py` comments referencing the
+  Stage A6-deleted `_layer2._rewrite_term_lazy` helper updated to
+  describe the actual side-vector mechanism that replaced it.
+
+**Maintenance**
+
+- `polar-high>=2.0.2` → `polar-high>=2.2.0` in `pyproject.toml`.
+  The cross-solve hygiene code (and most of 4.0.0a3 itself) reads
+  polar-high's canonical-matrix surface (`Problem.canonicalise`,
+  `Problem._matrix`, `_layer2_*_factor`, `_canonical_dirty`), all
+  introduced in polar-high 2.2.0.
+
+- `flextool/cli/cmd_run_flextool.py` and
+  `flextool/engine_polars/_orchestration.py` — ruff clean.  Earlier
+  the sampler import sat between the `MALLOC_ARENA_MAX` setdefault
+  and the workload imports, triggering 15 E402 errors; moved the
+  `start_mem_sampler()` call to the first statement after imports.
+  Pre-existing F401 / F841 / F821 warnings in `_orchestration.py`
+  also cleaned (unused imports/locals removed, `polars as pl` and
+  `Callable` added to the `TYPE_CHECKING` block).
+
+- `_audit_reports/FLEXTOOL_PYRAMID_HANDOFF.md` and
+  `_audit_reports/storage_binding_method_callsites.md` removed
+  from the git index (the `_audit_reports/` and `specs/` folders
+  are gitignored; these two were the only tracked exceptions).
+  Files preserved on disk.
+
+**Real-workload validation**
+
+The cross-solve memory cliff that froze the user's machine at DES
+solve 3 under `--save-memory` (parent at ~40 GB + subprocess
+trying to start + system swap-thrashing → kernel page-fault
+storm) is structurally addressed.  Synthetic 4-solve fixture
+validates the per-solve RSS-at-`Outputs written` baseline shifts
+from a +9 MB-per-solve climb to a flat curve (modulo the
+intentional `captured_vars` retention for cross-solve writers,
+which is independent of the cliff).  Full validation on a real
+DES run is recommended before relying on the workaround being
+durable.
+
+`tests/engine_polars/autoscale/test_layer2_roundtrip.py` and
+`tests/engine_polars/autoscale/test_h2_trade_e2e.py` (the
+bit-for-bit safety nets) pass; full flextool autoscale suite 51
+passed; polar-high 126 passed / 8 skipped.
+
+**Requires polar-high >= 2.2.0** (unchanged from 4.0.0a3).
+
+## Release 4.0.0a3 (28.5.2026) — GLPK-style autoscale refactor
+
+Stage A of a two-stage refactor of the polar-high <-> flextool
+autoscale interface, paired with polar-high 2.2.0.  Together they
+replace the pre-existing "rewrite every constraint's lazy plan to
+embed the scaling factors, then re-evaluate from scratch in every
+consumer" model with the GLPK textbook approach: scaling lives in
+two numpy side vectors on `Problem`, and a single canonical CSC
+matrix is built once and shared across consumers.
+
+**What changes in flextool**
+
+- `flextool/engine_polars/autoscale/_layer2.py` — `apply_layer2` no
+  longer mutates `Problem._cstrs` or `Problem._obj_terms`.  It
+  writes the per-column factor into `Problem._layer2_col_factor`
+  (as `1 / cf_math`, the inverse convention required by
+  consumers that multiply rather than divide) and the per-row
+  factor into `Problem._layer2_row_factor` (forward `rf_math`).
+  Sets `Problem._layer2_locked = True` and `Problem._canonical_dirty = True`.
+  `Var.lower` / `Var.upper` continue to be mutated in place — they
+  are scalar per family, the cost is `O(n_var_families)`, and they
+  must be visible to any caller of `Var` (not just to the matrix
+  consumers).  `Layer2Plan`'s public shape is unchanged;
+  `unscale_solution` is byte-for-byte unchanged.
+
+- The four now-dead helper functions are deleted:
+  `_rewrite_term_lazy`, `_rewrite_obj_term_lazy`, `_scale_rhs`,
+  `_rhs_has_vars`.  ~250 LoC net reduction in `_layer2.py`.
+
+- The `POLAR_HIGH_RANGES_MAX_FAMILY_ROWS` family-size skip added in
+  4.0.0a2 to `apply_layer2`'s row-factor loop is no longer needed
+  and was removed.  (The equivalent skip still lives in
+  `bucket_coefficients` — that one is for the in-bucket-walk
+  pattern in Layer 1 detection, unrelated.)
+
+- `flextool/engine_polars/_orchestration.py` — two warm-path
+  comments updated to describe the side-vector design instead of
+  the deleted `_layer2._rewrite_term_lazy` helper.
+
+**Real-workload validation**
+
+The original OOM trigger on DES (`profile_flow_upper_limit`'s
+1.5M-row multi-Param chain in `apply_layer2`) is gone.  A full DES
+smoke run under the new architecture completed 8 of 9 dispatch
+solves with `Model status: Optimal` before OOM-killing at solve 9
+— and that 9th-solve OOM is *not* a refactor regression but a
+pre-existing cross-solve memory build-up that the refactor exposed
+by getting further into the workflow than any previous run.  At
+solve 9's start the process is at 47.6 GB RSS purely from
+accumulated state across solves 1-8; investigation deferred.
+
+Bit-for-bit safety nets (`test_layer2_roundtrip.py` +
+`test_h2_trade_e2e.py::test_h2_trade_autoscale_full_matches_solver_only_bit_for_bit`)
+pass under the new code path.  Full flextool autoscale suite: 51
+passed.  Full polar-high suite: 126 passed / 8 skipped (the one
+pre-existing-hung warm-rolling-speedup test deselected).
+
+**Requires polar-high >= 2.2.0** — the side-vector storage, the
+canonical matrix, and the `_canonical_dirty` flag all live on the
+polar-high `Problem` class.
+
 ## Release 4.0.0a1 (26.5.2026) — first v4 alpha
 
 First public alpha of the v4 line.  The 3.x series ended at 3.47.0

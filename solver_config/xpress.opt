@@ -1,0 +1,26 @@
+# Xpress baseline controls file (FlexTool default).
+#
+# Format: one "<CONTROL> <value>" per line.  Lines starting with "#"
+# are comments.  Consumed by FlexTool's commercial-solver subprocess
+# driver (flextool/engine_polars/_subprocess_solve.py): each non-comment
+# line is translated to ``setControl <CONTROL> <value>`` and piped on
+# stdin to the ``optimizer`` console before ``readprob <mps>`` /
+# ``lpoptimize``.
+#
+# Why not Xpress' native ``.ctl`` / ``readcontrols``?  ``readcontrols``
+# has been on-and-off across Xpress 8.x / 9.x and the file syntax
+# (binary vs ASCII, locale handling for floats) varies between
+# versions.  ``setControl`` from the optimizer console is the portable
+# escape hatch and matches what the rest of the per-solver dispatchers
+# in this driver do (Gurobi uses ReadParams, CPLEX uses inline ``set``,
+# COPT uses inline param-set commands).
+#
+# Any value set here is overridden line-by-line by the scenario's
+# ``solver_options`` Map (and by the translated convenience knobs).
+#
+# Reference: https://www.fico.com/fico-xpress-optimization/docs/dms2024-01/solver/optimizer/HTML/chapter6.html
+#
+# Conservative defaults — edit to suit your model.
+THREADS 1
+MIPRELSTOP 0.002
+OUTPUTLOG 1

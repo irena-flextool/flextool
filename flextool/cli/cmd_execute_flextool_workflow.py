@@ -2,19 +2,19 @@
 """
 FlexTool Workflow Orchestrator
 
-This script executes the complete FlexTool workflow in three phases:
-1. Input preparation: Convert tabular data to FlexTool input database
-2. Model execution: Run the FlexTool optimization model
-3. Output generation: Process and write results in various formats
-
-Each phase can be skipped independently using --skip-* flags.
+Runs the FlexTool workflow in two phases:
+1. Input preparation (optional): convert tabular data into a FlexTool input
+   database. Runs only when --tabular-file-path or --csv-directory-path is
+   given; otherwise the existing input database is used as-is.
+2. Model execution + output write: run the optimisation model and write
+   results in the requested formats. Parquet is always produced; --write-methods
+   selects which additional formats (plot, csv, excel) to generate alongside.
 """
 
 import argparse
 import logging
 import subprocess
 import sys
-import os
 from pathlib import Path
 
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
@@ -32,11 +32,11 @@ Examples:
   # Full workflow with CSV input
   python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --csv-directory-path input_data/
 
-  # Skip input prep if database already exists
-  python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --skip-input-prep
+  # Use an existing input database (no tabular/csv source → input prep is skipped)
+  python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario
 
-  # Run only model (skip both input and output phases)
-  python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --skip-input-prep --skip-output-write
+  # Add plots and CSV alongside the default parquet output
+  python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --write-methods plot parquet csv
         """
     )
 
@@ -45,26 +45,23 @@ Examples:
     parser.add_argument('output_db_url', help='Output database URL for storing result metadata')
     parser.add_argument('scenario_name', help='Name of the scenario to execute')
 
-    # Input phase arguments
+    # Input phase arguments. Presence of either flag triggers Phase 1
+    # (input preparation); when neither is given, the existing input
+    # database is used as-is.
     input_group = parser.add_mutually_exclusive_group()
     input_group.add_argument('--tabular-file-path', help='Path to Excel/ODS input file')
     input_group.add_argument('--csv-directory-path', help='Path to directory containing CSV input files')
 
-    # Output phase arguments
-    parser.add_argument('--output-methods', nargs='+', default=['plot', 'parquet', 'csv'],
+    # Output controls — forwarded to cmd_run_flextool, which writes
+    # outputs inline using the live in-memory flex_data + solution.
+    parser.add_argument('--write-methods', nargs='+',
+                        default=['plot', 'parquet', 'csv'],
                         choices=['plot', 'parquet', 'excel', 'csv'],
-                        help='Output formats to generate (default: plot parquet csv)')
+                        help='Output formats to generate (default: plot parquet csv). '
+                             'Parquet is the canonical output and is always produced when this flag is omitted.')
     parser.add_argument('--output-subdir', help='Subdirectory for output files (default: scenario_name)')
     parser.add_argument('--output-config', default=None,
                         help='Path to output configuration YAML file (default: bundled schemas/default_plots.yaml)')
-
-    # Skip flags for individual phases
-    parser.add_argument('--skip-input-prep', action='store_true',
-                        help='Skip input preparation phase (assumes input database already exists)')
-    parser.add_argument('--skip-model-run', action='store_true',
-                        help='Skip model execution phase (assumes model has already run)')
-    parser.add_argument('--skip-output-write', action='store_true',
-                        help='Skip output generation phase')
 
     # Additional options
     parser.add_argument('--debug',
@@ -90,15 +87,15 @@ Examples:
         except Exception as _exc:
             logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
 
-    # Validate arguments
-    if not args.skip_input_prep and not (args.tabular_file_path or args.csv_directory_path):
-        parser.error("Must provide either --tabular-file-path or --csv-directory-path unless --skip-input-prep is used")
+    # Phase 1 runs only when a tabular/csv source is provided; otherwise
+    # the existing input database is used as-is.
+    run_input_prep = bool(args.tabular_file_path or args.csv_directory_path)
 
     # Set default output subdirectory to scenario name if not specified
     output_subdir = args.output_subdir if args.output_subdir else args.scenario_name
 
     # Phase 1: Input Preparation
-    if not args.skip_input_prep:
+    if run_input_prep:
         print(f"\n{'='*70}")
         print("PHASE 1: PREPARING INPUT DATA")
         print(f"{'='*70}")
@@ -109,7 +106,7 @@ Examples:
         print(f"  Target DB:   {args.input_db_url}")
         print()
 
-        cmd = ['python', 'read_tabular_input.py', args.input_db_url]
+        cmd = [sys.executable, '-m', 'flextool.cli.cmd_read_tabular_input', args.input_db_url]
         if args.tabular_file_path:
             cmd.extend(['--tabular-file-path', args.tabular_file_path])
         else:
@@ -130,75 +127,49 @@ Examples:
         print("PHASE 1: SKIPPED (using existing input database)")
         print(f"{'='*70}\n")
 
-    # Phase 2: Model Execution
-    if not args.skip_model_run:
-        print(f"\n{'='*70}")
-        print("PHASE 2: RUNNING FLEXTOOL MODEL")
-        print(f"{'='*70}")
-        print(f"  Input DB:    {args.input_db_url}")
-        print(f"  Output DB:   {args.output_db_url}")
-        print(f"  Scenario:    {args.scenario_name}")
-        print()
+    # Phase 2: Model Execution + Output Write
+    # cmd_run_flextool writes outputs inline using the live in-memory
+    # flex_data + solution from the cascade. There is no separate
+    # standalone "write outputs" subprocess — the data is gone once the
+    # solver exits.
+    print(f"\n{'='*70}")
+    print("PHASE 2: RUNNING FLEXTOOL MODEL + WRITING OUTPUTS")
+    print(f"{'='*70}")
+    print(f"  Input DB:    {args.input_db_url}")
+    print(f"  Output DB:   {args.output_db_url}")
+    print(f"  Scenario:    {args.scenario_name}")
+    print(f"  Formats:     {', '.join(args.write_methods)}")
+    print(f"  Subdirectory: {output_subdir}")
+    print()
 
-        cmd = [sys.executable, '-m', 'flextool.cli.cmd_run_flextool',
-               args.input_db_url, args.output_db_url, args.scenario_name]
-        if args.debug != 'off':
-            cmd.append(f'--debug={args.debug}')
+    # Resolve --output-config: bare basename or unset → bundled
+    # default from the package; absolute path → used verbatim.
+    from flextool._resources import package_data_path
+    output_config = args.output_config
+    if not output_config or Path(output_config).name in {
+        'default_plots.yaml', 'default_comparison_plots.yaml'
+    }:
+        output_config = str(package_data_path("schemas/default_plots.yaml"))
 
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            print("\n" + "="*70)
-            print("ERROR: Model execution failed with return code", result.returncode)
-            print("="*70)
-            sys.exit(result.returncode)
+    cmd = [sys.executable, '-m', 'flextool.cli.cmd_run_flextool',
+           args.input_db_url, args.output_db_url,
+           '--scenario-name', args.scenario_name,
+           '--output-config', output_config,
+           '--output-subdir', output_subdir,
+           '--write-methods'] + args.write_methods
+    if args.debug != 'off':
+        cmd.append(f'--debug={args.debug}')
 
-        print(f"\n{'='*70}")
-        print("PHASE 2: COMPLETED SUCCESSFULLY")
-        print(f"{'='*70}\n")
-    else:
-        print(f"\n{'='*70}")
-        print("PHASE 2: SKIPPED (using existing model results)")
-        print(f"{'='*70}\n")
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print("\n" + "="*70)
+        print("ERROR: Model execution failed with return code", result.returncode)
+        print("="*70)
+        sys.exit(result.returncode)
 
-    # Phase 3: Output Generation
-    if not args.skip_output_write:
-        # Resolve --output-config: bare basename or unset → bundled
-        # default from the package; absolute path → used verbatim.
-        from flextool._resources import package_data_path
-        output_config = args.output_config
-        if not output_config or Path(output_config).name in {
-            'default_plots.yaml', 'default_comparison_plots.yaml'
-        }:
-            output_config = str(package_data_path("schemas/default_plots.yaml"))
-
-        print(f"\n{'='*70}")
-        print("PHASE 3: WRITING OUTPUTS")
-        print(f"{'='*70}")
-        print(f"  Scenario:    {args.scenario_name}")
-        print(f"  Formats:     {', '.join(args.output_methods)}")
-        print(f"  Subdirectory: {output_subdir}")
-        print(f"  Config:      {output_config}")
-        print()
-
-        cmd = [sys.executable, '-m', 'flextool.cli.cmd_write_outputs',
-               args.scenario_name,
-               '--config_path', output_config,
-               '--methods'] + args.output_methods + ['--subdir', output_subdir]
-
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            print("\n" + "="*70)
-            print("ERROR: Output generation failed with return code", result.returncode)
-            print("="*70)
-            sys.exit(result.returncode)
-
-        print(f"\n{'='*70}")
-        print("PHASE 3: COMPLETED SUCCESSFULLY")
-        print(f"{'='*70}\n")
-    else:
-        print(f"\n{'='*70}")
-        print("PHASE 3: SKIPPED")
-        print(f"{'='*70}\n")
+    print(f"\n{'='*70}")
+    print("PHASE 2: COMPLETED SUCCESSFULLY")
+    print(f"{'='*70}\n")
 
     # Success summary
     print(f"\n{'='*70}")
@@ -207,8 +178,7 @@ Examples:
     print(f"  Scenario:     {args.scenario_name}")
     print(f"  Input DB:     {args.input_db_url}")
     print(f"  Output DB:    {args.output_db_url}")
-    if not args.skip_output_write:
-        print(f"  Output dir:   {output_subdir}/")
+    print(f"  Output dir:   {output_subdir}/")
     print(f"{'='*70}\n")
 
 

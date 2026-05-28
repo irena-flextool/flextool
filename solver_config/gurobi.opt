@@ -1,0 +1,18 @@
+# Gurobi baseline parameter file (FlexTool default).
+#
+# Format: Gurobi .prm — one "<ParamName> <value>" per line.
+# Lines starting with "#" are comments.  This file is consumed via
+#     gurobi_cl ReadParams=<this-file> ResultFile=<sol> <mps>
+# by FlexTool's commercial-solver subprocess driver
+# (flextool/engine_polars/_subprocess_solve.py).
+#
+# Any value set here is overridden line-by-line by the scenario's
+# ``solver_options`` Map (and by the translated convenience knobs
+# ``solver_time_limit`` / ``solver_mip_gap`` / ``solver_threads``).
+#
+# Reference: https://docs.gurobi.com/projects/optimizer/en/current/reference/parameters.html
+#
+# Conservative defaults — edit to suit your model.
+Threads 1
+MIPGap 0.002
+LogToConsole 1
