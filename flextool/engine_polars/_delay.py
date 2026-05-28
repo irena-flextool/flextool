@@ -186,8 +186,10 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
     def _read_pse(name: str) -> pl.DataFrame | None:
         p = sd / f"{name}.csv"
         df = _provider_get(provider, p)
-        if df is None or df.height == 0: return None
-        if "process" in df.columns: df = df.rename({"process": "p"})
+        if df is None or df.height == 0:
+            return None
+        if "process" in df.columns:
+            df = df.rename({"process": "p"})
         return df.select("p", "source")
 
     pse_delayed   = _read_pse("process_source_delayed")
@@ -197,8 +199,10 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
     def _read_psse(name: str) -> pl.DataFrame | None:
         p = sd / f"{name}.csv"
         df = _provider_get(provider, p)
-        if df is None or df.height == 0: return None
-        if "process" in df.columns: df = df.rename({"process": "p"})
+        if df is None or df.height == 0:
+            return None
+        if "process" in df.columns:
+            df = df.rename({"process": "p"})
         return df.select("p", "source", "sink")
 
     psse_delayed   = _read_psse("process_source_sink_delayed")
@@ -243,10 +247,14 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
     raw = _provider_get(provider, dtt_path)
     if raw is not None and raw.height > 0:
         rename_map = {}
-        if "period" in raw.columns:      rename_map["period"] = "d"
-        if "time_source" in raw.columns: rename_map["time_source"] = "t_source"
-        if "time_sink" in raw.columns:   rename_map["time_sink"] = "t_sink"
-        if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
+        if "period" in raw.columns:
+            rename_map["period"] = "d"
+        if "time_source" in raw.columns:
+            rename_map["time_source"] = "t_source"
+        if "time_sink" in raw.columns:
+            rename_map["time_sink"] = "t_sink"
+        if "delay_duration" in raw.columns:
+            rename_map["delay_duration"] = "td"
         dtt_df = raw.rename(rename_map).select("d", "t_source", "t_sink", "td")
 
     pw_path = sd / "p_process_delay_weight.csv"
@@ -254,8 +262,10 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
     raw = _provider_get(provider, pw_path)
     if raw is not None and raw.height > 0:
         rename_map = {}
-        if "process" in raw.columns: rename_map["process"] = "p"
-        if "delay_duration" in raw.columns: rename_map["delay_duration"] = "td"
+        if "process" in raw.columns:
+            rename_map["process"] = "p"
+        if "delay_duration" in raw.columns:
+            rename_map["delay_duration"] = "td"
         pw_long = raw.rename(rename_map).select("p", "td", "value")
         pw_param = Param(("p", "td"), pw_long)
 

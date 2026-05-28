@@ -364,11 +364,13 @@ def _emit_invest_period_minmax(m, d, vars: dict,
     if kind == "invest":
         idx_set   = getattr(d, "ed_invest_period_set", None)
         cap_param = getattr(d, "ed_invest_min_period", None)
-        v_p = vars.get("v_invest_p"); v_n = vars.get("v_invest_n")
+        v_p = vars.get("v_invest_p")
+        v_n = vars.get("v_invest_n")
     else:  # divest
         idx_set   = getattr(d, "ed_divest_period_set", None)
         cap_param = getattr(d, "ed_divest_min_period", None)
-        v_p = vars.get("v_divest_p"); v_n = vars.get("v_divest_n")
+        v_p = vars.get("v_divest_p")
+        v_n = vars.get("v_divest_n")
     if idx_set is None or idx_set.height == 0 or cap_param is None:
         return
     suffix = f"min{kind.capitalize()}_entity_period"
@@ -418,12 +420,14 @@ def _emit_invest_total_minmax(m, d, vars: dict,
         e_set     = getattr(d, "e_invest_total", None)
         cap_param = getattr(d, "e_invest_min_total", None)
         edd_set   = getattr(d, "edd_invest_set", None)
-        v_p = vars.get("v_invest_p"); v_n = vars.get("v_invest_n")
+        v_p = vars.get("v_invest_p")
+        v_n = vars.get("v_invest_n")
     else:
         e_set     = getattr(d, "e_divest_total", None)
         cap_param = getattr(d, "e_divest_min_total", None)
         edd_set   = None
-        v_p = vars.get("v_divest_p"); v_n = vars.get("v_divest_n")
+        v_p = vars.get("v_divest_p")
+        v_n = vars.get("v_divest_n")
     if e_set is None or e_set.height == 0 or cap_param is None:
         return
     cstr_name = f"min{kind.capitalize()}_entity_total"
@@ -538,8 +542,10 @@ def _emit_cumulative_capacity(m, d, vars: dict, sense: str) -> None:
     if edd_set is None:
         return
 
-    v_inv_p = vars.get("v_invest_p"); v_inv_n = vars.get("v_invest_n")
-    v_div_p = vars.get("v_divest_p"); v_div_n = vars.get("v_divest_n")
+    v_inv_p = vars.get("v_invest_p")
+    v_inv_n = vars.get("v_invest_n")
+    v_div_p = vars.get("v_divest_p")
+    v_div_n = vars.get("v_divest_n")
 
     # Process side
     if v_inv_p is not None and d.p_unitsize is not None:
@@ -650,12 +656,14 @@ def _emit_group_invest_period(m, d, vars: dict,
         gd_idx = getattr(d, "gd_invest_period", None)
         cap_field = ("p_group_invest_max_period" if sense == "<="
                      else "p_group_invest_min_period")
-        v_p = vars.get("v_invest_p"); v_n = vars.get("v_invest_n")
+        v_p = vars.get("v_invest_p")
+        v_n = vars.get("v_invest_n")
     else:
         gd_idx = getattr(d, "gd_divest_period", None)
         cap_field = ("p_group_retire_max_period" if sense == "<="
                      else "p_group_retire_min_period")
-        v_p = vars.get("v_divest_p"); v_n = vars.get("v_divest_n")
+        v_p = vars.get("v_divest_p")
+        v_n = vars.get("v_divest_n")
     cap_param = getattr(d, cap_field, None)
     group_entity = getattr(d, "group_entity", None)
     if (gd_idx is None or gd_idx.height == 0
@@ -731,13 +739,15 @@ def _emit_group_invest_total(m, d, vars: dict,
         cap_field = ("p_group_invest_max_total" if sense == "<="
                      else "p_group_invest_min_total")
         edd_set   = getattr(d, "edd_invest_set", None)
-        v_p = vars.get("v_invest_p"); v_n = vars.get("v_invest_n")
+        v_p = vars.get("v_invest_p")
+        v_n = vars.get("v_invest_n")
     else:
         g_set     = getattr(d, "g_divest_total", None)
         cap_field = ("p_group_retire_max_total" if sense == "<="
                      else "p_group_retire_min_total")
         edd_set   = None
-        v_p = vars.get("v_divest_p"); v_n = vars.get("v_divest_n")
+        v_p = vars.get("v_divest_p")
+        v_n = vars.get("v_divest_n")
     cap_param = getattr(d, cap_field, None)
     if g_set is None or g_set.height == 0 or cap_param is None:
         return
@@ -915,7 +925,8 @@ def _emit_group_invest_cumulative(m, d, vars: dict, sense: str) -> None:
         return
 
     # LHS pieces: invest sum (process + node) and existing sum.
-    v_inv_p = vars.get("v_invest_p"); v_inv_n = vars.get("v_invest_n")
+    v_inv_p = vars.get("v_invest_p")
+    v_inv_n = vars.get("v_invest_n")
     existing = getattr(d, "p_entity_all_existing", None)
 
     lhs_terms: dict = {}

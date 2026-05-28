@@ -144,7 +144,9 @@ def test_cumulative_commodity_extracted_from_v_trade(_fixture):
     # since p_commodity_unitsize.csv is absent for this fixture.
     expected: dict[tuple[str, int], float] = {}
     for r in v_trade.iter_rows(named=True):
-        c = str(r["c"]); i = int(r["i"]); v = float(r["value"])
+        c = str(r["c"])
+        i = int(r["i"])
+        v = float(r["value"])
         if (c, i) != ("coal", 1):
             continue
         expected[(c, i)] = expected.get((c, i), 0.0) + v

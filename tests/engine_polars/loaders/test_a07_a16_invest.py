@@ -64,7 +64,8 @@ def _make_invest_workdir(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Return (inp, sd, dt) ready for ``_load_invest`` calls."""
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     return inp, sd, _empty_dt()
 
 
@@ -180,7 +181,8 @@ def test_group_entity_solve_data_precedence_and_input_fallback(tmp_path: Path):
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     _write(sd / "group_entity.csv",   "group,entity\ng1,e1\n")
     _write(inp / "group__entity.csv", "group,entity\ng1,e2\n")
 
@@ -217,7 +219,8 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     _write(sd / "g_invest_cumulative.csv", "group\ng1\n")
 
     out = _load_cumulative_invest(inp, sd, _empty_dt())
@@ -269,7 +272,8 @@ def test_min_invest_total_seed_param(tmp_path: Path):
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     _write(sd / "e_invest_min_total.csv", "entity,value\ne1,3.0\n")
 
     out = _load_cumulative_invest(inp, sd, _empty_dt())

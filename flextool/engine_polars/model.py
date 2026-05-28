@@ -493,8 +493,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     has_startup_cost_int = (d.pdt_online_integer is not None
                             and d.pdt_online_integer.height > 0)
 
-    if has_proc:      _check(d, PROCESSES, "processes")
-    if has_indirect:  _check(d, INDIRECT,  "conversion_indirect")
+    if has_proc:
+        _check(d, PROCESSES, "processes")
+    if has_indirect:
+        _check(d, INDIRECT,  "conversion_indirect")
     # co2_price: topology activates the feature whenever a priced commodity
     # node is wired up, but the data fields (p_co2_price, p_co2_content)
     # are authored separately.  Missing data is a configuration warning,
@@ -512,11 +514,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             " and ".join(_missing),
         )
         has_co2_price = False
-    if has_co2_cap:   _check(d, CO2_CAP,   "co2_max_period")
-    if has_co2_cap_total: _check(d, CO2_CAP_TOTAL, "co2_max_total")
-    if has_user_cstr: _check(d, USER_CSTR, "user_constraints")
-    if has_profile:   _check(d, PROFILES,  "profile_flow")
-    if has_storage:   _check(d, STORAGE,   "storage")
+    if has_co2_cap:
+        _check(d, CO2_CAP,   "co2_max_period")
+    if has_co2_cap_total:
+        _check(d, CO2_CAP_TOTAL, "co2_max_total")
+    if has_user_cstr:
+        _check(d, USER_CSTR, "user_constraints")
+    if has_profile:
+        _check(d, PROFILES,  "profile_flow")
+    if has_storage:
+        _check(d, STORAGE,   "storage")
     has_ramp = any(getattr(d, f) is not None and getattr(d, f).height > 0
                    for f in ("process_source_sink_ramp_limit_sink_up",
                              "process_source_sink_ramp_limit_sink_down",
@@ -526,13 +533,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     has_divest_p = (d.pd_divest_set is not None and d.pd_divest_set.height > 0)
     has_invest_n = (d.nd_invest_set is not None and d.nd_invest_set.height > 0)
     has_divest_n = (d.nd_divest_set is not None and d.nd_divest_set.height > 0)
-    if has_ramp:             _check(d, RAMP,                  "ramp_limit")
-    if has_invest_p or has_invest_n: _check(d, INVEST,        "invest")
-    if has_divest_p:         _check(d, DIVEST,                "divest")
-    if has_online:           _check(d, ONLINE,                "online")
-    if has_minload_eff:      _check(d, MINLOAD_EFF,           "min_load_efficiency")
-    if has_startup_cost_lin: _check(d, STARTUP_COST_LINEAR,   "startup_cost_linear")
-    if has_startup_cost_int: _check(d, STARTUP_COST_INTEGER,  "startup_cost_integer")
+    if has_ramp:
+        _check(d, RAMP,                  "ramp_limit")
+    if has_invest_p or has_invest_n:
+        _check(d, INVEST,        "invest")
+    if has_divest_p:
+        _check(d, DIVEST,                "divest")
+    if has_online:
+        _check(d, ONLINE,                "online")
+    if has_minload_eff:
+        _check(d, MINLOAD_EFF,           "min_load_efficiency")
+    if has_startup_cost_lin:
+        _check(d, STARTUP_COST_LINEAR,   "startup_cost_linear")
+    if has_startup_cost_int:
+        _check(d, STARTUP_COST_INTEGER,  "startup_cost_integer")
 
     # Phase E.3: build the formerly-persistent cross-join scratch frames
     # once here as locals, then re-use throughout build_flextool.  Each
@@ -2283,8 +2297,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
              # source-side param; defer to it.
              d.p_ramp_speed_down_source),
         ]:
-            if idx_set is None or idx_set.height == 0: continue
-            if ramp_param is None: continue
+            if idx_set is None or idx_set.height == 0:
+                continue
+            if ramp_param is None:
+                continue
             sense = "<=" if dir_ == "up" else ">="
             sign  = 1.0  if dir_ == "up" else -1.0  # flips the RHS sign for "down"
             over_idx = idx_set.join(d.dt, how="cross")
@@ -2478,7 +2494,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
               .rows()
         )
     def _e_prior_invested() -> dict[str, float]:
-        if d.p_entity_invested is None: return {}
+        if d.p_entity_invested is None:
+            return {}
         return dict(d.p_entity_invested.frame.rows())
     def _e_prior_divested() -> dict[str, float]:
         # The .mod gates p_entity_divested behind ``not p_model['solveFirst']``
@@ -2486,7 +2503,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # single-solve scenario).  ``p_nested_solve_first`` is tri-state:
         # None → no p_nested_model.csv (single-solve, treated as solveFirst);
         # True → solveFirst=1 (skip); False → solveFirst=0 (use the prior).
-        if d.p_entity_divested is None: return {}
+        if d.p_entity_divested is None:
+            return {}
         if getattr(d, "p_nested_solve_first", None) is not False:
             return {}
         return dict(d.p_entity_divested.frame.rows())
@@ -3668,13 +3686,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # ─── Group-level slack (capacity_margin / inertia / non_sync) ────────
     if _group_slack.has_feature(d):
         vars_: dict = {}
-        if has_proc:        vars_["v_flow"]       = v_flow
-        if has_online_lin:  vars_["v_online_lin"] = v_online_lin
-        if has_online_int:  vars_["v_online_int"] = v_online_int
-        if has_invest_p:    vars_["v_invest_p"]   = v_invest_p
-        if has_divest_p:    vars_["v_divest_p"]   = v_divest_p
-        if has_invest_n:    vars_["v_invest_n"]   = v_invest_n
-        if has_divest_n:    vars_["v_divest_n"]   = v_divest_n
+        if has_proc:
+            vars_["v_flow"]       = v_flow
+        if has_online_lin:
+            vars_["v_online_lin"] = v_online_lin
+        if has_online_int:
+            vars_["v_online_int"] = v_online_int
+        if has_invest_p:
+            vars_["v_invest_p"]   = v_invest_p
+        if has_divest_p:
+            vars_["v_divest_p"]   = v_divest_p
+        if has_invest_n:
+            vars_["v_invest_n"]   = v_invest_n
+        if has_divest_n:
+            vars_["v_divest_n"]   = v_divest_n
         vars_["vq_state_up"]   = vq_up
         vars_["vq_state_down"] = vq_down
         _group_slack.add_constraints(m, d, vars_)
@@ -3685,11 +3710,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
     if _reserve.has_feature(d):
         res_vars: dict = dict(reserve_vars)
-        if has_proc:        res_vars["v_flow"]       = v_flow
-        if has_online_lin:  res_vars["v_online_lin"] = v_online_lin
-        if has_online_int:  res_vars["v_online_int"] = v_online_int
-        if has_invest_p:    res_vars["v_invest_p"]   = v_invest_p
-        if has_divest_p:    res_vars["v_divest_p"]   = v_divest_p
+        if has_proc:
+            res_vars["v_flow"]       = v_flow
+        if has_online_lin:
+            res_vars["v_online_lin"] = v_online_lin
+        if has_online_int:
+            res_vars["v_online_int"] = v_online_int
+        if has_invest_p:
+            res_vars["v_invest_p"]   = v_invest_p
+        if has_divest_p:
+            res_vars["v_divest_p"]   = v_divest_p
         _reserve.add_constraints(m, d, res_vars)
         res_obj = _reserve.add_objective_terms(m, d, res_vars, op_factor)
         if res_obj is not None:

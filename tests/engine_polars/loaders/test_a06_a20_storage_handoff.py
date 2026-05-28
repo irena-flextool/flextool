@@ -52,7 +52,8 @@ def test_blank_when_nodeState_absent_or_empty(tmp_path: Path):
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     dt = pl.DataFrame({"d": ["p1"], "t": ["t1"]})
     nb = _empty_nb()
 
@@ -84,7 +85,8 @@ def test_first_dt_precedence_and_fallback(tmp_path: Path):
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     dt = pl.DataFrame({"d": ["d1", "d2", "d2"], "t": ["t1", "t1", "t2"]})
     nb = _empty_nb()
     _write(sd / "nodeState.csv", "node\nn1\n")
@@ -120,7 +122,8 @@ def test_storage_start_end_method_input_over_solve_data(tmp_path: Path):
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     dt = pl.DataFrame({"d": ["p1"], "t": ["t1"]})
     _write(sd / "nodeState.csv", "node\nn1\nn2\n")
     _write(inp / "node__storage_start_end_method.csv",
@@ -151,7 +154,8 @@ def test_use_reference_value_excludes_competing_methods(tmp_path: Path):
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     dt = pl.DataFrame({"d": ["p1"], "t": ["t1"]})
     _write(sd / "nodeState.csv", "node\nn1\nn2\n")
     _write(inp / "node__storage_solve_horizon_method.csv",

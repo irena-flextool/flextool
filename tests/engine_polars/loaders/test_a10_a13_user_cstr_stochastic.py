@@ -37,7 +37,8 @@ def _write(p: Path, text: str) -> None:
 def _make_dirs(tmp_path: Path) -> tuple[Path, Path]:
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp.mkdir()
+    sd.mkdir()
     return inp, sd
 
 

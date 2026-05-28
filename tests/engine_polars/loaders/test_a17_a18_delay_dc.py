@@ -34,8 +34,10 @@ def test_feature_gate_missing_csv_returns_blank(tmp_path: Path):
     returns the all-None blank dict; ``has_feature`` False on the
     resulting FlexData.
     """
-    inp = tmp_path / "input"; sd = tmp_path / "solve_data"
-    inp.mkdir(); sd.mkdir()
+    inp = tmp_path / "input"
+    sd = tmp_path / "solve_data"
+    inp.mkdir()
+    sd.mkdir()
 
     out = _delay.load_data(inp, sd)
     # Hand-calc: missing CSV → blank dict, every value None, all 8 keys present.

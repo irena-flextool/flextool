@@ -210,7 +210,8 @@ def _slice_pdgroup(sd: Path, param: str, *, provider=None) -> pl.DataFrame | Non
     carry the key / the slice is empty / the slice contains only zeros."""
     p = sd / "pdGroup.csv"
     df = _provider_get(provider, p)
-    if df is None or df.height == 0: return None
+    if df is None or df.height == 0:
+        return None
     sliced = (df.filter(pl.col("param") == param)
                 .rename({"group": "g", "period": "d"})
                 .select("g", "d", "value")
@@ -218,7 +219,8 @@ def _slice_pdgroup(sd: Path, param: str, *, provider=None) -> pl.DataFrame | Non
     # Drop zero rows so the constraint set is naturally empty when the
     # feature isn't exercised.
     sliced = sliced.filter(pl.col("value") != 0.0)
-    if sliced.height == 0: return None
+    if sliced.height == 0:
+        return None
     return sliced
 
 
@@ -230,7 +232,8 @@ def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str,
     a long ``(g, d, value)`` frame with zero rows dropped."""
     p = sd / fname
     df = _provider_get(provider, p)
-    if df is None or df.height == 0: return None
+    if df is None or df.height == 0:
+        return None
     if "solve" in df.columns:
         df = df.drop("solve")
     if {"period", value_col}.issubset(df.columns) and df.columns[0] == "group":
@@ -245,7 +248,8 @@ def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str,
     elif "period" in df.columns:
         # wide-per-group: cols are (period, g1, g2, ...).
         val_cols = [c for c in df.columns if c != "period"]
-        if not val_cols: return None
+        if not val_cols:
+            return None
         out = (df.unpivot(on=val_cols, index=["period"],
                            variable_name="g", value_name="value")
                  .rename({"period": "d"})
@@ -254,7 +258,8 @@ def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str,
     else:
         return None
     out = out.filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0))
-    if out.height == 0: return None
+    if out.height == 0:
+        return None
     return out
 
 
@@ -270,7 +275,8 @@ def _read_inertia_constants(inp: Path, *,
     See ``_read_p_process_side`` in input.py for the canonical shape."""
     def _read(path: Path, side: str) -> pl.DataFrame | None:
         df = _provider_get(provider, path)
-        if df is None or df.height == 0: return None
+        if df is None or df.height == 0:
+            return None
         if not {"process", "sourceSinkParam"}.issubset(df.columns):
             return None
         value_col = df.columns[-1]
@@ -434,8 +440,10 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     if p_grp_inside is not None:
         cols = p_grp_inside.columns
         rn = {}
-        if "process" in cols: rn["process"] = "p"
-        if "group"   in cols: rn["group"]   = "g"
+        if "process" in cols:
+            rn["process"] = "p"
+        if "group"   in cols:
+            rn["group"]   = "g"
         out["process_group_inside_nonSync"] = (
             p_grp_inside.rename(rn).select("p", "g").unique())
 
