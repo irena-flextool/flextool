@@ -458,7 +458,7 @@
       ],
       null,
       null,
-      false
+      true
     ],
     [
       "reserve__upDown__unit__node",
@@ -470,7 +470,7 @@
       ],
       null,
       null,
-      false
+      true
     ]
   ],
   "parameter_definitions": [
@@ -802,6 +802,17 @@
       ],
       null,
       "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.",
+      "constraint"
+    ],
+    [
+      "constraint",
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "constraint"
     ],
     [
@@ -1578,11 +1589,14 @@
     ],
     [
       "reserve__upDown__connection__node",
-      "is_active",
-      null,
-      "is_active",
-      "Can the connection provide this reserve to the selected node. Empty indicates not allowed. Use 'yes' to indicate true.",
-      null
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
+      "reserve"
     ],
     [
       "reserve__upDown__connection__node",
@@ -1656,11 +1670,14 @@
     ],
     [
       "reserve__upDown__unit__node",
-      "is_active",
-      null,
-      "is_active",
-      "Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.",
-      null
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
+      "reserve"
     ],
     [
       "reserve__upDown__unit__node",
@@ -2753,6 +2770,12 @@
     ],
     [
       "constraint",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "constraint",
       "sense",
       "str",
       0
@@ -3455,6 +3478,12 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       "float",
       0
@@ -3511,6 +3540,12 @@
       "reserve__upDown__unit__node",
       "increase_reserve_ratio",
       "float",
+      0
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      "str",
       0
     ],
     [
@@ -4113,35 +4148,7 @@
     [
       "co2_methods",
       [
-        "\"price\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
         "\"period\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "\"total\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "\"price_period\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "\"price_total\"",
         "str"
       ]
     ],
@@ -4155,7 +4162,35 @@
     [
       "co2_methods",
       [
+        "\"price\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "\"price_period\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
         "\"price_period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "\"price_total\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "\"total\"",
         "str"
       ]
     ],
@@ -4183,14 +4218,14 @@
     [
       "decomposition_methods",
       [
-        "\"none\"",
+        "\"lagrangian_region\"",
         "str"
       ]
     ],
     [
       "decomposition_methods",
       [
-        "\"lagrangian_region\"",
+        "\"none\"",
         "str"
       ]
     ],
@@ -4218,14 +4253,14 @@
     [
       "inflow_methods",
       [
-        "\"use_original\"",
+        "\"scale_in_proportion\"",
         "str"
       ]
     ],
     [
       "inflow_methods",
       [
-        "\"scale_in_proportion\"",
+        "\"scale_to_annual_and_peak_flow\"",
         "str"
       ]
     ],
@@ -4239,14 +4274,14 @@
     [
       "inflow_methods",
       [
-        "\"scale_to_annual_and_peak_flow\"",
+        "\"use_original\"",
         "str"
       ]
     ],
     [
       "invest_methods",
       [
-        "\"not_allowed\"",
+        "\"cumulative_limits\"",
         "str"
       ]
     ],
@@ -4267,42 +4302,7 @@
     [
       "invest_methods",
       [
-        "\"invest_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "\"invest_period_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_no_limit\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_period\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_period_total\"",
         "str"
       ]
     ],
@@ -4323,13 +4323,6 @@
     [
       "invest_methods",
       [
-        "\"invest_retire_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "\"invest_retire_period_total\"",
         "str"
       ]
@@ -4337,14 +4330,56 @@
     [
       "invest_methods",
       [
-        "\"cumulative_limits\"",
+        "\"invest_retire_total\"",
         "str"
       ]
     ],
     [
-      "is_active",
+      "invest_methods",
       [
-        "\"yes\"",
+        "\"invest_total\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"not_allowed\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"retire_no_limit\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"retire_period\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"retire_period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"retire_total\"",
+        "str"
+      ]
+    ],
+    [
+      "lifetime_methods",
+      [
+        "\"no_investment\"",
         "str"
       ]
     ],
@@ -4359,13 +4394,6 @@
       "lifetime_methods",
       [
         "\"reinvest_choice\"",
-        "str"
-      ]
-    ],
-    [
-      "lifetime_methods",
-      [
-        "\"no_investment\"",
         "str"
       ]
     ],
@@ -4393,7 +4421,7 @@
     [
       "minimum_time_methods",
       [
-        "\"min_uptime\"",
+        "\"both\"",
         "str"
       ]
     ],
@@ -4407,7 +4435,7 @@
     [
       "minimum_time_methods",
       [
-        "\"both\"",
+        "\"min_uptime\"",
         "str"
       ]
     ],
@@ -4415,6 +4443,13 @@
       "minimum_time_methods",
       [
         "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
+        "\"balance\"",
         "str"
       ]
     ],
@@ -4435,13 +4470,6 @@
     [
       "node_type",
       [
-        "\"balance\"",
-        "str"
-      ]
-    ],
-    [
-      "node_type",
-      [
         "\"storage\"",
         "str"
       ]
@@ -4449,14 +4477,14 @@
     [
       "optional_output",
       [
-        "\"yes\"",
+        "\"no\"",
         "str"
       ]
     ],
     [
       "optional_output",
       [
-        "\"no\"",
+        "\"yes\"",
         "str"
       ]
     ],
@@ -4484,7 +4512,7 @@
     [
       "profile_methods",
       [
-        "\"upper_limit\"",
+        "\"fixed\"",
         "str"
       ]
     ],
@@ -4498,14 +4526,14 @@
     [
       "profile_methods",
       [
-        "\"fixed\"",
+        "\"upper_limit\"",
         "str"
       ]
     ],
     [
       "ramp_methods",
       [
-        "\"ramp_limit\"",
+        "\"both\"",
         "str"
       ]
     ],
@@ -4519,21 +4547,21 @@
     [
       "ramp_methods",
       [
-        "\"both\"",
+        "\"ramp_limit\"",
         "str"
       ]
     ],
     [
       "reserve_methods",
       [
-        "\"no_reserve\"",
+        "\"all\"",
         "str"
       ]
     ],
     [
       "reserve_methods",
       [
-        "\"timeseries_only\"",
+        "\"dynamic_and_large_failure\"",
         "str"
       ]
     ],
@@ -4554,6 +4582,13 @@
     [
       "reserve_methods",
       [
+        "\"no_reserve\"",
+        "str"
+      ]
+    ],
+    [
+      "reserve_methods",
+      [
         "\"timeseries_and_dynamic\"",
         "str"
       ]
@@ -4568,21 +4603,21 @@
     [
       "reserve_methods",
       [
-        "\"dynamic_and_large_failure\"",
-        "str"
-      ]
-    ],
-    [
-      "reserve_methods",
-      [
-        "\"all\"",
+        "\"timeseries_only\"",
         "str"
       ]
     ],
     [
       "results",
       [
-        "\"summary_only\"",
+        "\"full_period\"",
+        "str"
+      ]
+    ],
+    [
+      "results",
+      [
+        "\"full_period_time\"",
         "str"
       ]
     ],
@@ -4603,14 +4638,14 @@
     [
       "results",
       [
-        "\"full_period\"",
+        "\"summary_only\"",
         "str"
       ]
     ],
     [
-      "results",
+      "senses",
       [
-        "\"full_period_time\"",
+        "\"equal\"",
         "str"
       ]
     ],
@@ -4625,13 +4660,6 @@
       "senses",
       [
         "\"less_than\"",
-        "str"
-      ]
-    ],
-    [
-      "senses",
-      [
-        "\"equal\"",
         "str"
       ]
     ],
@@ -4652,14 +4680,7 @@
     [
       "solvers",
       [
-        "\"highs\"",
-        "str"
-      ]
-    ],
-    [
-      "solvers",
-      [
-        "\"gurobi\"",
+        "\"copt\"",
         "str"
       ]
     ],
@@ -4673,21 +4694,28 @@
     [
       "solvers",
       [
-        "\"xpress\"",
+        "\"gurobi\"",
         "str"
       ]
     ],
     [
       "solvers",
       [
-        "\"copt\"",
+        "\"highs\"",
+        "str"
+      ]
+    ],
+    [
+      "solvers",
+      [
+        "\"xpress\"",
         "str"
       ]
     ],
     [
       "startup_methods",
       [
-        "\"no_startup\"",
+        "\"binary\"",
         "str"
       ]
     ],
@@ -4701,21 +4729,7 @@
     [
       "startup_methods",
       [
-        "\"binary\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_within_period\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_within_solve\"",
+        "\"no_startup\"",
         "str"
       ]
     ],
@@ -4729,6 +4743,13 @@
     [
       "storage_binding_methods",
       [
+        "\"bind_forward_only_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
         "\"bind_intraperiod_blocks\"",
         "str"
       ]
@@ -4736,14 +4757,7 @@
     [
       "storage_binding_methods",
       [
-        "\"bind_within_timeblock\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_within_solve_blended_weights\"",
+        "\"bind_within_period\"",
         "str"
       ]
     ],
@@ -4757,7 +4771,35 @@
     [
       "storage_binding_methods",
       [
-        "\"bind_forward_only_blended_weights\"",
+        "\"bind_within_solve\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_within_solve_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_within_timeblock\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_include_solve_fix_method",
+      [
+        "\"fix_price\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_include_solve_fix_method",
+      [
+        "\"fix_quantity\"",
         "str"
       ]
     ],
@@ -4769,37 +4811,23 @@
       ]
     ],
     [
-      "storage_include_solve_fix_method",
-      [
-        "\"fix_quantity\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_include_solve_fix_method",
-      [
-        "\"fix_price\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_nested_fix_method",
-      [
-        "\"fix_quantity\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_nested_fix_method",
-      [
-        "\"fix_price\"",
-        "str"
-      ]
-    ],
-    [
       "storage_nested_fix_method",
       [
         "\"fix_nothing\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_nested_fix_method",
+      [
+        "\"fix_price\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_nested_fix_method",
+      [
+        "\"fix_quantity\"",
         "str"
       ]
     ],
@@ -4820,21 +4848,14 @@
     [
       "storage_solve_horizon_methods",
       [
-        "\"use_reference_value\"",
+        "\"use_reference_price\"",
         "str"
       ]
     ],
     [
       "storage_solve_horizon_methods",
       [
-        "\"use_reference_price\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_start_end_methods",
-      [
-        "\"fix_start\"",
+        "\"use_reference_value\"",
         "str"
       ]
     ],
@@ -4848,14 +4869,28 @@
     [
       "storage_start_end_methods",
       [
-        "\"fix_start_end\"",
+        "\"fix_nothing\"",
         "str"
       ]
     ],
     [
       "storage_start_end_methods",
       [
-        "\"fix_nothing\"",
+        "\"fix_start\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_start_end_methods",
+      [
+        "\"fix_start_end\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods",
+      [
+        "\"exact\"",
         "str"
       ]
     ],
@@ -4870,20 +4905,6 @@
       "transfer_methods",
       [
         "\"regular\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods",
-      [
-        "\"exact\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods",
-      [
-        "\"variable_cost_only\"",
         "str"
       ]
     ],
@@ -4895,35 +4916,7 @@
       ]
     ],
     [
-      "transfer_methods_group",
-      [
-        "\"use_connection_transfer_methods\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "\"no_losses_no_variable_cost\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "\"regular\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "\"exact\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
+      "transfer_methods",
       [
         "\"variable_cost_only\"",
         "str"
@@ -4939,14 +4932,42 @@
     [
       "transfer_methods_group",
       [
+        "\"exact\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "\"no_losses_no_variable_cost\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "\"regular\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
         "\"unidirectional\"",
         "str"
       ]
     ],
     [
-      "yes_no",
+      "transfer_methods_group",
       [
-        "\"yes\"",
+        "\"use_connection_transfer_methods\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "\"variable_cost_only\"",
         "str"
       ]
     ],
@@ -4954,6 +4975,13 @@
       "yes_no",
       [
         "\"no\"",
+        "str"
+      ]
+    ],
+    [
+      "yes_no",
+      [
+        "\"yes\"",
         "str"
       ]
     ]

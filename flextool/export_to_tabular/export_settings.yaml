@@ -3,9 +3,6 @@ entity_alternative_classes:
   - node
   - unit
   - connection
-  - constraint
-  - reserve__upDown__unit__node
-  - reserve__upDown__connection__node
 
 # Parameters that must appear before the Entity Alternative column.
 # Ensures roundtrip compatibility with the position-based importer.

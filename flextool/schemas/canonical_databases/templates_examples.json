@@ -1192,22 +1192,6 @@
       true
     ],
     [
-      "constraint",
-      [
-        "coal_chp_fix"
-      ],
-      "coal_chp_extraction",
-      false
-    ],
-    [
-      "constraint",
-      [
-        "wind_growth_cap"
-      ],
-      "wind_growth_cap_pre_built",
-      true
-    ],
-    [
       "node",
       [
         "anti_energy_market"
@@ -1301,50 +1285,6 @@
         "west"
       ],
       "west",
-      true
-    ],
-    [
-      "reserve__upDown__unit__node",
-      [
-        "n_1",
-        "up",
-        "coal_plant",
-        "west"
-      ],
-      "reserve_n_1",
-      true
-    ],
-    [
-      "reserve__upDown__unit__node",
-      [
-        "n_1",
-        "up",
-        "wind_plant",
-        "west"
-      ],
-      "reserve_n_1",
-      true
-    ],
-    [
-      "reserve__upDown__unit__node",
-      [
-        "primary",
-        "up",
-        "coal_plant",
-        "west"
-      ],
-      "reserve",
-      false
-    ],
-    [
-      "reserve__upDown__unit__node",
-      [
-        "primary",
-        "up",
-        "wind_plant",
-        "west"
-      ],
-      "reserve",
       true
     ],
     [
@@ -1717,7 +1657,7 @@
       ],
       null,
       null,
-      false
+      true
     ],
     [
       "reserve__upDown__unit__node",
@@ -1729,7 +1669,7 @@
       ],
       null,
       null,
-      false
+      true
     ]
   ],
   "parameter_definitions": [
@@ -2058,6 +1998,17 @@
       ],
       null,
       "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.",
+      "constraint"
+    ],
+    [
+      "constraint",
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "constraint"
     ],
     [
@@ -2811,10 +2762,13 @@
     ],
     [
       "reserve__upDown__connection__node",
-      "is_active",
-      null,
-      "is_active",
-      "Can the connection provide this reserve to the selected node. Empty indicates not allowed. Use 'yes' to indicate true.",
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "reserve"
     ],
     [
@@ -2889,10 +2843,13 @@
     ],
     [
       "reserve__upDown__unit__node",
-      "is_active",
-      null,
-      "is_active",
-      "Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.",
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "reserve"
     ],
     [
@@ -3964,6 +3921,12 @@
     ],
     [
       "constraint",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "constraint",
       "sense",
       "str",
       0
@@ -4648,6 +4611,12 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       "float",
       0
@@ -4704,6 +4673,12 @@
       "reserve__upDown__unit__node",
       "increase_reserve_ratio",
       "float",
+      0
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      "str",
       0
     ],
     [
@@ -5342,35 +5317,7 @@
     [
       "co2_methods",
       [
-        "\"price\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
         "\"period\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "\"total\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "\"price_period\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "\"price_total\"",
         "str"
       ]
     ],
@@ -5384,14 +5331,35 @@
     [
       "co2_methods",
       [
+        "\"price\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "\"price_period\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
         "\"price_period_total\"",
         "str"
       ]
     ],
     [
-      "conversion_methods",
+      "co2_methods",
       [
-        "\"constant_efficiency\"",
+        "\"price_total\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "\"total\"",
         "str"
       ]
     ],
@@ -5406,6 +5374,13 @@
       "conversion_methods",
       [
         "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "conversion_methods",
+      [
+        "\"constant_efficiency\"",
         "str"
       ]
     ],
@@ -5447,14 +5422,14 @@
     [
       "inflow_methods",
       [
-        "\"use_original\"",
+        "\"scale_in_proportion\"",
         "str"
       ]
     ],
     [
       "inflow_methods",
       [
-        "\"scale_in_proportion\"",
+        "\"scale_to_annual_and_peak_flow\"",
         "str"
       ]
     ],
@@ -5468,7 +5443,7 @@
     [
       "inflow_methods",
       [
-        "\"scale_to_annual_and_peak_flow\"",
+        "\"use_original\"",
         "str"
       ]
     ],
@@ -5476,6 +5451,20 @@
       "invest_methods",
       [
         "\"not_allowed\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"cumulative_limits\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"invest_total\"",
         "str"
       ]
     ],
@@ -5496,42 +5485,7 @@
     [
       "invest_methods",
       [
-        "\"invest_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "\"invest_period_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_no_limit\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_period\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_period_total\"",
         "str"
       ]
     ],
@@ -5552,13 +5506,6 @@
     [
       "invest_methods",
       [
-        "\"invest_retire_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "\"invest_retire_period_total\"",
         "str"
       ]
@@ -5566,14 +5513,42 @@
     [
       "invest_methods",
       [
-        "\"cumulative_limits\"",
+        "\"invest_retire_total\"",
         "str"
       ]
     ],
     [
-      "is_active",
+      "invest_methods",
       [
-        "\"yes\"",
+        "\"retire_total\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"retire_no_limit\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"retire_period\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"retire_period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "lifetime_methods",
+      [
+        "\"no_investment\"",
         "str"
       ]
     ],
@@ -5592,9 +5567,9 @@
       ]
     ],
     [
-      "lifetime_methods",
+      "load_share_type",
       [
-        "\"no_investment\"",
+        "\"no\"",
         "str"
       ]
     ],
@@ -5609,13 +5584,6 @@
       "load_share_type",
       [
         "\"inflow_weighted\"",
-        "str"
-      ]
-    ],
-    [
-      "load_share_type",
-      [
-        "\"no\"",
         "str"
       ]
     ],
@@ -5643,6 +5611,13 @@
     [
       "node_type",
       [
+        "\"balance\"",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
         "\"balance_within_period\"",
         "str"
       ]
@@ -5657,13 +5632,6 @@
     [
       "node_type",
       [
-        "\"balance\"",
-        "str"
-      ]
-    ],
-    [
-      "node_type",
-      [
         "\"storage\"",
         "str"
       ]
@@ -5671,14 +5639,14 @@
     [
       "optional_output",
       [
-        "\"yes\"",
+        "\"no\"",
         "str"
       ]
     ],
     [
       "optional_output",
       [
-        "\"no\"",
+        "\"yes\"",
         "str"
       ]
     ],
@@ -5706,7 +5674,7 @@
     [
       "profile_methods",
       [
-        "\"upper_limit\"",
+        "\"fixed\"",
         "str"
       ]
     ],
@@ -5720,14 +5688,14 @@
     [
       "profile_methods",
       [
-        "\"fixed\"",
+        "\"upper_limit\"",
         "str"
       ]
     ],
     [
       "ramp_methods",
       [
-        "\"ramp_limit\"",
+        "\"both\"",
         "str"
       ]
     ],
@@ -5741,7 +5709,7 @@
     [
       "ramp_methods",
       [
-        "\"both\"",
+        "\"ramp_limit\"",
         "str"
       ]
     ],
@@ -5755,7 +5723,14 @@
     [
       "reserve_methods",
       [
-        "\"timeseries_only\"",
+        "\"all\"",
+        "str"
+      ]
+    ],
+    [
+      "reserve_methods",
+      [
+        "\"dynamic_and_large_failure\"",
         "str"
       ]
     ],
@@ -5790,21 +5765,21 @@
     [
       "reserve_methods",
       [
-        "\"dynamic_and_large_failure\"",
-        "str"
-      ]
-    ],
-    [
-      "reserve_methods",
-      [
-        "\"all\"",
+        "\"timeseries_only\"",
         "str"
       ]
     ],
     [
       "results",
       [
-        "\"summary_only\"",
+        "\"full_period\"",
+        "str"
+      ]
+    ],
+    [
+      "results",
+      [
+        "\"full_period_time\"",
         "str"
       ]
     ],
@@ -5825,14 +5800,14 @@
     [
       "results",
       [
-        "\"full_period\"",
+        "\"summary_only\"",
         "str"
       ]
     ],
     [
-      "results",
+      "senses",
       [
-        "\"full_period_time\"",
+        "\"equal\"",
         "str"
       ]
     ],
@@ -5851,9 +5826,9 @@
       ]
     ],
     [
-      "senses",
+      "solve_mode",
       [
-        "\"equal\"",
+        "\"rolling_window\"",
         "str"
       ]
     ],
@@ -5865,23 +5840,9 @@
       ]
     ],
     [
-      "solve_mode",
-      [
-        "\"rolling_window\"",
-        "str"
-      ]
-    ],
-    [
       "solvers",
       [
-        "\"highs\"",
-        "str"
-      ]
-    ],
-    [
-      "solvers",
-      [
-        "\"gurobi\"",
+        "\"copt\"",
         "str"
       ]
     ],
@@ -5895,14 +5856,21 @@
     [
       "solvers",
       [
-        "\"xpress\"",
+        "\"gurobi\"",
         "str"
       ]
     ],
     [
       "solvers",
       [
-        "\"copt\"",
+        "\"highs\"",
+        "str"
+      ]
+    ],
+    [
+      "solvers",
+      [
+        "\"xpress\"",
         "str"
       ]
     ],
@@ -5916,28 +5884,14 @@
     [
       "startup_methods",
       [
-        "\"linear\"",
+        "\"binary\"",
         "str"
       ]
     ],
     [
       "startup_methods",
       [
-        "\"binary\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_within_period\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_within_solve\"",
+        "\"linear\"",
         "str"
       ]
     ],
@@ -5951,6 +5905,13 @@
     [
       "storage_binding_methods",
       [
+        "\"bind_forward_only_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
         "\"bind_intraperiod_blocks\"",
         "str"
       ]
@@ -5958,14 +5919,7 @@
     [
       "storage_binding_methods",
       [
-        "\"bind_within_timeblock\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_within_solve_blended_weights\"",
+        "\"bind_within_period\"",
         "str"
       ]
     ],
@@ -5979,7 +5933,28 @@
     [
       "storage_binding_methods",
       [
-        "\"bind_forward_only_blended_weights\"",
+        "\"bind_within_solve\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_within_solve_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_within_timeblock\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_nested_fix_method",
+      [
+        "\"fix_usage\"",
         "str"
       ]
     ],
@@ -5987,13 +5962,6 @@
       "storage_nested_fix_method",
       [
         "\"fix_nothing\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_nested_fix_method",
-      [
-        "\"fix_quantity\"",
         "str"
       ]
     ],
@@ -6007,7 +5975,7 @@
     [
       "storage_nested_fix_method",
       [
-        "\"fix_usage\"",
+        "\"fix_quantity\"",
         "str"
       ]
     ],
@@ -6021,21 +5989,14 @@
     [
       "storage_solve_horizon_methods",
       [
-        "\"use_reference_value\"",
+        "\"use_reference_price\"",
         "str"
       ]
     ],
     [
       "storage_solve_horizon_methods",
       [
-        "\"use_reference_price\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_start_end_methods",
-      [
-        "\"fix_start\"",
+        "\"use_reference_value\"",
         "str"
       ]
     ],
@@ -6049,14 +6010,21 @@
     [
       "storage_start_end_methods",
       [
-        "\"fix_start_end\"",
+        "\"fix_nothing\"",
         "str"
       ]
     ],
     [
       "storage_start_end_methods",
       [
-        "\"fix_nothing\"",
+        "\"fix_start\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_start_end_methods",
+      [
+        "\"fix_start_end\"",
         "str"
       ]
     ],
@@ -6070,13 +6038,6 @@
     [
       "transfer_methods",
       [
-        "\"regular\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods",
-      [
         "\"exact\"",
         "str"
       ]
@@ -6084,7 +6045,7 @@
     [
       "transfer_methods",
       [
-        "\"variable_cost_only\"",
+        "\"regular\"",
         "str"
       ]
     ],
@@ -6092,6 +6053,13 @@
       "transfer_methods",
       [
         "\"unidirectional\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods",
+      [
+        "\"variable_cost_only\"",
         "str"
       ]
     ],
@@ -6105,14 +6073,14 @@
     [
       "yes_no",
       [
-        "\"yes\"",
+        "\"no\"",
         "str"
       ]
     ],
     [
       "yes_no",
       [
-        "\"no\"",
+        "\"yes\"",
         "str"
       ]
     ]
@@ -6421,6 +6389,16 @@
     [
       "constraint",
       "coal_chp_fix",
+      "is_enabled",
+      [
+        "\"no\"",
+        "str"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "constraint",
+      "coal_chp_fix",
       "sense",
       [
         "\"equal\"",
@@ -6455,6 +6433,16 @@
       [
         "0.0",
         "float"
+      ],
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "constraint",
+      "wind_growth_cap",
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
       ],
       "wind_growth_cap_pre_built"
     ],
@@ -7902,6 +7890,36 @@
         "coal_plant",
         "west"
       ],
+      "is_enabled",
+      [
+        "\"no\"",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "n_1",
+        "up",
+        "coal_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
+      ],
+      "reserve_n_1"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "n_1",
+        "up",
+        "coal_plant",
+        "west"
+      ],
       "large_failure_ratio",
       [
         "0.1",
@@ -7947,6 +7965,36 @@
         "wind_plant",
         "west"
       ],
+      "is_enabled",
+      [
+        "\"no\"",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "n_1",
+        "up",
+        "wind_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
+      ],
+      "reserve_n_1"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "n_1",
+        "up",
+        "wind_plant",
+        "west"
+      ],
       "max_share",
       [
         "1",
@@ -7977,6 +8025,36 @@
         "coal_plant",
         "west"
       ],
+      "is_enabled",
+      [
+        "\"no\"",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "primary",
+        "up",
+        "coal_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "\"no\"",
+        "str"
+      ],
+      "reserve"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "primary",
+        "up",
+        "coal_plant",
+        "west"
+      ],
       "max_share",
       [
         "0.01",
@@ -7996,6 +8074,36 @@
       [
         "1",
         "float"
+      ],
+      "reserve"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "primary",
+        "up",
+        "wind_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "\"no\"",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "primary",
+        "up",
+        "wind_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "\"yes\"",
+        "str"
       ],
       "reserve"
     ],

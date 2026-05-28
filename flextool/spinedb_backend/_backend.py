@@ -68,6 +68,23 @@ from flextool.spinedb_backend._axis_enums import (
 # the model, so the effective precision is forced to 0 (passthrough).
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# v56 Batch F — three entity classes carry an explicit ``is_enabled``
+# parameter that replaces the pre-v56 ``entity_alternative.active``
+# gating.  The Backend post-filters entities/parameter_values of these
+# three classes against the resolved ``is_enabled`` value in the active
+# scenario.  See ``flextool.update_flextool.db_migration.
+# _migrate_v56_reactivate_is_enabled_parameter`` for the migration that
+# materialises the parameter on legacy DBs.
+# ---------------------------------------------------------------------------
+
+_IS_ENABLED_CLASSES: frozenset[str] = frozenset({
+    "constraint",
+    "reserve__upDown__unit__node",
+    "reserve__upDown__connection__node",
+})
+
+
 _STRUCTURAL_PARAM_NAMES: frozenset[str] = frozenset({
     # method names
     "ct_method", "transfer_method", "conversion_method",
@@ -146,6 +163,12 @@ class SpineDBBackend:
     # large databases) with one bulk ``find_parameter_values()`` call
     # plus a Python partition (~22ms total) — a ~60x speed-up.
     _parameter_value_index: dict | None = None
+    # v56 Batch F — lazy cache of ``frozenset[int]`` disabled-entity ids
+    # per entity_class in ``_IS_ENABLED_CLASSES``.  Populated on the first
+    # ``find_entities`` / ``entities`` / ``parameter_values`` call for
+    # that class.  Lifetime is tied to ``_open`` / ``close`` of this
+    # Backend instance (single scenario filter).
+    _disabled_entity_id_cache: dict | None = None
 
     def __init__(
         self,
@@ -200,6 +223,7 @@ class SpineDBBackend:
                 pass
             self._db = None
         self._parameter_value_index = None
+        self._disabled_entity_id_cache = None
 
     def __enter__(self) -> "SpineDBBackend":
         if self._db is None:
@@ -239,10 +263,69 @@ class SpineDBBackend:
         consumers in :mod:`flextool.input_derivation` (DC power flow,
         process method, commodity ladder) can perform DB-driven
         derivations without reaching past the Backend boundary.
+
+        v56 Batch F — for the three entity classes in
+        :data:`_IS_ENABLED_CLASSES` the result is post-filtered against
+        the explicit ``is_enabled`` parameter_value: entities whose
+        ``is_enabled`` resolves to ``"no"`` in the active scenario are
+        dropped.  Replaces the entity_alternative-based gating that
+        spinedb_api's scenario_filter applied pre-v56 (the migration
+        drops those rows for the three classes).
         """
         if self._db is None:
             raise RuntimeError("SpineDBBackend is closed")
-        return self._db.find_entities(entity_class_name=entity_class_name)
+        entities = list(
+            self._db.find_entities(entity_class_name=entity_class_name)
+        )
+        if entity_class_name in _IS_ENABLED_CLASSES:
+            disabled_ids = self._disabled_entity_ids(entity_class_name)
+            if disabled_ids:
+                entities = [e for e in entities if e["id"] not in disabled_ids]
+        return entities
+
+    def _disabled_entity_ids(self, entity_class_name: str) -> frozenset[int]:
+        """Return entity IDs of *entity_class_name* whose effective
+        ``is_enabled`` parameter_value is ``"no"`` under the active
+        scenario filter.
+
+        Lazy-cached per class on first call.  The scenario filter is
+        applied DB-wide at ``_open`` time (see
+        :meth:`scenario_filter_from_dict`), so
+        :meth:`spinedb_api.DatabaseMapping.find_parameter_values` already
+        returns the scenario-priority winner per (entity, parameter):
+        one row per entity, with the highest-priority alternative's
+        value resolved.  We treat any returned row carrying
+        ``parsed_value == "no"`` as disabling its entity.
+
+        On a pre-v56 database the ``is_enabled`` parameter_definition
+        does not exist; ``find_parameter_values`` then yields nothing
+        and every entity is treated as enabled — preserving legacy
+        behaviour for callers that open an un-migrated DB read-only.
+        """
+        cache = self._disabled_entity_id_cache
+        if cache is None:
+            cache = {}
+            self._disabled_entity_id_cache = cache
+        if entity_class_name in cache:
+            return cache[entity_class_name]
+        if self._db is None:
+            raise RuntimeError("SpineDBBackend is closed")
+        try:
+            pv_rows = self._db.find_parameter_values(
+                entity_class_name=entity_class_name,
+                parameter_definition_name="is_enabled",
+            )
+        except Exception:  # noqa: BLE001 — pre-v56 DBs lack the pdef
+            pv_rows = []
+        disabled: set[int] = set()
+        for pv in pv_rows:
+            if pv.get("type") != "str":
+                continue
+            if pv.get("parsed_value") == "no":
+                disabled.add(pv["entity_id"])
+        result = frozenset(disabled)
+        cache[entity_class_name] = result
+        return result
 
     def find_parameter_values(
         self,
@@ -439,7 +522,15 @@ class SpineDBBackend:
         row_origins: list[dict[str, Any]] = []
         for i, ent_class in enumerate(classes_list):
             dim_proj = dimens_list[i] if i < len(dimens_list) else None
+            # v56 Batch F — filter is_enabled="no" entities out of the
+            # three affected classes.  Replaces the entity_alternative
+            # gating spinedb_api's scenario_filter applied pre-v56.
+            disabled_ids: frozenset[int] = frozenset()
+            if ent_class in _IS_ENABLED_CLASSES:
+                disabled_ids = self._disabled_entity_ids(ent_class)
             for entity in self._db.find_entities(entity_class_name=ent_class):
+                if disabled_ids and entity["id"] in disabled_ids:
+                    continue
                 byname = entity["entity_byname"]
                 if dim_proj is None:
                     rows.append(list(byname))
@@ -531,8 +622,24 @@ class SpineDBBackend:
         # N, so once N > ~2 this is a net win.
         index = self._get_parameter_value_index()
         params: list = []
+        # v56 Batch F — when a (class, param) pair belongs to an
+        # is_enabled-gated class, drop parameter_value rows for entities
+        # whose ``is_enabled`` resolves to ``"no"`` in the active
+        # scenario.  Without this filter the cascade would re-introduce
+        # disabled entities through their non-is_enabled
+        # parameter_values (e.g. ``constraint.constant`` /
+        # ``reserve__upDown__unit__node.reliability``).
         for cl_par in cl_pars:
-            params.extend(index.get((cl_par[0], cl_par[1]), ()))
+            bucket = index.get((cl_par[0], cl_par[1]), ())
+            ent_class = cl_par[0]
+            if ent_class in _IS_ENABLED_CLASSES:
+                disabled_ids = self._disabled_entity_ids(ent_class)
+                if disabled_ids:
+                    bucket = [
+                        p for p in bucket
+                        if p["entity_id"] not in disabled_ids
+                    ]
+            params.extend(bucket)
 
         # Track A.6 — chunked row accumulator.  Some specs (notably
         # ``('profile', 'profile')`` on H2_trade) flatten to multi-million

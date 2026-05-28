@@ -1598,6 +1598,22 @@ def migrate_database(database_path, up_to: int | None = None):
                 # ``price_period_total``); ``no_method`` and ``none``
                 # both fall through identically.
                 _migrate_v56_rename_co2_methods_no_method_to_none(db)
+                # Batch F Option A — re-add ``is_enabled`` parameter on
+                # the three classes whose pre-v56 gating used
+                # entity_alternative.active.  Materialises explicit
+                # parameter_values from existing entity_alternative
+                # rows, backfills Base ``is_enabled="no"`` for the two
+                # reserve classes whose ``active_by_default`` flips
+                # False → True, drops the entity_alternative rows for
+                # the three classes, and removes the orphan
+                # ``is_active`` value list.  Named ``is_enabled`` (not
+                # ``is_active``) to bypass spinedb_api's
+                # compatibility.py shim which auto-collapses
+                # ``is_active`` parameter_values back to
+                # entity_alternative on every commit.  Engine wire-up
+                # lives in SpineDBBackend.find_entities / entities /
+                # parameter_values and SpineDbReader.
+                _migrate_v56_reactivate_is_enabled_parameter(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -5455,6 +5471,279 @@ def _migrate_v56_rename_co2_methods_no_method_to_none(db) -> None:
         f"{rewritten} legacy group.co2_method='no_method' "
         f"parameter_value row(s) to 'none'.  list_value dropped: "
         f"{dropped}.  parameter_definition default set to 'none'.",
+    )
+
+
+def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
+    """Batch F Option A — re-add ``is_enabled`` on three entity classes
+    that previously used the ``entity_alternative.active`` pattern.
+
+    Affected classes (parameter group in parentheses):
+
+    - ``constraint``                           (constraint)
+    - ``reserve__upDown__unit__node``          (reserve)
+    - ``reserve__upDown__connection__node``    (reserve)
+
+    Why a NEW parameter (not ``is_active``)?
+    ----------------------------------------
+
+    spinedb_api's ``compatibility.py`` runs
+    ``convert_tool_feature_method_to_entity_alternative`` on every
+    ``commit_session``: it scans parameter_values named exactly
+    ``is_active`` and auto-collapses them back into
+    ``entity_alternative.active`` rows.  Naming our replacement
+    ``is_enabled`` bypasses that shim.  Verified in attempt #1 (named
+    ``is_active``: values vanished on commit) vs attempt #2 (named
+    ``is_enabled``: values survived).
+
+    Why migrate at all?
+    -------------------
+
+    Pre-v56 the constraint and reserve activation lived on the
+    Entity Alternative tab — invisible from the parameter table, easy
+    to miss when reviewing inputs, and forced an ``active_by_default
+    = False`` schema on the two reserve classes (so any new reserve
+    relationship was disabled until the user added an
+    ``entity_alternative`` row).  Replacing the gate with an explicit
+    ``is_enabled = yes/no`` parameter:
+
+    * surfaces the on/off state in the parameter table where every
+      other entity-scoped flag lives;
+    * lets the two reserve classes flip to ``active_by_default =
+      True`` (their natural default — declared reserves are usually
+      meant to be active);
+    * keeps ``constraint.active_by_default = True`` unchanged.
+
+    Class-specific behaviour
+    ------------------------
+
+    For **all three** classes:
+
+    (a) Every ``entity_alternative`` row of the class is materialised
+        as an explicit ``is_enabled`` parameter_value in the same
+        alternative: ``yes`` if ``active=True``, ``no`` if
+        ``active=False``.
+    (b) After (a), every ``entity_alternative`` row of the class is
+        dropped — the old gate is retired.
+
+    For the **two reserve classes** (flipping
+    ``active_by_default`` False → True) **only**:
+
+    (c) For each entity in the class that has no Base
+        ``entity_alternative`` row pre-migration, write Base
+        ``is_enabled="no"``.  Preserves the legacy semantic ``no
+        row → inactive`` across the default flip.  Constraint does
+        NOT get this backfill — its ``active_by_default`` was already
+        True, so the post-migration ``is_enabled`` default ``"yes"``
+        matches.
+    (d) Flip ``active_by_default`` to True on the entity_class.
+
+    The schema-template JSON adds the three ``parameter_definitions``
+    rows (with default ``"yes"`` against the shared ``yes_no``
+    value-list) and the three ``parameter_types`` str-scalar rows in
+    the same commit; the orphan ``is_active`` value list entry is
+    dropped at the same time.
+
+    Engine wire-up
+    --------------
+
+    :meth:`flextool.spinedb_backend._backend.SpineDBBackend.find_entities`
+    / :meth:`SpineDBBackend.entities` / :meth:`parameter_values`
+    post-filter the three classes by ``is_enabled != "no"`` resolved
+    against the active scenario.  Likewise
+    :class:`flextool.engine_polars._spinedb_reader.SpineDbReader`
+    drops disabled entities from its per-class caches at construction
+    time.  Together these replace the entity_alternative-based
+    gating spinedb_api's scenario_filter applied pre-v56.
+    """
+    affected_classes = (
+        "constraint",
+        "reserve__upDown__unit__node",
+        "reserve__upDown__connection__node",
+    )
+    classes_with_flip = (
+        "reserve__upDown__unit__node",
+        "reserve__upDown__connection__node",
+    )
+    group_by_class = {
+        "constraint": "constraint",
+        "reserve__upDown__unit__node": "reserve",
+        "reserve__upDown__connection__node": "reserve",
+    }
+
+    description = (
+        "Whether the entity is enabled. Set to 'no' to disable "
+        "without deleting the entity. Constant."
+    )
+
+    # ---- Step 1: ensure the parameter_definition exists on each class -
+    yes_value, yes_type = to_database("yes")
+    for cls_name in affected_classes:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=cls_name,
+            name="is_enabled",
+            default_value=yes_value,
+            default_type=yes_type,
+            parameter_value_list_name="yes_no",
+            description=description,
+            parameter_type_list=("str",),
+            parameter_group_name=group_by_class[cls_name],
+        )
+
+    # ---- Step 2: walk entity_alternative rows ------------------------
+    # Per affected class: collect every (entity_byname, alt, active),
+    # then materialise an is_enabled parameter_value mirroring the
+    # active flag.  Also track per-class Base coverage so the reserve-
+    # class backfill (step 3) can fill the gaps.
+    yes_no_values = {
+        True: to_database("yes"),
+        False: to_database("no"),
+    }
+    base_alt_covered: dict[str, set[tuple]] = {
+        cls: set() for cls in affected_classes
+    }
+    materialised_count = 0
+    for cls_name in affected_classes:
+        # ``list(...)`` snapshot so the subsequent ``remove_items``
+        # iteration is safe.
+        ea_rows = list(
+            db.find_entity_alternatives(entity_class_name=cls_name),
+        )
+        for ea in ea_rows:
+            byname = ea["entity_byname"]
+            alt = ea["alternative_name"]
+            active = bool(ea.get("active", True))
+            value_bytes, value_type = yes_no_values[active]
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name=cls_name,
+                entity_byname=byname,
+                parameter_definition_name="is_enabled",
+                alternative_name=alt,
+                value=value_bytes,
+                type=value_type,
+            )
+            materialised_count += 1
+            if alt == "Base":
+                base_alt_covered[cls_name].add(tuple(byname))
+
+    # ---- Step 3: Base is_enabled="no" backfill for the two reserve ---
+    # classes only.  Mirrors the pre-migration "no entity_alternative
+    # row = inactive" semantic across the active_by_default flip.
+    backfilled_count = 0
+    no_value, no_type = yes_no_values[False]
+    for cls_name in classes_with_flip:
+        covered = base_alt_covered[cls_name]
+        for ent in db.find_entities(entity_class_name=cls_name):
+            byname = ent["entity_byname"]
+            if tuple(byname) in covered:
+                continue
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name=cls_name,
+                entity_byname=byname,
+                parameter_definition_name="is_enabled",
+                alternative_name="Base",
+                value=no_value,
+                type=no_type,
+            )
+            backfilled_count += 1
+
+    # ---- Step 4: drop entity_alternative rows for the three classes --
+    dropped_ea_count = 0
+    for cls_name in affected_classes:
+        ea_rows = list(
+            db.find_entity_alternatives(entity_class_name=cls_name),
+        )
+        for ea in ea_rows:
+            db.remove_item("entity_alternative", ea["id"])
+            dropped_ea_count += 1
+
+    # ---- Step 5: flip active_by_default on the two reserve classes ---
+    entity_class_table = db.mapped_table("entity_class")
+    flipped_classes: list[str] = []
+    for cls_name in classes_with_flip:
+        ec = db.item(entity_class_table, name=cls_name)
+        if ec is None:
+            continue
+        if ec.get("active_by_default") is False:
+            db.add_update_item(
+                "entity_class",
+                name=cls_name,
+                active_by_default=True,
+            )
+            flipped_classes.append(cls_name)
+
+    # ---- Step 6: drop the orphan ``is_active`` value list ------------
+    # Pre-v56 the list existed but no parameter_definition referenced
+    # it; the migration drops it for cleanliness.  Safe regardless of
+    # presence (idempotent skip when absent).
+    pvl_table = db.mapped_table("parameter_value_list")
+    dropped_is_active_vl = False
+    try:
+        vl = db.item(pvl_table, name="is_active")
+    except SpineDBAPIError:
+        vl = None
+    if vl is not None:
+        db.remove_items("parameter_value_list", vl["id"])
+        dropped_is_active_vl = True
+
+    # ---- Verification -----------------------------------------------
+    parameter_definitions = db.mapped_table("parameter_definition")
+    for cls_name in affected_classes:
+        defn = db.item(
+            parameter_definitions,
+            entity_class_name=cls_name,
+            name="is_enabled",
+        )
+        if defn is None:
+            raise SpineDBAPIError(
+                f"v56 Batch F: parameter_definition {cls_name}.is_enabled "
+                "missing after migration."
+            )
+        if defn["parameter_value_list_name"] != "yes_no":
+            raise SpineDBAPIError(
+                f"v56 Batch F: {cls_name}.is_enabled bound to value-list "
+                f"{defn['parameter_value_list_name']!r}, expected 'yes_no'."
+            )
+        if from_database(defn["default_value"], defn["default_type"]) != "yes":
+            raise SpineDBAPIError(
+                f"v56 Batch F: {cls_name}.is_enabled default is "
+                f"{from_database(defn['default_value'], defn['default_type'])!r}, "
+                "expected 'yes'."
+            )
+
+    for cls_name in affected_classes:
+        leftover = list(
+            db.find_entity_alternatives(entity_class_name=cls_name),
+        )
+        if leftover:
+            raise SpineDBAPIError(
+                f"v56 Batch F: {len(leftover)} entity_alternative row(s) "
+                f"remain for {cls_name} after migration."
+            )
+
+    for cls_name in classes_with_flip:
+        ec = db.item(entity_class_table, name=cls_name)
+        if ec is None or ec.get("active_by_default") is not True:
+            raise SpineDBAPIError(
+                f"v56 Batch F: {cls_name}.active_by_default not flipped "
+                "to True after migration."
+            )
+
+    _commit_step(
+        db,
+        "v56 Batch F (Option A): re-added is_enabled parameter on "
+        "constraint + reserve__upDown__unit__node + "
+        "reserve__upDown__connection__node (replaces the pre-v56 "
+        "entity_alternative.active gating); materialised "
+        f"{materialised_count} parameter_value(s) from "
+        f"{dropped_ea_count} entity_alternative row(s); backfilled "
+        f"Base is_enabled='no' on {backfilled_count} reserve entity "
+        "row(s) without a pre-migration Base row; flipped "
+        f"active_by_default True on {flipped_classes!r}.  Orphan "
+        f"is_active value list dropped: {dropped_is_active_vl}.",
     )
 
 

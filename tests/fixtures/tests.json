@@ -246,7 +246,7 @@
       ],
       null,
       null,
-      false
+      true
     ],
     [
       "reserve__upDown__unit__node",
@@ -258,7 +258,7 @@
       ],
       null,
       null,
-      false
+      true
     ]
   ],
   "entities": [
@@ -1232,22 +1232,6 @@
       true
     ],
     [
-      "constraint",
-      [
-        "coal_chp_fix"
-      ],
-      "coal_chp_extraction",
-      false
-    ],
-    [
-      "constraint",
-      [
-        "wind_growth_cap"
-      ],
-      "wind_growth_cap_pre_built",
-      true
-    ],
-    [
       "node",
       [
         "anti_energy_market"
@@ -1341,50 +1325,6 @@
         "west"
       ],
       "west",
-      true
-    ],
-    [
-      "reserve__upDown__unit__node",
-      [
-        "n_1",
-        "up",
-        "coal_plant",
-        "west"
-      ],
-      "reserve_n_1",
-      true
-    ],
-    [
-      "reserve__upDown__unit__node",
-      [
-        "n_1",
-        "up",
-        "wind_plant",
-        "west"
-      ],
-      "reserve_n_1",
-      true
-    ],
-    [
-      "reserve__upDown__unit__node",
-      [
-        "primary",
-        "up",
-        "coal_plant",
-        "west"
-      ],
-      "reserve",
-      false
-    ],
-    [
-      "reserve__upDown__unit__node",
-      [
-        "primary",
-        "up",
-        "wind_plant",
-        "west"
-      ],
-      "reserve",
       true
     ],
     [
@@ -1521,35 +1461,7 @@
     [
       "co2_methods",
       [
-        "InByaWNlIg==",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
         "InBlcmlvZCI=",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InRvdGFsIg==",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InByaWNlX3BlcmlvZCI=",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InByaWNlX3RvdGFsIg==",
         "str"
       ]
     ],
@@ -1563,14 +1475,35 @@
     [
       "co2_methods",
       [
+        "InByaWNlIg==",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "InByaWNlX3BlcmlvZCI=",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
         "InByaWNlX3BlcmlvZF90b3RhbCI=",
         "str"
       ]
     ],
     [
-      "conversion_methods",
+      "co2_methods",
       [
-        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "InByaWNlX3RvdGFsIg==",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "InRvdGFsIg==",
         "str"
       ]
     ],
@@ -1585,6 +1518,13 @@
       "conversion_methods",
       [
         "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "conversion_methods",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
         "str"
       ]
     ],
@@ -1626,14 +1566,14 @@
     [
       "inflow_methods",
       [
-        "InVzZV9vcmlnaW5hbCI=",
+        "InNjYWxlX2luX3Byb3BvcnRpb24i",
         "str"
       ]
     ],
     [
       "inflow_methods",
       [
-        "InNjYWxlX2luX3Byb3BvcnRpb24i",
+        "InNjYWxlX3RvX2FubnVhbF9hbmRfcGVha19mbG93Ig==",
         "str"
       ]
     ],
@@ -1647,7 +1587,7 @@
     [
       "inflow_methods",
       [
-        "InNjYWxlX3RvX2FubnVhbF9hbmRfcGVha19mbG93Ig==",
+        "InVzZV9vcmlnaW5hbCI=",
         "str"
       ]
     ],
@@ -1655,6 +1595,20 @@
       "invest_methods",
       [
         "Im5vdF9hbGxvd2VkIg==",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "ImN1bXVsYXRpdmVfbGltaXRzIg==",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "ImludmVzdF90b3RhbCI=",
         "str"
       ]
     ],
@@ -1675,42 +1629,7 @@
     [
       "invest_methods",
       [
-        "ImludmVzdF90b3RhbCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "ImludmVzdF9wZXJpb2RfdG90YWwi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9ub19saW1pdCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9wZXJpb2Qi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV90b3RhbCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9wZXJpb2RfdG90YWwi",
         "str"
       ]
     ],
@@ -1731,13 +1650,6 @@
     [
       "invest_methods",
       [
-        "ImludmVzdF9yZXRpcmVfdG90YWwi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "ImludmVzdF9yZXRpcmVfcGVyaW9kX3RvdGFsIg==",
         "str"
       ]
@@ -1745,14 +1657,42 @@
     [
       "invest_methods",
       [
-        "ImN1bXVsYXRpdmVfbGltaXRzIg==",
+        "ImludmVzdF9yZXRpcmVfdG90YWwi",
         "str"
       ]
     ],
     [
-      "is_active",
+      "invest_methods",
       [
-        "InllcyI=",
+        "InJldGlyZV90b3RhbCI=",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9ub19saW1pdCI=",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9wZXJpb2Qi",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9wZXJpb2RfdG90YWwi",
+        "str"
+      ]
+    ],
+    [
+      "lifetime_methods",
+      [
+        "Im5vX2ludmVzdG1lbnQi",
         "str"
       ]
     ],
@@ -1771,9 +1711,9 @@
       ]
     ],
     [
-      "lifetime_methods",
+      "load_share_type",
       [
-        "Im5vX2ludmVzdG1lbnQi",
+        "Im5vIg==",
         "str"
       ]
     ],
@@ -1788,13 +1728,6 @@
       "load_share_type",
       [
         "ImluZmxvd193ZWlnaHRlZCI=",
-        "str"
-      ]
-    ],
-    [
-      "load_share_type",
-      [
-        "Im5vIg==",
         "str"
       ]
     ],
@@ -1822,6 +1755,13 @@
     [
       "node_type",
       [
+        "ImJhbGFuY2Ui",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
         "ImJhbGFuY2Vfd2l0aGluX3BlcmlvZCI=",
         "str"
       ]
@@ -1836,13 +1776,6 @@
     [
       "node_type",
       [
-        "ImJhbGFuY2Ui",
-        "str"
-      ]
-    ],
-    [
-      "node_type",
-      [
         "InN0b3JhZ2Ui",
         "str"
       ]
@@ -1850,14 +1783,14 @@
     [
       "optional_output",
       [
-        "InllcyI=",
+        "Im5vIg==",
         "str"
       ]
     ],
     [
       "optional_output",
       [
-        "Im5vIg==",
+        "InllcyI=",
         "str"
       ]
     ],
@@ -1885,7 +1818,7 @@
     [
       "profile_methods",
       [
-        "InVwcGVyX2xpbWl0Ig==",
+        "ImZpeGVkIg==",
         "str"
       ]
     ],
@@ -1899,14 +1832,14 @@
     [
       "profile_methods",
       [
-        "ImZpeGVkIg==",
+        "InVwcGVyX2xpbWl0Ig==",
         "str"
       ]
     ],
     [
       "ramp_methods",
       [
-        "InJhbXBfbGltaXQi",
+        "ImJvdGgi",
         "str"
       ]
     ],
@@ -1920,7 +1853,7 @@
     [
       "ramp_methods",
       [
-        "ImJvdGgi",
+        "InJhbXBfbGltaXQi",
         "str"
       ]
     ],
@@ -1934,7 +1867,14 @@
     [
       "reserve_methods",
       [
-        "InRpbWVzZXJpZXNfb25seSI=",
+        "ImFsbCI=",
+        "str"
+      ]
+    ],
+    [
+      "reserve_methods",
+      [
+        "ImR5bmFtaWNfYW5kX2xhcmdlX2ZhaWx1cmUi",
         "str"
       ]
     ],
@@ -1969,21 +1909,21 @@
     [
       "reserve_methods",
       [
-        "ImR5bmFtaWNfYW5kX2xhcmdlX2ZhaWx1cmUi",
-        "str"
-      ]
-    ],
-    [
-      "reserve_methods",
-      [
-        "ImFsbCI=",
+        "InRpbWVzZXJpZXNfb25seSI=",
         "str"
       ]
     ],
     [
       "results",
       [
-        "InN1bW1hcnlfb25seSI=",
+        "ImZ1bGxfcGVyaW9kIg==",
+        "str"
+      ]
+    ],
+    [
+      "results",
+      [
+        "ImZ1bGxfcGVyaW9kX3RpbWUi",
         "str"
       ]
     ],
@@ -2004,14 +1944,14 @@
     [
       "results",
       [
-        "ImZ1bGxfcGVyaW9kIg==",
+        "InN1bW1hcnlfb25seSI=",
         "str"
       ]
     ],
     [
-      "results",
+      "senses",
       [
-        "ImZ1bGxfcGVyaW9kX3RpbWUi",
+        "ImVxdWFsIg==",
         "str"
       ]
     ],
@@ -2030,9 +1970,9 @@
       ]
     ],
     [
-      "senses",
+      "solve_mode",
       [
-        "ImVxdWFsIg==",
+        "InJvbGxpbmdfd2luZG93Ig==",
         "str"
       ]
     ],
@@ -2044,23 +1984,9 @@
       ]
     ],
     [
-      "solve_mode",
-      [
-        "InJvbGxpbmdfd2luZG93Ig==",
-        "str"
-      ]
-    ],
-    [
       "solvers",
       [
-        "ImhpZ2hzIg==",
-        "str"
-      ]
-    ],
-    [
-      "solvers",
-      [
-        "Imd1cm9iaSI=",
+        "ImNvcHQi",
         "str"
       ]
     ],
@@ -2074,14 +2000,21 @@
     [
       "solvers",
       [
-        "InhwcmVzcyI=",
+        "Imd1cm9iaSI=",
         "str"
       ]
     ],
     [
       "solvers",
       [
-        "ImNvcHQi",
+        "ImhpZ2hzIg==",
+        "str"
+      ]
+    ],
+    [
+      "solvers",
+      [
+        "InhwcmVzcyI=",
         "str"
       ]
     ],
@@ -2095,28 +2028,14 @@
     [
       "startup_methods",
       [
-        "ImxpbmVhciI=",
+        "ImJpbmFyeSI=",
         "str"
       ]
     ],
     [
       "startup_methods",
       [
-        "ImJpbmFyeSI=",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "ImJpbmRfd2l0aGluX3BlcmlvZCI=",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "ImJpbmRfd2l0aGluX3NvbHZlIg==",
+        "ImxpbmVhciI=",
         "str"
       ]
     ],
@@ -2130,6 +2049,13 @@
     [
       "storage_binding_methods",
       [
+        "ImJpbmRfZm9yd2FyZF9vbmx5X2JsZW5kZWRfd2VpZ2h0cyI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
         "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
         "str"
       ]
@@ -2137,14 +2063,7 @@
     [
       "storage_binding_methods",
       [
-        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "ImJpbmRfd2l0aGluX3NvbHZlX2JsZW5kZWRfd2VpZ2h0cyI=",
+        "ImJpbmRfd2l0aGluX3BlcmlvZCI=",
         "str"
       ]
     ],
@@ -2158,7 +2077,28 @@
     [
       "storage_binding_methods",
       [
-        "ImJpbmRfZm9yd2FyZF9vbmx5X2JsZW5kZWRfd2VpZ2h0cyI=",
+        "ImJpbmRfd2l0aGluX3NvbHZlIg==",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfd2l0aGluX3NvbHZlX2JsZW5kZWRfd2VpZ2h0cyI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_nested_fix_method",
+      [
+        "ImZpeF91c2FnZSI=",
         "str"
       ]
     ],
@@ -2166,13 +2106,6 @@
       "storage_nested_fix_method",
       [
         "ImZpeF9ub3RoaW5nIg==",
-        "str"
-      ]
-    ],
-    [
-      "storage_nested_fix_method",
-      [
-        "ImZpeF9xdWFudGl0eSI=",
         "str"
       ]
     ],
@@ -2186,7 +2119,7 @@
     [
       "storage_nested_fix_method",
       [
-        "ImZpeF91c2FnZSI=",
+        "ImZpeF9xdWFudGl0eSI=",
         "str"
       ]
     ],
@@ -2200,21 +2133,14 @@
     [
       "storage_solve_horizon_methods",
       [
-        "InVzZV9yZWZlcmVuY2VfdmFsdWUi",
+        "InVzZV9yZWZlcmVuY2VfcHJpY2Ui",
         "str"
       ]
     ],
     [
       "storage_solve_horizon_methods",
       [
-        "InVzZV9yZWZlcmVuY2VfcHJpY2Ui",
-        "str"
-      ]
-    ],
-    [
-      "storage_start_end_methods",
-      [
-        "ImZpeF9zdGFydCI=",
+        "InVzZV9yZWZlcmVuY2VfdmFsdWUi",
         "str"
       ]
     ],
@@ -2228,14 +2154,21 @@
     [
       "storage_start_end_methods",
       [
-        "ImZpeF9zdGFydF9lbmQi",
+        "ImZpeF9ub3RoaW5nIg==",
         "str"
       ]
     ],
     [
       "storage_start_end_methods",
       [
-        "ImZpeF9ub3RoaW5nIg==",
+        "ImZpeF9zdGFydCI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_start_end_methods",
+      [
+        "ImZpeF9zdGFydF9lbmQi",
         "str"
       ]
     ],
@@ -2249,13 +2182,6 @@
     [
       "transfer_methods",
       [
-        "InJlZ3VsYXIi",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods",
-      [
         "ImV4YWN0Ig==",
         "str"
       ]
@@ -2263,7 +2189,7 @@
     [
       "transfer_methods",
       [
-        "InZhcmlhYmxlX2Nvc3Rfb25seSI=",
+        "InJlZ3VsYXIi",
         "str"
       ]
     ],
@@ -2271,6 +2197,13 @@
       "transfer_methods",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods",
+      [
+        "InZhcmlhYmxlX2Nvc3Rfb25seSI=",
         "str"
       ]
     ],
@@ -2284,14 +2217,14 @@
     [
       "yes_no",
       [
-        "InllcyI=",
+        "Im5vIg==",
         "str"
       ]
     ],
     [
       "yes_no",
       [
-        "Im5vIg==",
+        "InllcyI=",
         "str"
       ]
     ]
@@ -2801,6 +2734,17 @@
       ],
       null,
       "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.",
+      "constraint"
+    ],
+    [
+      "constraint",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "constraint"
     ],
     [
@@ -3773,13 +3717,13 @@
     ],
     [
       "reserve__upDown__connection__node",
-      "is_active",
+      "is_enabled",
       [
-        null,
-        null
+        "InllcyI=",
+        "str"
       ],
-      "is_active",
-      "Can the connection provide this reserve to the selected node. Empty indicates not allowed. Use 'yes' to indicate true.",
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "reserve"
     ],
     [
@@ -3872,13 +3816,13 @@
     ],
     [
       "reserve__upDown__unit__node",
-      "is_active",
+      "is_enabled",
       [
-        null,
-        null
+        "InllcyI=",
+        "str"
       ],
-      "is_active",
-      "Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true.",
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "reserve"
     ],
     [
@@ -5077,6 +5021,12 @@
     ],
     [
       "constraint",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "constraint",
       "sense",
       "str",
       0
@@ -5761,6 +5711,12 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       "float",
       0
@@ -5817,6 +5773,12 @@
       "reserve__upDown__unit__node",
       "increase_reserve_ratio",
       "float",
+      0
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      "str",
       0
     ],
     [
@@ -6808,6 +6770,16 @@
     [
       "constraint",
       "coal_chp_fix",
+      "is_enabled",
+      [
+        "Im5vIg==",
+        "str"
+      ],
+      "coal_chp_extraction"
+    ],
+    [
+      "constraint",
+      "coal_chp_fix",
       "sense",
       [
         "ImVxdWFsIg==",
@@ -6842,6 +6814,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "wind_growth_cap_pre_built"
+    ],
+    [
+      "constraint",
+      "wind_growth_cap",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "wind_growth_cap_pre_built"
     ],
@@ -8309,6 +8291,36 @@
         "coal_plant",
         "west"
       ],
+      "is_enabled",
+      [
+        "Im5vIg==",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "n_1",
+        "up",
+        "coal_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "reserve_n_1"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "n_1",
+        "up",
+        "coal_plant",
+        "west"
+      ],
       "large_failure_ratio",
       [
         "MC4x",
@@ -8354,6 +8366,36 @@
         "wind_plant",
         "west"
       ],
+      "is_enabled",
+      [
+        "Im5vIg==",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "n_1",
+        "up",
+        "wind_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "reserve_n_1"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "n_1",
+        "up",
+        "wind_plant",
+        "west"
+      ],
       "max_share",
       [
         "MQ==",
@@ -8384,6 +8426,36 @@
         "coal_plant",
         "west"
       ],
+      "is_enabled",
+      [
+        "Im5vIg==",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "primary",
+        "up",
+        "coal_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "Im5vIg==",
+        "str"
+      ],
+      "reserve"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "primary",
+        "up",
+        "coal_plant",
+        "west"
+      ],
       "max_share",
       [
         "MC4wMQ==",
@@ -8403,6 +8475,36 @@
       [
         "MQ==",
         "float"
+      ],
+      "reserve"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "primary",
+        "up",
+        "wind_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "Im5vIg==",
+        "str"
+      ],
+      "Base"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      [
+        "primary",
+        "up",
+        "wind_plant",
+        "west"
+      ],
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "reserve"
     ],

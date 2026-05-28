@@ -197,6 +197,67 @@ class SpineDbReader:
                 for eid, name, _ in ents:
                     self._entity_by_id[eid] = (cls_id, name)
 
+            # v56 Batch F — drop is_enabled="no" entities of the three
+            # gated classes from the caches.  Mirrors
+            # :meth:`flextool.spinedb_backend._backend.SpineDBBackend.
+            # _disabled_entity_ids` so the cascade direct-param path
+            # (``InputSource.entities`` / ``InputSource.parameter`` via
+            # this reader) sees the same effective entity set as the
+            # input_derivation Backend.
+            _IS_ENABLED_CLASSES = (
+                "constraint",
+                "reserve__upDown__unit__node",
+                "reserve__upDown__connection__node",
+            )
+            for gated_cls_name in _IS_ENABLED_CLASSES:
+                gated_cls_id = self._class_name_to_id.get(gated_cls_name)
+                if gated_cls_id is None:
+                    continue
+                is_enabled_pdef = self._pdef_by_class_name.get(
+                    (gated_cls_id, "is_enabled"),
+                )
+                if is_enabled_pdef is None:
+                    continue
+                disabled_ids: set[int] = set()
+                for eid, v in self._param_rows.get(
+                    (gated_cls_id, is_enabled_pdef["id"]), [],
+                ):
+                    if v == "no":
+                        disabled_ids.add(eid)
+                if not disabled_ids:
+                    continue
+                # Drop disabled entities from the per-class entity list.
+                self._entities_by_class[gated_cls_id] = [
+                    row for row in self._entities_by_class[gated_cls_id]
+                    if row[0] not in disabled_ids
+                ]
+                # Drop disabled entities from every parameter_value row
+                # cache of the same class.  Walk every (cls_id, pdef_id)
+                # key whose cls_id matches; rebuild the row list without
+                # the disabled entries.
+                for (cls_id_key, pdef_id_key), rows in list(
+                    self._param_rows.items(),
+                ):
+                    if cls_id_key != gated_cls_id:
+                        continue
+                    filtered = [
+                        r for r in rows if r[0] not in disabled_ids
+                    ]
+                    if filtered:
+                        self._param_rows[(cls_id_key, pdef_id_key)] = (
+                            filtered
+                        )
+                    else:
+                        # Empty buckets behave the same as missing
+                        # buckets for ``parameter()`` (it uses
+                        # ``.get(..., [])``); keep the cache compact.
+                        del self._param_rows[(cls_id_key, pdef_id_key)]
+                # Drop disabled entries from the entity_id → (cls, name)
+                # map so downstream joiners can't accidentally re-emit
+                # them.
+                for did in disabled_ids:
+                    self._entity_by_id.pop(did, None)
+
     # ------------------------------------------------------------------
     # Public diagnostics
 

@@ -246,7 +246,7 @@
       ],
       null,
       null,
-      false
+      true
     ],
     [
       "reserve__upDown__unit__node",
@@ -258,7 +258,7 @@
       ],
       null,
       null,
-      false
+      true
     ]
   ],
   "entities": [
@@ -3504,86 +3504,6 @@
         "CHI_Battery_Connection",
         "CHI_elec",
         "CHI_Battery"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_ARG_battery_ratio"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_ARG_h2tomeoh_co2_lock"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_AUS_battery_ratio"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_AUS_h2tomeoh_co2_lock"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_AUS_oretoHBI_elec_lock"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_AUS_oretoHBI_h2_lock"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_CHI_battery_ratio"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_CHI_h2tomeoh_co2_lock"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_CHI_oretoHBI_elec_lock"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "constraint",
-      [
-        "c_CHI_oretoHBI_h2_lock"
       ],
       "shared",
       true
@@ -7009,35 +6929,7 @@
     [
       "co2_methods",
       [
-        "InByaWNlIg==",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
         "InBlcmlvZCI=",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InRvdGFsIg==",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InByaWNlX3BlcmlvZCI=",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InByaWNlX3RvdGFsIg==",
         "str"
       ]
     ],
@@ -7051,14 +6943,35 @@
     [
       "co2_methods",
       [
+        "InByaWNlIg==",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "InByaWNlX3BlcmlvZCI=",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
         "InByaWNlX3BlcmlvZF90b3RhbCI=",
         "str"
       ]
     ],
     [
-      "conversion_methods",
+      "co2_methods",
       [
-        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "InByaWNlX3RvdGFsIg==",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "InRvdGFsIg==",
         "str"
       ]
     ],
@@ -7073,6 +6986,13 @@
       "conversion_methods",
       [
         "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "conversion_methods",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
         "str"
       ]
     ],
@@ -7114,14 +7034,14 @@
     [
       "inflow_methods",
       [
-        "InVzZV9vcmlnaW5hbCI=",
+        "InNjYWxlX2luX3Byb3BvcnRpb24i",
         "str"
       ]
     ],
     [
       "inflow_methods",
       [
-        "InNjYWxlX2luX3Byb3BvcnRpb24i",
+        "InNjYWxlX3RvX2FubnVhbF9hbmRfcGVha19mbG93Ig==",
         "str"
       ]
     ],
@@ -7135,7 +7055,7 @@
     [
       "inflow_methods",
       [
-        "InNjYWxlX3RvX2FubnVhbF9hbmRfcGVha19mbG93Ig==",
+        "InVzZV9vcmlnaW5hbCI=",
         "str"
       ]
     ],
@@ -7143,6 +7063,20 @@
       "invest_methods",
       [
         "Im5vdF9hbGxvd2VkIg==",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "ImN1bXVsYXRpdmVfbGltaXRzIg==",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "ImludmVzdF90b3RhbCI=",
         "str"
       ]
     ],
@@ -7163,42 +7097,7 @@
     [
       "invest_methods",
       [
-        "ImludmVzdF90b3RhbCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "ImludmVzdF9wZXJpb2RfdG90YWwi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9ub19saW1pdCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9wZXJpb2Qi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV90b3RhbCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9wZXJpb2RfdG90YWwi",
         "str"
       ]
     ],
@@ -7219,13 +7118,6 @@
     [
       "invest_methods",
       [
-        "ImludmVzdF9yZXRpcmVfdG90YWwi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "ImludmVzdF9yZXRpcmVfcGVyaW9kX3RvdGFsIg==",
         "str"
       ]
@@ -7233,14 +7125,42 @@
     [
       "invest_methods",
       [
-        "ImN1bXVsYXRpdmVfbGltaXRzIg==",
+        "ImludmVzdF9yZXRpcmVfdG90YWwi",
         "str"
       ]
     ],
     [
-      "is_active",
+      "invest_methods",
       [
-        "InllcyI=",
+        "InJldGlyZV90b3RhbCI=",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9ub19saW1pdCI=",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9wZXJpb2Qi",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9wZXJpb2RfdG90YWwi",
+        "str"
+      ]
+    ],
+    [
+      "lifetime_methods",
+      [
+        "Im5vX2ludmVzdG1lbnQi",
         "str"
       ]
     ],
@@ -7259,9 +7179,9 @@
       ]
     ],
     [
-      "lifetime_methods",
+      "load_share_type",
       [
-        "Im5vX2ludmVzdG1lbnQi",
+        "Im5vIg==",
         "str"
       ]
     ],
@@ -7276,13 +7196,6 @@
       "load_share_type",
       [
         "ImluZmxvd193ZWlnaHRlZCI=",
-        "str"
-      ]
-    ],
-    [
-      "load_share_type",
-      [
-        "Im5vIg==",
         "str"
       ]
     ],
@@ -7303,14 +7216,21 @@
     [
       "minimum_time_methods",
       [
-        "ImJvdGgi",
+        "Im5vbmUi",
         "str"
       ]
     ],
     [
       "minimum_time_methods",
       [
-        "Im5vbmUi",
+        "ImJvdGgi",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
         "str"
       ]
     ],
@@ -7331,13 +7251,6 @@
     [
       "node_type",
       [
-        "ImJhbGFuY2Ui",
-        "str"
-      ]
-    ],
-    [
-      "node_type",
-      [
         "InN0b3JhZ2Ui",
         "str"
       ]
@@ -7345,14 +7258,14 @@
     [
       "optional_output",
       [
-        "InllcyI=",
+        "Im5vIg==",
         "str"
       ]
     ],
     [
       "optional_output",
       [
-        "Im5vIg==",
+        "InllcyI=",
         "str"
       ]
     ],
@@ -7380,7 +7293,7 @@
     [
       "profile_methods",
       [
-        "InVwcGVyX2xpbWl0Ig==",
+        "ImZpeGVkIg==",
         "str"
       ]
     ],
@@ -7394,14 +7307,14 @@
     [
       "profile_methods",
       [
-        "ImZpeGVkIg==",
+        "InVwcGVyX2xpbWl0Ig==",
         "str"
       ]
     ],
     [
       "ramp_methods",
       [
-        "InJhbXBfbGltaXQi",
+        "ImJvdGgi",
         "str"
       ]
     ],
@@ -7415,7 +7328,7 @@
     [
       "ramp_methods",
       [
-        "ImJvdGgi",
+        "InJhbXBfbGltaXQi",
         "str"
       ]
     ],
@@ -7429,7 +7342,14 @@
     [
       "reserve_methods",
       [
-        "InRpbWVzZXJpZXNfb25seSI=",
+        "ImFsbCI=",
+        "str"
+      ]
+    ],
+    [
+      "reserve_methods",
+      [
+        "ImR5bmFtaWNfYW5kX2xhcmdlX2ZhaWx1cmUi",
         "str"
       ]
     ],
@@ -7464,21 +7384,21 @@
     [
       "reserve_methods",
       [
-        "ImR5bmFtaWNfYW5kX2xhcmdlX2ZhaWx1cmUi",
-        "str"
-      ]
-    ],
-    [
-      "reserve_methods",
-      [
-        "ImFsbCI=",
+        "InRpbWVzZXJpZXNfb25seSI=",
         "str"
       ]
     ],
     [
       "results",
       [
-        "InN1bW1hcnlfb25seSI=",
+        "ImZ1bGxfcGVyaW9kIg==",
+        "str"
+      ]
+    ],
+    [
+      "results",
+      [
+        "ImZ1bGxfcGVyaW9kX3RpbWUi",
         "str"
       ]
     ],
@@ -7499,14 +7419,14 @@
     [
       "results",
       [
-        "ImZ1bGxfcGVyaW9kIg==",
+        "InN1bW1hcnlfb25seSI=",
         "str"
       ]
     ],
     [
-      "results",
+      "senses",
       [
-        "ImZ1bGxfcGVyaW9kX3RpbWUi",
+        "ImVxdWFsIg==",
         "str"
       ]
     ],
@@ -7525,9 +7445,9 @@
       ]
     ],
     [
-      "senses",
+      "solve_mode",
       [
-        "ImVxdWFsIg==",
+        "InJvbGxpbmdfd2luZG93Ig==",
         "str"
       ]
     ],
@@ -7539,23 +7459,9 @@
       ]
     ],
     [
-      "solve_mode",
-      [
-        "InJvbGxpbmdfd2luZG93Ig==",
-        "str"
-      ]
-    ],
-    [
       "solvers",
       [
-        "ImhpZ2hzIg==",
-        "str"
-      ]
-    ],
-    [
-      "solvers",
-      [
-        "Imd1cm9iaSI=",
+        "ImNvcHQi",
         "str"
       ]
     ],
@@ -7569,14 +7475,21 @@
     [
       "solvers",
       [
-        "InhwcmVzcyI=",
+        "Imd1cm9iaSI=",
         "str"
       ]
     ],
     [
       "solvers",
       [
-        "ImNvcHQi",
+        "ImhpZ2hzIg==",
+        "str"
+      ]
+    ],
+    [
+      "solvers",
+      [
+        "InhwcmVzcyI=",
         "str"
       ]
     ],
@@ -7590,28 +7503,14 @@
     [
       "startup_methods",
       [
-        "ImxpbmVhciI=",
+        "ImJpbmFyeSI=",
         "str"
       ]
     ],
     [
       "startup_methods",
       [
-        "ImJpbmFyeSI=",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "ImJpbmRfd2l0aGluX3BlcmlvZCI=",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "ImJpbmRfd2l0aGluX3NvbHZlIg==",
+        "ImxpbmVhciI=",
         "str"
       ]
     ],
@@ -7625,6 +7524,13 @@
     [
       "storage_binding_methods",
       [
+        "ImJpbmRfZm9yd2FyZF9vbmx5X2JsZW5kZWRfd2VpZ2h0cyI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
         "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
         "str"
       ]
@@ -7632,14 +7538,7 @@
     [
       "storage_binding_methods",
       [
-        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "ImJpbmRfd2l0aGluX3NvbHZlX2JsZW5kZWRfd2VpZ2h0cyI=",
+        "ImJpbmRfd2l0aGluX3BlcmlvZCI=",
         "str"
       ]
     ],
@@ -7653,7 +7552,28 @@
     [
       "storage_binding_methods",
       [
-        "ImJpbmRfZm9yd2FyZF9vbmx5X2JsZW5kZWRfd2VpZ2h0cyI=",
+        "ImJpbmRfd2l0aGluX3NvbHZlIg==",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfd2l0aGluX3NvbHZlX2JsZW5kZWRfd2VpZ2h0cyI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_nested_fix_method",
+      [
+        "ImZpeF91c2FnZSI=",
         "str"
       ]
     ],
@@ -7661,13 +7581,6 @@
       "storage_nested_fix_method",
       [
         "ImZpeF9ub3RoaW5nIg==",
-        "str"
-      ]
-    ],
-    [
-      "storage_nested_fix_method",
-      [
-        "ImZpeF9xdWFudGl0eSI=",
         "str"
       ]
     ],
@@ -7681,7 +7594,7 @@
     [
       "storage_nested_fix_method",
       [
-        "ImZpeF91c2FnZSI=",
+        "ImZpeF9xdWFudGl0eSI=",
         "str"
       ]
     ],
@@ -7695,21 +7608,14 @@
     [
       "storage_solve_horizon_methods",
       [
-        "InVzZV9yZWZlcmVuY2VfdmFsdWUi",
+        "InVzZV9yZWZlcmVuY2VfcHJpY2Ui",
         "str"
       ]
     ],
     [
       "storage_solve_horizon_methods",
       [
-        "InVzZV9yZWZlcmVuY2VfcHJpY2Ui",
-        "str"
-      ]
-    ],
-    [
-      "storage_start_end_methods",
-      [
-        "ImZpeF9zdGFydCI=",
+        "InVzZV9yZWZlcmVuY2VfdmFsdWUi",
         "str"
       ]
     ],
@@ -7723,14 +7629,21 @@
     [
       "storage_start_end_methods",
       [
-        "ImZpeF9zdGFydF9lbmQi",
+        "ImZpeF9ub3RoaW5nIg==",
         "str"
       ]
     ],
     [
       "storage_start_end_methods",
       [
-        "ImZpeF9ub3RoaW5nIg==",
+        "ImZpeF9zdGFydCI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_start_end_methods",
+      [
+        "ImZpeF9zdGFydF9lbmQi",
         "str"
       ]
     ],
@@ -7744,6 +7657,13 @@
     [
       "transfer_methods",
       [
+        "ImV4YWN0Ig==",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods",
+      [
         "InJlZ3VsYXIi",
         "str"
       ]
@@ -7751,7 +7671,7 @@
     [
       "transfer_methods",
       [
-        "ImV4YWN0Ig==",
+        "InVuaWRpcmVjdGlvbmFsIg==",
         "str"
       ]
     ],
@@ -7763,7 +7683,35 @@
       ]
     ],
     [
-      "transfer_methods",
+      "transfer_methods_group",
+      [
+        "Im5vX2xvc3Nlc19ub192YXJpYWJsZV9jb3N0Ig==",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "ImRjX3Bvd2VyX2Zsb3dfd2l0aF9hbmdsZXMi",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "ImV4YWN0Ig==",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "InJlZ3VsYXIi",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
         "str"
@@ -7779,49 +7727,7 @@
     [
       "transfer_methods_group",
       [
-        "Im5vX2xvc3Nlc19ub192YXJpYWJsZV9jb3N0Ig==",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "InJlZ3VsYXIi",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "ImV4YWN0Ig==",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
         "InZhcmlhYmxlX2Nvc3Rfb25seSI=",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "ImRjX3Bvd2VyX2Zsb3dfd2l0aF9hbmdsZXMi",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "InVuaWRpcmVjdGlvbmFsIg==",
-        "str"
-      ]
-    ],
-    [
-      "yes_no",
-      [
-        "InllcyI=",
         "str"
       ]
     ],
@@ -7829,6 +7735,13 @@
       "yes_no",
       [
         "Im5vIg==",
+        "str"
+      ]
+    ],
+    [
+      "yes_no",
+      [
+        "InllcyI=",
         "str"
       ]
     ]
@@ -8338,6 +8251,17 @@
       ],
       null,
       "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.",
+      "constraint"
+    ],
+    [
+      "constraint",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "constraint"
     ],
     [
@@ -9310,6 +9234,17 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       [
         null,
@@ -9394,6 +9329,17 @@
       ],
       null,
       "[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "reserve"
     ],
     [
@@ -10581,6 +10527,12 @@
     ],
     [
       "constraint",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "constraint",
       "sense",
       "str",
       0
@@ -11307,6 +11259,12 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       "float",
       0
@@ -11363,6 +11321,12 @@
       "reserve__upDown__unit__node",
       "increase_reserve_ratio",
       "float",
+      0
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      "str",
       0
     ],
     [
@@ -13222,6 +13186,16 @@
     [
       "constraint",
       "c_ARG_battery_ratio",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_ARG_battery_ratio",
       "sense",
       [
         "ImVxdWFsIg==",
@@ -13236,6 +13210,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_ARG_h2tomeoh_co2_lock",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],
@@ -13256,6 +13240,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_AUS_battery_ratio",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],
@@ -13276,6 +13270,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_AUS_h2tomeoh_co2_lock",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],
@@ -13296,6 +13300,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_AUS_oretoHBI_elec_lock",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],
@@ -13316,6 +13330,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_AUS_oretoHBI_h2_lock",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],
@@ -13336,6 +13360,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_CHI_battery_ratio",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],
@@ -13356,6 +13390,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_CHI_h2tomeoh_co2_lock",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],
@@ -13376,6 +13420,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_CHI_oretoHBI_elec_lock",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],
@@ -13396,6 +13450,16 @@
       [
         "MC4w",
         "float"
+      ],
+      "shared"
+    ],
+    [
+      "constraint",
+      "c_CHI_oretoHBI_h2_lock",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
       ],
       "shared"
     ],

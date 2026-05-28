@@ -1571,7 +1571,7 @@
       ],
       null,
       null,
-      false
+      true
     ],
     [
       "reserve__upDown__unit__node",
@@ -1583,7 +1583,7 @@
       ],
       null,
       null,
-      false
+      true
     ]
   ],
   "parameter_definitions": [
@@ -2014,6 +2014,17 @@
       ],
       null,
       "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.",
+      "constraint"
+    ],
+    [
+      "constraint",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "constraint"
     ],
     [
@@ -2997,6 +3008,17 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       [
         "IiI=",
@@ -3081,6 +3103,17 @@
       ],
       null,
       "[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "reserve"
     ],
     [
@@ -3701,6 +3734,28 @@
     ],
     [
       "unit__inputNode",
+      "capacity_max_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
+      "basics"
+    ],
+    [
+      "unit__inputNode",
+      "capacity_min_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
+      "basics"
+    ],
+    [
+      "unit__inputNode",
       "constraint_flow_coefficient",
       [
         "bnVsbA==",
@@ -3742,28 +3797,6 @@
       "yes_no",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__inputNode",
-      "capacity_max_coeff",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
-      "basics"
-    ],
-    [
-      "unit__inputNode",
-      "capacity_min_coeff",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
-      "basics"
     ],
     [
       "unit__inputNode",
@@ -3833,6 +3866,28 @@
     ],
     [
       "unit__outputNode",
+      "capacity_max_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
+      "basics"
+    ],
+    [
+      "unit__outputNode",
+      "capacity_min_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
+      "basics"
+    ],
+    [
+      "unit__outputNode",
       "constraint_flow_coefficient",
       [
         "bnVsbA==",
@@ -3874,28 +3929,6 @@
       "yes_no",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
-    ],
-    [
-      "unit__outputNode",
-      "capacity_max_coeff",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap (maxToSink / maxFromSource / ramp). For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
-      "basics"
-    ],
-    [
-      "unit__outputNode",
-      "capacity_min_coeff",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output of an extraction CHP that may drop to zero in pure-condensing mode).",
-      "basics"
     ],
     [
       "unit__outputNode",
@@ -4341,6 +4374,12 @@
       "constraint",
       "constant",
       "float",
+      0
+    ],
+    [
+      "constraint",
+      "is_enabled",
+      "str",
       0
     ],
     [
@@ -5077,6 +5116,12 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       "float",
       0
@@ -5133,6 +5178,12 @@
       "reserve__upDown__unit__node",
       "increase_reserve_ratio",
       "float",
+      0
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      "str",
       0
     ],
     [
@@ -5729,35 +5780,7 @@
     [
       "co2_methods",
       [
-        "InByaWNlIg==",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
         "InBlcmlvZCI=",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InRvdGFsIg==",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InByaWNlX3BlcmlvZCI=",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "InByaWNlX3RvdGFsIg==",
         "str"
       ]
     ],
@@ -5771,14 +5794,35 @@
     [
       "co2_methods",
       [
+        "InByaWNlIg==",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "InByaWNlX3BlcmlvZCI=",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
         "InByaWNlX3BlcmlvZF90b3RhbCI=",
         "str"
       ]
     ],
     [
-      "conversion_methods",
+      "co2_methods",
       [
-        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "InByaWNlX3RvdGFsIg==",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "InRvdGFsIg==",
         "str"
       ]
     ],
@@ -5793,6 +5837,13 @@
       "conversion_methods",
       [
         "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "conversion_methods",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
         "str"
       ]
     ],
@@ -5834,14 +5885,14 @@
     [
       "inflow_methods",
       [
-        "InVzZV9vcmlnaW5hbCI=",
+        "InNjYWxlX2luX3Byb3BvcnRpb24i",
         "str"
       ]
     ],
     [
       "inflow_methods",
       [
-        "InNjYWxlX2luX3Byb3BvcnRpb24i",
+        "InNjYWxlX3RvX2FubnVhbF9hbmRfcGVha19mbG93Ig==",
         "str"
       ]
     ],
@@ -5855,7 +5906,7 @@
     [
       "inflow_methods",
       [
-        "InNjYWxlX3RvX2FubnVhbF9hbmRfcGVha19mbG93Ig==",
+        "InVzZV9vcmlnaW5hbCI=",
         "str"
       ]
     ],
@@ -5863,6 +5914,20 @@
       "invest_methods",
       [
         "Im5vdF9hbGxvd2VkIg==",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "ImN1bXVsYXRpdmVfbGltaXRzIg==",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "ImludmVzdF90b3RhbCI=",
         "str"
       ]
     ],
@@ -5883,42 +5948,7 @@
     [
       "invest_methods",
       [
-        "ImludmVzdF90b3RhbCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "ImludmVzdF9wZXJpb2RfdG90YWwi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9ub19saW1pdCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9wZXJpb2Qi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV90b3RhbCI=",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "InJldGlyZV9wZXJpb2RfdG90YWwi",
         "str"
       ]
     ],
@@ -5939,13 +5969,6 @@
     [
       "invest_methods",
       [
-        "ImludmVzdF9yZXRpcmVfdG90YWwi",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
         "ImludmVzdF9yZXRpcmVfcGVyaW9kX3RvdGFsIg==",
         "str"
       ]
@@ -5953,14 +5976,42 @@
     [
       "invest_methods",
       [
-        "ImN1bXVsYXRpdmVfbGltaXRzIg==",
+        "ImludmVzdF9yZXRpcmVfdG90YWwi",
         "str"
       ]
     ],
     [
-      "is_active",
+      "invest_methods",
       [
-        "InllcyI=",
+        "InJldGlyZV90b3RhbCI=",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9ub19saW1pdCI=",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9wZXJpb2Qi",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "InJldGlyZV9wZXJpb2RfdG90YWwi",
+        "str"
+      ]
+    ],
+    [
+      "lifetime_methods",
+      [
+        "Im5vX2ludmVzdG1lbnQi",
         "str"
       ]
     ],
@@ -5979,9 +6030,9 @@
       ]
     ],
     [
-      "lifetime_methods",
+      "load_share_type",
       [
-        "Im5vX2ludmVzdG1lbnQi",
+        "Im5vIg==",
         "str"
       ]
     ],
@@ -5996,13 +6047,6 @@
       "load_share_type",
       [
         "ImluZmxvd193ZWlnaHRlZCI=",
-        "str"
-      ]
-    ],
-    [
-      "load_share_type",
-      [
-        "Im5vIg==",
         "str"
       ]
     ],
@@ -6023,14 +6067,21 @@
     [
       "minimum_time_methods",
       [
-        "ImJvdGgi",
+        "Im5vbmUi",
         "str"
       ]
     ],
     [
       "minimum_time_methods",
       [
-        "Im5vbmUi",
+        "ImJvdGgi",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
         "str"
       ]
     ],
@@ -6051,13 +6102,6 @@
     [
       "node_type",
       [
-        "ImJhbGFuY2Ui",
-        "str"
-      ]
-    ],
-    [
-      "node_type",
-      [
         "InN0b3JhZ2Ui",
         "str"
       ]
@@ -6065,14 +6109,14 @@
     [
       "optional_output",
       [
-        "InllcyI=",
+        "Im5vIg==",
         "str"
       ]
     ],
     [
       "optional_output",
       [
-        "Im5vIg==",
+        "InllcyI=",
         "str"
       ]
     ],
@@ -6100,7 +6144,7 @@
     [
       "profile_methods",
       [
-        "InVwcGVyX2xpbWl0Ig==",
+        "ImZpeGVkIg==",
         "str"
       ]
     ],
@@ -6114,14 +6158,14 @@
     [
       "profile_methods",
       [
-        "ImZpeGVkIg==",
+        "InVwcGVyX2xpbWl0Ig==",
         "str"
       ]
     ],
     [
       "ramp_methods",
       [
-        "InJhbXBfbGltaXQi",
+        "ImJvdGgi",
         "str"
       ]
     ],
@@ -6135,7 +6179,7 @@
     [
       "ramp_methods",
       [
-        "ImJvdGgi",
+        "InJhbXBfbGltaXQi",
         "str"
       ]
     ],
@@ -6149,7 +6193,14 @@
     [
       "reserve_methods",
       [
-        "InRpbWVzZXJpZXNfb25seSI=",
+        "ImFsbCI=",
+        "str"
+      ]
+    ],
+    [
+      "reserve_methods",
+      [
+        "ImR5bmFtaWNfYW5kX2xhcmdlX2ZhaWx1cmUi",
         "str"
       ]
     ],
@@ -6184,21 +6235,21 @@
     [
       "reserve_methods",
       [
-        "ImR5bmFtaWNfYW5kX2xhcmdlX2ZhaWx1cmUi",
-        "str"
-      ]
-    ],
-    [
-      "reserve_methods",
-      [
-        "ImFsbCI=",
+        "InRpbWVzZXJpZXNfb25seSI=",
         "str"
       ]
     ],
     [
       "results",
       [
-        "InN1bW1hcnlfb25seSI=",
+        "ImZ1bGxfcGVyaW9kIg==",
+        "str"
+      ]
+    ],
+    [
+      "results",
+      [
+        "ImZ1bGxfcGVyaW9kX3RpbWUi",
         "str"
       ]
     ],
@@ -6219,14 +6270,14 @@
     [
       "results",
       [
-        "ImZ1bGxfcGVyaW9kIg==",
+        "InN1bW1hcnlfb25seSI=",
         "str"
       ]
     ],
     [
-      "results",
+      "senses",
       [
-        "ImZ1bGxfcGVyaW9kX3RpbWUi",
+        "ImVxdWFsIg==",
         "str"
       ]
     ],
@@ -6245,9 +6296,9 @@
       ]
     ],
     [
-      "senses",
+      "solve_mode",
       [
-        "ImVxdWFsIg==",
+        "InJvbGxpbmdfd2luZG93Ig==",
         "str"
       ]
     ],
@@ -6259,9 +6310,9 @@
       ]
     ],
     [
-      "solve_mode",
+      "solver",
       [
-        "InJvbGxpbmdfd2luZG93Ig==",
+        "ImNwbGV4Ig==",
         "str"
       ]
     ],
@@ -6280,23 +6331,9 @@
       ]
     ],
     [
-      "solver",
-      [
-        "ImNwbGV4Ig==",
-        "str"
-      ]
-    ],
-    [
       "startup_methods",
       [
         "Im5vX3N0YXJ0dXAi",
-        "str"
-      ]
-    ],
-    [
-      "startup_methods",
-      [
-        "ImxpbmVhciI=",
         "str"
       ]
     ],
@@ -6308,9 +6345,30 @@
       ]
     ],
     [
+      "startup_methods",
+      [
+        "ImxpbmVhciI=",
+        "str"
+      ]
+    ],
+    [
       "storage_binding_methods",
       [
-        "ImJpbmRfd2l0aGluX3RpbWVzZXQi",
+        "ImJpbmRfZm9yd2FyZF9vbmx5Ig==",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfd2l0aGluX21vZGVsIg==",
         "str"
       ]
     ],
@@ -6331,14 +6389,7 @@
     [
       "storage_binding_methods",
       [
-        "ImJpbmRfd2l0aGluX21vZGVsIg==",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "ImJpbmRfZm9yd2FyZF9vbmx5Ig==",
+        "ImJpbmRfd2l0aGluX3RpbWVzZXQi",
         "str"
       ]
     ],
@@ -6350,9 +6401,9 @@
       ]
     ],
     [
-      "storage_binding_methods",
+      "storage_nested_fix_method",
       [
-        "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
+        "ImZpeF91c2FnZSI=",
         "str"
       ]
     ],
@@ -6360,13 +6411,6 @@
       "storage_nested_fix_method",
       [
         "ImZpeF9ub3RoaW5nIg==",
-        "str"
-      ]
-    ],
-    [
-      "storage_nested_fix_method",
-      [
-        "ImZpeF9xdWFudGl0eSI=",
         "str"
       ]
     ],
@@ -6380,7 +6424,7 @@
     [
       "storage_nested_fix_method",
       [
-        "ImZpeF91c2FnZSI=",
+        "ImZpeF9xdWFudGl0eSI=",
         "str"
       ]
     ],
@@ -6394,21 +6438,14 @@
     [
       "storage_solve_horizon_methods",
       [
-        "InVzZV9yZWZlcmVuY2VfdmFsdWUi",
+        "InVzZV9yZWZlcmVuY2VfcHJpY2Ui",
         "str"
       ]
     ],
     [
       "storage_solve_horizon_methods",
       [
-        "InVzZV9yZWZlcmVuY2VfcHJpY2Ui",
-        "str"
-      ]
-    ],
-    [
-      "storage_start_end_methods",
-      [
-        "ImZpeF9zdGFydCI=",
+        "InVzZV9yZWZlcmVuY2VfdmFsdWUi",
         "str"
       ]
     ],
@@ -6422,14 +6459,21 @@
     [
       "storage_start_end_methods",
       [
-        "ImZpeF9zdGFydF9lbmQi",
+        "ImZpeF9ub3RoaW5nIg==",
         "str"
       ]
     ],
     [
       "storage_start_end_methods",
       [
-        "ImZpeF9ub3RoaW5nIg==",
+        "ImZpeF9zdGFydCI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_start_end_methods",
+      [
+        "ImZpeF9zdGFydF9lbmQi",
         "str"
       ]
     ],
@@ -6443,6 +6487,13 @@
     [
       "transfer_methods",
       [
+        "ImV4YWN0Ig==",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods",
+      [
         "InJlZ3VsYXIi",
         "str"
       ]
@@ -6450,7 +6501,7 @@
     [
       "transfer_methods",
       [
-        "ImV4YWN0Ig==",
+        "InVuaWRpcmVjdGlvbmFsIg==",
         "str"
       ]
     ],
@@ -6462,7 +6513,35 @@
       ]
     ],
     [
-      "transfer_methods",
+      "transfer_methods_group",
+      [
+        "Im5vX2xvc3Nlc19ub192YXJpYWJsZV9jb3N0Ig==",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "ImRjX3Bvd2VyX2Zsb3dfd2l0aF9hbmdsZXMi",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "ImV4YWN0Ig==",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "InJlZ3VsYXIi",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
         "str"
@@ -6478,49 +6557,7 @@
     [
       "transfer_methods_group",
       [
-        "Im5vX2xvc3Nlc19ub192YXJpYWJsZV9jb3N0Ig==",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "InJlZ3VsYXIi",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "ImV4YWN0Ig==",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
         "InZhcmlhYmxlX2Nvc3Rfb25seSI=",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "ImRjX3Bvd2VyX2Zsb3dfd2l0aF9hbmdsZXMi",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "InVuaWRpcmVjdGlvbmFsIg==",
-        "str"
-      ]
-    ],
-    [
-      "yes_no",
-      [
-        "InllcyI=",
         "str"
       ]
     ],
@@ -6528,6 +6565,13 @@
       "yes_no",
       [
         "Im5vIg==",
+        "str"
+      ]
+    ],
+    [
+      "yes_no",
+      [
+        "InllcyI=",
         "str"
       ]
     ]

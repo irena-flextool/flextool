@@ -246,7 +246,7 @@
       ],
       null,
       null,
-      false
+      true
     ],
     [
       "reserve__upDown__unit__node",
@@ -258,7 +258,7 @@
       ],
       null,
       null,
-      false
+      true
     ]
   ],
   "entities": [
@@ -409,10 +409,6 @@
     [
       "invest_methods",
       "cumulative_limits"
-    ],
-    [
-      "is_active",
-      "yes"
     ],
     [
       "lifetime_methods",
@@ -1163,6 +1159,14 @@
     ],
     [
       "constraint",
+      "is_enabled",
+      "yes",
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
+      "constraint"
+    ],
+    [
+      "constraint",
       "sense",
       "equal",
       "senses",
@@ -1867,6 +1871,14 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      "yes",
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       null,
       null,
@@ -1927,6 +1939,14 @@
       null,
       null,
       "[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      "yes",
+      "yes_no",
+      "Whether the entity is enabled. Set to 'no' to disable without deleting the entity. Constant.",
       "reserve"
     ],
     [
@@ -2903,6 +2923,12 @@
     ],
     [
       "constraint",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "constraint",
       "sense",
       "str",
       0
@@ -3689,6 +3715,12 @@
     ],
     [
       "reserve__upDown__connection__node",
+      "is_enabled",
+      "str",
+      0
+    ],
+    [
+      "reserve__upDown__connection__node",
       "large_failure_ratio",
       "float",
       0
@@ -3751,6 +3783,12 @@
       "reserve__upDown__unit__node",
       "increase_reserve_ratio",
       "float",
+      0
+    ],
+    [
+      "reserve__upDown__unit__node",
+      "is_enabled",
+      "str",
       0
     ],
     [
