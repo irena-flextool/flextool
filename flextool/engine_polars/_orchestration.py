@@ -1497,15 +1497,17 @@ def _drive_cascade(
             # Layer 1/2/3 decisions are identical across rolls of the
             # same base solve, so the operator-facing summary fires once.
             self._autoscale_summary_emitted: set[str] = set()
-            # Warm-path autoscale plan cache: Layer 2 rewrites the
-            # WarmProblem's lazy constraint plans once at first-build;
-            # the plan stays valid across subsequent ``_apply_warm_updates``
-            # reuses because the polars join-based rewrite at
-            # ``_layer2._rewrite_term_lazy`` is itself lazy and re-evaluates
-            # with the updated Params.  The plan is needed on every
-            # warm solve so :func:`_autoscale_unscale_post_solve` can
-            # restore the solution to physical coordinates.  Cleared
-            # whenever ``self._warm_problem`` is dropped.
+            # Warm-path autoscale plan cache: Layer 2 writes side
+            # vectors on the Problem at first-build; the WarmProblem's
+            # canonical matrix bakes them in (and ``_param_cells``
+            # caches the scaled factors for tracked Params).  The plan
+            # stays valid across subsequent ``_apply_warm_updates``
+            # reuses because ``WarmProblem.update_param`` updates HiGHS
+            # cells via the cached factors — no re-scaling, no plan
+            # re-evaluation.  The plan is needed on every warm solve so
+            # :func:`_autoscale_unscale_post_solve` can restore the
+            # solution to physical coordinates.  Cleared whenever
+            # ``self._warm_problem`` is dropped.
             self._autoscale_warm_layer2_plan: "_AutoscaleLayer2Plan | None" = None
         def run(self, complete_solve_name: str) -> int:
             # Optional per-iter phase-timing (opt-in via env var).  Emits
@@ -1781,12 +1783,16 @@ def _drive_cascade(
                     # of internal simplex working set on
                     # poorly-conditioned LPs.
                     #
-                    # First-build only: the Layer 2 polars rewrite at
-                    # :func:`_layer2._rewrite_term_lazy` is lazy, so
-                    # subsequent ``_apply_warm_updates`` Param mutations
-                    # flow through the scaled LHS without re-applying
-                    # Layer 2.  ``self._autoscale_warm_layer2_plan``
-                    # caches the plan for use by
+                    # First-build only: Layer 2 writes side vectors on
+                    # the Problem and ``WarmProblem._initial_build``
+                    # bakes them into the canonical matrix (with
+                    # ``_param_cells`` caching the scaled factors for
+                    # tracked Params).  Subsequent
+                    # ``_apply_warm_updates`` Param mutations update
+                    # HiGHS coefficients via those cached factors — no
+                    # re-canonicalisation, no Layer 2 re-apply.
+                    # ``self._autoscale_warm_layer2_plan`` caches the
+                    # plan for use by
                     # :func:`_autoscale_unscale_post_solve` after every
                     # warm solve (first build AND reuses).
                     (
