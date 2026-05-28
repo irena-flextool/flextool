@@ -260,7 +260,9 @@ def test_p_entity_period_existing_capacity_first_solve(tmp_path: Path) -> None:
         variable_names=["v_invest[battery,p2020]"], col_values=[368.0],
     )
 
-    write_p_entity_period_existing_capacity(h, solve_name="s1", work_folder=work)
+    write_p_entity_period_existing_capacity(
+        h, solve_name="s1", work_folder=work, csv_dump=True,
+    )
     rows = list(csv.DictReader(
         open(work / "solve_data" / "p_entity_period_existing_capacity.csv")
     ))
