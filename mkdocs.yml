@@ -65,6 +65,7 @@ nav:
     - 'Decomposition': dev/decomposition.md
     - 'Database schema and migration': dev/db_schema.md
     - 'Testing': dev/testing.md
+    - 'Environment variables': dev/env_vars.md
   - 'Release notes': release.md
   - Archived:
     - 'Web interface (deprecated)': archived/browser_interface.md
