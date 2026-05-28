@@ -109,7 +109,7 @@ def format_constant_sheet(
     max_row = ws.max_row
     max_col = ws.max_column
 
-    first_param_col = 1 + n_entity_cols + n_extra_cols + 1  # 1-based
+    1 + n_entity_cols + n_extra_cols + 1  # 1-based
 
     for col in range(1, max_col + 1):
         # --- Row 1: description row ---
@@ -414,7 +414,6 @@ def format_timeseries_sheet_v2(
 
     If *row_types* is not provided, it is inferred from *single_param*.
     """
-    max_row = ws.max_row
     max_col = ws.max_column
 
     if row_types is None:

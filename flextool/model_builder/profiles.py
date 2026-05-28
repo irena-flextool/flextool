@@ -119,7 +119,6 @@ def generate_autocorrelated_series(
     result = beta_dist.ppf(uniform, alpha, beta_param) * range_val + dist_min
 
     # Soft clipping: allow ~5% of values outside range, clip the rest
-    clip_margin = 0.0  # Already mapped to range via CDF, minimal clipping needed
     result = np.clip(result, dist_min, dist_max)
 
     return result

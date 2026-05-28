@@ -455,7 +455,6 @@ def add_constraints(
 
     p_unit_c = _commodity_unitsize_param(d)
     cnd = d.cnd_ladder
-    cndi = d.cndi_ladder
 
     # ── 1. commodity_ladder_balance: Σ_i v_trade · unitsize == flow ────
     # LHS: Σ_i v_trade[c, n, d, i] * p_commodity_unitsize[c]

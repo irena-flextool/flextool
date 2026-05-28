@@ -255,7 +255,7 @@ def write_constant_sheet(
 
     # --- Row 1: descriptions ---
     ws.cell(row=1, column=1, value="navigate")
-    n_fixed = len(headers)
+    len(headers)
     for col_idx, hdr in enumerate(all_headers, start=1):
         if hdr == "Entity Alternative":
             ws.cell(row=1, column=col_idx, value="Whether the entity is active in this alternative.")
@@ -514,7 +514,7 @@ def write_periodic_sheet(
 
     # --- Collect data rows ---
     data_rows: list[list[Any]] = []
-    index_col_pos = len(headers) - 1  # 0-based position of index column
+    len(headers) - 1  # 0-based position of index column
 
     for entity_class in spec.entity_classes:
         entities = db_contents.entities.get(entity_class, [])
@@ -708,7 +708,6 @@ def write_nested_periodic_sheet(
                 # Collect nested Map data for this entity+alt
                 nested_data: dict[str, Map] = {}
                 all_outer_indexes: set[str] = set()
-                all_inner_indexes: dict[str, set[str]] = {}
 
                 for pname in nested_params:
                     key = (entity_class, entity_byname, pname, alt)
@@ -2072,7 +2071,7 @@ def _write_param_reference(
     # Get ALL valid params for this layout (for the quadruplet — extra params not shown)
     all_valid = _get_all_param_defs_for_class(spec.entity_classes, db_contents, layout=layout)
     shown_set = set(shown_params)
-    extra_pdefs = [p for p in all_valid if p["name"] not in shown_set]
+    [p for p in all_valid if p["name"] not in shown_set]
 
     pdefs = [all_pdefs_map[p] for p in shown_params if p in all_pdefs_map]
     if not pdefs:
@@ -2901,7 +2900,7 @@ def write_timeseries_sheet_v2(
     single_param = len(spec.parameter_names) == 1
     n_entity_dims = len(spec.entity_columns)
     has_direction = spec.direction_column is not None
-    entity_label = _build_entity_def_label(spec)
+    _build_entity_def_label(spec)
 
     # ── Build header rows following canonical order ───────────────
     row_types: dict[int, str] = {}

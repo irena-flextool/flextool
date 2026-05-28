@@ -258,13 +258,11 @@ def add_constraints(m, d, vars: dict) -> None:
 
     v_invest_p = vars.get("v_invest_p")
     v_invest_n = vars.get("v_invest_n")
-    v_divest_p = vars.get("v_divest_p")
-    v_divest_n = vars.get("v_divest_n")
+    vars.get("v_divest_p")
+    vars.get("v_divest_n")
 
     has_inv_p = v_invest_p is not None
     has_inv_n = v_invest_n is not None
-    has_div_p = v_divest_p is not None
-    has_div_n = v_divest_n is not None
 
     # ─── fix_v_invest_no_investment_eq ──────────────────────────────
     # Pin v_invest[e, d] == 0 on (e, d) ∈ ed_invest_forbidden_no_investment.

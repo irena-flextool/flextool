@@ -210,7 +210,7 @@ def _pt_node_inflow_lf(source: "InputSource",
     fallback ``0.0``.
     """
     raw = _try_param(source, "node", "inflow")
-    schema = {"n": schema_dtype(_enums, "n"),
+    {"n": schema_dtype(_enums, "n"),
               "t": schema_dtype(_enums, "t"),
               "value": pl.Float64}
     empty_explicit_lf = pl.LazyFrame(schema={
@@ -659,7 +659,6 @@ def _read_csv_pairs_dict(provider, path: Path, key_col: int,
     if df is None or df.height == 0 or df.width < 2:
         return out
     other_col = 1 - key_col
-    cols = df.columns
     for row in df.iter_rows():
         if len(row) >= 2 and row[0] and row[1]:
             out.setdefault(str(row[key_col]),

@@ -124,7 +124,7 @@ def order_parameters(
     This ensures the string/float column-type boundary in the import spec
     lines up correctly for roundtrip xlsx compatibility.
     """
-    pdefs_dict = {
+    {
         p["name"]: p for p in db_contents.parameter_definitions.get(entity_class, [])
     }
 

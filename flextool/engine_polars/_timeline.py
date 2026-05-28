@@ -685,7 +685,6 @@ class TimelineConfig:
             provider, p_node_key, p_node_path,
         )
         if p_node_frame is not None and p_node_frame.height > 0:
-            cols = p_node_frame.columns
             # Expected (node, nodeParam, p_node); the 'inflow' rows
             # have value in column index 2.
             for row in p_node_frame.iter_rows():

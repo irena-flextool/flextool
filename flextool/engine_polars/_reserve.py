@@ -311,7 +311,7 @@ def add_constraints(m, d, vars: dict) -> None:
     vq_reserve = vars["vq_reserve"]
     p_unitsize = d.p_unitsize
     rug        = d.reserve_upDown_group                # (r, ud, g)
-    rug_dt     = rug.join(d.dt, how="cross")           # (r, ud, g, d, t)
+    rug.join(d.dt, how="cross")           # (r, ud, g, d, t)
     pruna      = d.process_reserve_upDown_node_active  # (p, r, ud, n)
     gn         = d.group_node.pipe(rename_to_axis, {"n": "n"})       # (g, n)
 

@@ -109,10 +109,9 @@ def run(
         combined_mapping_dfs = {}
 
     # Derive group_node_df for summary plots (needs 'scenario' as column)
-    group_node_df = None
     group_node_combined = combined_mapping_dfs.get('group_node')
     if group_node_combined is not None and not group_node_combined.empty:
-        group_node_df = group_node_combined.reset_index()
+        group_node_combined.reset_index()
 
     # Create or update dispatch config
     dispatch_config = None

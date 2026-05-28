@@ -1060,7 +1060,6 @@ def cast_against_contract(
         # and raise on the first miss.
         bad_axis: AxisSpec | None = None
         bad_token: str = "<unknown>"
-        bad_col: str | None = None
         for col, axis in cast_pairs:
             dtype = axis_enums[axis.name]
             vocab = set(dtype.categories.to_list())
@@ -1071,7 +1070,6 @@ def cast_against_contract(
                 if v not in vocab:
                     bad_axis = axis
                     bad_token = str(v)
-                    bad_col = col
                     break
             if bad_axis is not None:
                 break

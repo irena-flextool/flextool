@@ -728,15 +728,15 @@ def _build_stack_figure(
                 # Negative areas stack downward (col 0 = top → keep order for legend).
                 pos_pairs = []
                 neg_pairs = []
-                for h, l in zip(handles, labels):
-                    if l in df_to_plot.columns and (df_to_plot[l] <= 0).all():
-                        neg_pairs.append((h, l))
+                for h, label in zip(handles, labels):
+                    if label in df_to_plot.columns and (df_to_plot[label] <= 0).all():
+                        neg_pairs.append((h, label))
                     else:
-                        pos_pairs.append((h, l))
+                        pos_pairs.append((h, label))
                 pos_pairs.reverse()
                 ordered = pos_pairs + neg_pairs
                 handles = [h for h, _ in ordered]
-                labels = [l for _, l in ordered]
+                labels = [label for _, label in ordered]
                 legend_x = 1 + LEGEND_GAP / layout.base_width
                 ax.legend(handles, labels, bbox_to_anchor=(legend_x, 1), loc='upper left', fontsize='small', borderaxespad=0)
 

@@ -712,7 +712,6 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
 
     # Find entity element columns (columns in definition row between entity def and first
     # non-structural column).  These are the dimension name columns.
-    entity_element_cols: list[int] = []
     for c in sorted(meta.col_defs.keys()):
         defn = meta.col_defs[c].lower()
         if not (defn == "alternative" or defn.startswith("entity") or

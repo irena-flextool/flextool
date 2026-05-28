@@ -572,10 +572,11 @@ def _process_file_member(
         )
         effective_plot_name = f'{plot_title} \u2014 {member_str}'
 
-        _shift = lambda lvls: [
-            l - sum(1 for fl in file_levels if fl < l)
-            for l in lvls
-        ]
+        def _shift(lvls):
+            return [
+                lvl - sum(1 for fl in file_levels if fl < lvl)
+                for lvl in lvls
+            ]
         fm_grouped_bar_levels = _shift(grouped_bar_levels)
         fm_stack_levels = _shift(stack_levels)
         fm_expand_axis_levels = _shift(expand_axis_levels)

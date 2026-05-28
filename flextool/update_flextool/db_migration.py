@@ -393,7 +393,7 @@ def migrate_database(database_path, up_to: int | None = None):
                 # Only entities whose flow_coefficient was *explicitly set*
                 # are affected; those relying on the default 1.0 already
                 # get max/min = 1.0 from the defaults introduced in v35.
-                parameter_values = db.mapped_table("parameter_value")
+                db.mapped_table("parameter_value")
                 for cls in ("unit__outputNode", "unit__inputNode"):
                     existing = list(db.find_parameter_values(
                         entity_class_name=cls,
@@ -439,7 +439,7 @@ def migrate_database(database_path, up_to: int | None = None):
                 # flow_coefficient value on unit__outputNode: replace x
                 # with 1/x. Defaults (1.0) are left alone; 0 (hydro-
                 # pass-through marker) is left alone.
-                parameter_values = db.mapped_table("parameter_value")
+                db.mapped_table("parameter_value")
                 for pv in list(db.find_parameter_values(
                         entity_class_name="unit__outputNode",
                         parameter_definition_name="flow_coefficient")):
@@ -1642,7 +1642,7 @@ def remove_parameters_manual(db,obj_param_names):
         object_name = name_list[0]
         parameter_name = name_list[1]
         param = db.query(sq_def).filter(sq_def.c.object_class_name == object_name).filter(sq_def.c.parameter_name == parameter_name).one_or_none()
-        if param != None:
+        if param is not None:
             id_list.append(param.id)
 
     try:
@@ -1743,7 +1743,7 @@ def change_optional_output_type(db, filepath):
                 new_output = [(param[0][0], param[0][1], parameter_name, "no", param[0][2])]
                 (num,log) = import_data(db, object_parameter_values = new_output)
     
-    if enable_parameter_definition != None:
+    if enable_parameter_definition is not None:
         db.remove_items('parameter_definition', *[enable_parameter_definition.id,disable_parameter_definition.id])
     try:
         _commit_step(db,"Changed optional outputs")
@@ -3207,7 +3207,7 @@ def _migrate_v54_storage_binding_arrays_to_scalar(db) -> None:
     Post-migration assertion: every remaining row for
     ``node.storage_binding_method`` is verified to have ``type == "str"``.
     """
-    priority_set = set(_STORAGE_BINDING_PRIORITY)
+    set(_STORAGE_BINDING_PRIORITY)
 
     updated: list[tuple[tuple[str, ...], str, list, str]] = []
     for pv in list(db.find_parameter_values(

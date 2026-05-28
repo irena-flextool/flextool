@@ -94,7 +94,7 @@ class ExecutionWindow(tk.Toplevel):
         # We need to call update_idletasks() on parent to get accurate geometry
         parent.update_idletasks()
         main_x = parent.winfo_x()
-        main_y = parent.winfo_y()
+        parent.winfo_y()
         main_w = parent.winfo_width()
         screen_w = parent.winfo_screenwidth()
         screen_h = parent.winfo_screenheight()

@@ -246,7 +246,7 @@ def _setup_rp_scenario(db_url: str, n_rp: int, period_length: int, storage_nodes
     from spinedb_api import DatabaseMapping, import_data
     from flextool.representative_periods.preprocess import preprocess_representative_periods
 
-    timeset_name = preprocess_representative_periods(db_url, "generated_scenario", n_rp, period_length)
+    preprocess_representative_periods(db_url, "generated_scenario", n_rp, period_length)
     hull_alt = f"hull_{n_rp}rp_{period_length}h"
 
     with DatabaseMapping(db_url) as db:

@@ -198,7 +198,7 @@ class ResultViewer(tk.Toplevel):
 
         master.update_idletasks()
         main_x = master.winfo_x()
-        main_y = master.winfo_y()
+        master.winfo_y()
         main_w = master.winfo_width()
         screen_w = master.winfo_screenwidth()
         screen_h = master.winfo_screenheight()
@@ -2030,7 +2030,7 @@ class ResultViewer(tk.Toplevel):
             # before the chosen duration. This keeps the time axis
             # stable when the user toggles between scenarios with
             # different model horizons.
-            duration = self._duration_var.get()
+            self._duration_var.get()
 
             # Spinbox values include the standard steps (always; we no
             # longer trim to <= data_length so the user can dial up to

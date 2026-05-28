@@ -1432,7 +1432,10 @@ class MainWindow(tk.Tk):
             return
 
         changed = False
-        is_external = lambda iid: iid.startswith(_EXT_IID_PREFIX)
+
+        def is_external(iid):
+            return iid.startswith(_EXT_IID_PREFIX)
+
         sources_by_name = {s.name: s for s in self.input_source_mgr._sources}
         for item in self.input_sources_tree.get_children():
             values = self.input_sources_tree.item(item, "values")
@@ -2415,7 +2418,7 @@ class MainWindow(tk.Tk):
         from flextool.update_flextool.db_migration import migrate_database
         info = detect_excel_format(xlsx_path)
 
-        flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
+        Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
         needs_migration = False
 
         if info.format == ExcelFormat.SELF_DESCRIBING and (

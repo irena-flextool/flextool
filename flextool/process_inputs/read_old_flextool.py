@@ -714,7 +714,7 @@ def _read_connections(wb: openpyxl.Workbook) -> list[NodeNodeConnection]:
     c_inv_cost = _col("inv.cost/kW")
     c_life = _col("lifetime")
     c_interest = _col("interest")
-    c_annuity = _col("annuity")
+    _col("annuity")
     c_hvdc = _col("HVDC")
 
     for row in rows[1:]:

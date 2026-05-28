@@ -408,7 +408,7 @@ def test_unit_capacity_period_table_includes_invested(tmp_path: Path, scenario_w
 
     csv = work / "output_csv" / "ncwbic" / "unit_capacity__d.csv"
     assert csv.exists()
-    text = csv.read_text()
+    csv.read_text()
     # Reads as a header + 8 rows (coal_plant × 4 periods + wind_plant × 4).
     df = pd.read_csv(csv)
     coal = df[df["unit"] == "coal_plant"].sort_values("period")

@@ -426,7 +426,7 @@ def test_period_block_multi_resolution_parity(work: str, scenario_workdir) -> No
     out = period_block_multi_resolution_lf(bundle)
     assert out is not None
     pb = out["period_block"].collect()
-    pbs = out["period_block_succ"].collect()
+    out["period_block_succ"].collect()
     pbt = out["period_block_time"].collect()
     # period_block: distinct (d, b_first) per coarse block.
     coarse_use = bundle.layout.entity_block_frame.filter(

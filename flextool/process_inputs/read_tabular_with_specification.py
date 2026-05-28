@@ -325,7 +325,7 @@ class TabularReader:
         Raises:
             ValueError: If sheet not in specification
         """
-        file_path = Path(excel_file_path)
+        Path(excel_file_path)
 
         # Check if table is selected for processing
         if not self.is_table_selected(sheet_name):

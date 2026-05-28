@@ -438,7 +438,7 @@ def _write_storage_units(
             continue
 
         unit_name = _get_unit_name(unit)
-        ut = _get_unit_type(data, unit)
+        _get_unit_type(data, unit)
         storage_node = f"{unit_name}_storage"
         charger_name = f"{unit_name}_charger"
         discharger_name = f"{unit_name}_discharger"
@@ -2732,7 +2732,6 @@ def write_sensitivities_to_db(
 
     with DatabaseMapping(db_url, create=False, upgrade=True) as db:
         counters = _Counters()
-        entities_added: set[tuple[str, tuple[str, ...]]] = set()
         entity_alts_added: set[tuple[str, tuple[str, ...], str]] = set()
 
         # Build entity existence lookup from DB

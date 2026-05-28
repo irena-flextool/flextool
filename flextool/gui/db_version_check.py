@@ -74,12 +74,12 @@ def check_and_upgrade_database(db_path: Path) -> tuple[bool, list[str]]:
     # ── Step 1: SpineDB API schema upgrade ─────────────────────────
     try:
         try:
-            with DatabaseMapping(db_url, create=False, upgrade=False) as db:
+            with DatabaseMapping(db_url, create=False, upgrade=False):
                 pass  # Schema is already current
         except Exception:
             # Schema needs upgrading -- reopen with upgrade=True
             try:
-                with DatabaseMapping(db_url, create=False, upgrade=True) as db:
+                with DatabaseMapping(db_url, create=False, upgrade=True):
                     pass
                 messages.append(f"{db_path.name}: SpineDB schema upgraded to latest version.")
                 was_upgraded = True

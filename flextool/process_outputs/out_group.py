@@ -74,7 +74,7 @@ def nodeGroup_indicators(par, s, v, r, debug):
         potential_sum = r.potentialVREgen_dt[potential_cols].mul(step_dur, axis=0).sum(axis=1)
         curtailed_vre = (potential_sum - vre_flow_sum).clip(lower=0)
         curtailed_vre_share = curtailed_vre / group_inflow.where(group_inflow != 0, pd.NA)
-        curtailed_vre_of_potential_vre = curtailed_vre / potential_sum
+        curtailed_vre / potential_sum
 
         # Filter balance nodes directly from the sets
         balance_set = set(s.node_balance) | set(s.node_balance_period)

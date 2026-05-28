@@ -560,7 +560,6 @@ def _inject_half_flows(
 
     # Capture the original arc rows so we can pull their (d, t) shape and
     # flow_upper Param values.
-    orig_pss = src.process_source_sink
     # Phase E.3: ``src.pss_dt`` is no longer materialised; build it on
     # demand from the constituents.  Half-flow injection always touches
     # the full arc-dt grid for the cross-region arcs, so a one-shot build
@@ -570,7 +569,6 @@ def _inject_half_flows(
     orig_flow_upper_existing = src.p_flow_upper_existing
     orig_unitsize = src.p_unitsize
     orig_eff = src.process_source_sink_eff
-    orig_noEff = src.process_source_sink_noEff
 
     # Build new pss / pss_dt / flow_*/upper rows for each half-flow.
     new_pss_rows: list[dict] = []
@@ -585,7 +583,6 @@ def _inject_half_flows(
     new_flow_upper_rows: list[dict] = []
     new_flow_upper_existing_rows: list[dict] = []
     new_arc_sink_block_dt_rows: list[dict] = []
-    new_arc_sink_block_dt_full = src.arc_sink_block_dt is not None
     new_p_arc_sink_weight_rows: list[dict] = []
 
     # Classification: inherit from the original arc.  When the original

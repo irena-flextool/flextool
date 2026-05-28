@@ -78,7 +78,7 @@ class TestBarChunkColumnReconstruction:
         # Reconstruct each chunk and verify it only contains that subplot's
         # data AND only that expand group's columns.
         for title, selector in plan.effective_plot_specs:
-            rows_sel = selector["rows"]
+            selector["rows"]
             cols_sel = selector["cols"]
             # cols_sel must be full-width tuples matching df.columns
             for c in cols_sel:

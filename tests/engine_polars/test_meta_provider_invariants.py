@@ -409,7 +409,7 @@ def _detect_rule3_shim_definitions(
         docstring = ast.get_docstring(node) or ""
         if _EXEMPT_RE in docstring:
             continue
-        if any(_EXEMPT_RE in l for l in ctx_lines):
+        if any(_EXEMPT_RE in line for line in ctx_lines):
             continue
         out.append(Violation(
             fname, node.lineno,

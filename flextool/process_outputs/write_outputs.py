@@ -341,7 +341,6 @@ def write_summary_csv(par, s, v, r, csv_dir):
     # Get period sets
     period_in_use = complete_period_share_of_year.index
     d_realized_period = s.d_realized_period
-    d_realize_invest = s.d_realize_invest
 
     # Open file and write all content
     with open(fn_summary, 'w') as f:

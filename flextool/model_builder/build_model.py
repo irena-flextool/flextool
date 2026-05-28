@@ -413,7 +413,7 @@ class ModelBuilder:
         # Source grid nodes (for grid-to-grid technologies)
         source_nodes = self.grid_nodes.get(source_name, [])
         source_grid_spec = self.spec.get("grids", {}).get(source_name, {})
-        source_node_group = source_grid_spec.get("node_group", "")
+        source_grid_spec.get("node_group", "")
 
         for i, sink_node in enumerate(sink_nodes):
             location = sink_locations[i] if i < len(sink_locations) else f"loc{i}"

@@ -1168,7 +1168,7 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
                                 .cast(schema_dtype(_enums, "d_first"),
                                        strict=False)))
     pyd_first = pyd_lf.rename({"d": "d_first", "yr": "yr_first"})
-    e_dfirst = (in_methods.join(pf_lf, how="cross")
+    (in_methods.join(pf_lf, how="cross")
                           .pipe(rename_to_axis, {"d_first": "d"})
                           .pipe(lambda lf: lf))  # placeholder for symmetry
     # Resolve lifetime[e, d_first] via cascade.

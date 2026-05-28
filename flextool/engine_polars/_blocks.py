@@ -362,7 +362,7 @@ def _solve_step_duration(
     in Agent 1.1.
     """
     if solve_config is not None:
-        new_step = solve_config if False else None  # type: ignore
+        pass  # type: ignore
     # Solve-level new_stepduration (v50)
     if timeline_config is not None:
         raw = timeline_config.new_step_durations.get(solve)
@@ -608,7 +608,7 @@ def _build_block_timelines(
     # Priority: active_time_list from the orchestration loop (has the
     # trimmed per-solve windowing); otherwise reconstruct from the
     # timeline_config.
-    default_dur = block_assignments.block_step_duration[DEFAULT_BLOCK]
+    block_assignments.block_step_duration[DEFAULT_BLOCK]
     default_periods: dict[str, list[tuple[str, float]]] = {}
 
     if active_time_list is not None:

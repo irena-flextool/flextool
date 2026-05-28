@@ -234,7 +234,6 @@ def test_profile_upper_invest_lhs_tightening(toy_invest_3d):
     p_pen = Param(("n", "d", "t"),
         nb_dt.with_columns(value=pl.lit(1e6)).select("n", "d", "t", "value"))
     # Profile upper = 0.5 in d1/t01 (loose elsewhere).
-    pss = d.process_source_sink
     process_profile_upper = pl.DataFrame(
         {"p": ["u"], "source": ["FUEL_n"], "sink": ["n"], "f": ["fUP"]})
     p_profile_value = Param(("f", "d", "t"),

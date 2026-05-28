@@ -53,7 +53,6 @@ def test_b07_no_non_anticipativity_flow_constraint(toy_2branch_2d):
     emitted (the indirect mechanism that enforces flow continuity).
     """
     d = toy_2branch_2d
-    periods = ["d1", "d2", "d2_b1", "d2_b2"]
     # Inject a process whose sink is the storage node so v_flow exists and
     # the storage_use constraint actually fires.
     pss = pl.DataFrame({"p": ["p"], "source": ["FUEL_n"], "sink": ["s"]})

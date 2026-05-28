@@ -345,9 +345,12 @@ def process_source_sink_canonical(source: "InputSource",
     # their canonical Enum dtype so joins against Enum-keyed frames
     # don't SchemaError on the empty branch.
     _enums_empty = get_global_axis_enums()
-    _empty_lf = lambda *cols: pl.DataFrame(
-        {c: [] for c in cols},
-        schema={c: schema_dtype(_enums_empty, c) for c in cols}).lazy()
+
+    def _empty_lf(*cols):
+        return pl.DataFrame(
+            {c: [] for c in cols},
+            schema={c: schema_dtype(_enums_empty, c) for c in cols},
+        ).lazy()
     if classified is not None and classified.height > 0:
         cls_units = (classified.lazy()
                        .filter(pl.col("klass") == "unit")

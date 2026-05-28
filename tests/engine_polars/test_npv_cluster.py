@@ -317,7 +317,7 @@ def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_workdir):
     work = scenario_workdir(SCENARIO_INFLATION)
     sqlite = work / "tests.sqlite"
     reader = SpineDbReader(sqlite, SCENARIO_INFLATION)
-    data = load_flextool(work, db_reader=reader)
+    load_flextool(work, db_reader=reader)
     provider = _seed_workdir_provider(work)
     active_solve = _read_active_solve(work, provider=provider)
     period_in_use = _period_in_use_set(reader, active_solve, work,

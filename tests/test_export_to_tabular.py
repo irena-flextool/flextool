@@ -389,7 +389,7 @@ class TestConstraintSheet:
     def test_constraint_flow_coeff_values(self, exported_workbook: openpyxl.Workbook) -> None:
         ws = exported_workbook["unit_node_constraint_c"]
         # Find parameter names in row 3
-        headers = {ws.cell(row=3, column=c).value: c for c in range(1, ws.max_column + 1)}
+        {ws.cell(row=3, column=c).value: c for c in range(1, ws.max_column + 1)}
         assert "constraint_flow_coeff" in [ws.cell(row=3, column=c).value for c in range(1, ws.max_column + 1)], (
             "unit_node_constraint_c: 'constraint_flow_coeff' not found in row 3 headers"
         )

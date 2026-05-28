@@ -1015,7 +1015,7 @@ class SpineDbReader:
         # discovery time; TimeSeries / Array fall through to the
         # depth-indexed slot (or ``i`` if we've outrun the discovered
         # index_cols, e.g. a shape-mixed parameter).
-        depth = len(idx_path)
+        len(idx_path)
         if isinstance(v, Map):
             for idx, child in zip(v.indexes, v.values):
                 idx_path.append(_coerce_index(idx))

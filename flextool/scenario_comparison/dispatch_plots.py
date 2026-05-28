@@ -146,7 +146,7 @@ def _build_dispatch_figure(
         all_labels.append('Curtailed')
     if has_demand:
         all_labels.append('Demand')
-    max_label_len = max((len(str(l)) for l in all_labels), default=0)
+    max_label_len = max((len(str(label)) for label in all_labels), default=0)
     legend_width_in = max(1.5, max_label_len * 0.08 + 0.6)
 
     plot_width = 10

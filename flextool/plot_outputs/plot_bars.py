@@ -782,8 +782,8 @@ def _build_bar_figure(
                     ax.axhline(y=boundary, color="grey", linewidth=0.8, linestyle="-")
             else:  # vertical
                 if layout.bar_label_width > 0 and layout.group_label_width > 0:
-                    bar_tick_length = layout.bar_label_width * 72
-                    group_tick_length = layout.total_label_width * 72
+                    layout.bar_label_width * 72
+                    layout.total_label_width * 72
                     group_label_pad = layout.bar_label_width * 72 + 10
                 else:
                     group_label_pad = 10

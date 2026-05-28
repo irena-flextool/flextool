@@ -4624,7 +4624,7 @@ def _build_lookback_rows(processes_min: list[tuple[str, float]],
     if n == 0:
         return rows
     # Build index from (d, t) → position.
-    idx_by_pos: dict[tuple[str, str], int] = {
+    {
         (d, t): i for i, (d, t, _) in enumerate(ordered_steps)
     }
     for proc, min_time in sorted(processes_min):
@@ -6391,7 +6391,7 @@ def dtttdt_from_source(source: "InputSource",
             if b != a and a in anchors_with_self:
                 branch_anchor[b] = a
     out_rows: list[tuple[str, str, str, str, str, str]] = []
-    n_periods = len(period_order)
+    len(period_order)
     # Find within-solve predecessor for first-of-period rows.
     for pi, period in enumerate(period_order):
         steps = per_period.get(period) or []
@@ -6416,7 +6416,7 @@ def dtttdt_from_source(source: "InputSource",
         prev_solve_last_t = prev_solve_steps[-1][0] if prev_solve_steps \
                             else steps[-1][0]
         # Within-period: cyclic over current period.
-        block_last_t = steps[-1][0]
+        steps[-1][0]
         n = len(steps)
         # Track running block_last_t as we walk forward from j=0 to j=n-1.
         # In flextool's reversed loop, block_last initialises to len-1 and
