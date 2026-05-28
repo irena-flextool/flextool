@@ -2422,7 +2422,14 @@ def _drive_cascade(
             #
             # Memory-pressure-yielding for kept Highs instances is a
             # future concern, explicitly out of scope per the user.
-            if not _save_memory:
+            #
+            # ``keep_solutions=True`` opts out of per-iter slimming
+            # entirely — callers like ``tests/test_scenarios.py`` and
+            # any other ``solve_steps``-style end-of-cascade walker
+            # union per-step ``flex_data`` + ``solution`` after the
+            # cascade returns and would crash on the nulled fields
+            # otherwise.
+            if not _save_memory and not keep_solutions:
                 _all_level_keys = getattr(
                     self.state, "_all_level_keys", ()
                 )
@@ -2534,7 +2541,11 @@ def _drive_cascade(
             # the time of writing did not produce a default-changing
             # signal — the knob exists for workloads where the DB
             # re-read dominates wall time.
-            if _save_memory and self._prev_step_key is not None:
+            # ``keep_solutions=True`` opts out (see the warm-slim
+            # block above for the same rationale — callers that union
+            # per-step state after the cascade returns crash on nulled
+            # fields).
+            if _save_memory and not keep_solutions and self._prev_step_key is not None:
                 _prev_step = self._all_steps.get(self._prev_step_key)
                 if _prev_step is not None and _prev_step is not self._all_steps.get(step_key):
                     _prev_step.flex_data = None
