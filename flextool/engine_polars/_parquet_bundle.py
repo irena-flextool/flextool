@@ -17,7 +17,8 @@ who writes what.  It provides:
   Existing writers can opt in by calling this; the existing writers are
   NOT migrated in this phase.
 * :func:`write_manifest` — walks REGISTRY, checks file presence on disk,
-  emits ``manifest.json`` at ``work_folder / "manifest.json"``.  Idempotent.
+  emits ``manifest.json`` at ``work_folder / "output_raw" / "manifest.json"``.
+  Idempotent.
   Logs warnings (not errors) for mismatches: a registered file that
   doesn't exist (and isn't documented as conditional), or a parquet
   file present in ``output_raw/`` / ``output_processed/`` with no
@@ -625,7 +626,7 @@ def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
 
 
 def write_manifest(work_folder: Path | str) -> Path:
-    """Emit ``work_folder / manifest.json`` describing the output bundle.
+    """Emit ``work_folder / output_raw / manifest.json`` describing the output bundle.
 
     Idempotent — safe to call multiple times.  Each call regenerates
     the file from the current on-disk state.
@@ -671,8 +672,16 @@ def write_manifest(work_folder: Path | str) -> Path:
         "files": files,
     }
 
-    manifest_path = work_folder / "manifest.json"
-    work_folder.mkdir(parents=True, exist_ok=True)
+    # Land the manifest under ``output_raw/`` alongside the per-solve
+    # parquets it enumerates.  Keeps ``work_folder`` root clean when
+    # Spine Toolbox (or any other driver) sets ``work_folder`` to a
+    # shared location such as the repo root.  Paths inside the manifest
+    # remain relative to ``work_folder`` (resolved via ``bundle_root``),
+    # so readers can locate every artifact without parsing the manifest
+    # path itself.
+    manifest_dir = work_folder / "output_raw"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
         fh.write("\n")

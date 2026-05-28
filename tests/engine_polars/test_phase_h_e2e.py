@@ -236,7 +236,7 @@ def _validate_manifest(work: Path, *, must_have_raw: bool = True) -> dict:
     entries.
     """
     path = write_manifest(work)
-    assert path == work / "manifest.json"
+    assert path == work / "output_raw" / "manifest.json"
     assert path.is_file(), f"manifest not written to {path}"
     manifest = json.loads(path.read_text())
 
@@ -508,7 +508,7 @@ def test_external_consumer_can_load_bundle(tmp_path: Path, scenario_workdir) -> 
     _run_cascade(db, _SCEN_SINGLE_ROLL, work, csv_disabled=True)
     _validate_manifest(work, must_have_raw=True)
 
-    manifest_path = work / "manifest.json"
+    manifest_path = work / "output_raw" / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
 
     # Simulate an external tool:

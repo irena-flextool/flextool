@@ -48,8 +48,8 @@ from flextool.engine_polars._parquet_bundle import (
 
 def _manifest_for(work_folder: Path) -> dict:
     path = write_manifest(work_folder)
-    assert path == work_folder / "manifest.json", (
-        f"write_manifest must write to <work_folder>/manifest.json; "
+    assert path == work_folder / "output_raw" / "manifest.json", (
+        f"write_manifest must write to <work_folder>/output_raw/manifest.json; "
         f"got {path}"
     )
     assert path.is_file(), f"manifest.json not on disk after write: {path}"
