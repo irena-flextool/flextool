@@ -21,6 +21,7 @@ Two focused constraint tests on the shared minimal fixtures:
 from __future__ import annotations
 
 import dataclasses
+from typing import Any  # noqa: F401  # used in string annotation on _solve
 
 import polars as pl
 import pytest

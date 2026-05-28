@@ -7,10 +7,15 @@ reason — the corresponding self-test asserts the skip happened.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from polar_high import Problem
 from flextool.engine_polars import build_flextool
+
+if TYPE_CHECKING:
+    from polar_high.engine import Solution  # noqa: F401  # used in string annotation
 
 from .conftest import solver_options
 

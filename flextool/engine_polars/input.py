@@ -25,8 +25,12 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 import polars as pl
 from polar_high import Param
+
+if TYPE_CHECKING:
+    from ._input_source import FlexInputSource, InputSource
 
 
 # ---------------------------------------------------------------------------

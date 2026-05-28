@@ -115,6 +115,7 @@ def _provider_read(provider, path: "Path | str") -> "pl.DataFrame":
 _enums: "dict | None" = None
 
 if TYPE_CHECKING:
+    from flextool.engine_polars._block_layout import BlockLayout
     from flextool.engine_polars._input_source import InputSource
     from flextool.engine_polars._solve_context import SolveContext
 

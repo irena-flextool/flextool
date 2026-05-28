@@ -2,8 +2,10 @@
 (built by ``scenario_workdir`` fixture) — parity vs flextool's recorded
 ``v_obj``, plus parameter perturbations validated against a closed-form
 re-evaluation."""
+from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import pytest
 import polars as pl
@@ -11,6 +13,9 @@ import polars as pl
 from polar_high import Problem, Param
 from flextool.engine_polars import load_flextool
 from flextool.engine_polars import build_flextool
+
+if TYPE_CHECKING:
+    from polar_high.engine import Solution  # noqa: F401  # used in string annotation
 
 pytestmark = pytest.mark.solver
 

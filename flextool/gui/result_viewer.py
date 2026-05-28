@@ -10,6 +10,7 @@ import tkinter.font as tkfont
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import ttk
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -34,6 +35,10 @@ from flextool.scenario_comparison.db_reader import (
 from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
 from flextool.scenario_comparison.dispatch_mappings import load_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
+
+if TYPE_CHECKING:
+    from flextool.gui.data_models import PlotSettings
+    from flextool.plot_outputs.plan import PlotPlan
 
 logger = logging.getLogger(__name__)
 

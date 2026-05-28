@@ -98,7 +98,7 @@ def test_dump_csvs_roundtrip(tmp_path, scenario, db_fixture, scenario_workdir):
                 f"orig:\n{a.head(5)}\nreload:\n{b.head(5)}")
     assert not mismatches, (
         f"dump_csvs round-trip failed on {len(mismatches)} field(s) "
-        f"for {scenario or work_name}:\n" + "\n\n".join(mismatches))
+        f"for {scenario or db_fixture}:\n" + "\n\n".join(mismatches))
 
 
 def test_dump_csvs_creates_expected_layout(tmp_path, scenario_workdir):

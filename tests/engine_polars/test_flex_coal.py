@@ -1,7 +1,9 @@
 """Stage-3: polar_high ``coal`` model — single-process commodity-buy
 dispatch.  Parity vs flextool + four perturbations."""
+from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import pytest
 import polars as pl
@@ -9,6 +11,9 @@ import polars as pl
 from polar_high import Problem, Param
 from flextool.engine_polars import load_flextool
 from flextool.engine_polars import build_flextool
+
+if TYPE_CHECKING:
+    from polar_high.engine import Solution  # noqa: F401  # used in string annotation
 
 pytestmark = pytest.mark.solver
 

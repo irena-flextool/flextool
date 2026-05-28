@@ -15,12 +15,17 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 import pandas as pd
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
+
+    from flextool.plot_outputs.config import PlotConfig
 
 logger = logging.getLogger(__name__)
 

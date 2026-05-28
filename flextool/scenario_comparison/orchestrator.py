@@ -193,6 +193,7 @@ def run(
                 _json.dump(dispatch_meta, f, indent=2)
             print(f"Wrote dispatch metadata to: {meta_path}")
         except Exception as exc:
+            import logging as _logging
             _logging.warning("Dispatch metadata computation failed (non-fatal): %s", exc)
 
     # Compute plot plans for the viewer (always in comparison parquet dir)

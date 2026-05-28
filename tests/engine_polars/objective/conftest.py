@@ -14,6 +14,7 @@ duplicating construction.  Adds:
 from __future__ import annotations
 
 import sys
+from typing import Any  # noqa: F401  # used in string annotation on solve_problem
 
 import polars as pl
 import pytest
