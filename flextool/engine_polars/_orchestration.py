@@ -520,10 +520,11 @@ def _autoscale_unscale_post_solve(
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import polars as pl
     from polar_high import Problem, Solution
 
-    from flextool.engine_polars._solve_config import SolveConfig
-    from flextool.engine_polars._timeline import TimelineConfig
     from flextool.engine_polars.input import FlexData
 
 
@@ -847,7 +848,6 @@ class _MemoryRecorder:
         delta_rss = rss_mb - self._rss_prev_mb
         delta_sys = sys_mb - self._sys_prev_mb
         delta_swap = swap_mb - self._swap_prev_mb
-        delta_peak = (peak_mb - self._peak_prev_mb) if peak_mb is not None else None
         # CSV row — only when full diagnostics is enabled and a path was
         # configured.  Always written for every checkpoint (independent
         # of the log-line whitelist) so the CSV remains a complete
@@ -1380,7 +1380,6 @@ def _drive_cascade(
     """
     # Late imports — keep the orchestration module's import surface narrow
     # for callers that only need the dataclass.
-    from flextool.engine_polars._db_loader import FlexToolRunner
     from flextool.engine_polars._solver_base import SolverRunner
     from flextool.engine_polars._native_run_model import native_run_model
 
@@ -1450,7 +1449,7 @@ def _drive_cascade(
     _op = getattr(state, "override_provider", None)
     if _op is not None:
         runner.state.override_provider = _op
-    runner.state.logger.setLevel(logger_level := logging.ERROR)
+    runner.state.logger.setLevel(logging.ERROR)
     # Forward the opt-in memory recorder (no-op when env var unset) so
     # ``_PolarHighCascadeSolver.run`` can fire the first-iter checkpoints.
     runner.state._memory_recorder = getattr(  # type: ignore[attr-defined]
