@@ -61,22 +61,27 @@ def _install_polar_high_determinism() -> None:
 _install_polar_high_determinism()
 
 
-from flextool.engine_polars.input import (
+# Sub-module imports are deliberately placed AFTER
+# _install_polar_high_determinism() above: they pull in polar_high (via
+# `from polar_high import …`) and rely on Problem.add_var / add_cstr
+# already being wrapped at first call. Reordering would break the
+# determinism guarantee documented above.
+from flextool.engine_polars.input import (  # noqa: E402  # see determinism note above
     FlexData, load_flextool,
 )
-from flextool.engine_polars.model import build_flextool
-from flextool.engine_polars.chain import run_chain, ChainStep
-from flextool.engine_polars._input_source import FlexInputSource, CsvSource, InputSource
-from flextool.engine_polars._spinedb_reader import SpineDbReader
-from flextool.engine_polars._inmemory_reader import InMemoryReader
-from flextool.engine_polars._solve_handoff import (
+from flextool.engine_polars.model import build_flextool  # noqa: E402  # see determinism note above
+from flextool.engine_polars.chain import run_chain, ChainStep  # noqa: E402  # see determinism note above
+from flextool.engine_polars._input_source import FlexInputSource, CsvSource, InputSource  # noqa: E402  # see determinism note above
+from flextool.engine_polars._spinedb_reader import SpineDbReader  # noqa: E402  # see determinism note above
+from flextool.engine_polars._inmemory_reader import InMemoryReader  # noqa: E402  # see determinism note above
+from flextool.engine_polars._solve_handoff import (  # noqa: E402  # see determinism note above
     SolveHandoff,
 )
-from flextool.engine_polars._orchestration import (
+from flextool.engine_polars._orchestration import (  # noqa: E402  # see determinism note above
     OrchestrationStep, run_chain_from_db, run_orchestration,
     run_single_solve_from_db,
 )
-from flextool.engine_polars._fast_load import (
+from flextool.engine_polars._fast_load import (  # noqa: E402  # see determinism note above
     FastLoadError, load_flextool_source_only,
 )
 

@@ -26,12 +26,12 @@ for sub in ("src", ".", "tests"):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-import polars as pl
+import polars as pl  # noqa: E402  # imports after sys.path manipulation above
 
-from polar_high import Problem
-from flextool.engine_polars import SpineDbReader, build_flextool, load_flextool
+from polar_high import Problem  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine_polars import SpineDbReader, build_flextool, load_flextool  # noqa: E402  # imports after sys.path manipulation above
 
-from _golden import write_golden, lookup_v_obj_parquet
+from _golden import write_golden, lookup_v_obj_parquet  # noqa: E402  # imports after sys.path manipulation above
 
 
 # (fixture_dirname, sqlite_name, scenario_name).  Scenario maps to

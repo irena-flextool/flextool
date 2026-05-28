@@ -75,6 +75,7 @@ from flextool.engine_polars._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
+from ._derived_walks import period_walk_iterator, WindowMethod
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
@@ -83,8 +84,6 @@ from flextool.engine_polars._axis_enums import (
 # ContextVar) when this is ``None``, so substrate sites pick up
 # activation set by ``load_flextool`` automatically.
 _enums: "dict | None" = None
-
-from ._derived_walks import period_walk_iterator, WindowMethod
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource

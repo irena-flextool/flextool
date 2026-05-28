@@ -29,6 +29,25 @@ from polar_high import Param
 if TYPE_CHECKING:
     from ._input_source import FlexInputSource, InputSource
 
+from . import _group_slack
+from . import _reserve
+from . import _cumulative_invest
+from . import _delay
+from . import _dc_power_flow
+from . import _commodity_ladder
+from ._axis_enums import (  # substrate retained for Path B — see handoff
+    alias_to_axis,
+    cast_dim,
+    cast_flexdata_axes,
+    get_global_axis_enums,
+    rename_to_axis,
+    lit_axis,
+    set_global_axis_enums,
+)
+from ._block_layout import BlockLayout
+from ._emit_provider_io import _provider_key
+from ._input_source import read_csv_fallback
+
 
 # ---------------------------------------------------------------------------
 # Diagnostic gate for `__setattr__` on FlexData.  Production code never
@@ -61,16 +80,6 @@ def _cascade_gate():
         yield
     finally:
         _CASCADE_GATE_ACTIVE = prev
-
-from . import _group_slack
-from . import _reserve
-from . import _cumulative_invest
-from . import _delay
-from . import _dc_power_flow
-from . import _commodity_ladder
-from ._block_layout import BlockLayout
-from ._input_source import read_csv_fallback
-from ._emit_provider_io import _provider_key
 
 
 # ---------------------------------------------------------------------------
@@ -141,15 +150,6 @@ def _provider_open(provider: "object | None", name: str,
     if p.exists():
         return p.open()
     return None
-from ._axis_enums import (  # substrate retained for Path B — see handoff
-    alias_to_axis,
-    cast_dim,
-    cast_flexdata_axes,
-    get_global_axis_enums,
-    rename_to_axis,
-    lit_axis,
-    set_global_axis_enums,
-)
 
 
 # ---------------------------------------------------------------------------

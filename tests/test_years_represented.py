@@ -26,8 +26,8 @@ REPO_ROOT = TEST_DIR.parent
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
-from db_utils import json_to_db
-from flextool.engine_polars import run_chain_from_db
+from db_utils import json_to_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine_polars import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
 
 
 # ---------------------------------------------------------------------------

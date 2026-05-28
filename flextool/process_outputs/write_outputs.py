@@ -1,12 +1,48 @@
+import logging
 import os
 import re
-import pandas as pd
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
 import time
+import warnings
+from datetime import datetime, timezone
+
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend; must precede any pyplot import
+import pandas as pd
 import yaml
+from spinedb_api import DatabaseMapping, from_database, Array
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
+from flextool.process_outputs.out_ancillary import (
+    connection, connection_wards, connection_cf,
+    reserves, investment_duals, inertia_results,
+    slack_variables, input_sets, dc_power_flow,
+    co2_duals,
+)
+from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
+from flextool.process_outputs.out_costs import generic, cost_summaries, CO2
+from flextool.process_outputs.out_flowgroup import flowGroup_indicators
+from flextool.process_outputs.out_flows import (
+    unit_outputNode, unit_inputNode,
+    unit_cf_outputNode, unit_cf_inputNode,
+    unit_VRE_curtailment_and_potential, unit_ramps,
+    unit_online_and_startup,
+)
+from flextool.process_outputs.out_group import (
+    nodeGroup_indicators, nodeGroup_VRE_share,
+    nodeGroup_total_inflow, nodeGroup_flows,
+)
+from flextool.process_outputs.out_node import node_summary, node_additional_results
+from flextool.process_outputs.process_results import post_process_results
+from flextool.process_outputs.read_parameters import (
+    read_parameters,
+    read_parameters_multi,
+)
+from flextool.process_outputs.read_sets import (
+    read_sets,
+    read_sets_multi,
+)
+from flextool.process_outputs.read_variables import read_variables
 
 
 def _parse_rename_entry(entry) -> tuple[str, bool]:
@@ -18,42 +54,6 @@ def _parse_rename_entry(entry) -> tuple[str, bool]:
         return str(entry[0]), bool(entry[1])
     # Bare string (legacy) — treat as name with export=True
     return str(entry), True
-
-from datetime import datetime, timezone
-from flextool.process_outputs.read_variables import read_variables
-from flextool.process_outputs.read_parameters import (
-    read_parameters,
-    read_parameters_multi,
-)
-from flextool.process_outputs.read_sets import (
-    read_sets,
-    read_sets_multi,
-)
-from flextool.process_outputs.process_results import post_process_results
-from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
-from flextool.process_outputs.out_flows import (
-    unit_outputNode, unit_inputNode,
-    unit_cf_outputNode, unit_cf_inputNode,
-    unit_VRE_curtailment_and_potential, unit_ramps,
-    unit_online_and_startup,
-)
-from flextool.process_outputs.out_node import node_summary, node_additional_results
-from flextool.process_outputs.out_costs import generic, cost_summaries, CO2
-from flextool.process_outputs.out_ancillary import (
-    connection, connection_wards, connection_cf,
-    reserves, investment_duals, inertia_results,
-    slack_variables, input_sets, dc_power_flow,
-    co2_duals,
-)
-from flextool.process_outputs.out_group import (
-    nodeGroup_indicators, nodeGroup_VRE_share,
-    nodeGroup_total_inflow, nodeGroup_flows,
-)
-from flextool.process_outputs.out_flowgroup import flowGroup_indicators
-from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
-import logging
-from spinedb_api import DatabaseMapping, from_database, Array
-import warnings
 
 
 def _provider_lookup_df(provider, parent: str, stem: str):
