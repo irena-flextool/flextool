@@ -56,14 +56,13 @@ if str(_TESTS_DIR) not in sys.path:
 from flextool.engine_polars import (  # noqa: E402
     run_chain_from_db,
 )
-from polar_high.engine import _recommend_user_bound_scale  # noqa: E402
 
-# polar-high's geo-midpoint heuristic clamps to [-10, 0].  Mirror the
-# constants here so the smoke assertions stay readable; both ends are
-# baked into ``_recommend_user_bound_scale`` itself.
-USER_BOUND_SCALE_MIN = -10
-USER_BOUND_SCALE_MAX = 0
-
+# Note: this file used to also smoke-test
+# ``polar_high.engine._recommend_user_bound_scale``.  That function
+# was retired when the polar-high autoscale package replaced the
+# in-engine recommender (see ``polar_high.autoscale.__init__``
+# module docstring).  The dependent assertions and their constants
+# were removed; the primary LP-bound-spread invariant remains.
 
 SCENARIO = "5weeks_invest_fullYear_dispatch_coal_wind"
 
@@ -209,22 +208,12 @@ def test_invest_chain_pae_frame_equality(invest_chain_steps, sub_solve):
 # Phase E-h's bug surfaced as a -10 → -19 shift in ``user_bound_scale``;
 # the underlying cause was that the recommendation heuristic anchored to
 # ``abs_max`` and collapsed the bottom end of the bound range below
-# HiGHS' practical precision (~1e-8).  Current heuristic uses
-# geometric-midpoint centering with a clamp at
-# ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX] = [-10, 0]`` — see
-# ``polar_high.engine._recommend_user_bound_scale``.
+# HiGHS' practical precision (~1e-8).
 #
-# This smoke asserts:
-#
-# 1. The post-build LP bound spread (decades of |bound|) stays under a
-#    generous ceiling.  A real regression that pushed Rivendell into
-#    presolve-infeasible territory would manifest here as a sudden jump
-#    from ~3 decades to ~10+ decades.
-# 2. The recommended ``user_bound_scale`` lands in the legitimate
-#    post-clamp range ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.
-#    The pre-fix bug recommended ``-19`` (5 decades past the floor);
-#    this assertion pins that failure mode at the LP-formulation layer
-#    rather than waiting for HiGHS to declare the model infeasible.
+# This smoke asserts the post-build LP bound spread (decades of
+# |bound|) stays under a generous ceiling.  A real regression that
+# pushed Rivendell into presolve-infeasible territory would manifest
+# here as a sudden jump from ~3 decades to ~10+ decades.
 #
 # The post-mortem text suggests requiring ``[-12, -8]`` for invest
 # fixtures, but that range presumes a Rivendell-sized LP whose
@@ -303,23 +292,6 @@ def test_invest_chain_lp_bound_range_smoke(invest_chain_steps, sub_solve):
         f"col_bound={lp_ranges.get('col_bound')!r}"
     )
 
-    col_bound = lp_ranges.get("col_bound")
-    if col_bound is None:
-        # No column bounds reported — the recommendation is trivially 0
-        # (the heuristic only fires off col bounds).  Assert this directly
-        # so a future regression that drops col_bound altogether is loud.
-        scale = 0
-    else:
-        scale = _recommend_user_bound_scale(col_bound[0], col_bound[1])
-    assert USER_BOUND_SCALE_MIN <= scale <= USER_BOUND_SCALE_MAX, (
-        f"sub-solve {sub_solve!r}: _recommend_user_bound_scale returned "
-        f"{scale}, outside the post-clamp range "
-        f"[{USER_BOUND_SCALE_MIN}, {USER_BOUND_SCALE_MAX}]. "
-        f"The geometric-midpoint heuristic in polar_high.engine is supposed "
-        f"to enforce this clamp — a breach here means either the "
-        f"clamp regressed or the recommender bypassed it."
-    )
-
 
 # ---------------------------------------------------------------------------
 # R7 — also smoke ``work_base`` (the trivial-shape anchor)
@@ -376,15 +348,4 @@ def test_work_base_lp_bound_range_smoke(base_steps):
         f"(ceiling {_LP_BOUND_SPREAD_DECADES_MAX}). "
         f"row_bound={lp_ranges.get('row_bound')!r} "
         f"col_bound={lp_ranges.get('col_bound')!r}"
-    )
-
-    col_bound = lp_ranges.get("col_bound")
-    if col_bound is None:
-        scale = 0
-    else:
-        scale = _recommend_user_bound_scale(col_bound[0], col_bound[1])
-    assert USER_BOUND_SCALE_MIN <= scale <= USER_BOUND_SCALE_MAX, (
-        f"work_base: _recommend_user_bound_scale returned "
-        f"{scale}, outside the post-clamp range "
-        f"[{USER_BOUND_SCALE_MIN}, {USER_BOUND_SCALE_MAX}]"
     )
