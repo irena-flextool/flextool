@@ -77,6 +77,17 @@ viewer = ["tsdownsample>=0.1.3", "networkx>=3.0"]
 # automation pinned to ``pip install flextool[engine-polars]`` keeps
 # working.
 engine-polars = []
+# Dev tooling for running the test suite locally and in CI.  ``pytest``
+# itself is included for completeness even though it's transitively
+# pulled in by ``spinetoolbox``.  ``pytest-timeout`` enforces a hard
+# per-test wallclock cap so a HiGHS solve that wedges in a C extension
+# doesn't stall the full sweep (see ``[tool.pytest.ini_options]``
+# below for the default).
+dev = [
+    "pytest>=8.0",
+    "pytest-timeout>=2.3",
+    "ruff>=0.5",
+]
 
 [project.scripts]
 # Primary entry points — kept hyphen-cased for `flextool-*` CLI uniformity.
@@ -104,6 +115,17 @@ markers = [
     "smoke: fast Layer-1 scenarios for the per-commit gate",
 ]
 testpaths = ["tests"]
+# Hard per-test wallclock cap.  Used by ``pytest-timeout`` (installed
+# via ``pip install -e .[dev]``).  The default applies to every test
+# unless overridden with ``@pytest.mark.timeout(N)`` or the CLI
+# ``--timeout=N``.  300 s is comfortable headroom for the slowest
+# legitimate rolling scenarios while still cutting off HiGHS runs
+# that wedge in a C extension and ignore SIGTERM.
+# ``thread`` mode runs the test in a thread and dumps a traceback
+# on timeout — works for tests stuck inside C extensions where the
+# default ``signal`` mode can't fire from a non-main thread.
+timeout = 300
+timeout_method = "thread"
 
 [tool.setuptools.packages.find]
 # Auto-discover all flextool subpackages.  Excludes test/scratch dirs.
