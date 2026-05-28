@@ -331,19 +331,7 @@
       "yes"
     ],
     [
-      "has_capacity_margin",
-      "yes"
-    ],
-    [
-      "has_inertia",
-      "yes"
-    ],
-    [
       "has_invest",
-      "yes"
-    ],
-    [
-      "has_non_synchronous",
       "yes"
     ],
     [
@@ -423,15 +411,7 @@
       "cumulative_limits"
     ],
     [
-      "is_DC",
-      "yes"
-    ],
-    [
       "is_active",
-      "yes"
-    ],
-    [
-      "is_non_synchronous",
       "yes"
     ],
     [
@@ -1052,8 +1032,8 @@
     [
       "connection",
       "is_DC",
-      null,
-      "is_DC",
+      "no",
+      "yes_no",
       "A flag whether the connection is DC (the flow will not be counted as synchronous if there is a non_synchronous_limit). Default false.",
       "network"
     ],
@@ -1284,24 +1264,24 @@
     [
       "group",
       "has_capacity_margin",
-      null,
-      "has_capacity_margin",
+      "no",
+      "yes_no",
       "A flag whether the group of nodes has a capacity margin constraint in the investment mode.",
       "investment"
     ],
     [
       "group",
       "has_inertia",
-      null,
-      "has_inertia",
+      "no",
+      "yes_no",
       "A flag whether the group of nodes has an inertia constraint active.\n",
       "network"
     ],
     [
       "group",
       "has_non_synchronous",
-      null,
-      "has_non_synchronous",
+      "no",
+      "yes_no",
       "A flag whether the group of nodes has the non-synchronous share constraint active.",
       "network"
     ],
@@ -2452,8 +2432,8 @@
     [
       "unit__inputNode",
       "is_non_synchronous",
-      null,
-      "is_non_synchronous",
+      "no",
+      "yes_no",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
     ],
@@ -2548,8 +2528,8 @@
     [
       "unit__outputNode",
       "is_non_synchronous",
-      null,
-      "is_non_synchronous",
+      "no",
+      "yes_no",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
     ],

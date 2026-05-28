@@ -642,28 +642,7 @@
       ]
     ],
     [
-      "has_capacity_margin",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
-      "has_inertia",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
       "has_invest",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
-      "has_non_synchronous",
       [
         "InllcyI=",
         "str"
@@ -803,21 +782,7 @@
       ]
     ],
     [
-      "is_DC",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
       "is_active",
-      [
-        "InllcyI=",
-        "str"
-      ]
-    ],
-    [
-      "is_non_synchronous",
       [
         "InllcyI=",
         "str"
@@ -1746,7 +1711,7 @@
         "bnVsbA==",
         null
       ],
-      "is_DC",
+      "yes_no",
       "A flag whether the connection is DC (the flow will not be counted as synchronous if there is a non_synchronous_limit). Default false.",
       "network"
     ],
@@ -2065,7 +2030,7 @@
         "bnVsbA==",
         null
       ],
-      "has_capacity_margin",
+      "yes_no",
       "A flag whether the group of nodes has a capacity margin constraint in the investment mode.",
       "investment"
     ],
@@ -2076,7 +2041,7 @@
         "bnVsbA==",
         null
       ],
-      "has_inertia",
+      "yes_no",
       "A flag whether the group of nodes has an inertia constraint active.\n",
       "network"
     ],
@@ -2087,7 +2052,7 @@
         "bnVsbA==",
         null
       ],
-      "has_non_synchronous",
+      "yes_no",
       "A flag whether the group of nodes has the non-synchronous share constraint active.",
       "network"
     ],

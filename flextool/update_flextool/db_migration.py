@@ -1556,6 +1556,18 @@ def migrate_database(database_path, up_to: int | None = None):
                 # ``none`` so the new default does not silently
                 # activate the constraint on pre-D.2 data.
                 _migrate_v56_set_unit_node_profile_default_upper_limit(db)
+                # Batch D.3 — retype six boolean-as-enum parameters
+                # (connection.is_DC, group.has_capacity_margin,
+                # group.has_inertia, group.has_non_synchronous,
+                # unit__inputNode.is_non_synchronous,
+                # unit__outputNode.is_non_synchronous) from their
+                # dedicated single-``yes`` value-lists to the shared
+                # ``yes_no`` list; set default to ``"no"`` on each;
+                # drop the five obsolete single-member value-lists.
+                # Existing ``yes`` parameter_value rows are preserved
+                # unchanged because ``yes`` is also a member of
+                # ``yes_no``.
+                _migrate_v56_retype_yes_only_to_yes_no(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -5074,6 +5086,170 @@ def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
         "unit__node__profile entity row(s) with an explicit "
         "method='none' value to preserve the pre-D.2 'no method set' "
         "semantics on legacy data.",
+    )
+
+
+def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
+    """Batch D.3 — retype the six boolean-as-enum parameters from their
+    single-``yes`` dedicated value-lists to the shared ``yes_no``
+    value-list, and drop the five obsolete single-member lists.
+
+    Pre-D.3 the schema declared five dedicated value-lists each carrying
+    a single member ``yes``:
+
+    - ``is_DC``           (referenced by ``connection.is_DC``)
+    - ``has_capacity_margin``   (``group.has_capacity_margin``)
+    - ``has_inertia``           (``group.has_inertia``)
+    - ``has_non_synchronous``   (``group.has_non_synchronous``)
+    - ``is_non_synchronous``    (``unit__inputNode.is_non_synchronous``
+                                 + ``unit__outputNode.is_non_synchronous``)
+
+    That carried two costs: (1) the parameters could not be flipped to
+    ``"no"`` through their value-list bindings even though the engine
+    treats ``no`` as the off state; (2) the six similarly-shaped
+    parameters did not share the same value-list, so schema reviewers
+    had to read each list separately to confirm the enum domain.  D.3
+    rebinds all six parameters to the shared ``yes_no`` list (which
+    carries both ``yes`` and ``no``), sets each default to ``"no"``,
+    and drops the five obsolete single-yes lists.
+
+    Existing ``parameter_value`` rows are PRESERVED unchanged: every
+    pre-D.3 value is the string ``"yes"`` (the only member of the old
+    lists) which is also a valid member of ``yes_no``.  No rewrite is
+    required.
+
+    Step (a) — for each of the six parameters, ``add_update_item`` to
+    rebind ``parameter_value_list_name`` to ``"yes_no"`` and set
+    ``default_value`` to ``"no"``.
+
+    Step (b) — drop the five obsolete value-lists via
+    :func:`db.remove_items` on the matching
+    ``parameter_value_list`` rows.  Safe after step (a) because no
+    parameter_definition still references them.
+
+    Step (c) — verification.  Re-read each of the six
+    parameter_definitions and confirm both the value-list rebind and
+    the ``"no"`` default.  Re-query
+    ``parameter_value_list``/``list_value`` and confirm each of the
+    five legacy lists is gone.  Re-query the surviving
+    ``parameter_value`` rows for the six parameters and confirm each
+    string value is still either ``"yes"`` or ``"no"`` (i.e. a member
+    of the shared list).  Mismatch raises
+    :class:`SpineDBAPIError`.
+    """
+    targets: tuple[tuple[str, str], ...] = (
+        ("connection",       "is_DC"),
+        ("group",            "has_capacity_margin"),
+        ("group",            "has_inertia"),
+        ("group",            "has_non_synchronous"),
+        ("unit__inputNode",  "is_non_synchronous"),
+        ("unit__outputNode", "is_non_synchronous"),
+    )
+    legacy_lists: tuple[str, ...] = (
+        "is_DC",
+        "has_capacity_margin",
+        "has_inertia",
+        "has_non_synchronous",
+        "is_non_synchronous",
+    )
+
+    no_value, no_type = to_database("no")
+
+    # ---- Step (a): rebind each parameter_definition -----------------
+    for entity_class_name, name in targets:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=entity_class_name,
+            name=name,
+            parameter_value_list_name="yes_no",
+            default_value=no_value,
+            default_type=no_type,
+        )
+
+    # ---- Step (b): drop the five obsolete value-lists ---------------
+    pvl_table = db.mapped_table("parameter_value_list")
+    dropped: list[str] = []
+    for legacy_name in legacy_lists:
+        try:
+            vl = db.item(pvl_table, name=legacy_name)
+        except SpineDBAPIError:
+            vl = None
+        if vl is None:
+            continue
+        db.remove_items("parameter_value_list", vl["id"])
+        dropped.append(legacy_name)
+
+    # ---- Step (c): verification -------------------------------------
+    parameter_definitions = db.mapped_table("parameter_definition")
+    for entity_class_name, name in targets:
+        defn = db.item(
+            parameter_definitions,
+            entity_class_name=entity_class_name,
+            name=name,
+        )
+        if defn is None:
+            raise SpineDBAPIError(
+                f"v56 D.3: parameter_definition {entity_class_name}.{name} "
+                "not found after retype."
+            )
+        if defn["parameter_value_list_name"] != "yes_no":
+            raise SpineDBAPIError(
+                f"v56 D.3: {entity_class_name}.{name} value-list rebind "
+                "failed: got "
+                f"{defn['parameter_value_list_name']!r}, expected 'yes_no'."
+            )
+        if from_database(defn["default_value"], defn["default_type"]) != "no":
+            raise SpineDBAPIError(
+                f"v56 D.3: {entity_class_name}.{name} default retype "
+                "failed: got "
+                f"{from_database(defn['default_value'], defn['default_type'])!r}, "
+                "expected 'no'."
+            )
+
+    for legacy_name in legacy_lists:
+        # ``db.item`` raises ``SpineDBAPIError`` when the item was
+        # explicitly removed earlier in this session (vs returning
+        # ``None`` for a never-present name); both outcomes mean
+        # "list is gone", which is what we want.
+        try:
+            vl = db.item(pvl_table, name=legacy_name)
+        except SpineDBAPIError:
+            vl = None
+        if vl is not None:
+            raise SpineDBAPIError(
+                f"v56 D.3: legacy value-list {legacy_name!r} still "
+                "present after removal."
+            )
+
+    for entity_class_name, name in targets:
+        for pv in db.find_parameter_values(
+            entity_class_name=entity_class_name,
+            parameter_definition_name=name,
+        ):
+            if pv["type"] != "str":
+                raise SpineDBAPIError(
+                    f"v56 D.3: {entity_class_name}.{name} row "
+                    f"{pv['entity_byname']!r}/{pv['alternative_name']!r} "
+                    f"has non-str type {pv['type']!r} after retype."
+                )
+            if pv["parsed_value"] not in {"yes", "no"}:
+                raise SpineDBAPIError(
+                    f"v56 D.3: {entity_class_name}.{name} row "
+                    f"{pv['entity_byname']!r}/{pv['alternative_name']!r} "
+                    f"carries value {pv['parsed_value']!r}, expected "
+                    "'yes' or 'no'."
+                )
+
+    _commit_step(
+        db,
+        "v56 D.3: retyped six boolean-as-enum parameters to the shared "
+        "yes_no value-list (connection.is_DC, group.has_capacity_margin, "
+        "group.has_inertia, group.has_non_synchronous, "
+        "unit__inputNode.is_non_synchronous, "
+        "unit__outputNode.is_non_synchronous); set each default to 'no' "
+        "and dropped the five obsolete single-yes value-lists: "
+        f"{sorted(dropped)!r}.  Existing 'yes' parameter_value rows "
+        "are preserved (still valid under yes_no).",
     )
 
 

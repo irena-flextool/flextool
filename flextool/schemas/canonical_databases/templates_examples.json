@@ -1925,7 +1925,7 @@
       "connection",
       "is_DC",
       null,
-      "is_DC",
+      "yes_no",
       "A flag whether the connection is DC (the flow will not be counted as synchronous if there is a non_synchronous_limit). Default false.",
       "network"
     ],
@@ -2166,7 +2166,7 @@
       "group",
       "has_capacity_margin",
       null,
-      "has_capacity_margin",
+      "yes_no",
       "A flag whether the group of nodes has a capacity margin constraint in the investment mode.",
       "investment"
     ],
@@ -2174,7 +2174,7 @@
       "group",
       "has_inertia",
       null,
-      "has_inertia",
+      "yes_no",
       "A flag whether the group of nodes has an inertia constraint active.\n",
       "network"
     ],
@@ -2182,7 +2182,7 @@
       "group",
       "has_non_synchronous",
       null,
-      "has_non_synchronous",
+      "yes_no",
       "A flag whether the group of nodes has the non-synchronous share constraint active.",
       "network"
     ],
@@ -3422,7 +3422,7 @@
       "unit__inputNode",
       "is_non_synchronous",
       null,
-      "is_non_synchronous",
+      "yes_no",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
     ],
@@ -3527,7 +3527,7 @@
       "unit__outputNode",
       "is_non_synchronous",
       null,
-      "is_non_synchronous",
+      "yes_no",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
     ],
@@ -5431,28 +5431,7 @@
       ]
     ],
     [
-      "has_capacity_margin",
-      [
-        "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "has_inertia",
-      [
-        "\"yes\"",
-        "str"
-      ]
-    ],
-    [
       "has_invest",
-      [
-        "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "has_non_synchronous",
       [
         "\"yes\"",
         "str"
@@ -5592,21 +5571,7 @@
       ]
     ],
     [
-      "is_DC",
-      [
-        "\"yes\"",
-        "str"
-      ]
-    ],
-    [
       "is_active",
-      [
-        "\"yes\"",
-        "str"
-      ]
-    ],
-    [
-      "is_non_synchronous",
       [
         "\"yes\"",
         "str"
