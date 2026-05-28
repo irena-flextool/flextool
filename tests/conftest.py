@@ -137,9 +137,21 @@ def pytest_collection_modifyitems(
 
 @pytest.fixture(scope="session")
 def test_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
-    """Import JSON fixture → fresh SQLite DB once per test session."""
+    """Import JSON fixture → fresh SQLite DB once per test session.
+
+    The ``migrate_database`` call is defensive — idempotent at the
+    current schema and only does work if the committed JSON lags the
+    code's ``FLEXTOOL_DB_VERSION``.  Without it, a code-side rename
+    (e.g. commit 109bd689) goes silent until someone reruns
+    ``test_fixtures migrate-all``.  Mirrors the pattern used by all
+    other DB fixtures below.
+    """
+    from flextool.update_flextool.db_migration import migrate_database
+
     db_path = tmp_path_factory.mktemp("db") / "tests.sqlite"
-    return json_to_db(FIXTURES_DIR / "tests.json", db_path)
+    url = json_to_db(FIXTURES_DIR / "tests.json", db_path)
+    migrate_database(url)
+    return url
 
 
 @pytest.fixture(scope="session")
