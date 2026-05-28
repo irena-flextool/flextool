@@ -260,6 +260,13 @@ def test_p_entity_period_existing_capacity_first_solve(tmp_path: Path) -> None:
         variable_names=["v_invest[battery,p2020]"], col_values=[368.0],
     )
 
+    # ``csv_dump=True`` is the public opt-in to disk materialisation
+    # (mirrors the CLI ``--csv-dump`` flag in ``cmd_run_flextool.py``).
+    # Cascade-mode callers pass ``csv_dump=False`` because the Provider
+    # carries the frame in memory; this unit test asserts on the CSV
+    # contract (column order, ``%.8g`` rounding, on-disk layout) so the
+    # opt-in is correct here, not legacy fallback.  Do not drop it
+    # without also moving the assertions to a non-CSV access pattern.
     write_p_entity_period_existing_capacity(
         h, solve_name="s1", work_folder=work, csv_dump=True,
     )
