@@ -13,10 +13,15 @@ The Phase-1 ``test_axis_enums`` blocker (scenario-filter session
 binding) means we exercise the cast against an unscoped Backend —
 the cast is a per-frame dtype contract, independent of which
 scenario filter the Backend was opened with.
+
+Fixture work folders are built dynamically per session via the
+``scenario_workdir`` factory (``tests/conftest.py``).  The pre-v4.0.0
+committed ``tests/engine_polars/data/work_*`` snapshots that this
+module used to read from disk are gone; the backend now opens the
+``tests.sqlite`` materialised on demand from the JSON-backed SpineDB
+fixtures.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -27,19 +32,6 @@ from flextool.spinedb_backend._axis_enums import (
     FlexDataIntegrityError,
     build_axis_enums,
     load_axis_contract,
-)
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-TEST_A_LOT_DB = (
-    REPO_ROOT / "tests" / "engine_polars" / "data" / "work_test_a_lot"
-    / "tests.sqlite"
-)
-
-
-pytestmark = pytest.mark.skipif(
-    not TEST_A_LOT_DB.exists(),
-    reason=f"test_a_lot DB not present at {TEST_A_LOT_DB}",
 )
 
 
@@ -54,8 +46,9 @@ def contract() -> AxisContract:
 
 
 @pytest.fixture(scope="module")
-def backend() -> SpineDBBackend:
-    b = SpineDBBackend(str(TEST_A_LOT_DB))
+def backend(scenario_workdir) -> SpineDBBackend:
+    fixture = scenario_workdir("test_a_lot")
+    b = SpineDBBackend(str(fixture / "tests.sqlite"))
     yield b
     b.close()
 

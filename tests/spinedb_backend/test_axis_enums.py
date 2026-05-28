@@ -10,7 +10,7 @@ JSON shape) implements:
   * :func:`_lookup_similar_classes` — suggestion-builder helper.
 
 These tests pin every behaviour above against the canonical contract
-and a small DB fixture (``work_test_a_lot/tests.sqlite``).
+and a small DB fixture (``test_a_lot``).
 
 The Backend's per-scenario filter is not exercised here — it has a
 pre-existing session-binding bug that's unrelated to Phase 1 (see
@@ -18,10 +18,15 @@ pre-existing session-binding bug that's unrelated to Phase 1 (see
 unscoped vocabulary (no scenario filter) is the right vocabulary for
 the Enum bootstrap anyway: an Enum dtype must cover EVERY token any
 scenario emits, and the unscoped EAV view is the union.
+
+Fixture work folders are built dynamically per session via the
+``scenario_workdir`` factory (``tests/conftest.py``).  The pre-v4.0.0
+committed ``tests/engine_polars/data/work_*`` snapshots that this
+module used to read from disk are gone; the backend now opens the
+``tests.sqlite`` materialised on demand from the JSON-backed SpineDB
+fixtures.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -39,28 +44,6 @@ from flextool.spinedb_backend._axis_enums import (
 
 
 # ---------------------------------------------------------------------------
-# Fixture paths
-# ---------------------------------------------------------------------------
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-TEST_A_LOT_DB = (
-    REPO_ROOT / "tests" / "engine_polars" / "data" / "work_test_a_lot"
-    / "tests.sqlite"
-)
-LADDER_ANNUAL_DB = (
-    REPO_ROOT / "tests" / "engine_polars" / "data"
-    / "work_commodity_ladder_annual" / "tests.sqlite"
-)
-
-
-pytestmark = pytest.mark.skipif(
-    not TEST_A_LOT_DB.exists(),
-    reason=f"test_a_lot DB not present at {TEST_A_LOT_DB}",
-)
-
-
-# ---------------------------------------------------------------------------
 # Module-scoped fixtures — open the Backend once, reuse across tests.
 # ---------------------------------------------------------------------------
 
@@ -71,12 +54,13 @@ def contract() -> AxisContract:
 
 
 @pytest.fixture(scope="module")
-def backend() -> SpineDBBackend:
+def backend(scenario_workdir) -> SpineDBBackend:
     """A long-lived SpineDBBackend on test_a_lot.
 
     No scenario filter — see the module docstring for the rationale.
     """
-    b = SpineDBBackend(str(TEST_A_LOT_DB))
+    fixture = scenario_workdir("test_a_lot")
+    b = SpineDBBackend(str(fixture / "tests.sqlite"))
     yield b
     b.close()
 
@@ -211,19 +195,19 @@ def test_build_axis_enums_parameter_keys_d(
 
 
 def test_build_axis_enums_parameter_keys_i_runtime_depth(
-    contract: AxisContract,
+    contract: AxisContract, scenario_workdir,
 ) -> None:
     """``i`` enum cardinality matches the runtime-discovered tier count
-    of the ``commodity.price_ladder_*`` maps.  Uses a fixture that has
-    a known 2-tier ladder so this gates the discovery logic instead of
+    of the ``commodity.price_ladder_*`` maps.  Uses the ``coal_ladder_annual``
+    scenario (formerly ``work_commodity_ladder_annual``) which has a
+    known 2-tier ladder so this gates the discovery logic instead of
     measuring "≥1"."""
-    if not LADDER_ANNUAL_DB.exists():
-        pytest.skip(f"ladder annual DB not at {LADDER_ANNUAL_DB}")
-    backend_ladder = SpineDBBackend(str(LADDER_ANNUAL_DB))
+    fixture = scenario_workdir("coal_ladder_annual")
+    backend_ladder = SpineDBBackend(str(fixture / "tests.sqlite"))
     try:
         enums = build_axis_enums(backend_ladder, contract)
         i_vocab = enums["i"].categories.to_list()
-        # work_commodity_ladder_annual has a 2-tier ladder (keys "1", "2").
+        # coal_ladder_annual has a 2-tier ladder (keys "1", "2").
         assert i_vocab == ["1", "2"], (
             f"i axis vocab should be ['1','2']; got {i_vocab}"
         )
