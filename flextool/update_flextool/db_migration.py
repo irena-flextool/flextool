@@ -1568,6 +1568,15 @@ def migrate_database(database_path, up_to: int | None = None):
                 # unchanged because ``yes`` is also a member of
                 # ``yes_no``.
                 _migrate_v56_retype_yes_only_to_yes_no(db)
+                # Batch D.4 — drop the redundant ``no`` member from
+                # the ``storage_nested_fix_method`` value-list (the
+                # canonical off-name is ``fix_nothing``, matching the
+                # active-member naming convention on the same list).
+                # Existing ``no`` parameter_value rows are rewritten
+                # to ``fix_nothing`` so the user's intent is preserved
+                # under the canonical spelling.  The parameter_definition
+                # default is already ``fix_nothing`` — unchanged.
+                _migrate_v56_drop_storage_nested_fix_method_no(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -5250,6 +5259,68 @@ def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
         "and dropped the five obsolete single-yes value-lists: "
         f"{sorted(dropped)!r}.  Existing 'yes' parameter_value rows "
         "are preserved (still valid under yes_no).",
+    )
+
+
+def _migrate_v56_drop_storage_nested_fix_method_no(db) -> None:
+    """Batch D.4 — drop the redundant ``no`` member from the
+    ``storage_nested_fix_method`` value-list; rewrite any existing
+    ``no`` parameter_value rows to ``fix_nothing``.
+
+    Pre-D.4 the value-list carried two members that meant the same
+    thing — ``fix_nothing`` and ``no``.  ``fix_nothing`` is the
+    canonical off-name (matches the surrounding off-vs-active member
+    naming on the same list: ``fix_quantity`` / ``fix_price`` /
+    ``fix_usage`` for the active modes).  ``no`` was a legacy artefact;
+    keeping both lets two authors author the same intent two different
+    ways.  D.4 collapses them: rewrite any ``no`` rows to
+    ``fix_nothing`` (preserves the user's intent under the canonical
+    spelling), then drop ``no`` from the list.
+
+    The parameter_definition default is already ``fix_nothing`` (the
+    canonical off-name) and stays unchanged.
+
+    Step (a) — rewrite parameter_value rows.  Mirror the v55
+    storage_binding_rename rewrite: for each ``no`` row, write a
+    fresh ``fix_nothing`` value via ``db.update_parameter_value``.
+    Step (b) — drop the ``no`` list_value.  Same pattern as
+    :func:`_migrate_v55_storage_binding_rename_and_extend` (locate
+    the list_value row by encoded value bytes, ``remove_item``).
+    """
+    rewritten = 0
+    for pv in list(db.find_parameter_values(
+        entity_class_name="node",
+        parameter_definition_name="storage_nested_fix_method",
+    )):
+        if pv["type"] != "str":
+            continue
+        if pv["parsed_value"] != "no":
+            continue
+        new_value_bytes, new_value_type = to_database("fix_nothing")
+        db.update_parameter_value(
+            id=pv["id"],
+            value=new_value_bytes,
+            type=new_value_type,
+        )
+        rewritten += 1
+
+    no_bytes, _ = to_database("no")
+    dropped = False
+    for lv in list(db.find_list_values(
+        parameter_value_list_name="storage_nested_fix_method",
+    )):
+        if lv["value"] == no_bytes:
+            db.remove_item("list_value", lv["id"])
+            dropped = True
+            break
+
+    _commit_step(
+        db,
+        "v56 D.4: dropped redundant 'no' member from the "
+        "storage_nested_fix_method value-list (collapses to canonical "
+        f"'fix_nothing' off-name); rewrote {rewritten} legacy 'no' "
+        "parameter_value row(s) on node.storage_nested_fix_method to "
+        f"'fix_nothing'.  list_value dropped: {dropped}.",
     )
 
 

@@ -5113,13 +5113,6 @@
     [
       "storage_nested_fix_method",
       [
-        "\"no\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_nested_fix_method",
-      [
         "\"fix_usage\"",
         "str"
       ]
