@@ -115,7 +115,7 @@ Parquet is always written for an executed scenario, regardless of any Auto-gen t
 
 The narrow column to the left of the Outputs table holds five user-tunable controls. It is split into a top group and a bottom group by a flexible spacer:
 
-- **Save memory** — checkbox that passes `--save-memory` to scenario runs. After the LP is built, polar-high's polars / numpy LP source is dropped and the HiGHS instance is round-tripped through a temp MPS file before solving, trading ~+90 s I/O per sub-solve for ~5–10 GB lower peak RSS. Also disables warm-LP reuse across cascade iterations (every sub-solve cold-rebuilds).
+- **Save memory** — checkbox that passes `--save-memory` to scenario runs. After the LP is built, polar-high's polars / numpy LP source is dropped, the LP is written to a temp MPS file, and HiGHS solves it in a separate subprocess (via `cmd_solve_mps`) so the solver's working set lives outside the FlexTool address space. Trades ~+90 s I/O per sub-solve for ~5–10 GB lower peak RSS. Also disables warm-LP reuse across cascade iterations (every sub-solve cold-rebuilds).
 - **Debug** — checkbox that passes `--debug --csv-dump` to scenario runs. `--debug` turns on verbose engine logging; `--csv-dump` writes the cascade's processed inputs to disk after the last sub-solve for inspection.
 - **OS theme / Dark / Light** — theme radio buttons. Takes effect on the next launch and is persisted to `projects/projects.yaml`.
 - **Png settings** — opens the plot configuration dialog (see [Png settings](#png-settings)).

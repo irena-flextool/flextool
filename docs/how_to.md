@@ -1043,7 +1043,7 @@ The split sample investment run produces in this case similar results as the one
 
 The cascade keeps several solves' worth of state alive in RAM at once — the just-solved LP, the warm-start shell for the next roll, and the parked Provider state from earlier sub-solves. On continental-scale rolling or nested chains this can push peak RSS into the 10-30 GB range. Two CLI knobs help when peak RSS is the bottleneck rather than wall time:
 
-- `--save-memory` (or `FLEXTOOL_SAVE_MEMORY=1`) — after each LP is built, drops polar-high's polars/numpy LP source and round-trips the HiGHS instance through a temp MPS file before solving. Frees ~5–10 GB on large models at a cost of ~+90 s I/O per sub-solve. Also disables warm-LP reuse, so every sub-solve cold-rebuilds. Use when the machine OOMs, not as a default.
+- `--save-memory` (or `FLEXTOOL_SAVE_MEMORY=1`) — after each LP is built, drops polar-high's polars/numpy LP source, writes the LP to a temp MPS file, and solves it in a separate HiGHS subprocess (via `cmd_solve_mps`) so the solver's working set lives outside the FlexTool address space. Frees ~5–10 GB on large models at a cost of ~+90 s I/O per sub-solve. Also disables warm-LP reuse, so every sub-solve cold-rebuilds. Use when the machine OOMs, not as a default.
 - `--presolve off` — HiGHS' presolve is the largest single contributor to peak RSS on highly-structured LPs (continental power grids, dense capacity-expansion). Turning it off slows the solve but can free several GB. Pair with `--save-memory` for the largest savings.
 
 Both flags are documented in [Terminal / CLI](terminal_workflow.md). The FlexTool GUI's side menu has a **Save memory** checkbox that passes `--save-memory` through to each scenario run.
