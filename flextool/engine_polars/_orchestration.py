@@ -621,6 +621,8 @@ class _MemoryRecorder:
         self._header_emitted: bool = False
         self._path = Path(csv_path) if csv_path is not None else None
         self._started = False
+        # FLEXTOOL_PYRAMID_PROFILE=1: previous RSS for per-batch delta.
+        self._pyramid_prev_rss_mb: float = 0.0
         if self.enabled and self._path is not None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             import csv as _csv
@@ -866,6 +868,25 @@ class _MemoryRecorder:
                     _csv.writer(f).writerow(row)
             except OSError:
                 pass
+        # FLEXTOOL_PYRAMID_PROFILE=1: emit a tab-separated stderr line
+        # for emit_solve_time.* labels (polar-high precedent).  Reuses
+        # the already-computed rss_mb / t_elapsed; zero cost when unset.
+        if (os.environ.get("FLEXTOOL_PYRAMID_PROFILE") == "1"
+                and label.startswith("emit_solve_time.")):
+            delta_pyramid = rss_mb - self._pyramid_prev_rss_mb
+            rss_gb = rss_mb / 1024.0
+            delta_gb = delta_pyramid / 1024.0
+            try:
+                import sys as _sys
+                _sys.stderr.write(
+                    f"[pyramid profile]\tphase={label}\t"
+                    f"rss_gb={rss_gb:.2f}\tdelta_gb={delta_gb:+.2f}\t"
+                    f"t_s={t_elapsed:.1f}\n"
+                )
+                _sys.stderr.flush()
+            except OSError:
+                pass
+            self._pyramid_prev_rss_mb = rss_mb
         # Decide whether to emit the log line.  Regular mode shows only
         # the whitelisted phase labels; ``FLEXTOOL_MEMORY_VERBOSE=1``
         # restores the full per-checkpoint trace.
