@@ -118,7 +118,17 @@ def check_and_upgrade_database(db_path: Path) -> tuple[bool, list[str]]:
                 version_after,
             )
     except Exception as exc:
-        messages.append(f"{db_path.name}: FlexTool version check failed: {exc}")
+        import traceback as _tb
+        tb_text = _tb.format_exc()
+        messages.append(
+            f"{db_path.name}: FlexTool data migration FAILED — migration was "
+            f"cancelled. The database may be partially upgraded; do not modify "
+            f"it before re-running the migration (re-run is safe: completed "
+            f"steps are idempotent). To report this bug, please attach the "
+            f"traceback below.\n\n"
+            f"Error: {exc}\n\n"
+            f"Traceback:\n{tb_text}"
+        )
         logger.warning("FlexTool migration failed for %s: %s", db_path, exc, exc_info=True)
 
     return was_upgraded, messages

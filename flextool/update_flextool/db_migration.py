@@ -5204,7 +5204,26 @@ def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
     no_value, no_type = to_database("no")
 
     # ---- Step (a): rebind each parameter_definition -----------------
+    # spinedb_api refuses to mutate ``parameter_value_list_name`` on a
+    # parameter that already has stored values ("can't modify the
+    # parameter value list of a parameter that already has values").
+    # The pre-D.3 lists each carry only ``"yes"`` so any saved value is
+    # the string ``"yes"`` — also a valid member of ``yes_no``.  We
+    # save them, remove them, rebind the parameter_definition, and then
+    # restore the same rows; the round-trip is byte-stable.
     for entity_class_name, name in targets:
+        saved_values = [
+            (pv["entity_byname"], pv["alternative_name"], pv["value"], pv["type"])
+            for pv in db.find_parameter_values(
+                entity_class_name=entity_class_name,
+                parameter_definition_name=name,
+            )
+        ]
+        for pv in list(db.find_parameter_values(
+            entity_class_name=entity_class_name,
+            parameter_definition_name=name,
+        )):
+            db.remove_item("parameter_value", pv["id"])
         db.add_update_item(
             "parameter_definition",
             entity_class_name=entity_class_name,
@@ -5213,6 +5232,16 @@ def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
             default_value=no_value,
             default_type=no_type,
         )
+        for entity_byname, alt_name, raw_val, raw_type in saved_values:
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name=entity_class_name,
+                entity_byname=entity_byname,
+                parameter_definition_name=name,
+                alternative_name=alt_name,
+                value=raw_val,
+                type=raw_type,
+            )
 
     # ---- Step (b): drop the five obsolete value-lists ---------------
     pvl_table = db.mapped_table("parameter_value_list")
