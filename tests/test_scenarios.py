@@ -220,6 +220,7 @@ def test_scenario(
         scenario_name=scenario,
         work_folder=workdir,
         solver_config_dir=test_solver_config_dir,
+        warm=True,
         # Phase C.5 — the ``solve_steps`` block below consumes every
         # sub-solve's ``flex_data`` + ``solution`` to union par/s over
         # the full dt axis.  Opt out of the slim-step cascade.
