@@ -15,6 +15,11 @@ results/
 # Live HiGHS options — user-editable; seeded from the bundled template on first run
 solver_config/highs.opt
 __pycache__
+# Python build artifacts — setuptools regenerates these on every
+# editable install / build / sdist; never repo assets.
+*.egg-info/
+build/
+dist/
 .idea/
 .claude/
 site/
