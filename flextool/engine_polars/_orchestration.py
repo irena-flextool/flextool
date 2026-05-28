@@ -2309,8 +2309,8 @@ def _drive_cascade(
                 self.state.paths.work_folder, complete_solve_name,
                 provider=getattr(self.state, "current_provider", None),
             )
-            # Slim the PRIOR iter's parked Solution before parking this
-            # iter's.  The prior iter's per-iter writers
+            # Warm-path slim of the PRIOR iter's parked Solution before
+            # parking this iter's.  The prior iter's per-iter writers
             # (``write_outputs_for_solve``) and
             # ``build_handoff_from_solution`` ran before its
             # ``self._all_steps[...] = OrchestrationStep(...)`` deposit
@@ -2331,7 +2331,12 @@ def _drive_cascade(
             # ``/tmp/highs-memory-investigation/`` HiGHS attribution
             # logs for the per-iter ~5.6 KB * ~400 vars * 80 iter =
             # 172 MB climb this addresses.
-            if self._prev_step_key is not None:
+            #
+            # On the COLD path (``_save_memory``) this prev-iter slim is
+            # superseded by the immediate post-write slim below — every
+            # iter's heavy state is released right after ``Outputs
+            # written``.  Skip the prev-iter dance there.
+            if not _save_memory and self._prev_step_key is not None:
                 _prev = self._all_steps.get(self._prev_step_key)
                 if _prev is not None and _prev.solution is not None:
                     _prev_sol = _prev.solution
@@ -2408,6 +2413,52 @@ def _drive_cascade(
                     "outputs_written_end", self.state.logger,
                     user_label="Outputs written",
                 )
+            # Cold-path (save-memory) eager slim of the PRIOR iter's
+            # parked OrchestrationStep.  We can't slim the JUST-parked
+            # step here — the orchestration cli (``cmd_run_flextool``)
+            # passes the LAST step's ``flex_data`` + ``solution`` to
+            # :func:`write_outputs`, and from inside the per-iter callback
+            # we don't yet know which iter is last.  Slimming the PRIOR
+            # iter instead leaves one step's heavy state live at any
+            # given time (the just-parked one) and guarantees the LAST
+            # step survives the cascade intact.
+            #
+            # By the time we reach here the PRIOR iter's per-iter
+            # consumers all ran on its own iter:
+            #
+            # * ``write_outputs_for_solve`` (the writers that needed
+            #   ``sol.highs.allVariableNames()`` / ``getSolution()``
+            #   / ``getLp().row_names_``) — done.
+            # * ``build_handoff_from_solution`` — done; carrier stored
+            #   in ``step.handoff`` survives this slim.
+            # * ``captured_vars`` snapshot — done; lives on
+            #   ``step.captured_vars`` independently of ``sol._vars``.
+            #
+            # On cold the cascade rebuilds the LP from scratch every
+            # sub-solve (warm reuse is disabled via the
+            # ``_warm_disabled_by_save_memory`` branch at the top of
+            # this method), so the prior iter has no further consumer.
+            # Drop everything heavy on it — that is the root-cause fix
+            # for the cross-solve RSS climb on ``--save-memory`` runs.
+            #
+            # ``flex_data_provider`` is dropped here per the Phase 1
+            # default; Phase 3 will revisit based on DB re-read cost
+            # measured on real-model fixtures.
+            if _save_memory and self._prev_step_key is not None:
+                _prev_step = self._all_steps.get(self._prev_step_key)
+                if _prev_step is not None and _prev_step is not self._all_steps.get(step_key):
+                    _prev_step.flex_data = None
+                    _prev_step.flex_data_provider = None
+                    _psol = _prev_step.solution
+                    if _psol is not None:
+                        try:
+                            _psol._vars = {}
+                        except Exception:  # noqa: BLE001
+                            pass
+                        try:
+                            _psol.highs = None
+                        except Exception:  # noqa: BLE001
+                            pass
             return 0
 
     # Drive the cascade via the native ``native_run_model``.  Native

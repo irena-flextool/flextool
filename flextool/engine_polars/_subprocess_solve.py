@@ -95,6 +95,232 @@ def _read_objective_from_sol(sol_path: Path) -> float:
 
 
 # ---------------------------------------------------------------------------
+# HiGHS .sol direct parser + lightweight Highs-shim
+# ---------------------------------------------------------------------------
+#
+# The cold (``--save-memory``) path used to re-load the *entire* MPS via
+# ``highspy.Highs.readModel`` in the parent process — purely to satisfy
+# downstream writers that call ``h.allVariableNames()`` / ``h.getSolution()``
+# / ``h.getLp().row_names_``.  On large LPs (DES: ~10 M rows, 7 M cols)
+# that ``readModel`` accounts for the +33 GB RSS spike at the per-solve
+# ``Solver`` checkpoint — and immediately gets thrown away after the
+# writers finish.  We sidestep it: parse the HiGHS style=0 .sol file
+# directly (it already carries column / row names + primal + dual values)
+# and wrap the arrays in a duck-typed shim that exposes exactly the API
+# surface the writers use.  No 33 GB sidecar Highs instance.
+
+def _parse_highs_sol(
+    sol_path: Path,
+) -> tuple[
+    list[str], list[str],
+    np.ndarray, np.ndarray, np.ndarray,
+]:
+    """Parse a HiGHS style=0 ``.sol`` file into the writer-facing arrays.
+
+    Returns ``(col_names, row_names, col_value, col_dual, row_dual)``.
+    All five live in-process at numpy / list scale — typically a few
+    hundred MB even on the DES-scale LP, vs the +33 GB the equivalent
+    ``Highs.readModel(mps)`` parent re-read used to cost.
+
+    The HiGHS style=0 file format (see ``Highs::writeSolution``):
+
+        Model status
+        <status>
+
+        # Primal solution values
+        Feasible | Infeasible
+        Objective <value>
+        # Columns <N>
+        <name> <value>
+        ...
+        # Rows <M>
+        <name> <value>
+        ...
+
+        # Dual solution values
+        Feasible | Infeasible
+        # Columns <N>
+        <name> <dual>
+        ...
+        # Rows <M>
+        <name> <dual>
+        ...
+
+        # Basis ...   (ignored — basis statuses are not needed by the
+                       parent-side output writers)
+
+    Each ``<name> <value>`` line splits on whitespace; names with
+    embedded spaces are not produced by HiGHS so the simple split is
+    safe.
+    """
+    col_names: list[str] = []
+    row_names: list[str] = []
+    col_value_list: list[float] = []
+    col_dual_list: list[float] = []
+    row_value_list: list[float] = []   # not actually exposed; parse but discard
+    row_dual_list: list[float] = []
+
+    # Three-state parser:
+    #   section   ∈ {"primal", "dual", None}
+    #   bucket    ∈ {"col", "row", None}
+    section: str | None = None
+    bucket: str | None = None
+
+    with open(sol_path) as fh:
+        for raw in fh:
+            line = raw.rstrip("\n")
+            if not line.strip():
+                continue
+            if line.startswith("# Primal solution"):
+                section, bucket = "primal", None
+                continue
+            if line.startswith("# Dual solution"):
+                section, bucket = "dual", None
+                continue
+            if line.startswith("# Basis"):
+                # Basis section ends the data we care about.
+                break
+            if line.startswith("# Columns"):
+                bucket = "col"
+                continue
+            if line.startswith("# Rows"):
+                bucket = "row"
+                continue
+            if line.startswith("#"):
+                # Unrecognised comment header — keep current state.
+                continue
+            if (
+                line.startswith("Model status")
+                or line.startswith("Objective ")
+                or line in ("Feasible", "Infeasible", "Unknown")
+                or line.startswith("HiGHS_basis_file")
+                or line in ("Valid", "None")
+            ):
+                continue
+            # Data row: "<name> <value>"
+            sp = line.rsplit(None, 1)
+            if len(sp) != 2:
+                continue
+            name, val_s = sp
+            try:
+                val = float(val_s)
+            except ValueError:
+                continue
+            if section == "primal" and bucket == "col":
+                col_names.append(name)
+                col_value_list.append(val)
+            elif section == "primal" and bucket == "row":
+                row_names.append(name)
+                row_value_list.append(val)
+            elif section == "dual" and bucket == "col":
+                col_dual_list.append(val)
+            elif section == "dual" and bucket == "row":
+                row_dual_list.append(val)
+
+    col_value = np.asarray(col_value_list, dtype=np.float64)
+    col_dual = (
+        np.asarray(col_dual_list, dtype=np.float64)
+        if col_dual_list else np.zeros(len(col_value), dtype=np.float64)
+    )
+    row_dual = (
+        np.asarray(row_dual_list, dtype=np.float64)
+        if row_dual_list else np.zeros(len(row_names), dtype=np.float64)
+    )
+    return col_names, row_names, col_value, col_dual, row_dual
+
+
+class _SolHighsShim:
+    """Duck-typed stand-in for ``highspy.Highs`` for the cold-path writers.
+
+    The flextool writers under ``process_outputs/`` consume the solver
+    instance via a small, stable surface:
+
+    * ``allVariableNames()`` — list[str] of column names.
+    * ``getSolution()`` — object with ``col_value`` / ``col_dual``
+      / ``row_dual`` attributes (numpy arrays).
+    * ``getLp().row_names_`` — list[str] of constraint names.
+    * ``passColName(cid, name)`` — in-place rename of a column.
+
+    This shim wraps the arrays parsed from the subprocess ``.sol`` file
+    and exposes exactly those four entry points.  Sidesteps the parent-
+    side ``highspy.Highs.readModel`` whose +33 GB RSS bump used to spike
+    at the per-solve ``Solver`` checkpoint on large LPs.
+
+    Memory cost: O(n_cols + n_rows) Python strings + the four numpy
+    arrays — typically a few hundred MB on a 10 M-cell LP vs the tens
+    of GB the full Highs sidecar took.
+    """
+
+    __slots__ = ("_col_names", "_row_names", "_solution", "_lp", "_obj")
+
+    class _SolutionView:
+        __slots__ = ("col_value", "col_dual", "row_dual")
+
+        def __init__(
+            self,
+            col_value: np.ndarray,
+            col_dual: np.ndarray,
+            row_dual: np.ndarray,
+        ):
+            self.col_value = col_value
+            self.col_dual = col_dual
+            self.row_dual = row_dual
+
+    class _LpView:
+        __slots__ = ("row_names_",)
+
+        def __init__(self, row_names: list[str]):
+            self.row_names_ = row_names
+
+    def __init__(
+        self,
+        *,
+        col_names: list[str],
+        row_names: list[str],
+        col_value: np.ndarray,
+        col_dual: np.ndarray,
+        row_dual: np.ndarray,
+        objective: float = 0.0,
+    ):
+        self._col_names = col_names
+        self._row_names = row_names
+        self._solution = self._SolutionView(col_value, col_dual, row_dual)
+        self._lp = self._LpView(row_names)
+        self._obj = objective
+
+    # --- writer-facing API ------------------------------------------------
+
+    def allVariableNames(self) -> list[str]:
+        return self._col_names
+
+    def getSolution(self) -> "_SolHighsShim._SolutionView":
+        return self._solution
+
+    def getLp(self) -> "_SolHighsShim._LpView":
+        return self._lp
+
+    def passColName(self, col_id: int, new_name: str) -> None:
+        # Mirror highspy's in-place rename onto the shim's name array.
+        self._col_names[col_id] = new_name
+
+    def getNumCol(self) -> int:
+        return len(self._col_names)
+
+    def getNumRow(self) -> int:
+        return len(self._row_names)
+
+    def getObjectiveValue(self) -> float:
+        # Used by ``write_v_obj`` (scaled value, the writer un-scales).
+        # Backed by the value we parsed from the ``Objective`` line in
+        # the .sol file.
+        return self._obj
+
+    # Silence / status helpers a few code paths invoke defensively.
+    def silent(self) -> None:  # pragma: no cover - trivial
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Per-solver CLI dispatch (copied from polar-high's _mps_fallback.py)
 # ---------------------------------------------------------------------------
 # Source: ``polar-high-opt/src/polar_high/solvers/_mps_fallback.py``.
@@ -695,10 +921,10 @@ def _solve_highs_subprocess(
     """HiGHS-specific subprocess path (unchanged contract).
 
     Writes MPS via :meth:`Problem.write_mps`, spawns
-    :mod:`flextool.cli.cmd_solve_mps`, reads the .sol back via a fresh
-    :class:`highspy.Highs`.
+    :mod:`flextool.cli.cmd_solve_mps`, parses the .sol back via
+    :func:`_parse_highs_sol` + :class:`_SolHighsShim` — no parent-side
+    ``highspy.Highs.readModel`` (which used to dominate cold-path RSS).
     """
-    import highspy
     from polar_high import Solution
 
     cleanup = work_folder is None
@@ -752,44 +978,27 @@ def _solve_highs_subprocess(
                 cp.returncode, optimal, sol_path,
             )
 
-        h = highspy.Highs()
-        try:
-            h.silent()
-        except Exception:
-            pass
-        ok = (highspy.HighsStatus.kOk, highspy.HighsStatus.kWarning)
-        if h.readModel(str(mps_path)) not in ok:
-            raise RuntimeError(
-                f"parent failed to read MPS back from {mps_path} "
-                f"after subprocess solve",
-            )
-        if h.readSolution(str(sol_path), 0) not in ok:
-            raise RuntimeError(
-                f"parent failed to read solution from {sol_path}",
-            )
-
-        hs = h.getSolution()
-        col_value = np.asarray(hs.col_value, dtype=np.float64)
+        # Parse the .sol directly — no parent-side ``Highs.readModel``.
+        # On large LPs the old path's ``readModel(mps)`` spiked +33 GB
+        # of RSS purely to satisfy ``allVariableNames()`` / ``getSolution()``
+        # on downstream writers; the .sol file already carries names +
+        # primal + duals, and the writers see the same shape via the
+        # ``_SolHighsShim`` wrapper.
+        col_names, row_names, col_value, col_dual, row_dual = (
+            _parse_highs_sol(sol_path)
+        )
         n_cols = len(col_value)
-        row_dual = (
-            np.asarray(hs.row_dual, dtype=np.float64)
-            if hs.row_dual else np.zeros(0, dtype=np.float64)
-        )
-        col_dual = (
-            np.asarray(hs.col_dual, dtype=np.float64)
-            if hs.col_dual else np.zeros(n_cols, dtype=np.float64)
-        )
+        if col_dual.size == 0:
+            col_dual = np.zeros(n_cols, dtype=np.float64)
         obj = _read_objective_from_sol(sol_path)
-        # Recover column names from the read-back HiGHS instance so the
-        # downstream output writer adapter (``_rename_invest_columns``)
-        # can index ``sol.col_names[cid]`` — without these the in-process
-        # path's contract (col_names parallel to col_value) is broken
-        # and the rename pass raises ``IndexError`` before any handoff
-        # writers run.  Mirrors the commercial subprocess path.
-        try:
-            col_names = list(h.allVariableNames())
-        except Exception:
-            col_names = []
+        h = _SolHighsShim(
+            col_names=col_names,
+            row_names=row_names,
+            col_value=col_value,
+            col_dual=col_dual,
+            row_dual=row_dual,
+            objective=obj,
+        )
 
         return Solution(
             optimal=optimal,
@@ -798,7 +1007,7 @@ def _solve_highs_subprocess(
             row_dual=row_dual,
             col_dual=col_dual,
             col_names=col_names,
-            row_names=[],
+            row_names=row_names,
             vars=dict(problem._vars),
             highs=h,
         )
