@@ -545,6 +545,7 @@ _MEM_WHITELIST_LABELS: frozenset[str] = frozenset({
     "Matrix built by polar-high",
     "Solver",
     "Outputs written",
+    "Solve cleanup",
 })
 
 

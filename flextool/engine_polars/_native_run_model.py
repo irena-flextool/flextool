@@ -423,11 +423,32 @@ def native_run_model(state, solver) -> int:
         if i > 0 and level_keys[i] != level_keys[i - 1]:
             print("", flush=True)
 
+        # Between-solves memory snapshot — fires at level-group
+        # boundaries (where the previous iter just emitted the four
+        # phase checkpoints, ending in ``Outputs written``).  Shows
+        # what's left in memory at the solve boundary so cross-solve
+        # retention is visible in the standard log.  The Δ columns
+        # are taken vs. the previous emitted line (``Outputs
+        # written``), so positive Δrss here is memory the previous
+        # solve's outputs phase did not release.
+        _memrec_iter = getattr(state, "_memory_recorder", None)
+        if (
+            i > 0
+            and level_keys[i] != level_keys[i - 1]
+            and _memrec_iter is not None
+        ):
+            try:
+                _memrec_iter.checkpoint(
+                    "solve_cleanup", state.logger,
+                    user_label="Solve cleanup",
+                )
+            except Exception:
+                pass
+
         # Per-sub-solve marker — plain text line (no timer/memory).
         # Always printed so the user can see roll progression even
         # when the four phase checkpoints are suppressed for within-
         # group rolling iters.
-        _memrec_iter = getattr(state, "_memory_recorder", None)
         if _memrec_iter is not None and getattr(_memrec_iter, "verbose", True):
             try:
                 print(
