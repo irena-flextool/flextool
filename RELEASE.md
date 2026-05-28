@@ -1,3 +1,64 @@
+## Release 4.0.0a3 (28.5.2026) — GLPK-style autoscale refactor
+
+Stage A of a two-stage refactor of the polar-high <-> flextool
+autoscale interface, paired with polar-high 2.2.0.  Together they
+replace the pre-existing "rewrite every constraint's lazy plan to
+embed the scaling factors, then re-evaluate from scratch in every
+consumer" model with the GLPK textbook approach: scaling lives in
+two numpy side vectors on `Problem`, and a single canonical CSC
+matrix is built once and shared across consumers.
+
+**What changes in flextool**
+
+- `flextool/engine_polars/autoscale/_layer2.py` — `apply_layer2` no
+  longer mutates `Problem._cstrs` or `Problem._obj_terms`.  It
+  writes the per-column factor into `Problem._layer2_col_factor`
+  (as `1 / cf_math`, the inverse convention required by
+  consumers that multiply rather than divide) and the per-row
+  factor into `Problem._layer2_row_factor` (forward `rf_math`).
+  Sets `Problem._layer2_locked = True` and `Problem._canonical_dirty = True`.
+  `Var.lower` / `Var.upper` continue to be mutated in place — they
+  are scalar per family, the cost is `O(n_var_families)`, and they
+  must be visible to any caller of `Var` (not just to the matrix
+  consumers).  `Layer2Plan`'s public shape is unchanged;
+  `unscale_solution` is byte-for-byte unchanged.
+
+- The four now-dead helper functions are deleted:
+  `_rewrite_term_lazy`, `_rewrite_obj_term_lazy`, `_scale_rhs`,
+  `_rhs_has_vars`.  ~250 LoC net reduction in `_layer2.py`.
+
+- The `POLAR_HIGH_RANGES_MAX_FAMILY_ROWS` family-size skip added in
+  4.0.0a2 to `apply_layer2`'s row-factor loop is no longer needed
+  and was removed.  (The equivalent skip still lives in
+  `bucket_coefficients` — that one is for the in-bucket-walk
+  pattern in Layer 1 detection, unrelated.)
+
+- `flextool/engine_polars/_orchestration.py` — two warm-path
+  comments updated to describe the side-vector design instead of
+  the deleted `_layer2._rewrite_term_lazy` helper.
+
+**Real-workload validation**
+
+The original OOM trigger on DES (`profile_flow_upper_limit`'s
+1.5M-row multi-Param chain in `apply_layer2`) is gone.  A full DES
+smoke run under the new architecture completed 8 of 9 dispatch
+solves with `Model status: Optimal` before OOM-killing at solve 9
+— and that 9th-solve OOM is *not* a refactor regression but a
+pre-existing cross-solve memory build-up that the refactor exposed
+by getting further into the workflow than any previous run.  At
+solve 9's start the process is at 47.6 GB RSS purely from
+accumulated state across solves 1-8; investigation deferred.
+
+Bit-for-bit safety nets (`test_layer2_roundtrip.py` +
+`test_h2_trade_e2e.py::test_h2_trade_autoscale_full_matches_solver_only_bit_for_bit`)
+pass under the new code path.  Full flextool autoscale suite: 51
+passed.  Full polar-high suite: 126 passed / 8 skipped (the one
+pre-existing-hung warm-rolling-speedup test deselected).
+
+**Requires polar-high >= 2.2.0** — the side-vector storage, the
+canonical matrix, and the `_canonical_dirty` flag all live on the
+polar-high `Problem` class.
+
 ## Release 4.0.0a1 (26.5.2026) — first v4 alpha
 
 First public alpha of the v4 line.  The 3.x series ended at 3.47.0
