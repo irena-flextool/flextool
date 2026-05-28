@@ -20,9 +20,10 @@ The tests salvaged here have ongoing value:
 * ``test_load_flextool_*`` — edge cases for the source-aware
   ``load_flextool`` entry point.
 
-* ``test_resolved_default_landed`` — §5.3 default-migration regression
-  matrix: each previously-blocked schema default must surface via
-  ``SpineDbReader.parameter_default``.
+* ``test_resolved_default_landed`` — v56 None-default policy regression
+  matrix: each engine-substituted default must surface as ``None`` via
+  ``SpineDbReader.parameter_default`` (engine-side fallback is the
+  source of truth).
 
 * A handful of singletons (``test_p_entity_max_units_canonical_test_a_lot``,
   ``test_e_invest_total_method_filter_test_a_lot``,
@@ -427,24 +428,30 @@ def test_load_flextool_with_db_reader_solves_correctly(scenario_workdir):
 
 
 # ---------------------------------------------------------------------------
-# §5.3 default-migration regression guard — schema defaults landed
+# v56 None-default policy regression guard — schema defaults stay None
 #
-# Each (entity_class, parameter_name) below was a §5.3 blocker: flextool
-# applied the default via Python convention while the Spine schema
-# declared `default_value = None`.  After the JSON-source updates these
-# defaults must be readable from the regenerated SQLites via
-# `SpineDbReader.parameter_default()`.  Regression here would mean a
-# vendored JSON drifted back to a None default.
+# Each (entity_class, parameter_name) below historically had a Python
+# convention default applied by the engine (1.0 for *_unitsize, 0.0 for
+# loss/rate/load/reservation rows).  The v56 audit (see
+# _audit_reports/v56_default_audit.md and commit 10d9a21f) committed to
+# a "None-default" policy: spinedb_schema.json carries
+# ``default_value = None`` for every such row, and consumers fall back
+# to the engine's hard-coded substitute at read time (see
+# ``_scalar_default`` in _derived_params.py and the min_load comment in
+# _projection_params.py:1101).  Regression here would mean a vendored
+# JSON drifted *to* a non-None default — silently bypassing the
+# engine-side fallback and breaking the contract that the schema only
+# declares user-overridable defaults.
 
 # (entity_class, parameter_name, expected_default)
 RESOLVED_DEFAULTS = [
-    ("unit", "virtual_unitsize", 1.0),
-    ("node", "virtual_unitsize", 1.0),
-    ("connection", "virtual_unitsize", 1.0),
-    ("unit", "min_load", 0.0),
-    ("node", "self_discharge_loss", 0.0),
-    ("model", "inflation_rate", 0.0),
-    ("reserve__upDown__group", "reservation", 0.0),
+    ("unit", "virtual_unitsize", None),
+    ("node", "virtual_unitsize", None),
+    ("connection", "virtual_unitsize", None),
+    ("unit", "min_load", None),
+    ("node", "self_discharge_loss", None),
+    ("model", "inflation_rate", None),
+    ("reserve__upDown__group", "reservation", None),
 ]
 
 
@@ -453,19 +460,20 @@ RESOLVED_DEFAULTS = [
                          ids=[f"{c}.{p}" for c, p, _ in RESOLVED_DEFAULTS])
 def test_resolved_default_landed(entity_class, param_name, expected,
                                   scenario_workdir):
-    """§5.3 default-migration: each resolved blocker must surface its
-    expected schema default through `SpineDbReader.parameter_default`.
-    The fixture (`test_a_lot`) descends from `tests.json`, one of the
-    three updated JSON sources.  This is the regression guard: a future
-    JSON edit that drops a default back to None breaks here rather than
-    silently corrupting Γ.3 LP parity downstream.
+    """v56 None-default policy: each historical Python-convention default
+    must surface as ``None`` through ``SpineDbReader.parameter_default``,
+    confirming the engine-side substitution path is still the source of
+    truth.  The fixture (``test_a_lot``) descends from ``tests.json``,
+    one of the three JSON sources that participate in the policy.  A
+    future JSON edit that bakes a default back into the schema breaks
+    here rather than silently bypassing ``_scalar_default``'s fallback.
     """
     work = scenario_workdir("test_a_lot")
     reader = SpineDbReader(work / "tests.sqlite", "test_a_lot")
     actual = reader.parameter_default(entity_class, param_name)
     assert actual == expected, (
         f"{entity_class}.{param_name} default: expected {expected}, "
-        f"got {actual!r} — §5.3 schema migration regression"
+        f"got {actual!r} — v56 None-default policy regression"
     )
 
 
