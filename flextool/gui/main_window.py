@@ -1950,17 +1950,73 @@ class MainWindow(tk.Tk):
             self.add_source_btn.configure(style="TButton")
 
     def _update_add_to_execution_style(self) -> None:
-        """Highlight 'Add selected to execution list' green when scenarios are checked."""
-        has_checked = False
+        """Update the Add/Create/Update button text + state + style.
+
+        Three states, driven by checked rows in ``available_tree`` and
+        whether on-disk results already exist for those scenarios under
+        ``output_parquet/<resolved subdir>/``:
+
+        - 0 checked scenarios → button is disabled, base label
+          ("Add checked scenarios to the execution list [F9]"), plain
+          style.
+        - ≥1 checked, none with results on disk → enabled, label
+          starts with "Create" (signals "new results"), Accent style.
+        - ≥1 checked, at least one with results on disk → enabled,
+          label starts with "Update" (signals "regen"), Accent style.
+
+        Results existence is checked per scenario via
+        :func:`resolve_subdir_for_read` against ``output_parquet/``.
+        """
+        from flextool.gui.scenario_key import resolve_subdir_for_read
+
+        # Collect checked rows: each row is (source_number, scenario_name).
+        checked_pairs: list[tuple[int, str]] = []
         for item in self.available_tree.get_children():
             values = self.available_tree.item(item, "values")
-            if values and values[0] == CHECK_ON:
-                has_checked = True
-                break
-        if has_checked:
-            self.add_to_execution_btn.configure(style="Accent.TButton")
-        else:
-            self.add_to_execution_btn.configure(style="TButton")
+            if not values or values[0] != CHECK_ON:
+                continue
+            # available_tree columns: ("check", "source_num", "scenario_name")
+            try:
+                src_num = int(values[1])
+            except (ValueError, IndexError):
+                continue
+            checked_pairs.append((src_num, values[2]))
+
+        if not checked_pairs:
+            self.add_to_execution_btn.configure(
+                state="disabled",
+                style="TButton",
+                text="Add checked scenarios to\nthe execution list [F9]",
+            )
+            return
+
+        # Determine whether any checked scenario already has results on
+        # disk under output_parquet/<resolved subdir>/.
+        any_results = False
+        if self.current_project:
+            parquet_root = (
+                get_projects_dir() / self.current_project / "output_parquet"
+            )
+            bare_owners = self.project_settings.bare_output_owners
+            for src_num, scen_name in checked_pairs:
+                subdir = resolve_subdir_for_read(bare_owners, src_num, scen_name)
+                scen_dir = parquet_root / subdir
+                if scen_dir.is_dir():
+                    try:
+                        if any(scen_dir.iterdir()):
+                            any_results = True
+                            break
+                    except OSError:
+                        # Permission / I/O glitch — treat as "no results"
+                        # rather than crashing the trace.
+                        continue
+
+        verb = "Update" if any_results else "Create"
+        self.add_to_execution_btn.configure(
+            state="normal",
+            style="Accent.TButton",
+            text=f"{verb} checked scenarios on\nthe execution list [F9]",
+        )
 
     def _update_execution_menu_style(self) -> None:
         """Highlight 'Execution jobs' when there are jobs and the window is not open."""
