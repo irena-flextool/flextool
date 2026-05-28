@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import shutil
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, messagebox
@@ -11,18 +13,26 @@ from flextool.gui.project_utils import (
     rename_project,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ProjectDialog(tk.Toplevel):
-    """Modal dialog for creating, selecting, and renaming projects.
+    """Modal dialog for creating, selecting, renaming, and deleting projects.
 
-    After the dialog closes, ``self.result`` holds the selected project
-    name or ``None`` if the user cancelled.
+    After the dialog closes:
+      * ``self.result`` holds the selected project name (Open clicked) or
+        ``None`` if the user cancelled.
+      * ``self.deleted_names`` lists projects that were deleted while the
+        dialog was open.  The caller can use it to check whether the
+        currently-open project was removed.
     """
 
-    def __init__(self, parent: tk.Misc) -> None:
+    def __init__(self, parent: tk.Misc, current_project: str | None = None) -> None:
         super().__init__(parent)
         self.title("Project menu")
         self.result: str | None = None
+        self.deleted_names: list[str] = []
+        self._current_project = current_project
 
         # ── Modal behaviour ─────────────────────────────────────────
         self.transient(parent)
@@ -115,17 +125,27 @@ class ProjectDialog(tk.Toplevel):
         self._open_btn = ttk.Button(btn_frame, text="Open the selected project", command=self._on_open, state="disabled")
         self._open_btn.pack(side="left")
 
+        self._delete_btn = ttk.Button(
+            btn_frame,
+            text="Delete",
+            command=self._on_delete_clicked,
+            state="disabled",
+        )
+        self._delete_btn.pack(side="left", padx=(10, 0))
+
         self._cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self._on_cancel)
         self._cancel_btn.pack(side="right")
 
     # ── Helpers ──────────────────────────────────────────────────────
 
     def _update_ok_state(self) -> None:
-        """Enable Ok button when a project is selected, disable otherwise."""
+        """Enable Open/Delete buttons when a project is selected."""
         if self._project_listbox.curselection():
             self._open_btn.configure(state="normal")
+            self._delete_btn.configure(state="normal")
         else:
             self._open_btn.configure(state="disabled")
+            self._delete_btn.configure(state="disabled")
 
     def _populate_projects(self) -> None:
         """Refresh the listbox with the current project list."""
@@ -195,6 +215,135 @@ class ProjectDialog(tk.Toplevel):
         self.result = None
         self.grab_release()
         self.destroy()
+
+    # ── Delete project ──────────────────────────────────────────────
+
+    def _on_delete_clicked(self) -> None:
+        """Confirm and recursively delete the selected project directory."""
+        name = self._selected_project()
+        if name is None:
+            return
+        if not self._confirm_delete(name):
+            return
+
+        project_path = get_projects_dir() / name
+        try:
+            shutil.rmtree(project_path)
+        except OSError as exc:
+            logger.warning("Failed to delete project %r", name, exc_info=True)
+            messagebox.showerror(
+                "Delete failed",
+                f"Could not delete project '{name}':\n\n{exc}",
+                parent=self,
+            )
+            return
+
+        self.deleted_names.append(name)
+        self._populate_projects()
+        self._update_ok_state()
+
+    def _confirm_delete(self, name: str) -> bool:
+        """Show a custom confirmation dialog; return True if user confirms.
+
+        The confirmation uses a capital-letters warning line and a
+        regular-text explanation that the deletion is recursive
+        (including any imported input databases).  Default focus is
+        Cancel so an accidental Enter doesn't trigger deletion.
+        """
+        dlg = tk.Toplevel(self)
+        dlg.title("Delete project")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        # Sizing — match the parent dialog's DPI-aware metric helper.
+        from flextool.gui.ui_metrics import get_metrics
+        _m = get_metrics(dlg)
+        cw, lh = _m.cw, _m.lh
+        wrap_px = cw * 60
+
+        confirmed = {"value": False}
+
+        body = ttk.Frame(dlg, padding=(cw * 2, lh))
+        body.pack(fill="both", expand=True)
+
+        warning_font = tkfont.Font(font="TkDefaultFont")
+        warning_font.configure(weight="bold", size=warning_font.cget("size") + 2)
+
+        ttk.Label(
+            body,
+            text="ALL PROJECT DATA WILL BE PERMANENTLY DELETED",
+            font=warning_font,
+            foreground="#b00020",
+            wraplength=wrap_px,
+            justify="left",
+        ).pack(anchor="w", pady=(0, lh))
+
+        ttk.Label(
+            body,
+            text=(
+                "This includes input databases (Excel, SQLite) that were "
+                "copied or imported into the project folder, as well as "
+                "all output results, plots, settings, and any other files "
+                "under the project directory."
+            ),
+            wraplength=wrap_px,
+            justify="left",
+        ).pack(anchor="w")
+
+        ttk.Label(
+            body,
+            text=f"Project: {name}",
+            wraplength=wrap_px,
+            justify="left",
+        ).pack(anchor="w", pady=(lh, 0))
+
+        # -- Buttons --
+        btn_row = ttk.Frame(dlg, padding=(cw * 2, 0, cw * 2, lh))
+        btn_row.pack(fill="x")
+
+        def _do_delete() -> None:
+            confirmed["value"] = True
+            dlg.grab_release()
+            dlg.destroy()
+
+        def _do_cancel() -> None:
+            confirmed["value"] = False
+            dlg.grab_release()
+            dlg.destroy()
+
+        # Try to use a danger style if the theme defines one; fall back
+        # silently to the default button style.
+        delete_btn = ttk.Button(btn_row, text="Delete", command=_do_delete)
+        try:
+            ttk.Style().configure("Danger.TButton", foreground="#b00020")
+            delete_btn.configure(style="Danger.TButton")
+        except tk.TclError:
+            pass
+        delete_btn.pack(side="left")
+
+        cancel_btn = ttk.Button(btn_row, text="Cancel", command=_do_cancel)
+        cancel_btn.pack(side="right")
+
+        dlg.protocol("WM_DELETE_WINDOW", _do_cancel)
+        dlg.bind("<Escape>", lambda _e: _do_cancel())
+        # Default focus = Cancel (defensive — Enter should not delete).
+        cancel_btn.focus_set()
+
+        # Centre on parent dialog.
+        dlg.update_idletasks()
+        px = self.winfo_rootx()
+        py = self.winfo_rooty()
+        pw = self.winfo_width()
+        ph = self.winfo_height()
+        w = dlg.winfo_width()
+        h = dlg.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+        self.wait_window(dlg)
+        return confirmed["value"]
 
     # ── Inline rename ───────────────────────────────────────────────
 

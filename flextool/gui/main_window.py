@@ -275,9 +275,17 @@ class MainWindow(tk.Tk):
         self.project_combo.bind("<Double-Button-1>", self._on_combo_rename)
 
         self.project_menu_btn = ttk.Button(
-            outer, text="Project menu", command=self._on_project_menu_btn
+            outer, text="Project", command=self._open_project_dialog
         )
         self.project_menu_btn.grid(row=row, column=1, sticky="w", padx=5)
+
+        # UI settings button — top-right corner of row 0.  Holds the
+        # UI-related items (font size cascade + reset window layout)
+        # that previously lived in the Project menu popup.
+        self.ui_settings_btn = ttk.Button(
+            outer, text="UI settings", command=self._on_ui_settings_btn
+        )
+        self.ui_settings_btn.grid(row=row, column=5, sticky="e", padx=5)
 
         # Debug / themes / Png settings / Execution jobs / Results viewer
         # used to occupy row 0 and a separate bottom-of-section row; both
@@ -994,16 +1002,17 @@ class MainWindow(tk.Tk):
 
         self._switch_project(new_name)
 
-    # ── Project menu button ──────────────────────────────────────────
+    # ── UI settings button ───────────────────────────────────────────
 
-    def _on_project_menu_btn(self) -> None:
-        """Show the Project popup menu under the button."""
+    def _on_ui_settings_btn(self) -> None:
+        """Show the UI-settings popup menu under the button.
+
+        Holds two items: a cascading "UI font size" menu (presets plus
+        Custom…) and "Reset window layout".  These were previously part
+        of the Project popup menu but moved here so the Project button
+        can be a direct action that opens Manage projects.
+        """
         menu = tk.Menu(self, tearoff=0)
-        menu.add_command(
-            label="Manage projects...",
-            command=self._open_project_dialog,
-        )
-        menu.add_separator()
 
         # UI font size cascade — radio for presets + Custom...
         size_menu = tk.Menu(menu, tearoff=0)
@@ -1027,9 +1036,11 @@ class MainWindow(tk.Tk):
             label="Reset window layout",
             command=self._on_reset_window_layout,
         )
-        # Post the menu just under the button
-        btn = self.project_menu_btn
-        x = btn.winfo_rootx()
+        # Post the menu just under the button, right-aligned so the
+        # menu's right edge lines up with the button's right edge.
+        btn = self.ui_settings_btn
+        menu.update_idletasks()
+        x = btn.winfo_rootx() + btn.winfo_width() - menu.winfo_reqwidth()
         y = btn.winfo_rooty() + btn.winfo_height()
         try:
             menu.tk_popup(x, y)
@@ -1082,13 +1093,71 @@ class MainWindow(tk.Tk):
             self._set_font_size(new)
 
     def _open_project_dialog(self) -> None:
-        """Open the ProjectDialog and handle its result."""
+        """Open the ProjectDialog and handle its result.
+
+        If the currently-open project was deleted via the dialog, reset
+        the main window to a no-project state (clear combo, drop child
+        windows, repopulate combo) before honouring any new selection.
+        """
         # Import here to avoid circular imports at module level
         from flextool.gui.dialogs.project_dialog import ProjectDialog
 
-        dlg = ProjectDialog(self)
+        dlg = ProjectDialog(self, current_project=self.current_project)
+
+        # Handle deletion of the currently-open project before any
+        # potential switch — _switch_project below would otherwise
+        # overwrite current_project and mask the deletion.
+        if self.current_project and self.current_project in dlg.deleted_names:
+            self._reset_to_no_project()
+
         if dlg.result:
             self._switch_project(dlg.result)
+        else:
+            # No project opened — refresh the combo so any deletions
+            # are reflected even if the user cancelled afterwards.
+            self._refresh_project_combo()
+
+    def _reset_to_no_project(self) -> None:
+        """Tear down per-project state after the open project is deleted."""
+        # Close child windows tied to the deleted project.
+        if self.execution_mgr is not None:
+            try:
+                self.execution_mgr.kill_all()
+            except Exception:
+                logger.warning(
+                    "Failed to kill execution jobs after project deletion",
+                    exc_info=True,
+                )
+        if self.execution_window is not None and self.execution_window.winfo_exists():
+            self.execution_window.destroy()
+        self.execution_window = None
+        if self._result_viewer is not None and self._result_viewer.winfo_exists():
+            self._result_viewer.destroy()
+        self._result_viewer = None
+        self.execution_mgr = None
+        self.output_action_mgr = None
+
+        self.current_project = None
+        # Clear "recent project" so a future launch doesn't try to
+        # re-open the deleted one.
+        if self.global_settings.recent_project:
+            self.global_settings.recent_project = ""
+            try:
+                save_global_settings(get_projects_dir(), self.global_settings)
+            except Exception:
+                logger.warning(
+                    "Failed to clear recent project after deletion",
+                    exc_info=True,
+                )
+
+        # Reset UI: combo, title, highlight the Project button.
+        self._refresh_project_combo()
+        self.project_combo.set("")
+        self.title("FlexTool")
+        try:
+            self.project_menu_btn.configure(style="Accent.TButton")
+        except tk.TclError:
+            pass
 
     def _on_reset_window_layout(self) -> None:
         """Clear all saved window/sash positions and apply defaults.
