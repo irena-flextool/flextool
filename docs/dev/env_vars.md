@@ -95,9 +95,7 @@ them.
 ## See also
 
 - [LP scaling pipeline](scaling.md) — the full autoscale story for
-  `FLEXTOOL_SCALING` and `FLEXTOOL_USER_BOUND_SCALE`. Note: an earlier
-  draft of that page references `FLEXTOOL_AUTO_SCALE`; the current env
-  var is `FLEXTOOL_SCALING` (with `=off` to disable Layers 2/3).
+  `FLEXTOOL_SCALING` and `FLEXTOOL_USER_BOUND_SCALE`.
 - [polar-high — Environment variables](https://nodal-tools.github.io/polar-high/guide/env-vars/) —
   the kernel-side `POLAR_HIGH_*` profiling and tuning variables.
   `FLEXTOOL_SAVE_MEMORY=1` enables the path where

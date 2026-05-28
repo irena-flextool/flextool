@@ -447,8 +447,10 @@ runs on every solve and is documented end-to-end in
   power-of-2 column scalers; `autoscale._layer3.apply_layer3`
   (Layer 3) folds the HiGHS-native `user_bound_scale` and the escape
   valve in a single pass.
-- `--auto-scale=off` (or `FLEXTOOL_AUTO_SCALE=0`) disables the whole
-  package; `--user-bound-scale N` pins Layer 3 manually.
+- `--scaling=off` (or `FLEXTOOL_SCALING=off`) disables Layers 2/3
+  (Layer 1 still runs for the YAML audit); `--user-bound-scale N` pins
+  Layer 3 manually. See [env_vars.md](env_vars.md) for the
+  intermediate `solver_only` / `basic` modes.
 - `autoscale._report.write_report` writes
   `solve_data/autoscale_<solve>.yaml` after each solve; the same
   module's `format_console_summary` prints a one-liner verdict and

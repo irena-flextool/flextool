@@ -41,18 +41,19 @@ The autoscaler is **on by default**. Two ways to turn it off:
 
 ```bash
 python run_flextool.py <input.sqlite> <output_info.sqlite> \
-    --scenario-name <name> --auto-scale=off
+    --scenario-name <name> --scaling=off
 ```
 
 Or set the environment variable:
 
 ```bash
-export FLEXTOOL_AUTO_SCALE=0
+export FLEXTOOL_SCALING=off
 ```
 
-With `--auto-scale=off`, Layer 1 still runs (the YAML audit is always
+With `--scaling=off`, Layer 1 still runs (the YAML audit is always
 written) but Layers 2 and 3 are skipped — the LP arrives at HiGHS in
-raw user units.
+raw user units. See [Environment variables](env_vars.md) for the
+intermediate `solver_only` and `basic` modes.
 
 ### Manual `user_bound_scale` override
 

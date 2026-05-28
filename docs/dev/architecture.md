@@ -631,7 +631,7 @@ slack semantics.
    rounded to 10 significant figures so benign precision artifacts don't
    trip near-duplicate detection.
 5. **Autoscale package** (`engine_polars/autoscale/`). Three layers,
-   on by default (gate via `--auto-scale=off` / `FLEXTOOL_AUTO_SCALE=0`):
+   on by default (gate via `--scaling=off` / `FLEXTOOL_SCALING=off`):
    - **Layer 1 — detect** (`_ranges.py`). Walks the assembled LP and
      computes matrix / cost / bound / RHS log10 ranges plus a
      cross-group max-ratio. Always emitted to the YAML audit; the
