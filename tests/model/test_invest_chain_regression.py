@@ -41,7 +41,6 @@ lived.
 """
 from __future__ import annotations
 
-import json
 import math
 import sys
 from pathlib import Path
@@ -52,10 +51,6 @@ import pytest
 _TESTS_DIR = Path(__file__).resolve().parent.parent
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
-
-from flextool.engine_polars import (  # noqa: E402
-    run_chain_from_db,
-)
 
 # Note: this file used to also smoke-test
 # ``polar_high.engine._recommend_user_bound_scale``.  That function
@@ -70,18 +65,15 @@ SCENARIO = "5weeks_invest_fullYear_dispatch_coal_wind"
 SUB_SOLVES = ("invest_1year_5weeks", "y2020_fullYear_dispatch")
 
 # The post-mortem's R1 target: ``rel_tol=1e-9`` against v3.32.0 golden.
-# The fixture's ``golden_obj.json`` carries the captured objective; we
-# tighten from the file's recorded ``rel_tolerance=1e-6`` to ``1e-9``
-# because the native cascade matches the golden to ~1e-15 today (see
-# the file docstring's ``probe`` block in commit history).
+# The captured value (originally lived in
+# ``tests/engine_polars/data/work_5weeks_invest_fullYear_dispatch_coal_wind/
+# golden_obj.json`` and was deleted alongside the rest of the static
+# work_*/ snapshots in commit ce17da96) is inlined as a constant: it's
+# a one-shot capture from db_direct on 2026-05-04 and the cascade
+# matches it to ~1e-15 today.  Re-capturing involves a single solver
+# run; the rel_tolerance gate here is what defends against drift.
 OBJ_REL_TOL = 1e-9
-
-_FIXTURE_DIR = (
-    _TESTS_DIR
-    / "engine_polars"
-    / "data"
-    / "work_5weeks_invest_fullYear_dispatch_coal_wind"
-)
+GOLDEN_OBJ = 17805916.666666668
 
 # R2 expected frame.  Hand-derived from the fixture spec:
 #   - ``coal_market`` / ``west`` are markets / nodes — ``existing=0``.
@@ -113,6 +105,7 @@ def invest_chain_steps(test_db_url, tmp_path_factory):  # noqa: ANN001
     Uses ``keep_solutions=True`` so each step retains its Provider for
     frame-equality checks (R2).
     """
+    from flextool.engine_polars import run_chain_from_db
     work = tmp_path_factory.mktemp("invest_chain_regression_work")
     steps = run_chain_from_db(
         test_db_url,
@@ -122,11 +115,6 @@ def invest_chain_steps(test_db_url, tmp_path_factory):  # noqa: ANN001
     )
     assert steps, f"run_chain_from_db returned no steps for {SCENARIO!r}"
     return steps
-
-
-def _golden_obj() -> float:
-    with (_FIXTURE_DIR / "golden_obj.json").open() as fh:
-        return float(json.load(fh)["obj"])
 
 
 def test_invest_chain_objective_matches_golden(invest_chain_steps):
@@ -142,7 +130,7 @@ def test_invest_chain_objective_matches_golden(invest_chain_steps):
     assert last.solution is not None and last.solution.optimal, (
         f"Last sub-solve of {SCENARIO!r} did not produce an optimal LP"
     )
-    golden = _golden_obj()
+    golden = GOLDEN_OBJ
     # ``step.obj`` is the un-scaled (model-cost) objective populated by
     # ``OrchestrationStep`` — ``step.solution.obj`` is the raw LP
     # solver value, which may be scaled by the ``scale_the_objective``
@@ -301,6 +289,7 @@ def test_invest_chain_lp_bound_range_smoke(invest_chain_steps, sub_solve):
 @pytest.fixture(scope="module")
 def base_steps(test_db_url, tmp_path_factory):  # noqa: ANN001
     """Run the ``base`` scenario once per module for the work_base smoke."""
+    from flextool.engine_polars import run_chain_from_db
     work = tmp_path_factory.mktemp("invest_chain_regression_base_work")
     steps = run_chain_from_db(
         test_db_url,
