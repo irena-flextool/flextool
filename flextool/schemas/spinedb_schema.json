@@ -1710,7 +1710,7 @@
       "penalty_down",
       10000.0,
       null,
-      "[CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, Period or Time.",
+      "[CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, period, time, period+time, or stochastic time.",
       "basics"
     ],
     [
@@ -1718,7 +1718,7 @@
       "penalty_up",
       10000.0,
       null,
-      "[CUR/MWh] Penalty cost for decreasing consumption in the node (energy not served). Constant, Period or Time.",
+      "[CUR/MWh] Penalty cost for decreasing consumption in the node (energy not served). Constant, period, time, period+time, or stochastic time.",
       "basics"
     ],
     [
@@ -3509,6 +3509,18 @@
     ],
     [
       "node",
+      "penalty_down",
+      "map",
+      2
+    ],
+    [
+      "node",
+      "penalty_down",
+      "map",
+      3
+    ],
+    [
+      "node",
       "penalty_up",
       "float",
       0
@@ -3518,6 +3530,18 @@
       "penalty_up",
       "map",
       1
+    ],
+    [
+      "node",
+      "penalty_up",
+      "map",
+      2
+    ],
+    [
+      "node",
+      "penalty_up",
+      "map",
+      3
     ],
     [
       "node",
