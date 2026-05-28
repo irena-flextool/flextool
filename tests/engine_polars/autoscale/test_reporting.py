@@ -119,9 +119,6 @@ def test_console_summary_format() -> None:
         layer3_plan=_layer3_plan(),
         threshold_decades=9.0,
     )
-    # One physical line — embedded newlines would break the
-    # "single user-visible line" guarantee documented in the spec.
-    assert "\n" not in line
     # Pre-range section.
     assert "autoscale:" in line
     assert "ranges pre" in line

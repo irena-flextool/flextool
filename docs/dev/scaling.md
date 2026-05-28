@@ -79,9 +79,10 @@ sections:
 | `layer2` | per-quantity-type power-of-2 exponents; post-Layer-2 ranges per type; list of quantity-types actually present in the LP. |
 | `layer3` | `user_bound_scale` exponent applied to HiGHS; escape-tier plan. |
 
-A single-line console summary echoes after each solve. On HiGHS
-non-optimal a poorly-scaled-LP hint also prints; the YAML shows which
-layer (or which quantity-type) could not compress the spread.
+A console summary echoes after each solve (wrapped onto one line per
+segment when it would exceed 100 chars). On HiGHS non-optimal a
+poorly-scaled-LP hint also prints; the YAML shows which layer (or
+which quantity-type) could not compress the spread.
 
 ## Limitations to be aware of
 

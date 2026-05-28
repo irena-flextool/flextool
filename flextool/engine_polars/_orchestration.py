@@ -49,6 +49,7 @@ import math
 import os
 import re
 import tempfile
+import textwrap
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -84,6 +85,14 @@ from flextool.engine_polars.autoscale import (
     unscale_solution as _autoscale_unscale_solution,
     write_report as _autoscale_write_report,
 )
+
+
+def _wrap_log_prose(text: str, width: int = 100, indent: str = "  ") -> str:
+    """Wrap a prose log message at ``width`` chars, continuation indented."""
+    return textwrap.fill(
+        text, width=width, subsequent_indent=indent,
+        break_long_words=False, break_on_hyphens=False,
+    )
 
 
 # Legacy ``scale_the_objective`` default — historically the
@@ -606,6 +615,7 @@ class _MemoryRecorder:
         self._rss_prev_mb: float = 0.0
         self._peak_prev_mb: float = 0.0
         self._sys_prev_mb: float = 0.0
+        self._swap_prev_mb: float = 0.0
         self._header_emitted: bool = False
         self._path = Path(csv_path) if csv_path is not None else None
         self._started = False
@@ -725,52 +735,72 @@ class _MemoryRecorder:
     # Label column fits the longest whitelisted label
     # ("Matrix built by polar-high", 26 chars).
     _LABEL_W = 28      # label column (left-aligned)
-    _TIME_W = 10       # cumulative column (right-aligned)
-    _SIZE_W = 12       # MB/GB column (right-aligned); fits "system total"
+    # Each data cell renders "<absolute> (<+/-delta>)" right-aligned
+    # within these widths.  Sized for normal use; cells widen
+    # naturally when values overflow (right-align preserves the gutter).
+    _TIME_CELL_W = 17  # fits e.g. "9999.9s (+999.9)"
+    _MEM_CELL_W = 19   # fits e.g. "-100.00 GB (+99.99)"
+
+    @staticmethod
+    def _pick_size_unit(mb: float) -> tuple[float, str]:
+        """Pick GB vs MB display unit for an absolute MB value.
+        Returns ``(divisor, label)`` — e.g. ``(1024.0, "GB")``.
+        """
+        if abs(mb) >= 1024.0:
+            return 1024.0, "GB"
+        return 1.0, "MB"
 
     @classmethod
-    def _fmt_size(cls, mb: float | None) -> str:
-        """Format an MB value as GB when ≥ 1024 MB, otherwise MB.
-        Right-aligned within ``_SIZE_W`` so a column of these stacks.
-        ``None`` renders as a dash placeholder of the same width.
+    def _fmt_mem_cell(cls, mb: float | None, delta_mb: float | None) -> str:
+        """Render a memory cell as ``"<absolute> (<±delta>)"`` right-
+        aligned within ``_MEM_CELL_W``.  Both numbers are rendered in
+        the unit chosen for the absolute, so the cell reads as a single
+        consistent magnitude (e.g. ``"5.18 GB (+0.21)"`` — both GB).
+        When ``mb`` is None, a single dash fills the cell.
         """
         if mb is None:
-            return f"{'-':>{cls._SIZE_W}}"
-        if mb >= 1024.0:
-            s = f"{mb / 1024.0:.2f} GB"
+            return f"{'-':>{cls._MEM_CELL_W}}"
+        div, label = cls._pick_size_unit(mb)
+        # Two decimals when GB, integer when MB — matches the example.
+        if label == "GB":
+            val = f"{mb / div:.2f} {label}"
         else:
-            s = f"{mb:.0f} MB"
-        return f"{s:>{cls._SIZE_W}}"
+            val = f"{mb / div:.0f} {label}"
+        if delta_mb is None:
+            cell = f"{val} (-)"
+        else:
+            if abs(delta_mb) < (0.005 if label == "GB" else 0.5):
+                delta_str = "+0"
+            else:
+                sign = "+" if delta_mb >= 0 else "-"
+                a = abs(delta_mb) / div
+                fmt = ".2f" if label == "GB" else ".0f"
+                delta_str = f"{sign}{a:{fmt}}"
+            cell = f"{val} ({delta_str})"
+        return f"{cell:>{cls._MEM_CELL_W}}"
 
     @classmethod
-    def _fmt_delta(cls, delta_mb: float | None) -> str:
-        """Format a signed delta in MB / GB, right-aligned to
-        ``_SIZE_W``.  ``None`` renders as a dash placeholder of the
-        same width.  Near-zero values render as ``+0`` rather than
-        signed-rounded noise.
+    def _fmt_time_cell(cls, t_elapsed: float, t_section: float | None) -> str:
+        """Render the time cell as ``"<elapsed>s (+<section>)"`` right-
+        aligned within ``_TIME_CELL_W``.  First-row ``t_section is None``
+        renders ``"<elapsed>s (-)"``.
         """
-        if delta_mb is None:
-            return f"{'-':>{cls._SIZE_W}}"
-        if abs(delta_mb) < 0.5:
-            return f"{'+0':>{cls._SIZE_W}}"
-        sign = "+" if delta_mb >= 0 else "-"
-        a = abs(delta_mb)
-        if a >= 1024.0:
-            s = f"{sign}{a / 1024.0:.2f} GB"
+        if t_section is None:
+            cell = f"{t_elapsed:.1f}s (-)"
         else:
-            s = f"{sign}{a:.0f} MB"
-        return f"{s:>{cls._SIZE_W}}"
+            sign = "+" if t_section >= 0 else "-"
+            cell = f"{t_elapsed:.1f}s ({sign}{abs(t_section):.1f})"
+        return f"{cell:>{cls._TIME_CELL_W}}"
 
     def _emit_header(self) -> None:
         """Print the column-header line for the phase-progress table."""
         blank_label = " " * self._LABEL_W
-        tw = self._SIZE_W
-        tcol = self._TIME_W
         header = (
-            f"{blank_label}  {'cumulative':>{tcol}}  "
-            f"| {'ΔRSS memory':>{tw}}  {'Δsystem':>{tw}}  "
-            f"| {'RSS memory':>{tw}}  {'system total':>{tw}}  "
-            f"{'system swap':>{tw}}"
+            f"{blank_label}  "
+            f"{'time':^{self._TIME_CELL_W}}  "
+            f"|  {'RSS memory':^{self._MEM_CELL_W}}  "
+            f"|  {'system memory':^{self._MEM_CELL_W}}  "
+            f"|  {'system swap':^{self._MEM_CELL_W}}"
         )
         try:
             print(header, flush=True)
@@ -815,6 +845,7 @@ class _MemoryRecorder:
         t_section = t_elapsed - (self._t_prev - self.t0)
         delta_rss = rss_mb - self._rss_prev_mb
         delta_sys = sys_mb - self._sys_prev_mb
+        delta_swap = swap_mb - self._swap_prev_mb
         delta_peak = (peak_mb - self._peak_prev_mb) if peak_mb is not None else None
         # CSV row — only when full diagnostics is enabled and a path was
         # configured.  Always written for every checkpoint (independent
@@ -860,24 +891,23 @@ class _MemoryRecorder:
                 except OSError:
                     pass
                 self._emit_header()
-            # Section-delta block (ΔRSS memory / Δsystem).
-            if is_first:
-                d_rss_str = self._fmt_size(None)
-                d_sys_str = self._fmt_size(None)
-            else:
-                d_rss_str = self._fmt_delta(delta_rss)
-                d_sys_str = self._fmt_delta(delta_sys)
-            # Cumulative block: process RSS + swap, system used,
-            # system swap.
-            mem_str = self._fmt_size(rss_mb)
-            sys_str = self._fmt_size(sys_mb)
-            swap_str = self._fmt_size(swap_mb)
-            time_col = f"{t_elapsed:.1f}s"
+            # First-row convention: time delta renders "(-)" (no prior
+            # checkpoint to subtract from); memory deltas equal their
+            # absolute (prev=0), so e.g. "+230.1" appears alongside the
+            # absolute "230.1 MB" — which is correct: the process has
+            # consumed exactly that much since the recorder started.
+            time_cell = self._fmt_time_cell(
+                t_elapsed, None if is_first else t_section
+            )
+            rss_cell = self._fmt_mem_cell(rss_mb, delta_rss)
+            sys_cell = self._fmt_mem_cell(sys_mb, delta_sys)
+            swap_cell = self._fmt_mem_cell(swap_mb, delta_swap)
             line = (
                 f"{label_col}  "
-                f"{time_col:>{self._TIME_W}}  "
-                f"| {d_rss_str}  {d_sys_str}  "
-                f"| {mem_str}  {sys_str}  {swap_str}"
+                f"{time_cell}  "
+                f"|  {rss_cell}  "
+                f"|  {sys_cell}  "
+                f"|  {swap_cell}"
             )
             try:
                 print(line, flush=True)
@@ -889,6 +919,7 @@ class _MemoryRecorder:
             self._t_prev = time.perf_counter()
             self._rss_prev_mb = rss_mb
             self._sys_prev_mb = sys_mb
+            self._swap_prev_mb = swap_mb
             if peak_mb is not None:
                 self._peak_prev_mb = peak_mb
 
@@ -1678,21 +1709,26 @@ def _drive_cascade(
                 self, "_warm_disabled_by_save_memory_warned", False
             ):
                 state.logger.warning(
-                    "FLEXTOOL_SAVE_MEMORY=1: warm-LP reuse disabled; every "
-                    "sub-solve will cold-rebuild, write MPS, and dispatch "
-                    "to a subprocess HiGHS. Expect ~+30-60 s I/O per sub-"
-                    "solve in exchange for HiGHS' active-solve memory "
-                    "living outside this Python process.",
+                    _wrap_log_prose(
+                        "FLEXTOOL_SAVE_MEMORY=1: warm-LP reuse disabled; "
+                        "every sub-solve will cold-rebuild, write MPS, and "
+                        "dispatch to a subprocess HiGHS. Expect ~+30-60 s "
+                        "I/O per sub-solve in exchange for HiGHS' "
+                        "active-solve memory living outside this Python "
+                        "process."
+                    ),
                 )
                 self._warm_disabled_by_save_memory_warned = True
             if _warm_disabled_by_solver and not getattr(
                 self, "_warm_disabled_warned", False
             ):
                 state.logger.warning(
-                    "warm-start is unavailable for solver %r; falling back "
-                    "to cold rebuilds per sub-solve, expect slower per-iter "
-                    "wall-clock.",
-                    _active_solver_cfg.name,
+                    _wrap_log_prose(
+                        f"warm-start is unavailable for solver "
+                        f"{_active_solver_cfg.name!r}; falling back to cold "
+                        f"rebuilds per sub-solve, expect slower per-iter "
+                        f"wall-clock."
+                    ),
                 )
                 self._warm_disabled_warned = True
             # HiGHS soft-promote: warm=False on HiGHS without
@@ -1714,11 +1750,13 @@ def _drive_cascade(
                     self, "_warm_disabled_softpromote_warned", False,
                 ):
                     state.logger.warning(
-                        "Warm reuse disabled (warm=False); HiGHS solve "
-                        "will route through the cmd_solve_mps subprocess "
-                        "to bound memory footprint.  Set "
-                        "FLEXTOOL_SAVE_MEMORY=1 explicitly to silence "
-                        "this warning.",
+                        _wrap_log_prose(
+                            "Warm reuse disabled (warm=False); HiGHS solve "
+                            "will route through the cmd_solve_mps "
+                            "subprocess to bound memory footprint.  Set "
+                            "FLEXTOOL_SAVE_MEMORY=1 explicitly to silence "
+                            "this warning."
+                        ),
                     )
                     self._warm_disabled_softpromote_warned = True
                 _save_memory = True
