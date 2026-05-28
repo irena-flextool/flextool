@@ -2528,14 +2528,19 @@ def _drive_cascade(
             # Drop everything heavy on it — that is the root-cause fix
             # for the cross-solve RSS climb on ``--save-memory`` runs.
             #
-            # ``flex_data_provider`` is dropped here per the Phase 1
-            # default; Phase 3 will revisit based on DB re-read cost
-            # measured on real-model fixtures.
+            # ``flex_data_provider`` is dropped here by default; set
+            # ``FLEXTOOL_COLD_KEEP_PROVIDER=1`` to retain it across the
+            # cold-path cascade (trades higher RSS for skipping the
+            # per-iter Spine DB re-read).  Real-model measurement at
+            # the time of writing did not produce a default-changing
+            # signal — the knob exists for workloads where the DB
+            # re-read dominates wall time.
             if _save_memory and self._prev_step_key is not None:
                 _prev_step = self._all_steps.get(self._prev_step_key)
                 if _prev_step is not None and _prev_step is not self._all_steps.get(step_key):
                     _prev_step.flex_data = None
-                    _prev_step.flex_data_provider = None
+                    if os.environ.get("FLEXTOOL_COLD_KEEP_PROVIDER") != "1":
+                        _prev_step.flex_data_provider = None
                     _psol = _prev_step.solution
                     if _psol is not None:
                         try:
