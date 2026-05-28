@@ -2500,7 +2500,7 @@
     [
       "unit__node__profile",
       "profile_method",
-      null,
+      "upper_limit",
       "profile_methods",
       "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
       "basics"

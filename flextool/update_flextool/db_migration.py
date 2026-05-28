@@ -1548,6 +1548,14 @@ def migrate_database(database_path, up_to: int | None = None):
                 # default (``upper_limit``); see
                 # ``_migrate_v56_set_unit_node_profile_default_upper_limit``.
                 _migrate_v56_add_profile_and_ramp_method_none(db)
+                # Batch D.2 — flip
+                # ``unit__node__profile.profile_method`` default from
+                # ``null`` to ``upper_limit`` (the dominant authoring
+                # case for this relationship class) and backfill
+                # legacy entities lacking an explicit method to
+                # ``none`` so the new default does not silently
+                # activate the constraint on pre-D.2 data.
+                _migrate_v56_set_unit_node_profile_default_upper_limit(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4968,6 +4976,104 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
         f"backfilled {backfilled_count} legacy entity row(s) with an "
         "explicit method='none' value to preserve the pre-D.1 'no method "
         "set' semantics.",
+    )
+
+
+def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
+    """Batch D.2 — flip ``unit__node__profile.profile_method`` default
+    from ``null`` to ``upper_limit`` and backfill legacy entities to
+    ``none``.
+
+    The ``unit__node__profile`` class is unusual: when a user creates
+    one of these relationships they almost always want a per-time-step
+    upper-bound profile (the dominant use-case — capping the unit's
+    output to a node by a time series).  The pre-D.2 default of
+    ``null`` forced every new entity to set ``profile_method``
+    explicitly even for the dominant case.  D.2 makes ``upper_limit``
+    the new default so that authoring a ``unit__node__profile`` row
+    with no ``profile_method`` set lands on the dominant semantics.
+
+    To prevent silent activation on legacy data: every existing
+    ``unit__node__profile`` entity without an explicit
+    ``profile_method`` row is backfilled with ``profile_method='none'``
+    (the off-member D.1 introduced).  That preserves the pre-D.2
+    "no method set" behaviour for those entities while the new default
+    only kicks in for newly authored rows.
+
+    Note: this is the third ``profile_method`` parameter in the schema
+    (alongside ``connection__profile`` and ``node__profile`` covered
+    in D.1).  We keep this in a separate helper because its post-D.2
+    default differs (``upper_limit`` instead of ``none``); sharing a
+    helper would obscure that.
+
+    Verification: re-read the default and confirm it is
+    ``"upper_limit"``.  Mismatch raises :class:`SpineDBAPIError`.
+    """
+    entity_class_name = "unit__node__profile"
+    name = "profile_method"
+
+    upper_limit_value, upper_limit_type = to_database("upper_limit")
+    none_value, none_type = to_database("none")
+
+    # ---- Step (a): flip default to upper_limit ----------------------
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name=entity_class_name,
+        name=name,
+        default_value=upper_limit_value,
+        default_type=upper_limit_type,
+    )
+
+    # ---- Step (b): backfill legacy entities to 'none' ---------------
+    entities_with_value = {
+        pv["entity_byname"]
+        for pv in db.find_parameter_values(
+            entity_class_name=entity_class_name,
+            parameter_definition_name=name,
+        )
+    }
+    backfilled_count = 0
+    for ent in db.find_entities(entity_class_name=entity_class_name):
+        byname = ent["entity_byname"]
+        if byname in entities_with_value:
+            continue
+        db.add_update_item(
+            "parameter_value",
+            entity_class_name=entity_class_name,
+            entity_byname=byname,
+            parameter_definition_name=name,
+            alternative_name="Base",
+            value=none_value,
+            type=none_type,
+        )
+        backfilled_count += 1
+
+    # ---- Verification ------------------------------------------------
+    parameter_definitions = db.mapped_table("parameter_definition")
+    defn = db.item(
+        parameter_definitions,
+        entity_class_name=entity_class_name,
+        name=name,
+    )
+    if defn is None:
+        raise SpineDBAPIError(
+            "v56 D.2: parameter_definition "
+            "unit__node__profile.profile_method not found after retype."
+        )
+    if from_database(defn["default_value"], defn["default_type"]) != "upper_limit":
+        raise SpineDBAPIError(
+            "v56 D.2: default_value retype failed for "
+            "unit__node__profile.profile_method: got "
+            f"{from_database(defn['default_value'], defn['default_type'])!r}."
+        )
+
+    _commit_step(
+        db,
+        "v56 D.2: set unit__node__profile.profile_method default to "
+        f"'upper_limit'; backfilled {backfilled_count} legacy "
+        "unit__node__profile entity row(s) with an explicit "
+        "method='none' value to preserve the pre-D.2 'no method set' "
+        "semantics on legacy data.",
     )
 
 
