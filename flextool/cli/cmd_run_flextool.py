@@ -14,9 +14,6 @@ import os
 # growth could matter.  ``setdefault`` so the shell wins.
 os.environ.setdefault("MALLOC_ARENA_MAX", "4")
 
-from flextool._mem_sampler import start_mem_sampler
-start_mem_sampler()
-
 import argparse
 import sys
 import logging
@@ -25,6 +22,7 @@ import traceback
 from pathlib import Path
 from datetime import datetime
 import time
+from flextool._mem_sampler import start_mem_sampler
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.cli._timing import TimingRecorder
 from flextool.common_utils.precision import resolve_precision_digits
@@ -32,6 +30,13 @@ from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database, DateTime
 from spinedb_api.exception import NothingToCommit
+
+# Start the memory sampler as the first statement after imports.  The
+# few hundred ms of import-cascade RSS that precede this point are not
+# captured; the workload-level RSS curve (what the sampler exists to
+# measure) is fully captured.  Gated by FLEXTOOL_MEM_SAMPLER=1; no-op
+# when the env var is unset.
+start_mem_sampler()
 
 class FlushingStream:
     def __init__(self, stream):
