@@ -7,7 +7,7 @@ Branch: `v56-test-cleanup`
 
 | # | Test | Classification | Action |
 |---|------|---------------|--------|
-| 1 | `test_db_direct_solve_parity_with_derived_b[work_coal_chp]` | B | documented (polar_high 111× scaling drift) |
+| 1 | `test_db_direct_solve_parity_with_derived_b[work_coal_chp]` | A | **FIXED (G5)** — axis_enums backend ran without scenario_filter; `is_enabled="no"` rows from non-scenario alternatives disabled `coal_chp_fix` from the constraint enum |
 | 2 | `TestPGLibCase14Integration::test_objective_value` | C | documented (output_raw/v_obj parquet contract drift) |
 | 3 | `TestPGLibCase14Integration::test_reference_bus_angle_zero` | C | documented (same root cause as #2) |
 | 4 | `TestPGLibCase14Integration::test_nonreference_buses_have_nonzero_angles` | C | documented (same root cause as #2) |
@@ -48,22 +48,89 @@ Fix: pass `csv_dump=True` at the call site in the test.
 
 File: `tests/test_handoff_writers.py` (around line 263).
 
-## (B) — Real bugs documented for follow-up
+## (A continued) — `work_coal_chp` parity fix (G5)
 
-### #1 — `work_coal_chp` 111× objective drift
+### #1 — `work_coal_chp` 111× objective drift — **FIXED**
 
+Headline observation: `polar_high=21,097,000`, cascade-written parquet
+`2,312,767,749.99`, ratio `109.625`.  Earlier hypothesis (polar_high LP
+scaling drift) was wrong — both objectives came from polar_high
+correctly; they just solved **different LPs**.  Side-by-side MPS diff
+confirmed the cascade-built LP carried 48 extra rows
+(`process_constraint_equal[coal_chp_fix,p2020,t0001..t0048]`) that the
+DB-direct path's LP omitted entirely.
+
+**Root cause.** `load_flextool` (`flextool/engine_polars/input.py`,
+lines ≈4011-4019 before the fix) constructs a transient
+`SpineDBBackend` to build the global `axis_enums` vocabulary, but
+passes `scenario_name=None`:
+
+```python
+with SpineDBBackend(
+    f"sqlite:///{sqlite_for_backend}",
+    None,                           # ← no scenario_filter
+) as _ab:
+    axis_enums = build_axis_enums(_ab, contract)
 ```
-polar_high=21,097,000.0 vs flextool=2,312,767,749.99, rel=0.99
+
+Without a scenario_filter, `_disabled_entity_ids("constraint")` calls
+`find_parameter_values(entity_class="constraint",
+parameter_definition_name="is_enabled")` and walks **every**
+parameter_value row in the DB.  For the `coal_chp_fix` constraint
+there's a `is_enabled="no"` row in alternative `coal_chp_extraction` —
+NOT part of the `coal_chp` scenario — that nevertheless lands in the
+disabled set and removes `coal_chp_fix` from the `constraint` axis enum
+vocabulary (only `battery_tie_kW_kWh / water_pump_fix / wind_growth_cap`
+survive).
+
+Downstream cascade: `_load_user_constraints` reads the
+`p_process_node_constraint_flow_coeff.csv` and casts the
+`constraint`→`cn` column through `alias_to_axis` against the (now
+missing-`coal_chp_fix`) enum — a silent `cn=null` cast.  The
+`flow_constraint_idx`'s `(p, source, sink, cn=null)` rows then fail to
+join `cdt_eq` (which carries `cn=null` too, for the same reason).
+Either way the `lhs_pieces` Where reduces to zero rows and
+`m.add_cstr("process_constraint_equal", …)` emits no constraints.
+The LP then satisfies heat / west demand with `vq_state_up` /
+`vq_state_down` slacks (cost 0.01825-0.16425 per unit, scale_obj=1e-6)
+because nothing forces the heat ↔ electricity coupling on the CHP
+unit.  The slack-dominated objective is 109.625× the constrained one,
+matching the observed ratio.
+
+**Fix** (`flextool/engine_polars/input.py`):
+
+```python
+_scenario_for_backend = None
+if db_reader is not None:
+    _scenario_for_backend = getattr(db_reader, "scenario", None)
+if _scenario_for_backend is None:
+    _scenario_for_backend = _find_scenario(workdir_for_db)
+with SpineDBBackend(
+    f"sqlite:///{sqlite_for_backend}",
+    _scenario_for_backend,
+) as _ab:
+    axis_enums = build_axis_enums(_ab, contract)
 ```
 
-Hand-off note `_audit_reports/H_cumulative_handoffs_verdict.md` already
-covers polar_high LP scaling work; this is the next case to land after
-the Layer 2/3 sweep.  The Γ.3.B derived overlay path now reaches
-`solve()` so the bug is no longer hidden behind a structural failure
-— but the objective is off by a fixed ratio (~111×).  Likely a missing
-unit-conversion in the derived `flow_constraint_coef` / topology overlay.
+Source the scenario from an explicit `db_reader=` first (the reader
+already knows its scenario), else fall back to `_find_scenario` on the
+workdir convention.  Backend's `_open` then applies
+`scenario_filter_from_dict`, narrowing `find_parameter_values` to the
+active alternatives — `coal_chp_fix` is enabled, lands in the enum,
+the cascade joins succeed, `process_constraint_equal[coal_chp_fix,*]`
+rows emit, and the LP solves to the cascade's objective.
 
-**Out of scope for v56 cleanup.**
+**Verification.**
+
+- `tests/model/test_db_direct_solve.py::test_db_direct_solve_parity_with_derived_b[work_coal_chp]` — PASS (was FAIL with rel=0.99).
+- `tests/model/test_db_direct_solve.py` (full file) — 43 passed, 2 skipped (no regressions).
+- `tests/spinedb_backend/test_axis_enums.py` + 25 other axis-related tests — 26 passed.
+
+Scope: targeted fix to the single SpineDBBackend constructor call in
+`load_flextool`'s axis_enums-build branch.  The two other call sites
+that already passed a scenario name are unchanged.  The fix only
+activates when the workdir-convention or `db_reader` carries a
+scenario; legacy CSV-only callers still see `None`.
 
 ### #5 — `TestWithinPeriodCumulativeRolling::test_within_period_cumulative_completes`
 
