@@ -385,8 +385,20 @@ class _MultiClassStubSource:
 
 
 def test_p_pdt_varCost_process_multi_class_concat(period_filter) -> None:
-    """``unit`` and ``connection`` rows both surface in a single
-    ``Param(("p", "d", "t"))``; no dups; values preserved per class.
+    """Only ``connection`` rows surface in the resulting
+    ``Param(("p", "d", "t"))``; no dups; values preserved.
+
+    v56 (commit 62e62e9b) dropped the dead ``("unit",
+    "other_operational_cost")`` branch — no ``_specs.py`` writer ever
+    emitted unit-level ``other_operational_cost`` to any CSV, so the
+    pre-cleanup loop's unit pass was silently empty.  The class loop in
+    :func:`p_pdt_varCost_process_from_source` is now single-element
+    ``("connection",)``.  Even when a caller supplies a stub that would
+    surface unit rows, the helper must ignore them — that's what this
+    test pins.  User-facing ``other_operational_cost`` still lives on
+    connection, unit__inputNode, and unit__outputNode via the dedicated
+    ``p_pdt_varCost_source_from_source`` /
+    ``p_pdt_varCost_sink_from_source`` helpers.
     """
     import flextool.engine_polars._direct_params as dp
     unit_pt = {("p2024", "t00001"): 1.0, ("p2025", "t00002"): 2.0}
@@ -405,16 +417,11 @@ def test_p_pdt_varCost_process_multi_class_concat(period_filter) -> None:
         pl.col("d").cast(pl.Utf8),
         pl.col("t").cast(pl.Utf8),
     )
-    # Both classes' stub-entity names must surface.
+    # Only the connection stub-entity name must surface — unit branch
+    # was dropped in v56 cleanup (commit 62e62e9b).
     names = set(frame.get_column("p").to_list())
-    assert names == {"stub_unit", "stub_connection"}, names
-    # Values per-class preserved.
-    unit_rows = frame.filter(pl.col("p") == "stub_unit").sort("d", "t")
-    assert dict(zip(
-        list(zip(unit_rows.get_column("d").to_list(),
-                  unit_rows.get_column("t").to_list())),
-        unit_rows.get_column("value").to_list(),
-    )) == unit_pt
+    assert names == {"stub_connection"}, names
+    # Values per-class preserved for the surviving connection branch.
     conn_rows = frame.filter(pl.col("p") == "stub_connection").sort("d", "t")
     assert dict(zip(
         list(zip(conn_rows.get_column("d").to_list(),
