@@ -14,6 +14,9 @@ import os
 # growth could matter.  ``setdefault`` so the shell wins.
 os.environ.setdefault("MALLOC_ARENA_MAX", "4")
 
+from flextool._mem_sampler import start_mem_sampler
+start_mem_sampler()
+
 import argparse
 import sys
 import logging
