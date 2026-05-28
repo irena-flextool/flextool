@@ -1346,27 +1346,25 @@ def p_pdt_varCost_process_from_source(
     source: "InputSource",
     period_filter: pl.DataFrame | None = None,
 ) -> Param | None:
-    """``unit/connection.other_operational_cost`` Map(period→time) →
-    ``Param(("p", "d", "t"))``.  Union across the two object classes.
+    """``connection.other_operational_cost`` Map(period→time) →
+    ``Param(("p", "d", "t"))``.  Single-class helper.
 
-    Δ.17c-Tier3 — each per-class call routes through
-    ``resolve_param_shape`` + ``broadcast_to_period_time``.  Pre-
-    migration the helper gated on ``{"name", "period", "t"}.issubset``,
-    silently dropping silent-default-Map authoring (column ``"x"`` not
-    ``"period"``) and SCALAR / MAP_PERIOD / MAP_TIME shapes.  Mirrors
-    the Phase-2 ``_e_period_param_union`` multi-class concat template.
+    Δ.17c-Tier3 — the call routes through ``resolve_param_shape`` +
+    ``broadcast_to_period_time``.  Pre-migration the helper gated on
+    ``{"name", "period", "t"}.issubset``, silently dropping silent-
+    default-Map authoring (column ``"x"`` not ``"period"``) and
+    SCALAR / MAP_PERIOD / MAP_TIME shapes.
 
     SCALAR / MAP_PERIOD / MAP_TIME branches return Params with fewer
-    dims than the canonical ``(p, d, t)``.  Per-class results are
-    broadcast up to ``(p, d, t)`` against ``period_filter``'s
-    ``(d, t)`` axis before concat so the union frame is dim-uniform.
-    Callers (the dispatcher) always pass a non-empty ``period_filter``;
-    if a per-class Param is a strict subset of ``(p, d, t)`` AND no
-    period_filter is on hand, we raise rather than concat
-    incompatible-shape frames.
+    dims than the canonical ``(p, d, t)``.  Results are broadcast up
+    to ``(p, d, t)`` against ``period_filter``'s ``(d, t)`` axis so
+    the output frame is dim-uniform.  Callers (the dispatcher) always
+    pass a non-empty ``period_filter``; if the Param is a strict
+    subset of ``(p, d, t)`` AND no period_filter is on hand, we raise
+    rather than emit an incompatible-shape frame.
     """
     parts: list[pl.LazyFrame] = []
-    for cls in ("unit", "connection"):
+    for cls in ("connection",):
         resolved = resolve_param_shape(
             source, cls, "other_operational_cost",
             period_filter=period_filter)

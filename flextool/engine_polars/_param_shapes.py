@@ -237,9 +237,6 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("unit__outputNode",       "other_operational_cost"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
-    ("unit",                   "other_operational_cost"): {
-        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
-    },
     ("connection",             "other_operational_cost"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
