@@ -73,7 +73,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('co2_max_total', 'group'): QuantityType.EMISSION_MASS,
     # [tCO2] Maximum limit for emitted CO2 in the whole solve.
     ('co2_method', 'group'): QuantityType.DIMENSIONLESS,
-    # Choice of the CO2 method: no_method, price, period, total, price_period, price_total, period_total, price_period_total
+    # Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, price_period_total
     ('co2_price', 'group'): QuantityType.PRICE_PER_MASS,
     # [CUR/ton] CO2 price for a group of nodes. Constant, period or time.
     ('constant', 'constraint'): QuantityType.DIMENSIONLESS,

@@ -276,7 +276,7 @@
   "parameter_value_lists": [
     [
       "co2_methods",
-      "no_method"
+      "none"
     ],
     [
       "co2_methods",
@@ -1212,9 +1212,9 @@
     [
       "group",
       "co2_method",
-      "no_method",
+      "none",
       "co2_methods",
-      "Choice of the CO2 method: no_method, price, period, total, price_period, price_total, period_total, price_period_total",
+      "Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, price_period_total",
       "emission"
     ],
     [

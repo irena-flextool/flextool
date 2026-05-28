@@ -2548,7 +2548,7 @@
     [
       "co2_methods",
       [
-        "Im5vX21ldGhvZCI=",
+        "Im5vbmUi",
         "str"
       ]
     ],
@@ -3911,7 +3911,7 @@
         null
       ],
       "co2_methods",
-      "Choice of the CO2 method: no_method, price, period, total, price_period, price_total, period_total, price_period_total",
+      "Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, price_period_total",
       "emission"
     ],
     [

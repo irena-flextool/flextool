@@ -860,7 +860,7 @@
       "co2_method",
       null,
       "co2_methods",
-      "Choice of the CO2 method: no_method, price, period, total, price_period, price_total, period_total, price_period_total",
+      "Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, price_period_total",
       "emission"
     ],
     [
@@ -4106,7 +4106,7 @@
     [
       "co2_methods",
       [
-        "\"no_method\"",
+        "\"none\"",
         "str"
       ]
     ],

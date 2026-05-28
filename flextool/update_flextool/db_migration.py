@@ -1577,6 +1577,25 @@ def migrate_database(database_path, up_to: int | None = None):
                 # under the canonical spelling.  The parameter_definition
                 # default is already ``fix_nothing`` — unchanged.
                 _migrate_v56_drop_storage_nested_fix_method_no(db)
+                # Batch D.7 — rename ``co2_methods.no_method`` to
+                # ``co2_methods.none`` so the off-member on the
+                # ``co2_methods`` value-list aligns with every other
+                # off-style member used by the schema
+                # (``conversion_methods.none``,
+                # ``decomposition_methods.none``,
+                # ``minimum_time_methods.none``, ``profile_methods.none``,
+                # ``ramp_methods.none``, …).  Adds the new member,
+                # rewrites every ``group.co2_method = no_method``
+                # parameter_value row to ``"none"``, drops the legacy
+                # ``no_method`` list_value, and sets the
+                # parameter_definition default to ``"none"``.  Engine
+                # semantics are unchanged: every consumer in
+                # :mod:`flextool.engine_polars._emit_co2_accumulators`
+                # filters by exact-match on the active method names
+                # (``total`` / ``price_total`` / ``period_total`` /
+                # ``price_period_total``); ``no_method`` and ``none``
+                # both fall through identically.
+                _migrate_v56_rename_co2_methods_no_method_to_none(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -5321,6 +5340,117 @@ def _migrate_v56_drop_storage_nested_fix_method_no(db) -> None:
         f"'fix_nothing' off-name); rewrote {rewritten} legacy 'no' "
         "parameter_value row(s) on node.storage_nested_fix_method to "
         f"'fix_nothing'.  list_value dropped: {dropped}.",
+    )
+
+
+def _migrate_v56_rename_co2_methods_no_method_to_none(db) -> None:
+    """Batch D.7 — rename ``co2_methods.no_method`` → ``co2_methods.none``.
+
+    The ``co2_methods`` value-list shipped with ``no_method`` as its
+    off-member while every other "off"-style member on the schema uses
+    ``none``:
+
+    * ``conversion_methods.none``
+    * ``decomposition_methods.none``
+    * ``minimum_time_methods.none``
+    * ``profile_methods.none`` (added in D.1)
+    * ``ramp_methods.none`` (added in D.1)
+    * ``reserve_methods.no_reserve`` (a sister off-name not touched here)
+
+    D.7 collapses the inconsistency by renaming the
+    ``co2_methods.no_method`` member to ``co2_methods.none`` so the
+    schema's off-vocabulary is uniform.  Audit reference:
+    ``_audit_reports/v56_method_none_audit.md``.
+
+    Steps (mirrors the D.4 ``no -> fix_nothing`` pattern, plus a default
+    flip and an explicit add-before-drop ordering to keep the existing
+    ``group.co2_method = no_method`` parameter_value rows valid against
+    the value-list at every intermediate state):
+
+    1. Add the new ``co2_methods.none`` member.
+    2. Rewrite every ``group.co2_method = no_method`` parameter_value
+       row to value ``"none"``.
+    3. Drop the legacy ``co2_methods.no_method`` list_value (safe now
+       because step 2 cleared every parameter_value reference).
+    4. Update the ``group.co2_method`` parameter_definition default to
+       ``"none"`` so newly created entities land on the canonical
+       off-name.
+
+    Engine consumer behaviour is unchanged: the only filter site is
+    :func:`flextool.engine_polars._emit_co2_accumulators._emitting_groups`,
+    which keeps groups whose method is in
+    ``{"total", "price_total", "period_total", "price_period_total"}``;
+    ``no_method`` and ``none`` both fall through identically.
+    """
+    # ---- Step 1: add the new ``none`` member -----------------------------
+    add_value_list_manual(db, [["co2_methods", "none"]])
+
+    # ---- Step 2: rewrite ``no_method`` parameter_value rows to ``none`` --
+    rewritten = 0
+    none_bytes, none_type = to_database("none")
+    for pv in list(db.find_parameter_values(
+        entity_class_name="group",
+        parameter_definition_name="co2_method",
+    )):
+        if pv["type"] != "str":
+            continue
+        if pv["parsed_value"] != "no_method":
+            continue
+        db.update_parameter_value(
+            id=pv["id"],
+            value=none_bytes,
+            type=none_type,
+        )
+        rewritten += 1
+
+    # ---- Step 3: drop the legacy ``no_method`` list_value ----------------
+    no_method_bytes, _ = to_database("no_method")
+    dropped = False
+    for lv in list(db.find_list_values(
+        parameter_value_list_name="co2_methods",
+    )):
+        if lv["value"] == no_method_bytes:
+            db.remove_item("list_value", lv["id"])
+            dropped = True
+            break
+
+    # ---- Step 4: flip the parameter_definition default to ``none`` -------
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="co2_method",
+        default_value=none_bytes,
+        default_type=none_type,
+    )
+
+    # ---- Verification ---------------------------------------------------
+    parameter_definitions = db.mapped_table("parameter_definition")
+    defn = db.item(
+        parameter_definitions,
+        entity_class_name="group",
+        name="co2_method",
+    )
+    if defn is None:
+        raise SpineDBAPIError(
+            "v56 D.7: parameter_definition group.co2_method not found "
+            "after rename."
+        )
+    if from_database(defn["default_value"], defn["default_type"]) != "none":
+        raise SpineDBAPIError(
+            "v56 D.7: default_value retype failed for "
+            "group.co2_method: got "
+            f"{from_database(defn['default_value'], defn['default_type'])!r}."
+        )
+
+    _commit_step(
+        db,
+        "v56 D.7: renamed co2_methods.no_method -> co2_methods.none for "
+        "consistency with the other off-style value-list members "
+        "(conversion_methods/decomposition_methods/minimum_time_methods/"
+        "profile_methods/ramp_methods all use 'none'); rewrote "
+        f"{rewritten} legacy group.co2_method='no_method' "
+        f"parameter_value row(s) to 'none'.  list_value dropped: "
+        f"{dropped}.  parameter_definition default set to 'none'.",
     )
 
 
