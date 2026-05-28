@@ -3283,13 +3283,6 @@
     [
       "storage_binding_methods",
       [
-        "ImJpbmRfd2l0aGluX3RpbWVzZXQi",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
         "ImJpbmRfd2l0aGluX3BlcmlvZCI=",
         "str"
       ]
@@ -3304,13 +3297,6 @@
     [
       "storage_binding_methods",
       [
-        "ImJpbmRfd2l0aGluX21vZGVsIg==",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
         "ImJpbmRfZm9yd2FyZF9vbmx5Ig==",
         "str"
       ]
@@ -3319,6 +3305,34 @@
       "storage_binding_methods",
       [
         "ImJpbmRfaW50cmFwZXJpb2RfYmxvY2tzIg==",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfd2l0aGluX3NvbHZlX2JsZW5kZWRfd2VpZ2h0cyI=",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfd2l0aGluX3BlcmlvZF9ibGVuZGVkX3dlaWdodHMi",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "ImJpbmRfZm9yd2FyZF9vbmx5X2JsZW5kZWRfd2VpZ2h0cyI=",
         "str"
       ]
     ],
@@ -4546,7 +4560,7 @@
       "model",
       "version",
       [
-        "NTI=",
+        "NTU=",
         "float"
       ],
       null,
@@ -4902,7 +4916,7 @@
         null
       ],
       "storage_binding_methods",
-      "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0.",
+      "Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0.",
       "storage"
     ],
     [
