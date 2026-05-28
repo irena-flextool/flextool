@@ -4,7 +4,6 @@ from spinedb_api import DatabaseMapping
 from spinedb_api.filters.tools import name_from_dict
 import logging
 import sys
-from pathlib import Path
 
 def main():
 

@@ -13,7 +13,6 @@ topology, missing-region defaults).  Asserts the output FlexDatas have:
 """
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
 import polars as pl
@@ -22,8 +21,6 @@ import pytest
 from flextool.engine_polars import load_flextool
 from flextool.engine_polars._pdt_join import compute_pss_dt
 from flextool.engine_polars._region_filter import (
-    HalfFlow,
-    RegionSplit,
     discover_regions,
     load_decomposition_method,
     load_region_membership,

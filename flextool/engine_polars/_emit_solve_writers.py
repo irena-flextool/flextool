@@ -41,10 +41,7 @@ The scaling CSVs use ``%.17g`` repr formatting for round-trip safety.
 """
 from __future__ import annotations
 
-import csv
-import logging
 import math
-import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any

@@ -25,8 +25,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from polar_high.autoscale import (
-    USER_SCALE_CLAMP_HI as _PH_USER_SCALE_CLAMP_HI,
-    USER_SCALE_CLAMP_LO as _PH_USER_SCALE_CLAMP_LO,
     ScalingConfig,
     ScalingMode,
 )

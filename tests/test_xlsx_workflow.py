@@ -4,7 +4,6 @@ The ``test_full_workflow_from_xlsx`` test is a slow integration test that
 actually runs the FlexTool model.  It may take several minutes.
 """
 
-import os
 import subprocess
 import sys
 import tempfile

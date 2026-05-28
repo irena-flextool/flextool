@@ -51,8 +51,6 @@ with ``branch_idx`` in {0, 1, 2, 3} ordered as
 from __future__ import annotations
 
 import math
-import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path

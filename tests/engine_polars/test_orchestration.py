@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -187,7 +186,8 @@ def test_build_handoff_from_solution_covers_eight_carriers(scenario_workdir)-> N
 
     # Build a tempdir mirroring the layout used by run_chain so
     # build_handoff_from_solution can find the per-solve CSVs.
-    import tempfile, os
+    import tempfile
+    import os
     with tempfile.TemporaryDirectory() as tmp:
         td = Path(tmp)
         # Symlink input/ + solve_data/ from the fixture to the tempdir.

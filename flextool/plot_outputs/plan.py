@@ -447,7 +447,6 @@ def build_figure_from_plan(
     For time-series plans whose *processed_df* covers the full timeline,
     pass *plot_rows* ``(start, start + duration)`` to display a sub-range.
     """
-    from matplotlib.figure import Figure
     from flextool.plot_outputs.subplot_helpers import LineLayoutParams, BarLayoutParams
 
     if file_index >= plan.total_file_count or file_index < 0:
@@ -1379,7 +1378,6 @@ def compute_live_plan(
     Uses the full data range so time-series plans can be rendered at any
     start/duration via :func:`build_figure_from_plan` with *plot_rows*.
     """
-    from flextool.plot_outputs.config import PlotConfig  # noqa: F811
     from flextool.plot_outputs.orchestrator import (
         _apply_dimension_rules, _resolve_shared_axis_bounds, _process_file_member,
     )

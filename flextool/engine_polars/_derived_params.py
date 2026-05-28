@@ -6755,7 +6755,6 @@ def nodeStateBlock_from_source(source: "InputSource",
     # the workdir CSV read can be skipped when ``solve_data/`` is empty.
     bl = block_layout
     if bl is None and (workdir is not None or provider is not None):
-        from flextool.engine_polars._block_layout import BlockLayout
         bl = _load_block_layout_with_seed(workdir, provider)
     if bl is not None:
         eb = bl.entity_block_frame

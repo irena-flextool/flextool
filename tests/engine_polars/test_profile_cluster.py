@@ -29,12 +29,10 @@ Test cases
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import polars as pl
 import pytest
-import spinedb_api as api
 
 from flextool.engine_polars import SpineDbReader
 from flextool.engine_polars._inmemory_reader import InMemoryReader

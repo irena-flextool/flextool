@@ -34,7 +34,6 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-import spinedb_api as api
 
 from flextool.engine_polars import (
     InMemoryReader,
@@ -42,7 +41,6 @@ from flextool.engine_polars import (
     load_flextool,
 )
 from flextool.engine_polars import _derived_arithmetic as ar
-from polar_high import Param
 
 
 HERE = Path(__file__).resolve().parent
@@ -115,7 +113,7 @@ def _frames_equal(a: pl.DataFrame | None, b: pl.DataFrame | None,
     a_keys = a_sorted.select(list(keys))
     b_keys = b_sorted.select(list(keys))
     if not a_keys.equals(b_keys):
-        return False, f"key sets differ"
+        return False, "key sets differ"
     av = a_sorted[val_col].cast(pl.Float64, strict=False).to_list()
     bv = b_sorted[val_col].cast(pl.Float64, strict=False).to_list()
     max_diff = 0.0

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from flextool.gui.downsampling import downsample_for_display, _lttb_fallback
 

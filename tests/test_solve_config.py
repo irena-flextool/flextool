@@ -5,9 +5,8 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 
-import pytest
 
-from flextool.engine_polars._solve_config import HiGHSConfig, SolverSettings, SolveConfig
+from flextool.engine_polars._solve_config import SolverSettings, SolveConfig
 
 
 @dataclass

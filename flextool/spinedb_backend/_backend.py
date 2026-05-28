@@ -54,7 +54,6 @@ import polars as pl
 from flextool.common_utils.precision import format_scalar_for_csv
 from flextool.spinedb_backend._axis_enums import (
     AxisContract,
-    FlexDataIntegrityError,
     cast_against_contract,
     load_axis_contract,
 )

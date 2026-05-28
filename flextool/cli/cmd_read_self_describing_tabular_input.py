@@ -1,7 +1,6 @@
 """CLI entry point for importing a self-describing FlexTool Excel file to a Spine DB."""
 
 import argparse
-import sys
 
 from flextool.process_inputs.read_self_describing_excel import read_self_describing_excel
 from flextool.process_inputs.write_self_describing_to_db import write_sheet_data_to_db

@@ -1,7 +1,6 @@
 """CLI entry point for importing a MATPOWER .m file to a FlexTool Spine DB."""
 
 import argparse
-import sys
 
 from flextool.process_inputs.read_matpower import (
     create_flextool_db_from_matpower,

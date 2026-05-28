@@ -21,14 +21,11 @@ import pandas as pd
 import pytest
 
 from flextool.engine_polars import (
-    build_flextool,
-    load_flextool,
     run_single_solve_from_db,
 )
 from flextool.process_outputs.read_parameters import read_parameters
 from flextool.process_outputs.read_sets import read_sets
 
-from polar_high import Problem
 
 
 pytestmark = pytest.mark.solver

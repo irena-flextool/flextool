@@ -76,7 +76,6 @@ from polar_high import Param
 from ._emit_provider_io import _provider_key
 from ._axis_enums import (
     alias_to_axis,
-    get_global_axis_enums,
     schema_dtype,
 )
 

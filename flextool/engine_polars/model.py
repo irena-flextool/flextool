@@ -32,14 +32,13 @@ from . import _cumulative_invest
 from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
-from ._axis_enums import alias_to_axis, cast_dim, rename_to_axis, lit_axis
+from ._axis_enums import alias_to_axis, cast_dim, rename_to_axis
 from ._solve_state import FlexToolConfigError
 from ._param_shapes import promote_param_to_dt
 from ._pdt_join import (
     compute_pss_dt,
     compute_nodeBalance_dt,
     compute_nodeState_dt,
-    compute_nodeState_rp_dt,
     compute_nodeState_rp_block_first_dt,
     compute_process_indirect_dt,
 )
@@ -1972,7 +1971,6 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             # coarse block.  Use the FlexData's pss + process_side_block
             # via solve_data CSV (read inline; small file).
             try:
-                from pathlib import Path as _P
                 # Caller can override; this read is best-effort.
                 # We don't have direct access to ``WORK`` here so we
                 # rely on the synthesised dtttdt_block_interior carrying

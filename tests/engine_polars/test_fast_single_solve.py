@@ -23,7 +23,6 @@ from pathlib import Path
 import pytest
 
 from flextool.engine_polars import (
-    FastLoadError,
     run_single_solve_from_db,
 )
 

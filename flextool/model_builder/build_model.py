@@ -6,8 +6,6 @@ that can be imported into an initialized Spine database.
 
 import argparse
 import json
-import math
-import sys
 from pathlib import Path
 from typing import Any
 

@@ -19,7 +19,7 @@ chain.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import polars as pl

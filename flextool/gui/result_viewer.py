@@ -6,7 +6,6 @@ import logging
 import threading
 import time
 import tkinter as tk
-import tkinter.font as tkfont
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import ttk
@@ -24,7 +23,6 @@ from flextool.gui.plot_canvas import PlotCanvas
 from flextool.gui.plot_config_reader import (
     PlotConfigData, PlotEntry, PlotGroup, PlotVariant, parse_plot_config,
 )
-from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.settings_io import save_project_settings
 from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, flatten_new_format
 from flextool.plot_outputs.orchestrator import prepare_plot_data
@@ -2683,7 +2681,7 @@ class ResultViewer(tk.Toplevel):
         #     time slice and matplotlib rendering run on each slider change.
         try:
             from flextool.plot_outputs.plan import (
-                load_plot_plan, build_figure_from_plan, compute_live_plan,
+                load_plot_plan, compute_live_plan,
             )
             plan_key = (scenario, variant.result_key, variant.sub_config)
             if self._live_plan_key == plan_key and self._live_plan is not None:

@@ -15,7 +15,6 @@ class TestBuildNetworkFigureGracefulDegradation(unittest.TestCase):
         """If networkx is not importable, build_network_figure returns None."""
         with patch.dict("sys.modules", {"networkx": None}):
             # Re-import to pick up the patched module state
-            import importlib
             import flextool.gui.network_graph as mod
 
             original_nx = mod.nx
@@ -125,7 +124,6 @@ class TestRenderNetwork(unittest.TestCase):
 
     def test_unit_positioned_at_midpoint(self) -> None:
         """A unit connected to two positioned nodes should be placed at their midpoint."""
-        import networkx as nx
 
         positioned_nodes = {
             "n1": {"lat": 0.0, "lon": 0.0},

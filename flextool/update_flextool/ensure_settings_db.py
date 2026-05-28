@@ -25,7 +25,6 @@ those require migrations that aren't appropriate to run on every solve.
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse

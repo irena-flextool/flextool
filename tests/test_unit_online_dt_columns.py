@@ -59,7 +59,6 @@ import tempfile
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 TEST_DIR = Path(__file__).parent
 REPO_ROOT = TEST_DIR.parent

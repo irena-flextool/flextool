@@ -8,8 +8,6 @@ import openpyxl
 from flextool.process_inputs.read_self_describing_excel import (
     find_crossing_point,
     parse_sheet_metadata,
-    parse_link_sheet_metadata,
-    parse_transposed_sheet_metadata,
     detect_and_parse_sheet,
     extract_sheet_data,
     _parse_entity_def,

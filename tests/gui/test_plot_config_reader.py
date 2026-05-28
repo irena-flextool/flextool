@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 from textwrap import dedent
 
 import pytest
-import yaml
 
 from flextool._resources import package_data_path
 from flextool.gui.plot_config_reader import (
-    PlotEntry,
     PlotGroup,
-    PlotVariant,
     parse_plot_config,
 )
 

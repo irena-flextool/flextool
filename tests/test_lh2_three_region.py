@@ -36,8 +36,6 @@ if str(TEST_DIR / "fixtures") not in sys.path:
     sys.path.insert(0, str(TEST_DIR / "fixtures"))
 
 from build_lh2_three_region import (  # noqa: E402
-    DAILY_STEPS,
-    HOURLY_STEPS,
     N_DAYS,
     N_HOURS,
     REGIONS,

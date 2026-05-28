@@ -20,7 +20,6 @@ These tests exercise the derivation through the Provider directly:
 - Integration test: full FlexTool run on PGLib case14 IEEE (DC-OPF)
 """
 
-import csv
 import logging
 import subprocess
 import sys

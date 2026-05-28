@@ -3,8 +3,6 @@ from __future__ import annotations
 import matplotlib
 matplotlib.use("Agg")
 
-import matplotlib.pyplot as plt
-import pytest
 from matplotlib.figure import Figure
 
 from flextool.gui.plot_cache import PlotCache, _figure_size_bytes

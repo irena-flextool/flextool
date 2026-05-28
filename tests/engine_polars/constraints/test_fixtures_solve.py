@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
 
 from polar_high import Problem
 from flextool.engine_polars import build_flextool

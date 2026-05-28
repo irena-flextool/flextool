@@ -52,7 +52,6 @@ from flextool.engine_polars._axis_enums import (
     cast_dim,
     cast_frame_axes,
     get_global_axis_enums,
-    lit_axis,
     rename_to_axis,
     schema_dtype,
 )

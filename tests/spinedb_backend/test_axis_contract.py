@@ -22,7 +22,6 @@ See `schemas/AXIS_CONTRACT.md` for the editor-facing documentation.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 

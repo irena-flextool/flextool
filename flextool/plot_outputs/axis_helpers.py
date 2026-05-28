@@ -1,7 +1,6 @@
 """Axis formatting utilities shared across all plot types."""
 import re
 import pandas as pd
-from matplotlib.ticker import MaxNLocator
 
 
 def _is_datetime_format(s: str) -> bool:

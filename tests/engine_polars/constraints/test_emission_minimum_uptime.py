@@ -30,7 +30,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 from polar_high import Problem

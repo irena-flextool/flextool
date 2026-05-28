@@ -1,14 +1,11 @@
 import pandas as pd
 import numpy as np
 import json
-from python_calamine import load_workbook
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Set
+from typing import Dict, List, Any, Optional, Tuple
 import logging
 import argparse
-import re
-from spinedb_api import to_database, Map, Array, SpineDBAPIError, dataframes
-from spinedb_api.exception import NothingToCommit
+from spinedb_api import to_database, Map, Array
 
 # Backward-compatible value remapping for renamed parameter values.
 _VALUE_REMAP: dict[str, str] = {
@@ -353,7 +350,7 @@ class TabularReader:
 
         try:
             raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='calamine', header=None, na_filter=True)
-        except Exception as e1:
+        except Exception:
             try:
                 self.logger.info(f"Calamine engine could not read sheet '{sheet_name}', trying openpyxl.")
                 raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='openpyxl', header=None, na_filter=True)

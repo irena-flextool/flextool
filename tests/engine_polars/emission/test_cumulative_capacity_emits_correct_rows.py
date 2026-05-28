@@ -28,7 +28,6 @@ import pytest
 
 from tests.engine_polars.emission._helpers import (
     assert_cstr_present,
-    assert_cstr_row_count,
     build,
 )
 

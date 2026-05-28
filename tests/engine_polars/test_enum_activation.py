@@ -31,7 +31,6 @@ import dataclasses
 from pathlib import Path
 
 import polars as pl
-import pytest
 
 from flextool.engine_polars.input import load_flextool
 

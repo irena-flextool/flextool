@@ -39,8 +39,6 @@ limits discharge to 1, forcing 1 MWh of unmet-demand slack → obj = 1e6.
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
-from types import SimpleNamespace
 
 import polars as pl
 import pytest

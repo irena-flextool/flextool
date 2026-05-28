@@ -507,7 +507,6 @@ def _plot_stacked_bars(
     # - Vertical: top-to-bottom = top-to-bottom.
     #   Full bar reads: [positives top → 0 → negatives bottom]
     #   Legend: positives first (reversed), then negative-only (reversed).
-    from matplotlib.patches import Patch
     pos_indices = sorted(pos_stacks)
     neg_only_indices = sorted(neg_stacks - pos_stacks)  # stacks that are only negative
 

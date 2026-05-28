@@ -24,16 +24,11 @@ eager outputs surfaces as a per-fixture failure with a diff frame.
 """
 from __future__ import annotations
 
-import logging
 import math
 from pathlib import Path
 
 import polars as pl
 import pytest
-import spinedb_api as api
-from spinedb_api.filters.scenario_filter import (
-    apply_scenario_filter_to_subqueries,
-)
 
 from flextool.engine_polars import (
     SpineDbReader,

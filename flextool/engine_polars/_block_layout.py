@@ -49,7 +49,6 @@ from typing import TYPE_CHECKING, Iterable
 import polars as pl
 
 from flextool.engine_polars._axis_enums import (
-    get_global_axis_enums,
     rename_to_axis,
     schema_dtype,
 )

@@ -1,7 +1,6 @@
 """CLI entry point for importing an old-format FlexTool .xlsm file to a Spine DB."""
 
 import argparse
-import sys
 
 from flextool.process_inputs.read_old_flextool import read_old_flextool
 from flextool.process_inputs.write_old_flextool_to_db import write_old_flextool_to_db

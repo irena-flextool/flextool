@@ -8,13 +8,11 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import ttk, messagebox, simpledialog
 
 from flextool._resources import package_data_path
 from flextool.gui.project_utils import (
-    create_project,
     get_projects_dir,
     list_projects,
     rename_project,
@@ -42,7 +40,6 @@ from flextool.gui.error_handling import safe_callback
 from flextool.gui.platform_utils import (
     open_file_in_default_app,
     open_folder,
-    open_spine_db_editor,
 )
 from flextool.gui.db_editor_integration import DbEditorManager
 

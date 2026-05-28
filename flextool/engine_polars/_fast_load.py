@@ -55,7 +55,6 @@ import polars as pl
 
 from ._axis_enums import (
     alias_to_axis,
-    get_global_axis_enums,
     rename_to_axis,
     schema_dtype,
 )

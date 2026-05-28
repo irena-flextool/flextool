@@ -20,7 +20,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import polars as pl
-import pytest
 
 from flextool.engine_polars.input import _load_storage, _apply_db_overrides
 

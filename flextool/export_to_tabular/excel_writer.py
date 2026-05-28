@@ -17,7 +17,6 @@ from openpyxl.worksheet.worksheet import Worksheet
 from spinedb_api import Map, Array
 
 from flextool.export_to_tabular.db_reader import DatabaseContents
-from openpyxl.styles import Protection
 
 from flextool.export_to_tabular.formatting import (
     add_navigate_link,

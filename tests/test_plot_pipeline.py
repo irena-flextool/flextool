@@ -13,7 +13,6 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from flextool.plot_outputs.config import PlotConfig
 from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes, prepare_plot_data

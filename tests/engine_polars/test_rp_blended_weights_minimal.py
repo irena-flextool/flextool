@@ -44,7 +44,6 @@ The full derivation is in
 from __future__ import annotations
 
 import polars as pl
-import pytest
 
 from polar_high import Param, Problem
 from flextool.engine_polars import build_flextool

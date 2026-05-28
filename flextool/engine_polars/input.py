@@ -17,13 +17,10 @@ preprocessing state directly, skipping the CSV roundtrip.
 
 from __future__ import annotations
 
-import csv
 import logging
-import os
-import sys
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 import polars as pl
@@ -147,8 +144,6 @@ def _provider_open(provider: "object | None", name: str,
 from ._axis_enums import (  # substrate retained for Path B — see handoff
     alias_to_axis,
     cast_dim,
-    cast_frame_axes,
-    cast_value_axes,
     cast_flexdata_axes,
     get_global_axis_enums,
     rename_to_axis,

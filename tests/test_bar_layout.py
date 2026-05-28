@@ -6,7 +6,6 @@ for various DataFrame shapes and configuration options.
 
 import pandas as pd
 import numpy as np
-import pytest
 
 from flextool.plot_outputs.plot_bars import _compute_bar_layout
 from flextool.plot_outputs.subplot_helpers import BarLayoutParams

@@ -41,7 +41,6 @@ Architecture notes
 """
 from __future__ import annotations
 
-import csv
 import logging
 import math
 from collections import defaultdict
@@ -62,7 +61,6 @@ from flextool.engine_polars._solve_state import (
 )
 from flextool.engine_polars._emit_provider_io import (
     _provider_key,
-    _provider_open,
 )
 
 if TYPE_CHECKING:

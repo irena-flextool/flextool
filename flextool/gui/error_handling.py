@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import tkinter.messagebox as messagebox
-import traceback
 from functools import wraps
 from typing import Any, Callable
 

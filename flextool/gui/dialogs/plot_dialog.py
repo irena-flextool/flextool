@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import tkinter as tk
-import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -12,7 +11,6 @@ from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.dialogs.file_picker import FilePickerDialog
 from flextool.gui.data_models import PlotSettings, ProjectSettings
-from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.settings_io import save_project_settings
 
 logger = logging.getLogger(__name__)

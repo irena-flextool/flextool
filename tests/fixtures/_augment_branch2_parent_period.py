@@ -83,7 +83,6 @@ These hand-derived sums are the parity oracle for
 """
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path

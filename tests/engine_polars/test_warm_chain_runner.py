@@ -191,7 +191,6 @@ def test_warm_native_reuses_warmproblem_on_identical_data(
         _build_warm_problem,
         _apply_warm_updates,
         _fingerprint,
-        _IncompatibleUpdate,
     )
     from flextool.engine_polars.input import load_flextool
 

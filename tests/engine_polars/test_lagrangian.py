@@ -9,16 +9,12 @@ Exercises ``flextool._lagrangian.solve_lagrangian`` on:
 """
 from __future__ import annotations
 
-import numpy as np
-import polars as pl
 import pytest
 
 from polar_high import Problem, WarmProblem
 
 from flextool.engine_polars import build_flextool, load_flextool
 from flextool.engine_polars._lagrangian import (
-    Coupling,
-    LagrangianResult,
     solve_lagrangian,
     _identify_coupling_cols,
 )

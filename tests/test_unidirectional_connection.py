@@ -11,11 +11,9 @@ Post-GMPL retirement (Δ.22), the feature reduces to making
 """
 from __future__ import annotations
 
-import csv
 import logging
 from pathlib import Path
 
-import pytest
 from spinedb_api import DatabaseMapping, import_data
 
 from flextool.input_derivation._specs import METHODS_MAPPING

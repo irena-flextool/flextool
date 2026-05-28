@@ -22,7 +22,6 @@ from flextool.plot_outputs.config import PlotConfig
 from flextool.plot_outputs.plan import (
     _compute_bar_plan,
     _compute_time_plan,
-    build_figure_from_plan,
 )
 
 

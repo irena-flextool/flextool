@@ -47,7 +47,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 import polars as pl
-import pytest
 
 from polar_high import Param, Problem
 
@@ -63,7 +62,6 @@ if str(_TEST_DIR) not in sys.path:
 # Re-export the canonical objective parser so tests share one source of truth.
 from test_scenarios import (  # noqa: E402
     OUTPUT_CONFIG,
-    _parse_summary_solve_objective,
 )
 
 

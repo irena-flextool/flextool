@@ -6,7 +6,6 @@ context activated; this file pins down the SolveContext API itself
 """
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import polars as pl

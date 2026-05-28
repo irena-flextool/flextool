@@ -10,7 +10,6 @@ Two layers:
 from __future__ import annotations
 
 import csv
-import shutil
 import subprocess
 import sys
 from io import StringIO
@@ -426,8 +425,8 @@ def _run_scenario(repo: Path, scenario: str, *, use_old_raw_csv: bool) -> dict[s
     """Run a real scenario via subprocess and return handoff CSV contents."""
     cmd = [
         sys.executable, "run_flextool.py",
-        f"sqlite:///templates/examples.sqlite",
-        f"sqlite:///output_info.sqlite",
+        "sqlite:///templates/examples.sqlite",
+        "sqlite:///output_info.sqlite",
         "--scenario-name", scenario,
     ]
     if use_old_raw_csv:

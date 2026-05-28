@@ -72,7 +72,6 @@ from polar_high import Param
 
 from flextool.engine_polars._axis_enums import (
     alias_to_axis,
-    get_global_axis_enums,
     rename_to_axis,
     schema_dtype,
 )

@@ -361,7 +361,7 @@ class TestLinkSheet:
             n = ws.cell(row=row, column=3).value
             if c is not None and n is not None:
                 pairs.add((str(c), str(n)))
-        assert len(pairs) > 0, f"No commodity-node pairs found. Sheet is empty."
+        assert len(pairs) > 0, "No commodity-node pairs found. Sheet is empty."
 
 
 # ---------------------------------------------------------------------------

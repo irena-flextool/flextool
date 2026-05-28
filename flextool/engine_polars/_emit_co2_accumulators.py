@@ -27,12 +27,9 @@ from flextool.engine_polars._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine_polars._emit_provider_io import _emit
-from flextool.engine_polars import _provider_keys as K
-from flextool.engine_polars._provider_translators import read_handoff_frame
 
 if TYPE_CHECKING:
-    from ._solve_handoff import SolveHandoff
+    pass
 
 _logger = logging.getLogger(__name__)
 

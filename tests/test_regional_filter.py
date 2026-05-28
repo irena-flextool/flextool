@@ -53,7 +53,6 @@ from flextool.decomposition.region_decomposition import (  # noqa: E402
 from flextool.decomposition.region_filter import (  # noqa: E402
     HalfFlow,
     build_region_provider,
-    classify_half_flows_from_provider,
     discover_decomposition_regions_from_db,
     discover_region_membership_from_provider,
 )

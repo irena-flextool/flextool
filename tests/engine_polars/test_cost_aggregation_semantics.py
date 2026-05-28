@@ -61,7 +61,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
-import pytest
 
 from polar_high import Problem
 from flextool.engine_polars import build_flextool, load_flextool

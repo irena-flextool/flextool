@@ -7,7 +7,7 @@ import os
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus, JobType
+from flextool.gui.execution_manager import ExecutionManager, JobStatus, JobType
 from flextool.gui.hover_tooltip import attach_tooltip
 
 logger = logging.getLogger(__name__)

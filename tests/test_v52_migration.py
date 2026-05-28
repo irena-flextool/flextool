@@ -17,7 +17,6 @@ check for the newly-bumped ``FLEXTOOL_DB_VERSION = 52``.
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest

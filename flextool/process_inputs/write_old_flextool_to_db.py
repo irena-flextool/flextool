@@ -24,13 +24,9 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool.process_inputs.read_old_flextool import (
     DemandTimeSeries,
-    GridNode,
-    NodeGroup,
-    NodeNodeConnection,
     OldFlexToolData,
     SensitivityOverride,
     TimeSeriesData,
-    UnitGroup,
     UnitInstance,
     UnitTimeSeries,
     UnitType,
@@ -1816,7 +1812,6 @@ def _build_timeset_duration(
         A Map where each key is the start time_id of a contiguous block
         and each value is the total duration of that block in hours.
     """
-    from flextool.process_inputs.read_old_flextool import TimeStep
 
     starts: list[str] = []
     durations: list[float] = []

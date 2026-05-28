@@ -18,13 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from flextool.gui.data_models import ProjectSettings, ScenarioInfo
 from flextool.gui.execution_manager import (
     ExecutionManager,
     JobStatus,
-    JobType,
 )
 from flextool.gui.scenario_key import (
     choose_output_subdir_for_write,

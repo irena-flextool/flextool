@@ -21,7 +21,6 @@ plot builds within the same process don't re-read it.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 import yaml

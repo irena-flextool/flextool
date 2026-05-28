@@ -41,11 +41,9 @@ from flextool.engine_polars._block_layout import (
     BlockLayout,
 )
 from flextool.engine_polars._derived_block import (
-    BlockBundle,
     arc_block_dt,
     dtttdt_block_interior_lf,
     flow_from_n_block_filtered,
-    flow_from_nodeBalance_block_filtered,
     flow_to_n_block_filtered,
     load_block_bundle,
     nodeState_last_dt_lf,

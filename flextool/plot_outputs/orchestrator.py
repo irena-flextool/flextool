@@ -166,8 +166,8 @@ def _apply_dimension_rules(
         df_index_levels, df_columns_levels = parts
     else:
         raise ValueError(
-            f'map_dimensions_for_plots first element should '
-            f'contain one underscore to separate row and column index indicators'
+            'map_dimensions_for_plots first element should '
+            'contain one underscore to separate row and column index indicators'
         )
 
     if 't' in rules and 'i' not in rules:

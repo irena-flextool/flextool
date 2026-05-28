@@ -6,7 +6,6 @@ Uses spinedb_api Map/Array objects for complex values. Provides two output modes
 """
 
 import base64
-import json
 from typing import Any
 
 from spinedb_api import Map, Array, to_database

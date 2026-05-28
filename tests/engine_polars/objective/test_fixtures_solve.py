@@ -1,7 +1,6 @@
 """Self-tests for the shared fixtures in ``objective/conftest.py``."""
 from __future__ import annotations
 
-import pytest
 
 from .conftest import solve_problem
 

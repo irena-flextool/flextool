@@ -21,7 +21,7 @@ call-site instead of producing silently-empty outputs.
 """
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import pandas as pd
 import polars as pl

@@ -36,14 +36,13 @@ of LHS terms to add.
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 import polars as pl
 
 from polar_high import Sum, Where, Param
 from polar_high.engine import Var
 
-from ._axis_enums import get_global_axis_enums, rename_to_axis, schema_dtype
+from ._axis_enums import rename_to_axis, schema_dtype
 from ._emit_provider_io import _provider_key
 
 

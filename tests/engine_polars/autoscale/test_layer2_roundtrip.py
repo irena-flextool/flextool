@@ -33,7 +33,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from polar_high.engine import Param, Problem, Sum
+from polar_high.engine import Problem, Sum
 
 from flextool.engine_polars.autoscale import (
     QuantityType,

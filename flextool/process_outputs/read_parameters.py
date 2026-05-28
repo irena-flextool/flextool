@@ -30,7 +30,6 @@ import pandas as pd
 import polars as pl
 
 from flextool.process_outputs._inmemory_helpers import (
-    add_solve_to_pandas,
     series_with_index,
     series_with_multi_index,
     wide_multi_col,

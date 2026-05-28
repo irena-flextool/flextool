@@ -28,7 +28,6 @@ import pytest
 
 from flextool.engine_polars import SpineDbReader
 from flextool.engine_polars._projection_params import (
-    process_source_sink,
     process_source_sink_canonical,
     process_source_sink_collapsed,
     process_source_sink_eff,

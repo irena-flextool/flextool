@@ -29,7 +29,6 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars.autoscale import (
-    RangeReport,
     ScalingConfig,
     ScalingMode,
     detect_ranges,

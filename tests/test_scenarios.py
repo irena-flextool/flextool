@@ -31,7 +31,6 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import round_for_comparison  # noqa: E402
 
-from flextool.engine_polars._db_loader import FlexToolRunner
 from flextool.engine_polars import run_chain_from_db
 from flextool.process_outputs.write_outputs import write_outputs
 

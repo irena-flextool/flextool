@@ -82,7 +82,7 @@ from flextool.engine_polars._block_layout import (
 _enums: "dict | None" = None
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
-    from flextool.engine_polars._input_source import InputSource
+    pass
 
 
 # ---------------------------------------------------------------------------

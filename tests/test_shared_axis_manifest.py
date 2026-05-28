@@ -25,7 +25,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from flextool.plot_outputs.plan import PlotPlan
 from flextool.plot_outputs.shared_manifest import (

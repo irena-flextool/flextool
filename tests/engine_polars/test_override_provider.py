@@ -77,8 +77,8 @@ def _read_prev_inv(step) -> dict[tuple[str, str], float]:
     """
     prov = step.flex_data_provider
     assert prov is not None, (
-        f"step.flex_data_provider missing — keep_solutions=True is required "
-        f"for the assertion path; without it earlier steps are slimmed."
+        "step.flex_data_provider missing — keep_solutions=True is required "
+        "for the assertion path; without it earlier steps are slimmed."
     )
     # No K constant for this key yet (mechanical migration deferred per
     # specs/provider_consolidation.md "Incremental follow-ups not blocking

@@ -41,7 +41,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
-import pytest
 
 DATA = Path(__file__).resolve().parent / "data"
 

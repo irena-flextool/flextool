@@ -27,7 +27,6 @@ blocked-method tuple is now empty and the
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -36,7 +35,6 @@ from flextool.engine_polars._flex_data_provider import FlexDataProvider
 from flextool.engine_polars._native_run_model import (
     _downgrade_rp_methods_for_non_rp_solve,
 )
-from flextool.engine_polars._solve_state import FlexToolConfigError
 
 
 # ---------------------------------------------------------------------------

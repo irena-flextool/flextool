@@ -6,7 +6,6 @@ without error, and that ``write_csv`` round-trips through ``pl.read_csv``.
 from __future__ import annotations
 
 import polars as pl
-import pytest
 
 from flextool.engine_polars import load_flextool
 

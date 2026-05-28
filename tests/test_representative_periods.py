@@ -4,7 +4,6 @@ Unit tests for the clustering and weight algorithms, plus functional tests
 that verify the full pipeline: build model → cluster → solve with RP weights.
 """
 
-import math
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +14,6 @@ import pytest
 from flextool.representative_periods.clustering import greedy_convex_hull_clustering
 from flextool.representative_periods.weights import (
     compute_weight_matrix,
-    distance_to_hull,
     fit_convex_weights,
     project_onto_simplex,
 )
@@ -220,7 +218,6 @@ def _build_test_db(db_path: str, yaml_path: str, seed: int = 42) -> None:
 
 def _run_flextool(db_path: str, out_path: str, scenario: str) -> float:
     """Run FlexTool and return total_cost."""
-    from pathlib import Path
     work_cwd = Path(db_path).parent
     result = subprocess.run(
         [sys.executable, "run_flextool.py",

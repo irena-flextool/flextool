@@ -136,7 +136,6 @@ def objective_term_value(problem: Problem, term_name: str) -> float:
     Returns ``float('nan')`` when no matching variable exists, so callers
     can ``assert math.isnan(...)`` to detect the "term not present" case.
     """
-    import math
     # Resolve variable col_id range for the matching var.
     matching_cols: set[int] = set()
     for vname, var in problem._vars.items():

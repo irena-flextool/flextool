@@ -66,7 +66,7 @@ from polar_high import Param, Sum, Where
 
 
 if TYPE_CHECKING:
-    from polar_high.engine import Var
+    pass
 
 
 # .mod uses 1e30 as +Infinity sentinel; the constraint filter is

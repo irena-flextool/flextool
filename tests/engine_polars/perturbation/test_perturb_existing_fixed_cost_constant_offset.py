@@ -79,8 +79,8 @@ def test_perturb_p_entity_existing_fixed_cost_constant_obj_offset(retire_data):
     base_obj = solve_obj(retire_data, include_existing_fixed_cost=True)
     term_base = _existing_fixed_cost_constant(retire_data)
     assert term_base != 0.0, (
-        f"work_coal_retire should exercise §8.1 (got constant=0); "
-        f"check ed_fixed_cost / p_entity_all_existing fixture data")
+        "work_coal_retire should exercise §8.1 (got constant=0); "
+        "check ed_fixed_cost / p_entity_all_existing fixture data")
 
     perturbed = scale_param(retire_data, "p_ed_fixed_cost", factor)
     perturbed_obj = solve_obj(perturbed, include_existing_fixed_cost=True)
