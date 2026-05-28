@@ -333,19 +333,25 @@ def main():
                              'Batch C.8).  Routed through the '
                              'effective-options resolver as a CLI '
                              'override (highest precedence).')
-    parser.add_argument('--solver-io-api',
-                        choices=['direct', 'mps', 'lp'],
+    parser.add_argument('--matrix-file-format',
+                        choices=['mps', 'lp'],
                         default=None,
-                        help='Commercial-solver dispatch transport: '
-                             '``direct`` (in-process binding, fastest; '
-                             'default), ``mps`` or ``lp`` (file '
-                             'fallback for solvers / environments '
-                             'without a direct binding).  Only the '
-                             'commercial-solver path (gurobi / cplex '
-                             '/ xpress / copt) consults this — the '
-                             'HiGHS path is always direct.  Replaces '
-                             'the v55-era DB-stored solver_io_api '
-                             'knob (removed in Batch C.9).')
+                        help='On-disk format used when the solver is '
+                             'dispatched via a matrix file: ``mps`` '
+                             '(default) or ``lp``.  The in-process '
+                             'vs. file decision is implicit:\n'
+                             '* HiGHS + no ``--save-memory`` -> direct '
+                             '(in-process binding, fastest).\n'
+                             '* HiGHS + ``--save-memory`` -> file write '
+                             '(polar-high round-trips through MPS '
+                             'internally; this flag has no effect).\n'
+                             '* Commercial solver (gurobi / cplex / '
+                             'xpress / copt) -> file write using the '
+                             'chosen format.\n'
+                             'Replaces the v55-era ``--solver-io-api`` '
+                             'flag; the engine still uses '
+                             '``direct|mps|lp`` internally for '
+                             '``SolverConfig.io_api``.')
     parser.add_argument('--csv-dump', action='store_true',
                         default=False,
                         help='Debug visibility for cascade-internal '
@@ -395,8 +401,8 @@ def main():
         # name is a historical artefact from the diagnostic shim that
         # predated the resolver but the semantics are identical.
         os.environ['FLEXTOOL_HIGHS_TIME_LIMIT'] = str(args.solver_time_limit)
-    if args.solver_io_api is not None:
-        os.environ['FLEXTOOL_SOLVER_IO_API'] = args.solver_io_api
+    if args.matrix_file_format is not None:
+        os.environ['FLEXTOOL_MATRIX_FILE_FORMAT'] = args.matrix_file_format
     # ``--scaling`` (off/solver_only/basic/full) — CLI > env > default-full.
     # Surfacing via the same ``FLEXTOOL_SCALING`` env var that
     # ``resolve_scaling_config`` already consults keeps the threading

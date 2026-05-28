@@ -1512,11 +1512,13 @@ def migrate_database(database_path, up_to: int | None = None):
                 _migrate_v56_remove_solver_time_limit(db)
                 # Batch C.9 — drop ``solver_io_api`` parameter.
                 # User-stored value DROPPED.  Use the new
-                # --solver-io-api {direct,mps,lp} CLI flag (plumbed
-                # via FLEXTOOL_SOLVER_IO_API env var into
+                # --matrix-file-format {mps,lp} CLI flag (plumbed via
+                # FLEXTOOL_MATRIX_FILE_FORMAT env var into
                 # SolveConfig.load_from_db, overriding the per-solve
-                # SolverConfig.io_api default).  Only the commercial-
-                # solver path consumes this — HiGHS is always direct.
+                # SolverConfig.io_api default).  The in-process vs.
+                # file decision is implicit: HiGHS + no --save-memory
+                # stays on the direct binding; commercial solvers
+                # always write a file using the chosen format.
                 # Also removes the dedicated ``solver_io_apis``
                 # parameter_value_list.
                 _migrate_v56_remove_solver_io_api(db)
@@ -4807,13 +4809,15 @@ def _migrate_v56_remove_solver_io_api(db) -> None:
 
     Batch C.9 — drop the GUI/CLI-only knob's DB axis.  User-stored
     values are intentionally NOT migrated (per Q-C-2).  Equivalent
-    control is exposed via the new ``--solver-io-api {direct,mps,lp}``
-    CLI flag, plumbed via the ``FLEXTOOL_SOLVER_IO_API`` env var into
-    :meth:`SolveConfig.load_from_db` where it overrides the per-solve
-    :class:`SolverConfig.io_api` default for every solve.  Only the
-    commercial-solver dispatch path consumes this — the HiGHS path
-    is always direct in-process.  GUI controls for the DB-stored
-    equivalent are deferred to the v56 follow-up PR (task #26).
+    control is exposed via the new ``--matrix-file-format {mps,lp}``
+    CLI flag, plumbed via the ``FLEXTOOL_MATRIX_FILE_FORMAT`` env var
+    into :meth:`SolveConfig.load_from_db` where it overrides the
+    per-solve :class:`SolverConfig.io_api` default for every solve.
+    The in-process vs. file dispatch is implicit: HiGHS without
+    ``--save-memory`` stays on the direct binding; commercial
+    solvers (gurobi/cplex/xpress/copt) always write a file using
+    the chosen format.  GUI controls for the DB-stored equivalent
+    are deferred to the v56 follow-up PR (task #26).
 
     The ``solver_io_apis`` parameter_value_list (``direct``, ``mps``,
     ``lp``) is also removed since the parameter was its sole referent.

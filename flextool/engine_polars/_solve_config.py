@@ -386,15 +386,24 @@ class SolveConfig:
         # (which downstream callers still consume); we reuse that dict
         # here rather than re-querying.
         # Batch C.9 — ``solver_io_api`` DB axis removed.  Replaced by
-        # the ``--solver-io-api`` CLI flag, env-var-plumbed via
-        # ``FLEXTOOL_SOLVER_IO_API``.  When the env var is set its
-        # value applies uniformly to every solve in the chain
-        # (commercial-solver path only — the HiGHS path is always
-        # direct).  Unset preserves the SolverConfig.io_api default
-        # of "direct".
+        # the ``--matrix-file-format`` CLI flag (mps | lp),
+        # env-var-plumbed via ``FLEXTOOL_MATRIX_FILE_FORMAT``.  The
+        # in-process vs. file dispatch is implicit:
+        # * HiGHS + no --save-memory: ``SolverConfig.io_api`` defaults
+        #   to ``"direct"`` (in-process binding).
+        # * HiGHS + --save-memory: ``Problem.solve(save_memory=True)``
+        #   round-trips through MPS internally; ``io_api`` is ignored
+        #   on that path.
+        # * Commercial solver: ``polar_high.solvers.solve`` consults
+        #   ``io_api``.  When the CLI flag is set its value
+        #   (``"mps"`` or ``"lp"``) applies uniformly to every solve.
+        # ``matrix_file_format`` stays an empty dict (no per-solve
+        # author override since the DB axis is gone); the default is
+        # resolved below using the env var when present, else
+        # ``"direct"``.
         import os as _os_c9
-        _cli_io_api = _os_c9.environ.get("FLEXTOOL_SOLVER_IO_API")
-        solver_io_api: dict = {}
+        _cli_io_api = _os_c9.environ.get("FLEXTOOL_MATRIX_FILE_FORMAT")
+        matrix_file_format: dict = {}
         # Batch C.7 — ``solver_log_level`` shortcut removed; use the
         # --solver-log-level CLI flag (silent / normal / verbose →
         # HiGHS output_flag + log_dev_level).
@@ -509,7 +518,7 @@ class SolveConfig:
         # consumes).
         solver_config_keys = (
             set(solvers)
-            | set(solver_io_api)
+            | set(matrix_file_format)
             | set(solver_arguments)
             | set(solver_time_limit_raw)
             | set(solver_mip_gap_raw)
@@ -525,14 +534,17 @@ class SolveConfig:
             v = raw.get(key)
             return int(float(v)) if v is not None else None
 
-        # Batch C.9 — the CLI ``--solver-io-api`` env var override (when
-        # set) wins over the per-solve default for every solve.
-        _io_api_default = _cli_io_api if _cli_io_api in ("direct", "mps", "lp") else "direct"
+        # Batch C.9 — the CLI ``--matrix-file-format`` env var override
+        # (when set, ``"mps"`` or ``"lp"``) becomes the default
+        # ``SolverConfig.io_api`` for every solve.  Otherwise the
+        # default is ``"direct"`` (HiGHS in-process binding; commercial
+        # solvers' in-process Python API).
+        _io_api_default = _cli_io_api if _cli_io_api in ("mps", "lp") else "direct"
         solver_configs: dict[str, SolverConfig] = {}
         for key in solver_config_keys:
             solver_configs[key] = SolverConfig(
                 name=solvers.get(key, "highs"),
-                io_api=solver_io_api.get(key, _io_api_default),
+                io_api=matrix_file_format.get(key, _io_api_default),
                 options=dict(solver_arguments.get(key, {})),
                 time_limit=_opt_float(solver_time_limit_raw, key),
                 mip_gap=_opt_float(solver_mip_gap_raw, key),
