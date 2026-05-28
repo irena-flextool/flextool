@@ -1515,6 +1515,12 @@ def _drive_cascade(
             # :func:`_native_run_model`, which on multi-roll runs is too
             # late (storage→dispatch OOMs).
             self._prev_step_key: "str | None" = None
+            # Phase 2 — per-step level_key sidecar.  Populated when
+            # parking each step so the warm-path "keep one
+            # ``Solution.highs`` + one ``flex_data_provider`` per level"
+            # slim can iterate prior steps and resolve their level.
+            # Keyed by the same ``step_key`` used in ``self._all_steps``.
+            self._step_level_keys: "dict[str, tuple]" = {}
             # Per-base-solve gating for the scaling CSV.  The CSV value
             # (effective_obj_scale) is invariant across rolls of the same
             # base solve, so we track which base solve names already have
@@ -2309,45 +2315,18 @@ def _drive_cascade(
                 self.state.paths.work_folder, complete_solve_name,
                 provider=getattr(self.state, "current_provider", None),
             )
-            # Warm-path slim of the PRIOR iter's parked Solution before
-            # parking this iter's.  The prior iter's per-iter writers
-            # (``write_outputs_for_solve``) and
-            # ``build_handoff_from_solution`` ran before its
-            # ``self._all_steps[...] = OrchestrationStep(...)`` deposit
-            # — so by the time we get here on iter N, the iter-(N-1)
-            # Solution's heavy ``_vars`` dict (one ``Var.frame``
-            # polars DataFrame per LP variable) and its ``highs`` C++
-            # instance are no longer needed.  Drop those; keep the
-            # cheap 1-D arrays (``col_value``, ``col_dual``,
-            # ``row_dual``), the small scalars (``optimal``, ``obj``,
-            # ``col_names``, ``row_names``) — leaves the door open for
-            # a future level-warm-start optimisation that seeds the
-            # next cold-built LP's initial col_value from the prior
-            # solution without paying the GB-scale frame cost.  The
-            # post-loop slim at the bottom of ``_native_run_model``
-            # still runs and nulls the whole ``step.solution`` on
-            # non-last steps; this block only bounds the in-cascade
-            # peak.  See
-            # ``/tmp/highs-memory-investigation/`` HiGHS attribution
-            # logs for the per-iter ~5.6 KB * ~400 vars * 80 iter =
-            # 172 MB climb this addresses.
+            # NOTE: the previous "slim PRIOR iter's _vars + highs at
+            # the start of iter N" block has been retired.  Both paths
+            # now do their slim AFTER ``Outputs written`` below:
             #
-            # On the COLD path (``_save_memory``) this prev-iter slim is
-            # superseded by the immediate post-write slim below — every
-            # iter's heavy state is released right after ``Outputs
-            # written``.  Skip the prev-iter dance there.
-            if not _save_memory and self._prev_step_key is not None:
-                _prev = self._all_steps.get(self._prev_step_key)
-                if _prev is not None and _prev.solution is not None:
-                    _prev_sol = _prev.solution
-                    try:
-                        _prev_sol._vars = {}
-                    except Exception:  # noqa: BLE001
-                        pass
-                    try:
-                        _prev_sol.highs = None
-                    except Exception:  # noqa: BLE001
-                        pass
+            # * Warm path: per-level retention slim (Phase 2) — keeps
+            #   one ``Solution.highs`` + one ``flex_data_provider`` per
+            #   live level, drops everything else.
+            # * Cold path (``_save_memory``): eager prior-iter slim —
+            #   nulls everything heavy on the prior step.
+            #
+            # Both blocks live at the bottom of this method, just after
+            # the ``outputs_written_end`` memory checkpoint.
             # Capture per-sub-solve decision-variable frames before the
             # step is deposited.  Polar-high may release ``sol._vars``
             # internally between sub-solves (a memory optimisation on
@@ -2392,6 +2371,14 @@ def _drive_cascade(
             # Track the just-parked step_key so the next iter can slim
             # THIS iter's Solution (see block above).
             self._prev_step_key = step_key
+            # Phase 2 — record this step's level_key for the warm-path
+            # per-level slim below.  ``state._current_level_key`` was
+            # set by ``_native_run_model`` immediately before this call.
+            _this_level_key = getattr(
+                self.state, "_current_level_key", None,
+            )
+            if _this_level_key is not None:
+                self._step_level_keys[step_key] = _this_level_key
             if _phase_timing:
                 _tr.record(
                     "per_iter",
@@ -2413,6 +2400,106 @@ def _drive_cascade(
                     "outputs_written_end", self.state.logger,
                     user_label="Outputs written",
                 )
+            # Phase 2 — warm-path per-level retention slim.  Per the
+            # user's design:
+            #
+            # * Keep ONE ``Solution.highs`` (the live ``polar_high.Solution``
+            #   wrapping the WarmProblem's HiGHS instance) per level —
+            #   the MOST RECENT parked one of each level.
+            # * Keep ONE ``flex_data_provider`` per level — same gating.
+            # * Drop both as soon as the pipeline has no more upcoming
+            #   solves of that level (``state._all_level_keys[i+1:]``).
+            # * Drop ``Solution._vars`` after ``Outputs written`` on
+            #   warm too (warm-start uses HiGHS' basis, not these
+            #   polars frames).
+            # * Drop ``flex_data`` after the solve consumes it.
+            #
+            # ``flex_data`` and ``solution`` (the Python object, minus
+            # the heavy ``.highs`` + ``._vars`` slots) on the LAST step
+            # overall survive the per-iter slim because cmd_run_flextool
+            # passes them to ``write_outputs``.  We never null the
+            # ``step.solution`` object itself here — only its
+            # ``_vars`` dict and its ``.highs`` reference.
+            #
+            # Memory-pressure-yielding for kept Highs instances is a
+            # future concern, explicitly out of scope per the user.
+            if not _save_memory:
+                _all_level_keys = getattr(
+                    self.state, "_all_level_keys", ()
+                )
+                _iter_idx = getattr(
+                    self.state, "_current_iter_index", None,
+                )
+                _upcoming_levels: "set" = set()
+                if _iter_idx is not None and _all_level_keys:
+                    _upcoming_levels = set(
+                        _all_level_keys[_iter_idx + 1:]
+                    )
+                _this_level = self._step_level_keys.get(step_key)
+                # Walk every parked step.  For each, decide whether to
+                # keep its ``solution.highs`` + ``flex_data_provider``.
+                for _k, _step in self._all_steps.items():
+                    _step_lvl = self._step_level_keys.get(_k)
+                    _is_just_parked = (_k == step_key)
+                    # ``solution._vars`` and ``flex_data`` are dropped on
+                    # every PRIOR step regardless of level (the per-iter
+                    # writers + handoff carrier already consumed them).
+                    if not _is_just_parked and _step.solution is not None:
+                        try:
+                            _step.solution._vars = {}
+                        except Exception:  # noqa: BLE001
+                            pass
+                    if not _is_just_parked:
+                        _step.flex_data = None
+                    # ``solution.highs`` + ``flex_data_provider`` are
+                    # kept only on the MOST RECENT parked step of each
+                    # level whose pipeline still has upcoming iters.
+                    # Just-parked step's level always has at least one
+                    # member (itself) so the "drop entire level" rule
+                    # fires only on PRIOR steps whose level is exhausted.
+                    if _is_just_parked:
+                        # Even the just-parked step drops its highs +
+                        # flex_data_provider when its level has no
+                        # more upcoming iters.  Saves the level's last
+                        # parked Highs for the duration of subsequent
+                        # other-level work that would otherwise pin it.
+                        if (
+                            _step_lvl is not None
+                            and _step_lvl not in _upcoming_levels
+                            and _this_level != _step_lvl
+                        ):
+                            # Can't happen: just-parked step's level
+                            # IS ``_this_level``.  Defensive no-op.
+                            pass
+                        continue
+                    # Prior step.  Drop its highs / provider when EITHER:
+                    #   (a) the level it belongs to is exhausted
+                    #       (``_step_lvl not in _upcoming_levels`` and
+                    #       ``_step_lvl != _this_level``), OR
+                    #   (b) the level it belongs to is the same as the
+                    #       just-parked step's level — in which case
+                    #       the just-parked step is the new "most recent
+                    #       of this level" and this older sibling is
+                    #       superseded.
+                    _level_exhausted = (
+                        _step_lvl is not None
+                        and _step_lvl != _this_level
+                        and _step_lvl not in _upcoming_levels
+                    )
+                    _same_level_older = (
+                        _step_lvl is not None
+                        and _step_lvl == _this_level
+                    )
+                    if _level_exhausted or _same_level_older:
+                        if _step.solution is not None:
+                            try:
+                                _step.solution.highs = None
+                            except Exception:  # noqa: BLE001
+                                pass
+                        _step.flex_data_provider = None
+                # Trim the libc heap after potentially dropping multiple
+                # large Highs instances + polars frames.
+                _try_malloc_trim()
             # Cold-path (save-memory) eager slim of the PRIOR iter's
             # parked OrchestrationStep.  We can't slim the JUST-parked
             # step here — the orchestration cli (``cmd_run_flextool``)

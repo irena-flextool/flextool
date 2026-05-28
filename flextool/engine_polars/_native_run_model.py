@@ -413,6 +413,12 @@ def native_run_model(state, solver) -> int:
         )
         for s in all_solves
     ]
+    # Phase 2 — expose the full pre-planned sequence of level_keys onto
+    # ``state`` so the per-solve callback (``_PolarHighCascadeSolver.run``)
+    # can answer the "is there another solve of THIS level coming?"
+    # question used by the warm-path per-level retention slim.  Empty
+    # tuple is safe (no upcoming iter exists for the empty case).
+    state._all_level_keys = tuple(level_keys)
 
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()
@@ -1212,6 +1218,12 @@ def native_run_model(state, solver) -> int:
             i == len(all_solves) - 1
             or level_keys[i + 1] != _level_key
         )
+        # Phase 2 — expose the current iter's position in the level_keys
+        # sequence so the per-solve callback can decide whether to retain
+        # or drop this level's ``Solution.highs`` / ``flex_data_provider``
+        # after the per-iter writers run.
+        state._current_iter_index = i
+        state._current_level_key = _level_key
         exit_status = solver.run(complete_solve[solve])
         state.emit_phase_checkpoints_this_iter = False
         state.current_parent_complete = None
