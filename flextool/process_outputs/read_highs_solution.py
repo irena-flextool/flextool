@@ -1494,7 +1494,17 @@ def write_v_obj(
     inv_scale = _resolve_inv_scale_the_objective(
         wf, scale_the_objective=scale_the_objective,
     )
-    obj = float(h.getObjectiveValue()) * inv_scale
+    # Prefer the autoscale-stashed objective when present: Layer 2's
+    # ``_push_unscaled_to_highs`` calls ``h.setSolution`` to mirror the
+    # unscaled primal back onto the live solver handle, but that call
+    # zeroes HiGHS's cached ``getObjectiveValue()`` (verified against
+    # highspy 1.14.0).  ``_flextool_unscaled_objective`` is the obj
+    # captured immediately before that ``setSolution`` and is the
+    # post-Layer-2-substitution / post-user_bound_scale-unscale value.
+    raw_obj = getattr(h, "_flextool_unscaled_objective", None)
+    if raw_obj is None:
+        raw_obj = float(h.getObjectiveValue())
+    obj = float(raw_obj) * inv_scale
     df = pd.DataFrame(
         {"objective": [obj]},
         index=pd.Index([solve_name], name="solve"),

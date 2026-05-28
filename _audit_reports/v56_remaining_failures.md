@@ -11,9 +11,9 @@ Branch: `v56-test-cleanup`
 | 2 | `TestPGLibCase14Integration::test_objective_value` | C | documented (output_raw/v_obj parquet contract drift) |
 | 3 | `TestPGLibCase14Integration::test_reference_bus_angle_zero` | C | documented (same root cause as #2) |
 | 4 | `TestPGLibCase14Integration::test_nonreference_buses_have_nonzero_angles` | C | documented (same root cause as #2) |
-| 5 | `TestWithinPeriodCumulativeRolling::test_within_period_cumulative_completes` | B | documented (only p2020 accumulator visible; p2025 missing) |
-| 6 | `TestCumulativeLadderBindingCap::test_roll2_uses_tier2_only_after_roll1_saturates_cap` | B | documented (tier-2 sum stays 0 when tier-1 saturates) |
-| 7 | `TestSingleSolveBitIdentity::test_single_solve_cumulative_matches_coal_objective` | B | documented (`total_cost.val=0` after autoscale unscaling) |
+| 5 | `TestWithinPeriodCumulativeRolling::test_within_period_cumulative_completes` | B | documented; root cause traced to roll-2 dispatch-collapse — deeper cascade issue, deferred |
+| 6 | `TestCumulativeLadderBindingCap::test_roll2_uses_tier2_only_after_roll1_saturates_cap` | B | documented; **same root cause as #5** (roll-2 dispatch collapse) — deferred |
+| 7 | `TestSingleSolveBitIdentity::test_single_solve_cumulative_matches_coal_objective` | **FIXED (G4)** | autoscale `setSolution` zeroed `getObjectiveValue()`; stash `_flextool_unscaled_objective` before push, prefer it in `write_v_obj` |
 | 8 | `test_cli_end_to_end_rivendell_map_index_name` | A | **FIXED** — `_node_constraint_coef` now swallows `KeyError` on missing param |
 | 9 | `test_export_to_tabular::TestConstraintSheet::test_has_data_rows` | resolved | passes on re-run (state leak — already fixed elsewhere) |
 | 10 | `test_handoff_writers::test_p_entity_period_existing_capacity_first_solve` | A | **FIXED** — test now passes `csv_dump=True` to the writer |
@@ -72,9 +72,28 @@ assert periods_seen == {"p2020", "p2025"}
 AssertionError: Expected both periods accumulated, got {'p2020'}
 ```
 
-Roll-2 (period p2025) does not contribute a row to the accumulator
-output.  Either the rolling cascade drops the second period's
-contribution or the writer filters it out.
+**Investigation (G4 batch):** the accumulator contains only `p2020`
+because every roll past the first **dispatches zero coal**.  Reproduced
+on the simpler 2-roll cross-period scenario (`coal_cum_rolling`, under-
+spending cap) too:
+
+* roll-0 parquet `(coal, coal_market, p2020): tier1=58600, tier2=0`
+* roll-1 parquet `(coal, coal_market, p2025): tier1=0, tier2=0`
+
+`p_entity_all_existing.csv` in the roll-1 solve directory shows
+`coal_plant, p2025: 500.0` (i.e. the unit *is* there), and `f_d_k[p2025] =
+1.0` is emitted correctly, so the input-derivation cascade is structurally
+fine.  But the LP itself produces zero coal dispatch in roll-1 — the
+objective also balloons (e.g. 1.144e9 in roll-0 vs 15.4e9 in roll-1
+for the under-spending case), suggesting the node-balance constraint is
+being satisfied by a penalty/slack rather than by coal flow.
+
+Root cause is somewhere in the rolling cascade's roll-to-roll handoff
+of dispatch state — the warm-restart or one of the period-scoped
+parameters drops the coal availability/inflow for the non-realized-yet
+periods.  Outside the scope of a quick fix (>50 lines across
+`_orchestration.py` / `_emit_chain_params.py` / the warm-restart path).
+Deferred.
 
 ### #6 — `TestCumulativeLadderBindingCap::test_roll2_uses_tier2_only_after_roll1_saturates_cap`
 
@@ -83,24 +102,47 @@ AssertionError: Tier 2 (tail) must absorb roll-2 dispatch when tier 1
 is locked out. Got tier-2 sum=0.0 in v_trade__y2020_2day_dispatch_roll_1.parquet.
 ```
 
-Tier 1 saturates in roll 1 (correct) but tier 2 stays at zero in roll 2
-— suggests the cumulative cap mod's roll-to-roll state hand-off doesn't
-carry tier saturation forward.  Same area as #5 — both are cumulative
-ladder rolling regressions.
+**Investigation (G4 batch):** same underlying behaviour as #5 — roll-1
+produces `v_trade = (0, 0)` for `p2025`.  Tier-1 is correctly locked
+at 0 by the cumulative-cap constraint (cap = 1 MWh fully consumed in
+roll-0; RHS = 1·1 − 1 = 0), but tier-2 (infinite cap, no constraint)
+also stays at 0 because the LP cannot dispatch coal at all in roll-1.
+Same root cause as #5; the cumulative-cap mod itself is structurally
+correct (it produces the expected RHS=0 for tier-1).  Deferred — pair
+the fix with #5.
 
-### #7 — `TestSingleSolveBitIdentity::test_single_solve_cumulative_matches_coal_objective`
+### #7 — `TestSingleSolveBitIdentity::test_single_solve_cumulative_matches_coal_objective` — **FIXED**
 
 ```
-coal=1,144,037,750.0  vs  coal_cum_single=0.0
+coal=1,144,037,750.0  vs  coal_cum_single=0.0    (pre-fix)
 ```
 
-Stdout shows HiGHS returns `Objective value :  4.4688974609e+00` with
-`user_bound_scale=-8` applied, and then `unscaled solution has objective
-value 1144.03775` — i.e. autoscale unscales by 1e6 but the per-solve
-`total_cost.val` written to the parquet is `0`.  This is an autoscale
-result-collection bug specific to the cumulative ladder mod's output
-hook: the un-unscaled value never propagates into the parquet writer.
-Possibly related to the Layer 2/3 work currently in flight.
+**Root cause:** the autoscale Layer 2 unscale hook
+(`_push_unscaled_to_highs`, added in commit `319e2da4`) round-trips
+the unscaled primal back onto the live `highspy.Highs` handle via
+`setSolution(HighsSolution)`.  Verified empirically (highspy 1.14.0):
+calling `setSolution` AFTER `run` resets `getObjectiveValue()` to 0.0.
+`write_v_obj` reads `h.getObjectiveValue() * inv_scale` to derive the
+parquet objective and the `total_cost.val` stdout line, so the post-
+autoscale objective collapsed to zero on every Layer-2-triggering solve.
+
+This was specific to the cumulative-ladder fixture only because it
+happens to land outside HiGHS's comfort zone (≥9-decade RHS span from
+the `1e30` tier-2 quantity sentinel) — most regression tests don't
+trigger Layer 2 from a single-solve and so don't surface the bug.
+
+**Fix:**
+
+* `flextool/engine_polars/autoscale/_layer2.py` —
+  `_push_unscaled_to_highs` captures `h.getObjectiveValue()` BEFORE the
+  `setSolution` call and stashes it as `h._flextool_unscaled_objective`.
+* `flextool/process_outputs/read_highs_solution.py:write_v_obj` —
+  prefer `h._flextool_unscaled_objective` when present; fall back to
+  `h.getObjectiveValue()` otherwise.
+
+No effect on the cold-path `_SolHighsShim` (the shim's view is updated
+in place, no `setSolution` is involved, and the attribute is simply
+absent so the writer falls back).
 
 ### #2, #3, #4 — `TestPGLibCase14Integration` (3 ERRORs)
 
