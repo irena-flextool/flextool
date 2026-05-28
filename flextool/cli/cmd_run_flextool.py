@@ -207,8 +207,8 @@ def main():
                         help='Subdirectory name under output_parquet/ (and the '
                              'other output dirs). Defaults to the scenario '
                              'name for backward compatibility.')
-    parser.add_argument('--flextool-location', default=None,
-                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories). Defaults to the user\'s current working directory.')
+    parser.add_argument('--flextool-location', nargs='?', default=None, const=None,
+                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories). Defaults to the user\'s current working directory. The value may be omitted (Spine Toolbox sometimes passes the bare flag) — in that case the default is used.')
     parser.add_argument('--work-folder', metavar='PATH', default=None,
                         help='Working directory for intermediate files (default: current directory). '
                              'Enables parallel scenario execution by isolating each run.')
