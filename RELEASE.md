@@ -1,3 +1,99 @@
+## Release 4.0.0a5 (28.5.2026) — GUI migration UX + side-menu polish
+
+GUI-focused follow-on to 4.0.0a4.  Two visible bugs and a sweep
+of side-menu housekeeping.
+
+**Automatic DB migration no longer freezes the GUI**
+
+Opening a project with outdated sqlite input sources used to lock
+the Tk main thread for the duration of the migration with no
+feedback at all.  The migration now runs in a worker thread behind
+a modal progress dialog with a Cancel button.
+
+- `flextool/update_flextool/db_migration.py` — `migrate_database()`
+  gains keyword-only `progress_callback` and `cancel_check` hooks
+  plus a `MigrationCancelled` exception carrying the last
+  successfully completed version.  Cancel is checked at the top of
+  each step only — an in-flight commit always finishes before the
+  exception is raised, so cancel does not corrupt the DB.
+- `flextool/gui/db_version_check.py` — forwards the new hooks
+  through `check_and_upgrade_database()`; adds public helpers
+  `needs_flextool_migration()` and `get_target_flextool_version()`
+  so the GUI can pre-check which files actually need migration
+  without performing one.  A dedicated `except MigrationCancelled`
+  branch reports partial progress and documents that re-run is
+  safe (steps idempotent).
+- Externally-referenced sqlite files (registered via
+  `external_refs`) now trigger a 3-button consent dialog before
+  migration: **Migrate in place**, **Copy all to project and
+  migrate** (copies into `input_sources/` and drops the
+  external_refs entry), or **Cancel** (skips externals; internal
+  files still migrate).
+- Two new dialogs under `flextool/gui/dialogs/`:
+  `migration_consent_dialog.py` and `migration_progress_dialog.py`
+  (modal with spinner, current-file label, thread-safe
+  `update_status` / `mark_finished`, Cancel button).
+- `MainWindow._run_db_migrations_with_ui()` drives the new flow:
+  plan → consent → optional copy (persisted once before the
+  worker starts) → progress modal → worker thread → wait_window
+  → summary messagebox.
+
+**Per-project side-menu settings actually persist now**
+
+`_load_auto_gen_vars()` restored 12 Tk vars in sequence.  Each
+`var.set()` immediately fired the `_on_auto_gen_toggled` trace,
+which read **all** vars and wrote settings.yaml — capturing the
+still-stale not-yet-restored values from the previous project (or
+fresh defaults on first load).  Every project load silently
+overwrote the file with the wrong values within milliseconds of
+opening.  A guard flag now suppresses the trace during the restore.
+
+**Stacked-area y-axis no longer clips peaks**
+
+`flextool/plot_outputs/plan.py` `_compute_time_plan` used the
+per-series min/max for `subplot_y_ranges`, but stacked-area
+charts render the column-wise sum — peaks would flat-top at the
+visual ceiling (orange `wind_plant` over blue `coal_plant` in the
+dispatch plot).  For `chart_type == 'stack'` the range now uses
+`num.clip(lower=0).sum(axis=1).max()` and
+`num.clip(upper=0).sum(axis=1).min()`.  Non-stack line charts
+keep the original formula.  The shared-axis manifest unions
+already-correct numbers, so cross-scenario sharing is preserved.
+
+**Side menu / UI settings popup**
+
+- Theme radios moved from the side menu into the UI settings
+  popup as a "Theme" cascade — they are a global setting and
+  belong in the global menu.
+- Button-label hygiene: Project → Projects…; Add → Add…;
+  Png settings → Png settings…; Execution jobs → Execution jobs…;
+  Results viewer → Results viewer…; UI settings → UI settings…
+- Tooltips on every File outputs row (Scenario pngs / Excels /
+  csvs / Comparison pngs / Excel) — short descriptions of what
+  the action produces and where on disk.
+- `_styled_popup_menu()` themes native `tk.Menu` popups to match
+  the current sv_ttk theme (bg/fg/activebackground/selectcolor)
+  and binds `font="TkDefaultFont"` so the menu font tracks the
+  body font.  Applied to the UI settings popup plus the three
+  right-click context menus on the input-sources and scenarios
+  trees — the radio bullet was invisible on dark themes and the
+  menu font was smaller than the rest of the UI.
+- `_install_menu_hover_dismiss()` auto-unposts the UI settings
+  popup ~400 ms after the mouse leaves all menus; the delay lets
+  the cursor briefly cross the parent border into a cascade
+  submenu without dismissing.
+
+**Cleanup**
+
+- Removed `plot_settings/{single_dataset,multiple_datasets}/
+  default_result_plots.json` — superseded by
+  `flextool/schemas/default_plots.yaml`, not referenced by any
+  code path, not shipped via `pyproject.toml` package-data.
+- `default_plots.yaml` — `scenario_rule: l` added to three
+  sub-configs; one `unit_time_plots` variant flipped from `h`
+  to `l`.
+
+
 ## Release 4.0.0a4 (28.5.2026) — cross-solve memory hygiene + diagnostics
 
 Follow-on to 4.0.0a3.  The Stage A+B refactor exposed (but did not
