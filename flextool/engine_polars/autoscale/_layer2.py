@@ -724,7 +724,10 @@ def apply_layer2(
 def unscale_solution(sol: Any, plan: Layer2Plan) -> None:
     """In-place: undo the Layer-2 forward transform on ``sol``.
 
-    Mutates ``sol.col_value``, ``sol.col_dual``, ``sol.row_dual``.
+    Mutates ``sol.col_value``, ``sol.col_dual``, ``sol.row_dual``.  Also
+    mirrors the unscaled values onto ``sol.highs`` (the live solver
+    handle) so downstream writers that read ``h.getSolution().col_value``
+    see physical-coordinate values rather than the scaled solver state.
     ``sol.obj`` is invariant under the (c→c/cf, x→cf·x) substitution
     and is left untouched.
 
@@ -738,8 +741,10 @@ def unscale_solution(sol: Any, plan: Layer2Plan) -> None:
             f"Layer 2 unscale: col_value length {cv.shape[0]} != "
             f"col_factors length {plan.col_factors.shape[0]}"
         )
-    sol.col_value = cv / plan.col_factors
+    new_col_value = cv / plan.col_factors
+    sol.col_value = new_col_value
 
+    new_col_dual: "np.ndarray | None" = None
     cd = np.asarray(getattr(sol, "col_dual", None), dtype=np.float64) \
         if getattr(sol, "col_dual", None) is not None else None
     if cd is not None and cd.size > 0:
@@ -748,8 +753,10 @@ def unscale_solution(sol: Any, plan: Layer2Plan) -> None:
                 f"Layer 2 unscale: col_dual length {cd.shape[0]} != "
                 f"col_factors length {plan.col_factors.shape[0]}"
             )
-        sol.col_dual = cd * plan.col_factors
+        new_col_dual = cd * plan.col_factors
+        sol.col_dual = new_col_dual
 
+    new_row_dual: "np.ndarray | None" = None
     rd = np.asarray(getattr(sol, "row_dual", None), dtype=np.float64) \
         if getattr(sol, "row_dual", None) is not None else None
     if rd is not None and rd.size > 0:
@@ -758,7 +765,80 @@ def unscale_solution(sol: Any, plan: Layer2Plan) -> None:
                 f"Layer 2 unscale: row_dual length {rd.shape[0]} != "
                 f"row_factors length {plan.row_factors.shape[0]}"
             )
-        sol.row_dual = rd * plan.row_factors
+        new_row_dual = rd * plan.row_factors
+        sol.row_dual = new_row_dual
+
+    _push_unscaled_to_highs(
+        sol,
+        new_col_value=new_col_value,
+        new_col_dual=new_col_dual,
+        new_row_dual=new_row_dual,
+    )
+
+
+def _push_unscaled_to_highs(
+    sol: Any,
+    *,
+    new_col_value: "np.ndarray | None" = None,
+    new_col_dual: "np.ndarray | None" = None,
+    new_row_dual: "np.ndarray | None" = None,
+) -> None:
+    """Mirror the unscaled values onto ``sol.highs``.
+
+    Downstream output writers (``process_outputs.read_highs_solution``)
+    consume ``h.getSolution().col_value`` directly off the solver handle;
+    without this push they would see the scaled solver state and write
+    physically-meaningless values.  Two handle types appear in practice:
+
+    * The duck-typed ``_SolHighsShim`` (cold HiGHS subprocess path) —
+      direct attribute assignment on its ``_SolutionView``.
+    * A real :class:`highspy.Highs` (warm path; commercial-solver cold
+      path that injected primal via ``setSolution``) — round-trip through
+      a fresh ``HighsSolution`` pushed via ``setSolution``.
+    """
+    h = getattr(sol, "highs", None)
+    if h is None:
+        return
+
+    try:
+        sv = h.getSolution()
+    except Exception:
+        sv = None
+
+    # Shim path: the ``_SolHighsShim._SolutionView`` is a tiny class
+    # whose ``__slots__`` advertise ``col_value`` / ``col_dual`` /
+    # ``row_dual``.  Direct assignment makes ``h.getSolution()`` return
+    # the unscaled arrays on the next call.
+    sv_slots = getattr(sv, "__slots__", None) if sv is not None else None
+    if sv_slots is not None and "col_value" in sv_slots:
+        if new_col_value is not None:
+            sv.col_value = new_col_value
+        if new_col_dual is not None:
+            sv.col_dual = new_col_dual
+        if new_row_dual is not None:
+            sv.row_dual = new_row_dual
+        return
+
+    # Real highspy.Highs path: round-trip through HighsSolution +
+    # setSolution.  ``setSolution`` after ``run`` overwrites the solver's
+    # stored solution — verified by the inline unit test in
+    # ``tests/test_autoscale_unscale_highs_pushback.py``.
+    try:
+        import highspy
+    except ImportError:  # pragma: no cover — highspy is a hard dep
+        return
+    try:
+        hs = highspy.HighsSolution()
+        cv_push = new_col_value if new_col_value is not None else sol.col_value
+        hs.col_value = np.asarray(cv_push, dtype=np.float64).tolist()
+        hs.value_valid = True
+        rd_push = new_row_dual if new_row_dual is not None else getattr(sol, "row_dual", None)
+        if rd_push is not None and np.asarray(rd_push).size > 0:
+            hs.row_dual = np.asarray(rd_push, dtype=np.float64).tolist()
+            hs.dual_valid = True
+        h.setSolution(hs)
+    except Exception:  # pragma: no cover — version-specific highspy quirk
+        pass
 
 
 __all__ = [
