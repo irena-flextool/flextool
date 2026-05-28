@@ -523,6 +523,10 @@
       "fixed"
     ],
     [
+      "profile_methods",
+      "none"
+    ],
+    [
       "ramp_methods",
       "ramp_limit"
     ],
@@ -533,6 +537,10 @@
     [
       "ramp_methods",
       "both"
+    ],
+    [
+      "ramp_methods",
+      "none"
     ],
     [
       "reserve_methods",
@@ -1164,7 +1172,7 @@
     [
       "connection__profile",
       "profile_method",
-      null,
+      "none",
       "profile_methods",
       "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
       "basics"
@@ -1860,7 +1868,7 @@
     [
       "node__profile",
       "profile_method",
-      null,
+      "none",
       "profile_methods",
       "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
       "basics"
@@ -2468,7 +2476,7 @@
     [
       "unit__inputNode",
       "ramp_method",
-      null,
+      "none",
       "ramp_methods",
       "Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).",
       "tech_advanced"
@@ -2564,7 +2572,7 @@
     [
       "unit__outputNode",
       "ramp_method",
-      null,
+      "none",
       "ramp_methods",
       "Choice of ramp methods.",
       "tech_advanced"

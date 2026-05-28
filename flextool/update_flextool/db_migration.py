@@ -1532,6 +1532,22 @@ def migrate_database(database_path, up_to: int | None = None):
                 # entity class: solver, solve_mode, solver_arguments,
                 # solver_mip_gap, solver_precommand.
                 _migrate_v56_remove_use_row_scaling(db)
+                # Batch D.1 — add ``none`` off-member to
+                # ``profile_methods`` and ``ramp_methods`` value-lists,
+                # retype the four ``parameter_definition`` defaults
+                # (connection__profile.profile_method,
+                # node__profile.profile_method,
+                # unit__inputNode.ramp_method,
+                # unit__outputNode.ramp_method) to ``"none"``, and
+                # backfill an explicit ``method='none'`` row on every
+                # legacy entity that did not author a value.  Preserves
+                # the pre-D.1 silent "no method" semantics on legacy
+                # data and makes the off-state explicit going forward.
+                # ``unit__node__profile.profile_method`` is handled
+                # separately in D.2 because it gets a different new
+                # default (``upper_limit``); see
+                # ``_migrate_v56_set_unit_node_profile_default_upper_limit``.
+                _migrate_v56_add_profile_and_ramp_method_none(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -4828,6 +4844,131 @@ def _migrate_v56_remove_solver_log_level(db) -> None:
             _commit_step(db, "v56 removed solve.solver_log_levels parameter_value_list")
         except SpineDBAPIError:
             pass
+
+
+def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
+    """Batch D.1 — introduce a ``none`` off-member for the
+    ``profile_methods`` and ``ramp_methods`` value-lists, set the four
+    user-facing defaults to ``none``, and backfill an explicit
+    ``method = none`` row on every legacy entity that did not author a
+    value.
+
+    The pre-D.1 schema declared ``connection__profile.profile_method``,
+    ``node__profile.profile_method``, ``unit__inputNode.ramp_method``
+    and ``unit__outputNode.ramp_method`` with default ``null`` and no
+    "off" member on the corresponding value-list.  Engine consumers
+    treat an unset row as "no method" (the parameter is silently
+    skipped); D.1 makes that semantics explicit by introducing
+    ``profile_methods.none`` / ``ramp_methods.none`` and routing the
+    schema default through it.  Legacy entities that lacked a value
+    must be backfilled to ``none`` so the new schema default (``none``)
+    does not silently change their behaviour now and a future flip of
+    the default to a non-``none`` member does not silently activate the
+    method on those legacy entities.
+
+    Step (a) — extend the two value-lists with the new ``none`` member.
+    Idempotent via :func:`add_value_list_manual` (no-op if the row
+    already exists).
+
+    Step (b) — set the four ``parameter_definition`` defaults to
+    ``none``.
+
+    Step (c) — backfill an explicit ``method = none`` row on every
+    entity that owns one of the four classes and has zero
+    ``parameter_value`` rows for the relevant method parameter (across
+    every alternative).  Writes to the ``Base`` alternative.
+
+    Sister migration :func:`_migrate_v56_set_unit_node_profile_default_upper_limit`
+    handles ``unit__node__profile.profile_method`` separately because
+    its new default is ``upper_limit`` (not ``none``); the backfill
+    contract there still writes ``none`` to preserve legacy "no method"
+    semantics.
+
+    Verification: re-read the four defaults and confirm each is
+    ``"none"``; re-read each backfilled entity and confirm a
+    ``parameter_value`` row exists.  Mismatch raises
+    :class:`SpineDBAPIError`.
+    """
+    # ---- Step (a): extend profile_methods / ramp_methods ------------
+    add_value_list_manual(
+        db,
+        [["profile_methods", "none"], ["ramp_methods", "none"]],
+    )
+
+    none_value, none_type = to_database("none")
+
+    targets: tuple[tuple[str, str], ...] = (
+        ("connection__profile", "profile_method"),
+        ("node__profile",       "profile_method"),
+        ("unit__inputNode",     "ramp_method"),
+        ("unit__outputNode",    "ramp_method"),
+    )
+
+    # ---- Step (b): retype defaults to 'none' ------------------------
+    for entity_class_name, name in targets:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=entity_class_name,
+            name=name,
+            default_value=none_value,
+            default_type=none_type,
+        )
+
+    # ---- Step (c): backfill legacy entities -------------------------
+    backfilled_count = 0
+    for entity_class_name, name in targets:
+        entities_with_value = {
+            pv["entity_byname"]
+            for pv in db.find_parameter_values(
+                entity_class_name=entity_class_name,
+                parameter_definition_name=name,
+            )
+        }
+        for ent in db.find_entities(entity_class_name=entity_class_name):
+            byname = ent["entity_byname"]
+            if byname in entities_with_value:
+                continue
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name=entity_class_name,
+                entity_byname=byname,
+                parameter_definition_name=name,
+                alternative_name="Base",
+                value=none_value,
+                type=none_type,
+            )
+            backfilled_count += 1
+
+    # ---- Verification ------------------------------------------------
+    parameter_definitions = db.mapped_table("parameter_definition")
+    for entity_class_name, name in targets:
+        defn = db.item(
+            parameter_definitions,
+            entity_class_name=entity_class_name,
+            name=name,
+        )
+        if defn is None:
+            raise SpineDBAPIError(
+                f"v56 D.1: parameter_definition "
+                f"{entity_class_name}.{name} not found after retype."
+            )
+        if from_database(defn["default_value"], defn["default_type"]) != "none":
+            raise SpineDBAPIError(
+                f"v56 D.1: default_value retype failed for "
+                f"{entity_class_name}.{name}: got "
+                f"{from_database(defn['default_value'], defn['default_type'])!r}."
+            )
+
+    _commit_step(
+        db,
+        "v56 D.1: added 'none' off-member to profile_methods and "
+        "ramp_methods value-lists; set defaults to 'none' on "
+        "connection__profile.profile_method, node__profile.profile_method, "
+        "unit__inputNode.ramp_method, unit__outputNode.ramp_method; "
+        f"backfilled {backfilled_count} legacy entity row(s) with an "
+        "explicit method='none' value to preserve the pre-D.1 'no method "
+        "set' semantics.",
+    )
 
 
 if __name__ == '__main__':
