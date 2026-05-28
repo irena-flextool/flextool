@@ -158,7 +158,13 @@ def test_solve_config_solver_explicit_highs(tmp_path: Path):
 
 
 def test_solve_config_solver_options_map(tmp_path: Path):
-    """solver_options Map round-trips into SolverConfig.options dict."""
+    """solver_arguments 1d-map round-trips into SolverConfig.options dict.
+
+    v56 Batch C.2 folded the legacy ``solver_options`` Map into
+    ``solver_arguments`` (retyped to a 1d-map by Batch C.1).  The
+    engine-side resolver now sources ``SolverConfig.options`` from
+    ``solver_arguments`` (see ``_solve_config.load_from_db``).
+    """
     url = _make_migrated_db(tmp_path)
     _inject_param_values(
         url,
@@ -166,7 +172,7 @@ def test_solve_config_solver_options_map(tmp_path: Path):
             (
                 "solve",
                 SOLVE_NAME,
-                "solver_options",
+                "solver_arguments",
                 Map(["presolve", "log_to_console"], ["off", "no"]),
             ),
         ],
@@ -177,37 +183,49 @@ def test_solve_config_solver_options_map(tmp_path: Path):
 
 
 def test_solve_config_solver_convenience_knobs(tmp_path: Path):
-    """Time-limit / mip-gap / threads round-trip onto SolverConfig."""
+    """``solver_mip_gap`` round-trips onto SolverConfig.mip_gap.
+
+    v56 Batches C.6 and C.8 removed the ``solver_threads`` and
+    ``solver_time_limit`` DB axes (replaced by the ``--highs-threads``
+    and ``--solver-time-limit`` CLI flags).  Only ``solver_mip_gap``
+    survives at v56 as a per-solve convenience knob.
+    """
     url = _make_migrated_db(tmp_path)
     _inject_param_values(
         url,
         [
-            ("solve", SOLVE_NAME, "solver_time_limit", 60.0),
             ("solve", SOLVE_NAME, "solver_mip_gap", 0.01),
-            ("solve", SOLVE_NAME, "solver_threads", 4),
         ],
     )
     sc = _load_solve_config(url)
     cfg = sc.solver_configs[SOLVE_NAME]
-    assert cfg.time_limit == 60.0
     assert cfg.mip_gap == pytest.approx(0.01)
-    assert cfg.threads == 4
+    # The retired DB axes always resolve to None (CLI-flag-driven now).
+    assert cfg.time_limit is None
+    assert cfg.threads is None
     # Sanity: name still default — convenience knobs don't override solver
     assert cfg.name == "highs"
 
 
 def test_solve_config_load_idempotent(tmp_path: Path):
-    """Two consecutive load_from_db calls produce the same SolverConfigs."""
+    """Two consecutive load_from_db calls produce the same SolverConfigs.
+
+    v56 Batch C.1/C.2: the legacy ``solver_options`` Map was folded
+    into ``solver_arguments`` (now a 1d-map).  Batch C.8 removed
+    ``solver_time_limit``.  This test now exercises the surviving
+    per-solve solver params: ``solver`` + ``solver_arguments`` +
+    ``solver_mip_gap``.
+    """
     url = _make_migrated_db(tmp_path)
     _inject_param_values(
         url,
         [
             ("solve", SOLVE_NAME, "solver", "gurobi"),
-            ("solve", SOLVE_NAME, "solver_time_limit", 120.0),
+            ("solve", SOLVE_NAME, "solver_mip_gap", 0.005),
             (
                 "solve",
                 SOLVE_NAME,
-                "solver_options",
+                "solver_arguments",
                 Map(["MIPFocus"], ["1"]),
             ),
         ],
