@@ -66,6 +66,12 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the un...
     ('capacity_min_coeff', 'unit__outputNode'): QuantityType.FRACTION,
     # [factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the un...
+    # Legacy long-form aliases still present in the template DB until db_migration.py renames
+    # max_capacity_coefficient → capacity_max_coeff and min_capacity_coefficient → capacity_min_coeff.
+    ('max_capacity_coefficient', 'unit__inputNode'): QuantityType.FRACTION,
+    ('max_capacity_coefficient', 'unit__outputNode'): QuantityType.FRACTION,
+    ('min_capacity_coefficient', 'unit__inputNode'): QuantityType.FRACTION,
+    ('min_capacity_coefficient', 'unit__outputNode'): QuantityType.FRACTION,
     ('co2_content', 'commodity'): QuantityType.EMISSION_INTENSITY,
     # [CO2 ton per MWh] Constant.
     ('co2_max_period', 'group'): QuantityType.EMISSION_MASS,
@@ -76,6 +82,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, price_period_total
     ('co2_price', 'group'): QuantityType.PRICE_PER_MASS,
     # [CUR/ton] CO2 price for a group of nodes. Constant, period or time.
+    ('debug', 'model'): QuantityType.DIMENSIONLESS,
+    # Instruction set for performing model debugging and testing — a string toggle, no physical unit.
     ('constant', 'constraint'): QuantityType.DIMENSIONLESS,
     # A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.
     # User constraints aggregate LHS terms whose units depend on the user's coefficient choices; the RHS constant lives
@@ -86,26 +94,43 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline...
     ('constraint_cumulative_pre_built_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline...
+    # Legacy long-form names still present in the template DB until migration runs (db_migration.py renames *_coefficient → *_coeff).
+    ('constraint_cumulative_pre_built_capacity_coefficient', 'connection'): QuantityType.DIMENSIONLESS,
+    ('constraint_cumulative_pre_built_capacity_coefficient', 'node'): QuantityType.DIMENSIONLESS,
+    ('constraint_cumulative_pre_built_capacity_coefficient', 'unit'): QuantityType.DIMENSIONLESS,
     ('constraint_flow_coeff', 'connection__node'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow from the connection to a node ...
     ('constraint_flow_coeff', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-...
     ('constraint_flow_coeff', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the flow between unit and node in user-...
+    # Legacy long-form names still present in the template DB until migration runs.
+    ('constraint_flow_coefficient', 'connection__node'): QuantityType.DIMENSIONLESS,
+    ('constraint_flow_coefficient', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
+    ('constraint_flow_coefficient', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
     ('constraint_invested_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current pe...
     ('constraint_invested_capacity_coeff', 'node'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current pe...
     ('constraint_invested_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current pe...
+    # Legacy long-form names still present in the template DB until migration runs.
+    ('constraint_invested_capacity_coefficient', 'connection'): QuantityType.DIMENSIONLESS,
+    ('constraint_invested_capacity_coefficient', 'node'): QuantityType.DIMENSIONLESS,
+    ('constraint_invested_capacity_coefficient', 'unit'): QuantityType.DIMENSIONLESS,
     ('constraint_state_coeff', 'node'): QuantityType.DIMENSIONLESS,
     # A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined const...
+    ('constraint_state_coefficient', 'node'): QuantityType.DIMENSIONLESS,
+    # Legacy long-form name still present in the template DB until migration runs (renamed to constraint_state_coeff).
     ('contains_solves', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences
     ('conversion_flow_coeff', 'unit__inputNode'): QuantityType.FRACTION,
     # [factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from...
     ('conversion_flow_coeff', 'unit__outputNode'): QuantityType.FRACTION,
     # [factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from...
+    # Legacy long-form alias still present in the template DB until db_migration.py renames flow_coefficient → conversion_flow_coeff.
+    ('flow_coefficient', 'unit__inputNode'): QuantityType.FRACTION,
+    ('flow_coefficient', 'unit__outputNode'): QuantityType.FRACTION,
     ('conversion_method', 'unit'): QuantityType.DIMENSIONLESS,
     # Choice of conversion method.
     ('cumulative_max_capacity', 'connection'): QuantityType.POWER,
@@ -148,6 +173,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [MWh] Existing storage capacity. Constant or Period
     ('existing', 'unit'): QuantityType.POWER,
     # [MW] Existing capacity. Constant or Period
+    ('exclude_entity_outputs', 'model'): QuantityType.DIMENSIONLESS,
+    # Boolean-style toggle: excludes node/unit/connection-level results while preserving group-level results.
     ('fix_storage_periods', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set
     ('fixed_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
@@ -296,14 +323,26 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.
     ('other_operational_cost', 'unit__outputNode'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.
+    ('output_connection__node__node_flow_t', 'model'): QuantityType.DIMENSIONLESS,
+    # Boolean output toggle: per-timestep connection→node flows. Flag, no physical unit.
+    ('output_connection_flow_separate', 'model'): QuantityType.DIMENSIONLESS,
+    # Boolean output toggle: produce connection flows separately for each direction. Flag.
     ('output_flowGroup_indicators', 'group'): QuantityType.DIMENSIONLESS,
     # Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).
     ('output_horizon', 'model'): QuantityType.DIMENSIONLESS,
     # Outputs the flows in the horizons. Used for testing the model.
+    ('output_node_balance_t', 'model'): QuantityType.DIMENSIONLESS,
+    # Boolean output toggle: per-timestep node balance (inflows/outflows) for diagnostics. Flag.
     ('output_nodeGroup_dispatch', 'group'): QuantityType.DIMENSIONLESS,
     # Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.
     ('output_nodeGroup_indicators', 'group'): QuantityType.DIMENSIONLESS,
     # Flag to output node-group indicator results for groups whose members are nodes (group__node).
+    ('output_ramp_envelope', 'model'): QuantityType.DIMENSIONLESS,
+    # Boolean output toggle: include the seven-parameter ramp-envelope diagnostic outputs. Flag.
+    ('output_unit__node_flow_t', 'model'): QuantityType.DIMENSIONLESS,
+    # Boolean output toggle: per-timestep unit→node flows. Flag.
+    ('output_unit__node_ramp_t', 'model'): QuantityType.DIMENSIONLESS,
+    # Boolean output toggle: per-timestep per-unit ramps. Flag.
     ('peak_inflow', 'node'): QuantityType.ENERGY,
     # [MWh] Highest flow for scaling the inflow. Used only with inflow_method scale_to_annual_and_peak_flow. Constant or period.
     ('penalty_capacity_margin', 'group'): QuantityType.PRICE_PER_CAPACITY,
@@ -418,8 +457,28 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Choice of solver. HIGHs used as default. GLPSOL is another open source option. Out of commercial solvers CPLEX has been tested.
     ('solver_arguments', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of text commands for passing command line arguments to a solver. Can be used to set additional solver parameters.
+    # HiGHS-specific config strings ('simplex'/'ipm'/'choose', 'on'/'off') — all DIMENSIONLESS toggles, no physical unit.
+    ('highs_method', 'solve'): QuantityType.DIMENSIONLESS,
+    ('highs_parallel', 'solve'): QuantityType.DIMENSIONLESS,
+    ('highs_presolve', 'solve'): QuantityType.DIMENSIONLESS,
+    # Cross-solver configuration knobs normalised by polar-high. All are config (strings/maps/integers) or unitless
+    # tolerances/counts; none carry a physical [MW/MWh/CUR] unit.
+    ('solver_io_api', 'solve'): QuantityType.DIMENSIONLESS,
+    # 'direct' | 'mps' | 'lp' — how the model is handed to the solver. String choice.
+    ('solver_log_level', 'solve'): QuantityType.DIMENSIONLESS,
+    # 'silent' | 'normal' | 'verbose' — solver-log verbosity. String choice.
+    ('solver_mip_gap', 'solve'): QuantityType.FRACTION,
+    # Relative MIP optimality gap (dimensionless ratio in [0, 1]); classified as FRACTION because it is a unitless share.
+    ('solver_options', 'solve'): QuantityType.DIMENSIONLESS,
+    # Map of solver-specific option name -> raw value. Composite, no physical unit.
+    ('solver_threads', 'solve'): QuantityType.DIMENSIONLESS,
+    # Maximum number of solver worker threads — an integer count, not a physical quantity.
+    ('solver_time_limit', 'solve'): QuantityType.DURATION,
+    # Wall-clock time limit in seconds. DURATION carries time semantics; autoscaler treats it like other durations.
     ('solver_precommand', 'solve'): QuantityType.DIMENSIONLESS,
     # Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver.
+    ('use_row_scaling', 'solve'): QuantityType.DIMENSIONLESS,
+    # Boolean-style toggle ('yes'/'no') enabling experimental automatic row scaling. Flag, no physical unit.
     ('solves', 'model'): QuantityType.DIMENSIONLESS,
     # Sequence of solves in the model. Array.
     ('startup_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
