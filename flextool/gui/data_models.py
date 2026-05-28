@@ -76,6 +76,53 @@ class ProjectSettings:
     # "Save memory" checkbox in the main window, above "Debug".
     save_memory: bool = False
 
+    # ── Solver options (CLI knobs surfaced via the "Solver options"
+    # group in the main window side menu).  Values mirror the matching
+    # flags in ``flextool/cli/cmd_run_flextool.py`` and are appended by
+    # ExecutionManager only when they differ from the defaults below,
+    # so the engine command line stays clean on the common path.
+
+    # HiGHS solver thread count (``--highs-threads N``).  Default 1
+    # (deterministic).  Values >1 enable HiGHS parallel mode and trade
+    # determinism for wall-clock speedup.  Separate from
+    # ``execution_limits.max_cores_per_job``: the latter controls the
+    # per-job CPU budget, while this field is the explicit user-side
+    # override surfaced in the Solver options panel.
+    highs_threads: int = 1
+
+    # HiGHS log verbosity (``--solver-log-level``).  One of
+    # ``"silent"`` | ``"normal"`` | ``"verbose"``.  Default "normal";
+    # only appended when non-default.
+    solver_log_level: str = "normal"
+
+    # HiGHS wall-clock time limit in whole seconds
+    # (``--solver-time-limit``).  0 means "no limit" (the CLI's unset
+    # default).  Only appended when > 0.
+    solver_time_limit: int = 0
+
+    # Commercial-solver dispatch transport (``--solver-io-api``).  One
+    # of ``"direct"`` | ``"mps"`` | ``"lp"``.  Default "direct"; only
+    # appended when non-default.  HiGHS path is always direct.
+    solver_io_api: str = "direct"
+
+    # FlexTool autoscaler strategy (``--scaling``).  One of
+    # ``"off"`` | ``"solver_only"`` | ``"basic"`` | ``"full"``.
+    # Default "full"; only appended when non-default.
+    scaling: str = "full"
+
+    # HiGHS ``presolve`` override (``--presolve``).  One of
+    # ``"on"`` | ``"off"`` | ``"choose"``.  "choose" is the
+    # GUI-side default meaning "leave the CLI flag unset and keep the
+    # determinism-pinned default in the engine"; only "on" / "off" are
+    # appended to the engine command line.
+    presolve: str = "choose"
+
+    # HiGHS ``user_bound_scale`` override (``--user-bound-scale N``).
+    # ``None`` (the default) means "auto — let the autoscaler / input-
+    # data heuristic decide".  Integer values are clamped by the CLI
+    # to [-10, 0] (power of two: multiplies col bounds & RHS by 2**N).
+    user_bound_scale: int | None = None
+
     # Plot settings
     single_plot_settings: PlotSettings = field(default_factory=PlotSettings)
     comparison_plot_settings: PlotSettings = field(default_factory=PlotSettings)

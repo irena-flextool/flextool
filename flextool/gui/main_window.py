@@ -294,6 +294,30 @@ class MainWindow(tk.Tk):
         self.save_memory_var = tk.BooleanVar(value=False)
         self.save_memory_var.trace_add("write", self._on_auto_gen_toggled)
 
+        # ── Solver options vars ────────────────────────────────────
+        # Persisted into ProjectSettings; ExecutionManager._build_run_command
+        # appends the matching CLI flag only when the value differs from
+        # the default below.  See ProjectSettings docstrings for the
+        # allowed value sets.
+        self.highs_threads_var = tk.IntVar(value=1)
+        self.solver_log_level_var = tk.StringVar(value="normal")
+        self.solver_time_limit_var = tk.IntVar(value=0)
+        self.solver_io_api_var = tk.StringVar(value="direct")
+        self.scaling_var = tk.StringVar(value="full")
+        self.presolve_var = tk.StringVar(value="choose")
+        # user_bound_scale is optional (None = auto).  We store the
+        # user's text input in a StringVar so the "blank → None" path
+        # is representable; the int is parsed on save / command build.
+        self.user_bound_scale_var = tk.StringVar(value="")
+
+        for _v in (
+            self.highs_threads_var, self.solver_log_level_var,
+            self.solver_time_limit_var, self.solver_io_api_var,
+            self.scaling_var, self.presolve_var,
+            self.user_bound_scale_var,
+        ):
+            _v.trace_add("write", self._on_auto_gen_toggled)
+
         # ── Row 1: Section headers ───────────────────────────────────
         from flextool.gui.hover_tooltip import attach_tooltip
 
@@ -583,8 +607,175 @@ class MainWindow(tk.Tk):
             "             allocation-regression investigations."
         ))
 
+        # ── Solver options (collapsed by default) ───────────────────
+        # Bundles the v56 CLI knobs that don't influence results — only
+        # "ways to solve".  See ProjectSettings for the per-control
+        # defaults; ExecutionManager appends each flag only when it
+        # differs from the default so the engine command line stays
+        # clean on the common path.
+        solver_outer = ttk.Frame(side_menu)
+        solver_outer.grid(row=2, column=0, sticky="we", pady=(0, 4))
+        solver_outer.columnconfigure(0, weight=1)
+
+        # Toggle button that shows/hides the inner grid.  ttk lacks a
+        # native collapsible frame, so we roll a minimal one: a small
+        # ▸/▾ prefix toggles the visibility of ``solver_grid``.
+        self._solver_opts_open = tk.BooleanVar(value=False)
+        self._solver_opts_toggle_btn = ttk.Button(
+            solver_outer, width=22,
+            text="▸ Solver options",
+            command=self._on_toggle_solver_options,
+        )
+        self._solver_opts_toggle_btn.grid(row=0, column=0, sticky="w")
+
+        self._solver_opts_frame = ttk.LabelFrame(
+            solver_outer, padding=4,
+        )
+        # Not gridded yet — _on_toggle_solver_options handles that.
+
+        _sg = self._solver_opts_frame  # alias for brevity below
+        _sg.columnconfigure(1, weight=1)
+
+        # HiGHS threads — int spinbox, 1..system CPU count.
+        _cpu_max = max(1, os.cpu_count() or 1)
+        ttk.Label(_sg, text="HiGHS threads:").grid(
+            row=0, column=0, sticky="w", padx=(0, 6), pady=2,
+        )
+        ht_spin = ttk.Spinbox(
+            _sg, from_=1, to=_cpu_max, width=6,
+            textvariable=self.highs_threads_var,
+        )
+        ht_spin.grid(row=0, column=1, sticky="w", pady=2)
+        _attach_tip(ht_spin, (
+            "Number of HiGHS solver threads (--highs-threads N).\n"
+            "Default 1 (deterministic). Values > 1 enable HiGHS\n"
+            "parallel mode and trade determinism for wall-clock\n"
+            "speedup; goldens are not guaranteed to reproduce\n"
+            "across runs in that mode."
+        ))
+
+        # Log level — compact radio row.
+        ttk.Label(_sg, text="Log level:").grid(
+            row=1, column=0, sticky="w", padx=(0, 6), pady=2,
+        )
+        log_row = ttk.Frame(_sg)
+        log_row.grid(row=1, column=1, sticky="w", pady=2)
+        for _t, _v in (("Silent", "silent"), ("Normal", "normal"), ("Verbose", "verbose")):
+            ttk.Radiobutton(
+                log_row, text=_t, variable=self.solver_log_level_var, value=_v,
+            ).pack(side="left", padx=(0, 4))
+        _attach_tip(log_row, (
+            "HiGHS log verbosity (--solver-log-level).\n"
+            "  • silent   — output_flag=false (suppress HiGHS console).\n"
+            "  • normal   — output_flag=true (default).\n"
+            "  • verbose  — output_flag=true + log_dev_level=2 for\n"
+            "              per-iteration solver telemetry."
+        ))
+
+        # Time limit — seconds; 0 / blank = no limit.
+        ttk.Label(_sg, text="Time limit (s):").grid(
+            row=2, column=0, sticky="w", padx=(0, 6), pady=2,
+        )
+        tl_spin = ttk.Spinbox(
+            _sg, from_=0, to=10**9, width=10,
+            textvariable=self.solver_time_limit_var,
+        )
+        tl_spin.grid(row=2, column=1, sticky="w", pady=2)
+        _attach_tip(tl_spin, (
+            "HiGHS wall-clock time limit in whole seconds\n"
+            "(--solver-time-limit SECONDS). 0 means no limit\n"
+            "(the CLI's unset default). Routed through the\n"
+            "effective-options resolver as a CLI override\n"
+            "(highest precedence)."
+        ))
+
+        # I/O API — radio row.
+        ttk.Label(_sg, text="I/O API:").grid(
+            row=3, column=0, sticky="w", padx=(0, 6), pady=2,
+        )
+        io_row = ttk.Frame(_sg)
+        io_row.grid(row=3, column=1, sticky="w", pady=2)
+        for _t, _v in (("Direct", "direct"), ("MPS", "mps"), ("LP", "lp")):
+            ttk.Radiobutton(
+                io_row, text=_t, variable=self.solver_io_api_var, value=_v,
+            ).pack(side="left", padx=(0, 4))
+        _attach_tip(io_row, (
+            "Commercial-solver dispatch transport (--solver-io-api).\n"
+            "  • direct  — in-process binding, fastest (default).\n"
+            "  • mps / lp — file fallback for solvers / environments\n"
+            "              without a direct binding.\n"
+            "Only the commercial-solver path consults this — the\n"
+            "HiGHS path is always direct."
+        ))
+
+        # Scaling — radio grid (2x2 to fit in the side menu width).
+        ttk.Label(_sg, text="Scaling:").grid(
+            row=4, column=0, sticky="nw", padx=(0, 6), pady=2,
+        )
+        scl_row = ttk.Frame(_sg)
+        scl_row.grid(row=4, column=1, sticky="w", pady=2)
+        _scl_opts = (
+            ("Off", "off"), ("Solver only", "solver_only"),
+            ("Basic", "basic"), ("Full", "full"),
+        )
+        for _i, (_t, _v) in enumerate(_scl_opts):
+            ttk.Radiobutton(
+                scl_row, text=_t, variable=self.scaling_var, value=_v,
+            ).grid(row=_i // 2, column=_i % 2, sticky="w", padx=(0, 4))
+        _attach_tip(scl_row, (
+            "FlexTool autoscaler strategy (--scaling).\n"
+            "  • off          Disable ALL scaling (incl. HiGHS internal\n"
+            "                  matrix equilibration). Raw numerics.\n"
+            "  • solver_only  Disable FlexTool autoscaler; HiGHS still\n"
+            "                  scales the matrix internally (default).\n"
+            "  • basic        Compute LP ranges (Layer 1) and\n"
+            "                  recommend user_*_scale (Layer 3). No\n"
+            "                  LP-array mutation; MPS exports unscaled.\n"
+            "  • full         Full autoscaler: range detection,\n"
+            "                  semantic per-type LP scaling (Layer 2),\n"
+            "                  and HiGHS user_*_scale recommendation\n"
+            "                  (Layer 3). Default."
+        ))
+
+        # Presolve — radio row.
+        ttk.Label(_sg, text="Presolve:").grid(
+            row=5, column=0, sticky="w", padx=(0, 6), pady=2,
+        )
+        ps_row = ttk.Frame(_sg)
+        ps_row.grid(row=5, column=1, sticky="w", pady=2)
+        for _t, _v in (("On", "on"), ("Off", "off"), ("Choose", "choose")):
+            ttk.Radiobutton(
+                ps_row, text=_t, variable=self.presolve_var, value=_v,
+            ).pack(side="left", padx=(0, 4))
+        _attach_tip(ps_row, (
+            "HiGHS presolve override (--presolve).\n"
+            "  • on / off — explicit override.\n"
+            "  • choose   — leave the CLI flag unset; the engine keeps\n"
+            "                its determinism-pinned 'on' default.\n"
+            "Off disables presolve entirely (much slower but useful\n"
+            "for memory or numerical diagnostics)."
+        ))
+
+        # User bound scale — optional int.  Blank text = None = auto.
+        ttk.Label(_sg, text="User bound scale:").grid(
+            row=6, column=0, sticky="w", padx=(0, 6), pady=2,
+        )
+        ubs_entry = ttk.Entry(
+            _sg, width=8, textvariable=self.user_bound_scale_var,
+        )
+        ubs_entry.grid(row=6, column=1, sticky="w", pady=2)
+        _attach_tip(ubs_entry, (
+            "HiGHS user_bound_scale override (--user-bound-scale N).\n"
+            "Power of two: multiplies all col bounds and RHS by 2**N.\n"
+            "When HiGHS prints 'Consider setting the user_bound_scale\n"
+            "option to <N>' in its scaling warning, pass that <N>\n"
+            "here. Clamped by the CLI to [-10, 0].\n"
+            "Blank = auto (falls through to the autoscaler's Layer 3\n"
+            "recommendation / input-data heuristic)."
+        ))
+
         theme_frame = ttk.Frame(side_menu)
-        theme_frame.grid(row=2, column=0, sticky="w", pady=(0, 8))
+        theme_frame.grid(row=3, column=0, sticky="w", pady=(0, 8))
         for text, value in [("OS theme", "os"), ("Dark", "dark"), ("Light", "light")]:
             ttk.Radiobutton(
                 theme_frame, text=text, variable=self._theme_var,
@@ -595,14 +786,14 @@ class MainWindow(tk.Tk):
             side_menu, text="Png settings", width=22,
             command=self._on_plot_menu,
         )
-        self.plot_menu_btn.grid(row=3, column=0, sticky="w", pady=2)
+        self.plot_menu_btn.grid(row=4, column=0, sticky="w", pady=2)
 
-        # Row 4 is the stretch spacer; bottom group lives in rows 5-6.
+        # Row 5 is the stretch spacer; bottom group lives in rows 6-7.
         self.execution_menu_btn = ttk.Button(
             side_menu, text="Execution jobs", width=22,
             command=self._on_execution_menu,
         )
-        self.execution_menu_btn.grid(row=5, column=0, sticky="sw", pady=2)
+        self.execution_menu_btn.grid(row=6, column=0, sticky="sw", pady=2)
 
         # Width 22 to fit the alternate label "Update view scenarios"
         # when the viewer is already open.
@@ -610,7 +801,7 @@ class MainWindow(tk.Tk):
             side_menu, text="Results viewer", width=22,
             command=self._on_view_results,
         )
-        self.view_results_btn.grid(row=6, column=0, sticky="sw", pady=(2, 0))
+        self.view_results_btn.grid(row=7, column=0, sticky="sw", pady=(2, 0))
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -1271,6 +1462,10 @@ class MainWindow(tk.Tk):
                 self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
                 self.project_settings.debug_level = self.debug_var.get()
                 self.project_settings.save_memory = self.save_memory_var.get()
+
+                # Persist solver options.  Reuse the trace handler so
+                # the validate + commit logic stays in one place.
+                self._on_auto_gen_toggled()
 
                 # Persist scenario order
                 if self.avail_scenario_mgr:
@@ -3845,6 +4040,17 @@ class MainWindow(tk.Tk):
         self.auto_comp_excel_var.set(s.auto_generate_comp_excel)
         self.debug_var.set(s.debug_level)
         self.save_memory_var.set(s.save_memory)
+        # Solver options.
+        self.highs_threads_var.set(s.highs_threads)
+        self.solver_log_level_var.set(s.solver_log_level)
+        self.solver_time_limit_var.set(s.solver_time_limit)
+        self.solver_io_api_var.set(s.solver_io_api)
+        self.scaling_var.set(s.scaling)
+        self.presolve_var.set(s.presolve)
+        # user_bound_scale: int | None → text ("" for None).
+        self.user_bound_scale_var.set(
+            "" if s.user_bound_scale is None else str(s.user_bound_scale)
+        )
 
     def _on_auto_gen_toggled(self, *_args: object) -> None:
         """Save auto-generate settings when any checkbox is toggled."""
@@ -3856,9 +4062,62 @@ class MainWindow(tk.Tk):
         self.project_settings.debug_level = self.debug_var.get()
         self.project_settings.save_memory = self.save_memory_var.get()
 
+        # Solver options.  Spinbox / IntVar may surface ValueError when
+        # the user is mid-edit (empty text field); skip the write in
+        # that transient state — the trace fires again on the next
+        # keystroke.
+        try:
+            self.project_settings.highs_threads = max(1, int(self.highs_threads_var.get()))
+        except (TypeError, ValueError, tk.TclError):
+            pass
+        _sll = self.solver_log_level_var.get()
+        if _sll in ("silent", "normal", "verbose"):
+            self.project_settings.solver_log_level = _sll
+        try:
+            self.project_settings.solver_time_limit = max(0, int(self.solver_time_limit_var.get()))
+        except (TypeError, ValueError, tk.TclError):
+            pass
+        _sia = self.solver_io_api_var.get()
+        if _sia in ("direct", "mps", "lp"):
+            self.project_settings.solver_io_api = _sia
+        _scl = self.scaling_var.get()
+        if _scl in ("off", "solver_only", "basic", "full"):
+            self.project_settings.scaling = _scl
+        _ps = self.presolve_var.get()
+        if _ps in ("on", "off", "choose"):
+            self.project_settings.presolve = _ps
+        _ubs_text = self.user_bound_scale_var.get().strip()
+        if _ubs_text == "":
+            self.project_settings.user_bound_scale = None
+        else:
+            try:
+                self.project_settings.user_bound_scale = int(_ubs_text)
+            except (TypeError, ValueError):
+                # leave previous value in place until the user finishes typing
+                pass
+
         if self.current_project:
             project_path = get_projects_dir() / self.current_project
             save_project_settings(project_path, self.project_settings)
+
+    def _on_toggle_solver_options(self) -> None:
+        """Toggle the collapsed/expanded state of the Solver options group.
+
+        ttk has no native collapsible frame, so the inner LabelFrame is
+        grid-managed in/out of the side menu under the toggle button.
+        The state is in-session only — the group always opens collapsed
+        when the window is rebuilt.
+        """
+        opened = not self._solver_opts_open.get()
+        self._solver_opts_open.set(opened)
+        if opened:
+            self._solver_opts_frame.grid(
+                row=1, column=0, sticky="we", pady=(2, 0),
+            )
+            self._solver_opts_toggle_btn.configure(text="▾ Solver options")
+        else:
+            self._solver_opts_frame.grid_forget()
+            self._solver_opts_toggle_btn.configure(text="▸ Solver options")
 
     # ── Output generation button handlers ─────────────────────────
 
