@@ -936,34 +936,28 @@ class ExecutionManager:
         if settings.save_memory:
             cmd.append("--save-memory")
 
-        # ── Solver options (Solver options panel in the side menu) ──
+        # ── Solver options (Solver options dialog in the side menu) ──
         # Append each flag only when the user has changed it from the
         # GUI-side default, keeping the engine command line clean on
-        # the common path.  The "HiGHS threads" knob in the Solver
-        # options panel is intentionally a user-side override on top
-        # of the execution_limits-derived value above: argparse takes
-        # the last ``--highs-threads`` on the command line, so the
-        # later append wins when the user has set a non-default value.
-        if getattr(settings, "highs_threads", 1) != 1:
-            cmd.extend(["--highs-threads", str(settings.highs_threads)])
+        # the common path.  HiGHS thread count is sourced solely from
+        # the execution_limits.max_cores_per_job append above (the
+        # Execution jobs window owns that knob); ``user_bound_scale``
+        # is advanced-user territory routed through ``solver_arguments``.
         _sll = getattr(settings, "solver_log_level", "normal")
         if _sll != "normal":
             cmd.append(f"--solver-log-level={_sll}")
         _stl = getattr(settings, "solver_time_limit", 0)
         if isinstance(_stl, int) and _stl > 0:
             cmd.extend(["--solver-time-limit", str(_stl)])
-        _sia = getattr(settings, "solver_io_api", "direct")
-        if _sia != "direct":
-            cmd.append(f"--solver-io-api={_sia}")
+        _mff = getattr(settings, "matrix_file_format", "mps")
+        if _mff != "mps":
+            cmd.append(f"--matrix-file-format={_mff}")
         _scl = getattr(settings, "scaling", "full")
         if _scl != "full":
             cmd.append(f"--scaling={_scl}")
         _ps = getattr(settings, "presolve", "choose")
         if _ps != "choose":
             cmd.append(f"--presolve={_ps}")
-        _ubs = getattr(settings, "user_bound_scale", None)
-        if _ubs is not None:
-            cmd.extend(["--user-bound-scale", str(_ubs)])
 
         return cmd
 

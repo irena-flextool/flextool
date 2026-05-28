@@ -68,30 +68,21 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     # Solver options — validate each against its allowed set / type and
     # fall back to the dataclass default on anything malformed so a
     # hand-edited settings.yaml can't break the GUI.
-    _ht = data.get("highs_threads", settings.highs_threads)
-    if isinstance(_ht, int) and not isinstance(_ht, bool) and _ht >= 1:
-        settings.highs_threads = _ht
     _sll = data.get("solver_log_level", settings.solver_log_level)
     if _sll in ("silent", "normal", "verbose"):
         settings.solver_log_level = _sll
     _stl = data.get("solver_time_limit", settings.solver_time_limit)
     if isinstance(_stl, int) and not isinstance(_stl, bool) and _stl >= 0:
         settings.solver_time_limit = _stl
-    _sia = data.get("solver_io_api", settings.solver_io_api)
-    if _sia in ("direct", "mps", "lp"):
-        settings.solver_io_api = _sia
+    _mff = data.get("matrix_file_format", settings.matrix_file_format)
+    if _mff in ("mps", "lp"):
+        settings.matrix_file_format = _mff
     _scl = data.get("scaling", settings.scaling)
     if _scl in ("off", "solver_only", "basic", "full"):
         settings.scaling = _scl
     _ps = data.get("presolve", settings.presolve)
     if _ps in ("on", "off", "choose"):
         settings.presolve = _ps
-    # user_bound_scale: None / null is valid (= auto); otherwise int.
-    _ubs = data.get("user_bound_scale", settings.user_bound_scale)
-    if _ubs is None:
-        settings.user_bound_scale = None
-    elif isinstance(_ubs, int) and not isinstance(_ubs, bool):
-        settings.user_bound_scale = _ubs
 
     settings.input_source_numbers = data.get(
         "input_source_numbers", settings.input_source_numbers
