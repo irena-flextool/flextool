@@ -783,7 +783,11 @@ def _compute_time_plan(
         file_batches.append(list(range(offset, offset + batch_size)))
         offset += batch_size
 
-    # Compute per-subplot global y-axis ranges from full time series
+    # Compute per-subplot global y-axis ranges from full time series.
+    # For stacked charts the visual ceiling is the column-wise stacked
+    # sum (positives stack up, negatives stack down), not the per-series
+    # max — using the per-series max here clips peaks when multiple
+    # series are non-zero at the same timestep.
     include_zero = cfg.always_include_zero_in_axis
     subplot_y_ranges: list[tuple[float, float]] = []
     for _title, df_sub in effective_plots:
@@ -795,7 +799,12 @@ def _compute_time_plan(
         elif isinstance(df_sub, pd.DataFrame):
             num = df_sub.select_dtypes(include='number')
             if not num.empty:
-                lo, hi = float(num.min().min()), float(num.max().max())
+                if is_stack:
+                    pos_stack = num.clip(lower=0).sum(axis=1)
+                    neg_stack = num.clip(upper=0).sum(axis=1)
+                    lo, hi = float(neg_stack.min()), float(pos_stack.max())
+                else:
+                    lo, hi = float(num.min().min()), float(num.max().max())
         if include_zero:
             lo = min(lo, 0.0)
             hi = max(hi, 0.0)

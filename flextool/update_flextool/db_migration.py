@@ -1,6 +1,7 @@
 import json
 import os
 import argparse
+from typing import Callable
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database, Map
 from spinedb_api.exception import NothingToCommit
 import logging
@@ -32,13 +33,30 @@ def _commit_step(db, message):
         logging.info("Migration step idempotent (no changes): %s", message)
 
 
-def migrate_database(database_path, up_to: int | None = None):
+def migrate_database(
+    database_path,
+    up_to: int | None = None,
+    *,
+    progress_callback: Callable[[int, int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+):
     """Migrate a FlexTool database to a target schema version.
 
     Args:
         database_path: Path or URL to the SQLite database.
         up_to: Target version to migrate to.  When ``None`` (the default),
             migrates all the way to :data:`FLEXTOOL_DB_VERSION`.
+        progress_callback: Optional callable invoked BEFORE each step's
+            logic runs with ``(current_version, target_version,
+            next_version_being_applied)``.  Lets a GUI report which step
+            is in progress.
+        cancel_check: Optional callable returning ``True`` if the user
+            has requested cancellation.  Checked at the top of each loop
+            iteration, BEFORE step logic.  When True, raises
+            :class:`MigrationCancelled` carrying the last successfully
+            completed version.  The check does not fire inside a step,
+            so an in-flight commit always finishes before cancellation
+            takes effect.
     """
 
     if database_path.startswith('sqlite://') or database_path.startswith('http://'):
@@ -62,7 +80,12 @@ def migrate_database(database_path, up_to: int | None = None):
         next_version = int(version) + 1
         new_version = up_to if up_to is not None else FLEXTOOL_DB_VERSION
 
+        last_completed_version = int(version)
         while next_version <= new_version:
+            if cancel_check is not None and cancel_check():
+                raise MigrationCancelled(last_completed_version=last_completed_version)
+            if progress_callback is not None:
+                progress_callback(last_completed_version, new_version, next_version)
             if next_version == 0:
                 add_version(db)
             elif next_version == 1:
@@ -1616,6 +1639,7 @@ def migrate_database(database_path, up_to: int | None = None):
                 _migrate_v56_reactivate_is_enabled_parameter(db)
             else:
                 print("Version invalid")
+            last_completed_version = next_version
             next_version += 1
 
         if version < new_version:
@@ -2433,6 +2457,23 @@ def _migrate_v45_parameter_group_colors(db) -> None:
 class FlexToolMigrationError(RuntimeError):
     """Raised when a database migration hits an unresolvable data
     inconsistency and cannot continue safely."""
+
+
+class MigrationCancelled(RuntimeError):
+    """Raised when :func:`migrate_database` is interrupted via its
+    ``cancel_check`` callback.
+
+    Carries the last successfully completed version number so the caller
+    can report partial progress.  Cancellation is checked at the top of
+    each step, never inside a commit, so an in-flight step always
+    finishes before the exception is raised.
+    """
+
+    def __init__(self, last_completed_version: int):
+        super().__init__(
+            f"Migration cancelled after version {last_completed_version}"
+        )
+        self.last_completed_version = last_completed_version
 
 
 def _migrate_v50_new_stepduration_to_solve(db) -> None:

@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
+
+from flextool.update_flextool import FLEXTOOL_DB_VERSION
+from flextool.update_flextool.db_migration import MigrationCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +43,30 @@ def _read_flextool_version(db_url: str) -> int | None:
         return None
 
 
-def check_and_upgrade_database(db_path: Path) -> tuple[bool, list[str]]:
+def get_target_flextool_version() -> int:
+    """Return the FlexTool DB version this build migrates to."""
+    return int(FLEXTOOL_DB_VERSION)
+
+
+def needs_flextool_migration(db_path: Path) -> bool | None:
+    """Return True if this file's FlexTool data version is below the target.
+
+    Returns ``None`` if the version cannot be determined (file unreadable,
+    not a FlexTool DB, etc.).
+    """
+    db_url = f"sqlite:///{db_path}"
+    current = _read_flextool_version(db_url)
+    if current is None:
+        return None
+    return current < FLEXTOOL_DB_VERSION
+
+
+def check_and_upgrade_database(
+    db_path: Path,
+    *,
+    progress_callback: Callable[[int, int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> tuple[bool, list[str]]:
     """Check and upgrade a FlexTool database if needed.
 
     Performs two levels of upgrade:
@@ -51,6 +78,13 @@ def check_and_upgrade_database(db_path: Path) -> tuple[bool, list[str]]:
 
     Args:
         db_path: Path to the ``.sqlite`` file.
+        progress_callback: Optional callable forwarded to
+            :func:`migrate_database`.  Invoked before each migration
+            step with ``(current_version, target_version, next_version)``.
+        cancel_check: Optional callable forwarded to
+            :func:`migrate_database`.  When it returns ``True``, the
+            migration stops cleanly between steps and this function
+            returns a "cancelled" message instead of raising.
 
     Returns:
         A ``(was_upgraded, messages)`` tuple where *was_upgraded* is ``True``
@@ -97,7 +131,11 @@ def check_and_upgrade_database(db_path: Path) -> tuple[bool, list[str]]:
 
         from flextool.update_flextool.db_migration import migrate_database
 
-        migrate_database(str(db_path))
+        migrate_database(
+            str(db_path),
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
+        )
 
         version_after = _read_flextool_version(db_url)
 
@@ -117,6 +155,19 @@ def check_and_upgrade_database(db_path: Path) -> tuple[bool, list[str]]:
                 version_before,
                 version_after,
             )
+    except MigrationCancelled as exc:
+        version_before_safe = version_before if version_before is not None else 0
+        if exc.last_completed_version > version_before_safe:
+            was_upgraded = True
+        messages.append(
+            f"{db_path.name}: FlexTool data migration cancelled by user at version "
+            f"{exc.last_completed_version}. Re-run is safe: completed steps are idempotent."
+        )
+        logger.info(
+            "FlexTool migration cancelled for %s at version %s",
+            db_path,
+            exc.last_completed_version,
+        )
     except Exception as exc:
         import traceback as _tb
         tb_text = _tb.format_exc()

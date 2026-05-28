@@ -471,6 +471,7 @@ plots:
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
         axis_tick_format: '1,.0f'
+        scenario_rule: l
       chunks:
         plot_name: 'Curtail. amount weekly avg'
         variant: w
@@ -546,6 +547,7 @@ plots:
         legend: all
         skip_data_with_only_zeroes: true
         axis_tick_format: '.0%'
+        scenario_rule: l
 
   # Flows for units and connections
         scenario_rule: l
@@ -592,6 +594,7 @@ plots:
         base_length: 5
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
+        scenario_rule: l
       chunks:
         plot_name: 'Flows: unit to node weekly avg'
         variant: w
@@ -612,7 +615,7 @@ plots:
           subplots_per_row: 2
           ylabel: MWh
       unit_time_plots:
-        variant: h
+        variant: l
         map_dimensions_for_plots: [dt_ee, tt_uu]
         legend: shared
         max_items_per_plot: 10
@@ -682,7 +685,7 @@ plots:
           subplots_per_row: 2
           ylabel: MWh
       unit_time_plots:
-        variant: h
+        variant: l
         map_dimensions_for_plots: [dt_ee, tt_uu]
         legend: shared
         max_items_per_plot: 10
@@ -734,6 +737,7 @@ plots:
         legend: all
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
+        scenario_rule: l
       chunks:
         plot_name: 'Flows connection weekly avg'
         variant: w
@@ -763,6 +767,7 @@ plots:
         subplots_per_row: 2
         skip_data_with_only_zeroes: true
         xlabel: MWh (annualized)
+        scenario_rule: g
       sum_periods:
         plot_name: 'Connection leftward total'
         variant: a
@@ -772,6 +777,7 @@ plots:
         skip_data_with_only_zeroes: true
         subplots_per_row: 2
         xlabel: MWh (horizon total)
+        scenario_rule: g
     connection_leftward_dt_eee:
       debug:
         variant: h
@@ -782,6 +788,7 @@ plots:
         base_length: 5
         legend: all
         ylabel: MWh/h
+        scenario_rule: l
       chunks:
         plot_name: 'Connection leftward weekly avg'
         variant: w
@@ -793,6 +800,7 @@ plots:
         base_length: 5
         legend: all
         ylabel: MWh/h
+        scenario_rule: l
   'Connection rightward':
     group: 2
     order: 4
@@ -805,6 +813,7 @@ plots:
         skip_data_with_only_zeroes: true
         subplots_per_row: 2
         xlabel: MWh (annualized)
+        scenario_rule: l
       sum_periods:
         plot_name: 'Connection rightward total'
         variant: a
@@ -814,6 +823,7 @@ plots:
         skip_data_with_only_zeroes: true
         subplots_per_row: 2
         xlabel: MWh (horizon total)
+        scenario_rule: l
     connection_rightward_dt_eee:
       debug:
         variant: h
@@ -824,6 +834,7 @@ plots:
         skip_data_with_only_zeroes: true
         legend: all
         ylabel: MWh/h
+        scenario_rule: l
       chunks:
         plot_name: 'Connection rightward weekly avg'
         variant: w
@@ -835,6 +846,7 @@ plots:
         skip_data_with_only_zeroes: true
         legend: all
         ylabel: MWh/h
+        scenario_rule: l
 
   # Costs
   'Costs':

@@ -35,6 +35,9 @@ from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobSt
 from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.result_viewer import ResultViewer
+from flextool.gui.db_version_check import check_and_upgrade_database
+from flextool.gui.dialogs.migration_consent_dialog import ask_external_migration_consent
+from flextool.gui.dialogs.migration_progress_dialog import MigrationProgressDialog
 from flextool.gui.dialogs.plot_dialog import PlotDialog
 from flextool.gui.error_handling import safe_callback
 from flextool.gui.platform_utils import (
@@ -272,7 +275,7 @@ class MainWindow(tk.Tk):
         self.project_combo.bind("<Double-Button-1>", self._on_combo_rename)
 
         self.project_menu_btn = ttk.Button(
-            outer, text="Project", command=self._open_project_dialog
+            outer, text="Projects…", command=self._open_project_dialog
         )
         self.project_menu_btn.grid(row=row, column=1, sticky="w", padx=5)
 
@@ -280,7 +283,7 @@ class MainWindow(tk.Tk):
         # UI-related items (font size cascade + reset window layout)
         # that previously lived in the Project menu popup.
         self.ui_settings_btn = ttk.Button(
-            outer, text="UI settings", command=self._on_ui_settings_btn
+            outer, text="UI settings…", command=self._on_ui_settings_btn
         )
         self.ui_settings_btn.grid(row=row, column=5, sticky="e", padx=5)
 
@@ -411,7 +414,7 @@ class MainWindow(tk.Tk):
         # --- Input source buttons (col 1, rows 2-8) ---
         btn_col = 1
         self.add_source_btn = ttk.Button(
-            outer, text="Add", width=8, command=self._on_add_source
+            outer, text="Add…", width=8, command=self._on_add_source
         )
         self.add_source_btn.grid(row=2, column=btn_col, sticky="nw", padx=5, pady=2)
 
@@ -511,11 +514,43 @@ class MainWindow(tk.Tk):
             "comp_excel": "_on_show_comp_excel",
         }
 
+        _row_tooltips: dict[str, str] = {
+            "scen_plots": (
+                "Per-scenario PNG plots written under\n"
+                "<output>/<scenario>/plots/.\n"
+                "Layout and time ranges follow Png settings;\n"
+                "the result viewer is independent of these files."
+            ),
+            "scen_excel": (
+                "Per-scenario Excel workbook with the main result\n"
+                "tables (flows, capacities, costs, …) written under\n"
+                "<output>/<scenario>/."
+            ),
+            "scen_csvs": (
+                "Per-scenario CSV exports of the result tables\n"
+                "under <output>/<scenario>/csv/.\n"
+                "Handy for piping into other tools."
+            ),
+            "comp_plots": (
+                "PNG plots overlaying the checked executed scenarios,\n"
+                "written under <output>/comparison/plots/.\n"
+                "Regenerated whenever the set of checked scenarios\n"
+                "changes."
+            ),
+            "comp_excel": (
+                "Single Excel workbook comparing the checked executed\n"
+                "scenarios side by side, written to\n"
+                "<output>/comparison/."
+            ),
+        }
+
         for i, (display_name, key, auto_var, show_label) in enumerate(output_info):
             row_i = i + 1  # header is row 0
-            ttk.Label(
+            name_lbl = ttk.Label(
                 self.output_frame, text=display_name, anchor="w",
-            ).grid(row=row_i, column=0, sticky="w", padx=(0, 8), pady=2)
+            )
+            name_lbl.grid(row=row_i, column=0, sticky="w", padx=(0, 8), pady=2)
+            attach_tooltip(name_lbl, _row_tooltips[key])
 
             cb = ttk.Checkbutton(self.output_frame, variable=auto_var)
             cb.grid(row=row_i, column=1, padx=(0, 8), pady=2)
@@ -570,9 +605,10 @@ class MainWindow(tk.Tk):
             "polars data) sits idle while the child does its active-\n"
             "solve work, so the two never compound in the same process.\n"
             "\n"
-            "Adds ~+30-60 s I/O per sub-solve. Disables warm-LP reuse\n"
-            "across cascade iterations (each sub-solve cold-rebuilds).\n"
-            "Use when models OOM on the default in-process path."
+            "Solve takes more time (file operations) - depends on model.\n"
+            "Disables warm-LP reuse across cascade iterations\n"
+            "(each sub-solve rebuilds fully).\n"
+            "Try when models run out of memory."
         ))
 
         # ── Solver options launcher (modal dialog) ─────────────────
@@ -599,7 +635,7 @@ class MainWindow(tk.Tk):
             "autoscaler strategy, HiGHS presolve).\n"
             "\n"
             "These are 'ways to solve' knobs — they do not change\n"
-            "the optimisation results.  HiGHS thread count is\n"
+            "the optimisation results (usually).  HiGHS thread count is\n"
             "controlled separately by the Execution jobs window\n"
             "(execution_limits.max_cores_per_job)."
         ))
@@ -638,23 +674,15 @@ class MainWindow(tk.Tk):
             "             allocation-regression investigations."
         ))
 
-        theme_frame = ttk.Frame(side_menu)
-        theme_frame.grid(row=3, column=0, sticky="w", pady=(0, 8))
-        for text, value in [("OS theme", "os"), ("Dark", "dark"), ("Light", "light")]:
-            ttk.Radiobutton(
-                theme_frame, text=text, variable=self._theme_var,
-                value=value, command=self._on_theme_change,
-            ).pack(side="left", padx=(0, 4))
-
         self.plot_menu_btn = ttk.Button(
-            side_menu, text="Png settings", width=22,
+            side_menu, text="Png settings…", width=22,
             command=self._on_plot_menu,
         )
-        self.plot_menu_btn.grid(row=4, column=0, sticky="w", pady=2)
+        self.plot_menu_btn.grid(row=3, column=0, sticky="w", pady=(0, 2))
 
         # Row 5 is the stretch spacer; bottom group lives in rows 6-7.
         self.execution_menu_btn = ttk.Button(
-            side_menu, text="Execution jobs", width=22,
+            side_menu, text="Execution jobs…", width=22,
             command=self._on_execution_menu,
         )
         self.execution_menu_btn.grid(row=6, column=0, sticky="sw", pady=2)
@@ -662,7 +690,7 @@ class MainWindow(tk.Tk):
         # Width 22 to fit the alternate label "Update view scenarios"
         # when the viewer is already open.
         self.view_results_btn = ttk.Button(
-            side_menu, text="Results viewer", width=22,
+            side_menu, text="Results viewer…", width=22,
             command=self._on_view_results,
         )
         self.view_results_btn.grid(row=7, column=0, sticky="sw", pady=(2, 0))
@@ -1002,6 +1030,61 @@ class MainWindow(tk.Tk):
 
     # ── UI settings button ───────────────────────────────────────────
 
+    def _styled_popup_menu(self, parent: tk.Misc) -> tk.Menu:
+        """Return a ``tk.Menu`` themed to match the current ttk theme.
+
+        Native ``tk.Menu`` ignores ttk styling, so on the sv_ttk dark
+        theme the radio bullet renders as a dark dot on a dark background
+        and the default menu font does not track ``TkDefaultFont``.  We
+        pull bg/fg from the ttk style and bind the body-font name so the
+        popup matches the rest of the UI.
+        """
+        style = ttk.Style()
+        bg = style.lookup("TFrame", "background") or self.cget("background")
+        fg = style.lookup("TLabel", "foreground") or "#ffffff"
+        return tk.Menu(
+            parent,
+            tearoff=0,
+            background=bg,
+            foreground=fg,
+            activebackground=fg,
+            activeforeground=bg,
+            selectcolor=fg,
+            font="TkDefaultFont",
+            borderwidth=0,
+        )
+
+    def _install_menu_hover_dismiss(
+        self,
+        top_menu: tk.Menu,
+        submenus: list[tk.Menu],
+        delay_ms: int = 400,
+    ) -> None:
+        """Unpost ``top_menu`` shortly after the mouse leaves all menus.
+
+        Native ``tk.Menu`` only closes on click; users expect popup
+        menus to also dismiss on mouse-leave.  The delay keeps the menu
+        open while the cursor briefly crosses the border into a cascade
+        submenu (cascades fire ``<Leave>`` on the parent).
+        """
+        self._menu_dismiss_id: str | None = None
+
+        def _cancel() -> None:
+            if self._menu_dismiss_id is not None:
+                try:
+                    self.after_cancel(self._menu_dismiss_id)
+                except tk.TclError:
+                    pass
+                self._menu_dismiss_id = None
+
+        def _schedule(_event: object) -> None:
+            _cancel()
+            self._menu_dismiss_id = self.after(delay_ms, top_menu.unpost)
+
+        for m in (top_menu, *submenus):
+            m.bind("<Leave>", _schedule, add="+")
+            m.bind("<Enter>", lambda _e: _cancel(), add="+")
+
     def _on_ui_settings_btn(self) -> None:
         """Show the UI-settings popup menu under the button.
 
@@ -1010,10 +1093,10 @@ class MainWindow(tk.Tk):
         of the Project popup menu but moved here so the Project button
         can be a direct action that opens Manage projects.
         """
-        menu = tk.Menu(self, tearoff=0)
+        menu = self._styled_popup_menu(self)
 
         # UI font size cascade — radio for presets + Custom...
-        size_menu = tk.Menu(menu, tearoff=0)
+        size_menu = self._styled_popup_menu(menu)
         current = self.global_settings.font_size_pt
         self._font_size_var = getattr(self, "_font_size_var", None) or tk.IntVar(
             value=current
@@ -1030,10 +1113,26 @@ class MainWindow(tk.Tk):
         size_menu.add_command(label="Custom...", command=self._on_font_size_custom)
         menu.add_cascade(label="UI font size", menu=size_menu)
 
+        theme_menu = self._styled_popup_menu(menu)
+        for label, value in (("OS theme", "os"), ("Dark", "dark"), ("Light", "light")):
+            theme_menu.add_radiobutton(
+                label=label,
+                variable=self._theme_var,
+                value=value,
+                command=self._on_theme_change,
+            )
+        menu.add_cascade(label="Theme", menu=theme_menu)
+
         menu.add_command(
             label="Reset window layout",
             command=self._on_reset_window_layout,
         )
+
+        # Auto-dismiss when the mouse leaves all menus.  The delay keeps
+        # the menu visible while the cursor briefly crosses the border
+        # to a cascade submenu.
+        self._install_menu_hover_dismiss(menu, [size_menu, theme_menu])
+
         # Post the menu just under the button, right-aligned so the
         # menu's right edge lines up with the button's right edge.
         btn = self.ui_settings_btn
@@ -1694,7 +1793,7 @@ class MainWindow(tk.Tk):
             # Select the right-clicked row if not already selected
             if item not in tree.selection():
                 tree.selection_set(item)
-        menu = tk.Menu(self, tearoff=0)
+        menu = self._styled_popup_menu(self)
         menu.add_command(label="Edit", command=self._on_edit_source)
         menu.add_command(label="Convert", command=self._on_convert_source)
         menu.add_separator()
@@ -1775,7 +1874,7 @@ class MainWindow(tk.Tk):
         if item:
             if item not in tree.selection():
                 tree.selection_set(item)
-        menu = tk.Menu(self, tearoff=0)
+        menu = self._styled_popup_menu(self)
         menu.add_command(label="Check/uncheck selected", command=self._on_check_selected)
         menu.add_separator()
         menu.add_command(
@@ -1792,7 +1891,7 @@ class MainWindow(tk.Tk):
             if item not in tree.selection():
                 tree.selection_set(item)
 
-        menu = tk.Menu(self, tearoff=0)
+        menu = self._styled_popup_menu(self)
         menu.add_command(
             label="Check/uncheck selected",
             command=self._on_executed_space_from_menu,
@@ -1923,13 +2022,95 @@ class MainWindow(tk.Tk):
             return
         self._refresh_input_sources()
 
+    def _run_db_migrations_with_ui(self) -> list[str]:
+        """Plan, gather consent for, and run pending DB migrations with UI."""
+        assert self.input_source_mgr is not None
+        mgr = self.input_source_mgr
+
+        (
+            internal_to_migrate,
+            external_to_migrate,
+            planning_messages,
+        ) = mgr.plan_db_migrations()
+
+        if not internal_to_migrate and not external_to_migrate:
+            return planning_messages
+
+        consent: str = "in_place"
+        if external_to_migrate:
+            consent = ask_external_migration_consent(self, external_to_migrate)
+
+        final_list: list[tuple[str, Path]] = list(internal_to_migrate)
+        if consent == "in_place":
+            for name, abs_path, _curr, _tgt in external_to_migrate:
+                final_list.append((name, abs_path))
+        elif consent == "copy_to_project":
+            settings_changed = False
+            for name, _abs_path, _curr, _tgt in external_to_migrate:
+                dst, error = mgr.copy_external_to_project(name)
+                if error is None:
+                    final_list.append((name, dst))
+                    settings_changed = True
+                else:
+                    planning_messages.append(error)
+            if settings_changed:
+                save_project_settings(
+                    get_projects_dir() / self.current_project,
+                    self.project_settings,
+                )
+        # consent == "cancel" -> skip externals entirely
+
+        if not final_list:
+            return planning_messages
+
+        total = len(final_list)
+        dialog = MigrationProgressDialog(
+            self,
+            title="Migrating databases",
+            initial_status=f"Preparing to migrate {total} file(s)…",
+        )
+
+        worker_messages: list[str] = []
+
+        def _worker() -> None:
+            try:
+                for i, (name, path) in enumerate(final_list, start=1):
+                    if dialog.cancel_requested:
+                        break
+                    dialog.update_status(f"Migrating {name} ({i}/{total})…")
+
+                    def _progress_cb(
+                        curr: int,
+                        target: int,
+                        nxt: int,
+                        _name: str = name,
+                        _i: int = i,
+                    ) -> None:
+                        dialog.update_status(
+                            f"Migrating {_name} ({_i}/{total})… "
+                            f"step v{curr} → v{nxt} (target v{target})"
+                        )
+
+                    _was_upgraded, messages = check_and_upgrade_database(
+                        path,
+                        progress_callback=_progress_cb,
+                        cancel_check=lambda: dialog.cancel_requested,
+                    )
+                    worker_messages.extend(messages)
+            finally:
+                dialog.mark_finished()
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.wait_window(dialog)
+
+        return planning_messages + worker_messages
+
     def _refresh_input_sources(self) -> None:
         """Re-scan input sources and repopulate the treeview."""
         if not self.input_source_mgr:
             return
 
-        # Check and upgrade sqlite databases before reading scenarios
-        upgrade_messages = self.input_source_mgr.check_db_versions()
+        upgrade_messages = self._run_db_migrations_with_ui()
         if upgrade_messages:
             messagebox.showinfo(
                 "Database upgrades",
@@ -3766,7 +3947,7 @@ class MainWindow(tk.Tk):
         if viewer_open:
             self.view_results_btn.configure(text="Update view scenarios")
         else:
-            self.view_results_btn.configure(text="Results viewer")
+            self.view_results_btn.configure(text="Results viewer…")
 
         # Blue accent when there are checked executed scenarios (results to show)
         has_checked = False
@@ -4017,22 +4198,28 @@ class MainWindow(tk.Tk):
     def _load_auto_gen_vars(self) -> None:
         """Set auto-generate BooleanVars from the loaded project settings."""
         s = self.project_settings
-        self.auto_scen_plots_var.set(s.auto_generate_scen_plots)
-        self.auto_scen_excels_var.set(s.auto_generate_scen_excels)
-        self.auto_scen_csvs_var.set(s.auto_generate_scen_csvs)
-        self.auto_comp_plots_var.set(s.auto_generate_comp_plots)
-        self.auto_comp_excel_var.set(s.auto_generate_comp_excel)
-        self.debug_var.set(s.debug_level)
-        self.save_memory_var.set(s.save_memory)
-        # Solver options.
-        self.solver_log_level_var.set(s.solver_log_level)
-        self.solver_time_limit_var.set(s.solver_time_limit)
-        self.matrix_file_format_var.set(s.matrix_file_format)
-        self.scaling_var.set(s.scaling)
-        self.presolve_var.set(s.presolve)
+        self._suppress_auto_gen_save = True
+        try:
+            self.auto_scen_plots_var.set(s.auto_generate_scen_plots)
+            self.auto_scen_excels_var.set(s.auto_generate_scen_excels)
+            self.auto_scen_csvs_var.set(s.auto_generate_scen_csvs)
+            self.auto_comp_plots_var.set(s.auto_generate_comp_plots)
+            self.auto_comp_excel_var.set(s.auto_generate_comp_excel)
+            self.debug_var.set(s.debug_level)
+            self.save_memory_var.set(s.save_memory)
+            # Solver options.
+            self.solver_log_level_var.set(s.solver_log_level)
+            self.solver_time_limit_var.set(s.solver_time_limit)
+            self.matrix_file_format_var.set(s.matrix_file_format)
+            self.scaling_var.set(s.scaling)
+            self.presolve_var.set(s.presolve)
+        finally:
+            self._suppress_auto_gen_save = False
 
     def _on_auto_gen_toggled(self, *_args: object) -> None:
         """Save auto-generate settings when any checkbox is toggled."""
+        if getattr(self, "_suppress_auto_gen_save", False):
+            return
         self.project_settings.auto_generate_scen_plots = self.auto_scen_plots_var.get()
         self.project_settings.auto_generate_scen_excels = self.auto_scen_excels_var.get()
         self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()

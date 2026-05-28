@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -362,43 +363,101 @@ class InputSourceManager:
                 )
         return result
 
-    def check_db_versions(self) -> list[str]:
-        """Check and upgrade all sqlite input sources.
+    def plan_db_migrations(
+        self,
+    ) -> tuple[
+        list[tuple[str, Path]],
+        list[tuple[str, Path, int, int]],
+        list[str],
+    ]:
+        """Probe sqlite input sources for needed FlexTool DB migrations.
 
-        Delegates to :func:`~flextool.gui.db_version_check.check_and_upgrade_database`
-        for each ``.sqlite`` file in the input sources directory and each
-        registered external reference.
-
-        Returns a list of human-readable upgrade messages (empty if nothing
-        was upgraded).
+        Returns ``(internal_to_migrate, external_to_migrate, planning_messages)``.
+        Internal entries are ``(source_name, abs_path)``; external entries
+        include current and target version numbers for the consent dialog.
         """
-        all_messages: list[str] = []
+        from flextool.gui.db_version_check import (
+            _read_flextool_version,
+            get_target_flextool_version,
+            needs_flextool_migration,
+        )
 
-        sqlite_paths: list[Path] = []
+        internal_to_migrate: list[tuple[str, Path]] = []
+        external_to_migrate: list[tuple[str, Path, int, int]] = []
+        planning_messages: list[str] = []
+
+        target_version = get_target_flextool_version()
+
         if self.input_dir.is_dir():
             for filepath in sorted(self.input_dir.iterdir()):
-                if filepath.suffix.lower() == ".sqlite" and filepath.is_file():
-                    sqlite_paths.append(filepath)
+                if filepath.suffix.lower() != ".sqlite" or not filepath.is_file():
+                    continue
+                needs = needs_flextool_migration(filepath)
+                if needs is True:
+                    internal_to_migrate.append((filepath.name, filepath))
+                elif needs is None:
+                    planning_messages.append(
+                        f"{filepath.name}: could not read FlexTool version; "
+                        f"migration will attempt to surface the error."
+                    )
+                    internal_to_migrate.append((filepath.name, filepath))
+
         for ext_name, rel_path in self.settings.external_refs.items():
             if Path(ext_name).suffix.lower() != ".sqlite":
                 continue
             abs_path = (self.project_path / rel_path).resolve()
-            if abs_path.is_file():
-                sqlite_paths.append(abs_path)
-
-        for filepath in sqlite_paths:
-            try:
-                from flextool.gui.db_version_check import check_and_upgrade_database
-
-                _upgraded, messages = check_and_upgrade_database(filepath)
-                all_messages.extend(messages)
-            except Exception as exc:
-                all_messages.append(f"{filepath.name}: version check error: {exc}")
-                logger.warning(
-                    "Version check failed for %s: %s", filepath, exc, exc_info=True
+            if not abs_path.is_file():
+                continue
+            needs = needs_flextool_migration(abs_path)
+            if needs is True:
+                current_version = _read_flextool_version(f"sqlite:///{abs_path}")
+                if current_version is None:
+                    planning_messages.append(
+                        f"{ext_name}: external file's FlexTool version "
+                        f"became unreadable between checks; skipped."
+                    )
+                    continue
+                external_to_migrate.append(
+                    (ext_name, abs_path, current_version, target_version)
+                )
+            elif needs is None:
+                planning_messages.append(
+                    f"{ext_name}: could not read external file's FlexTool "
+                    f"version; skipped (open it in a tool that can read the "
+                    f"file to investigate)."
                 )
 
-        return all_messages
+        return internal_to_migrate, external_to_migrate, planning_messages
+
+    def copy_external_to_project(
+        self, source_name: str
+    ) -> tuple[Path, str | None]:
+        """Copy an external sqlite into ``input_sources/`` and drop the ref.
+
+        Returns ``(destination_path, error)``. ``error`` is ``None`` on
+        success. The caller is responsible for persisting ``self.settings``.
+        """
+        rel_path = self.settings.external_refs.get(source_name)
+        if rel_path is None:
+            return (Path(), f"External reference '{source_name}' not found.")
+
+        src = (self.project_path / rel_path).resolve()
+        dst = self.input_dir / source_name
+
+        if dst.exists():
+            return (
+                dst,
+                f"Cannot copy {source_name}: a file with that name "
+                f"already exists in input_sources.",
+            )
+
+        try:
+            shutil.copy2(src, dst)
+        except OSError as exc:
+            return (dst, f"Failed to copy {source_name}: {exc}")
+
+        del self.settings.external_refs[source_name]
+        return (dst, None)
 
     # ── Private helpers ───────────────────────────────────────────────
 
