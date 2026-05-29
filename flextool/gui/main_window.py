@@ -2558,19 +2558,62 @@ class MainWindow(tk.Tk):
             proc = self.db_editor_mgr.open_database(db_url, source_name)
             if proc is None:
                 messagebox.showinfo(
-                    "spine-db-editor not found",
-                    "The spine-db-editor command was not found on your system.\n\n"
-                    "To edit .sqlite input sources, install Spine Toolbox:\n\n"
-                    '  pip install ".[toolbox]"\n\n'
-                    "(run from the flextool directory)",
+                    "Spine DB Editor not available",
+                    "The 'spine-db-editor' command was not found.\n\n"
+                    "To edit .sqlite input sources you need Spine Toolbox. "
+                    "Install it (with FlexTool's GUI extra) from the flextool "
+                    "directory:\n\n"
+                    '  pip install -e ".[toolbox]"',
                 )
                 return
+            # spine-db-editor was found and launched, but an incomplete Spine
+            # Toolbox install can still crash it on startup. Check shortly after
+            # launch and explain the failure instead of leaving the user with a
+            # silent no-op (the crash otherwise only shows in the terminal).
+            self.after(
+                2000, self._check_db_editor_launch, proc, source_name
+            )
         else:
             messagebox.showinfo("Unsupported", f"Cannot edit files of type '{ext}'.")
             return
 
         # Refresh to show editing status
         self._refresh_input_sources()
+
+    def _check_db_editor_launch(self, proc, source_name: str) -> None:
+        """Surface a Spine DB Editor that crashed right after launch.
+
+        Scheduled shortly after :meth:`_on_edit_source` launches the editor.
+        If the process is still alive it opened fine and nothing happens; if
+        it has already exited with an error, explain why and how to fix it.
+        """
+        if proc.poll() is None:
+            return  # still running — launched successfully
+        if proc.returncode == 0:
+            return  # exited cleanly (e.g. user closed it already)
+
+        details = self.db_editor_mgr.read_launch_output(proc).strip()
+        if details:
+            # Keep the dialog readable — show only the tail (usually the
+            # exception line and traceback end).
+            tail = details[-1500:]
+            if len(details) > 1500:
+                tail = "…\n" + tail
+            details_block = f"\n\nDetails:\n{tail}"
+        else:
+            details_block = ""
+
+        messagebox.showerror(
+            "Could not open database",
+            "The Spine DB Editor failed to start, so the database could not "
+            "be opened.\n\n"
+            "This usually means Spine Toolbox is missing or only partially "
+            "installed. Reinstall it (with FlexTool's GUI extra) from the "
+            "flextool directory:\n\n"
+            '  pip install -e ".[toolbox]"'
+            + details_block,
+            parent=self,
+        )
 
     def _flash_input_source_open(self, source_name: str) -> None:
         """Briefly flash a source row red to signal "already open elsewhere"."""

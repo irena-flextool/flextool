@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -28,11 +30,19 @@ class DbEditorManager:
     def __init__(self) -> None:
         # source_name -> list of Popen objects (a source can be opened multiple times)
         self._processes: dict[str, list[subprocess.Popen]] = {}
+        # Captured stdout/stderr per launched process, so an immediate crash
+        # (e.g. an incomplete Spine Toolbox install) can be shown in the GUI
+        # instead of only printing a traceback to the launching terminal.
+        self._launch_logs: dict[subprocess.Popen, Path] = {}
 
     # ── Opening databases ─────────────────────────────────────────
 
     def open_database(self, db_url: str, source_name: str) -> subprocess.Popen | None:
         """Launch ``spine-db-editor`` for *db_url* and track the process.
+
+        The editor's own stdout/stderr is redirected to a temporary log file
+        so that, if it exits immediately, the caller can read the failure via
+        :meth:`read_launch_output` and surface it to the user.
 
         Args:
             db_url: SQLAlchemy-style database URL (e.g. ``sqlite:///path``).
@@ -41,22 +51,70 @@ class DbEditorManager:
 
         Returns:
             The :class:`subprocess.Popen` object, or ``None`` if the
-            editor executable is not found.
+            editor executable is not found on ``PATH``.
         """
         exe = shutil.which("spine-db-editor")
         if exe is None:
             logger.warning("spine-db-editor not found on PATH")
             return None
 
+        log_path: Path | None = None
+        log_handle = None
         try:
-            proc = subprocess.Popen([exe, db_url])
+            fd, name = tempfile.mkstemp(prefix="flextool_db_editor_", suffix=".log")
+            log_path = Path(name)
+            log_handle = os.fdopen(fd, "wb")
+        except OSError:
+            logger.debug("Could not create db-editor launch log", exc_info=True)
+            log_path = None
+
+        try:
+            if log_handle is not None:
+                proc = subprocess.Popen(
+                    [exe, db_url], stdout=log_handle, stderr=subprocess.STDOUT
+                )
+            else:
+                proc = subprocess.Popen([exe, db_url])
         except OSError:
             logger.warning("Failed to launch spine-db-editor", exc_info=True)
+            if log_path is not None:
+                try:
+                    log_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
             return None
+        finally:
+            # The child inherits its own dup of the fd; close the parent copy.
+            if log_handle is not None:
+                log_handle.close()
 
+        if log_path is not None:
+            self._launch_logs[proc] = log_path
         self._processes.setdefault(source_name, []).append(proc)
         self._reap_dead(source_name)
         return proc
+
+    def read_launch_output(self, proc: subprocess.Popen) -> str:
+        """Return (and consume) the captured launch output for *proc*.
+
+        Used by the GUI when an editor process died right after launch, to
+        show the user why.  The temporary log is removed once read.
+        """
+        log_path = self._launch_logs.pop(proc, None)
+        if log_path is None:
+            return ""
+        text = ""
+        try:
+            if log_path.exists():
+                text = log_path.read_text(errors="replace")
+        except OSError:
+            logger.debug("Could not read db-editor launch log", exc_info=True)
+        finally:
+            try:
+                log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return text
 
     # ── Status queries ────────────────────────────────────────────
 
@@ -107,12 +165,38 @@ class DbEditorManager:
     def cleanup(self) -> None:
         """Stop tracking all processes (without killing them)."""
         self._processes.clear()
+        for log_path in self._launch_logs.values():
+            try:
+                log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._launch_logs.clear()
 
     # ── Internals ─────────────────────────────────────────────────
 
     def _reap_dead(self, source_name: str) -> None:
-        """Remove finished processes from the tracking list."""
+        """Remove finished processes from the tracking list.
+
+        A process that exited cleanly has its launch log discarded here; a
+        non-zero exit keeps its log so :meth:`read_launch_output` can still
+        surface the failure to the user.
+        """
         procs = self._processes.get(source_name)
         if procs is None:
             return
-        self._processes[source_name] = [p for p in procs if p.poll() is None]
+        alive: list[subprocess.Popen] = []
+        for p in procs:
+            if p.poll() is None:
+                alive.append(p)
+            elif p.returncode == 0:
+                self._drop_log(p)
+        self._processes[source_name] = alive
+
+    def _drop_log(self, proc: subprocess.Popen) -> None:
+        """Discard the captured launch log for *proc*, if any."""
+        log_path = self._launch_logs.pop(proc, None)
+        if log_path is not None:
+            try:
+                log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
