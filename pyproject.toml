@@ -89,10 +89,14 @@ dev = [
     "ruff>=0.5",
 ]
 
-[project.scripts]
-# Bare `flextool` launches the desktop GUI (equivalent to
-# `python -m flextool.gui`); the hyphen-cased entries below are the CLI tools.
+[project.gui-scripts]
+# Windowed launchers — on Windows these use pythonw.exe (no stray console
+# window behind the GUI); identical to [project.scripts] on Linux/macOS. Bare
+# `flextool` is equivalent to `python -m flextool.gui`.
 flextool = "flextool.gui.__main__:main"
+flextool-gui = "flextool.gui.__main__:main"
+
+[project.scripts]
 # Primary entry points — kept hyphen-cased for `flextool-*` CLI uniformity.
 flextool-run = "flextool.cli.cmd_run_flextool:main"
 flextool-update = "flextool.cli.cmd_update_flextool:main"
@@ -104,7 +108,6 @@ flextool-export-to-tabular = "flextool.cli.cmd_export_to_tabular:main"
 flextool-read-tabular-input = "flextool.cli.cmd_read_tabular_input:main"
 flextool-read-self-describing-tabular-input = "flextool.cli.cmd_read_self_describing_tabular_input:main"
 # Existing entry points retained.
-flextool-gui = "flextool.gui.__main__:main"
 flextool-read-old = "flextool.cli.cmd_read_old_flextool:main"
 flextool-import-sensitivities = "flextool.cli.cmd_import_sensitivities:main"
 flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
