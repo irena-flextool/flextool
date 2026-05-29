@@ -54,6 +54,11 @@ from ._axis_enums import (
     schema_dtype,
 )
 from ._emit_provider_io import _provider_key
+from ._param_shapes import (
+    broadcast_to_period_time,
+    promote_param_to_dt,
+    resolve_param_shape,
+)
 
 
 def _load_block_layout_with_seed(workdir, provider):
@@ -2438,6 +2443,46 @@ def p_pssdt_varCost_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
+def _eff_param_to_pdt(source: "InputSource",
+                       entity_class: str,
+                       parameter_name: str,
+                       dt: pl.DataFrame,
+                       value_col_alias: str,
+                       ) -> "pl.LazyFrame | None":
+    """Resolve an efficiency-family time parameter to a
+    ``[p, d, t, <value_col_alias>]`` LazyFrame via the authoritative
+    shape resolver (:mod:`._param_shapes`).
+
+    Replaces the column-name-based ``_broadcast_param_to_dt``: the Spine
+    Map index label is user-set (``"x"`` is the spinedb_api default when
+    unset), so name matching mis-classified time-series parameters as
+    scalars and broadcast them with a ``how="cross"`` cartesian product
+    (process × full (d, t) grid) — which both overflowed polars' 2^32
+    row-index on long timelines and, on short ones, silently flattened
+    the time variation via the downstream ``unique(["p","d","t"])``.
+
+    The resolver reads the parameter's nesting depth + per-level
+    ``index_name`` from the DB and (for silent-default labels) probes the
+    index values against ``dt``'s period / timestep domains, so a
+    ``Map(time → value)`` resolves to ``Shape.MAP_TIME`` regardless of
+    label.  :func:`broadcast_to_period_time` then keeps the Param at its
+    authored shape (no cross-product) and :func:`promote_param_to_dt`
+    widens it to ``(p, d, t)`` with a *narrowing* inner-join on the axis
+    the source carries.
+
+    Returns ``None`` when the parameter has no usable rows (mirrors the
+    old helper's ``None`` contract so callers' gating is unchanged).
+    """
+    resolved = resolve_param_shape(
+        source, entity_class, parameter_name, period_filter=dt)
+    param = broadcast_to_period_time(resolved, "p", dt)
+    if param is None:
+        return None
+    return (promote_param_to_dt(param, dt)
+                .select("p", "d", "t",
+                        pl.col("value").cast(pl.Float64).alias(value_col_alias)))
+
+
 def p_slope_from_source(source: "InputSource",
                           dt: pl.DataFrame,
                           classified: pl.DataFrame | None = None,
@@ -2474,13 +2519,18 @@ def p_slope_from_source(source: "InputSource",
     minload = _try_param(source, "unit", "min_load")
 
     # Build a per-(p, d, t) efficiency lazyframe — union unit + connection.
+    # Routed through the authoritative shape resolver so time-series
+    # efficiency (e.g. connection.efficiency authored as Map(time→value)
+    # with the spinedb_api silent-default ``"x"`` index label) is narrowed
+    # to the active timeline instead of cross-joined; see
+    # :func:`_eff_param_to_pdt`.
     eff_lfs: list[pl.LazyFrame] = []
     if eff_unit is not None:
-        e = _broadcast_param_to_dt(eff_unit, dt, value_col_alias="eta")
+        e = _eff_param_to_pdt(source, "unit", "efficiency", dt, "eta")
         if e is not None:
             eff_lfs.append(e)
     if eff_conn is not None:
-        e = _broadcast_param_to_dt(eff_conn, dt, value_col_alias="eta")
+        e = _eff_param_to_pdt(source, "connection", "efficiency", dt, "eta")
         if e is not None:
             eff_lfs.append(e)
     # Default-fill for processes in the classifier but missing from the
@@ -2512,19 +2562,20 @@ def p_slope_from_source(source: "InputSource",
     # Linearisation: between (min_load, eta_min) and (1.0, eta), slope
     # of input/output (Δin/Δout) ≈ as in entity_period_calc_params.
     if eff_at_min is not None and minload is not None:
-        eta_min_lf = _broadcast_param_to_dt(eff_at_min, dt,
-                                              value_col_alias="eta_min")
-        ml_lf = (minload.lazy().select(
-            alias_to_axis("name", "p"),
-            pl.col("value").cast(pl.Float64).alias("min_load"),
-        ))
-        if eta_min_lf is not None:
+        eta_min_lf = _eff_param_to_pdt(source, "unit",
+                                        "efficiency_at_min_load", dt, "eta_min")
+        ml_lf = _eff_param_to_pdt(source, "unit", "min_load", dt, "min_load")
+        if ml_lf is not None and eta_min_lf is not None:
             base = (base.join(eta_min_lf, on=["p", "d", "t"], how="left")
-                         .join(ml_lf, on="p", how="left"))
-        else:
+                         .join(ml_lf, on=["p", "d", "t"], how="left"))
+        elif ml_lf is not None:
             base = (base
                 .with_columns(eta_min=pl.lit(None).cast(pl.Float64))
-                .join(ml_lf, on="p", how="left"))
+                .join(ml_lf, on=["p", "d", "t"], how="left"))
+        else:
+            base = (base
+                .with_columns(eta_min=pl.lit(None).cast(pl.Float64),
+                                min_load=pl.lit(None).cast(pl.Float64)))
     else:
         base = (base
             .with_columns(eta_min=pl.lit(None).cast(pl.Float64),
@@ -2552,53 +2603,6 @@ def p_slope_from_source(source: "InputSource",
     if out.height == 0:
         return None
     return Param(("p", "d", "t"), out)
-
-
-def _broadcast_param_to_dt(df: pl.DataFrame,
-                              dt: pl.DataFrame,
-                              value_col_alias: str = "value",
-                              ) -> pl.LazyFrame | None:
-    """Broadcast a Spine Map / scalar parameter onto the (d, t) grid.
-
-    Accepts:
-      * scalar: broadcast over full dt.
-      * 1d_map(period): broadcast over t for each period.
-      * time_series(t): broadcast over d for each t.
-      * 2d_map(period × t): keep both dims.
-
-    Returns a lazyframe with schema ``[p, d, t, <value_col_alias>]``,
-    or ``None`` when df is empty.
-    """
-    if df is None or df.height == 0:
-        return None
-    cols = df.columns
-    has_period = any(c in cols for c in ("period", "d"))
-    has_t = any(c in cols for c in ("t", "time", "step"))
-    period_col = next((c for c in ("period", "d") if c in cols), None)
-    t_col = next((c for c in ("t", "time", "step") if c in cols), None)
-    # Defensive re-cast: ensure d/t are canonical Enum so the joins below
-    # against alias_to_axis-cast ``base`` compose cleanly.
-    dt_lf = dt.lazy().with_columns(
-        alias_to_axis(pl.col("d"), "d"),
-        alias_to_axis(pl.col("t"), "t"),
-    )
-    base = df.lazy().select(
-        alias_to_axis("name", "p"),
-        *([alias_to_axis(period_col, "d")] if period_col else []),
-        *([alias_to_axis(t_col, "t")] if t_col else []),
-        pl.col("value").cast(pl.Float64).alias(value_col_alias),
-    )
-    if has_period and has_t:
-        return base.join(dt_lf, on=["d", "t"], how="inner") \
-                    .select("p", "d", "t", value_col_alias)
-    if has_period:
-        return base.join(dt_lf, on="d", how="inner") \
-                    .select("p", "d", "t", value_col_alias)
-    if has_t:
-        return base.join(dt_lf, on="t", how="inner") \
-                    .select("p", "d", "t", value_col_alias)
-    return base.join(dt_lf, how="cross") \
-                .select("p", "d", "t", value_col_alias)
 
 
 # ===========================================================================
@@ -4156,22 +4160,19 @@ def p_section_from_source(source: "InputSource",
     if eff_unit is None or eff_at_min is None or minload is None:
         return None
 
-    eta_lf = _broadcast_param_to_dt(eff_unit, dt, value_col_alias="eta")
-    eta_min_lf = _broadcast_param_to_dt(eff_at_min, dt,
-                                          value_col_alias="eta_min")
-    if eta_lf is None or eta_min_lf is None:
+    eta_lf = _eff_param_to_pdt(source, "unit", "efficiency", dt, "eta")
+    eta_min_lf = _eff_param_to_pdt(source, "unit",
+                                    "efficiency_at_min_load", dt, "eta_min")
+    ml_lf = _eff_param_to_pdt(source, "unit", "min_load", dt, "min_load")
+    if eta_lf is None or eta_min_lf is None or ml_lf is None:
         return None
-    ml_lf = (minload.lazy().select(
-        alias_to_axis("name", "p"),
-        pl.col("value").cast(pl.Float64).alias("min_load"),
-    ))
 
     # Mirror flextool's rounding (entity_period_calc_params.py:1283-1291):
     #   cr = round(1/eta, 6)
     #   sec = cr - round((cr - ml * (1/eta_min)) / (1 - ml), 6)
     out = (mle.join(eta_lf, on="p", how="inner")
                 .join(eta_min_lf, on=["p", "d", "t"], how="inner")
-                .join(ml_lf, on="p", how="inner")
+                .join(ml_lf, on=["p", "d", "t"], how="inner")
                 .with_columns(
                     cr=(1.0 / pl.col("eta")).round(6),
                     inv_em=1.0 / pl.col("eta_min"),
