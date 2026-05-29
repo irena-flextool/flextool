@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -107,6 +108,15 @@ class MainWindow(tk.Tk):
 
     def __init__(self, initial_theme: str = "dark") -> None:
         super().__init__()
+
+        # Marshal worker-thread → main-thread GUI work through a queue pumped
+        # by the Tk event loop (which also runs during modal ``wait_window``
+        # loops). tkinter is not thread-safe: even ``self.after()`` registers a
+        # Tcl command and raises "main thread is not in main loop" when called
+        # off the main thread on some platforms (notably macOS), so worker
+        # threads must never touch Tk directly — they call ``post_to_main``.
+        self._main_thread_queue: queue.Queue = queue.Queue()
+        self.after(50, self._pump_main_thread_queue)
 
         # ── DPI scaling — must come before any widget/font access ─
         from flextool.gui.platform_utils import (
@@ -996,7 +1006,7 @@ class MainWindow(tk.Tk):
             except Exception:
                 logger.debug("Update check failed", exc_info=True)
                 available = False
-            self.after(0, self._apply_update_indicator, available)
+            self.post_to_main(self._apply_update_indicator, available)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -3066,7 +3076,7 @@ class MainWindow(tk.Tk):
                     pass
 
             mgr.finish_job(job.job_id, success)
-            self.after(0, self._refresh_input_sources)
+            self.post_to_main(self._refresh_input_sources)
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
@@ -3111,6 +3121,28 @@ class MainWindow(tk.Tk):
         )
 
     # ── Conversion subprocess runner ─────────────────────────────
+
+    def post_to_main(self, fn, *args) -> None:
+        """Run ``fn(*args)`` on the Tk main thread.
+
+        Thread-safe and does not touch Tk, so it is the safe way for worker
+        threads to schedule GUI work (unlike ``self.after`` / any Tk call,
+        which must only be used from the main thread).
+        """
+        self._main_thread_queue.put((fn, args))
+
+    def _pump_main_thread_queue(self) -> None:
+        """Drain queued worker→main callbacks on the main thread, then reschedule."""
+        try:
+            while True:
+                fn, args = self._main_thread_queue.get_nowait()
+                try:
+                    fn(*args)
+                except Exception:
+                    logger.exception("main-thread task failed")
+        except queue.Empty:
+            pass
+        self.after(50, self._pump_main_thread_queue)
 
     def _run_conversion_subprocess(
         self,
@@ -3191,8 +3223,8 @@ class MainWindow(tk.Tk):
                 mgr.append_stdout(job.job_id, f"\nError: {exc}")
 
             mgr.finish_job(job.job_id, success)
-            self.after(0, self._conversion_finished,
-                       success, source_name, source_path, target_path)
+            self.post_to_main(self._conversion_finished,
+                              success, source_name, source_path, target_path)
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
@@ -3261,7 +3293,7 @@ class MainWindow(tk.Tk):
 
             mgr.finish_job(job.job_id, success)
             if on_finish is not None:
-                self.after(0, on_finish, success)
+                self.post_to_main(on_finish, success)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -3444,7 +3476,7 @@ class MainWindow(tk.Tk):
                 self.execution_mgr.append_stdout(job.job_id, f"\nError: {exc}")
 
             self.execution_mgr.finish_job(job.job_id, success)
-            self.after(0, self._xlsx_one_source_finished, source_name, success)
+            self.post_to_main(self._xlsx_one_source_finished, source_name, success)
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
@@ -4340,19 +4372,22 @@ class MainWindow(tk.Tk):
     def _on_job_status_change(self, job: ExecutionJob) -> None:
         """Callback from ExecutionManager when a job's status changes.
 
-        This is called from worker threads, so we schedule GUI updates
-        via ``self.after()``.
+        Invoked from worker threads, so the GUI work is marshalled onto the
+        main thread (tkinter — including ``after`` — is not thread-safe).
         """
+        self.post_to_main(self._apply_job_status_change, job)
+
+    def _apply_job_status_change(self, job: ExecutionJob) -> None:
+        """Apply a job status change; runs on the main thread."""
         if job.status == JobStatus.SUCCESS:
-            self.after(
-                0, self._refresh_and_autocheck_scenario,
+            self._refresh_and_autocheck_scenario(
                 job.scenario_name, job.finish_timestamp,
             )
         elif job.status in (JobStatus.FAILED, JobStatus.KILLED):
-            self.after(0, self._refresh_executed_scenarios)
+            self._refresh_executed_scenarios()
 
         # Update execution menu button highlight (Change 3)
-        self.after(0, self._update_execution_menu_style)
+        self._update_execution_menu_style()
 
         # Notify the execution window (if open)
         if (
@@ -4364,11 +4399,12 @@ class MainWindow(tk.Tk):
     def _on_all_jobs_finished(self) -> None:
         """Callback when all execution jobs have completed.
 
-        Called from the scheduler thread -- schedule GUI updates safely.
+        Called from the scheduler thread -- marshal GUI updates to the main
+        thread.
         """
-        self.after(0, self._refresh_executed_scenarios)
-        self.after(0, self._update_output_status)
-        self.after(0, self._update_execution_menu_style)
+        self.post_to_main(self._refresh_executed_scenarios)
+        self.post_to_main(self._update_output_status)
+        self.post_to_main(self._update_execution_menu_style)
 
     # ── Delete results handler ───────────────────────────────────
 
@@ -4943,9 +4979,9 @@ class MainWindow(tk.Tk):
     def _on_output_action_complete(self, action_name: str, success: bool) -> None:
         """Callback from OutputActionManager when an action finishes.
 
-        Called from a worker thread -- schedule GUI updates via ``self.after()``.
+        Called from a worker thread -- marshal GUI updates to the main thread.
         """
-        self.after(0, self._handle_output_action_done, action_name, success)
+        self.post_to_main(self._handle_output_action_done, action_name, success)
 
     def _handle_output_action_done(self, action_name: str, success: bool) -> None:
         """Re-enable the action button and refresh output status (runs on main thread)."""

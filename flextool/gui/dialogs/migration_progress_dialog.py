@@ -1,6 +1,7 @@
 """Modal progress dialog for the automatic FlexTool DB migration."""
 from __future__ import annotations
 
+import queue
 import tkinter as tk
 from tkinter import ttk
 
@@ -40,9 +41,14 @@ class MigrationProgressDialog(tk.Toplevel):
 
         self._cancel_requested: bool = False
         self._finished: bool = False
-        # The ``after`` id must be readable from the main thread only.
+        # The ``after`` ids must be read/written from the main thread only.
         self._spinner_after_id: str | None = None
+        self._pump_after_id: str | None = None
         self._spinner_idx: int = 0
+        # Worker threads enqueue updates here; a main-thread pump applies them.
+        # tkinter is not thread-safe (even ``after`` fails off the main thread
+        # on macOS), so the public methods must not touch Tk.
+        self._ui_queue: queue.Queue = queue.Queue()
 
         self._status_var = tk.StringVar(value=initial_status)
         status_lbl = ttk.Label(
@@ -96,8 +102,9 @@ class MigrationProgressDialog(tk.Toplevel):
         dh = self.winfo_height()
         self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
 
-        # Kick off the spinner animation.
+        # Kick off the spinner animation and the worker-update pump.
         self._spinner_after_id = self.after(200, self._tick_spinner)
+        self._pump_after_id = self.after(50, self._pump_queue)
 
     # ── Public API (thread-safe wrappers) ───────────────────────────
 
@@ -107,21 +114,41 @@ class MigrationProgressDialog(tk.Toplevel):
         return self._cancel_requested
 
     def update_status(self, text: str) -> None:
-        """Thread-safe: schedule a status-label update on the main thread."""
-        try:
-            self.after(0, self._set_status, text)
-        except tk.TclError:
-            # Dialog has already been destroyed; ignore.
-            pass
+        """Thread-safe: enqueue a status-label update (no Tk call here)."""
+        self._ui_queue.put(("status", text))
 
     def mark_finished(self) -> None:
-        """Thread-safe: schedule dialog close on the main thread."""
-        try:
-            self.after(0, self._finish)
-        except tk.TclError:
-            pass
+        """Thread-safe: enqueue dialog close (no Tk call here)."""
+        self._ui_queue.put(("finish", None))
 
     # ── Main-thread helpers ─────────────────────────────────────────
+
+    def _pump_queue(self) -> None:
+        """Apply queued worker updates on the main thread, then reschedule.
+
+        Drains the whole queue each tick, applying only the most recent status
+        (intermediate ones are stale) and closing if a finish was requested.
+        """
+        if self._finished:
+            return
+        latest_status: str | None = None
+        finish = False
+        try:
+            while True:
+                kind, payload = self._ui_queue.get_nowait()
+                if kind == "status":
+                    latest_status = payload
+                elif kind == "finish":
+                    finish = True
+        except queue.Empty:
+            pass
+
+        if latest_status is not None:
+            self._set_status(latest_status)
+        if finish:
+            self._finish()
+            return
+        self._pump_after_id = self.after(50, self._pump_queue)
 
     def _set_status(self, text: str) -> None:
         if self._finished:
@@ -141,6 +168,12 @@ class MigrationProgressDialog(tk.Toplevel):
             except tk.TclError:
                 pass
             self._spinner_after_id = None
+        if self._pump_after_id is not None:
+            try:
+                self.after_cancel(self._pump_after_id)
+            except tk.TclError:
+                pass
+            self._pump_after_id = None
         try:
             self.grab_release()
         except tk.TclError:
@@ -178,4 +211,10 @@ class MigrationProgressDialog(tk.Toplevel):
             except tk.TclError:
                 pass
             self._spinner_after_id = None
+        if self._pump_after_id is not None:
+            try:
+                self.after_cancel(self._pump_after_id)
+            except tk.TclError:
+                pass
+            self._pump_after_id = None
         super().destroy()
