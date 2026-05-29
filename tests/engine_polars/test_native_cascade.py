@@ -118,58 +118,6 @@ def test_cascade_matches_flextool_reference(
     )
 
 
-@pytest.mark.skip(
-    reason=(
-        "Phase 3d: seed-gated path can't be tested against cascade-built "
-        "workdirs.  The historical disk fixtures stored pre-cascade CSVs "
-        "(seedable inputs) alongside the flextool-reference parquet; the "
-        "new ``scenario_workdir`` fixture produces post-cascade CSVs "
-        "(which already incorporate the cascade overrides).  Re-reading "
-        "those CSVs under ``_cascade_gate()`` does not reproduce the "
-        "seed-only state.  Re-enabling this test requires either a "
-        "pre-cascade CSV snapshot helper or a different oracle.  The "
-        "cascade direction is still covered by "
-        "``test_cascade_matches_flextool_reference``."
-    )
-)
-@pytest.mark.parametrize(
-    "fixture,scenario,solve,seed_stale",
-    _FIXTURES,
-    ids=[f for f, _, _, _ in _FIXTURES],
-)
-def test_seed_path_matches_flextool_reference(
-        fixture: str, scenario: str, solve: str,
-        seed_stale: bool, scenario_workdir):
-    """The seed-only (cascade-disabled) LP objective matches flextool.
-
-    Fixtures flagged ``seed_stale=True`` are ``xfail`` — the cascade
-    is doing necessary work in those.  When you refresh the CSV
-    seeds in such a fixture, flip the flag to False and watch the
-    test go xpassed.
-    """
-    workdir = scenario_workdir(scenario)
-    ref_path = workdir / "output_raw" / f"v_obj__{solve}.parquet"
-    if not ref_path.exists():
-        pytest.skip(f"no flextool reference at {ref_path}")
-
-    ref = float(pl.read_parquet(ref_path)["objective"][0])
-    obj = _solve(workdir, gated=True)
-    rel = abs(obj - ref) / max(1.0, abs(ref))
-    if seed_stale:
-        if rel < 1e-6:
-            pytest.fail(
-                f"{fixture} marked seed_stale=True but seed path "
-                f"matches flextool — flip the flag to False")
-        pytest.xfail(
-            f"seed CSV is stale on {fixture}; cascade override "
-            f"provides correctness.  seed={obj:.6f}, flextool={ref:.6f}, "
-            f"rel={rel:.3e}.  Refresh CSV seeds or migrate this "
-            f"fixture's cascade dependency to an explicit field")
-    assert rel < 1e-6, (
-        f"seed-path objective drifts from flextool reference on "
-        f"{fixture}: seed={obj:.6f}, flextool={ref:.6f}, rel={rel:.3e}"
-    )
-
 
 def _build_step_duration_fixture(src: Path, dst: Path, scale: float) -> None:
     """Clone ``src`` into ``dst`` with every step_duration scaled by

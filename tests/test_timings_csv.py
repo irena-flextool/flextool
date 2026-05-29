@@ -111,49 +111,6 @@ def test_timings_csv_exists_and_has_expected_schema(
     )
 
 
-@pytest.mark.smoke
-@pytest.mark.skip(reason=(
-    "Asserts GMPL-pipeline subphase names (``mps_gen``, ``lp_solve``, "
-    "``mod_setup``) that the native cascade does not emit.  The .mod-"
-    "based per-phase printfs were retired in Δ.22 along with "
-    "SolverRunner.run; the cascade emits its own subphase names "
-    "(``lp_build``, ``solve``, ``warm_used``, ``preprocessing``, …).  "
-    "Re-enabling requires updating the asserted names to the cascade-"
-    "native vocabulary — that's a golden change and lives outside the "
-    "test-side migration scope."
-))
-def test_timings_csv_has_solve_subphases(
-    test_db_url: str,
-    test_solver_config_dir: Path,
-    workdir: Path,
-) -> None:
-    """The recorder captures both Python-side and mod-side solve subphases.
-
-    Python writers (``solver_runner.py``) emit ``mps_gen`` and
-    ``lp_solve``; the .mod's per-phase printfs emit ``mod_setup`` /
-    ``mod_balance`` / etc.  This test confirms both pathways feed the
-    unified CSV — losing either one would silently regress coverage.
-    """
-    _run_one("coal", test_db_url, test_solver_config_dir, workdir)
-
-    csv_path = workdir / "solve_data" / "timings.csv"
-    df = pd.read_csv(csv_path)
-    solve_rows = df[df["phase"] == "solve"]
-    subphases = set(solve_rows["subphase"].astype(str).unique())
-
-    # Python-side: mps generation + LP solve.
-    assert "mps_gen" in subphases, (
-        f"missing 'mps_gen' subphase under phase='solve'; got {sorted(subphases)}"
-    )
-    assert "lp_solve" in subphases, (
-        f"missing 'lp_solve' subphase under phase='solve'; got {sorted(subphases)}"
-    )
-    # Mod-side: at least the two early-LP phases (setup + total_obj_cost).
-    assert "mod_setup" in subphases, (
-        f"missing 'mod_setup' subphase; the .mod-side phase printfs are "
-        f"not feeding mod_phases.csv → timings.csv. got={sorted(subphases)}"
-    )
-
 
 @pytest.mark.smoke
 def test_timings_csv_multi_roll(

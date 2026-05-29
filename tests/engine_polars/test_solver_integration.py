@@ -515,29 +515,6 @@ def test_convenience_param_translation_raw_wins() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "HiGHS path uses Problem.solve() regardless of io_api per Phase 3 "
-        "design (run_one_solve short-circuits on solver_config.name == "
-        "'highs' and never reads io_api).  io_api='mps' currently has no "
-        "effect for the HiGHS path; revisit when polar-high adds MPS file "
-        "support to the direct API or when the dispatch routes HiGHS "
-        "through polar_solve unconditionally."
-    )
-)
-def test_mps_io_api(tmp_path: Path, stochastics_default_obj: float) -> None:
-    """Setting ``solver_io_api = "mps"`` on a HiGHS solve should yield
-    the same objective.  Currently skipped — see decorator reason.
-    """
-    db_url = _make_migrated_db(tmp_path)
-    _set_solver_param(db_url, SOLVE_NAME, "solver", "highs")
-    _set_solver_param(db_url, SOLVE_NAME, "solver_io_api", "mps")
-    step = run_single_solve_from_db(
-        db_url, SCENARIO, work_folder=tmp_path / "work", emit_output=False,
-    )
-    rel = abs(step.obj - stochastics_default_obj) / abs(stochastics_default_obj)
-    assert rel < 1e-9
-
 
 # ---------------------------------------------------------------------------
 # Test 8 — multi-solver dispatch on one Problem instance.
