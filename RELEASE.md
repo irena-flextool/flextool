@@ -1,3 +1,46 @@
+## Release 4.0.0b2 (29.5.2026) — desktop GUI: in-app updates, safer migration, macOS fix
+
+This beta focuses on the standalone Tkinter desktop application.
+
+**In-app "Update FlexTool"**
+
+- New **Update FlexTool…** button in the top-right of the main window (next to
+  **UI settings…**). It detects how FlexTool is installed and runs the right
+  upgrade automatically — `git pull` + editable reinstall for a git checkout,
+  or `pip install --upgrade` for a PyPI install — streaming output to the
+  Execution window and ending with a restart-required prompt.
+- An **Install Spine Toolbox** checkbox (opt-in; large dependency, required for
+  the Spine DB Editor; pre-ticked when Toolbox is already present).
+- A lightweight **startup update check** highlights the button (blue) when a
+  newer version exists. Disable it with the **Check for updates on startup**
+  toggle in the dialog or the `FLEXTOOL_NO_UPDATE_CHECK` environment variable.
+
+**Database migration**
+
+- GUI database migration now streams step-by-step progress to the Execution
+  window; the modal dialog is a clear "interface locked until done" gate.
+- Migration is wrapped in a backup/restore: a database is always left either
+  fully upgraded or exactly as it was found (a failed or cancelled migration is
+  rolled back), with failures pointing to the issue tracker.
+
+**Launchers and diagnostics**
+
+- A bare `flextool` command launches the desktop GUI; `flextool`/`flextool-gui`
+  are windowed launchers (no stray console on Windows), backed by a rotating
+  `flextool_gui.log` so diagnostics survive when there is no console.
+- When the Spine DB Editor is missing or fails to start, the GUI explains why
+  (and offers Update FlexTool / the install command) instead of failing
+  silently; the editor's traceback is captured to the Execution window.
+- Execution-window log: keyboard selection (Shift+arrows), a **Copy log text**
+  button, and a right-click Copy / Select-all menu.
+
+**Fixes**
+
+- Fixed a macOS crash (`RuntimeError: main thread is not in main loop`) during
+  database migration: worker threads no longer call tkinter (including
+  `after`) directly — all worker→main GUI updates are marshalled onto the main
+  thread.
+
 ## Release 4.0.0b1 (29.5.2026) — first beta: schema v56 finalised, input-shape correctness, autoscale hardening
 
 The 4.0 line moves from alpha to **beta**. The Spine data schema is
