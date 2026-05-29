@@ -6,8 +6,6 @@ against the real examples.sqlite database.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import openpyxl
 import pytest
 
@@ -16,10 +14,8 @@ from flextool.export_to_tabular.sheet_config import build_sheet_specs, SheetSpec
 from flextool.export_to_tabular.export_to_excel import export_to_excel
 
 from flextool._resources import package_data_path
+from flextool.update_flextool.initialize_database import initialize_database
 
-FLEXTOOL_ROOT = Path(__file__).resolve().parent.parent
-EXAMPLE_DB = FLEXTOOL_ROOT / "templates" / "examples.sqlite"
-EXAMPLE_DB_URL = f"sqlite:///{EXAMPLE_DB}"
 MASTER_TEMPLATE = package_data_path("schemas/spinedb_schema.json")
 
 # Parameters on split_params classes that are intentionally not surfaced in the
@@ -52,10 +48,25 @@ def _find_def_row(ws: "openpyxl.worksheet.worksheet.Worksheet") -> int:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def db_contents() -> DatabaseContents:
+def example_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Materialize ``templates_examples.json`` into a fresh tmp SQLite.
+
+    Avoids reading the user-facing ``templates/examples.sqlite``
+    directly — that file would otherwise need to be regenerated on
+    every schema bump just to keep these tests green, clobbering any
+    user edits in the process.
+    """
+    json_src = package_data_path("schemas/canonical_databases/templates_examples.json")
+    db_dir = tmp_path_factory.mktemp("examples_db")
+    sqlite_path = db_dir / "examples.sqlite"
+    initialize_database(str(json_src), str(sqlite_path))
+    return f"sqlite:///{sqlite_path}"
+
+
+@pytest.fixture(scope="module")
+def db_contents(example_db_url: str) -> DatabaseContents:
     """Read the example database once for all tests in this module."""
-    assert EXAMPLE_DB.exists(), f"Example DB not found: {EXAMPLE_DB}"
-    return read_database(EXAMPLE_DB_URL)
+    return read_database(example_db_url)
 
 
 @pytest.fixture(scope="module")
@@ -65,11 +76,15 @@ def sheet_specs(db_contents: DatabaseContents) -> list[SheetSpec]:
 
 
 @pytest.fixture(scope="module")
-def exported_workbook(tmp_path_factory: pytest.TempPathFactory, db_contents: DatabaseContents) -> openpyxl.Workbook:
+def exported_workbook(
+    tmp_path_factory: pytest.TempPathFactory,
+    db_contents: DatabaseContents,
+    example_db_url: str,
+) -> openpyxl.Workbook:
     """Export to a temporary Excel file and return the opened workbook."""
     out_dir = tmp_path_factory.mktemp("export")
     out_path = out_dir / "test_output.xlsx"
-    export_to_excel(EXAMPLE_DB_URL, str(out_path), include_advanced=True)
+    export_to_excel(example_db_url, str(out_path), include_advanced=True)
     wb = openpyxl.load_workbook(str(out_path))
     yield wb
     wb.close()

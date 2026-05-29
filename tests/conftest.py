@@ -92,7 +92,10 @@ def pytest_configure(config: pytest.Config) -> None:
     # Materialize canonical example/template SQLites (templates/examples.sqlite,
     # how to example databases/*.sqlite, ...) from their JSON sources so tests
     # that reference these paths directly work on a fresh clone.  Idempotent —
-    # skips files already present in the working tree.
+    # skips files already present in the working tree.  Tests that need a
+    # guaranteed-current SQLite (e.g. after a ``FLEXTOOL_DB_VERSION`` bump
+    # invalidates the on-disk copy) should build their own from the JSON
+    # source under ``tmp_path`` rather than mutating these user-facing files.
     from flextool.update_flextool.canonical_databases import materialize
     materialize(overwrite=False)
 
