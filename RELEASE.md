@@ -1,3 +1,82 @@
+## Release 4.0.0b1 (29.5.2026) — first beta: schema v56 finalised, input-shape correctness, autoscale hardening
+
+The 4.0 line moves from alpha to **beta**. The Spine data schema is
+finalised at version 56, the polars engine's input derivation gained an
+authoritative parameter-shape resolver, and the auto-scaler's registry
+contract is now enforced in CI. Existing input databases migrate forward
+automatically (`flextool-migrate-database` / GUI auto-migration).
+
+**Schema finalised at v56 (parameter & method renames; solver-config
+consolidation)**
+
+- Coefficient parameters renamed for consistency:
+  `flow_coefficient → conversion_flow_coeff`,
+  `max_capacity_coefficient → capacity_max_coeff`,
+  `min_capacity_coefficient → capacity_min_coeff`,
+  `constraint_*_coefficient → constraint_*_coeff`.
+- Method value-lists cleaned up: `co2_methods.no_method → none`; an
+  explicit `none` off-member added to `conversion_methods`,
+  `profile_methods` and `ramp_methods`; `is_*` / `has_*` flags retyped to
+  the `yes_no` list; the redundant `storage_nested_fix_method.no` member
+  dropped.
+- `is_enabled` re-added on `constraint` and the
+  `reserve__upDown__{unit,connection}__node` classes (read-time gate that
+  drops disabled entities).
+- Per-solve solver knobs consolidated: the individual `solver_options`,
+  `highs_method`, `highs_parallel`, `highs_presolve`, `solver_threads`,
+  `solver_log_level`, `solver_time_limit`, `solver_io_api` and
+  `use_row_scaling` parameters are gone — solver options now live in the
+  `solver_arguments` map, and the rest are CLI flags (`--scaling`,
+  `--solver-log-level`, `--solver-time-limit`, `--solver-io-api`,
+  `--highs-threads`). `db_migration.py` carries every rename/fold forward.
+
+**Input-shape correctness — authoritative parameter-shape resolver**
+
+- New `engine_polars/_param_shapes.py` resolver detects each DB-authored
+  parameter's shape from its nesting depth + per-level `index_name`
+  (validated against a per-parameter allow-list), with value-domain
+  probing to disambiguate spinedb_api's silent-default `"x"` Map index.
+- Efficiency / `min_load` / `efficiency_at_min_load` and
+  `other_operational_cost` derivation now route through this resolver
+  (`p_slope`, `p_section`, `p_pssdt_varCost`). This fixes a class of
+  cross-join blow-ups on long timelines — a time-series parameter carrying
+  the `"x"` index was mis-read as a scalar and broadcast against the full
+  `(period, time)` grid (overflowing on multi-week/multi-period runs) — and
+  the matching silent flattening of time variation on short timelines.
+
+**Numerical scaling / auto-scaler hardening**
+
+- The Layer-2 registries (`_layer2_types.py` / `_quantity_types.py`) are
+  verified complete against the schema and every emitted constraint /
+  variable; `lookup_cstr` now implements the documented prefix dispatch so
+  dynamic constraint names (e.g. the ramp family) resolve.
+- An unregistered family no longer silently degrades a solve to an
+  un-scaled LP: `FLEXTOOL_AUTOSCALE_STRICT=1` turns it into a hard error,
+  and CI now runs the suite with strict mode on.
+- Layer-2 scaling preserves the solver objective across the setSolution
+  push-back; the fast single-solve path unpacks the Layer-2 result
+  correctly.
+
+**Solver & I/O**
+
+- Requires `polar-high >= 2.3.0` (Where-pushdown release).
+- Self-describing Excel v2 round-trips cleanly; commodity price-ladder
+  parameters use the facet-leaf (`price`/`quantity`) layout; the Spine
+  reader no longer invents defaults (strict bool / header / dtype / alt
+  handling).
+
+**Testing & developer docs**
+
+- Tests build their input DB from JSON/schema under `tmp_path` rather than
+  depending on a checked-in SQLite (which lagged the schema); a
+  session-scoped `schema_db_url` fixture and schema-driven registry
+  coverage catch drift at the source.
+- Per-scenario timing-budget floor raised to 10 s (machine/drive
+  dependent; still catches gross regressions).
+- Developer docs document the autoscale-registry, parameter-shape and
+  build-from-schema invariants (`docs/dev/architecture.md`); `CLAUDE.md`
+  is now tracked; `ruff check .` is required and clean.
+
 ## Release 4.0.0a5 (28.5.2026) — GUI migration UX + side-menu polish
 
 GUI-focused follow-on to 4.0.0a4.  Two visible bugs and a sweep
