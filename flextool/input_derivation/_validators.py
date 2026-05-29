@@ -34,6 +34,7 @@ __all__ = [
     "validate_capacity_margin_groups",
     "validate_ladder_methods",
     "validate_group_output_memberships",
+    "validate_connection_node_memberships",
 ]
 
 
@@ -232,3 +233,39 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
                     "Group '%s' has %s: yes but no %s members — output will be empty.",
                     group_name, param_name, required_members,
                 )
+
+
+def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
+    """Warn when a ``connection`` entity has no ``connection__node__node``
+    relationship defining its two endpoints.
+
+    A connection's purpose is to transfer between two nodes; without a
+    ``connection__node__node`` member it carries no source/sink rows, never
+    enters ``process_source_sink``, and contributes nothing to any node
+    balance.  If it nonetheless has an ``invest_method`` it still becomes a
+    (degenerate, always-zero) investment variable in the LP, surfacing as a
+    ``v_invest`` column the output post-processor has to tolerate (see
+    ``read_parameters._entity_universe``).  Almost always this is a data-
+    entry error — the connection was given parameters but never wired to
+    its nodes.
+
+    Only a warning is emitted: the solve proceeds, treating the connection
+    as a no-op.
+    """
+    connected: set[str] = set()
+    for ent in db.find_entities(entity_class_name="connection__node__node"):
+        byname = ent["entity_byname"]
+        if byname:
+            connected.add(byname[0])
+    for ent in db.find_entities(entity_class_name="connection"):
+        byname = ent["entity_byname"]
+        if not byname:
+            continue
+        name = byname[0]
+        if name not in connected:
+            logger.warning(
+                "Connection '%s' has no connection__node__node members — it "
+                "cannot transfer between nodes and will be ignored (any "
+                "invest/transfer parameters have no effect).",
+                name,
+            )

@@ -983,6 +983,25 @@ def read_parameters(
         for col in ("source", "sink"):
             extra = flex_data.process_source_sink.select(col).unique().to_pandas()[col].tolist()
             _entity_universe.extend(extra)
+    # Also include every invest / divest variable entity.  ``ed_invest_set``
+    # / ``ed_divest_set`` carry the (e, d) variable index that becomes the
+    # ``v_invest`` / ``v_divest`` column set (read_sets.py:267-280 builds
+    # ``s.entityInvest`` / ``s.entityDivest`` from the same frames).  An
+    # entity can be invest-eligible (``invest_method`` set) without
+    # appearing in ``process_source_sink`` — e.g. a connection that has
+    # invest parameters but no ``connection__node__node`` endpoints, so it
+    # carries no source/sink rows.  It still produces a (degenerate, always
+    # -zero) ``v_invest`` column, and ``calc_costs.compute_costs`` indexes
+    # ``entity_unitsize`` / the invest-coefficient frames by
+    # ``v.invest.columns`` (lines 157-166).  Densifying over the invest /
+    # divest universe keeps those lookups from raising ``KeyError``; the
+    # input-side ``validate_connection_node_memberships`` warns about the
+    # malformed connection itself.
+    for _invest_set in (flex_data.ed_invest_set, flex_data.ed_divest_set):
+        if _invest_set is not None and _invest_set.height > 0:
+            _entity_universe.extend(
+                _invest_set.select("e").unique().to_pandas()["e"].tolist()
+            )
     # Deduplicate while keeping insertion order.
     _entity_universe = list(dict.fromkeys(_entity_universe))
 

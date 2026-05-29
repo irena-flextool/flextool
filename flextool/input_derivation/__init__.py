@@ -122,6 +122,7 @@ def run(
         validate_ladder_methods,
         validate_group_output_memberships,
         validate_capacity_margin_groups,
+        validate_connection_node_memberships,
     )
     from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
     from flextool.input_derivation._process_method import derive_process_method
@@ -261,6 +262,7 @@ def run(
         # Step 4 — validators that need DB access.
         validate_capacity_margin_groups(db, logger)
         validate_group_output_memberships(db, logger)
+        validate_connection_node_memberships(db, logger)
 
     # Accept either a backend, a DatabaseMapping or a URL string.
     if isinstance(backend_or_db_url, str):
