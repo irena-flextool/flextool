@@ -239,6 +239,7 @@ elif next_version == N:
 
 ### PR Checklist
 
+- [ ] Lint passes (`ruff check .`; `ruff check --fix .` applies safe autofixes)
 - [ ] Tests pass locally (`pytest tests/`)
 - [ ] No unintended changes to golden files
 - [ ] Master template is up-to-date (If schema changed. Check [CONTRIBUTING.md updating the data structure](#updating-the-data-structure))

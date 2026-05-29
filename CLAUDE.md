@@ -11,6 +11,8 @@ the authoritative sources before non-trivial work:
 ## Environment
 - Python 3.11+, type hints throughout.
 - Virtualenv at `~/venv-spi/` — invoke as `~/venv-spi/bin/python`.
+- **Lint with ruff before committing**: `ruff check .` (use
+  `ruff check --fix .` to apply safe autofixes). Keep the tree clean.
 
 ## Invariants that bite (don't learn these the hard way)
 
