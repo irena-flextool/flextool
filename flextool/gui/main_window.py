@@ -979,10 +979,13 @@ class MainWindow(tk.Tk):
     def _check_update_async(self) -> None:
         """Probe for a newer version off the UI thread, then update the button.
 
-        Skipped entirely when ``FLEXTOOL_NO_UPDATE_CHECK`` is set, for offline
-        or locked-down environments that should make no outbound request.
+        Skipped when the "Check for updates on startup" preference is off (set
+        in the Update FlexTool dialog) or when ``FLEXTOOL_NO_UPDATE_CHECK`` is
+        set — either way, no outbound request is made.
         """
         if os.environ.get("FLEXTOOL_NO_UPDATE_CHECK"):
+            return
+        if not self.global_settings.check_updates_on_startup:
             return
 
         def _worker() -> None:
@@ -2640,8 +2643,16 @@ class MainWindow(tk.Tk):
             install_description=install_info.describe_install(),
             is_git=install_info.is_git_install(),
             default_toolbox=default_toolbox,
+            check_on_startup=self.global_settings.check_updates_on_startup,
         )
         self.wait_window(dlg)
+
+        # Persist the "check on startup" preference whether or not the user
+        # proceeded with the update.
+        if dlg.check_on_startup != self.global_settings.check_updates_on_startup:
+            self.global_settings.check_updates_on_startup = dlg.check_on_startup
+            save_global_settings(get_projects_dir(), self.global_settings)
+
         if not dlg.proceed:
             return
 

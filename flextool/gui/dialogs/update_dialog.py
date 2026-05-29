@@ -8,11 +8,14 @@ from tkinter import ttk
 class UpdateDialog(tk.Toplevel):
     """Ask the user to confirm a FlexTool self-update.
 
-    Exposes two attributes after it closes:
+    Exposes these attributes after it closes:
 
       - ``proceed`` -- ``True`` if the user clicked Update.
       - ``include_toolbox`` -- ``True`` if Spine Toolbox should be installed
         alongside FlexTool (the ``[toolbox]`` extra).
+      - ``check_on_startup`` -- the (possibly changed) "check for updates on
+        startup" preference; the caller persists it whether or not the user
+        proceeded with the update.
 
     Show it by constructing it and calling ``parent.wait_window(self)``.
     """
@@ -24,6 +27,7 @@ class UpdateDialog(tk.Toplevel):
         install_description: str,
         is_git: bool,
         default_toolbox: bool,
+        check_on_startup: bool,
     ) -> None:
         super().__init__(parent)
         self.title("Update FlexTool")
@@ -32,7 +36,9 @@ class UpdateDialog(tk.Toplevel):
 
         self.proceed: bool = False
         self.include_toolbox: bool = default_toolbox
+        self.check_on_startup: bool = check_on_startup
         self._toolbox_var = tk.BooleanVar(value=default_toolbox)
+        self._check_startup_var = tk.BooleanVar(value=check_on_startup)
 
         body = ttk.Frame(self, padding=16)
         body.pack(fill="both", expand=True)
@@ -82,6 +88,13 @@ class UpdateDialog(tk.Toplevel):
             justify="left",
         ).pack(anchor="w", pady=(0, 8))
 
+        ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(0, 8))
+        ttk.Checkbutton(
+            body,
+            text="Check for updates on startup",
+            variable=self._check_startup_var,
+        ).pack(anchor="w", pady=(0, 8))
+
         btns = ttk.Frame(body)
         btns.pack(fill="x", pady=(4, 0))
         ttk.Button(btns, text="Cancel", command=self._on_cancel).pack(side="right")
@@ -102,10 +115,12 @@ class UpdateDialog(tk.Toplevel):
     def _on_update(self) -> None:
         self.proceed = True
         self.include_toolbox = bool(self._toolbox_var.get())
+        self.check_on_startup = bool(self._check_startup_var.get())
         self._close()
 
     def _on_cancel(self) -> None:
         self.proceed = False
+        self.check_on_startup = bool(self._check_startup_var.get())
         self._close()
 
     def _close(self) -> None:

@@ -222,6 +222,8 @@ class GlobalSettings:
     execution_limits: ExecutionLimits = field(default_factory=ExecutionLimits)
     font_size_pt: int = 10        # body / menu / heading base size
     code_font_size_pt: int = 0    # TkFixedFont (logs, code views); 0 = auto = body+2
+    # Check PyPI / the git remote for a newer version once at startup.
+    check_updates_on_startup: bool = True
 
 
 @dataclass

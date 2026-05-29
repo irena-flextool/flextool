@@ -243,6 +243,7 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
         execution_limits=execution_limits,
         font_size_pt=data.get("font_size_pt", 10),
         code_font_size_pt=data.get("code_font_size_pt", 0),
+        check_updates_on_startup=data.get("check_updates_on_startup", True),
     )
 
 
