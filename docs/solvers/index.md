@@ -37,52 +37,63 @@ Solver selection lives on the `solve` entity in the Spine database, in the
 to a documented default if omitted, so existing scenarios behave exactly as
 they did before this feature was added.
 
-The seven parameters are, with their per-solver defaults:
+The DB-level solver parameters are, with their per-solver defaults:
 
 | Parameter            | Default     | One-line description                                         |
 |----------------------|-------------|--------------------------------------------------------------|
 | `solver`             | `"highs"`   | Solver name from `[highs, gurobi, cplex, xpress, copt]`      |
-| `solver_io_api`      | `"direct"`  | How the model reaches the solver: `direct` / `mps` / `lp`    |
-| `solver_options`     | empty Map   | Raw key/value pairs forwarded verbatim to the solver         |
-| `solver_time_limit`  | unset       | Wall-clock seconds; normalised across solvers                |
+| `solver_arguments`   | empty Map   | Raw option name → value pairs forwarded verbatim to the solver |
 | `solver_mip_gap`     | unset       | Relative MIP gap; normalised across solvers                  |
-| `solver_threads`     | unset       | Thread count; normalised across solvers                      |
-| `solver_log_level`   | `"normal"`  | One of `silent` / `normal` / `verbose`                       |
+| `solver_precommand`  | unset       | Shell command run before the solver subprocess (advanced)    |
 
-Example — set Gurobi with a 60-second wall-clock cap on a single solve:
+A handful of options that used to be DB parameters are now controlled by
+**CLI flags** on `flextool` (they apply to the whole run rather than per
+solve):
+
+| CLI flag               | Replaces former DB param | Values / notes                                  |
+|------------------------|--------------------------|-------------------------------------------------|
+| `--matrix-file-format` | `solver_io_api`          | `mps` (default) / `lp`; on-disk format used when the solver is dispatched via a matrix file |
+| `--solver-time-limit`  | `solver_time_limit`      | Wall-clock seconds (HiGHS `time_limit`); unset means no limit |
+| `--highs-threads`      | `solver_threads`         | Integer thread count (default 1); `>1` enables HiGHS parallel mode |
+| `--solver-log-level`   | `solver_log_level`       | `silent` / `normal` / `verbose`                 |
+
+Example — set Gurobi on a single solve, with a 60-second wall-clock cap for
+the whole run:
 
 ```text
 solve entity:  yearly_dispatch
-  solve_advanced.solver             = "gurobi"
-  solve_advanced.solver_time_limit  = 60
+  solve_advanced.solver = "gurobi"
+```
+```bash
+flextool <input_db_url> --solver-time-limit 60
 ```
 
-Set in Spine Toolbox by selecting the `solve` entity, opening its parameter
-editor, finding the `solve_advanced` group, and entering the values above.
-Unspecified parameters take their defaults.
+Set the DB parameter in Spine Toolbox by selecting the `solve` entity,
+opening its parameter editor, finding the `solve_advanced` group, and
+entering the values above. Unspecified parameters take their defaults.
 
-## The seven parameters in detail
+## The parameters in detail
 
 | Parameter            | Type   | Default     | Description                                                                                              |
 |----------------------|--------|-------------|----------------------------------------------------------------------------------------------------------|
 | `solver`             | str    | `"highs"`   | Solver name. Must be one of `highs`, `gurobi`, `cplex`, `xpress`, `copt`.                                |
-| `solver_io_api`      | str    | `"direct"`  | Historically `direct` (in-process Python API) vs `mps` (file-based subprocess); after the in-process cold-solve retirement this knob is effectively informational — non-HiGHS solvers are always dispatched through the subprocess MPS path regardless of value. HiGHS still picks `direct` when warm reuse is active and falls back to subprocess otherwise. |
-| `solver_options`     | map    | empty       | Map of key → value pairs passed verbatim to the underlying solver. Use this for any solver-native option that is not one of the three convenience knobs below. Raw options always override the convenience knobs on key collision. |
-| `solver_time_limit`  | float  | unset       | Wall-clock time limit in seconds. FlexTool translates this to the right native parameter name per solver (`TimeLimit` / `timelimit` / `maxtime` / `TimeLimit` / `time_limit`). |
+| `solver_arguments`   | map    | empty       | Map of option name → value passed verbatim to the underlying solver. Use this for any solver-native option that is not one of the convenience knobs below. Raw options always override the convenience knobs on key collision. |
 | `solver_mip_gap`     | float  | unset       | Relative MIP optimality gap (e.g. `0.01` for 1 %). Translated to each solver's native parameter (`MIPGap` / `mip.tolerances.mipgap` / `miprelstop` / `RelGap` / `mip_rel_gap`). |
-| `solver_threads`     | int    | unset       | Maximum thread count. Translated to each solver's native parameter (`Threads` / `threads` / `threads` / `Threads` / `threads`). |
-| `solver_log_level`   | str    | `"normal"`  | `silent` suppresses solver output, `normal` is the solver default, `verbose` enables the solver's most chatty mode. |
+| `solver_precommand`  | str    | unset       | Shell command run before the solver subprocess (advanced; e.g. to source a licence environment). |
 
-### Authoring `solver_options` in Spine
+The corresponding CLI flags (`--matrix-file-format`, `--solver-time-limit`,
+`--highs-threads`, `--solver-log-level`) are documented in the table above.
 
-`solver_options` is a Spine **Map** of string keys to string-or-float values.
+### Authoring `solver_arguments` in Spine
+
+`solver_arguments` is a Spine **Map** of string keys to string-or-float values.
 Keys are the solver's own parameter names (e.g. `Presolve` for Gurobi or
 `presolve` for HiGHS), values are whatever that solver expects.
 
 Example (Gurobi, in Spine Toolbox's map editor):
 
 ```text
-solver_options:
+solver_arguments:
   Presolve   = 2
   Method     = 2
   Heuristics = 0.1
@@ -105,11 +116,11 @@ under `solver_config/`:
 | COPT    | `solver_config/copt.opt`     | `ParamName value` per line                          |
 
 These files are user-editable.  FlexTool reads each solver's baseline at
-solve time, overlays the scenario's `solver_options` Map (plus the
-convenience-knob translations from `solver_time_limit` / `solver_mip_gap`
-/ `solver_threads`) **line-by-line**, writes the merged result to a temp
-file alongside the MPS, and feeds it to the solver via the per-solver
-mechanism:
+solve time, overlays the scenario's `solver_arguments` Map (plus the
+convenience-knob translations from the `--solver-time-limit` /
+`solver_mip_gap` / `--highs-threads` knobs) **line-by-line**, writes the
+merged result to a temp file alongside the MPS, and feeds it to the solver
+via the per-solver mechanism:
 
 | Solver  | How FlexTool feeds the merged file to the CLI                                                  |
 |---------|------------------------------------------------------------------------------------------------|
@@ -121,10 +132,10 @@ mechanism:
 
 **Override precedence** (highest wins):
 
-1. Raw `solver_options` entries on the scenario / solve.
-2. Translated convenience knobs (`solver_time_limit` / `solver_mip_gap` /
-   `solver_threads`).
-3. The baseline file under `solver_config/<solver>.opt`.
+1. CLI flags (`--solver-time-limit`, `--highs-threads`, …).
+2. Raw `solver_arguments` entries on the scenario / solve.
+3. Translated convenience knobs (`solver_mip_gap`).
+4. The baseline file under `solver_config/<solver>.opt`.
 
 Override `solver_config/` location with the `FLEXTOOL_SOLVER_CONFIG_DIR`
 environment variable when running outside the standard project layout
@@ -186,14 +197,13 @@ per-solver page for the licence setup.
 - **Mixing solvers without checking.** A scenario tree can route each solve
   to a different solver, but every solve needs its own `solver` parameter
   if you want anything other than HiGHS. Unset solves stay on HiGHS.
-- **Using `io_api = "mps"` for very large models.** The MPS fallback writes
-  the full model to disk and shells out to the solver's CLI. After the
-  in-process cold-solve retirement this is the only path for non-HiGHS
-  solvers; `direct` is silently treated as a synonym for `mps` at the
-  orchestrator level. The trade-off is bounded peak RSS (the
+- **Using `--matrix-file-format mps` for very large models.** The MPS
+  fallback writes the full model to disk and shells out to the solver's CLI.
+  After the in-process cold-solve retirement this is the only path for
+  non-HiGHS solvers. The trade-off is bounded peak RSS (the
   `Problem.write_mps` writer caps ~2-3 GB on the largest LPs) at the cost
   of file I/O plus a fresh solver process per sub-solve.
-- **Hand-writing `solver_options` and the convenience knobs together.** Raw
-  options win on key collisions. If you set both `solver_time_limit = 60`
-  and `solver_options = {TimeLimit: 30}` on a Gurobi solve, Gurobi sees
-  `TimeLimit = 30`.
+- **Hand-writing `solver_arguments` and the convenience knobs together.** Raw
+  options win on key collisions. If you pass `--solver-time-limit 60` and
+  also set `solver_arguments = {TimeLimit: 30}` on a Gurobi solve, Gurobi
+  sees `TimeLimit = 30`.

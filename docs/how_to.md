@@ -855,7 +855,7 @@ Next figure shows the values needed to define one solve (out of the four solves 
 
 Note the the `solve_mode`: *rolling_window* is not used! This is not for investment runs (without nesting) as it rolls freely, and investments should only be made at the start of the period. This example is called 'manual rolling' later when those are discussed.
 
-In the examples.sqlite, the solve entities have solver parameters: `highs_method`, `highs_parallel` and `highs_presolve`. They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.
+In the examples.sqlite, the solve entities can carry solver options in the `solver_arguments` map (e.g. `solver`, `parallel` and `presolve` for HiGHS). They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.
 
 ![Solve data](./img/concept/data_for_one_solve.png)
 
@@ -1203,7 +1203,7 @@ External changes (results will remain the same):
 Model changes (results will remain the same):
 
 - Disable outputs that you don't need. This will speed up the result processing. See: [How to enable/disable outputs](#how-to-enabledisable-outputs)
-- When using HiGHS solver: in your solve's parameters, you can set highs_presolve = on, and highs_parallel = on to speed up the optimisation. However, it can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
+- When using HiGHS solver: in your solve's `solver_arguments` map, you can set `presolve = on` and `parallel = on` to speed up the optimisation. However, it can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
 - Especially with MIP problems, considering using a commercial solver like CPLEX (license required). See: [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
 
 Model changes (results will be affected):

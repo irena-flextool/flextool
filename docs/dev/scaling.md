@@ -108,16 +108,19 @@ The autoscaler is a numerical tool, not a model fixer. Some things it
   Layer 2 leaves those columns alone — the YAML records that the
   scaler was clamped.
 
-## Legacy LP row-scaling (`use_row_scaling`)
+## Legacy LP row-scaling
 
-Separate from the autoscale package, FlexTool still ships a per-solve
-DB-level row-scaling family: set `solve.use_row_scaling` to `yes` to
-multiply node-balance / group-balance rows by `node_capacity_for_scaling`
-/ `group_capacity_for_scaling` derived from connected-entity unitsizes
-(rounded to powers of 10 to preserve HiGHS symmetry detection). The two
-mechanisms are independent: you can enable either, both, or neither.
-Output un-scaling is wired into `process_outputs/read_highs_solution.py`
-either way.
+Separate from the autoscale package, FlexTool still ships an LP
+row-scaling family that multiplies node-balance / group-balance rows by
+`node_capacity_for_scaling` / `group_capacity_for_scaling` derived from
+connected-entity unitsizes (rounded to powers of 10 to preserve HiGHS
+symmetry detection). The former per-solve `solve.use_row_scaling` DB
+parameter was **removed**; row scaling is now controlled by the
+`--scaling` CLI flag (env var `FLEXTOOL_SCALING`) alongside the rest of
+the autoscaler. Every solve emits `p_use_row_scaling=0` by default, so
+the legacy family is off unless forced via the
+`FLEXTOOL_FORCE_ROW_SCALING` test hook. Output un-scaling is wired into
+`process_outputs/read_highs_solution.py` either way.
 
 ## Precision rounding
 
@@ -145,6 +148,8 @@ Override with `--precision-digits 15` to effectively disable rounding.
   the composite case. The autoscaler will record the wide
   cross-group ratio but cannot fix it numerically — aggregate the
   small-side units or stage the subsystems sequentially.
-- **"I want the legacy row-scaling on top of autoscale."** Set
-  `solve.use_row_scaling=yes` in the DB. Both mechanisms apply
-  independently; the output writer un-scales both.
+- **"I want the legacy row-scaling on top of autoscale."** The
+  `solve.use_row_scaling` DB knob no longer exists; the legacy family is
+  off by default and only reachable via the `FLEXTOOL_FORCE_ROW_SCALING`
+  test hook. For production scaling use the `--scaling` CLI flag; the
+  output writer un-scales whatever was applied.

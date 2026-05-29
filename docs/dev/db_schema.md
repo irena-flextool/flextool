@@ -75,7 +75,8 @@ is the authoritative inventory):
   `solve_advanced` parameter group on the `solve` entity (`solver`,
   `solver_io_api`, `solver_options`, `solver_time_limit`,
   `solver_mip_gap`, `solver_threads`, `solver_log_level`) so each
-  solve can dispatch to a different LP / MIP solver. See
+  solve can dispatch to a different LP / MIP solver. (Several of these
+  were later folded or removed at v56 — see below.) See
   [Solver selection](../solvers/index.md) for the user-facing story.
 - **v54 — `storage_binding_method` array → scalar.** The previously
   array-valued parameter is collapsed to a single scalar via a
@@ -94,6 +95,18 @@ is the authoritative inventory):
   refreshes the parameter description text. See
   [`reference.md`](../reference.md) for the user-facing enumeration
   and silent-degrade behaviour.
+- **v56 — solver-knob consolidation.** Retypes `solve.solver_arguments`
+  to a 1d-map (solver option name → value) and folds the v52-era
+  per-solve solver knobs into it or onto CLI flags: `solver_options`
+  folds into `solver_arguments`; `highs_method` / `highs_parallel` /
+  `highs_presolve` fold into the `solver` / `parallel` / `presolve`
+  keys of `solver_arguments`; `solver_threads` → `--highs-threads`,
+  `solver_log_level` → `--solver-log-level`, `solver_time_limit` →
+  `--solver-time-limit`, `solver_io_api` → `--matrix-file-format`, and
+  `use_row_scaling` → the `--scaling` CLI flag (env `FLEXTOOL_SCALING`).
+  The surviving `solve_advanced` DB parameters are `solver`,
+  `solver_arguments`, `solver_mip_gap`, and `solver_precommand`. See
+  [Solver selection](../solvers/index.md).
 
 A separate hand-coded step (independent of the numbered chain)
 migrates legacy databases that carried `has_storage = yes` without

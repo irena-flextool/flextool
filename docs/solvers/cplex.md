@@ -73,24 +73,24 @@ python -c "import cplex; cplex.Cplex().solve()"
 A clean exit (no `CplexSolverError` / `CplexError`) means the licence is
 discoverable.
 
-## Authoring `solver_options` for CPLEX
+## Authoring `solver_arguments` for CPLEX
 
 CPLEX parameters live under a nested attribute namespace
 (`c.parameters.<group>.<sub>...<name>`). polar-high's CPLEX adapter
 expects option keys as **dotted parameter paths** relative to
-`c.parameters`. In FlexTool's `solver_options` Map, write the dotted name
+`c.parameters`. In FlexTool's `solver_arguments` Map, write the dotted name
 directly:
 
 ```text
-solver_options:
+solver_arguments:
   timelimit                = 60
   mip.tolerances.mipgap    = 0.01
   threads                  = 8
 ```
 
-These three correspond to FlexTool's `solver_time_limit`,
-`solver_mip_gap`, and `solver_threads` convenience knobs; setting either
-form works.
+These three correspond to the `--solver-time-limit` CLI flag, FlexTool's
+`solver_mip_gap` parameter, and the `--highs-threads` CLI flag convenience
+knobs; either form works.
 
 ## Common errors
 
@@ -105,7 +105,7 @@ The error messages below are what FlexTool surfaces as `FlexToolUserError`.
   codes). Same FlexTool licence-error message family. Re-authenticate
   your IBM Cloud subscription or refresh the ILM token.
 - **Unknown CPLEX parameter.** Typing `timeLimit` instead of `timelimit`
-  in `solver_options` raises `CplexError` from the parameter setter;
+  in `solver_arguments` raises `CplexError` from the parameter setter;
   FlexTool surfaces it as *"Solver 'cplex' returned an error: ..."*. The
   parameter names are documented at the IBM CPLEX parameters reference
   ([FIXME: confirm URL] — typically under the IBM CPLEX online
@@ -116,17 +116,18 @@ The error messages below are what FlexTool surfaces as `FlexToolUserError`.
 On the `solve` entity:
 
 ```text
-solve_advanced.solver            = "cplex"
-solve_advanced.solver_time_limit = 60
-solve_advanced.solver_mip_gap    = 0.01
-solve_advanced.solver_threads    = 8
-solve_advanced.solver_options:
+solve_advanced.solver         = "cplex"
+solve_advanced.solver_mip_gap = 0.01
+solve_advanced.solver_arguments:
   lpmethod   = 4
   preind     = 1
 ```
+```bash
+flextool <input_db_url> --solver-time-limit 60 --highs-threads 8
+```
 
 The convenience knobs translate to CPLEX's `timelimit`,
-`mip.tolerances.mipgap`, and `threads`. Raw `solver_options` win on key
+`mip.tolerances.mipgap`, and `threads`. Raw `solver_arguments` win on key
 collision.
 
 ---

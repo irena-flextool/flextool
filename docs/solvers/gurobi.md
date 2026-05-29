@@ -104,7 +104,7 @@ as the cause of the wrapped exception.
   'gurobi' is not installed on this system. ..."* with the underlying
   cause "*scipy is not installed (required by the Gurobi adapter for
   vectorized matrix load)*". Run `pip install scipy`.
-- **Unknown Gurobi option.** Setting a typo'd key in `solver_options`
+- **Unknown Gurobi option.** Setting a typo'd key in `solver_arguments`
   (e.g. `TimeLImit` instead of `TimeLimit`) raises `GurobiError` from
   `Model.setParam`; FlexTool surfaces it as *"Solver 'gurobi' returned an
   error: Gurobi error (code ...): unknown parameter ..."*. Fix the typo.
@@ -114,18 +114,19 @@ as the cause of the wrapped exception.
 On the `solve` entity for the solve you want Gurobi to handle:
 
 ```text
-solve_advanced.solver            = "gurobi"
-solve_advanced.solver_time_limit = 60
-solve_advanced.solver_mip_gap    = 0.005
-solve_advanced.solver_threads    = 8
-solve_advanced.solver_options:
+solve_advanced.solver         = "gurobi"
+solve_advanced.solver_mip_gap = 0.005
+solve_advanced.solver_arguments:
   Method     = 2
   Presolve   = 2
   MIPFocus   = 1
 ```
+```bash
+flextool <input_db_url> --solver-time-limit 60 --highs-threads 8
+```
 
 The convenience knobs translate to `TimeLimit`, `MIPGap`, and `Threads`
-respectively. Raw `solver_options` entries pass through untouched and win
+respectively. Raw `solver_arguments` entries pass through untouched and win
 on any key collision with the convenience knobs.
 
 ---

@@ -92,7 +92,7 @@ than code; the keyword set is `license`, `licence`, `oem`, `expired`,
   surfaces this as the licence-error family. The fix is either to shrink
   the model or to upgrade to a full licence — Community Edition is
   unsuitable for production FlexTool scenarios.
-- **Unknown Xpress control.** Typing a wrong `solver_options` key raises a
+- **Unknown Xpress control.** Typing a wrong `solver_arguments` key raises a
   vendor exception from `p.setControl(name, value)`; FlexTool shows
   *"Solver 'xpress' returned an error: ..."*. The control names are in the
   Xpress reference manual ([FIXME: confirm URL]).
@@ -102,17 +102,18 @@ than code; the keyword set is `license`, `licence`, `oem`, `expired`,
 On the `solve` entity:
 
 ```text
-solve_advanced.solver            = "xpress"
-solve_advanced.solver_time_limit = 60
-solve_advanced.solver_mip_gap    = 0.005
-solve_advanced.solver_threads    = 8
-solve_advanced.solver_options:
+solve_advanced.solver         = "xpress"
+solve_advanced.solver_mip_gap = 0.005
+solve_advanced.solver_arguments:
   defaultalg = 4
   presolve   = 1
 ```
+```bash
+flextool <input_db_url> --solver-time-limit 60 --highs-threads 8
+```
 
 The convenience knobs translate to Xpress's `maxtime`, `miprelstop`, and
-`threads`. Raw `solver_options` are passed verbatim to `setControl` and
+`threads`. Raw `solver_arguments` are passed verbatim to `setControl` and
 win on key collision.
 
 ---

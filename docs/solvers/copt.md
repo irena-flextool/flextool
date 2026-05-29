@@ -116,17 +116,18 @@ documented as Gurobi's).
 On the `solve` entity:
 
 ```text
-solve_advanced.solver            = "copt"
-solve_advanced.solver_time_limit = 60
-solve_advanced.solver_mip_gap    = 0.005
-solve_advanced.solver_threads    = 8
-solve_advanced.solver_options:
+solve_advanced.solver         = "copt"
+solve_advanced.solver_mip_gap = 0.005
+solve_advanced.solver_arguments:
   Presolve   = 1
   LpMethod   = 2
 ```
+```bash
+flextool <input_db_url> --solver-time-limit 60 --highs-threads 8
+```
 
 The convenience knobs translate to COPT's `TimeLimit`, `RelGap`, and
-`Threads`. Raw `solver_options` win on key collision.
+`Threads`. Raw `solver_arguments` win on key collision.
 
 ---
 
