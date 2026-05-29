@@ -90,6 +90,9 @@ dev = [
 ]
 
 [project.scripts]
+# Bare `flextool` launches the desktop GUI (equivalent to
+# `python -m flextool.gui`); the hyphen-cased entries below are the CLI tools.
+flextool = "flextool.gui.__main__:main"
 # Primary entry points — kept hyphen-cased for `flextool-*` CLI uniformity.
 flextool-run = "flextool.cli.cmd_run_flextool:main"
 flextool-update = "flextool.cli.cmd_update_flextool:main"
