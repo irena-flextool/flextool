@@ -279,13 +279,20 @@ class MainWindow(tk.Tk):
         )
         self.project_menu_btn.grid(row=row, column=1, sticky="w", padx=5)
 
-        # UI settings button — top-right corner of row 0.  Holds the
-        # UI-related items (font size cascade + reset window layout)
-        # that previously lived in the Project menu popup.
+        # Top-right corner of row 0: UI settings (font size cascade + reset
+        # window layout) with Update FlexTool to its right.
+        top_right = ttk.Frame(outer)
+        top_right.grid(row=row, column=5, sticky="e", padx=5)
+
         self.ui_settings_btn = ttk.Button(
-            outer, text="UI settings…", command=self._on_ui_settings_btn
+            top_right, text="UI settings…", command=self._on_ui_settings_btn
         )
-        self.ui_settings_btn.grid(row=row, column=5, sticky="e", padx=5)
+        self.ui_settings_btn.pack(side="left", padx=(0, 5))
+
+        self.update_btn = ttk.Button(
+            top_right, text="Update FlexTool…", command=self._on_update_flextool
+        )
+        self.update_btn.pack(side="left")
 
         # Debug / themes / Png settings / Execution jobs / Results viewer
         # used to occupy row 0 and a separate bottom-of-section row; both
@@ -694,12 +701,6 @@ class MainWindow(tk.Tk):
             command=self._on_view_results,
         )
         self.view_results_btn.grid(row=7, column=0, sticky="sw", pady=(2, 0))
-
-        self.update_btn = ttk.Button(
-            side_menu, text="Update FlexTool…", width=22,
-            command=self._on_update_flextool,
-        )
-        self.update_btn.grid(row=8, column=0, sticky="sw", pady=(2, 0))
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
