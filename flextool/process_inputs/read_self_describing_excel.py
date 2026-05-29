@@ -46,12 +46,19 @@ COL_DEF_PREFIXES = (
     "parameter",
 )
 
-# Special parameter names recognised by the importer
+# Special parameter names recognised by the importer.
+#
+# The exporter (``excel_writer.py``) emits exactly ``"entity existence"`` as
+# the header label and ``"TRUE"`` / ``"FALSE"`` as the cell values.  The v2
+# reader is a faithful inverse of that exporter — it does NOT accept legacy
+# aliases (the old ``"entity alternative"`` header is rejected so users see
+# a clear error rather than silent renames).
 ENTITY_EXISTENCE = "entity existence"
-ENTITY_EXISTENCE_ALIASES = frozenset({
-    "entity existence",
-    "entity alternative",
-})
+# Strings the exporter EVER emits for a boolean-valued cell (case-insensitive
+# match).  Anything else is treated as a data error and raised — silent
+# coercion of ``"yes"`` / ``"no"`` / ``"1"`` would mask data corruption.
+_BOOL_TRUE_LITERAL = "true"
+_BOOL_FALSE_LITERAL = "false"
 
 
 # ---------------------------------------------------------------------------
@@ -441,13 +448,19 @@ def parse_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
         if not val:
             break  # empty separator column = end of parameter area
         vl = val.lower()
-        if vl in ENTITY_EXISTENCE_ALIASES:
+        if vl == ENTITY_EXISTENCE:
             meta.entity_existence_col = c
             meta.param_cols[c] = ENTITY_EXISTENCE
         else:
             meta.param_cols[c] = val
 
     # --- Parse crossing point for defaults ---
+    # NOTE: kept defensively — the current exporter ALWAYS writes a
+    # parameter name into every right-of-crossing header cell, so the
+    # back-fill loop below is dead code on writer-generated files.  It
+    # remains in place to keep hand-edited sheets (where the user relies
+    # on the crossing's ``parameter: <default>`` to label an empty
+    # column) loadable.  If the exporter contract changes, revisit.
     keyword, default = _parse_default_value(crossing_val)
     if keyword.lower() == "parameter" and default:
         meta.default_parameter = default
@@ -476,6 +489,12 @@ def parse_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
                 meta.default_data_type = default_val
             for c in meta.param_cols:
                 dt = _cell_value(ws, r, c)
+                # NOTE: ``.lower()`` is defensive — the exporter already
+                # emits all data-type labels lowercase ("float", "string",
+                # "boolean (array)", "string (array)", "*-1d-map", ...).
+                # Kept in case a hand-edited sheet uses mixed case so the
+                # downstream dtype dispatch (``_convert_value``) keeps
+                # matching its lowercase ``elif`` branches.
                 if dt:
                     meta.data_types[c] = dt.lower()
                 elif default_val:
@@ -767,8 +786,16 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
         dim_cols = []
 
     for r in range(meta.data_start_row, max_row):
-        # Read alternative
-        alt = _cell_value(ws, r, meta.alt_col) if meta.alt_col is not None else None
+        # Read alternative.  Normalise empty cells to ``None`` (rather than
+        # ``""``) so downstream entity-only records propagate a real
+        # absence — the writer's alt-creation step skips falsy names and
+        # discards entity-only records before parameter writes, so a
+        # synthesised ``""`` would create an empty-string alternative
+        # in SpineDB.
+        if meta.alt_col is not None:
+            alt = _cell_value(ws, r, meta.alt_col) or None
+        else:
+            alt = None
 
         # Read entity byname
         if entity_col is not None:
@@ -822,12 +849,19 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
             v = _cell_value(ws, r, c_extra) or None
             extra_index_values.append((name_extra, v))
 
-        # Read entity existence
+        # Read entity existence (strict TRUE/FALSE — exporter only ever
+        # writes those two literals; anything else is a data error).
         entity_existence = None
         if meta.entity_existence_col is not None:
             ee_val = _cell_value(ws, r, meta.entity_existence_col)
             if ee_val:
-                entity_existence = ee_val.lower() in ("1", "true", "yes")
+                entity_existence = _parse_strict_bool(
+                    ee_val,
+                    sheet_name=meta.sheet_name,
+                    row_1based=r + 1,
+                    col_1based=meta.entity_existence_col + 1,
+                    field_name="entity existence",
+                )
 
         # Read parameter values
         row_has_data = False
@@ -838,8 +872,27 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
             if not val:
                 continue
 
-            # Convert based on data type
-            dtype = meta.data_types.get(c, meta.default_data_type or "float")
+            # Convert based on data type.  Fallback order:
+            #   1. explicit per-column data_type
+            #   2. sheet default_data_type
+            #   3. "string" — safe pass-through.  The exporter ALWAYS
+            #      writes a data type for every parameter column, so
+            #      reaching the fallback implies a hand-edited sheet;
+            #      "string" preserves the cell verbatim instead of
+            #      forcing a ``float()`` that may corrupt string-typed
+            #      parameters (a previous "float" fallback turned cell
+            #      "123" into 123.0 even for schema-string params).
+            if c in meta.data_types:
+                dtype = meta.data_types[c]
+            elif meta.default_data_type:
+                dtype = meta.default_data_type
+            else:
+                dtype = "string"
+                logger.warning(
+                    "Sheet '%s' col %d (parameter %r): no data type declared; "
+                    "defaulting to 'string' (raw cell value).",
+                    meta.sheet_name, c + 1, pname,
+                )
             converted = _convert_value(val, dtype)
 
             record = {
@@ -871,10 +924,16 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
             row_has_data = True
 
         # Create entity-only record if no data was found for this row
-        # (ensures data-less entities are still imported)
+        # (ensures data-less entities are still imported).  Propagate the
+        # real ``alt`` even when None — the downstream writer
+        # (``write_self_describing_to_db._import_sheet``) skips
+        # alternative-creation for falsy alt names and discards
+        # entity-only records before parameter writes, so a synthesised
+        # ``""`` alt name would create an empty-string alternative in
+        # SpineDB while a faithful ``None`` is dropped cleanly.
         if not row_has_data and entity_byname:
             data.records.append({
-                "alternative": alt or "",
+                "alternative": alt,
                 "entity_class": entity_class.class_name,
                 "entity_byname": entity_byname,
                 "param_name": "",
@@ -949,7 +1008,15 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
             if not val or not index_val:
                 continue
 
-            converted = _convert_value(val, "float")
+            # Use the actual triplet data type for value conversion.
+            # The pre-fix code force-cast every cell to float, which only
+            # worked by accident for ``boolean (array)`` (period names
+            # like ``"Y2025"`` raise on ``float()`` and ``_convert_value``
+            # falls back to returning the raw string).  A schema-string
+            # series with numeric-looking entries (e.g. ``"01"``) would
+            # silently get coerced to ``1.0`` and round-trip wrong.
+            value_dtype = triplet_dtype or "string"
+            converted = _convert_value(val, value_dtype)
             data.records.append({
                 "alternative": alt,
                 "entity_class": entity_class.class_name,
@@ -962,6 +1029,36 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
             })
 
     return data
+
+
+def _parse_strict_bool(
+    val: str,
+    *,
+    sheet_name: str,
+    row_1based: int,
+    col_1based: int,
+    field_name: str,
+) -> bool:
+    """Strict TRUE / FALSE parse, case-insensitive, mirroring the exporter.
+
+    The exporter only ever writes the literal strings ``"TRUE"`` / ``"FALSE"``
+    for entity-existence and boolean-array cells (excel_writer.py:2272 and
+    :2773 — the dropdown validation also enforces those exact tokens).  A
+    cell holding anything else (``"yes"``, ``"1"``, ``"Y"``, a typo) is a
+    data error: raise so the user sees the offending sheet / cell rather
+    than silently importing ``False``.
+    """
+    stripped = val.strip().lower()
+    if stripped == _BOOL_TRUE_LITERAL:
+        return True
+    if stripped == _BOOL_FALSE_LITERAL:
+        return False
+    raise ValueError(
+        f"Sheet '{sheet_name}' row {row_1based} col {col_1based}: "
+        f"{field_name} cell has value {val!r}; expected 'TRUE' or 'FALSE' "
+        f"(case-insensitive).  The exporter only emits those literals — "
+        f"fix the cell or restore the exporter-written value."
+    )
 
 
 def _convert_value(val: str, dtype: str) -> Any:
@@ -985,7 +1082,21 @@ def _convert_value(val: str, dtype: str) -> Any:
         except (ValueError, TypeError):
             return val  # keep as string if conversion fails
     elif dtype == "boolean":
-        return val.lower() in ("1", "true", "yes")
+        # Strict match — the exporter only writes ``"TRUE"`` / ``"FALSE"``
+        # for boolean cells (see excel_writer.py:2272 / :2773).  Without
+        # call-site context we can't name the offending sheet/row, so the
+        # error message asks the user to inspect their workbook; the
+        # per-cell entity-existence path uses ``_parse_strict_bool`` and
+        # gives a much sharper message.
+        stripped = val.strip().lower()
+        if stripped == _BOOL_TRUE_LITERAL:
+            return True
+        if stripped == _BOOL_FALSE_LITERAL:
+            return False
+        raise ValueError(
+            f"Boolean cell has value {val!r}; expected 'TRUE' or 'FALSE' "
+            f"(case-insensitive)."
+        )
     else:
         return val
 

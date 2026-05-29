@@ -10,8 +10,10 @@ from flextool.process_inputs.read_self_describing_excel import (
     parse_sheet_metadata,
     detect_and_parse_sheet,
     extract_sheet_data,
+    _convert_value,
     _parse_entity_def,
     _parse_filter_def,
+    _parse_strict_bool,
     ENTITY_EXISTENCE,
 )
 
@@ -246,3 +248,201 @@ class TestDataExtraction:
         # Check index values (constraint names)
         index_vals = {r["index_value"] for r in data.records if r["index_value"]}
         assert "c01" in index_vals or "gas_export" in index_vals
+
+
+# ---------------------------------------------------------------------------
+# Strict-mode invariants — the v2 reader is a faithful inverse of the
+# exporter.  No fuzzy boolean coercion, no header aliases, no force-floats
+# in transposed sheets.  These tests pin those invariants without needing
+# the external example workbook.
+# ---------------------------------------------------------------------------
+
+
+def _make_ws(wb_data: list[list[str | int | float | None]]):
+    """Build a one-shot in-memory worksheet from a 2D Python list."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "probe"
+    for r_idx, row in enumerate(wb_data, start=1):
+        for c_idx, val in enumerate(row, start=1):
+            ws.cell(row=r_idx, column=c_idx, value=val)
+    return wb, ws
+
+
+class TestStrictBooleanParse:
+    """``_parse_strict_bool`` accepts only TRUE / FALSE (case-insensitive)."""
+
+    def test_true_accepted(self):
+        assert _parse_strict_bool(
+            "TRUE", sheet_name="s", row_1based=1, col_1based=1,
+            field_name="entity existence",
+        ) is True
+
+    def test_false_accepted(self):
+        assert _parse_strict_bool(
+            "FALSE", sheet_name="s", row_1based=1, col_1based=1,
+            field_name="entity existence",
+        ) is False
+
+    def test_case_insensitive(self):
+        assert _parse_strict_bool(
+            "True", sheet_name="s", row_1based=1, col_1based=1,
+            field_name="entity existence",
+        ) is True
+        assert _parse_strict_bool(
+            "false", sheet_name="s", row_1based=2, col_1based=2,
+            field_name="entity existence",
+        ) is False
+
+    def test_yes_rejected(self):
+        with pytest.raises(ValueError, match="expected 'TRUE' or 'FALSE'"):
+            _parse_strict_bool(
+                "yes", sheet_name="node_c", row_1based=5, col_1based=4,
+                field_name="entity existence",
+            )
+
+    def test_one_rejected(self):
+        # Previously coerced silently to True; now an error.
+        with pytest.raises(ValueError, match="expected 'TRUE' or 'FALSE'"):
+            _parse_strict_bool(
+                "1", sheet_name="node_c", row_1based=5, col_1based=4,
+                field_name="entity existence",
+            )
+
+    def test_error_message_locates_cell(self):
+        with pytest.raises(ValueError) as exc:
+            _parse_strict_bool(
+                "Y", sheet_name="profile_t", row_1based=12, col_1based=7,
+                field_name="entity existence",
+            )
+        msg = str(exc.value)
+        assert "profile_t" in msg
+        assert "row 12" in msg
+        assert "col 7" in msg
+        assert "'Y'" in msg
+
+
+class TestConvertValueBoolean:
+    """``_convert_value`` with dtype 'boolean' is strict."""
+
+    def test_true_false(self):
+        assert _convert_value("TRUE", "boolean") is True
+        assert _convert_value("FALSE", "boolean") is False
+        assert _convert_value("true", "boolean") is True
+
+    def test_yes_no_rejected(self):
+        # The pre-fix code accepted "yes" → True and silently mapped
+        # everything else to False; now both raise.
+        with pytest.raises(ValueError, match="expected 'TRUE' or 'FALSE'"):
+            _convert_value("yes", "boolean")
+        with pytest.raises(ValueError, match="expected 'TRUE' or 'FALSE'"):
+            _convert_value("no", "boolean")
+
+
+class TestEntityExistenceHeaderStrict:
+    """The legacy ``"entity alternative"`` alias is no longer rewritten.
+
+    The exporter emits exactly ``"entity existence"`` (excel_writer.py:2526).
+    A hand-edited sheet carrying the legacy header must not be silently
+    rebranded — the column is treated as an unknown parameter so the user
+    sees a mismatch instead of a phantom rename.
+    """
+
+    def test_legacy_header_not_rewritten(self):
+        # Minimal v2 layout with the legacy "Entity Alternative" header
+        # in what would be the entity-existence column.
+        sheet = [
+            ["navigate", None, "description", None, None],
+            [None, None, "data type", "string", "string"],
+            ["alternative", "entity: node", "parameter",
+             "Entity Alternative", "node_type"],
+            ["Base", "n1", None, "TRUE", "balance"],
+        ]
+        _wb, ws = _make_ws(sheet)
+        meta = parse_sheet_metadata(ws)
+        assert meta is not None
+        # The legacy header is NOT promoted to entity_existence_col.
+        assert meta.entity_existence_col is None
+        # It is kept verbatim as an (unknown) parameter so the rest of
+        # the pipeline either ignores it or surfaces a missing-parameter
+        # warning — never silently rewritten.
+        assert "Entity Alternative" in meta.param_cols.values()
+
+
+class TestMissingDataTypeDefaultsToString:
+    """When a column has no dtype declared, fall back to 'string'."""
+
+    def test_no_dtype_emits_warning_and_returns_string(self, caplog):
+        # Layout: declared data-type row covers col D ('declared'),
+        # but the unknown-dtype column E gets no dtype at all and no
+        # default_data_type either.  Cell should pass through verbatim.
+        sheet = [
+            ["navigate", None, "description", None, None],
+            [None, None, "data type", "string", None],
+            ["alternative", "entity: node", "parameter",
+             "declared", "no_dtype"],
+            ["Base", "n1", None, "abc", "01"],
+        ]
+        _wb, ws = _make_ws(sheet)
+        meta = parse_sheet_metadata(ws)
+        assert meta is not None
+        with caplog.at_level("WARNING"):
+            data = extract_sheet_data(ws, meta)
+        # Find the no_dtype record
+        no_dtype_recs = [r for r in data.records if r["param_name"] == "no_dtype"]
+        assert no_dtype_recs, "expected a no_dtype record"
+        # Value is preserved as a string ("01" — NOT coerced to 1.0).
+        assert no_dtype_recs[0]["value"] == "01"
+        # Warning was emitted about the missing data type.
+        assert any(
+            "no data type declared" in rec.message
+            for rec in caplog.records
+        )
+
+
+class TestEmptyAlternativePropagatesNone:
+    """Entity-only records preserve a real ``None`` alt (no '' synthesis)."""
+
+    def test_entity_only_row_has_none_alt(self):
+        # Layout: alternative column is empty, no parameter values → only
+        # an entity-only record should be emitted.
+        sheet = [
+            ["navigate", None, "description", None],
+            [None, None, "data type", "float"],
+            ["alternative", "entity: node", "parameter", "inflow"],
+            [None, "n1", None, None],  # no alt, no param value
+        ]
+        _wb, ws = _make_ws(sheet)
+        meta = parse_sheet_metadata(ws)
+        assert meta is not None
+        data = extract_sheet_data(ws, meta)
+        # We expect exactly one entity-only record for n1.
+        ent_recs = [r for r in data.records if r["entity_byname"] == ("n1",)]
+        assert ent_recs, "expected an entity-only record for n1"
+        assert ent_recs[0]["param_name"] == ""
+        assert ent_recs[0]["alternative"] is None
+
+
+class TestTransposedTripletDtypeRespected:
+    """Transposed extractor uses the triplet's data-type, not 'float'."""
+
+    def test_string_array_keeps_strings(self):
+        # Minimal transposed sheet with a string (array) triplet — values
+        # "01" and "02" must survive as strings, NOT coerce to 1.0 / 2.0.
+        sheet = [
+            ["index: period", "parameter: tier_label | data type: string (array)",
+             None],
+            [None, "entity: solve", "s1"],
+            ["index:", "alternative", "base"],
+            ["p1", None, "01"],
+            ["p2", None, "02"],
+        ]
+        _wb, ws = _make_ws(sheet)
+        meta, _ = detect_and_parse_sheet(ws)
+        assert meta is not None and meta.is_transposed
+        data = extract_sheet_data(ws, meta)
+        vals = {r["value"] for r in data.records}
+        # Strings preserved verbatim — would have been 1.0 / 2.0 before.
+        assert "01" in vals and "02" in vals
+        assert 1.0 not in vals and 2.0 not in vals
