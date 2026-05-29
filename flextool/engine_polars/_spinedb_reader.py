@@ -662,6 +662,41 @@ class SpineDbReader:
                 )
             if element_casts:
                 frame = frame.with_columns(element_casts)
+        # Scenario-trim Map-inner-key noise.  When the reader is
+        # bound to a scenario filter, the axis enums (e.g. ``d``
+        # period) reflect only the scenario-active tokens.  Map
+        # parameters may carry inner keys that exist in the broader
+        # DB but were authored outside the active scenario — those
+        # rows must be silently dropped so the strict cast below
+        # succeeds.  Entity-reference columns
+        # (source_type=="entity_class"/"entity_class_union") are
+        # vocab-correct by construction (the backend pre-filtered
+        # them), so any out-of-vocab token there is a true typo and
+        # must still raise.
+        if self._scenario is not None and self._contract is not None:
+            drop_mask: pl.Series | None = None
+            for col in frame.columns:
+                axis = self._contract.column_to_axis(col)
+                if axis is None or axis.source_type != "parameter_keys":
+                    continue
+                dtype = self._axis_enums.get(axis.name)
+                if dtype is None:
+                    continue
+                if frame.schema[col].is_numeric():
+                    continue
+                vocab = set(dtype.categories.to_list())
+                bad_rows = [
+                    (v is not None and v != "" and v not in vocab)
+                    for v in frame[col].to_list()
+                ]
+                if not any(bad_rows):
+                    continue
+                col_mask = pl.Series(bad_rows, dtype=pl.Boolean)
+                drop_mask = (
+                    col_mask if drop_mask is None else (drop_mask | col_mask)
+                )
+            if drop_mask is not None:
+                frame = frame.filter(~drop_mask)
         origin = {
             "parameter": parameter_name,
             "entity": entity_class,
