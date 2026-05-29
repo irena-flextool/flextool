@@ -43,11 +43,56 @@ def load_settings() -> dict:
         return yaml.safe_load(f)
 
 
-def classify_param_types(param_type_list: tuple | None) -> set[str]:
+def _has_facet_leaf_shape(entity_class: str, param_name: str) -> bool:
+    """Return True when ``(entity_class, param_name)`` is registered with a
+    facet-leaf shape (``LeafKind.FACET_PRICE_QUANTITY``).
+
+    Consults :data:`PARAM_ALLOWED_SHAPES` lazily to avoid pulling polars on
+    the export hot path.
+    """
+    if not entity_class or not param_name:
+        return False
+    try:
+        from flextool.engine_polars._param_shapes import (
+            LeafKind,
+            PARAM_ALLOWED_SHAPES,
+            shape_to_axes,
+        )
+    except Exception:  # pragma: no cover — registry must be importable
+        return False
+    allowed = PARAM_ALLOWED_SHAPES.get((entity_class, param_name))
+    if not allowed:
+        return False
+    for shape in allowed:
+        if shape_to_axes(shape).leaf is LeafKind.FACET_PRICE_QUANTITY:
+            return True
+    return False
+
+
+def classify_param_types(
+    param_type_list: tuple | None,
+    entity_class: str = "",
+    param_name: str = "",
+) -> set[str]:
     """Given a parameter's type_list tuple, return which sheet layouts it can appear on.
 
-    Returns a set that may contain 'constant', 'periodic', 'timeseries', 'stochastic'.
+    Returns a set that may contain ``'constant'``, ``'periodic'``,
+    ``'timeseries'``, ``'stochastic'``, or ``'ladder'``.
+
+    When the registry tags ``(entity_class, param_name)`` with a
+    ``FACET_PRICE_QUANTITY`` leaf shape, the result becomes ``{'ladder'}``
+    — the param is NOT a generic stochastic / nested-periodic param and
+    must NOT share a sheet with constants.  ``stochastic`` is suppressed
+    even when the type-list contains ``3d_map`` (the depth-3 variant of
+    ``commodity.price_ladder_annual``); the third Map level carries the
+    ``{price, quantity}`` facet, NOT a temporal axis.
     """
+    # Registry override for facet-leaf params (commodity.price_ladder_*):
+    # route exclusively to the dedicated ``ladder`` layout regardless of
+    # the schema-declared type-list.
+    if _has_facet_leaf_shape(entity_class, param_name):
+        return {"ladder"}
+
     if param_type_list is None:
         return {"constant"}
 
@@ -281,7 +326,11 @@ def build_sheet_specs(
             "timeseries": [],
         }
         for pname, pdef in remaining_params.items():
-            types = classify_param_types(pdef.get("parameter_type_list"))
+            types = classify_param_types(
+                pdef.get("parameter_type_list"),
+                entity_class=class_names[0],
+                param_name=pname,
+            )
             if "constant" in types:
                 layout_params["constant"].append(pname)
             if "periodic" in types:
@@ -489,10 +538,21 @@ def build_sheet_specs(
             "periodic": [],
             "timeseries": [],
             "stochastic": [],
+            "ladder": [],
         }
         for pdef in remaining_pdefs:
             pname = pdef["name"]
-            types = classify_param_types(pdef.get("parameter_type_list"))
+            types = classify_param_types(
+                pdef.get("parameter_type_list"),
+                entity_class=cls_name,
+                param_name=pname,
+            )
+            if "ladder" in types:
+                # Facet-leaf params (price_ladder_*) get their own
+                # dedicated sheet per param; never co-occur with
+                # constant/periodic/timeseries/stochastic.
+                layout_params["ladder"].append(pname)
+                continue
             if "constant" in types:
                 layout_params["constant"].append(pname)
             if "periodic" in types:
@@ -572,6 +632,24 @@ def build_sheet_specs(
             stoch_spec._primary_class = cls_name  # type: ignore[attr-defined]
             stoch_spec._all_param_defs = remaining_param_defs  # type: ignore[attr-defined]
             specs.append(stoch_spec)
+
+        # Ladder sheets: one per facet-leaf param.  Sheet name is the
+        # DB param name verbatim (e.g. ``price_ladder_cumulative``) — the
+        # ``ladder`` writer renders the price/quantity facet as two real
+        # Excel parameter columns sharing the entity/tier/[period] index
+        # columns.
+        for ladder_pname in layout_params["ladder"]:
+            ladder_spec = SheetSpec(
+                sheet_name=ladder_pname,
+                layout="ladder",
+                entity_classes=[cls_name],
+                entity_columns=entity_cols,
+                has_entity_alternative=False,
+            )
+            ladder_spec._raw_params = [ladder_pname]  # type: ignore[attr-defined]
+            ladder_spec._primary_class = cls_name  # type: ignore[attr-defined]
+            ladder_spec._all_param_defs = remaining_param_defs  # type: ignore[attr-defined]
+            specs.append(ladder_spec)
 
     # ---- 5. Add special sheets ----
     specs.append(SheetSpec(
@@ -691,7 +769,10 @@ def _filter_specs_by_groups(
                 return True
         return False
 
-    data_layouts = {"constant", "periodic", "timeseries", "stochastic", "nested_periodic"}
+    data_layouts = {
+        "constant", "periodic", "timeseries", "stochastic",
+        "nested_periodic", "ladder",
+    }
     structural_layouts = {"navigate", "scenario", "version"}
 
     # Pass 1: filter data-layout specs; defer link sheets to pass 2.

@@ -1570,6 +1570,296 @@ def write_stochastic_sheet_v2(
 
 
 # ---------------------------------------------------------------------------
+# v2 Ladder sheet (facet-leaf params — commodity.price_ladder_*)
+# ---------------------------------------------------------------------------
+
+
+def _xlsx_safe_float(value: Any) -> Any:
+    """Convert ``±inf`` / ``nan`` to string sentinels for openpyxl.
+
+    openpyxl silently writes a blank cell for IEEE non-finite floats, which
+    breaks round-trip for ``price_ladder_*`` whose top-tier ``quantity``
+    is canonically ``inf``.  The reader recognises the string sentinels
+    and converts them back to ``float`` via :func:`_convert_value`.
+    """
+    if isinstance(value, float):
+        if value != value:  # NaN
+            return "nan"
+        if value == float("inf"):
+            return "inf"
+        if value == float("-inf"):
+            return "-inf"
+        return value
+    if isinstance(value, (int, str)):
+        return value
+    nat = _to_native(value)
+    if isinstance(nat, float):
+        return _xlsx_safe_float(nat)
+    return nat
+
+
+def _ladder_axis_name(axis: Any) -> str:
+    """Return the human-readable axis name for an :class:`AxisName` value.
+
+    Maps registry axis tokens to the index labels we emit in the sheet.
+    """
+    # Use the axis's value (contract token) to derive a label.  We keep
+    # the mapping local to the writer so the registry stays UI-free.
+    token = getattr(axis, "value", str(axis))
+    return {"d": "period", "t": "time", "i": "tier"}.get(token, token)
+
+
+def _walk_ladder_map(
+    value: Any,
+    depth: int,
+    facet_keys_set: "frozenset[str]",
+) -> "list[tuple[tuple[str, ...], dict[str, Any]]]":
+    """Walk a depth-``depth`` Map down to the facet leaf.
+
+    Returns a list of ``(outer_index_tuple, {facet_key: value, ...})``.
+    The leaf is itself a depth-1 Map with facet keys ``price`` / ``quantity``.
+    ``depth`` here counts the outer non-facet Map levels — depth=1 means
+    ``Map(tier -> Map(price/quantity))``, depth=2 means
+    ``Map(period -> Map(tier -> Map(price/quantity)))``.
+    """
+    results: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+    if not _is_map(value):
+        return results
+    if depth == 1:
+        # value itself is Map(tier -> facet_map); walk one level
+        for idx, leaf in zip(value.indexes, value.values):
+            if not _is_map(leaf):
+                continue
+            facets: dict[str, Any] = {}
+            for fk, fv in zip(leaf.indexes, leaf.values):
+                fk_s = str(_to_native(fk))
+                if fk_s in facet_keys_set:
+                    facets[fk_s] = _to_native(fv)
+            if facets:
+                results.append((
+                    (str(_to_native(idx)),),
+                    facets,
+                ))
+        return results
+    # depth >= 2: peel one level and recurse
+    for idx, sub in zip(value.indexes, value.values):
+        for inner_tuple, facets in _walk_ladder_map(sub, depth - 1, facet_keys_set):
+            results.append((
+                (str(_to_native(idx)), *inner_tuple),
+                facets,
+            ))
+    return results
+
+
+def write_ladder_sheet_v2(
+    ws: Worksheet,
+    spec: SheetSpec,
+    db_contents: DatabaseContents,
+) -> None:
+    """Write a ladder-layout sheet for facet-leaf params.
+
+    Layout (e.g. ``price_ladder_cumulative``, depth-2):
+        Row 1: navigate |   |   |   |   | description       | description
+        Row 2:                          | data type: float  | data type: float
+        Row 3: alternative | entity: commodity | index: tier | parameter: price | parameter: quantity
+        Row 4+: base | coal | 1 | 20.0 | 1.0
+
+    For ``price_ladder_annual`` with mixed depth-2/depth-3 data, the
+    period column is added when ANY value has the depth-3 shape; depth-2
+    rows simply leave the period cell empty.
+    """
+    # Lazy registry import — kept off the hot path.
+    from flextool.engine_polars._param_shapes import (
+        LeafKind,
+        PARAM_ALLOWED_SHAPES,
+        facet_keys,
+        shape_to_axes,
+    )
+
+    if not spec.parameter_names:
+        add_navigate_link(ws)
+        return
+
+    pname = spec.parameter_names[0]
+    entity_class = spec.entity_classes[0]
+    allowed = PARAM_ALLOWED_SHAPES.get((entity_class, pname), set())
+    facet_leaf_shapes = [
+        s for s in allowed
+        if shape_to_axes(s).leaf is LeafKind.FACET_PRICE_QUANTITY
+    ]
+    if not facet_leaf_shapes:
+        # Registry didn't tag this param as facet-leaf — bail safely.
+        add_navigate_link(ws)
+        return
+
+    # Determine whether the period axis MAY be present (any allowed shape
+    # carries AxisName.D in its outer levels).
+    has_period_variant = any(
+        any(getattr(ax, "value", "") == "d" for ax in shape_to_axes(s).map_levels)
+        for s in facet_leaf_shapes
+    )
+    # The shared facet keys (we trust the registry to keep them identical
+    # across both variants for a given param).
+    leaf_kind = shape_to_axes(facet_leaf_shapes[0]).leaf
+    facet_key_set = facet_keys(leaf_kind)
+    # Deterministic facet ordering: price → quantity for the canonical
+    # FACET_PRICE_QUANTITY leaf.
+    facet_columns = ["price", "quantity"] if facet_key_set == frozenset(
+        ("price", "quantity")
+    ) else sorted(facet_key_set)
+
+    entity_label = _build_entity_def_label(spec)
+
+    # ── Collect data ────────────────────────────────────────────────
+    # rows: list of (alt, entity_byname, period_or_None, tier, {facet: value})
+    rows: list[tuple[str, tuple, str | None, str, dict[str, Any]]] = []
+    any_period_in_data = False
+
+    for ent_cls in spec.entity_classes:
+        for entity in db_contents.entities.get(ent_cls, []):
+            entity_byname = entity["entity_byname"]
+            for alt in db_contents.alternatives:
+                key = (ent_cls, entity_byname, pname, alt)
+                val = db_contents.parameter_values.get(key)
+                if val is None or not _is_map(val):
+                    continue
+                # Detect depth by inspecting nesting.  Outer Map levels
+                # exclude the final facet level: depth 1 == tier only,
+                # depth 2 == period + tier.
+                depth = 1
+                cursor = val
+                while _is_map(cursor) and cursor.values and _is_map(cursor.values[0]):
+                    nested = cursor.values[0]
+                    # If the nested Map is the facet leaf (indexes are facet keys),
+                    # stop counting.
+                    nested_keys = {str(_to_native(k)) for k in nested.indexes}
+                    if nested_keys and nested_keys.issubset(facet_key_set):
+                        break
+                    depth += 1
+                    cursor = nested
+
+                # Walk to leaf, emit rows.
+                walked = _walk_ladder_map(val, depth, facet_key_set)
+                for idx_tuple, facets in walked:
+                    if depth == 1:
+                        rows.append((alt, entity_byname, None, idx_tuple[0], facets))
+                    elif depth == 2:
+                        any_period_in_data = True
+                        rows.append((
+                            alt, entity_byname,
+                            idx_tuple[0], idx_tuple[1], facets,
+                        ))
+                    else:
+                        # Outer levels beyond 2 not currently registered;
+                        # skip rather than invent semantics.
+                        continue
+
+    # Sort for stable output.
+    rows.sort(key=lambda r: (r[0], tuple(str(x) for x in r[1]),
+                              r[2] or "", r[3]))
+
+    # ── Build header columns ───────────────────────────────────────
+    n_entity_cols = len(spec.entity_columns)
+    n_dims = n_entity_cols
+
+    left_cols: list[str] = ["alternative", entity_label]
+    if n_dims > 1:
+        for dim_name in spec.entity_columns:
+            left_cols.append(dim_name)
+
+    show_period_col = has_period_variant and any_period_in_data
+    period_col_pos: int | None = None
+    if show_period_col:
+        left_cols.append("index: period")
+        period_col_pos = len(left_cols)  # 1-based
+
+    left_cols.append("index: tier")
+    tier_col_pos = len(left_cols)  # 1-based
+
+    def_col = len(left_cols) + 1  # 1-based
+
+    # ── Write metadata rows (description, data type) ────────────────
+    # Layout follows the constant-sheet convention so the existing v2
+    # reader recognises the right-of-crossing param columns:
+    #   Row 1, col 1            "navigate"
+    #   Row 1, def_col          "description"  (row label)
+    #   Row 1, def_col+1..      DB-level description per facet column
+    #   Row 2, def_col          "data type"    (row label)
+    #   Row 2, def_col+1..      "float" per facet column
+    desc = _get_param_description(pname, spec.entity_classes, db_contents)
+    ws.cell(row=1, column=1, value="navigate")
+    ws.cell(row=1, column=def_col, value="description")
+    for i, _facet in enumerate(facet_columns):
+        if desc:
+            ws.cell(row=1, column=def_col + 1 + i, value=desc)
+    ws.cell(row=2, column=def_col, value="data type")
+    for i, _facet in enumerate(facet_columns):
+        ws.cell(row=2, column=def_col + 1 + i, value="float")
+
+    def_row = 3
+    data_start_row = def_row + 1
+
+    # ── Definition row ─────────────────────────────────────────────
+    for col_idx, label in enumerate(left_cols, start=1):
+        ws.cell(row=def_row, column=col_idx, value=label)
+    # def_col holds "parameter" (matches constant-sheet convention so
+    # the standard v2 reader recognises right-of-crossing param cols).
+    ws.cell(row=def_row, column=def_col, value="parameter")
+    for i, facet in enumerate(facet_columns):
+        ws.cell(row=def_row, column=def_col + 1 + i, value=facet)
+
+    # ── Column maps ────────────────────────────────────────────────
+    col_alt = 1
+    if n_dims <= 1:
+        entity_data_cols = [2]
+    else:
+        entity_data_cols = list(range(3, 3 + n_dims))
+
+    facet_col_map: dict[str, int] = {
+        f: def_col + 1 + i for i, f in enumerate(facet_columns)
+    }
+
+    # ── Write data rows ────────────────────────────────────────────
+    for r_offset, (alt, entity_byname, period, tier, facets) in enumerate(rows):
+        r = data_start_row + r_offset
+        ws.cell(row=r, column=col_alt, value=alt)
+        for i, col in enumerate(entity_data_cols):
+            if i < len(entity_byname):
+                ws.cell(row=r, column=col,
+                        value=str(_to_native(entity_byname[i])))
+        if period_col_pos is not None and period is not None:
+            ws.cell(row=r, column=period_col_pos, value=period)
+        ws.cell(row=r, column=tier_col_pos, value=tier)
+        for facet, fval in facets.items():
+            col = facet_col_map.get(facet)
+            if col is None:
+                continue
+            ws.cell(row=r, column=col, value=_xlsx_safe_float(fval))
+
+    # ── Reference section + formatting ─────────────────────────────
+    last_data_col = def_col + len(facet_columns)
+    index_col_positions: set[int] = {tier_col_pos}
+    if period_col_pos is not None:
+        index_col_positions.add(period_col_pos)
+    n_extra_cols = 1 + (1 if show_period_col else 0)
+    format_constant_sheet_v2(
+        ws, n_entity_cols, n_extra_cols, def_col, index_col_positions,
+        last_data_col, def_row=def_row,
+    )
+    add_navigate_link(ws)
+    auto_column_width(
+        ws,
+        min_param_width=_min_param_width,
+        non_param_width=_non_param_width,
+        def_col_width=_def_col_width,
+        index_col_width=_index_col_width,
+        header_row=def_row, def_col=def_col,
+        index_cols=index_col_positions,
+        last_data_col=last_data_col,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Navigate sheet
 # ---------------------------------------------------------------------------
 

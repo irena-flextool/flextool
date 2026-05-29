@@ -41,6 +41,252 @@ def _is_multidimensional(sheet: SheetData) -> bool:
     return False
 
 
+def _registry_facet_targets() -> "dict[tuple[str, str], list[tuple[str, tuple[str, ...], frozenset[str]]]]":
+    """Return the registry's facet-target map.
+
+    Keys are ``(entity_class, facet_key)`` — e.g. ``("commodity", "price")`` and
+    ``("commodity", "quantity")``.  Values are lists of
+    ``(canonical_param_name, outer_axis_names, facet_keys)`` tuples covering
+    EVERY allowed shape with a facet leaf for that entity class.  The
+    caller picks the right canonical name by matching the observed outer
+    axis vocabulary to ``outer_axis_names`` (e.g. ``("tier",)`` vs
+    ``("period", "tier")``).
+    """
+    try:
+        from flextool.engine_polars._param_shapes import (
+            LeafKind,
+            PARAM_ALLOWED_SHAPES,
+            facet_keys,
+            shape_to_axes,
+        )
+    except Exception:  # pragma: no cover — registry must be importable
+        return {}
+
+    out: dict[tuple[str, str], list[tuple[str, tuple[str, ...], frozenset[str]]]] = {}
+    axis_to_label = {"d": "period", "t": "time", "i": "tier"}
+    for (ec, pname), shapes in PARAM_ALLOWED_SHAPES.items():
+        for shape in shapes:
+            axes = shape_to_axes(shape)
+            if axes.leaf is not LeafKind.FACET_PRICE_QUANTITY:
+                continue
+            outer = tuple(
+                axis_to_label.get(getattr(ax, "value", ""), getattr(ax, "value", ""))
+                for ax in axes.map_levels
+            )
+            fkeys = facet_keys(axes.leaf)
+            for fk in fkeys:
+                out.setdefault((ec, fk), []).append((pname, outer, fkeys))
+    return out
+
+
+def _index_tuple(rec: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    """Build the (axis_name, value) tuple for *rec* in left-to-right order.
+
+    Combines ``extra_index_values`` (left of rightmost) with the
+    ``(index_name, index_value)`` pair from the standard record fields.
+    """
+    parts: list[tuple[str, str]] = []
+    for axis, val in rec.get("extra_index_values") or []:
+        if val is not None:
+            parts.append((axis, val))
+    if rec.get("index_name") and rec.get("index_value") is not None:
+        parts.append((rec["index_name"], rec["index_value"]))
+    return tuple(parts)
+
+
+def _combine_facet_records(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Combine facet-leaf records emitted by the ladder reader into single
+    nested-Map records per canonical parameter.
+
+    The reader treats the two ``parameter: price`` / ``parameter: quantity``
+    Excel columns as separate parameter records.  Spine encodes them as a
+    single nested Map under a canonical name (e.g.
+    ``commodity.price_ladder_cumulative``) — the registry tells us which.
+
+    Records that don't match the registry's facet vocabulary pass through
+    unchanged.
+    """
+    facet_targets = _registry_facet_targets()
+    if not facet_targets:
+        return records
+
+    # Bucket key: (entity_class, entity_byname, alternative, outer_index_tuple)
+    # where outer_index_tuple is the (axis, value)... part of the row.
+    BucketKey = tuple[str, tuple, str, tuple[tuple[str, str], ...]]
+    buckets: dict[BucketKey, dict[str, Any]] = {}
+    # Track which record-list positions belong to each bucket, so we can
+    # drop them in one go.
+    bucket_indices: dict[BucketKey, list[int]] = {}
+    # Per (entity_class, entity_byname, alt) — track the outer-axes
+    # signature so all rows in one group share the same canonical param.
+    group_axes: dict[tuple[str, tuple, str], tuple[str, ...]] = {}
+
+    drop_indices: set[int] = set()
+    out: list[dict[str, Any]] = []
+
+    for i, rec in enumerate(records):
+        pname = rec.get("param_name") or ""
+        ec = rec.get("entity_class") or ""
+        targets = facet_targets.get((ec, pname))
+        if not targets:
+            continue
+        # This record is a facet-leaf candidate.  We must still check that
+        # the index axes line up with a registered shape.
+        idx_pairs = _index_tuple(rec)
+        outer_axes = tuple(axis for axis, _ in idx_pairs)
+        # Pick the registered (canonical_name, outer_axes, fkeys) entry
+        # whose outer_axes matches our observed axes.  The facet axes
+        # never appear in the index tuple (they're separate columns), so
+        # equality is exact.
+        match: tuple[str, tuple[str, ...], frozenset[str]] | None = None
+        for cand in targets:
+            if cand[1] == outer_axes:
+                match = cand
+                break
+        if match is None:
+            # No registered shape matches; treat as a normal record.
+            continue
+
+        canonical_name, _axes, fkeys = match
+        alt = rec.get("alternative") or ""
+        ent = rec.get("entity_byname") or ()
+        group_key = (ec, ent, alt)
+        prior = group_axes.get(group_key)
+        if prior is not None and prior != outer_axes:
+            # Same (entity, alt) carries TWO different outer-axes shapes.
+            # The registry allows depth-2 and depth-3 to coexist on the
+            # same entity (price_ladder_annual), but only one canonical
+            # name per (entity, alt) — we refuse to merge silently in
+            # that case.  Surface a warning and keep the records as-is.
+            logger.warning(
+                "Facet records for %s.%s under (%s, alt=%s) carry mixed "
+                "index axes %s vs %s; skipping facet combination.",
+                ec, canonical_name, ent, alt, prior, outer_axes,
+            )
+            continue
+        group_axes[group_key] = outer_axes
+
+        bkey: BucketKey = (ec, ent, alt, idx_pairs)
+        bucket = buckets.get(bkey)
+        if bucket is None:
+            bucket = {
+                "canonical_name": canonical_name,
+                "facet_keys": fkeys,
+                "facet_values": {},
+                "template": rec,
+            }
+            buckets[bkey] = bucket
+            bucket_indices[bkey] = []
+        if pname in fkeys:
+            bucket["facet_values"][pname] = rec.get("value")
+            bucket_indices[bkey].append(i)
+            drop_indices.add(i)
+
+    if not buckets:
+        return records
+
+    # Group buckets by (entity_class, entity_byname, alt, canonical_name)
+    # to build one Map per canonical record.
+    GroupKey = tuple[str, tuple, str, str]
+    grouped: dict[GroupKey, list[tuple[tuple[tuple[str, str], ...], dict[str, Any]]]] = (
+        defaultdict(list)
+    )
+    for bkey, bucket in buckets.items():
+        ec, ent, alt, idx_pairs = bkey
+        gkey = (ec, ent, alt, bucket["canonical_name"])
+        grouped[gkey].append((idx_pairs, bucket))
+
+    # Emit one combined record per group.
+    template_alt: dict[GroupKey, dict[str, Any]] = {}
+    for gkey, entries in grouped.items():
+        ec, ent, alt, canonical_name = gkey
+        # Determine outer-axes signature (uniform across entries within a
+        # group — group_axes guarantees it).
+        sample_pairs = entries[0][0]
+        outer_axes = tuple(axis for axis, _ in sample_pairs)
+
+        # Sort entries deterministically by outer index tuple values.
+        entries.sort(key=lambda e: tuple(v for _, v in e[0]))
+
+        # Build the nested Map.  Inner-leaf Map: facet -> value (axis=
+        # "price" per the DB encoding hack).
+        facet_keys_order = list(entries[0][1]["facet_keys"])
+        # Canonical ordering: price, quantity
+        if set(facet_keys_order) == {"price", "quantity"}:
+            facet_keys_order = ["price", "quantity"]
+        else:
+            facet_keys_order.sort()
+
+        def _leaf_map(facet_values: dict[str, Any]) -> Map:
+            # The innermost Map's axis carries the facet key (price /
+            # quantity).  The canonical DB omits ``index_name`` for this
+            # level — Spine's encoder treats the facet axis as anonymous
+            # because the keys themselves are the schema.  Leaving
+            # ``index_name`` unset keeps the JSON byte-identical to the
+            # canonical authoring form.
+            idxs = facet_keys_order
+            vals = [facet_values.get(k) for k in idxs]
+            return Map(indexes=idxs, values=vals)
+
+        if len(outer_axes) == 1:
+            # Depth-2 Map(tier -> facet_map)
+            inner_indexes = [pairs[0][1] for pairs, _ in entries]
+            inner_values = [_leaf_map(b["facet_values"]) for _, b in entries]
+            top_map = Map(
+                indexes=inner_indexes,
+                values=inner_values,
+                index_name=outer_axes[0],
+            )
+        elif len(outer_axes) == 2:
+            # Depth-3 Map(period -> Map(tier -> facet_map)).  Group by
+            # first axis (period).
+            from collections import defaultdict as _dd
+            by_period: "dict[str, list[tuple[str, dict[str, Any]]]]" = _dd(list)
+            for pairs, bucket in entries:
+                p_val = pairs[0][1]
+                t_val = pairs[1][1]
+                by_period[p_val].append((t_val, bucket["facet_values"]))
+            period_indexes = list(by_period.keys())  # insertion order
+            period_values = []
+            for p in period_indexes:
+                inner_entries = by_period[p]
+                tier_indexes = [t for t, _ in inner_entries]
+                tier_values = [_leaf_map(fv) for _, fv in inner_entries]
+                period_values.append(Map(
+                    indexes=tier_indexes,
+                    values=tier_values,
+                    index_name=outer_axes[1],
+                ))
+            top_map = Map(
+                indexes=period_indexes,
+                values=period_values,
+                index_name=outer_axes[0],
+            )
+        else:
+            # Shouldn't happen for registered facet shapes.
+            continue
+
+        template = entries[0][1]["template"]
+        combined = dict(template)
+        combined["param_name"] = canonical_name
+        combined["value"] = top_map
+        combined["index_value"] = None
+        combined["index_name"] = None
+        combined.pop("extra_index_values", None)
+        combined["data_type"] = "map"
+        template_alt[gkey] = combined
+
+    # Final output: original records minus dropped ones, plus combined.
+    for i, rec in enumerate(records):
+        if i in drop_indices:
+            continue
+        out.append(rec)
+    out.extend(template_alt.values())
+    return out
+
+
 def _group_map_records(
     records: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -177,8 +423,16 @@ def _write_sheet(
                         byname, ec_name, exc,
                     )
 
+    # -- Combine facet-leaf records (price_ladder_*) ------------------------
+    # Reader emits ``price`` / ``quantity`` as separate per-row records;
+    # the registry tells us they belong to a canonical Map-valued param
+    # (e.g. ``commodity.price_ladder_cumulative``).  Combination must
+    # happen BEFORE the generic Map grouper so the resulting top-level
+    # Map flows through the scalar branch as a single rec with type=map.
+    records = _combine_facet_records(sheet.records)
+
     # -- Split records into scalars and maps --------------------------------
-    scalars, maps = _group_map_records(sheet.records)
+    scalars, maps = _group_map_records(records)
 
     # -- Entity existence (entity_alternative) ------------------------------
     for rec in scalars:

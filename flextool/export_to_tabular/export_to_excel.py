@@ -22,6 +22,7 @@ from flextool.export_to_tabular.excel_writer import (
     write_periodic_sheet,
     write_periodic_sheet_v2,
     write_scenario_sheet,
+    write_ladder_sheet_v2,
     write_stochastic_sheet_v2,
     write_timeseries_sheet,
     write_timeseries_sheet_v2,
@@ -171,6 +172,13 @@ def export_to_excel(
                 write_stochastic_sheet_v2(ws, spec, db_contents)
             else:
                 # v1 has no stochastic writer — skip
+                del wb[spec.sheet_name]
+                continue
+        elif layout == "ladder":
+            if use_new_format:
+                write_ladder_sheet_v2(ws, spec, db_contents)
+            else:
+                # v1 has no ladder writer — skip
                 del wb[spec.sheet_name]
                 continue
         elif layout == "link":

@@ -110,6 +110,14 @@ class SheetMetadata:
     index_col: int | None = None
     index_name: str | None = None
 
+    # Extra index columns (for ladder-style sheets with multiple ``index:`` cols
+    # on the left, e.g. ``index: period | index: tier``).  Each entry is
+    # ``(column_index, axis_name)``.  When non-empty, ``index_col`` /
+    # ``index_name`` carries the LAST entry; ``extra_index_cols`` carries the
+    # preceding ones in left-to-right order so the data extractor can recover
+    # all index levels.
+    extra_index_cols: list[tuple[int, str]] = field(default_factory=list)
+
     # Alternative column index (or None if alternatives are in a row)
     alt_col: int | None = None
 
@@ -403,6 +411,11 @@ def parse_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             meta.col_defs[c] = val.strip()
 
     # --- Interpret column definitions ---
+    # Multiple ``index:`` columns on the left are recorded in
+    # ``extra_index_cols`` (in column order); the rightmost wins for
+    # ``index_col`` / ``index_name`` to keep backwards compatibility with
+    # single-index sheets.
+    index_seen: list[tuple[int, str]] = []
     for c, defn in meta.col_defs.items():
         dl = defn.lower()
         if dl == "alternative":
@@ -413,8 +426,12 @@ def parse_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             meta.filter_col = c
             meta.filter_map = _parse_filter_def(defn)
         elif dl.startswith("index"):
-            meta.index_col = c
-            meta.index_name = _parse_index_def(defn)
+            index_seen.append((c, _parse_index_def(defn)))
+    if index_seen:
+        index_seen.sort()
+        meta.index_col, meta.index_name = index_seen[-1]
+        # Preceding (left-of-rightmost) index columns become extras.
+        meta.extra_index_cols = list(index_seen[:-1])
 
     # --- Parse parameter columns (definition row, right of crossing) ---
     # Stop at the first empty cell (separator column before parameter reference)
@@ -797,6 +814,14 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
         if meta.index_col is not None:
             index_val = _cell_value(ws, r, meta.index_col) or None
 
+        # Read extra index values (e.g. ladder sheets carry index: period
+        # + index: tier).  We keep them in the same column order as the
+        # sheet so the DB-write side can reconstruct the nested Map.
+        extra_index_values: list[tuple[str, str | None]] = []
+        for c_extra, name_extra in meta.extra_index_cols:
+            v = _cell_value(ws, r, c_extra) or None
+            extra_index_values.append((name_extra, v))
+
         # Read entity existence
         entity_existence = None
         if meta.entity_existence_col is not None:
@@ -827,6 +852,8 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "index_name": meta.index_name,
                 "data_type": dtype,
             }
+            if extra_index_values:
+                record["extra_index_values"] = list(extra_index_values)
             data.records.append(record)
             row_has_data = True
 
@@ -938,8 +965,21 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
 
 
 def _convert_value(val: str, dtype: str) -> Any:
-    """Convert a string cell value to the appropriate Python type."""
+    """Convert a string cell value to the appropriate Python type.
+
+    ``float`` cells accept the IEEE non-finite sentinels ``inf`` /
+    ``-inf`` / ``nan`` (case-insensitive) — the export writer emits
+    them as strings because openpyxl drops actual non-finite floats.
+    """
     if dtype == "float":
+        if isinstance(val, str):
+            lo = val.strip().lower()
+            if lo in ("inf", "+inf", "infinity", "+infinity"):
+                return float("inf")
+            if lo in ("-inf", "-infinity"):
+                return float("-inf")
+            if lo == "nan":
+                return float("nan")
         try:
             return float(val)
         except (ValueError, TypeError):

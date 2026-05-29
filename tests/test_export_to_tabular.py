@@ -487,3 +487,315 @@ class TestSplitParamsSchemaSync:
             "export_settings.yaml split_params lists parameters not in the "
             f"master template schema: {stale}. Remove or rename."
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase B: ladder routing for facet-leaf parameters (price/quantity)
+# ---------------------------------------------------------------------------
+
+
+class TestLadderRouting:
+    """``commodity.price_ladder_*`` must route via the dedicated ``ladder``
+    layout, NOT via ``stochastic``.
+
+    The two ``{price, quantity}`` facets surface as two real Excel
+    parameter columns (``parameter: price``, ``parameter: quantity``)
+    sharing the entity + tier ([+ period]) index columns.  The DB-side
+    encoding is a nested Map whose innermost level is the facet axis;
+    that combination happens at the import boundary.
+    """
+
+    def test_classify_returns_ladder_for_price_ladder_cumulative(self) -> None:
+        from flextool.export_to_tabular.sheet_config import classify_param_types
+
+        types = classify_param_types(
+            ("2d_map",),
+            entity_class="commodity",
+            param_name="price_ladder_cumulative",
+        )
+        assert types == {"ladder"}, (
+            f"Expected {{'ladder'}} for commodity.price_ladder_cumulative; "
+            f"got {types}"
+        )
+
+    def test_classify_returns_ladder_for_price_ladder_annual(self) -> None:
+        from flextool.export_to_tabular.sheet_config import classify_param_types
+
+        # price_ladder_annual admits both 2d_map and 3d_map per the
+        # registry; both must collapse to {ladder} (no stochastic /
+        # timeseries leakage from the schema-declared 3d_map type).
+        types = classify_param_types(
+            ("2d_map", "3d_map"),
+            entity_class="commodity",
+            param_name="price_ladder_annual",
+        )
+        assert types == {"ladder"}
+        assert "stochastic" not in types
+        assert "timeseries" not in types
+
+    def test_classify_without_registry_keeps_stochastic(self) -> None:
+        """A genuinely stochastic 3d_map param (no registry entry)
+        still routes to ``stochastic`` — confirms the registry override
+        is scoped to (entity_class, param_name) pairs we tagged."""
+        from flextool.export_to_tabular.sheet_config import classify_param_types
+
+        types = classify_param_types(
+            ("3d_map",),
+            entity_class="unit__inputNode",
+            param_name="profile",
+        )
+        assert "stochastic" in types
+        assert "ladder" not in types
+
+    def test_sheet_specs_include_ladder_sheets_for_commodity(
+        self, sheet_specs: list[SheetSpec],
+    ) -> None:
+        labels = {(s.sheet_name, s.layout) for s in sheet_specs}
+        assert ("price_ladder_cumulative", "ladder") in labels, (
+            f"Expected price_ladder_cumulative sheet with layout=ladder; "
+            f"got: {sorted(labels)}"
+        )
+        assert ("price_ladder_annual", "ladder") in labels
+
+    def test_no_commodity_stochastic_sheet_for_price_ladder(
+        self, sheet_specs: list[SheetSpec],
+    ) -> None:
+        """The facet-leaf params must NOT also surface on a duplicated
+        ``commodity_s`` / ``commodity_s_*`` sheet — that would let two
+        writers claim the same (entity, param, alt) keys."""
+        for spec in sheet_specs:
+            if spec.sheet_name.startswith("commodity_s") and spec.layout == "stochastic":
+                assert not any(
+                    p in ("price_ladder_annual", "price_ladder_cumulative")
+                    for p in spec.parameter_names
+                ), (
+                    f"Stochastic sheet {spec.sheet_name} carries facet-leaf "
+                    f"params {spec.parameter_names}"
+                )
+
+    def test_exported_workbook_has_ladder_sheets(
+        self, exported_workbook: openpyxl.Workbook,
+    ) -> None:
+        assert "price_ladder_cumulative" in exported_workbook.sheetnames
+        assert "price_ladder_annual" in exported_workbook.sheetnames
+
+    def test_price_ladder_cumulative_sheet_shape(
+        self, exported_workbook: openpyxl.Workbook,
+    ) -> None:
+        """Depth-2 sheet: alternative | entity: commodity | index: tier
+        | parameter | price | quantity."""
+        ws = exported_workbook["price_ladder_cumulative"]
+        assert ws.cell(row=3, column=1).value == "alternative"
+        assert ws.cell(row=3, column=2).value == "entity: commodity"
+        assert ws.cell(row=3, column=3).value == "index: tier"
+        assert ws.cell(row=3, column=4).value == "parameter"
+        assert ws.cell(row=3, column=5).value == "price"
+        assert ws.cell(row=3, column=6).value == "quantity"
+        # Data type row sets per-facet types.
+        assert ws.cell(row=2, column=5).value == "float"
+        assert ws.cell(row=2, column=6).value == "float"
+
+    def test_price_ladder_annual_sheet_has_period_col(
+        self, exported_workbook: openpyxl.Workbook,
+    ) -> None:
+        """Depth-3 sheet adds an ``index: period`` column between entity
+        and tier."""
+        ws = exported_workbook["price_ladder_annual"]
+        assert ws.cell(row=3, column=3).value == "index: period"
+        assert ws.cell(row=3, column=4).value == "index: tier"
+        assert ws.cell(row=3, column=5).value == "parameter"
+        assert ws.cell(row=3, column=6).value == "price"
+        assert ws.cell(row=3, column=7).value == "quantity"
+
+    def test_price_ladder_inf_is_string_sentinel(
+        self, exported_workbook: openpyxl.Workbook,
+    ) -> None:
+        """``quantity = inf`` must be written as the string ``"inf"`` —
+        openpyxl drops actual non-finite floats."""
+        ws = exported_workbook["price_ladder_cumulative"]
+        # Scan data rows for the unbounded tail tier.
+        found_inf = False
+        for r in range(4, ws.max_row + 1):
+            qty = ws.cell(row=r, column=6).value
+            if qty == "inf":
+                found_inf = True
+                break
+        assert found_inf, (
+            "Expected the canonical coal/tier-2 row to carry quantity='inf'; "
+            "no such row found."
+        )
+
+    def test_price_ladder_round_trip_byte_identical(
+        self, tmp_path_factory: pytest.TempPathFactory, example_db_url: str,
+    ) -> None:
+        """End-to-end: canonical → export → import → identical Maps."""
+        import json
+        import subprocess
+        import sys
+
+        from spinedb_api import DatabaseMapping, from_database, to_database
+
+        out_dir = tmp_path_factory.mktemp("ladder_rt")
+        xlsx = out_dir / "rt.xlsx"
+        export_to_excel(example_db_url, str(xlsx), include_advanced=True)
+        rt_db = out_dir / "rt.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(rt_db))
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "flextool.cli.cmd_read_self_describing_tabular_input",
+                str(xlsx),
+                f"sqlite:///{rt_db}",
+            ],
+            check=True,
+        )
+
+        def _ladder_values(url: str) -> dict:
+            out = {}
+            with DatabaseMapping(url) as db:
+                for p in db.get_parameter_value_items():
+                    if p["parameter_definition_name"] not in (
+                        "price_ladder_annual",
+                        "price_ladder_cumulative",
+                    ):
+                        continue
+                    k = (
+                        p["entity_class_name"],
+                        p["parameter_definition_name"],
+                        tuple(p["entity_byname"]),
+                        p["alternative_name"],
+                    )
+                    out[k] = (p["value"], p["type"])
+            return out
+
+        def _to_json(rec):
+            val = from_database(rec[0], rec[1])
+            v, _ = to_database(val)
+            return json.loads(v) if isinstance(v, (bytes, str)) else v
+
+        src_vals = _ladder_values(example_db_url)
+        rt_vals = _ladder_values(f"sqlite:///{rt_db}")
+        assert src_vals, "Canonical DB has no price_ladder data — fixture drift."
+        assert set(src_vals) == set(rt_vals), (
+            f"price_ladder key set differs across round-trip: "
+            f"src-only={set(src_vals) - set(rt_vals)}, "
+            f"rt-only={set(rt_vals) - set(src_vals)}"
+        )
+        for k in src_vals:
+            assert _to_json(src_vals[k]) == _to_json(rt_vals[k]), (
+                f"Map JSON differs for {k}: src={_to_json(src_vals[k])} "
+                f"rt={_to_json(rt_vals[k])}"
+            )
+
+
+class TestLadderReaderUnit:
+    """Reader-side unit tests for the ladder layout."""
+
+    def test_reader_emits_price_quantity_records(
+        self, tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """A synthesised minimal price_ladder_cumulative sheet must
+        produce one record per (commodity, alt, tier, facet)."""
+        from flextool.process_inputs.read_self_describing_excel import (
+            read_self_describing_excel,
+        )
+
+        out_dir = tmp_path_factory.mktemp("ladder_reader")
+        xlsx_path = out_dir / "mini.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "price_ladder_cumulative"
+        ws.cell(row=1, column=1, value="navigate")
+        ws.cell(row=1, column=4, value="description")
+        ws.cell(row=2, column=4, value="data type")
+        ws.cell(row=2, column=5, value="float")
+        ws.cell(row=2, column=6, value="float")
+        ws.cell(row=3, column=1, value="alternative")
+        ws.cell(row=3, column=2, value="entity: commodity")
+        ws.cell(row=3, column=3, value="index: tier")
+        ws.cell(row=3, column=4, value="parameter")
+        ws.cell(row=3, column=5, value="price")
+        ws.cell(row=3, column=6, value="quantity")
+        ws.cell(row=4, column=1, value="base")
+        ws.cell(row=4, column=2, value="coal")
+        ws.cell(row=4, column=3, value="1")
+        ws.cell(row=4, column=5, value=20.0)
+        ws.cell(row=4, column=6, value=1.0)
+        ws.cell(row=5, column=1, value="base")
+        ws.cell(row=5, column=2, value="coal")
+        ws.cell(row=5, column=3, value="2")
+        ws.cell(row=5, column=5, value=30.0)
+        ws.cell(row=5, column=6, value="inf")
+        wb.save(str(xlsx_path))
+        wb.close()
+
+        sheets = read_self_describing_excel(str(xlsx_path))
+        assert len(sheets) == 1
+        recs = sheets[0].records
+        keyed = {
+            (r["entity_byname"], r["param_name"], r["index_value"]): r["value"]
+            for r in recs
+        }
+        assert keyed[(("coal",), "price", "1")] == 20.0
+        assert keyed[(("coal",), "quantity", "1")] == 1.0
+        assert keyed[(("coal",), "price", "2")] == 30.0
+        # 'inf' sentinel must round-trip to float infinity.
+        assert keyed[(("coal",), "quantity", "2")] == float("inf")
+
+    def test_writer_to_db_combines_facets(
+        self, tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """Feed price/quantity records to write_sheet_data_to_db; expect
+        a single ``commodity.price_ladder_cumulative`` nested Map."""
+        from spinedb_api import DatabaseMapping, from_database
+
+        from flextool.process_inputs.read_self_describing_excel import (
+            EntityClassDef,
+            SheetData,
+            SheetMetadata,
+        )
+        from flextool.process_inputs.write_self_describing_to_db import (
+            write_sheet_data_to_db,
+        )
+
+        out_dir = tmp_path_factory.mktemp("ladder_writer")
+        db_path = out_dir / "rt.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(db_path))
+        db_url = f"sqlite:///{db_path}"
+
+        meta = SheetMetadata(sheet_name="price_ladder_cumulative")
+        meta.entity_classes = [EntityClassDef("commodity", ["commodity"])]
+        sheet = SheetData(sheet_name=meta.sheet_name, metadata=meta)
+        for tier, price, quantity in [("1", 20.0, 1.0), ("2", 30.0, float("inf"))]:
+            for facet, val in (("price", price), ("quantity", quantity)):
+                sheet.records.append({
+                    "alternative": "base",
+                    "entity_class": "commodity",
+                    "entity_byname": ("coal",),
+                    "param_name": facet,
+                    "value": val,
+                    "index_value": tier,
+                    "index_name": "tier",
+                    "data_type": "float",
+                })
+
+        write_sheet_data_to_db(
+            [sheet], db_url, purge_first=False, keep_entities=True,
+        )
+        with DatabaseMapping(db_url) as db:
+            ladder = [
+                p for p in db.get_parameter_value_items()
+                if p["parameter_definition_name"] == "price_ladder_cumulative"
+                and p["entity_byname"] == ("coal",)
+            ]
+        assert len(ladder) == 1
+        val = from_database(ladder[0]["value"], ladder[0]["type"])
+        # Outer Map indexed by tier
+        assert list(val.indexes) == ["1", "2"]
+        assert val.index_name == "tier"
+        leaf1 = val.values[0]
+        assert list(leaf1.indexes) == ["price", "quantity"]
+        assert list(leaf1.values) == [20.0, 1.0]
+        leaf2 = val.values[1]
+        assert leaf2.values[1] == float("inf")
