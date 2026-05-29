@@ -2322,107 +2322,68 @@ def p_pssdt_varCost_from_source(source: "InputSource",
 
     contributions: list[pl.LazyFrame] = []
 
-    def _broadcast_to_psd_dt(df: pl.DataFrame, side: str) -> pl.LazyFrame | None:
-        """Broadcast a (entity, [period], [t], value) frame to
-        (p, source, sink, d, t, value) by joining onto pss × dt.
+    def _resolved_psd_contribution(
+        entity_class: str,
+        alias: "str | dict[str, str]",
+        match_on: list[str],
+    ) -> "pl.LazyFrame | None":
+        """Resolve one ``other_operational_cost`` stream through the
+        authoritative shape resolver and expand it onto the
+        (p, source, sink, d, t) grid by matching ``pss``.
 
-        ``side ∈ {'source', 'sink', 'process'}`` — controls how the
-        entity column is matched against pss's (p, source, sink) tuple.
+        Replaces the column-name-based broadcaster: the Spine Map index
+        label is user-set (spinedb_api's silent default ``"x"``), so
+        name-based axis detection misread time-series O&M as a scalar and
+        ``how="cross"``-joined it against the full (d, t) grid — the
+        cross-join blow-up / silent-flatten pattern fixed for ``p_slope``.
+        ``resolve_param_shape`` + ``broadcast_to_period_time`` keep the
+        Param at its authored shape (no cross-product);
+        ``promote_param_to_dt`` widens to ``(…, d, t)`` with a narrowing
+        inner-join; then ``pss`` matches the entity onto the
+        (p, source, sink) tuples via ``match_on``.
+
+        The node axis is aliased to the entity-union ``e`` so the join
+        against ``pss.source`` / ``pss.sink`` (also ``e``-typed) composes
+        without an Enum-vs-Utf8 mismatch.
         """
-        cols = df.columns
-        if side == "source":
-            ent_p_col = "unit"
-            ent_n_col = "node"
-        elif side == "sink":
-            ent_p_col = "unit"
-            ent_n_col = "node"
-        elif side == "process":
-            ent_p_col = "name"
-            ent_n_col = None
-        else:
+        resolved = resolve_param_shape(
+            source, entity_class, "other_operational_cost", period_filter=dt)
+        param = broadcast_to_period_time(
+            resolved, alias, dt, filter_zero=True)
+        if param is None:
             return None
-
-        # Detect period / t index columns.
-        non_idx = {ent_p_col, "value"}
-        if ent_n_col is not None:
-            non_idx.add(ent_n_col)
-        idx_cols = [c for c in cols if c not in non_idx]
-        has_period = any(c in idx_cols for c in ("period", "d"))
-        has_t = any(c in idx_cols for c in ("t", "time", "step"))
-        period_col = next((c for c in ("period", "d") if c in idx_cols), None)
-        t_col = next((c for c in ("t", "time", "step") if c in idx_cols), None)
-
-        # Build base lazyframe and rename keys.  ``ent_n_col`` (the
-        # node column on the source side of unit__inputNode /
-        # unit__outputNode) is cast to the entity-union ``e`` axis so
-        # the join against pss.source / pss.sink (also e-typed)
-        # composes natively under Phase 4 activation.  Pattern 2.
-        select_exprs = [alias_to_axis(ent_p_col, "p"),
-                         pl.col("value").cast(pl.Float64).alias("v")]
-        if ent_n_col is not None:
-            select_exprs.append(alias_to_axis(ent_n_col, "e"))
-        if period_col is not None:
-            select_exprs.append(alias_to_axis(period_col, "d"))
-        if t_col is not None:
-            select_exprs.append(alias_to_axis(t_col, "t"))
-        lf = df.lazy().select(*select_exprs).filter(pl.col("v") != 0.0)
-
-        # Match against pss to get (p, source, sink) tuples.
-        if side == "source":
-            # e binds source.
-            psk = (pss.lazy()
-                .join(lf, left_on=["p", "source"], right_on=["p", "e"],
-                       how="inner"))
-        elif side == "sink":
-            psk = (pss.lazy()
-                .join(lf, left_on=["p", "sink"], right_on=["p", "e"],
-                       how="inner"))
+        pdt = promote_param_to_dt(param, dt)
+        if "e" in match_on or "e" in param.dims:
+            # Relationship-class side: pss.<source|sink> binds the union
+            # ``e`` column on the broadcast frame.
+            pss_key = "source" if match_on == ["p", "source"] else "sink"
+            psk = pss.lazy().join(
+                pdt, left_on=["p", pss_key], right_on=["p", "e"], how="inner")
         else:
-            # process-level, no entity match.
-            psk = pss.lazy().join(lf, on="p", how="inner")
-
-        # Broadcast over dt according to which dims are present.
-        # Defensive re-cast: ensure d/t are canonical Enum so the joins
-        # below against psk (Enum d/t via alias_to_axis above) compose
-        # cleanly even when ``dt`` arrives with Utf8 axis columns.
-        dt_lf = dt.lazy().with_columns(
-            alias_to_axis(pl.col("d"), "d"),
-            alias_to_axis(pl.col("t"), "t"),
-        )
-        if has_period and has_t:
-            return (psk.join(dt_lf, on=["d", "t"], how="inner")
-                       .select("p", "source", "sink", "d", "t", "v"))
-        if has_period:
-            return (psk.join(dt_lf, on="d", how="inner")
-                       .select("p", "source", "sink", "d", "t", "v"))
-        if has_t:
-            return (psk.join(dt_lf, on="t", how="inner")
-                       .select("p", "source", "sink", "d", "t", "v"))
-        # Scalar — broadcast over full dt.
-        return (psk.join(dt_lf, how="cross")
-                   .select("p", "source", "sink", "d", "t", "v"))
+            psk = pss.lazy().join(pdt, on=match_on, how="inner")
+        return psk.select("p", "source", "sink", "d", "t",
+                          pl.col("value").alias("v"))
 
     # 1) unit__inputNode.other_operational_cost — source-side
-    df = _try_param(source, "unit__inputNode", "other_operational_cost")
-    if df is not None:
-        c = _broadcast_to_psd_dt(df, "source")
-        if c is not None:
-            contributions.append(c)
+    c = _resolved_psd_contribution(
+        "unit__inputNode", {"unit": "p", "node": "e"}, ["p", "source"])
+    if c is not None:
+        contributions.append(c)
 
     # 2) unit__outputNode.other_operational_cost — sink-side
-    df = _try_param(source, "unit__outputNode", "other_operational_cost")
-    if df is not None:
-        c = _broadcast_to_psd_dt(df, "sink")
-        if c is not None:
-            contributions.append(c)
+    c = _resolved_psd_contribution(
+        "unit__outputNode", {"unit": "p", "node": "e"}, ["p", "sink"])
+    if c is not None:
+        contributions.append(c)
 
-    # 3) unit / connection.other_operational_cost — process-level
-    for ec in ("unit", "connection"):
-        df = _try_param(source, ec, "other_operational_cost")
-        if df is not None:
-            c = _broadcast_to_psd_dt(df, "process")
-            if c is not None:
-                contributions.append(c)
+    # 3) connection.other_operational_cost — process-level.
+    #    ``unit.other_operational_cost`` is NOT a schema parameter; the old
+    #    loop over ("unit", "connection") read a non-existent param that
+    #    ``_try_param`` silently returned None for (a harmless ghost).
+    #    Only ``connection`` carries process-level O&M.
+    c = _resolved_psd_contribution("connection", {"name": "p"}, ["p"])
+    if c is not None:
+        contributions.append(c)
 
     if not contributions:
         return None
