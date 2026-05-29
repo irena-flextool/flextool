@@ -63,4 +63,10 @@ jobs:
           if [ -f bin/glpsol_macos15_arm64 ]; then chmod +x bin/glpsol_macos15_arm64; fi
 
       - name: Run tests
+        env:
+          # Fail loudly on autoscale-registry gaps instead of silently
+          # degrading to an un-scaled LP. The full suite is verified
+          # gap-free (see docs/dev/architecture.md "Numerical scaling →
+          # Layer 2").
+          FLEXTOOL_AUTOSCALE_STRICT: "1"
         run: pytest tests/ -v --tb=short -x

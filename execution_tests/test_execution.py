@@ -5,12 +5,9 @@ import subprocess
 import unittest
 
 from spinedb_api import DiffDatabaseMapping, \
-    import_scenarios, import_object_classes, export_object_classes, import_relationship_classes, \
+    import_object_classes, export_object_classes, import_relationship_classes, \
     export_relationship_classes, import_object_parameters, export_object_parameters, \
-    import_relationship_parameters, export_relationship_parameters, \
-    import_objects, import_relationships, import_object_parameter_values, \
-    import_relationship_parameter_values, \
-    import_parameter_value_lists
+    import_relationship_parameters, export_relationship_parameters
 
 
 @unittest.skip("Not implemented properly")
