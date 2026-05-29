@@ -42,6 +42,7 @@ templates/
 benchmarks/
 flextool-venv/
 .venv/
+venv/
 specs/
 projects/
 tests/unitTests.txt

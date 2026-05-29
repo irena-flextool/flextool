@@ -657,7 +657,7 @@ class SolveConfig:
             f"SolveConfig.load_from_source does not yet support "
             f"{type(source).__name__!r} sources.  Use load_from_db / "
             f"load_from_db_url with a Spine DB for now; the in-memory and "
-            f"CSV adapters land in Γ.8.D when chain.run_chain is rewired."
+            f"CSV adapters land in Gamma.8.D when chain.run_chain is rewired."
         )
 
     # ------------------------------------------------------------------

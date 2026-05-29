@@ -641,7 +641,7 @@ def _write_scenarios(
                 )
             except SpineDBAPIError as exc:
                 logger.warning(
-                    "Could not add scenario_alternative %s → %s (rank %d): %s",
+                    "Could not add scenario_alternative %s -> %s (rank %d): %s",
                     scenario_name, alt_name, rank, exc,
                 )
 

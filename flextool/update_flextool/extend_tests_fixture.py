@@ -704,7 +704,7 @@ def apply_delta(
                 "nothing to regenerate"
             )
 
-    print(f"Applied delta {yaml_path.name} → {target}")
+    print(f"Applied delta {yaml_path.name} -> {target}")
     return 0
 
 

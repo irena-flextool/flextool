@@ -258,7 +258,7 @@ def main():
                              '``lagrangian`` is currently supported: it drives '
                              'one HiGHS instance per decomposition-region and '
                              'prices the cross-region pipeline flows via a '
-                             'damped subgradient on λ until the '
+                             'damped subgradient on lambda until the '
                              'primal-average imbalance is below tolerance '
                              '(Agent 3.2).  Requires at least two groups '
                              'declared with ``decomposition_method='
@@ -267,7 +267,7 @@ def main():
     parser.add_argument('--lagrangian-alpha', type=float, default=0.1,
                         help='Base step size for the Lagrangian subgradient '
                              'loop (default 0.1).  The actual per-iteration '
-                             'step is ``α / √k``.')
+                             'step is ``alpha / sqrt(k)``.')
     parser.add_argument('--lagrangian-max-iter', type=int, default=80,
                         help='Maximum outer-loop iterations for '
                              '``--decomposition lagrangian`` (default 80).')
@@ -662,7 +662,7 @@ def main():
         for r, obj in result.region_objectives.items():
             print(f"  region {r}: {obj:.6g}")
         for pipe, lam in result.final_lambdas.items():
-            print(f"  λ[{pipe}] = {lam:.6g}")
+            print(f"  lambda[{pipe}] = {lam:.6g}")
         sys.exit(0 if result.converged else 1)
 
     # Resolve scenario_name when omitted: pull it from the DB's

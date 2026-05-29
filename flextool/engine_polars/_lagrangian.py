@@ -178,7 +178,7 @@ def solve_lagrangian(
         regions = lagr
     if not regions or len(regions) < 2:
         raise ValueError(
-            f"solve_lagrangian: need ≥2 lagrangian_region groups; "
+            f"solve_lagrangian: need >=2 lagrangian_region groups; "
             f"got {regions!r}.  Use Problem().solve() for non-decomposed "
             f"scenarios.")
 

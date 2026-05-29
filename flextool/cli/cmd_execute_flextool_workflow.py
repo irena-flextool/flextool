@@ -32,7 +32,7 @@ Examples:
   # Full workflow with CSV input
   python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario --csv-directory-path input_data/
 
-  # Use an existing input database (no tabular/csv source → input prep is skipped)
+  # Use an existing input database (no tabular/csv source -> input prep is skipped)
   python execute_flextool_workflow.py input.sqlite results.sqlite my_scenario
 
   # Add plots and CSV alongside the default parquet output

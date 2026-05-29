@@ -312,7 +312,7 @@ def migrate_database(
                         name="constraint_cumulative_pre_built_capacity_coefficient",
                         description=prebuilt_desc)
                 _commit_step(db,
-                    "Renamed constraint_capacity_coefficient → "
+                    "Renamed constraint_capacity_coefficient -> "
                     "constraint_invested_capacity_coefficient; added "
                     "constraint_cumulative_pre_built_capacity_coefficient")
             elif next_version == 33:
@@ -398,7 +398,7 @@ def migrate_database(
                         default_type=default_one_type,
                         description=mincap_desc)
                 _commit_step(db,
-                    "Renamed coefficient → flow_coefficient; added "
+                    "Renamed coefficient -> flow_coefficient; added "
                     "max_capacity_coefficient and min_capacity_coefficient "
                     "on unit__inputNode and unit__outputNode")
             elif next_version == 36:
@@ -448,7 +448,7 @@ def migrate_database(
                     _commit_step(db,
                         "Backfilled max_capacity_coefficient and "
                         "min_capacity_coefficient from flow_coefficient for "
-                        "entities where flow_coefficient ≠ 1.0")
+                        "entities where flow_coefficient != 1.0")
                 except SpineDBAPIError:
                     pass
             elif next_version == 37:
@@ -3943,26 +3943,26 @@ def _migrate_v56_rename_constraint_coefficient_to_coeff(db) -> None:
             )
     _commit_step(
         db,
-        "v56 rename constraint_*_coefficient → constraint_*_coeff: "
-        "connection.constraint_cumulative_pre_built_capacity_coefficient → "
+        "v56 rename constraint_*_coefficient -> constraint_*_coeff: "
+        "connection.constraint_cumulative_pre_built_capacity_coefficient -> "
         "constraint_cumulative_pre_built_capacity_coeff; "
-        "connection.constraint_invested_capacity_coefficient → "
+        "connection.constraint_invested_capacity_coefficient -> "
         "constraint_invested_capacity_coeff; "
-        "connection__node.constraint_flow_coefficient → "
+        "connection__node.constraint_flow_coefficient -> "
         "constraint_flow_coeff; "
-        "node.constraint_cumulative_pre_built_capacity_coefficient → "
+        "node.constraint_cumulative_pre_built_capacity_coefficient -> "
         "constraint_cumulative_pre_built_capacity_coeff; "
-        "node.constraint_invested_capacity_coefficient → "
+        "node.constraint_invested_capacity_coefficient -> "
         "constraint_invested_capacity_coeff; "
-        "node.constraint_state_coefficient → "
+        "node.constraint_state_coefficient -> "
         "constraint_state_coeff; "
-        "unit.constraint_cumulative_pre_built_capacity_coefficient → "
+        "unit.constraint_cumulative_pre_built_capacity_coefficient -> "
         "constraint_cumulative_pre_built_capacity_coeff; "
-        "unit.constraint_invested_capacity_coefficient → "
+        "unit.constraint_invested_capacity_coefficient -> "
         "constraint_invested_capacity_coeff; "
-        "unit__inputNode.constraint_flow_coefficient → "
+        "unit__inputNode.constraint_flow_coefficient -> "
         "constraint_flow_coeff; "
-        "unit__outputNode.constraint_flow_coefficient → "
+        "unit__outputNode.constraint_flow_coefficient -> "
         "constraint_flow_coeff.",
     )
 
@@ -4023,9 +4023,9 @@ def _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db) -> None:
             )
     _commit_step(
         db,
-        "v56 rename flow_coefficient → conversion_flow_coeff: "
-        "unit__inputNode.flow_coefficient → conversion_flow_coeff; "
-        "unit__outputNode.flow_coefficient → conversion_flow_coeff.",
+        "v56 rename flow_coefficient -> conversion_flow_coeff: "
+        "unit__inputNode.flow_coefficient -> conversion_flow_coeff; "
+        "unit__outputNode.flow_coefficient -> conversion_flow_coeff.",
     )
 
 
@@ -4083,9 +4083,9 @@ def _migrate_v56_rename_max_capacity_coefficient_to_capacity_max_coeff(db) -> No
             )
     _commit_step(
         db,
-        "v56 rename max_capacity_coefficient → capacity_max_coeff: "
-        "unit__inputNode.max_capacity_coefficient → capacity_max_coeff; "
-        "unit__outputNode.max_capacity_coefficient → capacity_max_coeff.",
+        "v56 rename max_capacity_coefficient -> capacity_max_coeff: "
+        "unit__inputNode.max_capacity_coefficient -> capacity_max_coeff; "
+        "unit__outputNode.max_capacity_coefficient -> capacity_max_coeff.",
     )
 
 
@@ -4143,9 +4143,9 @@ def _migrate_v56_rename_min_capacity_coefficient_to_capacity_min_coeff(db) -> No
             )
     _commit_step(
         db,
-        "v56 rename min_capacity_coefficient → capacity_min_coeff: "
-        "unit__inputNode.min_capacity_coefficient → capacity_min_coeff; "
-        "unit__outputNode.min_capacity_coefficient → capacity_min_coeff.",
+        "v56 rename min_capacity_coefficient -> capacity_min_coeff: "
+        "unit__inputNode.min_capacity_coefficient -> capacity_min_coeff; "
+        "unit__outputNode.min_capacity_coefficient -> capacity_min_coeff.",
     )
 
 
@@ -4440,7 +4440,7 @@ def _migrate_v56_retype_solver_arguments_to_1d_map(db) -> None:
     )
     _commit_step(
         db,
-        "v56 retype solve.solver_arguments array → 1d-map: canonical "
+        "v56 retype solve.solver_arguments array -> 1d-map: canonical "
         "home for HiGHS solver-option overrides; values layered on top "
         "of solver_config/highs.opt by the engine's effective-options "
         "resolver (Batch C.1).",
@@ -4508,7 +4508,7 @@ def _migrate_v56_fold_solver_options_into_solver_arguments(db) -> None:
             continue
         if not isinstance(opt_value, Map):
             print(
-                f"v56 fold solver_options → solver_arguments: solve."
+                f"v56 fold solver_options -> solver_arguments: solve."
                 f"{opt_pv['entity_byname']!r}.solver_options is not a "
                 f"Map ({type(opt_value).__name__!r}); skipping fold."
             )
@@ -4543,7 +4543,7 @@ def _migrate_v56_fold_solver_options_into_solver_arguments(db) -> None:
             merged[key] = val
         if collisions:
             print(
-                "v56 fold solver_options → solver_arguments collisions on "
+                "v56 fold solver_options -> solver_arguments collisions on "
                 f"solve.{opt_pv['entity_byname']!r} "
                 f"(alt={opt_pv['alternative_name']!r}): "
                 + "; ".join(collisions)
@@ -4568,7 +4568,7 @@ def _migrate_v56_fold_solver_options_into_solver_arguments(db) -> None:
 
     _commit_step(
         db,
-        "v56 fold solve.solver_options → solver_arguments: existing "
+        "v56 fold solve.solver_options -> solver_arguments: existing "
         "solver_arguments entries win on key collision (Batch C.2).",
     )
 
@@ -4622,7 +4622,7 @@ def _fold_highs_shortcut_into_solver_arguments(
             continue
         if not isinstance(sh_value, str):
             print(
-                f"v56 fold {label} → solver_arguments[{highs_key!r}]: "
+                f"v56 fold {label} -> solver_arguments[{highs_key!r}]: "
                 f"solve.{sh_pv['entity_byname']!r}.{shortcut_param} is "
                 f"not a str ({type(sh_value).__name__!r}); skipping fold."
             )
@@ -4643,7 +4643,7 @@ def _fold_highs_shortcut_into_solver_arguments(
                 }
         if highs_key in existing_map and existing_map[highs_key] != sh_value:
             print(
-                f"v56 fold {label} → solver_arguments[{highs_key!r}] "
+                f"v56 fold {label} -> solver_arguments[{highs_key!r}] "
                 f"collision on solve.{sh_pv['entity_byname']!r} "
                 f"(alt={sh_pv['alternative_name']!r}): "
                 f"solver_arguments[{highs_key!r}]={existing_map[highs_key]!r} "
@@ -4672,7 +4672,7 @@ def _fold_highs_shortcut_into_solver_arguments(
 
     _commit_step(
         db,
-        f"v56 fold solve.{shortcut_param} → "
+        f"v56 fold solve.{shortcut_param} -> "
         f"solver_arguments[{highs_key!r}]: shortcut value injected "
         "into the canonical HiGHS option-overrides Map (existing "
         f"solver_arguments[{highs_key!r}] wins on collision).",

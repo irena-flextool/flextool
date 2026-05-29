@@ -95,7 +95,7 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
             old_count = len(old_data.get(key, []))
             new_count = len(new_data.get(key, []))
             if old_count != new_count:
-                print(f"  {key}: {old_count} → {new_count}")
+                print(f"  {key}: {old_count} -> {new_count}")
         print("Master template is OUT OF DATE. Run without --verify to regenerate.")
         return False
 

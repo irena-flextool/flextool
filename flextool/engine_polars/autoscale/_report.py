@@ -283,10 +283,10 @@ def format_console_summary(
             f"Bound={post_bound} RHS={post_rhs}"
         )
 
-    flat = " → ".join(parts)
+    flat = " -> ".join(parts)
     if len(flat) <= 100:
         return flat
-    return parts[0] + "".join(f"\n  → {p}" for p in parts[1:])
+    return parts[0] + "".join(f"\n  -> {p}" for p in parts[1:])
 
 
 def format_nonoptimal_hint(ranges_pre: RangeReport) -> str:

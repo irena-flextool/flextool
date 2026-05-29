@@ -294,7 +294,7 @@ def _write_results_to_db(
             entity_alternatives.append(
                 ("solve", solve_name, alternative_name, True)
             )
-            print(f"  Updated solve '{solve_name}' period_timeset → '{timeset_name}' for periods {[str(p) for p in periods]}")
+            print(f"  Updated solve '{solve_name}' period_timeset -> '{timeset_name}' for periods {[str(p) for p in periods]}")
 
         count, errors = import_data(
             db,

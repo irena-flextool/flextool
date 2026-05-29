@@ -207,7 +207,7 @@ class TestConvergenceBehavior:
 
 class TestErrorPaths:
     def test_solve_lagrangian_requires_two_regions(self, lh2_data) -> None:
-        with pytest.raises(ValueError, match="≥2 lagrangian_region groups"):
+        with pytest.raises(ValueError, match=">=2 lagrangian_region groups"):
             solve_lagrangian(
                 lh2_data,
                 regions=["region_A"],
@@ -215,7 +215,7 @@ class TestErrorPaths:
             )
 
     def test_solve_lagrangian_no_regions_errors(self, lh2_data) -> None:
-        with pytest.raises(ValueError, match="≥2 lagrangian_region groups"):
+        with pytest.raises(ValueError, match=">=2 lagrangian_region groups"):
             solve_lagrangian(
                 lh2_data,
                 regions=[],
@@ -227,7 +227,7 @@ class TestErrorPaths:
         # work_base has no decomposition_method param.
         work_base = scenario_workdir("base")
         data = load_flextool(work_base)
-        with pytest.raises(ValueError, match="≥2 lagrangian_region groups"):
+        with pytest.raises(ValueError, match=">=2 lagrangian_region groups"):
             solve_lagrangian(data, work_dir=work_base)
 
 

@@ -288,10 +288,10 @@ del _key, _producer, _note
 
 # Unit-flow outputs
 for _key, _producer, _note in (
-    ("unit_outputNode_dt_ee",      "out_flows.unit_outputNode",        "Per-(period,time) unit→node flow."),
-    ("unit_outputNode_d_ee",       "out_flows.unit_outputNode",        "Per-period unit→node flow."),
-    ("unit_inputNode_dt_ee",       "out_flows.unit_inputNode",         "Per-(period,time) node→unit flow."),
-    ("unit_inputNode_d_ee",        "out_flows.unit_inputNode",         "Per-period node→unit flow."),
+    ("unit_outputNode_dt_ee",      "out_flows.unit_outputNode",        "Per-(period,time) unit->node flow."),
+    ("unit_outputNode_d_ee",       "out_flows.unit_outputNode",        "Per-period unit->node flow."),
+    ("unit_inputNode_dt_ee",       "out_flows.unit_inputNode",         "Per-(period,time) node->unit flow."),
+    ("unit_inputNode_d_ee",        "out_flows.unit_inputNode",         "Per-period node->unit flow."),
     ("unit_VRE_potential_outputNode_dt_ee",     "out_flows.unit_VRE_curtailment_and_potential", "VRE potential; only with VRE units."),
     ("unit_VRE_potential_outputNode_d_ee",      "out_flows.unit_VRE_curtailment_and_potential", "VRE potential per period; only with VRE units."),
     ("unit_curtailment_outputNode_dt_ee",       "out_flows.unit_VRE_curtailment_and_potential", "VRE curtailment; only with VRE units."),
@@ -388,9 +388,9 @@ del _key, _producer, _note
 # Misc input-side sets propagated to processed outputs
 for _key, _producer, _note in (
     ("years_represented__d",      "out_ancillary.input_sets", "Years represented per period (annualisation factor)."),
-    ("group_node",                "out_ancillary.input_sets", "Group → node membership set."),
-    ("group_process",             "out_ancillary.input_sets", "Group → process membership set."),
-    ("group_process_node",        "out_ancillary.input_sets", "Group → (process, node) membership set."),
+    ("group_node",                "out_ancillary.input_sets", "Group -> node membership set."),
+    ("group_process",             "out_ancillary.input_sets", "Group -> process membership set."),
+    ("group_process_node",        "out_ancillary.input_sets", "Group -> (process, node) membership set."),
 ):
     REGISTRY[_key] = _proc(
         _key, note=_note, producer=f"flextool.process_outputs.{_producer}",
