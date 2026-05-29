@@ -37,6 +37,7 @@ class UpdateDialog(tk.Toplevel):
         self.proceed: bool = False
         self.include_toolbox: bool = default_toolbox
         self.check_on_startup: bool = check_on_startup
+        self._initial_check_on_startup: bool = check_on_startup
         self._toolbox_var = tk.BooleanVar(value=default_toolbox)
         self._check_startup_var = tk.BooleanVar(value=check_on_startup)
 
@@ -97,7 +98,13 @@ class UpdateDialog(tk.Toplevel):
 
         btns = ttk.Frame(body)
         btns.pack(fill="x", pady=(4, 0))
+        # Right-aligned, left→right: Update | OK | Cancel.
+        # Update = save settings and upgrade; OK = save settings only (no
+        # upgrade); Cancel = close without changing anything.
         ttk.Button(btns, text="Cancel", command=self._on_cancel).pack(side="right")
+        ttk.Button(btns, text="OK", command=self._on_ok).pack(
+            side="right", padx=(0, 8)
+        )
         ttk.Button(btns, text="Update", command=self._on_update).pack(
             side="right", padx=(0, 8)
         )
@@ -118,9 +125,16 @@ class UpdateDialog(tk.Toplevel):
         self.check_on_startup = bool(self._check_startup_var.get())
         self._close()
 
-    def _on_cancel(self) -> None:
+    def _on_ok(self) -> None:
+        """Save the settings (e.g. the startup-check toggle) without updating."""
         self.proceed = False
         self.check_on_startup = bool(self._check_startup_var.get())
+        self._close()
+
+    def _on_cancel(self) -> None:
+        """Close without applying any change (discard the toggle edits)."""
+        self.proceed = False
+        self.check_on_startup = self._initial_check_on_startup
         self._close()
 
     def _close(self) -> None:
