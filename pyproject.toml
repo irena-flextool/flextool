@@ -39,7 +39,7 @@ classifiers = [
 ]
 dependencies = [
     # Solver backend — pure-Python; replaces the retired glpsol pipeline.
-    "polar-high>=2.2.0",
+    "polar-high>=2.3.0",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.
