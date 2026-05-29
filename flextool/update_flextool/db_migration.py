@@ -1783,24 +1783,33 @@ def update_timestructure(db):
     db.update_entity_class(id = timeblock_entity_class_item["id"], name='timeset')
     db.add_parameter_definition(entity_class_name= "timeset", name= "timeline", parameter_type_list = ("str",), description = "The name of the timeline that the timeset uses. (String)")
     for block_duration in block_durations:
-        timeline_found = False
-        for timeblocks__timeline in timeblocks__timelines:
-            if timeblocks__timeline["entity_byname"][0] == block_duration["entity_byname"][0]:
-                if timeline_found:
-                    print(f'More than one timeline connected to the timeblockSet {timeblocks__timeline["entity_byname"][0]}. Converting only one to timeset - timeline')
-                else: 
-                    value_x, type_ = to_database(timeblocks__timeline["entity_byname"][1])
-                    param_table = db.mapped_table("parameter_value")
-                    db.add(
-                        param_table, 
-                        entity_class_name="timeset", 
-                        parameter_definition_name="timeline",
-                        entity_byname=(timeblocks__timeline["entity_byname"][0],),
-                        alternative_name=block_duration["alternative_name"],
-                        value=value_x,
-                        type=type_,
-                    )
-                    timeline_found = True
+        timeset_name = block_duration["entity_byname"][0]
+        # A timeset maps to a single timeline in the new schema, but the old
+        # timeblockSet__timeline relationship allowed several. Pick the
+        # alphabetically-first match so the collapse is deterministic
+        # (find_entities order is unspecified) and announce what was dropped.
+        matching_timelines = sorted(
+            timeblocks__timeline["entity_byname"][1]
+            for timeblocks__timeline in timeblocks__timelines
+            if timeblocks__timeline["entity_byname"][0] == timeset_name
+        )
+        if not matching_timelines:
+            continue
+        chosen_timeline = matching_timelines[0]
+        if len(matching_timelines) > 1:
+            print(f"More than one timeline connected to the timeblockSet {timeset_name}. "
+                  f"Keeping '{chosen_timeline}' (alphabetically first); dropping {matching_timelines[1:]}.")
+        value_x, type_ = to_database(chosen_timeline)
+        param_table = db.mapped_table("parameter_value")
+        db.add(
+            param_table,
+            entity_class_name="timeset",
+            parameter_definition_name="timeline",
+            entity_byname=(timeset_name,),
+            alternative_name=block_duration["alternative_name"],
+            value=value_x,
+            type=type_,
+        )
     
     t__t_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet__timeline")
     db.remove_entity_class(id = t__t_entity_class_item["id"])
