@@ -133,8 +133,6 @@ def test_p_profile_value_lazy_vs_csv(
     if not siu_path.exists():
         pytest.skip("no steps_in_use.csv")
     siu = pl.read_csv(siu_path)
-    if "period" not in siu.columns or "step" not in siu.columns:
-        pytest.skip("steps_in_use schema unexpected")
     dt = siu.select(d=pl.col("period"), t=pl.col("step"))
 
     lazy = p_profile_value_lf(reader, dt, workdir=work).collect()

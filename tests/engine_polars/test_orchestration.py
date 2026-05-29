@@ -123,13 +123,9 @@ def test_run_chain_from_db_single_solve_smoke(scenario_workdir)-> None:
     Uses ``work_base`` which is the smallest DB scenario.
     """
     sqlite = scenario_workdir("base") / "tests.sqlite"
-    if not sqlite.exists():
-        pytest.skip("work_base fixture not present")
     # Discover the scenario (first one alphabetically — same convention).
     with api.DatabaseMapping("sqlite:///" + str(sqlite)) as db:
         scenarios = sorted(s.name for s in db.query(db.scenario_sq).all())
-    if not scenarios:
-        pytest.skip("no scenarios in work_base")
     scenario = scenarios[0]
 
     steps = run_chain_from_db(sqlite, scenario, keep_solutions=True)

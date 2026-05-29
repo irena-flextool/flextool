@@ -160,8 +160,6 @@ def test_p_unitsize_parity(work_name: str, scenario: str, db_fixture: str, scena
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_unitsize)
     b = _param_frame(db_data.p_unitsize)
-    if a is None and b is None:
-        pytest.skip("p_unitsize None on both paths")
     ok, msg = _frames_equal(a, b, ("p",))
     assert ok, f"p_unitsize mismatch on {work_name}: {msg}\n  csv:\n{a}\n  db:\n{b}"
 
@@ -179,8 +177,6 @@ def test_p_state_unitsize_parity(work_name: str, scenario: str, db_fixture: str,
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_state_unitsize)
     b = _param_frame(db_data.p_state_unitsize)
-    if a is None and b is None:
-        pytest.skip("p_state_unitsize None on both paths")
     ok, msg = _frames_equal(a, b, ("n",))
     assert ok, (
         f"p_state_unitsize mismatch on {work_name}: {msg}\n"
@@ -202,8 +198,6 @@ def test_p_penalty_up_parity(work_name: str, scenario: str, db_fixture: str, sce
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_penalty_up)
     b = _param_frame(db_data.p_penalty_up)
-    if a is None and b is None:
-        pytest.skip("p_penalty_up None on both paths")
     ok, msg = _frames_equal(a, b, ("n", "d", "t"))
     assert ok, (
         f"p_penalty_up mismatch on {work_name}: {msg}"
@@ -224,8 +218,6 @@ def test_p_penalty_down_parity(work_name: str, scenario: str, db_fixture: str, s
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_penalty_down)
     b = _param_frame(db_data.p_penalty_down)
-    if a is None and b is None:
-        pytest.skip("p_penalty_down None on both paths")
     ok, msg = _frames_equal(a, b, ("n", "d", "t"))
     assert ok, (
         f"p_penalty_down mismatch on {work_name}: {msg}"
@@ -245,8 +237,6 @@ def test_p_process_source_conversion_flow_coeff_parity(work_name: str, scenario:
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_process_source_conversion_flow_coeff)
     b = _param_frame(db_data.p_process_source_conversion_flow_coeff)
-    if a is None and b is None:
-        pytest.skip("p_process_source_conversion_flow_coeff None on both paths")
     ok, msg = _frames_equal(a, b, ("p", "source"))
     assert ok, (
         f"p_process_source_conversion_flow_coeff mismatch on {work_name}: {msg}\n"
@@ -267,8 +257,6 @@ def test_p_process_sink_conversion_flow_coeff_parity(work_name: str, scenario: s
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_process_sink_conversion_flow_coeff)
     b = _param_frame(db_data.p_process_sink_conversion_flow_coeff)
-    if a is None and b is None:
-        pytest.skip("p_process_sink_conversion_flow_coeff None on both paths")
     ok, msg = _frames_equal(a, b, ("p", "sink"))
     assert ok, (
         f"p_process_sink_conversion_flow_coeff mismatch on {work_name}: {msg}\n"
@@ -294,8 +282,6 @@ def test_p_slope_full_sweep_parity(work_name: str, scenario: str, db_fixture: st
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_slope)
     b = _param_frame(db_data.p_slope)
-    if a is None and b is None:
-        pytest.skip("p_slope None on both paths")
     ok, msg = _frames_equal(a, b, ("p", "d", "t"))
     assert ok, f"p_slope mismatch on {work_name}: {msg}"
 
@@ -313,8 +299,6 @@ def test_p_section_full_sweep_parity(work_name: str, scenario: str, db_fixture: 
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_section)
     b = _param_frame(db_data.p_section)
-    if a is None and b is None:
-        pytest.skip("p_section None on both paths")
     ok, msg = _frames_equal(a, b, ("p", "d", "t"))
     assert ok, f"p_section mismatch on {work_name}: {msg}"
 
@@ -334,8 +318,6 @@ def test_p_flow_upper_existing_full_sweep_parity(work_name: str, scenario: str, 
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_flow_upper_existing)
     b = _param_frame(db_data.p_flow_upper_existing)
-    if a is None and b is None:
-        pytest.skip("p_flow_upper_existing None on both paths")
     ok, msg = _frames_equal(a, b, ("p", "source", "sink", "d"))
     assert ok, f"p_flow_upper_existing mismatch on {work_name}: {msg}"
 
@@ -355,8 +337,6 @@ def test_p_state_upper_full_sweep_parity(work_name: str, scenario: str, db_fixtu
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_state_upper)
     b = _param_frame(db_data.p_state_upper)
-    if a is None and b is None:
-        pytest.skip("p_state_upper None on both paths")
     ok, msg = _frames_equal(a, b, ("n", "d"))
     assert ok, f"p_state_upper mismatch on {work_name}: {msg}"
 
@@ -378,8 +358,6 @@ def test_p_process_existing_count_full_sweep_parity(
     db_data = load_flextool(work, db_reader=reader)
     a = _param_frame(csv_data.p_process_existing_count)
     b = _param_frame(db_data.p_process_existing_count)
-    if a is None and b is None:
-        pytest.skip("p_process_existing_count None on both paths")
     ok, msg = _frames_equal(a, b, ("p", "d"))
     assert ok, f"p_process_existing_count mismatch on {work_name}: {msg}"
 

@@ -233,7 +233,7 @@ def test_delta4_field_csv_vs_db_parity(scenario: str, field: str,
     a = _frame(getattr(csv, field, None))
     b = _frame(getattr(db, field, None))
     if a is None and b is None:
-        pytest.skip(f"{field} is None on both CSV and DB for {scenario}")
+        return
     assert a is not None, f"{field}: CSV is None, DB is not on {scenario}"
     assert b is not None, f"{field}: DB is None, CSV is not on {scenario}"
     keep = sorted(a.columns)

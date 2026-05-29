@@ -33,12 +33,8 @@ def work_base_db_with_scenario(tmp_path, scenario_workdir):
     disk (e.g. in a sparse checkout).
     """
     sqlite = scenario_workdir("base") / "tests.sqlite"
-    if not sqlite.exists():
-        pytest.skip("work_base fixture not present")
     with api.DatabaseMapping("sqlite:///" + str(sqlite)) as db:
         scenarios = sorted(s.name for s in db.query(db.scenario_sq).all())
-    if not scenarios:
-        pytest.skip("no scenarios in work_base")
     return sqlite, scenarios[0]
 
 
