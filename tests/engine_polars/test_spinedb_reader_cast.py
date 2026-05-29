@@ -5,8 +5,12 @@ kwargs.  When supplied, every frame returned by :meth:`entities`,
 :meth:`parameter`, :meth:`parameter_explicit` has its dim columns cast
 to the canonical :class:`pl.Enum` dtypes.
 
-Vocabulary misses raise :class:`FlexDataIntegrityError` with
-``(parameter, entity_class, scenario)`` origin breadcrumbs threaded in.
+Map-inner-key dim columns (axis ``source_type == "parameter_keys"``)
+are silently filtered to the scenario-active vocabulary so Map data
+authored beyond the active scenario does not break the strict cast.
+Entity-class dim columns remain strict — vocabulary misses there
+raise :class:`FlexDataIntegrityError` (covered by the backend-level
+breadcrumb suite in ``tests/spinedb_backend/test_backend_cast.py``).
 """
 from __future__ import annotations
 
@@ -19,7 +23,6 @@ from flextool.engine_polars import SpineDbReader
 from flextool.spinedb_backend import SpineDBBackend
 from flextool.spinedb_backend._axis_enums import (
     AxisContract,
-    FlexDataIntegrityError,
     build_axis_enums,
     load_axis_contract,
 )
@@ -148,15 +151,20 @@ def test_spinedb_reader_parameter_explicit_casts_dim_columns(
 # ---------------------------------------------------------------------------
 
 
-def test_spinedb_reader_integrity_error_carries_origin(
+def test_spinedb_reader_filters_scenario_trimmed_parameter_keys(
     TEST_A_LOT_DB: Path,
     contract: AxisContract,
     axis_enums: dict[str, pl.Enum],
 ) -> None:
-    """A truncated period enum forces a miss in
-    ``solve.years_represented``; the raised
-    :class:`FlexDataIntegrityError` must mention the parameter name +
-    entity_class as origin breadcrumbs.
+    """Map-inner-key dim columns (axis ``source_type == "parameter_keys"``)
+    are silently filtered to the scenario-active vocabulary in
+    ``_maybe_cast_frame``, NOT raised — Maps may legitimately carry
+    inner keys for periods/timesteps that the active scenario does
+    not enable, and the strict cast against the scenario-narrow enum
+    would otherwise reject perfectly valid data.
+
+    Entity-class dim columns remain strict — see the backend-level
+    breadcrumb suite in ``tests/spinedb_backend/test_backend_cast.py``.
     """
     # Probe the real DB to find a period token to sacrifice.
     probe = SpineDbReader(str(TEST_A_LOT_DB), "test_a_lot")
@@ -175,16 +183,14 @@ def test_spinedb_reader_integrity_error_carries_origin(
         axis_enums=bad_enums,
         contract=contract,
     )
-    with pytest.raises(FlexDataIntegrityError) as exc:
-        r.parameter("solve", "years_represented")
-    msg = str(exc.value)
-    assert sacrifice in msg
-    # Origin breadcrumb: parameter_name was threaded in.
-    assert "years_represented" in msg
-    # Origin breadcrumb: entity_class.
-    assert "solve" in msg
-    # Origin breadcrumb: scenario.
-    assert "test_a_lot" in msg
+    filtered = r.parameter("solve", "years_represented")
+    # The sacrificed token is silently dropped — no exception, no row
+    # carrying that token survives the cast.
+    assert filtered.schema["period"] == bad_enums["d"]
+    assert sacrifice not in filtered["period"].cast(pl.Utf8).to_list()
+    # All surviving period tokens are members of the narrowed vocabulary.
+    survivors = set(filtered["period"].cast(pl.Utf8).to_list()) - {None}
+    assert survivors <= set(d_vocab)
 
 
 def test_spinedb_reader_loads_contract_automatically(
