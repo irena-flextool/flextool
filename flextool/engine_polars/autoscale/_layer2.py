@@ -823,11 +823,29 @@ def _push_unscaled_to_highs(
     # setSolution.  ``setSolution`` after ``run`` overwrites the solver's
     # stored solution — verified by the inline unit test in
     # ``tests/test_autoscale_unscale_highs_pushback.py``.
+    #
+    # BUG (fixed): ``setSolution`` AFTER ``run`` also resets HiGHS's cached
+    # ``getObjectiveValue()`` to 0.0 (verified empirically against highspy
+    # 1.14.0).  ``write_v_obj`` reads that very value to derive
+    # ``v_obj__{solve}.parquet`` / ``total_cost.val``, so without the
+    # rescue path below the post-autoscale objective collapses to zero
+    # whenever Layer 2 fires on a warm-path solve (this manifested as
+    # the three ``test_commodity_ladder_rolling`` failures in v56).  Stash
+    # the pre-setSolution objective on the handle so the writer can
+    # prefer it over the zeroed-out cache.
     try:
         import highspy
     except ImportError:  # pragma: no cover — highspy is a hard dep
         return
     try:
+        # Capture HiGHS's post-run objective BEFORE setSolution wipes it.
+        # ``sol.obj`` may already be the unscaled-by-Layer-2 value
+        # (Layer 2 cost-side substitution is c -> c / cf, x -> cf · x,
+        # so c^T x is invariant; ``sol.obj`` is left untouched by
+        # ``unscale_solution``).  Read straight off the handle so the
+        # rescue path captures whatever the live HiGHS just reported,
+        # including HiGHS's own user_bound_scale unscale.
+        pre_obj = float(h.getObjectiveValue())
         hs = highspy.HighsSolution()
         cv_push = new_col_value if new_col_value is not None else sol.col_value
         hs.col_value = np.asarray(cv_push, dtype=np.float64).tolist()
@@ -837,6 +855,13 @@ def _push_unscaled_to_highs(
             hs.row_dual = np.asarray(rd_push, dtype=np.float64).tolist()
             hs.dual_valid = True
         h.setSolution(hs)
+        # Re-attach the captured objective so writers (see
+        # ``process_outputs.read_highs_solution.write_v_obj``) can
+        # bypass the zeroed ``getObjectiveValue()`` cache.
+        try:
+            h._flextool_unscaled_objective = pre_obj  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover — handle may forbid setattr
+            pass
     except Exception:  # pragma: no cover — version-specific highspy quirk
         pass
 

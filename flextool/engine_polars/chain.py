@@ -29,8 +29,47 @@ from pathlib import Path
 
 from polar_high import Solution
 
+# Backwards-compat re-exports of warm-update primitives that now live in
+# :mod:`flextool.engine_polars._warm`.  Documented in the module
+# docstring above; consumed by ``tests/engine_polars/test_warm_param_autoupdate.py``
+# (and any external caller that still does ``from
+# flextool.engine_polars.chain import _MUTABLE_PARAMS``).  Listed in
+# ``__all__`` so ruff F401 does not strip them as unused.
+from flextool.engine_polars._warm import (  # noqa: F401
+    _STRUCTURAL_FIELDS,
+    _WARM_PARAMS,
+    _MUTABLE_PARAMS,
+    _WARM_PARAMS_DEFERRED,
+    _WARM_PARAMS_NO_OP,
+    _WARM_PARAM_GATES,
+    _IncompatibleUpdate,
+    _fingerprint,
+    _param_frame_equal,
+    _param_values_position_equal,
+    _gate_active,
+    _apply_warm_updates,
+    _build_warm_problem,
+)
 
-__all__ = ["run_chain", "ChainStep"]
+
+__all__ = [
+    "run_chain",
+    "ChainStep",
+    # Re-exported warm-update primitives (see docstring).
+    "_STRUCTURAL_FIELDS",
+    "_WARM_PARAMS",
+    "_MUTABLE_PARAMS",
+    "_WARM_PARAMS_DEFERRED",
+    "_WARM_PARAMS_NO_OP",
+    "_WARM_PARAM_GATES",
+    "_IncompatibleUpdate",
+    "_fingerprint",
+    "_param_frame_equal",
+    "_param_values_position_equal",
+    "_gate_active",
+    "_apply_warm_updates",
+    "_build_warm_problem",
+]
 
 
 class ChainStep:

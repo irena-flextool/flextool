@@ -1546,6 +1546,18 @@ def _drive_cascade(
             # solution to physical coordinates.  Cleared whenever
             # ``self._warm_problem`` is dropped.
             self._autoscale_warm_layer2_plan: "_AutoscaleLayer2Plan | None" = None
+            # Cache of the pre-Layer-2 RangeReport from the warm first
+            # build, surfaced as ``Solution.streamed_lp_ranges`` after
+            # every warm solve so downstream telemetry (the LP-bound-
+            # range smoke in ``test_invest_chain_regression``, the
+            # autoscale Layer-1 YAML) sees the same four (min, max)
+            # pairs the autoscaler decided on.  Mirrors the cold path's
+            # post-``run_one_solve`` ``sol.streamed_lp_ranges = …``
+            # assignment (see the longer comment around the cold-path
+            # write below); dropped together with the warm problem.
+            self._autoscale_warm_ranges_pre: (
+                "_AutoscaleRangeReport | None"
+            ) = None
         def run(self, complete_solve_name: str) -> int:
             # Optional per-iter phase-timing (opt-in via env var).  Emits
             # `per_iter` rows to the workdir's timings.csv covering
@@ -1827,6 +1839,7 @@ def _drive_cascade(
                         # regenerate it from the fresh LP.
                         self._warm_problem = None
                         self._autoscale_warm_layer2_plan = None
+                        self._autoscale_warm_ranges_pre = None
                 if not warm_used:
                     # Build the warm problem first WITHOUT solver
                     # options so we can inspect LP ranges, then push the
@@ -1889,6 +1902,12 @@ def _drive_cascade(
                         solve_name=complete_solve_name,
                         logger=self.state.logger,
                     )
+                    # Cache the pre-Layer-2 RangeReport so subsequent
+                    # warm reuses can still attach it as
+                    # ``Solution.streamed_lp_ranges`` (the cascade only
+                    # builds the LP once, so the four ranges are
+                    # invariant across rolls of the same warm problem).
+                    self._autoscale_warm_ranges_pre = _autoscale_ranges_pre
                     _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
                         inner_pb,
                         layer2_plan=self._autoscale_warm_layer2_plan,
@@ -1916,6 +1935,33 @@ def _drive_cascade(
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                # Attach the cached pre-Layer-2 RangeReport as
+                # ``streamed_lp_ranges`` on the warm Solution so the
+                # Layer-1 emit hook and downstream telemetry
+                # (e.g. ``test_invest_chain_lp_bound_range_smoke``) see
+                # the four (min, max) pairs the autoscaler decided on.
+                # ``WarmProblem.solve`` returns a bare Solution with no
+                # streamed ranges of its own — the polar-high in-process
+                # streaming-solve path that populates that attribute is
+                # bypassed when HiGHS' ``Highs.run`` is invoked directly
+                # on the live instance, so the warm path has to surface
+                # the ranges itself.  Mirrors the cold-path assignment
+                # below (search for ``sol.streamed_lp_ranges = {``).
+                _warm_ranges = self._autoscale_warm_ranges_pre
+                if (
+                    _warm_ranges is not None
+                    and getattr(sol, "streamed_lp_ranges", None) is None
+                ):
+                    try:
+                        sol.streamed_lp_ranges = {
+                            "matrix": _warm_ranges.matrix,
+                            "cost": _warm_ranges.cost,
+                            "col_bound": _warm_ranges.bound,
+                            "row_bound": _warm_ranges.rhs,
+                        }
+                    except Exception:  # pragma: no cover — Solution may
+                        # forbid the assignment in a future polar-high
+                        pass
                 # Eager unscale on every warm solve (first-build AND
                 # reuses) so output writers see physical-coordinate
                 # primal / duals / reduced costs.  No-op when the
@@ -3088,7 +3134,15 @@ def run_single_solve_from_db(
     # autoscale Layer 2 (semantic per-type) pre-solve apply — see the
     # cascade path's wire-in for the rationale.  None when the
     # autoscaler is disabled or the Layer-1 trigger does not fire.
-    _autoscale_layer2_plan = _autoscale_apply_layer2_pre_solve(
+    # ``_autoscale_apply_layer2_pre_solve`` returns ``(plan, ranges_pre)``;
+    # the cascade (lines ~2053-2060) and warm (~1897-1904) paths unpack
+    # the tuple — leaving it packed here hands a tuple to
+    # ``_autoscale_unscale_post_solve`` and ``_autoscale_emit_layer1``,
+    # which then ``AttributeError`` on ``.col_factors``.
+    (
+        _autoscale_layer2_plan,
+        _autoscale_ranges_pre,
+    ) = _autoscale_apply_layer2_pre_solve(
         problem, solve_name=scenario_name, logger=logger,
     )
     _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
@@ -3127,6 +3181,25 @@ def run_single_solve_from_db(
         solve_name=scenario_name,
         work_folder=work_folder,
     )
+    # Attach the pre-Layer-2 RangeReport as ``streamed_lp_ranges`` on the
+    # Solution so the Layer-1 emit hook (which expects a dict per
+    # polar-high's in-process contract) sees the four (min, max) pairs
+    # the solver actually saw.  Mirrors the warm-path fix from 9c139d00
+    # and the cascade path's assignment above.
+    if (
+        _autoscale_ranges_pre is not None
+        and getattr(sol, "streamed_lp_ranges", None) is None
+    ):
+        try:
+            sol.streamed_lp_ranges = {
+                "matrix": _autoscale_ranges_pre.matrix,
+                "cost": _autoscale_ranges_pre.cost,
+                "col_bound": _autoscale_ranges_pre.bound,
+                "row_bound": _autoscale_ranges_pre.rhs,
+            }
+        except Exception:  # pragma: no cover — Solution may forbid the
+            # assignment in a future polar-high
+            pass
     # Eager Layer-2 unscale before any output writer touches ``sol``.
     _autoscale_unscale_post_solve(
         sol, _autoscale_layer2_plan, solve_name=scenario_name, logger=logger,

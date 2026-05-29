@@ -109,6 +109,59 @@ def _read_objective_from_sol(sol_path: Path) -> float:
 # and wrap the arrays in a duck-typed shim that exposes exactly the API
 # surface the writers use.  No 33 GB sidecar Highs instance.
 
+def _parse_mps_row_names(mps_path: Path) -> list[str]:
+    """Return constraint row names (in MPS ROWS order, objective excluded).
+
+    HiGHS' ``writeSolution`` periodically rewrites row names to
+    ``r0, r1, ...`` (warning: ``Row names are not present, or contain
+    duplicates: using names with prefix "r"``) when the LP's row name
+    array survives ``readModel`` in a degraded state — observed with
+    free-format MPS row names that contain bracket / comma characters
+    (``nodeBalance_eq[battery,p2020,t0001]``).  The MPS file itself
+    carries the canonical names; this helper recovers them so the
+    downstream output writers' name-based row lookups (``row_dual``
+    for ``nodeBalance_eq`` / ``reserveBalance_*_eq`` / ``co2_max_*``)
+    keep working through the subprocess-MPS path.
+
+    The objective row (``N  cost`` in the polar-high MPS) is excluded
+    so the returned list aligns with HiGHS' ``row_dual`` array, which
+    only covers constraint rows (objective dual is meaningless).
+
+    Parser: a tiny state machine over the ROWS section.  Lines look
+    like ``" E  nodeBalance_eq[...]"`` — leading whitespace + 1-char
+    sense + whitespace + name.  Anything else terminates the section.
+    """
+    names: list[str] = []
+    try:
+        with open(mps_path) as fh:
+            in_rows = False
+            for raw in fh:
+                line = raw.rstrip("\n")
+                if not in_rows:
+                    if line.strip().upper() == "ROWS":
+                        in_rows = True
+                    continue
+                # Detect end of ROWS section (next header line: COLUMNS,
+                # RHS, RANGES, BOUNDS, ENDATA, ...).  Header lines are
+                # left-flush; data lines start with whitespace.
+                if line and not line[0].isspace():
+                    break
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                sense = parts[0].upper()
+                name = parts[1]
+                # Skip the objective row — ``row_dual`` covers
+                # constraints only.
+                if sense == "N":
+                    continue
+                if sense in ("E", "L", "G"):
+                    names.append(name)
+    except OSError:
+        pass
+    return names
+
+
 def _parse_highs_sol(
     sol_path: Path,
 ) -> tuple[
@@ -990,6 +1043,31 @@ def _solve_highs_subprocess(
         n_cols = len(col_value)
         if col_dual.size == 0:
             col_dual = np.zeros(n_cols, dtype=np.float64)
+
+        # HiGHS' ``writeSolution`` may emit synthesized row names
+        # (``r0, r1, ...``) when the LP carried duplicate or otherwise
+        # un-preservable names through ``readModel`` — the warning
+        # "Row names are not present, or contain duplicates: using
+        # names with prefix 'r'" flags this on the subprocess stderr.
+        # The MPS file written by polar-high carries the canonical
+        # constraint names (e.g. ``nodeBalance_eq[n, d, t]``); recover
+        # them so the row-dual output writers' name-based lookups keep
+        # working.  Detect by checking whether every name matches the
+        # ``r<int>`` pattern AND the count equals the MPS' constraint
+        # row count.
+        if row_names and all(
+            n.startswith("r") and n[1:].isdigit() for n in row_names
+        ):
+            mps_row_names = _parse_mps_row_names(mps_path)
+            if len(mps_row_names) == len(row_names):
+                row_names = mps_row_names
+                if logger is not None:
+                    logger.debug(
+                        "save_memory: recovered %d row names from MPS "
+                        "(HiGHS writeSolution emitted synthesized 'r*' "
+                        "names for solve %r)",
+                        len(row_names), solve_name,
+                    )
         obj = _read_objective_from_sol(sol_path)
         h = _SolHighsShim(
             col_names=col_names,

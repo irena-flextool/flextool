@@ -287,7 +287,12 @@ def _node_constraint_coef(source: "InputSource", parameter_name: str) -> Param |
     The constraint axis column is named ``cn`` to disambiguate from the
     commodity axis column ``c`` (the contract's ``c_collision`` decision).
     """
-    df = source.parameter("node", parameter_name)
+    try:
+        df = source.parameter("node", parameter_name)
+    except KeyError:
+        # Older DBs may not define the parameter on the ``node`` class
+        # at all (rather than just having zero rows).  Treat the same.
+        return None
     if df.height == 0:
         return None
     return Param(

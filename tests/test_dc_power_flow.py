@@ -887,6 +887,8 @@ class TestPGLibCase14Integration:
     @pytest.fixture()
     def case14_run(self, tmp_path: Path) -> dict[str, object]:
         """Parse case14, create DB, run FlexTool, return results dict."""
+        import re
+
         from flextool.process_inputs.read_matpower import (
             create_flextool_db_from_matpower,
             read_matpower,
@@ -903,16 +905,22 @@ class TestPGLibCase14Integration:
         db_path = str(tmp_path / "case14.sqlite")
         url = create_flextool_db_from_matpower(case, db_path)
 
-        # Run FlexTool with --work-folder to isolate from other runs
+        # Run FlexTool with --work-folder + --output-location both inside
+        # ``tmp_path`` so the test is fully self-contained and never writes
+        # under the repo root.
         work_dir = tmp_path / "work"
         work_dir.mkdir()
+        output_loc = tmp_path / "out"
+        output_loc.mkdir()
 
+        scenario = "dc_opf_test"
         result = subprocess.run(
             [
                 sys.executable, "run_flextool.py",
                 url,
-                "--scenario-name", "dc_opf_test",
+                "--scenario-name", scenario,
                 "--work-folder", str(work_dir),
+                "--output-location", str(output_loc),
                 "--write-methods", "parquet",
             ],
             capture_output=True,
@@ -926,44 +934,49 @@ class TestPGLibCase14Integration:
             f"--- stderr ---\n{result.stderr[-2000:]}"
         )
 
-        # Δ.22: the legacy GMPL-mod CSV outputs (``output_raw/v_obj.csv``,
-        # ``v_angle.csv``, ``v_flow.csv``) are no longer produced — the
-        # native cascade writes per-solve parquets instead
-        # (``v_obj__<solve>.parquet``, …).  Read those, materialise
-        # the columns the original assertions expected.
+        # The native cascade no longer keeps the per-solve
+        # ``output_raw/v_obj__*.parquet`` / ``v_angle__*.parquet`` lean
+        # files around after ``write_outputs`` runs (``output_raw/`` is
+        # cleaned up unless ``--csv-dump`` is passed).  The canonical
+        # outputs after ``write_outputs`` are:
+        #
+        #   * Objective value → emitted on stdout as ``total_cost.val = X``
+        #     by ``write_v_obj`` (read_highs_solution.py:1507).
+        #   * Per-bus angles  → ``output_parquet/<scenario>/dc_angle_dt_e.parquet``
+        #     produced by the ``dc_power_flow`` output func
+        #     (out_ancillary.py:370) and aggregated by ``write_outputs``
+        #     with a top-level ``scenario`` column axis.
         from flextool.lean_parquet import read_lean_parquet
 
-        v_obj_pq = next(
-            (work_dir / "output_raw").glob("v_obj__*.parquet"), None,
+        obj_matches = re.findall(
+            r"total_cost\.val\s*=\s*([0-9eE.+\-]+)", result.stdout,
         )
-        assert v_obj_pq is not None, (
-            f"No v_obj parquet under {work_dir / 'output_raw'}"
+        assert obj_matches, (
+            "No 'total_cost.val = ...' line in FlexTool stdout.\n"
+            f"--- stdout tail ---\n{result.stdout[-2000:]}"
         )
-        obj_df = read_lean_parquet(v_obj_pq)
-        obj_value = float(obj_df["objective"].iloc[-1])
+        obj_value = float(obj_matches[-1])
 
-        v_angle_pq = next(
-            (work_dir / "output_raw").glob("v_angle__*.parquet"), None,
+        angle_pq = output_loc / "output_parquet" / scenario / "dc_angle_dt_e.parquet"
+        assert angle_pq.exists(), (
+            f"Expected aggregated DC angle parquet at {angle_pq}.\n"
+            f"output_parquet contents: "
+            f"{sorted(p.name for p in (output_loc / 'output_parquet' / scenario).glob('*')) if (output_loc / 'output_parquet' / scenario).exists() else 'MISSING'}"
         )
-        assert v_angle_pq is not None, (
-            f"No v_angle parquet under {work_dir / 'output_raw'}"
-        )
-        angle_df = read_lean_parquet(v_angle_pq)
-        # Mirror the original ``DictReader`` ``angle_row`` shape — a
-        # dict ``{bus_label: value_string}``.  The parquet's columns are
-        # the node names; values arrive numeric so str-cast on the way
-        # out to mirror the CSV reader's behaviour.
+        angle_df = read_lean_parquet(angle_pq)
+        # ``write_outputs`` wraps each result in ``pd.concat({scenario: df},
+        # axis=1, names=['scenario'])`` so columns become a MultiIndex
+        # ``(scenario, node)`` — drop the scenario level to recover the
+        # node-keyed columns the original test expected.
+        if hasattr(angle_df.columns, "nlevels") and angle_df.columns.nlevels > 1:
+            angle_df = angle_df.droplevel("scenario", axis=1)
+        # Build the original ``angle_row`` shape — ``{bus_label: value_str}``
+        # — using the first realised timestep.  Values arrive numeric so
+        # str-cast to mirror the legacy CSV ``DictReader`` behaviour.
         angle_row = {
             str(col): str(angle_df[col].iloc[0])
             for col in angle_df.columns
         }
-
-        v_flow_pq = next(
-            (work_dir / "output_raw").glob("v_flow__*.parquet"), None,
-        )
-        assert v_flow_pq is not None, (
-            f"No v_flow parquet under {work_dir / 'output_raw'}"
-        )
 
         return {
             "case": case,
@@ -971,6 +984,7 @@ class TestPGLibCase14Integration:
             "angle_row": angle_row,
             "stdout": result.stdout,
             "work_dir": work_dir,
+            "output_loc": output_loc,
         }
 
     def test_objective_value(self, case14_run: dict) -> None:

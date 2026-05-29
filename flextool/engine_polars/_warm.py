@@ -264,6 +264,26 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     # Commodity / CO2 — composite obj.
     "p_commodity_price", "p_co2_price", "p_co2_max_period",
     "p_co2_max_total", "p_co2_content",
+    # Commodity ladder (cumulative + annual) — RHS / cap terms of
+    # ``ladder_tier_cap_cumulative_roll`` / ``ladder_tier_cap_annual_roll``.
+    # The rolling cumulative accumulator (``p_ladder_cum_realized_mwh``)
+    # AND the per-roll period-fill fraction (``p_f_d_k``) BOTH change
+    # between rolls of a rolling-window solve — they encode the cross-
+    # solve carry of realised MWh and the current roll's share of each
+    # period, respectively.  Without listing them here, ``_apply_warm_updates``
+    # silently kept roll N+1's LP at roll N's RHS, so the tier-cap
+    # constraint never tightened and roll N+1's v_trade collapsed to
+    # roll N's solution.  Symptom: tests/test_commodity_ladder_rolling.py
+    # ``TestWithinPeriodCumulativeRolling::test_within_period_cumulative_completes``
+    # (only p2020 in the final accumulator) and
+    # ``TestCumulativeLadderBindingCap::test_roll2_uses_tier2_only_after_roll1_saturates_cap``
+    # (roll-2 v_trade zero across all tiers).  Listing them as deferred
+    # forces a cold rebuild on any per-roll diff — the ladder constraints
+    # touch composite LP cells with no warm-update side-table entry, so
+    # cold rebuild is the only correct option here.
+    "p_ladder_cum_realized_mwh", "p_f_d_k",
+    "p_ladder_cum_price", "p_ladder_cum_quantity",
+    "p_ladder_ann_price", "p_ladder_ann_quantity",
     # Process topology Params used in many cstrs / objs.
     "p_unitsize", "p_flow_upper", "p_flow_upper_existing",
     "p_slope", "p_process_existing_count", "p_process_availability",

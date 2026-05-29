@@ -222,13 +222,17 @@ def test_default_unchanged(
 def test_explicit_highs_matches_default(
     tmp_path: Path, stochastics_default_obj: float,
 ) -> None:
-    """Setting ``solver = "highs"`` (with default ``solver_io_api =
-    "direct"``) must be byte-identical to the default path — the call
-    site reduces to the same ``problem.solve(keep_solver=True)``.
+    """Setting ``solver = "highs"`` must be byte-identical to the
+    default path — the call site reduces to the same
+    ``problem.solve(keep_solver=True)``.
+
+    v56 Batch C.9 removed the ``solver_io_api`` DB axis (replaced by
+    the ``--matrix-file-format`` CLI flag; when unset the default
+    ``SolverConfig.io_api`` is ``"direct"``).  Only ``solver`` needs
+    to be authored for this parity check.
     """
     db_url = _make_migrated_db(tmp_path)
     _set_solver_param(db_url, SOLVE_NAME, "solver", "highs")
-    _set_solver_param(db_url, SOLVE_NAME, "solver_io_api", "direct")
 
     step = run_single_solve_from_db(
         db_url, SCENARIO, work_folder=tmp_path / "work", emit_output=False,

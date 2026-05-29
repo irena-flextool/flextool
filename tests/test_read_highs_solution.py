@@ -338,8 +338,18 @@ def test_write_variable_parquet_round_trip(tmp_path: Path) -> None:
 
 
 def test_write_v_obj_scalar(tmp_path: Path) -> None:
-    """v_obj file contains (solve,)-indexed objective scaled by 1e6."""
+    """v_obj file contains (solve,)-indexed objective scaled by 1e6.
+
+    Cold-path contract: when ``_flextool_unscaled_objective`` is not
+    stashed (no autoscale Layer 2 push), ``write_v_obj`` falls back
+    to ``h.getObjectiveValue()`` (see commit aab46eb5).  We must
+    explicitly null the attribute because :class:`MagicMock`
+    auto-fabricates attribute reads and ``float(MagicMock())`` returns
+    ``1.0`` — without the explicit None the test would silently exit
+    via the autoscale branch and never exercise getObjectiveValue.
+    """
     h = _fake_highs(variable_names=[], col_values=[])
+    h._flextool_unscaled_objective = None  # cold path
     h.getObjectiveValue.return_value = 1.234  # raw HiGHS objective (scaled)
     path = write_v_obj(h, solve_name="s1", output_dir=tmp_path)
     assert path.name == "v_obj__s1.parquet"

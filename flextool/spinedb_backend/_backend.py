@@ -191,12 +191,31 @@ class SpineDBBackend:
 
     def _open(self) -> None:
         """Open the DB, apply the scenario filter, pre-fetch entities +
-        parameter values."""
+        parameter values.
+
+        spinedb-api now requires the ``DatabaseMapping`` to be inside a
+        ``with`` block before ``self.query()`` works — the underlying
+        ``Session`` is only created in ``__enter__``.  Pre-v56 code
+        could call ``scenario_filter_from_dict`` against a freshly
+        constructed ``DatabaseMapping``; modern spinedb-api raises
+        ``SpineDBAPIError("session is None; did you forget to use the
+        DB map inside a 'with' block?")``.  We therefore enter the
+        mapping's context here and keep it open for the lifetime of
+        this Backend — :meth:`close` exits the context.  The
+        ``_context_open_count`` machinery in ``DatabaseMapping`` lets
+        nested call sites (e.g. ``fetch_all`` → internal ``with self``)
+        re-enter without closing prematurely.
+        """
         import spinedb_api as api  # late import: keeps cold-import cheap
         from spinedb_api import DatabaseMapping
 
         self._api = api
         db = DatabaseMapping(self._db_url)
+        # Enter the mapping's context so ``self._session`` is created.
+        # Required by ``scenario_filter_from_dict`` (which calls
+        # ``db.query()`` while building the filter's subqueries) and by
+        # downstream ``find_*`` calls.  Matched by :meth:`close`.
+        db.__enter__()
         # ``fetch_all`` mirrors ``input_writer.write_input`` (line 1836-1837).
         # Pre-fetching here means subsequent ``find_*`` calls are pure
         # in-memory walks.
@@ -212,6 +231,12 @@ class SpineDBBackend:
     def close(self) -> None:
         """Close the underlying DB connection.  Idempotent."""
         if self._db is not None:
+            # Exit the mapping's context manager entered by :meth:`_open`,
+            # so the Session that was created in ``__enter__`` is closed.
+            try:
+                self._db.__exit__(None, None, None)
+            except Exception:
+                pass
             try:
                 self._db.connection.close()
             except Exception:

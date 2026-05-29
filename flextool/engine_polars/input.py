@@ -4012,9 +4012,28 @@ def load_flextool(source: "Path | str | FlexInputSource",
             try:
                 from flextool.spinedb_backend import SpineDBBackend
                 contract = load_axis_contract()
+                # Resolve a scenario name so the backend's scenario_filter
+                # narrows ``find_entities`` / ``find_parameter_values`` to
+                # the active alternatives.  Without this, ``is_enabled="no"``
+                # parameter rows from non-scenario alternatives can disable
+                # entities that are perfectly valid in the active scenario
+                # — surfacing as missing tokens in the constraint / unit /
+                # connection axis enum vocabularies (e.g. ``coal_chp_fix``
+                # dropped from the ``constraint`` enum on the ``coal_chp``
+                # scenario, which then nulls the ``cn`` column in
+                # ``flow_constraint_idx`` and silently drops every user-
+                # defined flow constraint from the LP).  Source the
+                # scenario from an explicit ``db_reader=`` first (it
+                # already knows which scenario to filter to); fall back
+                # to ``_find_scenario`` on the workdir convention.
+                _scenario_for_backend = None
+                if db_reader is not None:
+                    _scenario_for_backend = getattr(db_reader, "scenario", None)
+                if _scenario_for_backend is None:
+                    _scenario_for_backend = _find_scenario(workdir_for_db)
                 with SpineDBBackend(
                     f"sqlite:///{sqlite_for_backend}",
-                    None,
+                    _scenario_for_backend,
                 ) as _ab:
                     axis_enums = build_axis_enums(_ab, contract)
                 if provider is not None:
