@@ -400,6 +400,8 @@ def _autoscale_apply_layer2_pre_solve(
     try:
         ranges_pre = _autoscale_compute_ranges(pb, cfg)
     except Exception:  # pragma: no cover — guard against future API drift
+        if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
+            raise
         logger.exception(
             "autoscale Layer 2 pre-solve range readout failed for %s; "
             "skipping Layer 2 (Layer 1 post-solve still fires)",
@@ -415,6 +417,17 @@ def _autoscale_apply_layer2_pre_solve(
     try:
         plan = _autoscale_apply_layer2(pb, cfg)
     except Exception:  # pragma: no cover
+        if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
+            # Opt-in fail-fast for tests / CI: surface Layer-2 errors
+            # (notably autoscale-registry gaps — an unregistered constraint
+            # / variable / parameter raising KeyError in
+            # bucket_coefficients) loudly instead of silently reverting to
+            # an un-scaled LP.  This is the behavioral backstop for dynamic
+            # (f-string) constraint names that the static-literal grep in
+            # test_registry_coverage cannot see (e.g. ramp_*_constraint).
+            # Production runs leave the flag unset and keep degrading
+            # gracefully so a registry gap never blocks a user's solve.
+            raise
         logger.exception(
             "autoscale Layer 2 apply failed for %s; reverting solve to "
             "un-scaled LP (Layer 1 post-solve still fires)",

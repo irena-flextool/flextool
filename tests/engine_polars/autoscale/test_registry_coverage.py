@@ -50,11 +50,6 @@ from pathlib import Path
 import pytest
 
 
-_TEMPLATE_DB = Path(
-    "/home/jkiviluo/sources/flextool-engine/templates/input_data_template.sqlite"
-)
-
-
 # add_var("name", ...)  /  add_cstr("name", ...).  Both names are
 # always the first positional argument as a string literal.  The
 # pattern is permissive about whitespace + newlines so the multi-line
@@ -83,22 +78,29 @@ def _engine_sources() -> list[Path]:
     ]
 
 
-def test_parameter_registry_covers_template_db() -> None:
-    """Every (parameter, entity_class) pair in the template has a
+def test_parameter_registry_covers_schema(schema_db_url: str) -> None:
+    """Every (parameter, entity_class) pair the schema declares has a
     :class:`QuantityType` registration.
 
-    If this fails the diagnostic message lists the missing pairs —
-    those parameters need a registry entry in
-    ``flextool/engine_polars/autoscale/_quantity_types.py`` with a
-    quantity tag derived from the parameter's ``description`` field.
+    Reads from a DB built off ``schemas/spinedb_schema.json`` at session
+    start (the ``schema_db_url`` fixture) rather than a checked-in
+    template SQLite.  The template lags the schema between regenerations
+    and silently under-covers — the v56 ``is_enabled`` add was present in
+    the schema but missing from ``templates/input_data_template.sqlite``,
+    so the old template-DB form of this test stayed green while
+    ``PARAMETER_TYPES`` was incomplete.  Building from the schema also
+    exercises the real ``import_data`` path.
+
+    If this fails the diagnostic lists the missing pairs — add each to
+    ``flextool/engine_polars/autoscale/_quantity_types.py`` with the
+    quantity tag from the parameter's description (flags / yes_no gates →
+    DIMENSIONLESS).
     """
-    if not _TEMPLATE_DB.exists():
-        pytest.skip(f"template DB not present at {_TEMPLATE_DB}")
     from flextool.engine_polars.autoscale._quantity_types import PARAMETER_TYPES
 
-    # Read-only URI so a buggy test cannot mutate the canonical
-    # template DB even by accident.
-    conn = sqlite3.connect(f"file:{_TEMPLATE_DB}?mode=ro", uri=True)
+    db_path = schema_db_url.replace("sqlite:///", "")
+    # Read-only URI so a buggy test cannot mutate the built DB by accident.
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         rows = conn.execute(
             "SELECT pd.name, ec.name "
@@ -111,8 +113,9 @@ def test_parameter_registry_covers_template_db() -> None:
     pairs = [(p, ec) for p, ec in rows]
     missing = [p for p in pairs if p not in PARAMETER_TYPES]
     assert not missing, (
-        f"{len(missing)} (parameter, entity_class) pairs missing from "
-        f"PARAMETER_TYPES (out of {len(pairs)} total in template):\n"
+        f"{len(missing)} (parameter, entity_class) pairs declared in "
+        f"spinedb_schema.json are missing from PARAMETER_TYPES (out of "
+        f"{len(pairs)} total):\n"
         + "\n".join(f"  {p!r}" for p in missing[:50])
         + ("\n  ..." if len(missing) > 50 else "")
         + "\n\nAdd each pair to "
@@ -188,3 +191,51 @@ def test_constraint_registry_covers_engine_sources() -> None:
         "with the QuantityType matching its row-bound (RHS) meaning, or "
         "``CstrFamily(None)`` if the row carries no per-row scaling."
     )
+
+
+# Dynamic (f-string) constraint names that the literal grep above CANNOT
+# see — ``add_cstr(f"...")`` calls.  These resolve only through
+# ``lookup_cstr``'s prefix / suffix dispatch, so the grep test's claim
+# that "the registry covers them transparently" is unverified by it.
+# The ramp family proved that gap can bite: the ``"ramp"`` prefix entry
+# existed but prefix dispatch was unimplemented, so
+# ``ramp_sink_up_constraint`` raised KeyError and silently degraded the
+# whole solve to an un-scaled LP.  Pin every dynamic family behaviorally
+# here.  When a new ``add_cstr(f"...")`` family is added in the engine,
+# add a representative instantiation to this list.
+_DYNAMIC_CONSTRAINT_SAMPLES = [
+    # ramp — model.py:2328  f"ramp_{side}_{dir_}_constraint"
+    "ramp_sink_up_constraint", "ramp_sink_down_constraint",
+    "ramp_source_up_constraint", "ramp_source_down_constraint",
+    # unit commitment — model.py:3909+  f"...{sfx}", sfx ∈ {_linear,_integer}
+    "maxOnline_linear", "maxOnline_integer",
+    "maxStartup_linear", "maxStartup_integer",
+    "maxShutdown_linear", "maxShutdown_integer",
+    "online__startup_linear", "online__startup_integer",
+    "online__shutdown_linear", "online__shutdown_integer",
+    "maxToSink_online_linear", "maxToSink_online_integer",
+    "minToSink_minload_linear", "minToSink_minload_integer",
+    "minimum_uptime_linear", "minimum_uptime_integer",
+    "minimum_downtime_linear", "minimum_downtime_integer",
+]
+
+
+@pytest.mark.parametrize("name", _DYNAMIC_CONSTRAINT_SAMPLES)
+def test_dynamic_constraint_names_resolve(name: str) -> None:
+    """Every dynamic (f-string) constraint family resolves via
+    :func:`lookup_cstr` and :func:`resolve_cstr_rhs_type`.
+
+    Behavioral complement to the literal-grep test above: actually
+    instantiating and resolving the dynamic names is the only thing that
+    catches a registry entry whose dispatch is broken (the ramp bug) or a
+    new dynamic family with no entry at all.
+    """
+    from flextool.engine_polars.autoscale._layer2_types import (
+        lookup_cstr,
+        resolve_cstr_rhs_type,
+    )
+
+    assert lookup_cstr(name) is not None  # raises KeyError if unresolved
+    # The path Layer 2 actually calls; must not raise for these samples
+    # (none carry the _p/_n suffix the group_capacity resolver requires).
+    resolve_cstr_rhs_type(name)

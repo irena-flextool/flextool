@@ -139,6 +139,31 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture(scope="session")
+def schema_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Build a fresh SQLite from ``schemas/spinedb_schema.json`` once per
+    session.
+
+    The schema JSON is the source of truth for the parameter / entity-class
+    / value-list contract.  Tests that need to enumerate "every parameter
+    FlexTool declares" must read it from a DB built off this JSON rather
+    than a checked-in template (``templates/input_data_template.sqlite``),
+    which lags the schema between regenerations and silently under-covers
+    (the v56 ``is_enabled`` add was missing from the on-disk template while
+    present in the schema).  Building here also exercises the real
+    schema→DB ``import_data`` path.  Session-scoped: the ~50 ms
+    ``initialize_database`` call runs once for the whole suite.
+    """
+    from flextool.update_flextool.initialize_database import initialize_database
+
+    schema_json = (
+        TEST_DIR.parent / "flextool" / "schemas" / "spinedb_schema.json"
+    )
+    db_path = tmp_path_factory.mktemp("schema_db") / "schema.sqlite"
+    initialize_database(str(schema_json), str(db_path))
+    return f"sqlite:///{db_path}"
+
+
+@pytest.fixture(scope="session")
 def test_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     """Import JSON fixture → fresh SQLite DB once per test session.
 
