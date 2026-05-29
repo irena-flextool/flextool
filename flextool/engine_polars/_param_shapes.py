@@ -85,18 +85,125 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+class AxisName(Enum):
+    """Canonical axis identifiers for parameter-shape declarations.
+
+    Sourced from ``flextool/schemas/flextool_axis_contract.json`` axes —
+    each member's value is the axis's `name` in that contract.  Phase A
+    introduces only the axes that participate in declared parameter
+    shapes today (period ``d``, time ``t``, tier ``i``).  Adding
+    ``block`` / ``branch`` / etc. is a follow-up when the registry
+    grows entries that use them.
+
+    Note: the model-internal ``ROLL`` axis is intentionally NOT included
+    — rolling boundaries are an engine concern, never authored as a
+    parameter index in input/output data.
+    """
+
+    D = "d"     # period
+    T = "t"     # time
+    I = "i"     # tier (price-ladder)  # noqa: E741 — axis name from contract
+
+
+class LeafKind(Enum):
+    """Leaf value kind for parameter shape declarations.
+
+    Phase A introduces three kinds:
+
+    * ``NUMERIC`` — the historical default; a scalar Float (or Int that
+      casts cleanly).  Every pre-existing :class:`Shape` member declares
+      this leaf kind.
+    * ``STR_FROM_LIST`` — a scalar string constrained by a
+      ``parameter_value_list`` (e.g. ``invest_methods``).  The reader
+      writes whichever token the DB carries; the registry just records
+      that this is a constrained-string leaf.
+    * ``FACET_PRICE_QUANTITY`` — a depth-1 ``Map(facet -> value)`` whose
+      facet keys are exactly ``{"price", "quantity"}``.  Used by the
+      commodity price-ladder shapes — Spine encodes the per-tier
+      ``{price, quantity}`` record as a third Map level.
+
+    Phase A consumers only need the leaf kind for documentation and
+    Phase B reader-routing.  ``resolve_param_shape`` accepts the new
+    leaf-kind shapes structurally; the reader/writer wiring is Phase B.
+    """
+
+    NUMERIC = "numeric"
+    STR_FROM_LIST = "str_from_list"
+    FACET_PRICE_QUANTITY = "facet[price,quantity]"
+
+
+# Frozen facet sets — kept here so ``ParamAxes`` and any Phase B reader
+# can share a single source of truth without re-importing across modules.
+_FACET_PRICE_QUANTITY: frozenset[str] = frozenset(("price", "quantity"))
+
+
 class Shape(Enum):
-    """Recognised parameter shapes for the (period, time)-broadcast family.
+    """Recognised parameter shapes.
 
     The string values mirror the user's notation in the dispatch /
-    open-issues doc (e.g. ``"1d_map[period]"``).
+    open-issues doc (e.g. ``"1d_map[period]"``).  Each member maps to a
+    ``ParamAxes(map_levels, leaf)`` view via :data:`_SHAPE_AXES` for
+    callers that prefer the (axes, leaf) decomposition over the enum tag.
+
+    The original (period, time)-broadcast family — ``SCALAR``,
+    ``MAP_PERIOD``, ``MAP_TIME``, ``MAP_PERIOD_TIME``, ``MAP_TIME_PERIOD``
+    — covers every entry routed through ``broadcast_to_period[_time]``
+    today.  Phase A adds three new members:
+
+    * ``SCALAR_STR`` — terminal scalar string (no map levels), value
+      constrained by a ``parameter_value_list``.  Used by the
+      ``{node, unit, connection}.invest_method`` family.
+    * ``MAP_TIER_FACET`` — depth-2 Map ``Map(tier -> {price, quantity})``
+      via :data:`LeafKind.FACET_PRICE_QUANTITY`.  Used by
+      ``commodity.price_ladder_cumulative`` and the depth-2 variant of
+      ``commodity.price_ladder_annual``.
+    * ``MAP_PERIOD_TIER_FACET`` — depth-3 Map
+      ``Map(period -> Map(tier -> {price, quantity}))``.  Used by the
+      depth-3 variant of ``commodity.price_ladder_annual``.
+
+    The Phase A choice was (a) — extend this enum in-place — because the
+    existing ``Shape`` use sites (3 test files + ``_direct_params.py``
+    imports only the resolver / broadcasters, not the enum members
+    directly) confine the blast radius to this module.  A natural
+    follow-up (option b in the Phase A design doc) is to make ``Shape``
+    a derived view over ``ParamAxes(map_levels, leaf)`` and let
+    registry entries quote axis tuples directly — useful when the
+    contract grows axes like ``block`` / ``branch``.  For now the
+    enum-extension keeps the diff minimal.
     """
 
     SCALAR = "scalar"
+    SCALAR_STR = "scalar[str_from_list]"
     MAP_PERIOD = "1d_map[period]"
     MAP_TIME = "1d_map[time]"
     MAP_PERIOD_TIME = "2d_map[period,time]"
     MAP_TIME_PERIOD = "2d_map[time,period]"
+    MAP_TIER_FACET = "2d_map[tier,facet{price,quantity}]"
+    MAP_PERIOD_TIER_FACET = "3d_map[period,tier,facet{price,quantity}]"
+
+
+@dataclass(frozen=True)
+class ParamAxes:
+    """Decomposed (axes, leaf) view of a :class:`Shape`.
+
+    ``map_levels`` are the outer Map index axes from outer to inner; for
+    a ``FACET_PRICE_QUANTITY`` leaf the trailing facet level is NOT
+    included in ``map_levels`` — it's carried in ``leaf`` instead, so
+    the axis tuple stays a pure list of named axes from
+    :class:`AxisName`.
+
+    Example: ``Shape.MAP_PERIOD_TIER_FACET`` decomposes to
+    ``ParamAxes(map_levels=(AxisName.D, AxisName.I),
+                leaf=LeafKind.FACET_PRICE_QUANTITY)``.
+
+    Phase A does not consume ``ParamAxes`` from the resolver — it's a
+    pure documentation/derived view, accessible via
+    :func:`shape_to_axes`.  Phase B will use it to route the new
+    parameter families through reader-side shape probing.
+    """
+
+    map_levels: tuple[AxisName, ...]
+    leaf: LeafKind
 
 
 # Per-(entity_class, parameter_name) allow-list.  Each entry lists the
@@ -209,6 +316,28 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("connection", "availability"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
+    # ─── unit / connection: efficiency-curve (period, time) Params ────────
+    # ``efficiency``, ``efficiency_at_min_load`` and ``min_load`` are all
+    # members of ``_PROCESS_TIME_PARAM``
+    # (_emit_arc_unions.py:146-149 — flextool_base.dat:153), so each admits
+    # the full (period, time) shape family exactly like ``availability``.
+    # Consumed by :func:`._derived_params.p_slope_from_source` /
+    # :func:`._derived_params.p_section_from_source` via
+    # :func:`._derived_params._eff_param_to_pdt`.  ``efficiency`` is
+    # authored on both unit and connection; ``efficiency_at_min_load`` /
+    # ``min_load`` only feed the unit ``min_load_efficiency`` linearisation.
+    ("unit", "efficiency"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    ("connection", "efficiency"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    ("unit", "efficiency_at_min_load"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    ("unit", "min_load"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
     # ─── commodity: time Params ──────────────────────────────────────────
     # commodityTimeParam = {price}.
     # Cascade: pt → pd → p → 0 (write_pdtCommodity, no pbt).
@@ -243,7 +372,100 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("reserve__upDown__group", "reservation"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
+    # ─── Phase A: commodity price-ladder Maps (tier-keyed, facet leaf) ───
+    # ``commodity.price_ladder_cumulative`` — depth-2 Map keyed by ``tier``
+    # with a facet-dict leaf ``{price, quantity}``.  Per the schema
+    # description (spinedb_schema.json L874) and the input-derivation
+    # contract (_commodity_ladder.py:151-156), this is the only valid
+    # authoring shape — period-agnostic, one row per tier.  Spine's
+    # ``parameter_value_types`` block locks this at ``("commodity",
+    # "price_ladder_cumulative", "map", 2)``.
+    #
+    # ``commodity.price_ladder_annual`` — TWO valid variants per the
+    # schema description (L869): a depth-2 form identical to cumulative
+    # (the same ``Map(tier -> {price, quantity})`` is expanded across
+    # every model period), and a depth-3 form
+    # ``Map(period -> Map(tier -> {price, quantity}))`` that varies the
+    # cap per period.  Spine's ``parameter_value_types`` declares both:
+    # ``("commodity", "price_ladder_annual", "map", 2)`` and
+    # ``("commodity", "price_ladder_annual", "map", 3)`` — matching the
+    # auto-detect branch in :func:`derive_commodity_ladder_annual`
+    # (input_derivation/_commodity_ladder.py:237-243).
+    #
+    # Phase A is contract-only.  Phase B will wire these through the
+    # readers/writers; today the entries just unblock
+    # :func:`resolve_param_shape` from raising on the registry probe.
+    ("commodity", "price_ladder_cumulative"): {Shape.MAP_TIER_FACET},
+    ("commodity", "price_ladder_annual"): {
+        Shape.MAP_TIER_FACET, Shape.MAP_PERIOD_TIER_FACET,
+    },
+    # ─── Phase A: scalar string constrained by parameter_value_list ──────
+    # ``{node, unit, connection}.invest_method`` — terminal scalar string
+    # whose value is constrained by the ``invest_methods`` value list
+    # (spinedb_schema.json L358-414 enumerate the allowed tokens).
+    # Spine's ``parameter_value_types`` locks each at ``("...",
+    # "invest_method", "str", 0)``.
+    #
+    # Phase A registers these as :class:`Shape.SCALAR_STR` so the
+    # registry can express that the leaf is a constrained string, not a
+    # numeric.  Phase B will wire the readers to honour the leaf-kind
+    # tag — today these parameters are read by feature-gate logic that
+    # bypasses :func:`resolve_param_shape`.
+    ("node",       "invest_method"): {Shape.SCALAR_STR},
+    ("unit",       "invest_method"): {Shape.SCALAR_STR},
+    ("connection", "invest_method"): {Shape.SCALAR_STR},
 }
+
+
+# ---------------------------------------------------------------------------
+# ParamAxes — derived (map_levels, leaf) view per :class:`Shape`
+# ---------------------------------------------------------------------------
+
+
+# Per-shape ``ParamAxes`` view.  Phase A consumers can read this to
+# decompose a :class:`Shape` into its outer-axis tuple + leaf kind
+# without inspecting the enum tag string.  Kept in sync with the
+# :class:`Shape` enum — every member must have an entry here.
+_SHAPE_AXES: "dict[Shape, ParamAxes]" = {
+    Shape.SCALAR:               ParamAxes((), LeafKind.NUMERIC),
+    Shape.SCALAR_STR:           ParamAxes((), LeafKind.STR_FROM_LIST),
+    Shape.MAP_PERIOD:           ParamAxes((AxisName.D,), LeafKind.NUMERIC),
+    Shape.MAP_TIME:             ParamAxes((AxisName.T,), LeafKind.NUMERIC),
+    Shape.MAP_PERIOD_TIME:      ParamAxes((AxisName.D, AxisName.T),
+                                          LeafKind.NUMERIC),
+    Shape.MAP_TIME_PERIOD:      ParamAxes((AxisName.T, AxisName.D),
+                                          LeafKind.NUMERIC),
+    Shape.MAP_TIER_FACET:       ParamAxes((AxisName.I,),
+                                          LeafKind.FACET_PRICE_QUANTITY),
+    Shape.MAP_PERIOD_TIER_FACET: ParamAxes(
+        (AxisName.D, AxisName.I), LeafKind.FACET_PRICE_QUANTITY),
+}
+
+
+def shape_to_axes(shape: Shape) -> ParamAxes:
+    """Return the :class:`ParamAxes` view of *shape*.
+
+    Stable read-only accessor — consumers should prefer this over
+    indexing :data:`_SHAPE_AXES` directly so the module stays free to
+    refactor the storage representation later (e.g. derive Shape from
+    ParamAxes if option (b) in the Phase A design is adopted).
+    """
+    return _SHAPE_AXES[shape]
+
+
+def facet_keys(leaf: LeafKind) -> "frozenset[str]":
+    """Return the facet-key set for a facet-dict :class:`LeafKind`.
+
+    Raises :class:`KeyError` when *leaf* isn't a facet leaf.  Phase B
+    readers use this when projecting facet-keyed leaves into columnar
+    form (one column per facet) — exposing the contract here keeps the
+    facet vocabulary in a single place.
+    """
+    if leaf is LeafKind.FACET_PRICE_QUANTITY:
+        return _FACET_PRICE_QUANTITY
+    raise KeyError(
+        f"facet_keys: LeafKind {leaf!r} is not a facet leaf"
+    )
 
 
 # Allowed shapes for the (entity, period) family — used by
@@ -323,12 +545,25 @@ def _normalise_label(n: "str | None") -> "str | None":
 # silent-default ``index_name`` labels by consulting the per-parameter
 # allow-list.  Each entry: shape → tuple of canonical labels per depth
 # level (length 0/1/2).  Mirrors the enum membership.
-_SHAPE_LABELS: "dict[Shape, tuple[str, ...]]" = {
-    Shape.SCALAR:           (),
-    Shape.MAP_PERIOD:       ("period",),
-    Shape.MAP_TIME:         ("time",),
-    Shape.MAP_PERIOD_TIME:  ("period", "time"),
-    Shape.MAP_TIME_PERIOD:  ("time", "period"),
+# For facet-leaf shapes every slot is ``None`` — the author chooses the
+# ``index_name`` per parameter value (``"tier"``, ``"i"``, ``"x"``, ...
+# are all valid) so structural detection MUST NOT rely on a canonical
+# label.  Phase A routes facet recognition through the registry
+# allow-list in :func:`resolve_param_shape` instead (see
+# :func:`_recognise_facet_shape`).  Listing the slots as ``None`` here
+# documents "label-agnostic" semantics — and keeps
+# :func:`_infer_silent_default_labels` consistent for these depths
+# (the helper only fills slots when the candidate set agrees on a
+# canonical label; ``None`` won't promote to anything).
+_SHAPE_LABELS: "dict[Shape, tuple[str | None, ...]]" = {
+    Shape.SCALAR:                   (),
+    Shape.SCALAR_STR:               (),
+    Shape.MAP_PERIOD:               ("period",),
+    Shape.MAP_TIME:                 ("time",),
+    Shape.MAP_PERIOD_TIME:          ("period", "time"),
+    Shape.MAP_TIME_PERIOD:          ("time", "period"),
+    Shape.MAP_TIER_FACET:           (None, None),
+    Shape.MAP_PERIOD_TIER_FACET:    (None, None, None),
 }
 
 
@@ -409,6 +644,16 @@ def _shape_from_indices(index_names: "list[str | None]",
     # Silent defaults at any level → return None (ambiguous; caller
     # falls back).  We DON'T raise here because the spinedb_api default
     # is a silent oversight, not a deliberate mismatch.
+    #
+    # Phase A note: registry-driven recognition of facet-leaf shapes
+    # (``MAP_TIER_FACET``, ``MAP_PERIOD_TIER_FACET``) does NOT live
+    # here — :func:`resolve_param_shape` handles it via the allow-list
+    # because the user can author any ``index_name`` they want for the
+    # outer Map levels (``index_name`` is user-set; ``"x"`` is the
+    # spinedb_api default when unset).  The shape + position is what
+    # identifies the parameter family; label inspection only
+    # disambiguates the legacy depth-1 / depth-2 period-vs-time case
+    # below.
     if any(n is None for n in normalised):
         return None
 
@@ -637,6 +882,47 @@ def _try_parameter_frame(
         return explicit
 
 
+def _recognise_facet_shape(
+    raw_labels: "list[str | None]",
+    allowed: "set[Shape]",
+) -> "Shape | None":
+    """Registry-driven detection for facet-leaf shapes (Phase A).
+
+    Spine-side ``index_name`` labels are user-set per parameter value —
+    the user may author ``Map(<anything>)`` with any label they like
+    (the spinedb_api default is ``"x"``).  Phase A therefore identifies
+    facet-leaf shapes (``MAP_TIER_FACET``, ``MAP_PERIOD_TIER_FACET``)
+    from the **shape + position** of the value, not from the labels:
+
+    * Depth of the raw shape info matches the candidate facet shape's
+      depth in :data:`_SHAPE_AXES` (``len(map_levels) + 1`` because the
+      facet itself sits at the innermost level).
+    * The allow-list contains exactly one facet shape at that depth —
+      so the structural match is unambiguous.
+
+    When both conditions hold the helper returns the matching facet
+    shape.  Otherwise ``None`` and the caller falls back to the legacy
+    label-based detection via :func:`_shape_from_indices`.
+
+    The helper does NOT inspect *raw_labels* values — that's the whole
+    point: facet recognition is label-agnostic.  We only need the depth
+    (``len(raw_labels)``).
+    """
+    depth = len(raw_labels)
+    facet_candidates = [
+        s for s in allowed
+        if _SHAPE_AXES[s].leaf is LeafKind.FACET_PRICE_QUANTITY
+        and len(_SHAPE_AXES[s].map_levels) + 1 == depth
+    ]
+    if len(facet_candidates) == 1:
+        return facet_candidates[0]
+    # Zero candidates → not a facet shape; >1 candidates → registry has
+    # multiple facet shapes at this depth (no current entries do, but
+    # be defensive — fall back to the legacy path which will surface
+    # the ambiguity through its own checks).
+    return None
+
+
 def _entity_dim_columns_for_frame(
     df: "pl.DataFrame",
     source: "InputSource",
@@ -725,6 +1011,30 @@ def resolve_param_shape(
     ent_cols = _entity_dim_columns_for_frame(df, source, entity_class)
     raw_labels = _read_index_names_from_source(
         source, entity_class, parameter_name)
+
+    # Phase A — registry-driven facet recognition.  The legacy
+    # label-based ``_shape_from_indices`` can't see the new facet
+    # shapes structurally (and shouldn't: facet outer-axis labels are
+    # user-set per parameter value).  Try a label-agnostic depth match
+    # against the allow-list first; on a hit, build the ResolvedShape
+    # straight away — facet shapes share no columns with the legacy
+    # period/time rename block, so the rest of the function (which
+    # exists for legacy period/time disambiguation) does not apply.
+    facet_shape = _recognise_facet_shape(raw_labels, allowed)
+    if facet_shape is not None:
+        # No column rename needed: the frame's outer-axis column names
+        # are user-set and will be projected by the Phase B reader
+        # using :func:`facet_keys` against the inner facet level.
+        period_col = "period" if "period" in df.columns else None
+        time_col = "t" if "t" in df.columns else None
+        return ResolvedShape(
+            shape=facet_shape,
+            frame=df,
+            entity_dim_columns=tuple(ent_cols),
+            period_index_column=period_col,
+            time_index_column=time_col,
+        )
+
     # Δ.17c follow-up — disambiguate silent-default ``index_name`` labels
     # against the per-parameter allow-list.  For parameters whose
     # registry entry permits a unique shape at the observed (depth,
@@ -777,6 +1087,20 @@ def resolve_param_shape(
         # the disambiguated label and renames the silent-default column
         # (typically ``"x"``) to ``"period"`` or ``"t"``.
         resolved_labels = list(_SHAPE_LABELS[shape])
+
+    # Phase A: depth-0 string-leaf promotion.  ``_shape_from_indices``
+    # only sees the Map-nesting structure — every scalar (numeric or
+    # string) collapses to :class:`Shape.SCALAR`.  When the registry
+    # entry permits :class:`Shape.SCALAR_STR` but not :class:`Shape.SCALAR`,
+    # the author's intent is a constrained-string leaf (per the
+    # ``parameter_value_list``); promote so the allow-list check below
+    # accepts it.  Leaf-type confirmation against the DB column dtype is
+    # Phase B — today the structural depth-0 match plus the registry's
+    # exclusivity unambiguously identifies these params.
+    if (shape is Shape.SCALAR
+            and Shape.SCALAR_STR in allowed
+            and Shape.SCALAR not in allowed):
+        shape = Shape.SCALAR_STR
 
     if shape not in allowed:
         # Render observed shape for the message — labels can be empty
