@@ -329,6 +329,12 @@ class ExecutionWindow(tk.Toplevel):
         # Ctrl+C work reliably on all platforms, but block keyboard input.
         self._output_text.bind("<Key>", self._on_key_press)
 
+        # Right-click context menu (Copy / Select all) on the log.
+        self._output_menu = tk.Menu(self._output_text, tearoff=0)
+        self._output_menu.add_command(label="Copy", command=self._on_copy_log)
+        self._output_menu.add_command(label="Select all", command=self._on_select_all_log)
+        self._output_text.bind("<Button-3>", self._show_output_menu)
+
         out_vscroll = ttk.Scrollbar(right_frame, orient="vertical", command=self._output_text.yview)
         self._output_text.configure(yscrollcommand=out_vscroll.set)
         out_vscroll.grid(row=0, column=1, sticky="ns")
@@ -383,6 +389,12 @@ class ExecutionWindow(tk.Toplevel):
         self._status_label = ttk.Label(btn_frame, text="", anchor="center")
         self._status_label.grid(row=0, column=col, rowspan=2, padx=15, sticky="ew")
         btn_frame.columnconfigure(col, weight=1)  # status label stretches
+
+        col += 1
+        self._copy_btn = ttk.Button(
+            btn_frame, text="Copy log text", command=self._on_copy_log
+        )
+        self._copy_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
 
         col += 1
         self._close_btn = ttk.Button(btn_frame, text="Close", command=self._on_close_attempt)
@@ -621,12 +633,46 @@ class ExecutionWindow(tk.Toplevel):
     # Output display
     # ------------------------------------------------------------------
 
+    # Keys that move the cursor / extend the selection without mutating the
+    # text — allowed through so Shift+arrow (and friends) select as usual.
+    _NAV_KEYSYMS = frozenset({
+        "Left", "Right", "Up", "Down", "Home", "End", "Prior", "Next",
+        "Shift_L", "Shift_R", "Control_L", "Control_R",
+    })
+
+    def _on_copy_log(self) -> None:
+        """Copy the current selection (or the whole log if nothing is
+        selected) to the clipboard."""
+        try:
+            text = self._output_text.get("sel.first", "sel.last")
+        except tk.TclError:
+            text = self._output_text.get("1.0", "end-1c")
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    def _on_select_all_log(self) -> None:
+        """Select the entire log and focus the widget."""
+        self._output_text.tag_add("sel", "1.0", "end-1c")
+        self._output_text.focus_set()
+
+    def _show_output_menu(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Pop up the log context menu at the pointer."""
+        try:
+            self._output_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._output_menu.grab_release()
+
     def _on_key_press(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
-        """Block keyboard input into the output text widget while still
-        allowing Ctrl+C (copy) and Ctrl+A (select all)."""
+        """Block text-mutating keys in the read-only output widget while
+        still allowing copy (Ctrl+C), select-all (Ctrl+A), and keyboard
+        navigation / selection (arrows, Home/End, PgUp/PgDn, with Shift)."""
         if event.state & 0x4 and event.keysym in ("c", "C", "a", "A"):
-            return None  # Allow the event to propagate
-        return "break"  # Suppress all other key events
+            return None  # Ctrl+C / Ctrl+A — let it propagate
+        if event.keysym in self._NAV_KEYSYMS:
+            return None  # navigation / selection — does not modify the text
+        return "break"  # suppress everything else (typing, paste, delete, …)
 
     def _update_output_display(self) -> None:
         """Append new stdout lines for the currently viewed job.
