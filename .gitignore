@@ -48,7 +48,6 @@ tests/unitTests.txt
 rivendell/
 .aider*
 # Local audit / investigation handoffs — meant for personal note-taking,
-# not shipped with the repo.  Files already tracked here predate this
-# rule and stay tracked; new files in this folder are local-only.
+# not shipped with the repo.  This folder is local-only; never track it.
 _audit_reports/
 _diagrams/
