@@ -168,9 +168,9 @@ def validate_ladder_methods(db, logger: logging.Logger) -> None:
             raise FlexToolConfigError(
                 f"commodity '{commodity}' has "
                 f"price_method='price_ladder_annual' but no "
-                f"'{expected_param}' value is set.  Add either a 1d "
-                f"Map(tier -> {{price, quantity}}) or a 2d "
-                f"Map(tier -> Map(period -> {{price, quantity}}))."
+                f"'{expected_param}' value is set.  Add either a 2d "
+                f"Map(tier -> {{price, quantity}}) or a 3d "
+                f"Map(period -> Map(tier -> {{price, quantity}}))."
             )
 
 
