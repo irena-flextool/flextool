@@ -1785,9 +1785,18 @@ def _get_param_data_type(
                         return "string"
                     return "float"
 
-                # On periodic sheets: array params are boolean (array index = period column)
+                # On periodic sheets: array params are written one row per
+                # array element with the period name as the cell value.
+                # Labelling the column ``string (array)`` lets the v2
+                # importer collapse the per-row records back into a
+                # SpineDB Array(values=[period_names]), preserving the
+                # original ``"array"`` type end-to-end.  Downstream code
+                # (``_solve_config.params_to_dict`` / ``periods_to_tuples``)
+                # requires Array — Map<period, period> would silently
+                # change the engine's solve identity to a (key, value)
+                # tuple and break ``model.solves`` resolution.
                 if layout == "periodic" and "array" in types:
-                    return "boolean (array)"
+                    return "string (array)"
 
                 # On periodic/timeseries sheets: report the map dimension
                 # relevant to THIS layout, not the highest available.
@@ -2742,11 +2751,14 @@ def write_periodic_sheet_v2(
                 all_indexes: set[str] = set()
                 param_maps: dict[str, Map] = {}
                 param_arrays: dict[str, list[str]] = {}
+                param_scalars: dict[str, Any] = {}
 
                 for pname in spec.parameter_names:
                     key = (entity_class, entity_byname, pname, alt)
                     value = db_contents.parameter_values.get(key)
-                    if value is not None and _is_map(value):
+                    if value is None:
+                        continue
+                    if _is_map(value):
                         is_nested = any(_is_map(mv) for mv in value.values)
                         if is_nested:
                             continue
@@ -2757,18 +2769,23 @@ def write_periodic_sheet_v2(
                         param_maps[pname] = value
                         for idx in value.indexes:
                             all_indexes.add(str(_to_native(idx)))
-                    elif value is not None and _is_array(value):
+                    elif _is_array(value):
                         period_names = [str(_to_native(v)) for v in value.values]
                         param_arrays[pname] = period_names
+                    elif _is_scalar(value):
+                        # Scalar values on a periodic-layout sheet — captured
+                        # so the entity-alt still produces an export row even
+                        # when no Map/Array index is present.  Necessary for
+                        # split-params sheets like 'solve' that mix scalars
+                        # (solve_mode, solver, ...) with 1d-map params
+                        # (solver_arguments).
+                        param_scalars[pname] = _to_native(value)
 
                 # If no Map indexes but we have Array values, use the array
                 # values as indexes (they contain period names)
                 if not all_indexes and param_arrays:
                     for arr_vals in param_arrays.values():
                         all_indexes.update(arr_vals)
-
-                if not all_indexes:
-                    continue
 
                 # Build dict lookups from Maps for O(1) access (avoids O(n²))
                 param_map_dicts: dict[str, dict[str, Any]] = {}
@@ -2778,19 +2795,19 @@ def write_periodic_sheet_v2(
                         for mi, mv in zip(m.indexes, m.values)
                     }
 
-                for idx_val in sorted(all_indexes):
-                    cells: list[tuple[int, Any]] = []
-
-                    cells.append((col_alt, alt))
-
+                def _build_left_cells(idx_val: str | None) -> list[tuple[int, Any]]:
+                    cells: list[tuple[int, Any]] = [(col_alt, alt)]
                     for i, col in enumerate(entity_data_cols):
                         if i < len(entity_byname):
                             cells.append((col, str(_to_native(entity_byname[i]))))
-
                     if filter_data_col is not None and direction is not None:
                         cells.append((filter_data_col, direction))
+                    if idx_val is not None and idx_val != "":
+                        cells.append((index_data_col, idx_val))
+                    return cells
 
-                    cells.append((index_data_col, idx_val))
+                for idx_val in sorted(all_indexes):
+                    cells = _build_left_cells(idx_val)
 
                     for pname in spec.parameter_names:
                         md = param_map_dicts.get(pname)
@@ -2800,8 +2817,33 @@ def write_periodic_sheet_v2(
                                 cells.append((param_col_map[pname], val))
                         elif pname in param_arrays:
                             if idx_val in param_arrays[pname]:
-                                cells.append((param_col_map[pname], "TRUE"))
+                                # Round-trip preservation: emit the period
+                                # name as the cell value (not "TRUE") so the
+                                # importer reconstructs a Map<period,period>.
+                                # The engine reads Array values via
+                                # ``param_value.values`` and treats each
+                                # value as a period token (see
+                                # ``_solve_config.periods_to_tuples``); using
+                                # the period name keeps that contract intact
+                                # even though the type morphs Array→Map on
+                                # round-trip.  Axis-enum vocab is built from
+                                # *both* map keys and array values
+                                # (``_build_period_vocab``), so the period
+                                # token survives in either representation.
+                                cells.append((param_col_map[pname], idx_val))
 
+                    data_rows.append(cells)
+
+                # Emit a scalar-only row when the entity-alt has scalar
+                # parameter values that no period-indexed row carries.
+                # Without this, periodic sheets that bundle scalar params
+                # (e.g. the split-params 'solve' sheet's solve_mode/solver/
+                # contains_solves) silently drop those values on entities
+                # that never set the periodic params.
+                if param_scalars:
+                    cells = _build_left_cells(None)
+                    for pname, val in param_scalars.items():
+                        cells.append((param_col_map[pname], val))
                     data_rows.append(cells)
 
     # --- Sort rows ---

@@ -17,7 +17,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from spinedb_api import Asterisk, DatabaseMapping, Map, SpineDBAPIError, to_database
+from spinedb_api import Array, Asterisk, DatabaseMapping, Map, SpineDBAPIError, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.process_inputs.read_self_describing_excel import SheetData
@@ -85,9 +85,24 @@ def _group_map_records(
         indexes = [e[0] for e in entries]
         values = [e[1] for e in entries]
         index_name = map_templates[key].get("index_name") or "index"
-        map_value = Map(indexes=indexes, values=values, index_name=index_name)
         rec = dict(map_templates[key])
-        rec["value"] = map_value
+        # When the source sheet's data type marks this parameter as an
+        # array (e.g. ``"string (array)"`` / ``"boolean (array)"``), the
+        # cells are array-expanded rows where the index cell holds the
+        # array slot number OR the period token.  Reconstruct an Array
+        # so the round-trip preserves the SpineDB ``"array"`` type — a
+        # hard requirement for ``model.solves``, ``solve.realized_periods``
+        # and friends, which downstream code (engine_polars._solve_config
+        # ``params_to_dict``) only treats as ordered sequences when the
+        # parsed value is an ``Array`` instance.  Index_name is preserved
+        # from the source so the engine's axis labels stay intact.
+        dtype = (rec.get("data_type") or "").lower()
+        is_array_dtype = "(array)" in dtype or dtype.endswith(" array") or dtype == "array"
+        if is_array_dtype:
+            value = Array(values=values, index_name=index_name)
+        else:
+            value = Map(indexes=indexes, values=values, index_name=index_name)
+        rec["value"] = value
         rec["index_value"] = None  # no longer individual
         collapsed.append(rec)
 

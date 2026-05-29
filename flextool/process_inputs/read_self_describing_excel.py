@@ -367,6 +367,23 @@ def _parse_default_value(text: str) -> tuple[str, str | None]:
     return text, None
 
 
+def _extract_triplet_field(text: str, field: str) -> str | None:
+    """Return the value of a labelled segment in a pipe-separated triplet.
+
+    Looks for ``<field>: <value>`` inside a ``"a | b | c"`` style string
+    (case-insensitive on the field name).  Returns the trimmed value or
+    ``None`` when the field isn't present.
+    """
+    if not text or "|" not in text:
+        return None
+    fl = field.lower()
+    for seg in text.split("|"):
+        s = seg.strip()
+        if s.lower().startswith(fl + ":"):
+            return s[len(field) + 1:].strip()
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Sheet metadata extraction
 # ---------------------------------------------------------------------------
@@ -824,6 +841,7 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "value": converted,
                 "index_value": index_val,
                 "index_name": meta.index_name,
+                "data_type": dtype,
             }
             data.records.append(record)
             row_has_data = True
@@ -884,6 +902,18 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
     # Each data column (from col 2 onwards) is one data series
     data_col_start = 2  # columns C+ (0-based index 2)
 
+    # On single-param transposed sheets (timeseries, array-transposed)
+    # the parameter triplet in row 1 / col B carries the canonical data
+    # type — e.g. ``"parameter: solves | data type: boolean (array)"``.
+    # We extract it once and attach it to every emitted record so the
+    # writer can decide whether to reconstruct an ``Array`` or a ``Map``.
+    triplet_dtype: str | None = None
+    if meta.param_row is not None:
+        triplet_text = _cell_value(ws, meta.param_row, 1)  # col B
+        triplet_dtype = _extract_triplet_field(triplet_text, "data type")
+    if triplet_dtype is None and meta.default_data_type:
+        triplet_dtype = meta.default_data_type
+
     for c in range(data_col_start, max_col):
         # Read column metadata from the header rows
         alt = _cell_value(ws, meta.alt_row, c) if meta.alt_row is not None else None
@@ -917,6 +947,7 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "value": converted,
                 "index_value": index_val,
                 "index_name": meta.index_name,
+                "data_type": triplet_dtype,
             })
 
     return data
