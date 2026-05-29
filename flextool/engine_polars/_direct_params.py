@@ -280,6 +280,45 @@ FIRST_WAVE_PARAMS = (
 # Helpers for FlexData-field-targeted overrides
 
 
+# Accepted ``Map.index_name`` labels for the per-entity constraint-coef
+# parameters.  ``"constraint"`` is what ``model_builder`` writes; ``"x"``
+# is spinedb_api's default when a Map is authored without an explicit
+# ``index_name``.  Anything else indicates a Spine authoring mistake
+# (typo, wrong axis label) and is surfaced loudly with the offending
+# entity rows so the user can fix the DB.
+_CONSTRAINT_INDEX_LABELS = ("constraint", "x")
+
+
+def _resolve_constraint_index_col(
+    df: pl.DataFrame,
+    *,
+    parameter_name: str,
+    entity_class: str,
+) -> str:
+    """Identify the Map's constraint-axis column in *df* (the frame
+    returned by :meth:`InputSource.parameter`).
+
+    Raises a clear ``ValueError`` naming the parameter, entity_class,
+    offending column name, and the entity rows that carry the bad Map
+    so the user can locate and fix it in Spine.
+    """
+    extras = [c for c in df.columns if c not in ("name", "value")]
+    if len(extras) == 1 and extras[0] in _CONSTRAINT_INDEX_LABELS:
+        return extras[0]
+    accepted = ", ".join(repr(s) for s in _CONSTRAINT_INDEX_LABELS)
+    entities = df.get_column("name").unique().to_list() if "name" in df.columns else []
+    entities_repr = ", ".join(repr(e) for e in entities[:10])
+    if len(entities) > 10:
+        entities_repr += f", … (+{len(entities) - 10} more)"
+    raise ValueError(
+        f"Unrecognised Map index column(s) {extras!r} in parameter "
+        f"{parameter_name!r} of entity_class {entity_class!r} "
+        f"(affected entities: [{entities_repr}]). "
+        f"Expected a 1-D Map with index_name in {{{accepted}}}; "
+        f"set Map.index_name to 'constraint' in Spine."
+    )
+
+
 def _node_constraint_coef(source: "InputSource", parameter_name: str) -> Param | None:
     """Return ``Param(("n", "cn"), [n, cn, value])`` for a per-(node,
     constraint) coefficient parameter.  ``None`` if the DB has no rows.
@@ -295,10 +334,12 @@ def _node_constraint_coef(source: "InputSource", parameter_name: str) -> Param |
         return None
     if df.height == 0:
         return None
+    c_col = _resolve_constraint_index_col(
+        df, parameter_name=parameter_name, entity_class="node")
     return Param(
         ("n", "cn"),
         df.lazy()
-          .rename({"name": "n", "constraint": "cn"})
+          .rename({"name": "n", c_col: "cn"})
           .select("n", "cn", "value")
     )
 
@@ -317,9 +358,11 @@ def _process_constraint_coef(source: "InputSource",
             continue
         if df.height == 0:
             continue
+        c_col = _resolve_constraint_index_col(
+            df, parameter_name=parameter_name, entity_class=cls)
         parts.append(
             df.lazy()
-              .rename({"name": "p", "constraint": "cn"})
+              .rename({"name": "p", c_col: "cn"})
               .select("p", "cn", "value")
         )
     if not parts:
