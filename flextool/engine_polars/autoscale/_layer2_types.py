@@ -492,6 +492,24 @@ def lookup_cstr(name: str) -> CstrFamily:
             if (base in CONSTRAINT_FAMILIES
                     and CONSTRAINT_FAMILIES[base].member_class_resolver):
                 return CONSTRAINT_FAMILIES[base]
+    # Prefix dispatch (the contract documented in this module's header and
+    # in test_registry_coverage): a registry key ``K`` matches a dynamic
+    # constraint name when ``name.startswith(K + "_")``.  This is what the
+    # ``"ramp"`` entry relies on — the ramp family
+    # (``ramp_{side}_{dir}_constraint``, model.py:2328) carries middle and
+    # suffix tokens (``_sink_up_constraint``) that neither the exact-match
+    # nor the UC / member-class suffix-strip paths above can resolve.
+    # Longest matching key wins so a more specific registration is never
+    # shadowed by a shorter prefix.  Runs last, after exact + suffix-strip,
+    # so it can only resolve names those paths leave unresolved — never
+    # change an existing resolution.
+    prefix_match: Optional[str] = None
+    for key in CONSTRAINT_FAMILIES:
+        if name.startswith(key + "_") and (
+                prefix_match is None or len(key) > len(prefix_match)):
+            prefix_match = key
+    if prefix_match is not None:
+        return CONSTRAINT_FAMILIES[prefix_match]
     raise KeyError(name)
 
 
