@@ -695,6 +695,12 @@ class MainWindow(tk.Tk):
         )
         self.view_results_btn.grid(row=7, column=0, sticky="sw", pady=(2, 0))
 
+        self.update_btn = ttk.Button(
+            side_menu, text="Update FlexTool…", width=22,
+            command=self._on_update_flextool,
+        )
+        self.update_btn.grid(row=8, column=0, sticky="sw", pady=(2, 0))
+
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
         sep.grid(row=9, column=0, columnspan=6, sticky="ew", pady=10)
@@ -2580,6 +2586,54 @@ class MainWindow(tk.Tk):
         # Refresh to show editing status
         self._refresh_input_sources()
 
+    def _on_update_flextool(self, preselect_toolbox: bool = False) -> None:
+        """Open the Update dialog and, if confirmed, run the update as a job."""
+        from flextool.gui.dialogs.update_dialog import UpdateDialog
+        from flextool.gui.execution_manager import JobType
+        from flextool.update_flextool import install_info
+
+        default_toolbox = preselect_toolbox or install_info.toolbox_installed()
+        dlg = UpdateDialog(
+            self,
+            install_description=install_info.describe_install(),
+            is_git=install_info.is_git_install(),
+            default_toolbox=default_toolbox,
+        )
+        self.wait_window(dlg)
+        if not dlg.proceed:
+            return
+
+        steps, cwd = install_info.upgrade_steps(dlg.include_toolbox)
+        self._run_cli_job(
+            steps,
+            job_type=JobType.UPDATE,
+            description="Update FlexTool",
+            action_key="update_flextool",
+            cwd=cwd,
+            intro="Updating FlexTool"
+            + (" with Spine Toolbox" if dlg.include_toolbox else "")
+            + "…\n",
+            on_finish=self._update_finished,
+        )
+
+    def _update_finished(self, success: bool) -> None:
+        """Report update result and prompt for the required restart."""
+        if success:
+            messagebox.showinfo(
+                "Update complete — restart required",
+                "FlexTool was updated successfully.\n\n"
+                "Please close and restart FlexTool for the new version to take "
+                "effect. The running application is still using the old code.",
+                parent=self,
+            )
+        else:
+            messagebox.showerror(
+                "Update failed",
+                "The update did not complete. See the Execution window log for "
+                "the full output (use 'Copy log text' to share it).",
+                parent=self,
+            )
+
     def _check_db_editor_launch(self, proc, source_name: str) -> None:
         """Surface a Spine DB Editor that crashed right after launch.
 
@@ -3070,6 +3124,74 @@ class MainWindow(tk.Tk):
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
+
+    def _run_cli_job(
+        self,
+        steps: list[list[str]],
+        *,
+        job_type,
+        description: str,
+        action_key: str,
+        cwd: Path | None = None,
+        intro: str | None = None,
+        on_finish=None,
+    ) -> None:
+        """Run one or more subprocess steps as a single auxiliary Execution job.
+
+        Steps run in order, with combined stdout/stderr streamed to the job
+        log; the first non-zero exit aborts the rest. When the job ends,
+        *on_finish* (if given) is invoked on the Tk main thread with the
+        overall success flag. Generic counterpart to
+        :meth:`_run_conversion_subprocess` for commands with no file-move
+        bookkeeping (e.g. self-update, toolbox install).
+        """
+        self._ensure_execution_mgr()
+        if self.execution_mgr is None:
+            return
+
+        job = self.execution_mgr.add_auxiliary_job(job_type, description, action_key)
+        mgr = self.execution_mgr
+        if intro:
+            mgr.append_stdout(job.job_id, intro)
+
+        self._open_or_raise_execution_window()
+        if self.execution_window is not None:
+            self.execution_window.select_job(job.job_id)
+
+        cwd_str = str(cwd) if cwd is not None else None
+
+        def _worker() -> None:
+            success = True
+            try:
+                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                for step in steps:
+                    mgr.append_stdout(job.job_id, "$ " + " ".join(step))
+                    proc = subprocess.Popen(
+                        step, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, bufsize=1, cwd=cwd_str, env=env,
+                    )
+                    with mgr._lock:
+                        job.process = proc
+                    for line in proc.stdout:  # type: ignore[union-attr]
+                        mgr.append_stdout(job.job_id, line.rstrip("\n"))
+                    proc.wait()
+                    if proc.returncode != 0:
+                        success = False
+                        mgr.append_stdout(
+                            job.job_id,
+                            f"\nStep failed (exit code {proc.returncode}); stopping.",
+                        )
+                        break
+            except Exception as exc:
+                logger.error("CLI job '%s' failed: %s", action_key, exc, exc_info=True)
+                mgr.append_stdout(job.job_id, f"\nError: {exc}")
+                success = False
+
+            mgr.finish_job(job.job_id, success)
+            if on_finish is not None:
+                self.after(0, on_finish, success)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _conversion_finished(
         self,

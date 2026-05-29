@@ -259,6 +259,8 @@ class JobType(Enum):
     OUTPUT_ACTION = auto()  # output generation (plots, Excel, CSV, comparison)
     OLD_CONVERT = auto()    # old FlexTool 2.0 import
     MIGRATION = auto()      # database schema / data version migration
+    UPDATE = auto()         # FlexTool self-update (git pull / pip upgrade)
+    DB_EDITOR = auto()      # Spine DB Editor launch (recorded only on failure)
 
 
 @dataclass
