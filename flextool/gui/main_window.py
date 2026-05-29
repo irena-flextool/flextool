@@ -2022,8 +2022,17 @@ class MainWindow(tk.Tk):
             return
         self._refresh_input_sources()
 
-    def _run_db_migrations_with_ui(self) -> list[str]:
-        """Plan, gather consent for, and run pending DB migrations with UI."""
+    def _run_db_migrations_with_ui(self) -> tuple[bool, list[str]]:
+        """Plan, gather consent for, and run pending DB migrations with UI.
+
+        Returns a ``(failed, messages)`` tuple.  *failed* is ``True`` if any
+        database could not be migrated and had to be rolled back, in which
+        case the caller should not proceed to use those sources.  Step-level
+        progress is streamed to the Execution window; a modal dialog keeps
+        the interface locked until the run finishes.
+        """
+        from flextool.gui.execution_manager import JobType
+
         assert self.input_source_mgr is not None
         mgr = self.input_source_mgr
 
@@ -2034,7 +2043,7 @@ class MainWindow(tk.Tk):
         ) = mgr.plan_db_migrations()
 
         if not internal_to_migrate and not external_to_migrate:
-            return planning_messages
+            return False, planning_messages
 
         consent: str = "in_place"
         if external_to_migrate:
@@ -2061,16 +2070,41 @@ class MainWindow(tk.Tk):
         # consent == "cancel" -> skip externals entirely
 
         if not final_list:
-            return planning_messages
+            return False, planning_messages
 
         total = len(final_list)
+
+        # Stream step-level progress to the Execution window (like conversion),
+        # set up before the modal gate grabs input.
+        self._ensure_execution_mgr()
+        exec_mgr = self.execution_mgr
+        job_id: int | None = None
+        if exec_mgr is not None:
+            job = exec_mgr.add_auxiliary_job(
+                JobType.MIGRATION,
+                "Database migration",
+                "db_migration",
+            )
+            job_id = job.job_id
+            exec_mgr.append_stdout(
+                job_id, f"Migrating {total} database file(s) to the current version.\n"
+            )
+            self._open_or_raise_execution_window()
+            if self.execution_window is not None:
+                self.execution_window.select_job(job_id)
+
         dialog = MigrationProgressDialog(
             self,
             title="Migrating databases",
             initial_status=f"Preparing to migrate {total} file(s)…",
         )
 
+        def _emit(line: str) -> None:
+            if exec_mgr is not None and job_id is not None:
+                exec_mgr.append_stdout(job_id, line)
+
         worker_messages: list[str] = []
+        outcome = {"failed": False}
 
         def _worker() -> None:
             try:
@@ -2078,6 +2112,7 @@ class MainWindow(tk.Tk):
                     if dialog.cancel_requested:
                         break
                     dialog.update_status(f"Migrating {name} ({i}/{total})…")
+                    _emit(f"[{i}/{total}] {name}: checking database version…")
 
                     def _progress_cb(
                         curr: int,
@@ -2090,28 +2125,53 @@ class MainWindow(tk.Tk):
                             f"Migrating {_name} ({_i}/{total})… "
                             f"step v{curr} → v{nxt} (target v{target})"
                         )
+                        _emit(
+                            f"[{_i}/{total}] {_name}: applying step "
+                            f"v{curr} → v{nxt} (target v{target})"
+                        )
 
-                    _was_upgraded, messages = check_and_upgrade_database(
+                    was_upgraded, failed, messages = check_and_upgrade_database(
                         path,
                         progress_callback=_progress_cb,
                         cancel_check=lambda: dialog.cancel_requested,
                     )
                     worker_messages.extend(messages)
+                    for msg in messages:
+                        _emit(msg)
+                    if not messages and not was_upgraded:
+                        _emit(f"[{i}/{total}] {name}: already up to date.")
+                    if failed:
+                        outcome["failed"] = True
             finally:
+                if exec_mgr is not None and job_id is not None:
+                    if outcome["failed"]:
+                        exec_mgr.append_stdout(
+                            job_id, "\nMigration finished with errors."
+                        )
+                    else:
+                        exec_mgr.append_stdout(job_id, "\nMigration finished.")
+                    exec_mgr.finish_job(job_id, not outcome["failed"])
                 dialog.mark_finished()
 
         threading.Thread(target=_worker, daemon=True).start()
         self.wait_window(dialog)
 
-        return planning_messages + worker_messages
+        return outcome["failed"], planning_messages + worker_messages
 
     def _refresh_input_sources(self) -> None:
         """Re-scan input sources and repopulate the treeview."""
         if not self.input_source_mgr:
             return
 
-        upgrade_messages = self._run_db_migrations_with_ui()
-        if upgrade_messages:
+        migration_failed, upgrade_messages = self._run_db_migrations_with_ui()
+        if migration_failed:
+            messagebox.showerror(
+                "Database migration failed",
+                "\n".join(upgrade_messages)
+                + "\n\nThe full log is shown in the Execution window.",
+                parent=self,
+            )
+        elif upgrade_messages:
             messagebox.showinfo(
                 "Database upgrades",
                 "\n".join(upgrade_messages),

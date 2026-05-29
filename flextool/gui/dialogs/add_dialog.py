@@ -393,27 +393,9 @@ class AddDialog(tk.Toplevel):
                 parent=self,
             )
 
-        # Check and upgrade any copied sqlite databases
-        upgrade_messages: list[str] = []
-        for fp in filepaths:
-            fp = Path(fp)
-            if fp.suffix.lower() == ".sqlite":
-                dest = self._input_dir / fp.name
-                if dest.exists():
-                    try:
-                        from flextool.gui.db_version_check import (
-                            check_and_upgrade_database,
-                        )
-
-                        _upgraded, msgs = check_and_upgrade_database(dest)
-                        upgrade_messages.extend(msgs)
-                    except Exception as exc:
-                        upgrade_messages.append(
-                            f"{fp.name}: version check error: {exc}"
-                        )
-                        logger.warning(
-                            "Version check failed for %s: %s", dest, exc, exc_info=True
-                        )
+        # Copied sqlite databases are migrated by the main window's input-source
+        # refresh (which runs right after this dialog closes), so their progress
+        # streams to the Execution window instead of blocking here silently.
 
         # Files undergoing conversion are excluded from the "Done"
         # notification — they will appear after conversion finishes.
@@ -427,8 +409,6 @@ class AddDialog(tk.Toplevel):
             done_text = (
                 f"Done — copied {len(ready_names)} file(s):\n{file_list}"
             )
-            if upgrade_messages:
-                done_text += "\n\n" + "\n".join(upgrade_messages)
             messagebox.showinfo(
                 "Done",
                 done_text,

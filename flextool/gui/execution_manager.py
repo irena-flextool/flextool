@@ -258,6 +258,7 @@ class JobType(Enum):
     CONVERSION = auto()     # xlsx → sqlite pre-conversion
     OUTPUT_ACTION = auto()  # output generation (plots, Excel, CSV, comparison)
     OLD_CONVERT = auto()    # old FlexTool 2.0 import
+    MIGRATION = auto()      # database schema / data version migration
 
 
 @dataclass

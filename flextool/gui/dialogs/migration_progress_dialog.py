@@ -65,8 +65,10 @@ class MigrationProgressDialog(tk.Toplevel):
         note_lbl = ttk.Label(
             self,
             text=(
-                "This may take a minute. Click Cancel to stop after the "
-                "current step."
+                "The interface is locked until the migration finishes. "
+                "Detailed progress is shown in the Execution window. "
+                "Click Cancel to stop after the current step — a cancelled "
+                "database is restored to its original state."
             ),
             wraplength=440,
             justify="left",
