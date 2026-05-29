@@ -169,6 +169,18 @@ If you installed from a zip file, download the latest zip, extract it over the e
 python update_flextool.py --skip-git
 ```
 
+### From the GUI
+
+Click **Update FlexTool…** in the top-right of the main window (next to **UI settings…**). FlexTool detects how it is installed and runs the right upgrade automatically — `git pull` plus an editable reinstall for a git checkout, or `pip install --upgrade` for a PyPI install — and streams the output to the Execution window. **Restart FlexTool when it finishes** for the new version to take effect.
+
+The dialog has an **Install Spine Toolbox** checkbox. Spine Toolbox is a large, optional dependency that is required to open `.sqlite` input sources in the Spine DB Editor; leave it unticked if you do not need it. (It is ticked by default when Spine Toolbox is already installed, so updating keeps it.)
+
+### Update notifications
+
+By default FlexTool makes one lightweight check at startup — against PyPI, or your git remote for a git checkout — for a newer version. When one is available the **Update FlexTool…** button is highlighted. The check fails silently if you are offline or the network is restricted.
+
+To disable it, untick **Check for updates on startup** in the Update FlexTool dialog (the choice is remembered), or set the environment variable `FLEXTOOL_NO_UPDATE_CHECK=1` to suppress the check entirely.
+
 ## Troubleshooting
 
 ### "command not found: flextool-gui" / "flextool-run"
