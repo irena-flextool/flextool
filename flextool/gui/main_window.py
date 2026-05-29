@@ -2563,14 +2563,18 @@ class MainWindow(tk.Tk):
             db_url = f"sqlite:///{filepath}"
             proc = self.db_editor_mgr.open_database(db_url, source_name)
             if proc is None:
-                messagebox.showinfo(
+                if messagebox.askyesno(
                     "Spine DB Editor not available",
-                    "The 'spine-db-editor' command was not found.\n\n"
-                    "To edit .sqlite input sources you need Spine Toolbox. "
-                    "Install it (with FlexTool's GUI extra) from the flextool "
-                    "directory:\n\n"
-                    '  pip install -e ".[toolbox]"',
-                )
+                    "The 'spine-db-editor' command was not found, so .sqlite "
+                    "input sources cannot be opened.\n\n"
+                    "It is part of Spine Toolbox. You can install it via "
+                    "'Update FlexTool' (tick 'Install Spine Toolbox'), or "
+                    'manually from the flextool directory:\n\n'
+                    '  pip install -e ".[toolbox]"\n\n'
+                    "Open 'Update FlexTool' now?",
+                    parent=self,
+                ):
+                    self._on_update_flextool(preselect_toolbox=True)
                 return
             # spine-db-editor was found and launched, but an incomplete Spine
             # Toolbox install can still crash it on startup. Check shortly after
@@ -2647,27 +2651,43 @@ class MainWindow(tk.Tk):
             return  # exited cleanly (e.g. user closed it already)
 
         details = self.db_editor_mgr.read_launch_output(proc).strip()
-        if details:
-            # Keep the dialog readable — show only the tail (usually the
-            # exception line and traceback end).
-            tail = details[-1500:]
-            if len(details) > 1500:
-                tail = "…\n" + tail
-            details_block = f"\n\nDetails:\n{tail}"
-        else:
-            details_block = ""
 
-        messagebox.showerror(
+        # Put the full traceback in the Execution window, where there is room
+        # to read it and a Copy button to share it.
+        self._ensure_execution_mgr()
+        if self.execution_mgr is not None:
+            from flextool.gui.execution_manager import JobType
+
+            job = self.execution_mgr.add_auxiliary_job(
+                JobType.DB_EDITOR,
+                f"Spine DB Editor: {source_name}",
+                f"db_editor:{source_name}",
+            )
+            self.execution_mgr.append_stdout(
+                job.job_id,
+                f"The Spine DB Editor exited immediately (code "
+                f"{proc.returncode}) when opening '{source_name}'.\n",
+            )
+            for line in (details or "(no output captured)").splitlines():
+                self.execution_mgr.append_stdout(job.job_id, line)
+            self.execution_mgr.finish_job(job.job_id, False)
+            self._open_or_raise_execution_window()
+            if self.execution_window is not None:
+                self.execution_window.select_job(job.job_id)
+
+        if messagebox.askyesno(
             "Could not open database",
             "The Spine DB Editor failed to start, so the database could not "
-            "be opened.\n\n"
-            "This usually means Spine Toolbox is missing or only partially "
-            "installed. Reinstall it (with FlexTool's GUI extra) from the "
-            "flextool directory:\n\n"
-            '  pip install -e ".[toolbox]"'
-            + details_block,
+            "be opened. This usually means Spine Toolbox is missing or only "
+            "partially installed.\n\n"
+            "The full error is shown in the Execution window. You can "
+            "(re)install Spine Toolbox via 'Update FlexTool' (tick 'Install "
+            "Spine Toolbox'), or manually:\n\n"
+            '  pip install -e ".[toolbox]"\n\n'
+            "Open 'Update FlexTool' now?",
             parent=self,
-        )
+        ):
+            self._on_update_flextool(preselect_toolbox=True)
 
     def _flash_input_source_open(self, source_name: str) -> None:
         """Briefly flash a source row red to signal "already open elsewhere"."""
