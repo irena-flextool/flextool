@@ -271,6 +271,16 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Chooses whether the unit is synchronously connected to this node.
     ('is_non_synchronous', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
     # Chooses whether the unit is synchronously connected to this node.
+    # v56 (fb444974) re-added is_enabled on these three classes; it is a
+    # yes_no gate consumed at read time (_spinedb_reader.py:205 drops
+    # is_enabled="no" entities) and never enters the LP as a coefficient,
+    # so DIMENSIONLESS per the flag convention (is_DC / is_non_synchronous).
+    ('is_enabled', 'constraint'): QuantityType.DIMENSIONLESS,
+    # Flag whether the constraint is enabled; disabled rows are dropped.
+    ('is_enabled', 'reserve__upDown__connection__node'): QuantityType.DIMENSIONLESS,
+    # Flag whether the reserve participation is enabled; disabled rows dropped.
+    ('is_enabled', 'reserve__upDown__unit__node'): QuantityType.DIMENSIONLESS,
+    # Flag whether the reserve participation is enabled; disabled rows dropped.
     ('large_failure_ratio', 'reserve__upDown__connection__node'): QuantityType.FRACTION,
     # [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of th...
     ('large_failure_ratio', 'reserve__upDown__unit__node'): QuantityType.FRACTION,
