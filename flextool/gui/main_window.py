@@ -972,6 +972,43 @@ class MainWindow(tk.Tk):
             self.project_menu_btn.configure(style="Accent.TButton")
             self.after(100, self._show_project_dialog_if_needed)
 
+        # Check for a newer FlexTool version in the background; if one is
+        # available, highlight the Update button (blue, like other call-outs).
+        self.after(1500, self._check_update_async)
+
+    def _check_update_async(self) -> None:
+        """Probe for a newer version off the UI thread, then update the button.
+
+        Skipped entirely when ``FLEXTOOL_NO_UPDATE_CHECK`` is set, for offline
+        or locked-down environments that should make no outbound request.
+        """
+        if os.environ.get("FLEXTOOL_NO_UPDATE_CHECK"):
+            return
+
+        def _worker() -> None:
+            try:
+                from flextool.update_flextool import install_info
+
+                available = install_info.update_available()
+            except Exception:
+                logger.debug("Update check failed", exc_info=True)
+                available = False
+            self.after(0, self._apply_update_indicator, available)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_update_indicator(self, available: bool) -> None:
+        """Blue-highlight the Update button when an update is available."""
+        if not hasattr(self, "update_btn") or not self.update_btn.winfo_exists():
+            return
+        self.update_btn.configure(
+            style="Accent.TButton" if available else "TButton"
+        )
+        if available:
+            from flextool.gui.hover_tooltip import attach_tooltip
+
+            attach_tooltip(self.update_btn, "A newer FlexTool version is available.")
+
     def _show_project_dialog_if_needed(self) -> None:
         """Open the ProjectDialog if no project is currently loaded."""
         if self.current_project is not None:
@@ -2624,6 +2661,9 @@ class MainWindow(tk.Tk):
     def _update_finished(self, success: bool) -> None:
         """Report update result and prompt for the required restart."""
         if success:
+            # Clear the "update available" highlight — it is now applied.
+            if hasattr(self, "update_btn") and self.update_btn.winfo_exists():
+                self.update_btn.configure(style="TButton")
             messagebox.showinfo(
                 "Update complete — restart required",
                 "FlexTool was updated successfully.\n\n"

@@ -16,9 +16,15 @@ Toolbox workflow updater (``git restore`` + project-file rebuild) stays in
 from __future__ import annotations
 
 import importlib.metadata as _im
+import json
+import logging
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
 
 
 def git_checkout_root() -> Path | None:
@@ -91,3 +97,74 @@ def upgrade_steps(include_toolbox: bool) -> tuple[list[list[str]], Path | None]:
         return steps, root
     steps = [[py, "-m", "pip", "install", "--upgrade", f"flextool{extra}"]]
     return steps, None
+
+
+def update_available(timeout: float = 5.0) -> bool:
+    """Best-effort check for a newer FlexTool version.
+
+    For a git checkout this fetches and reports whether the tracked upstream
+    branch is ahead; for a PyPI install it compares the installed version with
+    the latest on PyPI. Returns ``True`` only on a confident positive — any
+    error, offline state, or ambiguity returns ``False`` so the UI never nags
+    spuriously. Performs network I/O; call it off the UI thread.
+    """
+    root = git_checkout_root()
+    if root is not None:
+        return _git_behind_upstream(root, timeout)
+    return _pypi_has_newer(timeout)
+
+
+def _git_behind_upstream(root: Path, timeout: float) -> bool:
+    """Whether the checkout's tracked upstream has commits we don't have."""
+    import os
+
+    # Never let fetch block on an interactive credential / host-key prompt;
+    # it must fail fast and silently if auth is needed.
+    env = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GCM_INTERACTIVE": "never",
+        "GIT_SSH_COMMAND": "ssh -oBatchMode=yes",
+    }
+    try:
+        subprocess.run(
+            ["git", "fetch", "--quiet"],
+            cwd=root, timeout=timeout, check=True, capture_output=True, env=env,
+        )
+        result = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD..@{u}"],
+            cwd=root, timeout=timeout, check=True, capture_output=True, text=True,
+        )
+        return int(result.stdout.strip() or "0") > 0
+    except Exception:
+        # No upstream, no git, no network, auth needed, detached HEAD, … —
+        # don't nag.
+        logger.debug("git update check inconclusive for %s", root, exc_info=True)
+        return False
+
+
+def _pypi_latest_version(timeout: float) -> str | None:
+    """Latest FlexTool version string on PyPI, or ``None`` on any failure."""
+    request = Request(
+        "https://pypi.org/pypi/flextool/json",
+        headers={"User-Agent": "flextool-gui"},
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return json.load(response)["info"]["version"]
+    except Exception:
+        logger.debug("PyPI update check failed", exc_info=True)
+        return None
+
+
+def _pypi_has_newer(timeout: float) -> bool:
+    latest = _pypi_latest_version(timeout)
+    if latest is None:
+        return False
+    try:
+        from packaging.version import Version
+
+        return Version(latest) > Version(flextool_version())
+    except Exception:
+        logger.debug("Version comparison failed (latest=%s)", latest, exc_info=True)
+        return False
