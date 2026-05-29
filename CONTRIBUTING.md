@@ -243,6 +243,9 @@ elif next_version == N:
 - [ ] No unintended changes to golden files
 - [ ] Master template is up-to-date (If schema changed. Check [CONTRIBUTING.md updating the data structure](#updating-the-data-structure))
 - [ ] Code follows existing patterns and style
+- [ ] New `add_var` / `add_cstr` / schema parameter is registered in the autoscale registries (`flextool/engine_polars/autoscale/_layer2_types.py`, `_quantity_types.py`); ran the affected tests with `FLEXTOOL_AUTOSCALE_STRICT=1`. A missing entry silently degrades the solve to an un-scaled LP — see [architecture.md "Numerical scaling"](docs/dev/architecture.md).
+- [ ] Any parameter broadcast over `(d,t)` goes through `_param_shapes` (`resolve_param_shape` / `broadcast_to_period_time` / `promote_param_to_dt`), never column-name axis detection — see [architecture.md "Parameter shapes & (d,t) broadcasting"](docs/dev/architecture.md).
+- [ ] New / changed tests build their DB from JSON or schema under `tmp_path` (no checked-in `.sqlite` dependency).
 
 ### Review Process
 

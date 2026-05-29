@@ -340,6 +340,31 @@ _native_run_model.py              Per-solve run helper (cascade-internal)
 _output_writer.py                 Solution → output_parquet bridge
 ```
 
+#### Parameter shapes & `(d,t)` broadcasting
+
+`_param_shapes.py` is the authoritative resolver for how a DB-authored
+parameter maps onto the model axes. **Never detect a parameter's
+period / time axis by column name.** Spine writes a Map's index column
+under the author's `index_name`, defaulting to the silent `"x"` when
+unset — so a column-name check like `("t","time","step")` misclassifies
+a time series as a scalar and broadcasts it with a `how="cross"`
+Cartesian product against the full `(d,t)` grid. On long timelines that
+overflows polars' 2³² row index; on short ones it silently flattens the
+time variation via a downstream `unique([...])`. Both bit us (the
+`p_slope` blow-up). Route every param→`(d,t)` broadcast through
+`resolve_param_shape` (DB-metadata shape + value-domain probing) →
+`broadcast_to_period_time` (keeps the Param at its authored shape, no
+cross-product) → `promote_param_to_dt` (narrowing inner-join on the
+carried axis). A new parameter that needs this must be added to
+`PARAM_ALLOWED_SHAPES`.
+
+`_param_shapes` is the **I/O contract only** — it validates user-authored
+DB shapes and errors to the user on mismatch. Model-internal axes (e.g.
+the rolling-solve `roll` axis) are deliberately excluded; they are never
+DB-authored, never reach the resolver, and a stray one already fails
+loudly via `_UnrecognisedIndex`. Document such internal axes in
+`schemas/flextool_axis_contract.json`, not in the resolver's allow-lists.
+
 ### `flextool/process_inputs/` — tabular → Spine DB
 
 Reads tabular data and writes Spine DB. The output of this package is the
@@ -634,7 +659,8 @@ slack semantics.
 2. **Single-variable slack convention.** Every `vq_*` is a single
    non-negative variable, relative to its row-scaler where one applies.
    See [slack_convention.md](slack_convention.md).
-3. **Row scaling (opt-in, `solve.use_row_scaling`).** Node-balance and
+3. **Row scaling (opt-in, `--scaling` CLI flag / `FLEXTOOL_SCALING`).**
+   Node-balance and
    group-balance constraint rows get multiplied by
    `node_capacity_for_scaling` / `group_capacity_for_scaling` derived
    from connected-entity unitsizes; rounded to powers of 10 to preserve
@@ -657,6 +683,28 @@ slack semantics.
      limits: cannot compress within-type spread, and the Rivendell
      guard prevents over-shrinking columns with mixed-magnitude
      coefficients on a single row.
+
+     **Registry contract — read this before adding any `add_var` /
+     `add_cstr` / parameter.** Layer 2 looks up the quantity-type of every
+     variable (`VARIABLE_FAMILIES`), constraint (`CONSTRAINT_FAMILIES`
+     via `lookup_cstr`) and parameter (`PARAMETER_TYPES`) in
+     `_layer2_types.py` / `_quantity_types.py`. These registries refuse
+     to default — an unregistered name raises `KeyError` in
+     `bucket_coefficients`. That `KeyError` is **caught** in
+     `_orchestration._autoscale_apply_layer2_pre_solve` and the solve
+     silently reverts to an **un-scaled LP** ("autoscale Layer 2 apply
+     failed … reverting"), so a missing registration does not crash — it
+     quietly disables autoscaling. So: every new `add_var(...)` /
+     `add_cstr(...)` literal and every new schema parameter MUST get a
+     registry entry (flags / `yes_no` gates → `DIMENSIONLESS`).
+     `lookup_cstr` resolves dynamic (f-string) constraint names by
+     exact-match → `_linear`/`_integer`/`_p`/`_n` suffix strip → longest
+     prefix; dynamic names are invisible to the static-literal grep in
+     `test_registry_coverage`, so pin them in
+     `test_dynamic_constraint_names_resolve`. Run autoscale-exercising
+     tests with `FLEXTOOL_AUTOSCALE_STRICT=1` to turn the silent degrade
+     into a loud failure (off in production so a gap never blocks a user
+     solve).
    - **Layer 3 — HiGHS native + bound-scale folding** (`_layer3.py`).
      Picks an integer `user_bound_scale` exponent (within HiGHS's safe
      range) and folds D's escape-tier valve into the same pass, so the
@@ -685,7 +733,18 @@ slack semantics.
 `tests/fixtures/*.json` is the only authoritative source for test data and
 canonical example databases. Schema migration covers them via
 `flextool.update_flextool.test_fixtures.migrate_all`, and the CI verify
-chain enforces drift detection. Some downstream JSONs (e.g.
+chain enforces drift detection.
+
+**No test reads a checked-in `.sqlite`.** A test that needs a DB builds
+one from its JSON / schema source under `tmp_path_factory` at session
+start (e.g. `json_to_db(...)` for fixtures, or the `schema_db_url`
+fixture which runs `initialize_database` on `spinedb_schema.json` once
+per session). Checked-in DBs (`templates/*.sqlite`) are user-facing and
+go stale between regenerations: a registry-coverage test that read
+`templates/input_data_template.sqlite` stayed green through the v56
+`is_enabled` add because the on-disk template lagged the schema. Build
+from the source of truth so a schema change is caught the moment it
+lands — and never mutate a user-facing DB from a test. Some downstream JSONs (e.g.
 `templates_examples.json`, `howto_stochastics.json`) are *generated
 projections* of authoritative fixtures via
 `flextool.update_flextool.generate_canonical`; the remaining `howto_*.json`
