@@ -566,6 +566,27 @@ def _autoscale_apply_layer3_from_cache(
     return plan
 
 
+def _autoscale_lp_shape_signature(pb: "Problem", base_solve_name: str) -> tuple:
+    """Structural signature of a BUILT Problem for the autoscale cache key.
+
+    Invariant across rolls of one rolling solve (same matrix shape +
+    family layout) but distinct for genuinely different LPs. Cheap —
+    O(#var families + #cstr families), NO coefficient walk. Scoped by
+    ``base_solve_name`` so only rolls of the SAME named rolling solve can
+    share a cached scaling decision (guards against a same-shape /
+    different-magnitude collision between unrelated solves).
+    """
+    var_sig = tuple(sorted(
+        (name, int(v.frame.height), bool(v.integer))
+        for name, v in pb._vars.items()
+    ))
+    cstr_sig = tuple(
+        (cname, 1 if over is None else int(over.height))
+        for cname, _proto, over in pb._cstrs
+    )
+    return (base_solve_name, int(pb._next_col), var_sig, cstr_sig)
+
+
 def _autoscale_emit_console_summary(
     *,
     ranges_pre: "_AutoscaleRangeReport | None",
@@ -1791,7 +1812,11 @@ def _drive_cascade(
                 "_AutoscaleRangeReport | None"
             ) = None
             # Per-structural-shape autoscale DECISION cache.  Keyed by the
-            # warm structural fingerprint (``_fingerprint(data)``); each
+            # BUILT LP's structural signature
+            # (:func:`_autoscale_lp_shape_signature` — matrix shape +
+            # per-family layout, scoped by base solve name), which stays
+            # invariant across rolls of a rolling solve where
+            # ``_fingerprint(data)`` would slide; each
             # value is an :class:`_AutoscaleShapeCacheEntry` carrying the
             # Layer-2 exponents, the Layer-3 plan, and the pre/post
             # RangeReports computed on the FIRST solve of that shape.  On
@@ -2258,17 +2283,24 @@ def _drive_cascade(
                     # :func:`_autoscale_unscale_post_solve` after every
                     # warm solve (first build AND reuses).
                     #
-                    # Per-shape autoscale DECISION cache: the structural
-                    # fingerprint ``fp`` is invariant across rolls of the
-                    # same shape, so on a HIT we replay the cached Layer-2
-                    # exponents + Layer-3 plan WITHOUT any ``detect_ranges``
-                    # / ``bucket_coefficients`` walk (the per-roll multi-GB
-                    # spike).  A cold rebuild of an already-seen shape (the
-                    # ladder-Param ``_IncompatibleUpdate`` path) therefore
-                    # skips the traversals entirely.
+                    # Per-shape autoscale DECISION cache: keyed on the
+                    # BUILT LP's structural signature (matrix shape +
+                    # per-family layout), which is invariant across rolls
+                    # of the same rolling solve even though
+                    # ``_fingerprint(data)`` slides (a windowed period/dt
+                    # field's height tracks the rolling horizon).  On a HIT
+                    # we replay the cached Layer-2 exponents + Layer-3 plan
+                    # WITHOUT any ``detect_ranges`` / ``bucket_coefficients``
+                    # walk (the per-roll multi-GB spike).  A cold rebuild of
+                    # an already-seen shape (the ladder-Param
+                    # ``_IncompatibleUpdate`` path) therefore skips the
+                    # traversals entirely.
+                    _shape_key = _autoscale_lp_shape_signature(
+                        inner_pb, base_solve_name,
+                    )
                     _cache_entry = (
                         None if _autoscale_disable_cache()
-                        else self._autoscale_shape_cache.get(fp)
+                        else self._autoscale_shape_cache.get(_shape_key)
                     )
                     _phase_prof("autoscale_l2_start")
                     if _cache_entry is not None:
@@ -2317,7 +2349,7 @@ def _drive_cascade(
                         _autoscale_ranges_post = None
                         if not _autoscale_disable_cache():
                             _l2p = self._autoscale_warm_layer2_plan
-                            self._autoscale_shape_cache[fp] = (
+                            self._autoscale_shape_cache[_shape_key] = (
                                 _AutoscaleShapeCacheEntry(
                                     layer2_exponents=(
                                         dict(_l2p.type_exponents)
@@ -2481,18 +2513,22 @@ def _drive_cascade(
                 # solve returns so downstream output writers see the
                 # un-scaled solution.
                 # Per-shape autoscale DECISION cache (cold ``warm=False``
-                # / save_memory path).  ``warm_active`` is False here so no
-                # fingerprint was computed above; compute it now (cheap —
-                # heights only) purely as the cache key so repeated
-                # same-shape cold solves replay the cached decision without
-                # the per-roll ``detect_ranges`` / ``bucket_coefficients``
-                # traversal.  Honours ``FLEXTOOL_DISABLE_AUTOSCALE_CACHE=1``.
-                _cold_fp = (
-                    None if _autoscale_disable_cache() else _fingerprint(data)
+                # / save_memory path).  Keyed on the BUILT LP's structural
+                # signature (matrix shape + per-family layout), which is
+                # invariant across rolls of the same rolling solve even
+                # though ``_fingerprint(data)`` slides as the rolling
+                # horizon moves.  Cheap to compute (no coefficient walk) so
+                # repeated same-shape cold solves replay the cached decision
+                # without the per-roll ``detect_ranges`` /
+                # ``bucket_coefficients`` traversal.  Honours
+                # ``FLEXTOOL_DISABLE_AUTOSCALE_CACHE=1``.
+                _cold_key = (
+                    None if _autoscale_disable_cache()
+                    else _autoscale_lp_shape_signature(pb, base_solve_name)
                 )
                 _cache_entry = (
-                    self._autoscale_shape_cache.get(_cold_fp)
-                    if _cold_fp is not None else None
+                    self._autoscale_shape_cache.get(_cold_key)
+                    if _cold_key is not None else None
                 )
                 _phase_prof("autoscale_l2_start")
                 if _cache_entry is not None:
@@ -2578,9 +2614,9 @@ def _drive_cascade(
                     if _autoscale_profile:
                         _ap("ranges_post_computed",
                             ranges_post_ran=str(_autoscale_ranges_post is not None))
-                    if _cold_fp is not None:
+                    if _cold_key is not None:
                         _l2p = _autoscale_layer2_plan
-                        self._autoscale_shape_cache[_cold_fp] = (
+                        self._autoscale_shape_cache[_cold_key] = (
                             _AutoscaleShapeCacheEntry(
                                 layer2_exponents=(
                                     dict(_l2p.type_exponents)
