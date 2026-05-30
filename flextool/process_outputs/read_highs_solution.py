@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 from pathlib import Path
 from typing import NamedTuple, Sequence, TYPE_CHECKING
@@ -711,6 +712,11 @@ def extract_variable(
     trailing_col_names: Sequence[str] = (),
     flex_data: "FlexData | None" = None,
     provider: "object | None" = None,
+    col_names_cache: Sequence[str] | None = None,
+    row_names_cache: Sequence[str] | None = None,
+    col_value: "object | None" = None,
+    col_dual: "object | None" = None,
+    row_dual: "object | None" = None,
 ) -> pd.DataFrame:
     """Extract one quantity from a solved HiGHS instance as a wide DataFrame.
 
@@ -737,18 +743,22 @@ def extract_variable(
         MultiIndex when ``len(col_names) >= 2``, a single-level ``Index``
         otherwise.  Missing combinations are filled with 0.0.
     """
+    # Cached arrays (hoisted out of the per-spec loop by
+    # ``write_all_variables``) are used when provided; otherwise fall
+    # back to fetching from the live HiGHS instance so the standalone /
+    # single-spec code path keeps working unchanged.
     if source == "row_dual":
         # Constraint names are stored on the LP struct, not exposed via
         # a bulk getter on Highs itself — ``getLp().row_names_`` is the
         # fast path (no per-row Python call).
-        names = h.getLp().row_names_
-        values = h.getSolution().row_dual
+        names = row_names_cache if row_names_cache is not None else h.getLp().row_names_
+        values = row_dual if row_dual is not None else h.getSolution().row_dual
     elif source == "col_dual":
-        names = h.allVariableNames()
-        values = h.getSolution().col_dual
+        names = col_names_cache if col_names_cache is not None else h.allVariableNames()
+        values = col_dual if col_dual is not None else h.getSolution().col_dual
     elif source == "col_value":
-        names = h.allVariableNames()
-        values = h.getSolution().col_value
+        names = col_names_cache if col_names_cache is not None else h.allVariableNames()
+        values = col_value if col_value is not None else h.getSolution().col_value
     else:
         raise ValueError(
             f"Unknown source '{source}' — expected one of "
@@ -934,6 +944,11 @@ def write_variable_parquet(
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
     provider: "object | None" = None,
+    col_names_cache: Sequence[str] | None = None,
+    row_names_cache: Sequence[str] | None = None,
+    col_value: "object | None" = None,
+    col_dual: "object | None" = None,
+    row_dual: "object | None" = None,
 ) -> Path:
     """Extract the quantity described by *spec* and write a per-solve parquet.
 
@@ -984,6 +999,11 @@ def write_variable_parquet(
                 trailing_col_names=spec.trailing_col_names,
                 flex_data=flex_data,
                 provider=provider,
+                col_names_cache=col_names_cache,
+                row_names_cache=row_names_cache,
+                col_value=col_value,
+                col_dual=col_dual,
+                row_dual=row_dual,
             )
             df = src_df if df is None else df.add(src_df, fill_value=0.0)
         assert df is not None  # guaranteed: derived_from is non-empty
@@ -1000,6 +1020,11 @@ def write_variable_parquet(
             trailing_col_names=spec.trailing_col_names,
             flex_data=flex_data,
             provider=provider,
+            col_names_cache=col_names_cache,
+            row_names_cache=row_names_cache,
+            col_value=col_value,
+            col_dual=col_dual,
+            row_dual=row_dual,
         )
     # Agent 1.8 — block-aware output expansion.  Broadcast coarse-block
     # values to every covered fine timestep so parquet output stays
@@ -1817,6 +1842,36 @@ def write_all_variables(
             else None
         )
     )
+    # Hoist the expensive HiGHS bulk fetches out of the per-spec loop.
+    # extract_variable() otherwise re-materialises ``allVariableNames()``
+    # (a fresh multi-million-element Python list), ``getSolution()`` (full
+    # col_value/col_dual/row_dual array copies) and ``getLp().row_names_``
+    # (a full LP copy incl. all row names) ONCE PER SPEC (×len(specs)).
+    # Fetching once here and threading the cached arrays through
+    # write_variable_parquet -> extract_variable collapses that to a
+    # single fetch per solve.  Output content is unchanged — the same
+    # name/value arrays are indexed, just shared.  Set
+    # ``FLEXTOOL_DISABLE_OUTPUT_HOIST=1`` to keep the old per-spec fetch
+    # (A/B comparison / quick revert).
+    col_names_cache: Sequence[str] | None = None
+    row_names_cache: Sequence[str] | None = None
+    col_value = col_dual = row_dual = None
+    if os.environ.get("FLEXTOOL_DISABLE_OUTPUT_HOIST") != "1":
+        try:
+            col_names_cache = h.allVariableNames()
+            _sol = h.getSolution()
+            col_value = _sol.col_value
+            col_dual = _sol.col_dual
+            row_dual = _sol.row_dual
+            row_names_cache = h.getLp().row_names_
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            _logger.warning(
+                "output-hoist pre-fetch failed (solve '%s'): %s — "
+                "falling back to per-spec fetch", solve_name, exc,
+            )
+            col_names_cache = row_names_cache = None
+            col_value = col_dual = row_dual = None
+
     for spec in specs:
         try:
             path = write_variable_parquet(
@@ -1828,6 +1883,11 @@ def write_all_variables(
                 flex_data=flex_data,
                 scale_the_objective=scale_the_objective,
                 provider=provider,
+                col_names_cache=col_names_cache,
+                row_names_cache=row_names_cache,
+                col_value=col_value,
+                col_dual=col_dual,
+                row_dual=row_dual,
             )
             written.append(path)
         except Exception as exc:
