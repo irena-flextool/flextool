@@ -1170,7 +1170,9 @@ def _try_malloc_trim() -> bool:
 def _phase_prof(label: str) -> None:
     """Env-gated (FLEXTOOL_PHASE_PROFILE=1) epoch-stamped RSS print to stderr. No-op otherwise.
     Epoch matches flextool/_mem_sampler.py's `epoch=` field for 1:1 alignment with mem.log."""
-    import os, sys, time
+    import os
+    import sys
+    import time
     if os.environ.get("FLEXTOOL_PHASE_PROFILE") != "1":
         return
     try:
@@ -1178,7 +1180,8 @@ def _phase_prof(label: str) -> None:
             for _ln in _f:
                 if _ln.startswith("VmRSS:"):
                     sys.stderr.write(f"[phase profile] epoch={time.time():.3f}\tstep={label}\trss_gb={int(_ln.split()[1])/(1024*1024):.3f}\n")
-                    sys.stderr.flush(); break
+                    sys.stderr.flush()
+                    break
     except Exception:
         pass
 
