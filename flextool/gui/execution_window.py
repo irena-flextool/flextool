@@ -79,6 +79,11 @@ class ExecutionWindow(tk.Toplevel):
         # Guard flag to suppress <<TreeviewSelect>> events fired by
         # programmatic selection_set inside _refresh_job_list.
         self._refreshing_list: bool = False
+        # Coalesce the per-stdout-line refresh requests into at most one
+        # rebuild per idle cycle. Without this, a streaming job floods the
+        # event loop with after() callbacks and starves mouse/keyboard input
+        # (the log becomes unselectable / uncopyable while output streams).
+        self._refresh_scheduled: bool = False
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
         from flextool.gui.ui_metrics import get_metrics
@@ -803,12 +808,21 @@ class ExecutionWindow(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def schedule_refresh(self) -> None:
-        """Schedule a job list refresh on the main thread.
+        """Schedule a job list refresh on the main thread, coalescing bursts.
 
-        Safe to call from any thread.
+        Safe to call from any thread. Repeated calls before the pending
+        refresh runs are collapsed into a single rebuild, so a streaming job
+        (one call per output line) cannot flood the event loop.
         """
+        if not self.winfo_exists() or self._refresh_scheduled:
+            return
+        self._refresh_scheduled = True
+        self.after_idle(self._do_scheduled_refresh)
+
+    def _do_scheduled_refresh(self) -> None:
+        self._refresh_scheduled = False
         if self.winfo_exists():
-            self.after(0, self._refresh_job_list)
+            self._refresh_job_list()
 
     def select_job(self, job_id: int) -> None:
         """Select and show the log for the job with *job_id*.
