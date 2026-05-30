@@ -31,8 +31,8 @@ class CheckTreeController:
         tree: ttk.Treeview,
         *,
         check_column: str = "check",
-        checked_glyph: str = "☑",
-        unchecked_glyph: str = "☐",
+        checked_glyph: str = "▣",
+        unchecked_glyph: str = "□",
         on_toggle: Callable[[list[str]], None] | None = None,
     ) -> None:
         self._tree = tree
@@ -120,8 +120,8 @@ def install_check_tree(
     on_toggle: Callable[[list[str]], None] | None = None,
     *,
     check_column: str = "check",
-    checked_glyph: str = "☑",
-    unchecked_glyph: str = "☐",
+    checked_glyph: str = "▣",
+    unchecked_glyph: str = "□",
 ) -> CheckTreeController:
     """Convenience: build + return a controller in one call."""
     return CheckTreeController(

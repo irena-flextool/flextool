@@ -36,6 +36,11 @@ This beta focuses on the standalone Tkinter desktop application.
 
 **Fixes**
 
+- GUI status icons, spinners and checkboxes now use glyphs that render in the
+  default Windows Tk fonts (Geometric Shapes / check marks); the previous
+  emoji/Math-symbol glyphs (hourglasses, ballot boxes, ⌀, ⊘) showed as
+  missing-glyph boxes on Windows. (This is a font-coverage issue, distinct from
+  the cp1252 console-printing fix — GUI glyphs are rendered by Tk, not printed.)
 - Fixed a macOS crash (`RuntimeError: main thread is not in main loop`) during
   database migration: worker threads no longer call tkinter (including
   `after`) directly — all worker→main GUI updates are marshalled onto the main

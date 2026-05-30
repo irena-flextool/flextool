@@ -83,8 +83,8 @@ CHECK_ON = "\u25a3"   # ▣
 CHECK_OFF = "\u25a1"  # □
 STATUS_OK = "\u2713"      # ✓
 STATUS_ERR = "\u2717"     # ✗
-STATUS_EMPTY = "\u2300"   # ⌀  (no scenarios)
-STATUS_EDITING = "\u23f3" # ⏳
+STATUS_EMPTY = "\u25cb"   # (no scenarios; Geometric Shapes circle — was U+2300 diameter sign)
+STATUS_EDITING = "\u25b6" # open in editor (Geometric Shapes; was U+23F3)
 
 # Input-sources tree iid prefix for external references
 _EXT_IID_PREFIX = "ext:"
@@ -97,7 +97,7 @@ def _source_name_from_iid(iid: str) -> str:
     return iid
 
 # Animated spinner frames for output action progress indication
-_SPINNER_FRAMES = ["\u29d6", "\u29d7"]  # ⧖ ⧗ (hourglass variants)
+_SPINNER_FRAMES = ["\u25d0", "\u25d3", "\u25d1", "\u25d2"]  # rotating circle (Geometric Shapes; render on Windows Tk, unlike the old U+29D6/7 hourglasses)
 
 
 class MainWindow(tk.Tk):
@@ -365,7 +365,7 @@ class MainWindow(tk.Tk):
             "\n"
             "  • Auto-gen: produce this output automatically after\n"
             "    every scenario run.\n"
-            "  • Status: ✓ = exists, ⊘ = last run failed,\n"
+            "  • Status: ✓ = exists, ✗ = last run failed,\n"
             "    blank = not produced yet. Click to (re-)generate.\n"
             "  • Show: open the folder (or file for Comparison\n"
             "    Excel) in the system file manager.\n"
@@ -2403,7 +2403,7 @@ class MainWindow(tk.Tk):
     def _update_output_frame_style(self) -> None:
         """No-op: the legacy tint of the Output actions LabelFrame is
         gone since the File outputs box uses ttk.LabelFrame and inherits
-        the theme. Per-row ✓/⊘ status icons make the "ready to act"
+        the theme. Per-row ✓/✗ status icons make the "ready to act"
         affordance visible without an extra colour cue.
         """
         return
@@ -4508,7 +4508,7 @@ class MainWindow(tk.Tk):
                 if key in self.output_action_btns:
                     self.output_action_btns[key].configure(style="TButton")
             elif key in self._output_action_failed:
-                self._output_spinners[key].configure(text="\u2298")
+                self._output_spinners[key].configure(text="\u2717")
                 if key in self.output_action_btns:
                     self.output_action_btns[key].configure(style="Grey.TButton")
             else:
@@ -4992,7 +4992,7 @@ class MainWindow(tk.Tk):
             if success:
                 self._output_spinners[action_name].configure(text="\u2713")
             else:
-                self._output_spinners[action_name].configure(text="\u2298")
+                self._output_spinners[action_name].configure(text="\u2717")
         if action_name in self.output_status_labels:
             self.output_status_labels[action_name].configure(state="normal")
         self._update_output_status()

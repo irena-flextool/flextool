@@ -7,7 +7,7 @@ from tkinter import ttk
 
 # Mirrors flextool.gui.main_window._SPINNER_FRAMES; duplicated to keep this
 # dialog free of dependencies on main_window.
-_SPINNER_FRAMES = ["⧖", "⧗"]  # ⧖ ⧗ (hourglass variants)
+_SPINNER_FRAMES = ["◐", "◓", "◑", "◒"]  # rotating circle (Geometric Shapes; render on Windows Tk, unlike the old U+29D6/7 hourglasses)
 
 
 class MigrationProgressDialog(tk.Toplevel):

@@ -12,12 +12,16 @@ from flextool.gui.hover_tooltip import attach_tooltip
 
 logger = logging.getLogger(__name__)
 
-# Status icons for the scenarios list
+# Status icons for the scenarios list.
+# Restricted to glyphs that render in the default Windows Tk fonts: the
+# check/ballot marks (U+2713/2717) and the Geometric Shapes block (U+25xx).
+# Emoji-range/Math glyphs (U+23F3 hourglass, U+2610 ballot box) rendered as
+# missing-glyph boxes on Windows, so RUNNING/PENDING use Geometric Shapes.
 _STATUS_ICONS: dict[JobStatus, str] = {
     JobStatus.SUCCESS: "\u2713",   # ✓
     JobStatus.FAILED: "\u2717",    # ✗
-    JobStatus.RUNNING: "\u23f3",   # ⏳
-    JobStatus.PENDING: "\u2610",   # ☐
+    JobStatus.RUNNING: "\u25b6",   # running / active
+    JobStatus.PENDING: "\u25a1",   # queued / empty square
     JobStatus.KILLED: "\u2717",    # ✗
 }
 
@@ -577,7 +581,7 @@ class ExecutionWindow(tk.Toplevel):
 
                 peak_col = f"{job.peak_rss_mb / 1024:.1f}" if job.peak_rss_mb > 0 else ""
                 if peak_col and getattr(job, 'killed_for_memory', False):
-                    peak_col += " ⚠"
+                    peak_col += " (!)"
 
                 self._job_tree.insert(
                     "",
