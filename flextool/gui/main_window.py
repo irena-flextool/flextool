@@ -118,6 +118,9 @@ class MainWindow(tk.Tk):
         self._main_thread_queue: queue.Queue = queue.Queue()
         self.after(50, self._pump_main_thread_queue)
 
+        # Last known "is a newer version available?" result (None = unknown).
+        self._update_available: bool | None = None
+
         # ── DPI scaling — must come before any widget/font access ─
         from flextool.gui.platform_utils import (
             apply_dpi_scaling, scale_theme_fonts,
@@ -1010,8 +1013,9 @@ class MainWindow(tk.Tk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_update_indicator(self, available: bool) -> None:
+    def _apply_update_indicator(self, available: bool | None) -> None:
         """Blue-highlight the Update button when an update is available."""
+        self._update_available = available
         if not hasattr(self, "update_btn") or not self.update_btn.winfo_exists():
             return
         self.update_btn.configure(
@@ -2654,8 +2658,14 @@ class MainWindow(tk.Tk):
             is_git=install_info.is_git_install(),
             default_toolbox=default_toolbox,
             check_on_startup=self.global_settings.check_updates_on_startup,
+            update_available=self._update_available,
+            check_fn=install_info.update_available,
+            post_to_main=self.post_to_main,
         )
         self.wait_window(dlg)
+
+        # The dialog may have refreshed availability via its Check button.
+        self._apply_update_indicator(dlg.update_available)
 
         # Persist the "check on startup" preference whether or not the user
         # proceeded with the update.
@@ -2679,26 +2689,45 @@ class MainWindow(tk.Tk):
             on_finish=self._update_finished,
         )
 
-    def _update_finished(self, success: bool) -> None:
-        """Report update result and prompt for the required restart."""
-        if success:
-            # Clear the "update available" highlight — it is now applied.
-            if hasattr(self, "update_btn") and self.update_btn.winfo_exists():
-                self.update_btn.configure(style="TButton")
-            messagebox.showinfo(
-                "Update complete — restart required",
-                "FlexTool was updated successfully.\n\n"
-                "Please close and restart FlexTool for the new version to take "
-                "effect. The running application is still using the old code.",
-                parent=self,
-            )
-        else:
+    def _update_finished(self, success: bool, output: str = "") -> None:
+        """Report update result; prompt for restart only if code actually changed."""
+        if not success:
             messagebox.showerror(
                 "Update failed",
                 "The update did not complete. See the Execution window log for "
                 "the full output (use 'Copy log text' to share it).",
                 parent=self,
             )
+            return
+
+        # Decide whether anything actually changed, so we don't tell the user to
+        # restart after a no-op update.
+        from flextool.update_flextool import install_info
+
+        low = output.lower()
+        if install_info.is_git_install():
+            changed = "already up to date" not in low  # git pulled new commits
+        else:
+            changed = "successfully installed" in low  # pip upgraded the wheel
+
+        if not changed:
+            self._apply_update_indicator(False)
+            messagebox.showinfo(
+                "Already up to date",
+                "FlexTool is already at the latest version — nothing to update.",
+                parent=self,
+            )
+            return
+
+        # Something was updated: clear the highlight and ask for a restart.
+        self._apply_update_indicator(False)
+        messagebox.showinfo(
+            "Update complete — restart required",
+            "FlexTool was updated successfully.\n\n"
+            "Please close and restart FlexTool for the new version to take "
+            "effect. The running application is still using the old code.",
+            parent=self,
+        )
 
     def _check_db_editor_launch(self, proc, source_name: str) -> None:
         """Surface a Spine DB Editor that crashed right after launch.
@@ -3266,6 +3295,7 @@ class MainWindow(tk.Tk):
 
         def _worker() -> None:
             success = True
+            collected: list[str] = []
             try:
                 env = {**os.environ, "PYTHONUNBUFFERED": "1"}
                 for step in steps:
@@ -3277,7 +3307,9 @@ class MainWindow(tk.Tk):
                     with mgr._lock:
                         job.process = proc
                     for line in proc.stdout:  # type: ignore[union-attr]
-                        mgr.append_stdout(job.job_id, line.rstrip("\n"))
+                        text = line.rstrip("\n")
+                        collected.append(text)
+                        mgr.append_stdout(job.job_id, text)
                     proc.wait()
                     if proc.returncode != 0:
                         success = False
@@ -3293,7 +3325,7 @@ class MainWindow(tk.Tk):
 
             mgr.finish_job(job.job_id, success)
             if on_finish is not None:
-                self.post_to_main(on_finish, success)
+                self.post_to_main(on_finish, success, "\n".join(collected))
 
         threading.Thread(target=_worker, daemon=True).start()
 

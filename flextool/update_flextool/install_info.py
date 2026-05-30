@@ -90,13 +90,59 @@ def upgrade_steps(include_toolbox: bool) -> tuple[list[list[str]], Path | None]:
     py = sys.executable
     root = git_checkout_root()
     if root is not None:
+        if _has_upstream(root):
+            pull = ["git", "pull", "--ff-only"]
+        else:
+            # The branch has no upstream tracking ref, so a bare `git pull`
+            # fails with "no tracking information"; name the remote and branch
+            # explicitly instead.
+            remote = _default_remote(root)
+            branch = current_branch(root) or "main"
+            pull = ["git", "pull", "--ff-only", remote, branch]
         steps = [
-            ["git", "pull", "--ff-only"],
+            pull,
             [py, "-m", "pip", "install", "--upgrade", "-e", f".{extra}"],
         ]
         return steps, root
     steps = [[py, "-m", "pip", "install", "--upgrade", f"flextool{extra}"]]
     return steps, None
+
+
+def _git(root: Path, *args: str, timeout: float = 10.0) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=root, timeout=timeout, capture_output=True, text=True
+    )
+
+
+def current_branch(root: Path) -> str | None:
+    """Current branch name, or ``None`` (detached HEAD / error)."""
+    try:
+        result = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
+        name = result.stdout.strip()
+        return name if result.returncode == 0 and name and name != "HEAD" else None
+    except Exception:
+        return None
+
+
+def _has_upstream(root: Path) -> bool:
+    """Whether the current branch has an upstream tracking ref."""
+    try:
+        return _git(
+            root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+def _default_remote(root: Path) -> str:
+    """Pick a remote to pull from — ``origin`` if present, else the first."""
+    try:
+        remotes = _git(root, "remote").stdout.split()
+    except Exception:
+        remotes = []
+    if "origin" in remotes:
+        return "origin"
+    return remotes[0] if remotes else "origin"
 
 
 def update_available(timeout: float = 5.0) -> bool:
@@ -131,8 +177,17 @@ def _git_behind_upstream(root: Path, timeout: float) -> bool:
             ["git", "fetch", "--quiet"],
             cwd=root, timeout=timeout, check=True, capture_output=True, env=env,
         )
+        # Prefer the configured upstream; fall back to the remote branch of the
+        # same name when the branch has no tracking ref set.
+        if _has_upstream(root):
+            ref = "@{u}"
+        else:
+            branch = current_branch(root)
+            if branch is None:
+                return False
+            ref = f"{_default_remote(root)}/{branch}"
         result = subprocess.run(
-            ["git", "rev-list", "--count", "HEAD..@{u}"],
+            ["git", "rev-list", "--count", f"HEAD..{ref}"],
             cwd=root, timeout=timeout, check=True, capture_output=True, text=True,
         )
         return int(result.stdout.strip() or "0") > 0
