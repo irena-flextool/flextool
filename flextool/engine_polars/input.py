@@ -49,6 +49,25 @@ from ._emit_provider_io import _provider_key
 from ._input_source import read_csv_fallback
 
 
+def _loadflex_prof(label: str) -> None:
+    """Env-gated (FLEXTOOL_LOADFLEX_PROFILE=1) RSS print to stderr. No-op otherwise."""
+    import os, sys
+    if os.environ.get("FLEXTOOL_LOADFLEX_PROFILE") != "1":
+        return
+    try:
+        with open("/proc/self/status") as _f:
+            for _ln in _f:
+                if _ln.startswith("VmRSS:"):
+                    _rss = int(_ln.split()[1]) / (1024 * 1024)
+                    break
+            else:
+                _rss = -1.0
+        sys.stderr.write(f"[loadflex profile] step={label}\trss_gb={_rss:.3f}\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Diagnostic gate for `__setattr__` on FlexData.  Production code never
 # arms this — it's a tool for ``tests/engine_polars/test_native_cascade_parity.py``
@@ -3882,6 +3901,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
     truth, even when the workdir's ``solve_data/*.csv`` already carries
     a value).
     """
+    _loadflex_prof("enter")
     # Late-import the Protocol + adapters to avoid a circular import
     # against the tests' fixture-loaders (which sometimes import this
     # module before flextool.__init__ finishes).
@@ -4324,6 +4344,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         _load_mem("load_stochastics_end",
                   "load_flextool: stochastics + remaining CSV loaders done")
 
+        _loadflex_prof("before_flexdata_ctor")
         flex_data = FlexData(
             dt = dt,
             p_step_duration = step_dur,
@@ -4428,6 +4449,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # was just used to load process topology a few lines above.
             block_layout = block_layout,
         )
+        _loadflex_prof("after_flexdata_ctor")
 
         # Gap F final — handoff-path auxiliaries: surface the three CSVs
         # that ``build_handoff_from_solution`` would otherwise re-read.
@@ -4500,8 +4522,10 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # the model-build cross-joins then operate on Enum-typed
         # frames.
         if db_reader is not None:
+            _loadflex_prof("before_apply_db_overrides")
             _apply_db_overrides(flex_data, db_reader, source, ctx=ctx,
                                  provider=provider)
+            _loadflex_prof("after_apply_db_overrides")
 
         # Δ.11 — overlay in-memory handoff carriers onto the FlexData
         # built so far.  Replaces the previous post-load ``apply_handoff``
@@ -4516,6 +4540,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             sd_dir = workdir_for_db / "solve_data" if workdir_for_db is not None else None
             flex_data = _overlay_handoff(flex_data, handoff, sd_dir, ctx=ctx,
                                             provider=provider)
+            _loadflex_prof("after_overlay_handoff")
             # Re-apply the cluster B chained-existing helper so
             # ``p_entity_all_existing`` reflects the in-memory handoff
             # carriers (rather than the workdir's pre-handoff CSV value).
@@ -4535,6 +4560,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # dtype are skipped by ``cast_frame_axes``.
         if axis_enums is not None:
             cast_flexdata_axes(flex_data, axis_enums)
+        _loadflex_prof("after_cast")
 
         # Stash the resolved axis_enums on the returned FlexData so
         # downstream consumers (``build_flextool`` and the dumpers that
@@ -4549,6 +4575,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         result = _assign_param_names(flex_data)
         load_ok = True  # noqa: F841 — consumed by finally clause below
+        _loadflex_prof("return")
         return result
     finally:
         if ctx is not None:
@@ -4630,7 +4657,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # source can broadcast across the active solve's (d, t) axis.  See
     # ``_direct_params.apply_direct_params_a/b`` docstrings for the
     # full Δ.28 rationale.
+    _loadflex_prof("apply_db_overrides:pass_direct_params_a")
     _timed("1a direct_params_a", _dp.apply_direct_params_a, db_reader, flex_data)
+    _loadflex_prof("apply_db_overrides:pass_projection_params")
     _timed("2  projection_params", _pp.apply_projection_params, db_reader, flex_data)
 
     # Pass 3-9: workdir-aware Params.  Resolve the workdir from the
@@ -4646,6 +4675,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # CSV before ``_apply_db_overrides``; run pass 1b with that dt.
         # In the fast path ``workdir`` is always non-None
         # (``_SourceShim`` carries ``work_folder``).
+        _loadflex_prof("apply_db_overrides:pass_direct_params_b")
         _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
         return
     workdir_path = Path(workdir)
@@ -4678,6 +4708,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                                                                   active_solve):
         synth = _drv._resolve_synthetic_solve(db_reader, active_solve)
         if synth is not None:
+            _loadflex_prof("apply_db_overrides:pass_synthetic_invest_sets")
             _timed("c.synth invest_sets",
                    _drv.apply_synthetic_invest_sets,
                    flex_data, db_reader, active_solve, synth, workdir_path,
@@ -4686,6 +4717,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # slow path ``flex_data.dt`` is already populated from CSV (see
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
         # Params still apply against the CSV-loaded dt.
+        _loadflex_prof("apply_db_overrides:pass_direct_params_b")
         _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
 
         # RESERVE-1 — the synthetic-solve early-return skips passes 3-10
@@ -4703,9 +4735,11 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 _drv.process_reserve_upDown_node_active_from_source(db_reader))
             flex_data.prundt = _drv.prundt_from_source(
                 db_reader, active_solve, getattr(flex_data, "dt", None))
+        _loadflex_prof("apply_db_overrides:pass_synthetic_reserve")
         _timed("c.synth reserve", _wire_reserve_for_synthetic_solve)
         return
 
+    _loadflex_prof("apply_db_overrides:pass_derived_a")
     _timed("3  derived_a", _drv.apply_derived_a, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
 
     # Δ.28 — pass 1b: broadcast-needing Direct Params now have
@@ -4717,13 +4751,20 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # pass before ``apply_derived_a`` (the legacy ordering) left
     # ``p_commodity_price`` / ``p_process_availability`` / similar
     # fields empty on the fast path even when Spine carried the data.
+    _loadflex_prof("apply_db_overrides:pass_direct_params_b")
     _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
 
+    _loadflex_prof("apply_db_overrides:pass_derived_b")
     _timed("4  derived_b", _drv.apply_derived_b, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _loadflex_prof("apply_db_overrides:pass_derived_c")
     _timed("5  derived_c", _drv.apply_derived_c, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _loadflex_prof("apply_db_overrides:pass_derived_d")
     _timed("6  derived_d", _drv.apply_derived_d, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _loadflex_prof("apply_db_overrides:pass_derived_e")
     _timed("7  derived_e", _drv.apply_derived_e, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _loadflex_prof("apply_db_overrides:pass_derived_f")
     _timed("8  derived_f", _drv.apply_derived_f, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
+    _loadflex_prof("apply_db_overrides:pass_derived_g")
     _timed("9  derived_g", _drv.apply_derived_g, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
 
     # Δ.12c — ``apply_existing_chain`` runs LAST (after ``apply_derived_f``)
@@ -4734,6 +4775,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # carriers.  Now that ``apply_derived_f`` is the authoritative producer
     # of the carriers, the seed in ``_load_invest`` becomes redundant.
     from flextool.engine_polars import _derived_existing as _ex
+    _loadflex_prof("apply_db_overrides:pass_existing_chain")
     _timed("10 existing_chain", _ex.apply_existing_chain, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
 
 

@@ -1047,6 +1047,81 @@ def _try_malloc_trim() -> bool:
         return False
 
 
+def _phase_prof(label: str) -> None:
+    """Env-gated (FLEXTOOL_PHASE_PROFILE=1) epoch-stamped RSS print to stderr. No-op otherwise.
+    Epoch matches flextool/_mem_sampler.py's `epoch=` field for 1:1 alignment with mem.log."""
+    import os, sys, time
+    if os.environ.get("FLEXTOOL_PHASE_PROFILE") != "1":
+        return
+    try:
+        with open("/proc/self/status") as _f:
+            for _ln in _f:
+                if _ln.startswith("VmRSS:"):
+                    sys.stderr.write(f"[phase profile] epoch={time.time():.3f}\tstep={label}\trss_gb={int(_ln.split()[1])/(1024*1024):.3f}\n")
+                    sys.stderr.flush(); break
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Cross-level retention audit (env-gated diagnostic + regression hook)
+#
+# A prior solve-level's ``Solution.highs`` (and ``flex_data_provider``) must be
+# released BEFORE the next solve builds its FlexData + LP — otherwise the two
+# levels' footprints coexist (storage + dispatch ≈ 2x peak; the DES 7/9
+# near-OOM).  This records any prior step whose level is EXHAUSTED (no upcoming
+# solve of that level) yet still holds a live ``solution.highs`` at the instant
+# a new solve is about to build.  A non-empty record == the cross-level
+# retention bug is present.  Gated by ``FLEXTOOL_LEVEL_RELEASE_AUDIT=1``;
+# consumed by tests/engine_polars/test_cross_level_highs_release.py.
+# ---------------------------------------------------------------------------
+_LEVEL_RELEASE_AUDIT: "list[dict]" = []
+
+
+def _audit_prior_level_release(*, steps, step_level_keys, all_level_keys,
+                               iter_idx, this_level, complete_solve_name):
+    """Append a violation record for exhausted-level prior steps still holding
+    a live ``solution.highs``.  No-op unless ``FLEXTOOL_LEVEL_RELEASE_AUDIT=1``."""
+    if os.environ.get("FLEXTOOL_LEVEL_RELEASE_AUDIT") != "1":
+        return
+    upcoming = (
+        set(all_level_keys[iter_idx + 1:])
+        if (iter_idx is not None and all_level_keys) else set()
+    )
+    violators = []
+    for _k, _step in (steps or {}).items():
+        _lvl = step_level_keys.get(_k)
+        sol = getattr(_step, "solution", None)
+        if sol is None or getattr(sol, "highs", None) is None:
+            continue
+        if _lvl is not None and _lvl != this_level and _lvl not in upcoming:
+            violators.append(_k)
+    _LEVEL_RELEASE_AUDIT.append({
+        "kind": "exhausted_entry",
+        "solve": complete_solve_name,
+        "iter_idx": iter_idx,
+        "violators": violators,
+    })
+
+
+def _audit_cold_rebuild_release(*, steps, complete_solve_name):
+    """At a COLD rebuild (warm_used False), no parked step's HiGHS is the
+    reuse source, so any prior step still holding a live ``solution.highs``
+    is a same-level stacking risk.  Record them (post-release should be
+    empty).  No-op unless ``FLEXTOOL_LEVEL_RELEASE_AUDIT=1``."""
+    if os.environ.get("FLEXTOOL_LEVEL_RELEASE_AUDIT") != "1":
+        return
+    violators = [
+        _k for _k, _step in (steps or {}).items()
+        if getattr(getattr(_step, "solution", None), "highs", None) is not None
+    ]
+    _LEVEL_RELEASE_AUDIT.append({
+        "kind": "cold_rebuild",
+        "solve": complete_solve_name,
+        "violators": violators,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -1593,6 +1668,72 @@ def _drive_cascade(
                 "_AutoscaleRangeReport | None"
             ) = None
         def run(self, complete_solve_name: str) -> int:
+            _phase_prof("run_enter")
+            # Cross-level eviction — release any EXHAUSTED prior solve-level's
+            # live HiGHS instance + flex_data_provider BEFORE this solve builds
+            # its FlexData/LP, so two level footprints never coexist (the DES
+            # storage+dispatch ≈ 2x peak that drove the 7/9 near-OOM).  This
+            # hoists the post-solve slim's exhausted-level branch
+            # (``:2632-2647``) ahead of the allocation instead of running it
+            # after — the prior level's per-iter writers + handoff already
+            # consumed its solution on its own iter, so releasing here is safe.
+            # A level is "exhausted" when no upcoming iter shares its level_key
+            # and it is not the level THIS solve belongs to; same-level steps
+            # are kept for warm reuse.  ``self._warm_problem`` for an exhausted
+            # level was already nulled at the level boundary
+            # (_native_run_model.py:497-505), so nulling the step's
+            # ``solution.highs`` here drops the last reference and frees it.
+            # malloc_trim reclaims the HiGHS (glibc) heap; the polars-side
+            # provider is freed by dropping the Python ref.
+            if not keep_solutions:
+                _ilk = getattr(self.state, "_all_level_keys", ())
+                _iidx = getattr(self.state, "_current_iter_index", None)
+                _tlvl = getattr(self.state, "_current_level_key", None)
+                _upcoming = (
+                    set(_ilk[_iidx + 1:])
+                    if (_iidx is not None and _ilk) else set()
+                )
+                # Disable knob for A/B peak-memory measurement and the
+                # regression test's negative control (mirrors the
+                # ``POLAR_HIGH_DISABLE_PRUNE_DOWN`` style escape hatch).
+                if os.environ.get("FLEXTOOL_DISABLE_XLEVEL_RELEASE") != "1":
+                    _released = False
+                    for _k, _step in (getattr(self, "_all_steps", None) or {}).items():
+                        _lvl = self._step_level_keys.get(_k)
+                        if _lvl is None or _lvl == _tlvl or _lvl in _upcoming:
+                            continue  # current level or still-upcoming: keep
+                        _sol = getattr(_step, "solution", None)
+                        if _sol is not None and getattr(_sol, "highs", None) is not None:
+                            _sol.highs = None
+                            _released = True
+                        if getattr(_step, "flex_data_provider", None) is not None:
+                            _step.flex_data_provider = None
+                            _released = True
+                        # Also evict the exhausted level's entry from the
+                        # per-level FlexDataProvider cache — it is keyed by
+                        # level_key and only reused by FUTURE same-level rolls,
+                        # of which an exhausted level has none.  Without this
+                        # the cache (``state._level_providers``) pins the
+                        # level's polars FlexData for the whole cascade even
+                        # after the step ref above is dropped.
+                        _lp = getattr(self.state, "_level_providers", None)
+                        if isinstance(_lp, dict) and _lp.pop(_lvl, None) is not None:
+                            _released = True
+                    if _released:
+                        _try_malloc_trim()
+                # Cross-level retention audit — runs AFTER the eviction above so
+                # a correct release records zero violators.  Gated by the same
+                # ``not keep_solutions`` as the eviction: the release invariant
+                # only applies when slimming is active (``keep_solutions=True``
+                # deliberately retains every level's solution).
+                _audit_prior_level_release(
+                    steps=getattr(self, "_all_steps", None),
+                    step_level_keys=getattr(self, "_step_level_keys", {}),
+                    all_level_keys=getattr(self.state, "_all_level_keys", ()),
+                    iter_idx=getattr(self.state, "_current_iter_index", None),
+                    this_level=getattr(self.state, "_current_level_key", None),
+                    complete_solve_name=complete_solve_name,
+                )
             # Optional per-iter phase-timing (opt-in via env var).  Emits
             # `per_iter` rows to the workdir's timings.csv covering
             # lp_build / solve / handoff and a warm_used marker.  See
@@ -1866,19 +2007,66 @@ def _drive_cascade(
                         _apply_warm_updates(self._warm_problem,
                                             self._prior_data, data)
                         warm_used = True
-                    except _IncompatibleUpdate:
+                    except _IncompatibleUpdate as _warm_exc:
                         # Drop the stale warm problem so the next
                         # branch builds a fresh one.  The cached Layer 2
                         # plan dies with it — the next first-build will
                         # regenerate it from the fresh LP.
+                        #
+                        # Diagnostic: surface WHICH condition forced the
+                        # cold rebuild.  On rolling cascades the ladder
+                        # Params (commit 7b5ccb3e) trip this every roll,
+                        # which re-runs the full pre-solve autoscale
+                        # traversal (the between-solves memory pyramid).
+                        # The exception message names the offending
+                        # Param / reason; log it at WARNING so a single
+                        # run pins the cause without tracemalloc.
+                        state.logger.warning(
+                            "warm reuse fell back to COLD REBUILD for %s "
+                            "(re-runs pre-solve autoscale traversal): %s",
+                            complete_solve_name, _warm_exc,
+                        )
                         self._warm_problem = None
                         self._autoscale_warm_layer2_plan = None
                         self._autoscale_warm_ranges_pre = None
                 if not warm_used:
+                    # Cross-level eviction — same-level COLD-rebuild case
+                    # (e.g. ladder period switch, 7b5ccb3e).  We are about to
+                    # build a fresh LP and are NOT warm-reusing, so no parked
+                    # step's HiGHS is a reuse source and ``self._warm_problem``
+                    # was just nulled above.  Any prior step still holding a
+                    # live ``solution.highs`` — typically the previous
+                    # same-level roll; exhausted *other* levels were already
+                    # freed at the top of run() — is now the ONLY reference to
+                    # that HiGHS.  Release it BEFORE ``_build_warm_problem``
+                    # allocates, else two same-level footprints coexist (the
+                    # DES 7/9 dispatch-on-dispatch stack).  Per-iter writers +
+                    # handoff already consumed each prior step on its own iter,
+                    # so this is safe.  ``flex_data_provider`` is NOT dropped
+                    # here — same-level rolls reuse the per-level provider
+                    # cache (``state._level_providers``).
+                    if (
+                        not keep_solutions
+                        and os.environ.get("FLEXTOOL_DISABLE_XLEVEL_RELEASE") != "1"
+                    ):
+                        _cr_released = False
+                        for _ck, _cstep in (getattr(self, "_all_steps", None) or {}).items():
+                            _csol = getattr(_cstep, "solution", None)
+                            if _csol is not None and getattr(_csol, "highs", None) is not None:
+                                _csol.highs = None
+                                _cr_released = True
+                        if _cr_released:
+                            _try_malloc_trim()
+                    if not keep_solutions:
+                        _audit_cold_rebuild_release(
+                            steps=getattr(self, "_all_steps", None),
+                            complete_solve_name=complete_solve_name,
+                        )
                     # Build the warm problem first WITHOUT solver
                     # options so we can inspect LP ranges, then push the
                     # finalised HiGHS options through ``set_solver_options``
                     # on the underlying Problem.
+                    _phase_prof("before_build_or_solve")
                     self._warm_problem = _build_warm_problem(
                         data,
                         scale_the_objective=effective_obj_scale,
@@ -1965,10 +2153,12 @@ def _drive_cascade(
                 _t_solve_start = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                _phase_prof("before_build_or_solve")
                 sol = self._warm_problem.solve()
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                _phase_prof("after_solve")
                 # Attach the cached pre-Layer-2 RangeReport as
                 # ``streamed_lp_ranges`` on the warm Solution so the
                 # Layer-1 emit hook and downstream telemetry
@@ -2001,12 +2191,14 @@ def _drive_cascade(
                 # primal / duals / reduced costs.  No-op when the
                 # cached plan is None (Layer 2 was off or didn't
                 # trigger at first-build).
+                _phase_prof("unscale_start")
                 if self._autoscale_warm_layer2_plan is not None:
                     _autoscale_unscale_post_solve(
                         sol, self._autoscale_warm_layer2_plan,
                         solve_name=complete_solve_name,
                         logger=self.state.logger,
                     )
+                _phase_prof("unscale_done")
                 self._prior_data = data
                 self._prior_fp = fp
             else:
@@ -2173,6 +2365,7 @@ def _drive_cascade(
                 # consumes, so the per-solve ``autoscale_<solve>.yaml``
                 # still lands under ``solve_data/``.
                 _ranges_for_l1 = _autoscale_ranges_post or _autoscale_ranges_pre
+                _phase_prof("before_build_or_solve")
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,
                     save_memory=_save_memory,
@@ -2182,6 +2375,7 @@ def _drive_cascade(
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
+                _phase_prof("after_solve")
                 # Attach the pre-solve ranges as
                 # ``streamed_lp_ranges`` on the Solution so the L1
                 # emit hook (which expects a dict per polar-high's
@@ -2206,15 +2400,18 @@ def _drive_cascade(
                 # Eager unscale — restore primal / duals / reduced costs
                 # to the un-scaled coordinate so output writers and
                 # subsequent rolling iterations see physical values.
+                _phase_prof("unscale_start")
                 _autoscale_unscale_post_solve(
                     sol, _autoscale_layer2_plan,
                     solve_name=complete_solve_name,
                     logger=self.state.logger,
                 )
+                _phase_prof("unscale_done")
             # autoscale Layer 1 (detect) — log the four LP coefficient
             # ranges + trigger flag now that ``streamed_lp_ranges`` is
             # populated.  Detection-only in Phase 1b; Layer 2 / Layer 3
             # actions land in later phases.
+            _phase_prof("layer1emit_start")
             _autoscale_emit_layer1(
                 sol,
                 solve_name=complete_solve_name,
@@ -2224,6 +2421,7 @@ def _drive_cascade(
                 layer2_plan=locals().get("_autoscale_layer2_plan"),
                 layer3_plan=locals().get("_autoscale_layer3_plan"),
             )
+            _phase_prof("layer1emit_done")
             # Memory checkpoint after the solve completes.  Fires on
             # level-boundary iters only; on within-group rolling iters
             # the suppressed deltas accumulate into the next emitted
@@ -2335,6 +2533,7 @@ def _drive_cascade(
             # other handoff CSVs; ``build_handoff_from_solution`` then
             # reads those refreshed files for the in-memory handoff.
             _t_wofs_start = time.perf_counter() if _phase_timing else 0.0
+            _phase_prof("write_outputs_start")
             try:
                 # Phase G — pass in-memory FlexData and the cascade-known
                 # ``is_first_solve`` boolean so handoff writers + extractors
@@ -2374,6 +2573,7 @@ def _drive_cascade(
                     seconds=time.perf_counter() - _t_wofs_start,
                     t_start=_t_wofs_start,
                 )
+            _phase_prof("write_outputs_done")
 
             # Phase 4 (Gap F) — thread the in-memory FlexData + the
             # upper-level parent handoff so the extractors / fix_storage
@@ -2391,6 +2591,7 @@ def _drive_cascade(
                 and self.state.handoffs is not None else None
             )
             _t_bhf_start = time.perf_counter() if _phase_timing else 0.0
+            _phase_prof("build_handoff_start")
             handoff = build_handoff_from_solution(
                 sol, self.state.paths.work_folder, complete_solve_name,
                 prior_handoff=prior,
@@ -2398,6 +2599,7 @@ def _drive_cascade(
                 parent_handoff=parent_handoff,
                 provider=getattr(self.state, "current_provider", None),
             )
+            _phase_prof("build_handoff_done")
             if _phase_timing:
                 _tr.record(
                     "handoff_part",
@@ -2468,6 +2670,7 @@ def _drive_cascade(
             # sub-solve (typically a few hundred rows each).  See
             # :class:`SnapshotSolution` for the wrapper consumers read.
             captured_vars: "dict[str, pl.DataFrame]" = {}
+            _phase_prof("captured_vars_start")
             if sol is not None and getattr(sol, "_vars", None):
                 for _vname in (
                     "v_invest_p", "v_invest_n",
@@ -2482,6 +2685,7 @@ def _drive_cascade(
                             # writer's empty-fallback branch handles
                             # it (see ``_entity_all_capacity._try_value``).
                             pass
+            _phase_prof("captured_vars_done")
             self._all_steps[step_key] = OrchestrationStep(
                 solve_name=step_key,
                 solution=sol,

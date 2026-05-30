@@ -53,6 +53,12 @@ def run(
         if _memrec is not None:
             _memrec.checkpoint(f"emit_solve_time.{label}", state.logger)
 
+    # Checkpoint at the very start so the first batch's delta no longer
+    # absorbs all of load_flextool's pre-emit FlexData construction — lets
+    # us tell whether the dispatch-roll spike is in load_flextool (this
+    # delta) vs the emit_* batches below.
+    _ck("START")
+
     # Native emit modules.
     from flextool.engine_polars import (
         _emit_arc_unions as _arc,

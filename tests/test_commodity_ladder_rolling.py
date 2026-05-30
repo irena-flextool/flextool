@@ -775,3 +775,40 @@ class TestSingleSolveBitIdentity:
             f"coal objective bit-for-bit. coal={coal_obj}, "
             f"coal_cum_single={cum_obj}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Cross-solve memory: same-level cold-rebuild must not stack two footprints.
+# ---------------------------------------------------------------------------
+def test_same_level_cold_rebuild_releases_prior_highs(
+    cumulative_within_period_db_url, monkeypatch,
+) -> None:
+    """Within-period rolling cold-rebuild (ladder Params differ each roll →
+    ``_IncompatibleUpdate`` → cold rebuild, same ``level_key``) must release
+    the PRIOR roll's ``Solution.highs`` BEFORE the next roll builds its LP —
+    otherwise two same-level footprints coexist (the DES 7/9
+    dispatch-on-dispatch stack).  Structural assertion via the env-gated
+    cross-level audit; LP is trivial so no GB needed.
+    """
+    from flextool.engine_polars import _orchestration
+
+    monkeypatch.setenv("FLEXTOOL_LEVEL_RELEASE_AUDIT", "1")
+    _orchestration._LEVEL_RELEASE_AUDIT.clear()
+
+    run_chain_from_db(
+        cumulative_within_period_db_url, "coal_cum_within_period",
+        warm=True, keep_solutions=False,
+    )
+
+    audit = _orchestration._LEVEL_RELEASE_AUDIT
+    cold = [r for r in audit if r.get("kind") == "cold_rebuild"]
+    assert cold, (
+        "no cold-rebuild audit records — scenario did not cold-rebuild "
+        "(expected ladder _IncompatibleUpdate per roll)"
+    )
+    violations = [r for r in cold if r.get("violators")]
+    assert not violations, (
+        "a prior same-level roll's Solution.highs was still live at a cold "
+        "rebuild, stacking two footprints (same-level retention bug). "
+        f"Records: {violations}"
+    )

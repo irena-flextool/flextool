@@ -44,6 +44,22 @@ from ._solve_state import FlexToolConfigError
 _LOG = logging.getLogger(__name__)
 
 
+def _build_prof(label: str) -> None:
+    """Env-gated (FLEXTOOL_BUILD_PROFILE=1) RSS print to stderr. No-op otherwise."""
+    import os, sys
+    if os.environ.get("FLEXTOOL_BUILD_PROFILE") != "1":
+        return
+    try:
+        with open("/proc/self/status") as _f:
+            for _ln in _f:
+                if _ln.startswith("VmRSS:"):
+                    sys.stderr.write(f"[build profile] step={label}\trss_gb={int(_ln.split()[1])/(1024*1024):.3f}\n")
+                    sys.stderr.flush()
+                    break
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Field requirements per feature.  Each list is the FlexData fields that
 # *must* be populated for the corresponding feature block to be active.
@@ -411,6 +427,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     callers who want the .mod's "completeness" objective rather than
     the parquet-aligned one.  See ``audit/objective_audit.md §8.1``."""
 
+    _build_prof("build_flextool:enter")
     # Always required.
     _check(d, ALWAYS, "always")
 
@@ -461,6 +478,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 f"alternative override."
             )
 
+    _build_prof("before:feature_flags_and_index_sets")
     has_proc      = d.process_source_sink is not None and d.process_source_sink.height > 0
     has_indirect  = d.process_indirect is not None and d.process_indirect.height > 0
     has_co2_price = d.flow_from_co2_priced is not None and d.flow_from_co2_priced.height > 0
@@ -552,12 +570,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # once here as locals, then re-use throughout build_flextool.  Each
     # local is materialised only when its owning feature is active; in
     # particular ``pss_dt`` is only built when ``has_proc`` is True.
+    _build_prof("before:compute_dt_index_sets")
     pss_dt = compute_pss_dt(d) if has_proc else None
     nodeBalance_dt = compute_nodeBalance_dt(d)
     nodeState_dt = compute_nodeState_dt(d) if has_storage else None
     process_indirect_dt = (compute_process_indirect_dt(d)
                             if has_indirect else None)
 
+    _build_prof("before:core_variables")
     # ─── Variables ────────────────────────────────────────────────────────
     if has_proc:
         v_flow = m.add_var("v_flow",
@@ -614,6 +634,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # patches that splice ``v_reserve`` into maxToSink/ramp/profile LHS
     # terms) can reference them.  Returns {} when the reserve subsystem
     # is inactive.
+    _build_prof("before:reserve_dcpf_ladder_vars")
     reserve_vars = _reserve.add_variables(m, d) if _reserve.has_feature(d) else {}
 
     # ─── DC power flow vars (v_angle) ─────────────────────────────────────
@@ -693,6 +714,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     over=("r", "ud"),
                 )  # leaves (p, source, d, t)
 
+    _build_prof("before:nodeBalance_eq")
     # ─── nodeBalance_eq ───────────────────────────────────────────────────
     # The .mod's nodeBalance_eq weights every flow contribution by
     # block_step_duration[bn,d,t] (mod:2208-2213).  Our flow terms
@@ -901,6 +923,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             (v_state_rp_start_at_first - v_state_now_rp_first)
             * d.p_state_unitsize)
 
+    _build_prof("before:rp_inter_period_and_storage_state_change")
     # ─── rp_inter_period_balance (.mod:2965-2975) ─────────────────────────
     #   v_state_inter[n, b] - v_state_inter[n, b_prev]
     #     ==  Σ_{(b, r) ∈ rp_base__rep, d ∈ period_in_use :
@@ -2038,6 +2061,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             if False:
                 pass
 
+    _build_prof("before:maxToSink")
     # ─── maxToSink (capacity bound on every flow) ─────────────────────────
     if has_proc:
         flow_lhs: dict = {"flow":  v_flow}
@@ -2241,6 +2265,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     rhs_terms = {"upper": flow_upper_rhs},
                 )
 
+    _build_prof("before:dc_power_flow")
     # ─── DC power flow (dc_flow_eq + reference-angle pin) ─────────────────
     # Wires v_flow ↔ v_angle via the linear DC OPF approximation.  Emitted
     # only when ``node_dc_power_flow`` and ``connection_dc_power_flow``
@@ -2253,6 +2278,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             p_flow_upper_existing=d.p_flow_upper_existing,
         )
 
+    _build_prof("before:online_startup_shutdown_minload")
     # ─── Online / startup / shutdown / min_load ───────────────────────────
     # Linear variant
     if has_online_lin:
@@ -2269,6 +2295,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                           v_invest_p if has_invest_p else None,
                           v_divest_p if has_divest_p else None)
 
+    _build_prof("before:ramp_limits")
     # ─── Ramp limits ──────────────────────────────────────────────────────
     if has_ramp:
         v_flow_prev = Lag(v_flow, d.dtttdt, "t", "t_previous")
@@ -2332,6 +2359,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 rhs_terms = rhs_terms,
             )
 
+    _build_prof("before:invest_divest_bounds")
     # ─── Invest / divest variable bounds + maxToSink tightening ──────────
     if has_invest_p or has_divest_p:
         # p-side max_units (rename "e" → "p" to align with process vars).
@@ -2628,6 +2656,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 rhs_terms = {"cap": e_div_max_n},
             )
 
+    _build_prof("before:conversion_indirect")
     # ─── conversion_indirect (CHP / multi-flow) ───────────────────────────
     if has_indirect:
         # Per flextool.mod:2557-2580, the conversion equation reads:
@@ -2681,6 +2710,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                        over=("source","sink"))},
         )
 
+    _build_prof("before:co2_cap_period")
     # ─── CO2 cap (period level) ───────────────────────────────────────────
     if has_co2_cap:
         # The .mod splits CO2 emissions by partition: eff multiplies by
@@ -2712,6 +2742,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             rhs_terms = {"cap": d.p_co2_max_period},
         )
 
+    _build_prof("before:co2_cap_total")
     # ─── CO2 cap (multi-period total) ─────────────────────────────────────
     # Port of v3.32.0 ``co2_max_total`` (.mod:4019-4055).  Identical
     # per-(d,t) annualised-tonnes LHS shape as ``co2_max_period``, but
@@ -2747,6 +2778,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             rhs_terms = {"cap": d.p_co2_max_total},
         )
 
+    _build_prof("before:user_defined_flow_constraints")
     # ─── User-defined flow constraints ────────────────────────────────────
     has_any_cdt = any(x is not None and x.height > 0
                       for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
@@ -2906,6 +2938,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                            lhs_terms=cstr_lhs_terms,
                            rhs_terms={"constant":     d.p_constraint_constant})
 
+    _build_prof("before:storage_state_bounds")
     # ─── Storage state bounds + start binding ─────────────────────────────
     if has_storage:
         # maxState:  v_state[n, d, t]  <=  state_upper[n, d]
@@ -3294,6 +3327,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     rhs_terms = {"target": rhs_param_ssrv},
                 )
 
+    _build_prof("before:profile_constraints")
     # ─── Profile constraints (upper / lower / fixed) ──────────────────────
     # For each (p, source, sink, f) in process_profile_<method>:
     #     v_flow[p,source,sink,d,t]  <sense>  profile[f,d,t]
@@ -3359,6 +3393,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                               d.process_profile_fixed, "==",
                               v_inv_for_profile, v_div_for_profile)
 
+    _build_prof("before:objective")
     # ─── Objective ────────────────────────────────────────────────────────
     # ``op_factor`` matches the .mod's per-(d, t) cost coefficient on every
     # dispatch-class objective term:
@@ -3683,6 +3718,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         if fc_const:
             m.add_obj_constant(float(fc_const))
 
+    _build_prof("before:group_slack_reserves_invest_delay_obj")
     # ─── Group-level slack (capacity_margin / inertia / non_sync) ────────
     if _group_slack.has_feature(d):
         vars_: dict = {}
@@ -3748,6 +3784,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     if delay_obj is not None:
         obj = obj + delay_obj
 
+    _build_prof("before:commodity_price_ladder")
     # ─── Commodity price ladder ──────────────────────────────────────────
     # Per-tier v_trade balance + tier-cap constraints + per-tier price
     # objective contribution.  The legacy commodity price term above
@@ -3772,6 +3809,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         if ladder_obj is not None:
             obj = obj + ladder_obj
 
+    _build_prof("before:non_anticipativity")
     # ─── Non-anticipativity constraints (A6) ─────────────────────────────
     # mod:4173-4233.  Four constraint families pin per-branch dispatch
     # variables to the realised period at every (d, t) ∈ dt_non_anticipativity:
@@ -3834,6 +3872,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     if scale_the_objective != 1.0:
         obj = obj * scale_the_objective
     m.set_objective(obj, sense="min")
+
+    _build_prof("build_flextool:return")
 
     # ─── Wire flextool's HiGHS solver options through to Problem.solve() ──
     # ``d.solver_options`` is loaded from ``input/solve_mode.csv`` (param
