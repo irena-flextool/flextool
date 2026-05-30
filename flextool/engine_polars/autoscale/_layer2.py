@@ -577,6 +577,70 @@ def apply_layer2(
     matrix_acc, cost_acc, bound_acc, col_id_to_type = bucket_coefficients(problem)
     exponents = choose_scale_powers(matrix_acc, cost_acc, bound_acc)
 
+    # Per-type bucket-range reporting (computed from the accumulators that
+    # the walk above produced).  These feed the YAML / console report only;
+    # they are NOT needed to install the side vectors, so the
+    # exponents-only replay path (:func:`apply_layer2_with_exponents`)
+    # passes ``None`` and the plan carries empty buckets.
+    all_types = set(matrix_acc) | set(cost_acc) | set(bound_acc)
+    type_buckets_before: dict[QuantityType, tuple[float, float]] = {}
+    type_buckets_after: dict[QuantityType, tuple[float, float]] = {}
+    for t in all_types:
+        amin = math.inf
+        amax = 0.0
+        any_seen = False
+        for src in (matrix_acc, cost_acc, bound_acc):
+            if t in src:
+                _, count, mn, mx = src[t]
+                if count > 0:
+                    amin = min(amin, mn)
+                    amax = max(amax, mx)
+                    any_seen = True
+        if not any_seen:
+            continue
+        type_buckets_before[t] = (float(amin), float(amax))
+        exp = exponents.get(t, 0)
+        f = float(2 ** exp)
+        type_buckets_after[t] = (float(amin * f), float(amax * f))
+
+    return apply_layer2_with_exponents(
+        problem,
+        exponents,
+        type_buckets_before=type_buckets_before,
+        type_buckets_after=type_buckets_after,
+    )
+
+
+def apply_layer2_with_exponents(
+    problem: Any,
+    exponents: dict[QuantityType, int],
+    *,
+    type_buckets_before: dict[QuantityType, tuple[float, float]] | None = None,
+    type_buckets_after: dict[QuantityType, tuple[float, float]] | None = None,
+) -> Layer2Plan:
+    """Install Layer-2 side vectors on ``problem`` from KNOWN exponents.
+
+    This is the cheap second half of :func:`apply_layer2` — it walks
+    only ``problem._vars`` (O(#var families)) and ``problem._cstrs``
+    (O(#constraint families)) to map the per-type ``exponents`` onto
+    column / row factors.  It performs NO coefficient traversal
+    (``bucket_coefficients`` / ``detect_ranges`` / ``_ranges_via_streaming``)
+    and therefore none of the multi-GB transient working set those walks
+    spike.
+
+    Used by the orchestrator's per-roll autoscale cache: the first solve
+    of a structural shape runs the full :func:`apply_layer2` (deriving
+    ``exponents``); every subsequent same-shape roll replays the decision
+    here against THIS roll's freshly-built ``Problem``, producing
+    byte-identical scaled coefficients (the side vectors depend only on
+    the per-type exponents and the column/row family layout, both of
+    which are invariant for a fixed structural fingerprint).
+
+    ``type_buckets_*`` are optional reporting fields; when omitted the
+    returned plan carries empty buckets (the per-roll YAML report's
+    Layer-2 section is then range-free, but the scaling applied to the LP
+    is identical).
+    """
     n_cols = problem._next_col
     col_factors = np.ones(n_cols, dtype=np.float64)
 
@@ -680,37 +744,12 @@ def apply_layer2(
     # results without this flag.
     problem._canonical_dirty = True
 
-    # Per-type bucket-range reporting.  The accumulators carry
-    # (log_sum, count, abs_min, abs_max); to combine min/max across
-    # matrix∪cost∪bound we take element-wise min/max over the four-tuples
-    # for each type.
-    all_types = set(matrix_acc) | set(cost_acc) | set(bound_acc)
-    type_buckets_before: dict[QuantityType, tuple[float, float]] = {}
-    type_buckets_after: dict[QuantityType, tuple[float, float]] = {}
-    for t in all_types:
-        amin = math.inf
-        amax = 0.0
-        any_seen = False
-        for src in (matrix_acc, cost_acc, bound_acc):
-            if t in src:
-                _, count, mn, mx = src[t]
-                if count > 0:
-                    amin = min(amin, mn)
-                    amax = max(amax, mx)
-                    any_seen = True
-        if not any_seen:
-            continue
-        type_buckets_before[t] = (float(amin), float(amax))
-        exp = exponents.get(t, 0)
-        f = float(2 ** exp)
-        type_buckets_after[t] = (float(amin * f), float(amax * f))
-
     plan = Layer2Plan(
         col_factors=col_factors,
         row_factors=row_factors,
-        type_exponents=exponents,
-        type_buckets_before=type_buckets_before,
-        type_buckets_after=type_buckets_after,
+        type_exponents=dict(exponents),
+        type_buckets_before=dict(type_buckets_before or {}),
+        type_buckets_after=dict(type_buckets_after or {}),
         skipped_rows=skipped_rows,
         skipped_integer_cols=integer_cols,
     )

@@ -48,6 +48,7 @@ from ._config import (
 from ._layer2 import (
     Layer2Plan,
     apply_layer2,
+    apply_layer2_with_exponents,
     bucket_coefficients,
     choose_scale_powers,
     unscale_solution,
@@ -80,6 +81,7 @@ __all__ = [
     "VARIABLE_FAMILIES",
     "VarFamily",
     "apply_layer2",
+    "apply_layer2_with_exponents",
     "apply_scaling",
     "bucket_coefficients",
     "choose_scale_powers",

@@ -73,6 +73,7 @@ from flextool.engine_polars.autoscale import (
     USER_BOUND_SCALE_MAX as _USER_BOUND_SCALE_MAX,
     USER_BOUND_SCALE_MIN as _USER_BOUND_SCALE_MIN,
     apply_layer2 as _autoscale_apply_layer2,
+    apply_layer2_with_exponents as _autoscale_apply_layer2_with_exponents,
     apply_scaling as _autoscale_apply_scaling,
     detect_ranges as _autoscale_compute_ranges,
     format_console_summary as _autoscale_format_console_summary,
@@ -444,6 +445,125 @@ def _autoscale_apply_layer2_pre_solve(
         len(plan.skipped_integer_cols),
     )
     return plan, ranges_pre
+
+
+@dataclass
+class _AutoscaleShapeCacheEntry:
+    """Cached autoscale DECISION for one structural fingerprint.
+
+    Rolling dispatch solves that share the same structural fingerprint
+    (``_warm._fingerprint``) emit an LP of identical shape, so the
+    autoscaler's per-layer DECISION is invariant across rolls:
+
+    * ``layer2_exponents`` — the per-:class:`QuantityType` power-of-two
+      exponents Layer 2 chose on the first solve of this shape.  ``None``
+      when Layer 2 did not trigger (or BASIC/OFF mode).  Replaying these
+      via :func:`apply_layer2_with_exponents` reinstalls byte-identical
+      side vectors on a subsequent roll's freshly-built Problem WITHOUT
+      re-walking coefficients.
+    * ``layer3_plan`` — the :class:`Layer3Plan` (``user_*_scale`` etc.)
+      Layer 3 recommended.  Re-applied verbatim via
+      :func:`apply_scaling` (cheap option-set, no range walk).  ``None``
+      when Layer 3 was disabled or its readout failed.
+    * ``ranges_pre`` / ``ranges_post`` — the pre-/post-Layer-2
+      :class:`RangeReport`s, cached so the per-roll Layer-1 YAML emit and
+      the (deduped) console summary keep their range context without a
+      re-walk.
+
+    The KEY property: a cache HIT re-applies all of the above WITHOUT a
+    single :func:`detect_ranges` / ``bucket_coefficients`` traversal,
+    which is where the per-roll multi-GB ``priv_dirty`` spikes came from.
+    """
+
+    layer2_exponents: "dict | None"
+    layer2_buckets_before: "dict"
+    layer2_buckets_after: "dict"
+    layer3_plan: "_AutoscaleLayer3Plan | None"
+    ranges_pre: "_AutoscaleRangeReport | None"
+    ranges_post: "_AutoscaleRangeReport | None"
+
+
+def _autoscale_disable_cache() -> bool:
+    """True when ``FLEXTOOL_DISABLE_AUTOSCALE_CACHE=1`` — always recompute
+    (the pre-cache, per-roll-traversal behaviour)."""
+    return os.environ.get("FLEXTOOL_DISABLE_AUTOSCALE_CACHE") == "1"
+
+
+def _autoscale_apply_layer2_from_cache(
+    pb: "Problem",
+    entry: "_AutoscaleShapeCacheEntry",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+) -> "_AutoscaleLayer2Plan | None":
+    """Cache-HIT Layer-2 re-apply — NO coefficient walk.
+
+    Reinstalls the cached per-type exponents onto THIS roll's Problem via
+    :func:`apply_layer2_with_exponents` (O(#families); zero
+    ``detect_ranges`` / ``bucket_coefficients``).  Returns the replayed
+    :class:`Layer2Plan` (needed by :func:`_autoscale_unscale_post_solve`)
+    or ``None`` when Layer 2 did not trigger for this shape.
+    """
+    if entry.layer2_exponents is None:
+        return None
+    try:
+        plan = _autoscale_apply_layer2_with_exponents(
+            pb,
+            entry.layer2_exponents,
+            type_buckets_before=entry.layer2_buckets_before,
+            type_buckets_after=entry.layer2_buckets_after,
+        )
+    except Exception:  # pragma: no cover — guard against API drift
+        if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
+            raise
+        logger.exception(
+            "autoscale Layer 2 cached replay failed for %s; reverting to "
+            "un-scaled LP for this roll",
+            solve_name,
+        )
+        return None
+    logger.debug(
+        "autoscale Layer 2 [%s]: replayed cached exponents=%s (no range walk)",
+        solve_name,
+        {t.value: e for t, e in plan.type_exponents.items()},
+    )
+    return plan
+
+
+def _autoscale_apply_layer3_from_cache(
+    pb: "Problem",
+    entry: "_AutoscaleShapeCacheEntry",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+) -> "_AutoscaleLayer3Plan | None":
+    """Cache-HIT Layer-3 re-apply — NO post-Layer-2 range walk.
+
+    Re-applies the cached :class:`Layer3Plan`'s HiGHS options to THIS
+    roll's Problem via :func:`apply_scaling` (a plain ``set_solver_options``
+    merge).  Returns the cached plan for report visibility, or ``None``
+    when Layer 3 produced no plan on the first solve of this shape.
+    """
+    plan = entry.layer3_plan
+    if plan is None:
+        return None
+    try:
+        _autoscale_apply_scaling(pb, plan)
+    except Exception:  # pragma: no cover
+        logger.exception(
+            "autoscale Layer 3 cached option apply failed for %s; HiGHS "
+            "internal scaling will fill in",
+            solve_name,
+        )
+        return plan
+    logger.debug(
+        "autoscale Layer 3 [%s]: replayed cached user_objective_scale=%d, "
+        "user_bound_scale=%d (no range walk)",
+        solve_name,
+        plan.user_objective_scale,
+        plan.user_bound_scale,
+    )
+    return plan
 
 
 def _autoscale_emit_console_summary(
@@ -1667,6 +1787,23 @@ def _drive_cascade(
             self._autoscale_warm_ranges_pre: (
                 "_AutoscaleRangeReport | None"
             ) = None
+            # Per-structural-shape autoscale DECISION cache.  Keyed by the
+            # warm structural fingerprint (``_fingerprint(data)``); each
+            # value is an :class:`_AutoscaleShapeCacheEntry` carrying the
+            # Layer-2 exponents, the Layer-3 plan, and the pre/post
+            # RangeReports computed on the FIRST solve of that shape.  On
+            # every subsequent same-shape solve (notably the COLD-rebuild-
+            # per-roll path where ladder Params force a cold rebuild yet
+            # the matrix shape is invariant) the cached decision is
+            # re-applied via :func:`_autoscale_apply_layer2_from_cache` /
+            # :func:`_autoscale_apply_layer3_from_cache` WITHOUT any
+            # ``detect_ranges`` / ``bucket_coefficients`` traversal — that
+            # traversal was the source of the per-roll multi-GB transient
+            # peaks (the autoscale memory pyramid).  Disable with
+            # ``FLEXTOOL_DISABLE_AUTOSCALE_CACHE=1`` (always recompute).
+            self._autoscale_shape_cache: (
+                "dict[tuple, _AutoscaleShapeCacheEntry]"
+            ) = {}
         def run(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
             # Cross-level eviction — release any EXHAUSTED prior solve-level's
@@ -2066,12 +2203,13 @@ def _drive_cascade(
                     # options so we can inspect LP ranges, then push the
                     # finalised HiGHS options through ``set_solver_options``
                     # on the underlying Problem.
-                    _phase_prof("before_build_or_solve")
+                    _phase_prof("build_start")
                     self._warm_problem = _build_warm_problem(
                         data,
                         scale_the_objective=effective_obj_scale,
                         solver_options=None,
                     )
+                    _phase_prof("build_done")
                     if _memrec_local is not None and _emit_phase:
                         _memrec_local.checkpoint(
                             "lp_build_end", self.state.logger,
@@ -2116,34 +2254,95 @@ def _drive_cascade(
                     # plan for use by
                     # :func:`_autoscale_unscale_post_solve` after every
                     # warm solve (first build AND reuses).
-                    (
-                        self._autoscale_warm_layer2_plan,
-                        _autoscale_ranges_pre,
-                    ) = _autoscale_apply_layer2_pre_solve(
-                        inner_pb,
-                        solve_name=complete_solve_name,
-                        logger=self.state.logger,
+                    #
+                    # Per-shape autoscale DECISION cache: the structural
+                    # fingerprint ``fp`` is invariant across rolls of the
+                    # same shape, so on a HIT we replay the cached Layer-2
+                    # exponents + Layer-3 plan WITHOUT any ``detect_ranges``
+                    # / ``bucket_coefficients`` walk (the per-roll multi-GB
+                    # spike).  A cold rebuild of an already-seen shape (the
+                    # ladder-Param ``_IncompatibleUpdate`` path) therefore
+                    # skips the traversals entirely.
+                    _cache_entry = (
+                        None if _autoscale_disable_cache()
+                        else self._autoscale_shape_cache.get(fp)
                     )
-                    # Cache the pre-Layer-2 RangeReport so subsequent
-                    # warm reuses can still attach it as
-                    # ``Solution.streamed_lp_ranges`` (the cascade only
-                    # builds the LP once, so the four ranges are
-                    # invariant across rolls of the same warm problem).
-                    self._autoscale_warm_ranges_pre = _autoscale_ranges_pre
-                    _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
-                        inner_pb,
-                        layer2_plan=self._autoscale_warm_layer2_plan,
-                        solve_name=complete_solve_name,
-                        logger=self.state.logger,
-                    )
+                    _phase_prof("autoscale_l2_start")
+                    if _cache_entry is not None:
+                        # HIT — replay decision, no range walk.
+                        self._autoscale_warm_layer2_plan = (
+                            _autoscale_apply_layer2_from_cache(
+                                inner_pb, _cache_entry,
+                                solve_name=complete_solve_name,
+                                logger=self.state.logger,
+                            )
+                        )
+                        _autoscale_ranges_pre = _cache_entry.ranges_pre
+                        self._autoscale_warm_ranges_pre = _autoscale_ranges_pre
+                        _phase_prof("autoscale_l3_start")
+                        _autoscale_layer3_plan = (
+                            _autoscale_apply_layer3_from_cache(
+                                inner_pb, _cache_entry,
+                                solve_name=complete_solve_name,
+                                logger=self.state.logger,
+                            )
+                        )
+                        _autoscale_ranges_post = _cache_entry.ranges_post
+                    else:
+                        # MISS — run the full traversals, then cache.
+                        (
+                            self._autoscale_warm_layer2_plan,
+                            _autoscale_ranges_pre,
+                        ) = _autoscale_apply_layer2_pre_solve(
+                            inner_pb,
+                            solve_name=complete_solve_name,
+                            logger=self.state.logger,
+                        )
+                        # Cache the pre-Layer-2 RangeReport so subsequent
+                        # warm reuses can still attach it as
+                        # ``Solution.streamed_lp_ranges`` (the cascade only
+                        # builds the LP once, so the four ranges are
+                        # invariant across rolls of the same warm problem).
+                        self._autoscale_warm_ranges_pre = _autoscale_ranges_pre
+                        _phase_prof("autoscale_l3_start")
+                        _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
+                            inner_pb,
+                            layer2_plan=self._autoscale_warm_layer2_plan,
+                            solve_name=complete_solve_name,
+                            logger=self.state.logger,
+                        )
+                        _autoscale_ranges_post = None
+                        if not _autoscale_disable_cache():
+                            _l2p = self._autoscale_warm_layer2_plan
+                            self._autoscale_shape_cache[fp] = (
+                                _AutoscaleShapeCacheEntry(
+                                    layer2_exponents=(
+                                        dict(_l2p.type_exponents)
+                                        if _l2p is not None else None
+                                    ),
+                                    layer2_buckets_before=(
+                                        dict(_l2p.type_buckets_before)
+                                        if _l2p is not None else {}
+                                    ),
+                                    layer2_buckets_after=(
+                                        dict(_l2p.type_buckets_after)
+                                        if _l2p is not None else {}
+                                    ),
+                                    layer3_plan=_autoscale_layer3_plan,
+                                    ranges_pre=_autoscale_ranges_pre,
+                                    ranges_post=None,
+                                )
+                            )
+                    _phase_prof("autoscale_summary_start")
                     _autoscale_emit_console_summary(
                         ranges_pre=_autoscale_ranges_pre,
-                        ranges_post=None,
+                        ranges_post=_autoscale_ranges_post,
                         layer2_plan=self._autoscale_warm_layer2_plan,
                         layer3_plan=_autoscale_layer3_plan,
                         solve_name=base_solve_name,
                         already_emitted=self._autoscale_summary_emitted,
                     )
+                    _phase_prof("autoscale_done")
                 # ``WarmProblem.solve`` always keeps the HiGHS instance
                 # alive on ``Solution.highs`` — that's the whole point
                 # of warm reuse — so the output writer adapter
@@ -2153,7 +2352,7 @@ def _drive_cascade(
                 _t_solve_start = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
-                _phase_prof("before_build_or_solve")
+                _phase_prof("solve_start")
                 sol = self._warm_problem.solve()
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
@@ -2203,7 +2402,9 @@ def _drive_cascade(
                 self._prior_fp = fp
             else:
                 pb = Problem()
+                _phase_prof("build_start")
                 build_flextool(pb, data, scale_the_objective=effective_obj_scale)
+                _phase_prof("build_done")
                 if _memrec_local is not None and _emit_phase:
                     _memrec_local.checkpoint(
                         "lp_build_end", self.state.logger,
@@ -2276,60 +2477,125 @@ def _drive_cascade(
                 # consumed by ``_autoscale_unscale_post_solve`` once the
                 # solve returns so downstream output writers see the
                 # un-scaled solution.
-                (
-                    _autoscale_layer2_plan,
-                    _autoscale_ranges_pre,
-                ) = _autoscale_apply_layer2_pre_solve(
-                    pb,
-                    solve_name=complete_solve_name,
-                    logger=self.state.logger,
+                # Per-shape autoscale DECISION cache (cold ``warm=False``
+                # / save_memory path).  ``warm_active`` is False here so no
+                # fingerprint was computed above; compute it now (cheap —
+                # heights only) purely as the cache key so repeated
+                # same-shape cold solves replay the cached decision without
+                # the per-roll ``detect_ranges`` / ``bucket_coefficients``
+                # traversal.  Honours ``FLEXTOOL_DISABLE_AUTOSCALE_CACHE=1``.
+                _cold_fp = (
+                    None if _autoscale_disable_cache() else _fingerprint(data)
                 )
-                if _autoscale_profile:
-                    _ap("layer2_applied",
-                        n_cstrs=len(pb._cstrs),
-                        n_vars=len(pb._vars))
-                # Layer 3 (HiGHS-native top-up): set user_objective_scale,
-                # user_bound_scale, and simplex_scale_strategy from the
-                # post-Layer-2 ranges so HiGHS sees a final LP that is
-                # already inside its comfort zone.  Layer 3 is HiGHS-
-                # internal (no inverse transform on the solution); the
-                # writeModel MPS export remains unscaled.
-                _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
-                    pb,
-                    layer2_plan=_autoscale_layer2_plan,
-                    solve_name=complete_solve_name,
-                    logger=self.state.logger,
+                _cache_entry = (
+                    self._autoscale_shape_cache.get(_cold_fp)
+                    if _cold_fp is not None else None
                 )
-                if _autoscale_profile:
-                    _ap("layer3_applied")
-                # Console summary: one user-visible line per base solve
-                # describing the autoscaler's pre/post ranges and the
-                # Layer 2 / Layer 3 decisions.  Read post-Layer-2 ranges
-                # from the (mutated) Problem so the "after" view reflects
-                # what HiGHS will see; Layer 3 acts inside HiGHS so its
-                # values are surfaced separately in the same line.
-                _autoscale_ranges_post: "_AutoscaleRangeReport | None" = None
-                if (
-                    _autoscale_ranges_pre is not None
-                    and _autoscale_ranges_pre.trigger
-                ):
-                    try:
-                        _autoscale_cfg_for_post = _autoscale_resolve_config(
-                            None,
+                _phase_prof("autoscale_l2_start")
+                if _cache_entry is not None:
+                    # HIT — replay decision, NO range walk.
+                    _autoscale_layer2_plan = _autoscale_apply_layer2_from_cache(
+                        pb, _cache_entry,
+                        solve_name=complete_solve_name,
+                        logger=self.state.logger,
+                    )
+                    _autoscale_ranges_pre = _cache_entry.ranges_pre
+                    if _autoscale_profile:
+                        _ap("layer2_applied_cached",
+                            n_cstrs=len(pb._cstrs),
+                            n_vars=len(pb._vars))
+                    _phase_prof("autoscale_l3_start")
+                    _autoscale_layer3_plan = _autoscale_apply_layer3_from_cache(
+                        pb, _cache_entry,
+                        solve_name=complete_solve_name,
+                        logger=self.state.logger,
+                    )
+                    if _autoscale_profile:
+                        _ap("layer3_applied_cached")
+                    _phase_prof("autoscale_summary_start")
+                    _autoscale_ranges_post = _cache_entry.ranges_post
+                    if _autoscale_profile:
+                        _ap("ranges_post_cached",
+                            ranges_post_ran=str(_autoscale_ranges_post is not None))
+                else:
+                    # MISS — run the full traversals, then cache.
+                    (
+                        _autoscale_layer2_plan,
+                        _autoscale_ranges_pre,
+                    ) = _autoscale_apply_layer2_pre_solve(
+                        pb,
+                        solve_name=complete_solve_name,
+                        logger=self.state.logger,
+                    )
+                    if _autoscale_profile:
+                        _ap("layer2_applied",
+                            n_cstrs=len(pb._cstrs),
+                            n_vars=len(pb._vars))
+                    # Layer 3 (HiGHS-native top-up): set user_objective_scale,
+                    # user_bound_scale, and simplex_scale_strategy from the
+                    # post-Layer-2 ranges so HiGHS sees a final LP that is
+                    # already inside its comfort zone.  Layer 3 is HiGHS-
+                    # internal (no inverse transform on the solution); the
+                    # writeModel MPS export remains unscaled.
+                    _phase_prof("autoscale_l3_start")
+                    _autoscale_layer3_plan = _autoscale_apply_layer3_pre_solve(
+                        pb,
+                        layer2_plan=_autoscale_layer2_plan,
+                        solve_name=complete_solve_name,
+                        logger=self.state.logger,
+                    )
+                    if _autoscale_profile:
+                        _ap("layer3_applied")
+                    # Console summary: one user-visible line per base solve
+                    # describing the autoscaler's pre/post ranges and the
+                    # Layer 2 / Layer 3 decisions.  Read post-Layer-2 ranges
+                    # from the (mutated) Problem so the "after" view reflects
+                    # what HiGHS will see; Layer 3 acts inside HiGHS so its
+                    # values are surfaced separately in the same line.
+                    _phase_prof("autoscale_summary_start")
+                    _autoscale_ranges_post: "_AutoscaleRangeReport | None" = None
+                    if (
+                        _autoscale_ranges_pre is not None
+                        and _autoscale_ranges_pre.trigger
+                    ):
+                        try:
+                            _autoscale_cfg_for_post = _autoscale_resolve_config(
+                                None,
+                            )
+                            _autoscale_ranges_post = _autoscale_compute_ranges(
+                                pb, _autoscale_cfg_for_post,
+                            )
+                        except Exception:  # pragma: no cover — non-fatal
+                            self.state.logger.exception(
+                                "autoscale post-Layer-2 range readout failed "
+                                "for %s; console summary will omit the "
+                                "'ranges post' segment",
+                                complete_solve_name,
+                            )
+                    if _autoscale_profile:
+                        _ap("ranges_post_computed",
+                            ranges_post_ran=str(_autoscale_ranges_post is not None))
+                    if _cold_fp is not None:
+                        _l2p = _autoscale_layer2_plan
+                        self._autoscale_shape_cache[_cold_fp] = (
+                            _AutoscaleShapeCacheEntry(
+                                layer2_exponents=(
+                                    dict(_l2p.type_exponents)
+                                    if _l2p is not None else None
+                                ),
+                                layer2_buckets_before=(
+                                    dict(_l2p.type_buckets_before)
+                                    if _l2p is not None else {}
+                                ),
+                                layer2_buckets_after=(
+                                    dict(_l2p.type_buckets_after)
+                                    if _l2p is not None else {}
+                                ),
+                                layer3_plan=_autoscale_layer3_plan,
+                                ranges_pre=_autoscale_ranges_pre,
+                                ranges_post=_autoscale_ranges_post,
+                            )
                         )
-                        _autoscale_ranges_post = _autoscale_compute_ranges(
-                            pb, _autoscale_cfg_for_post,
-                        )
-                    except Exception:  # pragma: no cover — non-fatal
-                        self.state.logger.exception(
-                            "autoscale post-Layer-2 range readout failed "
-                            "for %s; console summary will omit the "
-                            "'ranges post' segment",
-                            complete_solve_name,
-                        )
-                if _autoscale_profile:
-                    _ap("ranges_post_computed",
-                        ranges_post_ran=str(_autoscale_ranges_post is not None))
                 _autoscale_emit_console_summary(
                     ranges_pre=_autoscale_ranges_pre,
                     ranges_post=_autoscale_ranges_post,
@@ -2338,6 +2604,7 @@ def _drive_cascade(
                     solve_name=base_solve_name,
                     already_emitted=self._autoscale_summary_emitted,
                 )
+                _phase_prof("autoscale_done")
                 if _autoscale_profile:
                     _ap("console_summary_done")
                 # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
@@ -2365,7 +2632,7 @@ def _drive_cascade(
                 # consumes, so the per-solve ``autoscale_<solve>.yaml``
                 # still lands under ``solve_data/``.
                 _ranges_for_l1 = _autoscale_ranges_post or _autoscale_ranges_pre
-                _phase_prof("before_build_or_solve")
+                _phase_prof("solve_start")
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,
                     save_memory=_save_memory,
