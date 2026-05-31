@@ -963,7 +963,14 @@ def _load_time(sd: Path,
     # ``arithmetic on string and numeric not allowed`` error.
     if "value" in siu.columns and siu.schema["value"] != pl.Float64:
         siu = siu.with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
-    dt = siu.select("d", "t")
+    # Sort dt canonically by (d, t) so it is pinned chronologically (d, t
+    # are pl.Enum with chronological category order).  dt is tiny, so this
+    # sort is negligible — and because the big (entity, d, t) grids are
+    # built as ``entity_frame.join(dt, how="cross")`` (left-major /
+    # right-minor), a pre-sorted dt makes those grids ALREADY globally
+    # lex-sorted by the declared dim order, letting the add_var/add_cstr
+    # determinism wrapper skip its O(n log n) boundary sort.
+    dt = siu.select("d", "t").sort(["d", "t"])
     step_dur = Param(("d","t"), siu.select("d", "t", "value"))
     # rp_cost_weight: canonical ``rp_cost_weight.csv``
     # (.mod's ``p_rp_cost_weight.csv`` is a printf debug-export).

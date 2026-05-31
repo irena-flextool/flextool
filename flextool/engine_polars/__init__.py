@@ -24,6 +24,7 @@ shape of flextool's optimization model (``model.py``). The
 # so the LP is byte-identical across processes regardless of upstream
 # polars hash-bucket randomness.
 def _install_polar_high_determinism() -> None:
+    import polars as pl
     import polar_high.engine as _phe
     if getattr(_phe.Problem.add_var, "_flextool_deterministic", False):
         return  # idempotent
@@ -41,7 +42,19 @@ def _install_polar_high_determinism() -> None:
         # through unchanged.
         if (index is not None and index.height > 0
                 and all(d in index.columns for d in dim_tuple)):
-            index = index.sort(list(dim_tuple))
+            keys = list(dim_tuple)
+            # Skip the O(n log n) sort when the frame is already
+            # lex-sorted by the dim keys.  ``pl.struct(keys).is_sorted()``
+            # is an O(n) monotonic scan that compares fields
+            # left-to-right and respects Enum CATEGORY order, so it agrees
+            # exactly with ``.sort(keys)``.  The wrapper's OUTPUT is
+            # unchanged ("frame sorted by the key"): already-sorted input
+            # equals sort(input), so LP col ids — and goldens — cannot
+            # move.  The big (entity, d, t) grids built by cross-joining a
+            # pre-sorted dt are already sorted, so this avoids re-sorting
+            # multi-million-row frames on every build.
+            if not index.select(pl.struct(keys)).to_series().is_sorted():
+                index = index.sort(keys)
         return _orig_add_var(self, name, dims, index, lower=lower,
                               upper=upper, integer=integer)
     add_var._flextool_deterministic = True
@@ -49,7 +62,12 @@ def _install_polar_high_determinism() -> None:
     def add_cstr(self, name, *, over=None, sense, lhs_terms,
                   rhs_terms=None):
         if over is not None and over.height > 0:
-            over = over.sort(list(over.columns))
+            keys = list(over.columns)
+            # Same skip-when-already-sorted optimisation as add_var; see
+            # the note there.  Output stays "over sorted by its columns",
+            # so row ids and goldens are unaffected.
+            if not over.select(pl.struct(keys)).to_series().is_sorted():
+                over = over.sort(keys)
         return _orig_add_cstr(self, name, over=over, sense=sense,
                                 lhs_terms=lhs_terms, rhs_terms=rhs_terms)
     add_cstr._flextool_deterministic = True

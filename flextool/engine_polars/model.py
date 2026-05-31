@@ -428,6 +428,15 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     the parquet-aligned one.  See ``audit/objective_audit.md §8.1``."""
 
     _build_prof("build_flextool:enter")
+
+    # Block-COO dense-axis contract: FlexTool's dense trailing axes are
+    # (period, timestep) = ("d","t"). Declaring them lets polar_high's
+    # canonical-matrix build use the fast block-COO slice path (bit-identical
+    # to the polars path). Guarded with hasattr so an older polar_high without
+    # the contract is a no-op (no regression).
+    if hasattr(m, "declare_dense_axes"):
+        m.declare_dense_axes(("d", "t"))
+
     # Always required.
     _check(d, ALWAYS, "always")
 
