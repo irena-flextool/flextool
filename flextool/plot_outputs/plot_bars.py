@@ -10,6 +10,7 @@ from flextool.plot_outputs.legend_helpers import (
 )
 from flextool.plot_outputs.axis_helpers import (
     _subplot_axis_bounds, _apply_subplot_label, _estimate_value_nbins,
+    _ylabel_axes_x,
 )
 from flextool.plot_outputs.subplot_helpers import (
     BarLayoutParams, _calculate_grid_layout, _get_unique_levels, _extract_subplot_data,
@@ -289,80 +290,51 @@ def _build_bar_figure(
         if df_s.empty:
             return BAR_HEIGHT  # minimum
 
-        def _sum_row_heights(df_data: pd.DataFrame) -> float:
-            """Sum per-row slot heights, using per-row n_grp.
+        def _sum_row_heights(df_data: pd.DataFrame, n_global: int) -> float:
+            """Sum per-row slot heights. Must match the render pass exactly.
 
-            Vectorised: avoids per-row ``df.loc[[idx]]`` slicing. Two cases:
-
-            * Simple bars (no ``grouped_bar_levels``): every kept row gets
-              ``_slot_height_for_n_grouped(1)``.
-            * Grouped bars: per-row group count = number of unique tuples
-              across ``grouped_bar_level_names`` whose column has at least
-              one non-zero value in that row (when pruning).
+            * Simple bars (no ``grouped_bar_levels``): every kept (non-empty)
+              row gets ``_slot_height_for_n_grouped(1)``; fully-empty rows
+              (under pruning) contribute nothing (they are not drawn).
+            * Grouped bars: every non-empty row reserves a slot for the
+              GLOBAL grouped count ``n_global`` (the same count
+              ``_plot_grouped_bars`` uses to position bars), so the slot is
+              consistent with what is drawn. Fully-empty rows fall back to
+              ``BAR_HEIGHT`` only if they are counted as rows; under pruning
+              they are removed and contribute nothing.
             """
             if df_data.empty:
                 return 0.0
 
-            import numpy as np
-            # Boolean mask: True where |v| > 1e-6 (column-wise).
-            nz_mask = df_data.abs() > 1e-6
+            # Boolean mask: True where |v| > 1e-6 (row has any non-zero).
+            row_has_data = (df_data.abs() > 1e-6).any(axis=1)
 
             # --- Case A: simple bars ---------------------------------------
             if not grouped_bar_levels:
                 if skip_data_with_only_zeroes:
-                    # Legacy semantics: skip a row iff every column in
-                    # that row has |v| <= 1e-6.
-                    n_non_zero_rows = int(nz_mask.any(axis=1).sum())
+                    n_non_zero_rows = int(row_has_data.sum())
                 else:
                     n_non_zero_rows = len(df_data.index)
                 return n_non_zero_rows * _slot_height_for_n_grouped(1)
 
             # --- Case B: grouped bars --------------------------------------
-            # Per-row count of unique grouped-level tuples whose column is
-            # non-zero in that row (mirrors legacy `_count_grouped(row)`
-            # called on the pre-pruned row).
-            cols = df_data.columns
-            slot_h = _slot_height_for_n_grouped  # local alias
+            # Every non-empty row reserves the GLOBAL-count slot; this is the
+            # render pass's behaviour (_row_height returns the global slot for
+            # any row with at least one non-zero bar).
+            slot_global = _slot_height_for_n_grouped(n_global)
             if skip_data_with_only_zeroes:
-                if isinstance(cols, pd.MultiIndex) and grouped_bar_level_names:
-                    # Group columns by the grouped levels: each label
-                    # contributes one bar if ANY of its columns is non-zero
-                    # for the row.
-                    col_groups = cols.to_frame(index=False)[grouped_bar_level_names]
-                    # Encode tuple per column → integer code for fast grouping
-                    keys = pd.MultiIndex.from_frame(col_groups)
-                    codes, _uniq = keys.factorize() if hasattr(keys, 'factorize') \
-                        else pd.factorize(list(keys))
-                    # For each row & each code, OR the column non-zero flags
-                    # together, then count codes that are True.
-                    nz_arr = nz_mask.to_numpy()
-                    codes_arr = np.asarray(codes)
-                    n_codes = int(codes_arr.max()) + 1 if codes_arr.size else 0
-                    if n_codes == 0:
-                        return 0.0
-                    # Aggregate OR per (row, code) → (n_rows × n_codes).
-                    n_rows = nz_arr.shape[0]
-                    per_row = np.zeros((n_rows, n_codes), dtype=bool)
-                    for col_i, code in enumerate(codes_arr):
-                        per_row[:, int(code)] |= nz_arr[:, col_i]
-                    n_grouped_per_row = per_row.sum(axis=1)
-                else:
-                    # Single-level columns: each non-zero column in a row
-                    # is its own group.
-                    n_grouped_per_row = nz_mask.sum(axis=1).to_numpy()
-                # Vectorise the slot-height lookup. Slot heights repeat for
-                # small n, so cache per-n via np.unique.
-                uniq, inv = np.unique(n_grouped_per_row, return_inverse=True)
-                heights = np.array([slot_h(int(n)) if n > 0 else 0.0
-                                    for n in uniq], dtype=float)
-                return float(heights[inv].sum())
+                n_non_empty = int(row_has_data.sum())
+                return n_non_empty * slot_global
+            return len(df_data.index) * slot_global
 
-            # No pruning: every row sees the same group count.
-            n_const = _count_grouped(df_data)
-            return len(df_data.index) * slot_h(n_const)
+        # GLOBAL grouped count for this subplot — the same count
+        # _plot_grouped_bars uses (len(grouped_bars) over the full subplot
+        # columns). Every non-empty row reserves a slot for this count, so the
+        # estimation total matches the render pass's per-row slot sum.
+        n_global = _count_grouped(df_s) if grouped_bar_levels else 1
 
         if not expand_axis_levels:
-            return max(_sum_row_heights(df_s), BAR_HEIGHT)
+            return max(_sum_row_heights(df_s, n_global), BAR_HEIGHT)
 
         # Per expand group: extract slice, sum per-row heights
         total_h = 0.0
@@ -388,7 +360,7 @@ def _build_bar_figure(
                 continue
             if isinstance(df_g, pd.Series):
                 df_g = df_g.to_frame()
-            total_h += _sum_row_heights(df_g)
+            total_h += _sum_row_heights(df_g, n_global)
         return max(total_h, BAR_HEIGHT)
 
     subplot_sizes: list[float] = [
@@ -605,17 +577,36 @@ def _build_bar_figure(
                 axes[idx].set_visible(False)
             continue
 
-        # Compute per-position slot heights based on actual grouped bar count.
-        # When skip_data_with_only_zeroes: count only non-zero grouped bars
-        # for height calculation (but df_sub is NOT modified — zero bars
-        # Per-row slot heights: count non-zero grouped bars at each position.
+        # Per-row slot heights. _plot_grouped_bars positions every row's bar
+        # group using a SINGLE total_w built from the GLOBAL grouped count
+        # (len(grouped_bars) over the full subplot), applied uniformly to all
+        # rows. So every row that draws any bar must reserve a slot sized for
+        # that same global count — otherwise a row with fewer non-zero
+        # scenarios gets a slot smaller than the group it draws and the bars
+        # overflow into adjacent rows. We therefore size every non-empty row
+        # to _slot_height_for_n_grouped(GLOBAL_n_grouped); only fully-empty
+        # rows (no non-zero bar) fall back to BAR_HEIGHT. GLOBAL_n is constant
+        # per subplot and equals the len(grouped_bars) the drawing uses.
+        global_n_grouped = _count_grouped(df_sub) if grouped_bar_levels else 1
+
         def _row_height(row_data: pd.DataFrame) -> float:
+            if grouped_bar_levels:
+                # Detect a fully-empty row only to fall back to BAR_HEIGHT;
+                # the non-empty slot uses the GLOBAL group count to match
+                # what _plot_grouped_bars draws.
+                if skip_data_with_only_zeroes:
+                    pruned = row_data.loc[:, (row_data.abs() > 1e-6).any(axis=0)]
+                    if pruned.empty:
+                        return BAR_HEIGHT
+                elif row_data.empty:
+                    return BAR_HEIGHT
+                return _slot_height_for_n_grouped(global_n_grouped)
+            # Simple bars (no grouping) — unchanged.
             if skip_data_with_only_zeroes:
                 row_data = row_data.loc[:, (row_data.abs() > 1e-6).any(axis=0)]
             if row_data.empty:
                 return BAR_HEIGHT
-            n = _count_grouped(row_data) if grouped_bar_levels else 1
-            return _slot_height_for_n_grouped(n)
+            return _slot_height_for_n_grouped(1)
 
         if expand_axis_levels and groups_with_bars:
             per_bar_heights: list[float] = []
@@ -942,14 +933,34 @@ def _build_bar_figure(
                 if ymin < 0:
                     ymin *= 1.13
                 ax.set_ylim(ymin, ymax)
-        # When expand-axis is active, push ylabel further left to avoid overlapping
-        # the secondary y-axis group labels. The pad is based on group_label_width in points.
-        if expand_axis_levels and bar_orientation == 'horizontal':
-            expand_pad = (layout.group_label_width + 0.15) * 72
+        # Y-axis label positioning. For HORIZONTAL bars the ylabel is the
+        # category axis (left of the tick labels): pin it explicitly to the
+        # left of the (generously estimated) tick-label region — and, when
+        # expand-axis group labels occupy space to the left, to the left of
+        # those too. Explicit set_label_coords avoids matplotlib's
+        # environment-dependent auto-positioning. For VERTICAL bars the ylabel
+        # is the value axis; keep the existing labelpad behaviour unchanged.
+        if bar_orientation == 'horizontal':
+            group_w = layout.group_label_width if expand_axis_levels else 0.0
+            # Inches reserved between figure-left and the axes' left spine
+            # (tick labels + ylabel reservation), minus LEFT_PAD which we keep
+            # as figure-edge breathing room. Used to clamp the ylabel so its
+            # text never crosses the figure's left edge for very wide category
+            # labels.
+            left_margin_in = layout.total_label_width + left_edge_pad - LEFT_PAD
+            ylabel_axes_x = _ylabel_axes_x(
+                layout.bar_label_width, group_w, layout.base_bar_length,
+                left_margin_in=left_margin_in,
+            )
+            _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows,
+                                 ylabel_axes_x=ylabel_axes_x)
         else:
-            expand_pad = 0
-        _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows,
-                             expand_label_pad=expand_pad)
+            if expand_axis_levels:
+                expand_pad = (layout.group_label_width + 0.15) * 72
+            else:
+                expand_pad = 18
+            _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows,
+                                 expand_label_pad=expand_pad)
 
         # Add a dotted zero line on the value axis
         if bar_orientation == 'horizontal':

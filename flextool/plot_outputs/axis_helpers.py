@@ -54,34 +54,85 @@ def _subplot_axis_bounds(axis_bounds: list | None, idx: int) -> tuple | None:
 _subplot_axis_scale = _subplot_axis_bounds
 
 
-# Default y-axis labelpad (points) when no expand-axis pad applies. Pushes the
-# rotated y-axis label ~0.25" further left so it clears wide tick labels: the
-# CHAR_WIDTH-based left reservation slightly under-estimates true tick width
-# (e.g. "Zimbabwe" measures wider than reserved), and a tighter ~0.125" pad
-# left the ylabel grazing the tick label under GUI fonts/DPI. 18pt (~0.25")
-# gives a clearly comfortable gap while still clearing the figure left edge.
-YLABEL_LABELPAD_PT = 18
+# Gap (inches) between the tick-label region and the y-axis label's right
+# edge, and the approximate half-thickness (inches) of the rotated ylabel text
+# so its RIGHT edge — not its anchor — clears the ticks. Used by the explicit
+# set_label_coords positioning below.
+YLABEL_TICK_GAP_IN = 0.12
+YLABEL_HALF_THICKNESS_IN = 0.07
+# Tick labels render at labelsize 10 while CHAR_WIDTH is calibrated at font-9,
+# so the reserved tick width under-estimates the true rendered width by
+# ~12-15%. Inflate the reserved width by this factor before positioning the
+# ylabel so its right edge clears the widest tick label.
+YLABEL_TICK_WIDTH_SAFETY = 1.2
+
+
+def _ylabel_axes_x(tick_width_in: float, group_label_width_in: float,
+                   axes_width_in: float, left_margin_in: float | None = None) -> float:
+    """Axes-fraction x for the rotated horizontal-bar ylabel via set_label_coords.
+
+    Returns a negative axes-width fraction placing the ylabel a controlled gap
+    to the LEFT of the tick-label region (and, when expand-axis group labels
+    occupy space, to the left of those too). matplotlib's auto-positioning of
+    the ylabel is environment-dependent (version / font / canvas), so we pin
+    the position explicitly instead of relying on labelpad.
+
+    ``left_margin_in`` is the inches reserved between the figure's left edge
+    and the axes' left spine (tick labels + ylabel reservation). When given,
+    the leftward offset is clamped so the ylabel's anchor never crosses the
+    figure's left edge (its text thickness still extends a touch further left,
+    so we leave ``YLABEL_HALF_THICKNESS_IN`` of headroom). Without the clamp a
+    very wide tick reservation (long category labels) would push the ylabel
+    off-canvas.
+
+    Guards ``axes_width_in <= 0`` by returning a small fixed fraction.
+    """
+    offset_in = (
+        tick_width_in * YLABEL_TICK_WIDTH_SAFETY
+        + group_label_width_in
+        + YLABEL_TICK_GAP_IN
+        + YLABEL_HALF_THICKNESS_IN
+    )
+    if left_margin_in is not None and left_margin_in > 0:
+        max_offset = max(0.0, left_margin_in - YLABEL_HALF_THICKNESS_IN)
+        offset_in = min(offset_in, max_offset)
+    if axes_width_in <= 0:
+        return -0.05
+    return -offset_in / axes_width_in
 
 
 def _apply_subplot_label(ax, xlabel, ylabel, idx: int, row: int, col: int, n_rows: int,
-                         expand_label_pad: float = 0) -> None:
+                         expand_label_pad: float = 0,
+                         ylabel_axes_x: float | None = None) -> None:
     """Apply xlabel/ylabel to ax, supporting both str (positional) and list (per-subplot).
 
     Parameters
     ----------
     expand_label_pad : float
-        Extra labelpad (in points) to push the ylabel further left when
-        expand-axis secondary axes occupy space to the left of the main axes.
-        When falsy, a generic ``YLABEL_LABELPAD_PT`` default is applied so the
-        y-axis label clears wide tick labels.
+        Legacy labelpad (points) retained only as a fallback when
+        ``ylabel_axes_x`` is not supplied (e.g. vertical-bar callers).
+    ylabel_axes_x : float | None
+        When supplied (horizontal bars), the ylabel position is pinned
+        explicitly with ``ax.yaxis.set_label_coords(ylabel_axes_x, 0.5)`` —
+        an axes-fraction x (negative = left of the spine), deterministic and
+        independent of matplotlib's auto-positioning. y=0.5 centers the label
+        on THIS subplot's axes (correct for per-subplot col==0 labels).
     """
-    ylabel_pad = expand_label_pad if expand_label_pad else YLABEL_LABELPAD_PT
+    ylabel_pad = expand_label_pad if expand_label_pad else 0
+
+    def _place_ylabel(text: str) -> None:
+        if ylabel_axes_x is not None:
+            ax.set_ylabel(text)
+            ax.yaxis.set_label_coords(ylabel_axes_x, 0.5)
+        else:
+            ax.set_ylabel(text, labelpad=ylabel_pad)
+
     if isinstance(ylabel, list):
         val = ylabel[idx] if idx < len(ylabel) else None
         if val:
-            ax.set_ylabel(val, labelpad=ylabel_pad)
+            _place_ylabel(val)
     elif ylabel and col == 0:
-        ax.set_ylabel(ylabel, labelpad=ylabel_pad)
+        _place_ylabel(ylabel)
 
     if isinstance(xlabel, list):
         val = xlabel[idx] if idx < len(xlabel) else None
