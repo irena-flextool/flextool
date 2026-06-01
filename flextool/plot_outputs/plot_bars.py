@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator, FixedLocator, FixedFormatter
-from flextool.plot_outputs.format_helpers import _get_value_formatter
+from flextool.plot_outputs.format_helpers import _get_value_formatter, format_value_label
 from flextool.plot_outputs.legend_helpers import (
     estimate_legend_width, estimate_legend_height,
     _format_legend_labels, _should_show_legend,
@@ -888,14 +888,52 @@ def _build_bar_figure(
             ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins, prune=prune))
             ax.yaxis.set_major_formatter(_fmt)
         # Extend axis limits AFTER tick locator to create room for value labels
-        # within the plot area (13% on each side that has data).
+        # within the plot area. The vertical branch keeps the simple 13% bump
+        # (label overflow there is one text-line tall — negligible). The
+        # horizontal branch reserves room sized to the *actual* value-label
+        # text width in inches, because a fixed % of the data range under-
+        # reserves for large numbers (the label width is ~constant in inches,
+        # not proportional to the data range) and the labels spill into the
+        # legend. It never shrinks below the old 13%.
         if value_fmt:
             if bar_orientation == 'horizontal':
-                xmin, xmax = ax.get_xlim()
-                if xmax > 0:
-                    xmax *= 1.13
-                if xmin < 0:
-                    xmin *= 1.13
+                data_min, data_max = ax.get_xlim()
+                # The label sits at the data extreme; reserve its text width.
+                neg_anchor = min(data_min, 0)
+
+                def _value_label_text(v):
+                    if value_fmt == 'dynamic':
+                        return format_value_label(v)
+                    return format(v, value_fmt)
+
+                # Per-char width slightly generous vs the font-9-calibrated
+                # CHAR_WIDTH (=0.081"): bar_label font is ~10pt and CHAR_WIDTH
+                # under-estimates it. Over-reserving a little is far better
+                # than clipping into the legend. Add the 3pt bar_label padding.
+                _label_char_w = 0.095          # inches per char at the label font
+                _label_pad_in = 3 / 72         # bar_label padding=3pt
+                _axw = layout.base_bar_length
+
+                xmin, xmax = data_min, data_max
+                if _axw > 0:
+                    if data_max > 0:
+                        label_w_in = len(_value_label_text(data_max)) * _label_char_w + _label_pad_in
+                        frac = min(0.9, label_w_in / _axw)
+                        new_xmax = (data_max - label_w_in * neg_anchor / _axw) / (1 - frac)
+                        xmax = max(data_max * 1.13, new_xmax)
+                    if data_min < 0:
+                        label_w_neg = len(_value_label_text(data_min)) * _label_char_w + _label_pad_in
+                        frac_neg = min(0.9, label_w_neg / _axw)
+                        # Mirror of the positive solve: reserve label_w_neg to
+                        # the left of data_min so the label fits in the axes.
+                        pos_anchor = max(data_max, 0)
+                        new_xmin = (data_min - label_w_neg * pos_anchor / _axw) / (1 - frac_neg)
+                        xmin = min(data_min * 1.13, new_xmin)
+                else:
+                    if data_max > 0:
+                        xmax = data_max * 1.13
+                    if data_min < 0:
+                        xmin = data_min * 1.13
                 ax.set_xlim(xmin, xmax)
             else:
                 ymin, ymax = ax.get_ylim()
