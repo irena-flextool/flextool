@@ -34,6 +34,13 @@ SOLO_BAR_THICKNESS_MULT = 2.0      # one-bar-per-row case (no grouping → no le
 _REF_DENOM = REFERENCE_BARS_PER_ROW + (REFERENCE_BARS_PER_ROW - 1) * BAR_GAP_FRACTION
 REFERENCE_BAR_THICKNESS = BAR_HEIGHT / _REF_DENOM   # ≈ 0.0558 in
 SOLO_BAR_THICKNESS = REFERENCE_BAR_THICKNESS * SOLO_BAR_THICKNESS_MULT  # ≈ 0.1116 in
+# When value labels are drawn on bars, the regular bar thickness leaves the
+# numeric labels too close together (the center-to-center bar pitch is only
+# ~0.44x the label font line height, so labels overlap). Thicken bars — and
+# correspondingly grow each bar's slot height so the thicker bars still fit —
+# by this factor whenever value labels are enabled. 2.5x raises the pitch to
+# slightly above one font line height (~0.139" at 10pt), separating labels.
+VALUE_LABEL_BAR_THICKNESS_MULT = 2.5
 SUBPLOT_VPAD = 0.3          # Space above axes for subplot title
 INTER_COL_GAP = 0.4         # Horizontal gap between subplot columns
 INTER_ROW_GAP = 0.6         # Vertical gap between subplot rows
@@ -229,6 +236,14 @@ def _build_bar_figure(
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
+    # When value labels are on, thicken bars and grow each slot by the same
+    # factor so the labels (which sit at bar centers) gain vertical
+    # separation. thickness_mult is captured by the closures below and
+    # passed to the draw functions, so the estimation and render passes stay
+    # consistent. value_fmt is in scope here (it is also used to draw the
+    # labels further down).
+    thickness_mult = VALUE_LABEL_BAR_THICKNESS_MULT if value_fmt else 1.0
+
     # Per-position bar height: when grouped bars exceed 3, scale up the slot
     # so each individual bar stays at least 1/3 of font height (~10pt).
     # Slot height for a label row containing n bars at the FIXED bar
@@ -239,7 +254,7 @@ def _build_bar_figure(
         """Bar slot height for n grouped bars at one label."""
         if n <= 0:
             return BAR_HEIGHT
-        bar_t = SOLO_BAR_THICKNESS if n == 1 else REFERENCE_BAR_THICKNESS
+        bar_t = (SOLO_BAR_THICKNESS if n == 1 else REFERENCE_BAR_THICKNESS) * thickness_mult
         needed = n * bar_t + max(0, n - 1) * BAR_GAP_FRACTION * bar_t
         return max(BAR_HEIGHT, needed)
 
@@ -698,7 +713,8 @@ def _build_bar_figure(
                                y_positions=y_positions,
                                slot_heights=per_bar_heights,
                                labeled_groups=labeled_groups,
-                               value_axis_lim=value_axis_lim)
+                               value_axis_lim=value_axis_lim,
+                               thickness_mult=thickness_mult)
         elif stack_levels:
             _plot_stacked_bars(ax, df_sub, all_bars, expand_axis_level_names,
                                stack_level_names, bar_orientation,
@@ -709,7 +725,8 @@ def _build_bar_figure(
             _plot_simple_bars(ax, df_sub, all_bars, expand_axis_level_names,
                               bar_orientation, value_fmt,
                               y_positions=y_positions, slot_heights=per_bar_heights,
-                              value_axis_lim=value_axis_lim)
+                              value_axis_lim=value_axis_lim,
+                              thickness_mult=thickness_mult)
 
         # Set up axis with groups and bars
         # Build bar labels for display (matching all_bars structure)

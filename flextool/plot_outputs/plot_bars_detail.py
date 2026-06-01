@@ -92,6 +92,7 @@ def _plot_grouped_bars(
     slot_heights: list[float] | None = None,
     labeled_groups: set[str] | None = None,
     value_axis_lim: tuple[float, float] | None = None,
+    thickness_mult: float = 1.0,
 ) -> None:
     """Render grouped side-by-side bars onto ax for one subplot.
 
@@ -205,6 +206,7 @@ def _plot_grouped_bars(
 
     # Bar geometry: identical to the original formula.
     bar_w = SOLO_BAR_THICKNESS if n_grouped == 1 else REFERENCE_BAR_THICKNESS
+    bar_w *= thickness_mult
     step = bar_w * (1 + BAR_GAP_FRACTION)
     total_w = bar_w * n_grouped + bar_w * BAR_GAP_FRACTION * max(0, n_grouped - 1)
 
@@ -535,6 +537,7 @@ def _plot_simple_bars(
     y_positions: list[float] | None = None,
     slot_heights: list[float] | None = None,
     value_axis_lim: tuple[float, float] | None = None,
+    thickness_mult: float = 1.0,
 ) -> None:
     """Render simple single-color bars onto ax for one subplot (no stacking, no grouping)."""
     if not all_bars:
@@ -604,6 +607,7 @@ def _plot_simple_bars(
 
     # Single vectorised draw call replacing the per-bar loop.
     bar_h = SOLO_BAR_THICKNESS
+    bar_h *= thickness_mult
     if horizontal:
         container = ax.barh(draw_y, draw_v, height=bar_h, color='steelblue')
     else:  # vertical
