@@ -608,23 +608,15 @@ def derive_process__source__sink__profile__profile_method_direct(
 def emit_process_arc_unions(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
     """Emit ``process_arc_unions`` to the Provider.
-    Emits the same 14 frames under ``solve_data/<basename>`` keys via
-    :func:`_emit` (dual-key registration).  *solve_data_dir* is retained
+    Emits 7 live frames under ``solve_data/<basename>`` keys via
+    :func:`_emit` (dual-key registration); 7 reader-less frames (the
+    toSink/toProcess/profile projections + the process_co2 pair) were
+    pruned as dead.  *solve_data_dir* is retained
     because the shared input bundle still consumes it for sister input
     reads (``_read_n_col`` / ``_read_pairs``).
     """
     inp = _arc_unions_inputs(input_dir, solve_data_dir, provider=provider)
 
-    _emit(provider, "solve_data/process__profileProcess__toSink.csv",
-          _compute_process__profileProcess__toSink(inp))
-    _emit(provider, "solve_data/process__source__toProfileProcess.csv",
-          _compute_process__source__toProfileProcess(inp))
-    _emit(provider, "solve_data/process_profile.csv",
-          _compute_process_profile(inp))
-    _emit(provider, "solve_data/process_source_toProcess.csv",
-          _compute_process_source_toProcess(inp))
-    _emit(provider, "solve_data/process_process_toSink.csv",
-          _compute_process_process_toSink(inp))
     _emit(provider, "solve_data/process_source_sink_eff.csv",
           _compute_process_source_sink_eff(solve_data_dir, provider=provider))
     disk = _disk_arc_lists(solve_data_dir, provider=provider)
@@ -634,11 +626,6 @@ def emit_process_arc_unions(input_dir: Path, solve_data_dir: Path,
           _compute_process_online(solve_data_dir, provider=provider))
     _emit(provider, "solve_data/process_minload.csv",
           _compute_process_minload(inp, solve_data_dir, provider=provider))
-    _emit(provider, "solve_data/process__commodity__node_co2.csv",
-          _compute_process__commodity__node_co2(inp, solve_data_dir,
-                                                  provider=provider))
-    _emit(provider, "solve_data/process_co2.csv",
-          _compute_process_co2(inp, solve_data_dir, provider=provider))
     _emit(provider, "solve_data/process_source_sink.csv",
           _compute_process_source_sink(inp, disk))
     _emit(provider, "solve_data/process_source_sink_alwaysProcess.csv",
