@@ -43,7 +43,6 @@ same pattern :mod:`._emit_chain_params` uses for its
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import polars as pl
@@ -51,7 +50,6 @@ import polars as pl
 from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
-    _provider_open,
 )
 from flextool.engine_polars._pdt_lookup import (
     NODE_PARAM_DEF1,
@@ -62,35 +60,46 @@ from flextool.engine_polars._pdt_lookup import (
 )
 
 
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a ``csv.reader`` cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; ``csv.reader`` then reads those
+    strings back.  Mirror that so structural string keys stay
+    byte-identical to the legacy CSV round-trip.
+    """
+    return "" if value is None else str(value)
+
+
 def _read_pairs(path: Path,
                 *,
                 provider: "object | None" = None) -> list[tuple[str, str]]:
-    fh = _provider_open(provider, _provider_key(path), path)
-    if fh is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str]] = []
-    with fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.append((row[0], row[1]))
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.append((c0, c1))
     return out
 
 
 def _read_triples(path: Path,
                   *,
                   provider: "object | None" = None) -> list[tuple[str, str, str]]:
-    fh = _provider_open(provider, _provider_key(path), path)
-    if fh is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str, str]] = []
-    with fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 3 and row[0] and row[1] and row[2]:
-                out.append((row[0], row[1], row[2]))
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1, c2 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2])
+        if c0 and c1 and c2:
+            out.append((c0, c1, c2))
     return out
 
 

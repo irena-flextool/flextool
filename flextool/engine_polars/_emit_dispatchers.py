@@ -26,7 +26,6 @@ the file level via ``filecmp.cmp(shallow=False)`` in
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import polars as pl
@@ -34,54 +33,67 @@ import polars as pl
 from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
-    _provider_open,
 )
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O — same helpers as the sibling legacy modules.
+# Native-frame row I/O — reads the in-memory polars frame directly from the
+# Provider via ``provider.get(_provider_key(path))`` instead of round-
+# tripping through CSV text.  ``_cell_str`` reproduces the ``csv.reader``
+# cell string (``null`` → ``""``, else ``str``) so structural string keys
+# stay byte-identical to the legacy round-trip; ``provider.get`` returns
+# data rows only, so there is no header row to skip.
 # ---------------------------------------------------------------------------
+
+
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a ``csv.reader`` cell string for a native frame value."""
+    return "" if value is None else str(value)
 
 
 def _read_pairs(path: Path,
                 *, provider: "object | None" = None) -> list[tuple[str, str]]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str]] = []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.append((row[0], row[1]))
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.append((c0, c1))
     return out
 
 
 def _read_n_col(path: Path, n: int,
                 *, provider: "object | None" = None) -> list[tuple[str, ...]]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, ...]] = []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= n and all(row[i] for i in range(n)):
-                out.append(tuple(row[:n]))
+    for row in df.iter_rows():
+        if len(row) < n:
+            continue
+        cells = tuple(_cell_str(row[i]) for i in range(n))
+        if all(cells):
+            out.append(cells)
     return out
 
 
 def _read_singles(path: Path,
                   *, provider: "object | None" = None) -> list[str]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        return [r[0] for r in reader if r and r[0]]
+    out: list[str] = []
+    for row in df.iter_rows():
+        if not row:
+            continue
+        c0 = _cell_str(row[0])
+        if c0:
+            out.append(c0)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -693,18 +705,18 @@ def _read_p_table(path: Path,
     rows whose value isn't a float.  Mirrors the legacy local-loop in
     :func:`write_entity_period_calc_params`."""
     out: dict[tuple[str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 3 and row[0] and row[1]:
-                try:
-                    out[(row[0], row[1])] = float(row[2])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            try:
+                out[(c0, c1)] = float(row[2])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
