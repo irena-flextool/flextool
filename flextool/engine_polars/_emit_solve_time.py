@@ -221,8 +221,6 @@ def run(
     # ── L4 batches 34-37 ──────────────────────────────────────────────
     _arc.emit_process_source_sink_param(input_dir, solve_data_dir, provider=provider)
     _ck("process_source_sink_param")
-    _arc.emit_process_source_sink_param_with_time(input_dir, solve_data_dir, provider=provider)
-    _ck("process_source_sink_param_with_time")
     _arc.emit_process_source_sink_profile_method_connection(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -321,9 +319,7 @@ def run(
     _ck("gcndt_co2_price")
     _arc.emit_group_commodity_node_period_co2_period(input_dir, solve_data_dir, provider=provider)
     _ck("group_commodity_node_period_co2_period")
-    # ── L0/L1 batch 64: param_t projections + instant-flow sets ───────
-    _arc.emit_param_t_projections_and_time_params(input_dir, solve_data_dir, provider=provider)
-    _ck("param_t_projections_and_time_params")
+    # ── L0/L1 batch 64: instant-flow sets ─────────────────────────────
     _arc.emit_gdt_instant_flow_sets(solve_data_dir, provider=provider)
     _ck("gdt_instant_flow_sets")
     # ── L0/L1 batch 65: small set derivations ─────────────────────────

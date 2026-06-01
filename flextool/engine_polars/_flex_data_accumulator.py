@@ -127,7 +127,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_sink_sourceSinkPeriodParam_in_use.csv",
     # — Phase E-b lifted streamed writers
     "peedt.csv",
-    "process__source__sink__param_t.csv",
     "gdt_maxInstantFlow.csv",
     "gdt_minInstantFlow.csv",
     "p_process_delay_weight.csv",
@@ -155,15 +154,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "nodeGroupDispatch__group_aggregate_Connection.csv",
     "nodeGroupDispatch__group_aggregate_Unit_to_group.csv",
     "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
-    # — 8-CSV param_t projections + timeParam
-    "process__param_t.csv",
-    "connection__param__time.csv",
-    "connection__param_t.csv",
-    "process__source__param_t.csv",
-    "process__sink__param_t.csv",
-    "process__source__timeParam.csv",
-    "process__sink__timeParam.csv",
-    "process__timeParam.csv",
     # _emit_chain_params — Phase E-b lifted streamed writers
     "p_entity_pre_existing.csv",
     "p_entity_divest_cumulative_max.csv",
