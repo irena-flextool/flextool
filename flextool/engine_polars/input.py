@@ -4744,6 +4744,33 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 db_reader, active_solve, getattr(flex_data, "dt", None))
         _loadflex_prof("apply_db_overrides:pass_synthetic_reserve")
         _timed("c.synth reserve", _wire_reserve_for_synthetic_solve)
+
+        # SECTION-1 — same class of gap as RESERVE-1.  The synthetic-solve
+        # early-return skips passes 3-10, so ``apply_derived_c``'s
+        # ``p_section`` producer never runs.  After the Δ.12-drop deleted
+        # the ``pdtProcess_section.csv`` loader seed (see ``_load_online``),
+        # ``apply_derived_c`` is the SOLE producer of ``flex_data.p_section``
+        # — so on a rolling sub-solve the CSV-seeded ``process_min_load_eff``
+        # (Projection Params, pass 2) stays populated while ``p_section`` is
+        # left ``None``.  ``build_flextool``'s ``MINLOAD_EFF`` ``_check`` then
+        # raises, and (when it doesn't) the section energy-balance term
+        # (``model.py`` online cost / flow) and the section cost output are
+        # silently dropped because both gate on ``p_section is not None``.
+        # ``p_section_from_source`` is solve-agnostic (no ``active_solve``
+        # filter), so calling it here mirrors ``apply_derived_c`` exactly
+        # (``_derived_params`` §3.8.1 wiring).  See
+        # ``specs/model_bugs.md::SECTION-1``.
+        def _wire_section_for_synthetic_solve():
+            dt = getattr(flex_data, "dt", None)
+            if dt is None or dt.height == 0:
+                return
+            classified = _drv._classify_process_method(db_reader)
+            if classified is None or classified.height == 0:
+                return
+            flex_data.p_section = _drv.p_section_from_source(
+                db_reader, dt, classified)
+        _loadflex_prof("apply_db_overrides:pass_synthetic_section")
+        _timed("c.synth section", _wire_section_for_synthetic_solve)
         return
 
     _loadflex_prof("apply_db_overrides:pass_derived_a")
