@@ -54,6 +54,14 @@ def _subplot_axis_bounds(axis_bounds: list | None, idx: int) -> tuple | None:
 _subplot_axis_scale = _subplot_axis_bounds
 
 
+# Default y-axis labelpad (points) when no expand-axis pad applies. Pushes the
+# rotated y-axis label ~0.125" further left so it clears wide tick labels: the
+# CHAR_WIDTH-based left reservation slightly under-estimates true tick width
+# (e.g. "Zimbabwe" measures wider than reserved), leaving a razor-thin
+# ylabel→tick gap that can overlap under GUI fonts/DPI.
+YLABEL_LABELPAD_PT = 9
+
+
 def _apply_subplot_label(ax, xlabel, ylabel, idx: int, row: int, col: int, n_rows: int,
                          expand_label_pad: float = 0) -> None:
     """Apply xlabel/ylabel to ax, supporting both str (positional) and list (per-subplot).
@@ -63,8 +71,10 @@ def _apply_subplot_label(ax, xlabel, ylabel, idx: int, row: int, col: int, n_row
     expand_label_pad : float
         Extra labelpad (in points) to push the ylabel further left when
         expand-axis secondary axes occupy space to the left of the main axes.
+        When falsy, a generic ``YLABEL_LABELPAD_PT`` default is applied so the
+        y-axis label clears wide tick labels.
     """
-    ylabel_pad = expand_label_pad if expand_label_pad else None
+    ylabel_pad = expand_label_pad if expand_label_pad else YLABEL_LABELPAD_PT
     if isinstance(ylabel, list):
         val = ylabel[idx] if idx < len(ylabel) else None
         if val:

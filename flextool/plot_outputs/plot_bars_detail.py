@@ -7,7 +7,7 @@ Each function receives an axes object and renders one subplot's bars.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from flextool.plot_outputs.format_helpers import DynamicFormatter
+from flextool.plot_outputs.format_helpers import format_value_label
 
 # Bar geometry constants (kept in sync with plot_bars.py module-level
 # values). Duplicated here to avoid a circular import — plot_bars.py
@@ -280,8 +280,7 @@ def _plot_grouped_bars(
         drawn_categories.add(grouped_idx)
         if value_fmt:
             if value_fmt == 'dynamic':
-                _dfmt = DynamicFormatter()
-                ax.bar_label(container, fmt=lambda x, _f=_dfmt: _f(x, None), padding=3)
+                ax.bar_label(container, fmt=lambda x: format_value_label(x), padding=3)
             else:
                 ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)
 
@@ -614,8 +613,7 @@ def _plot_simple_bars(
         container = ax.bar(draw_y, draw_v, width=bar_h, color='steelblue')
     if value_fmt:
         if value_fmt == 'dynamic':
-            _dfmt = DynamicFormatter()
-            ax.bar_label(container, fmt=lambda x, _f=_dfmt: _f(x, None), padding=3)
+            ax.bar_label(container, fmt=lambda x: format_value_label(x), padding=3)
         else:
             ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)
 

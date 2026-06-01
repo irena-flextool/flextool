@@ -13,6 +13,10 @@ from matplotlib.ticker import Formatter, FuncFormatter
 from flextool.lean_parquet import read_lean_parquet
 
 
+# ── superscript digits for nice exponent display (single source) ──
+_SUPERSCRIPTS = str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻')
+
+
 def _sig_figs_fmt(x, pos, n: int = 5) -> str:
     """Format x with n significant figures, plain notation, no trailing zeros."""
     if x == 0:
@@ -43,7 +47,9 @@ class DynamicFormatter(Formatter):
     """
 
     # ── superscript digits for nice exponent display ──
-    _SUPERSCRIPTS = str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻')
+    # Alias to the module-level single source so tick formatting and the
+    # value-label formatter share one table.
+    _SUPERSCRIPTS = _SUPERSCRIPTS
 
     def format_ticks(self, values):
         if len(values) == 0:
@@ -119,6 +125,42 @@ class DynamicFormatter(Formatter):
         if max_abs >= 1_000:
             return format(x, f',.{decimals}f')
         return format(x, f'.{decimals}f')
+
+
+# Module-level instance reused only to delegate the small-value (< 1e6)
+# comma-formatting path of format_value_label, so small value labels render
+# exactly as the dynamic tick path would. This does NOT affect tick labels.
+_VALUE_LABEL_DELEGATE = DynamicFormatter()
+
+
+def format_value_label(x) -> str:
+    """Format a bar value label (the ``'dynamic'`` value-label path only).
+
+    For ``abs(x) >= 1_000_000`` produce compact engineering notation in the
+    ×10⁶ / ×10⁹ / ×10¹² style with 5 significant figures on the mantissa
+    (trailing zeros and a trailing '.' stripped), e.g. ``16_701_871`` →
+    ``"16.701×10⁶"``. Below 1e6 (and for non-finite / zero values) delegate
+    to the existing dynamic comma formatting so small labels are unchanged.
+
+    Note: this is for *value labels on bars only*. Axis tick labels keep going
+    through DynamicFormatter / _get_value_formatter and must not call this.
+    """
+    if not math.isfinite(x) or x == 0:
+        return _VALUE_LABEL_DELEGATE(x, None)
+    abs_x = abs(x)
+    if abs_x < 1_000_000:
+        return _VALUE_LABEL_DELEGATE(x, None)
+
+    # Engineering exponent (multiple of 3); for abs_x >= 1e6 this is >= 6.
+    exp = 3 * (math.floor(math.log10(abs_x)) // 3)
+    mantissa = x / 10 ** exp
+    # 5 significant figures: |mantissa| lies in [1, 1000).
+    decimals = max(0, 4 - math.floor(math.log10(abs(mantissa))))
+    mantissa_str = format(mantissa, f'.{decimals}f')
+    if '.' in mantissa_str:
+        mantissa_str = mantissa_str.rstrip('0').rstrip('.')
+    exp_str = str(exp).translate(_SUPERSCRIPTS)
+    return f'{mantissa_str}×10{exp_str}'
 
 
 def _get_value_formatter(axis_tick_format, idx: int):
