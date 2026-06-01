@@ -172,7 +172,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # _emit_period_params — Phase E-b lifted streamed writers
     "pdtNodeInflow.csv",
     "pdtProfile.csv",
-    "pdtConversion_rate.csv",
     "pdtProcess_section.csv",
     "pdtProcess_slope.csv",
     "pdGroup.csv",
@@ -186,10 +185,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "pssdt_varCost_eff_unit_source.csv",
     "pssdt_varCost_eff_unit_sink.csv",
     "pssdt_varCost_eff_connection.csv",
-    "p_startup_cap_reduction_sink.csv",
-    "p_shutdown_cap_reduction_sink.csv",
-    "p_startup_cap_reduction_source.csv",
-    "p_shutdown_cap_reduction_source.csv",
     "ed_invest_max_period.csv",
     "ed_invest_min_period.csv",
     "ed_divest_max_period.csv",

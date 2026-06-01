@@ -255,9 +255,6 @@ def run(
         input_dir, solve_data_dir, provider=provider,
     )
     _ck("process_reserve_filters_and_reliability")
-    # ── L0 batch 50 ───────────────────────────────────────────────────
-    _period.emit_cap_reduction_params(input_dir, solve_data_dir, provider=provider)
-    _ck("cap_reduction_params")
     # ── L0 batch 51 ───────────────────────────────────────────────────
     _arc.emit_pProcess_source_sink(input_dir, solve_data_dir, provider=provider)
     _ck("pProcess_source_sink")

@@ -5,7 +5,7 @@ via mostly-procedural fallback cascades:
 
 * :func:`write_pdtNodeInflow`                  (3-branch).
 * :func:`write_pdtProfile`                     (5-branch).
-* :func:`write_pdtConversion_rate_section_slope` (3 outputs).
+* :func:`write_pdtConversion_rate_section_slope` (2 outputs — section + slope; conversion_rate emit pruned, dead).
 
 The fallback cascades use simple dict-keyed lookups — optimal for the
 per-row access pattern.  See the module docstring on
@@ -653,18 +653,6 @@ def _derive_conversion_trio(
     return conv_frame, section_frame, slope_frame
 
 
-def derive_pdtConversion_rate(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Materialise just the ``pdtConversion_rate`` frame (callers needing
-    all three should use :func:`_derive_conversion_trio` instead)."""
-    conv, _sec, _slope = _derive_conversion_trio(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return conv
-
-
 def derive_pdtProcess_section(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
@@ -692,10 +680,9 @@ def emit_pdtConversion_rate_section_slope(
     *, provider,
 ) -> None:
     """Emit ``pdtConversion_rate_section_slope`` to the Provider."""
-    conv, sec, slope = _derive_conversion_trio(
+    _conv, sec, slope = _derive_conversion_trio(
         input_dir, solve_data_dir, provider=provider,
     )
-    _emit(provider, "solve_data/pdtConversion_rate.csv", conv)
     _emit(provider, "solve_data/pdtProcess_section.csv", sec)
     _emit(provider, "solve_data/pdtProcess_slope.csv", slope)
 
@@ -1534,28 +1521,6 @@ def derive_p_shutdown_cap_reduction_source(
     )
     return _cap_reduction_frame(psrc, proc_src, "ramp_speed_down", "source",
                                 pp, online, dtd)
-
-
-def emit_cap_reduction_params(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider,
-) -> None:
-    """Emit ``cap_reduction_params`` to the Provider."""
-    (pp, psrc, psnk, online, proc_src, proc_snk, dtd) = _cap_reduction_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _emit(provider, "solve_data/p_startup_cap_reduction_sink.csv",
-          _cap_reduction_frame(psnk, proc_snk, "ramp_speed_up", "sink",
-                               pp, online, dtd))
-    _emit(provider, "solve_data/p_shutdown_cap_reduction_sink.csv",
-          _cap_reduction_frame(psnk, proc_snk, "ramp_speed_down", "sink",
-                               pp, online, dtd))
-    _emit(provider, "solve_data/p_startup_cap_reduction_source.csv",
-          _cap_reduction_frame(psrc, proc_src, "ramp_speed_up", "source",
-                               pp, online, dtd))
-    _emit(provider, "solve_data/p_shutdown_cap_reduction_source.csv",
-          _cap_reduction_frame(psrc, proc_src, "ramp_speed_down", "source",
-                               pp, online, dtd))
 
 
 # ---- write_ed_period_params (mod L1252-1255 family, ed_*_period) ----------
