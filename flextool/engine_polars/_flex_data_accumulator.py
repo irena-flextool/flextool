@@ -78,10 +78,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process__startup_method.csv",
     "node__inflow_method.csv",
     "node__storage_binding_method.csv",
-    "connection__param.csv",
-    "nodeGroupDispatch_node.csv",
     "commodity_node_co2.csv",
-    "process__commodity__node.csv",
     # _emit_calc_params — thin writers
     "process_VRE.csv",
     # _emit_arc_unions — thin writers + Phase E-b lifted streamed writers
