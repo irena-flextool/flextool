@@ -19,7 +19,6 @@ sites can keep using the canonical ``input/<stem>.csv`` /
 """
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import polars as pl
@@ -28,7 +27,15 @@ import polars as pl
 def _emit(provider, key: str, df: pl.DataFrame) -> None:
     """Register *df* in *provider* under *key* (canonical form).
 
-    *key* must be of the form 'parent/basename' (e.g. 'solve_data/foo.csv').
+    *key* must be of the form 'parent/basename' (e.g. 'solve_data/foo').
+    It is an **in-memory Provider key, not a file path** — in a normal
+    run nothing is written to disk; the frame lives in the Provider's
+    dict.  The path-like ``parent/basename`` form mirrors the layout
+    that ``--csv-dump`` writes (``work_folder/parent/basename.csv``), so
+    the key reads the same as the debug-dump path.  A trailing ``.csv``
+    in *key* is cosmetic — the Provider strips it on registration — so
+    consumers must query the suffix-free key.
+
     The Provider's bidirectional lookup (see
     :class:`FlexDataProvider.get`) resolves bare-basename consumer
     queries to the qualified key, so a single registration is
@@ -52,34 +59,6 @@ def _provider_key(path: "Path | str") -> str:
     return stem
 
 
-def _provider_open(provider: "object | None", name: str,
-                   path: "Path | str"):  # noqa: ARG001 — path kept for API
-    """Open an in-memory CSV handle for *name* from the Provider.
-
-    Returns a ``StringIO`` containing the frame's CSV serialisation
-    when the Provider carries *name*, else ``None``.  *path* is kept
-    in the signature so call sites can pass the canonical workdir
-    path alongside the key without restructuring — it is not read.
-
-    Raises :class:`ValueError` when *provider* is missing: cascade
-    callers must always thread a Provider, and a ``None`` here is a
-    bug, not a fallback.
-    """
-    if provider is None:
-        raise ValueError(
-            "_provider_open requires a FlexDataProvider; the disk-fallback "
-            "arm was removed in Step 2.5.  Plumb a provider through to "
-            "the caller."
-        )
-    if not provider.has(name):
-        return None
-    df = provider.get(name)
-    buf = io.StringIO()
-    df.write_csv(buf)
-    buf.seek(0)
-    return buf
-
-
 def _provider_lookup_positional(
     provider: "object | None",
     name: str,
@@ -91,8 +70,9 @@ def _provider_lookup_positional(
     Resolution: if *provider* has *name*, slice its frame to the first
     ``len(columns)`` columns and rename them by position to *columns*.
     Otherwise return ``None`` so the caller falls back to its own
-    empty-frame branch.  *path* is retained in the signature for
-    symmetry with :func:`_provider_open`; no disk I/O happens here.
+    empty-frame branch.  *path* is retained in the signature so call
+    sites can derive the key via :func:`_provider_key`; no disk I/O
+    happens here.
 
     Raises :class:`ValueError` when *provider* is missing.
     """
@@ -122,7 +102,8 @@ def workdir_provider_for_paths(
 
     Used by cascade entry points that accept a bare ``workdir`` and need
     to materialise Provider keys for the per-solve scaffolding the
-    cascade reads via :func:`_provider_open` / :func:`_provider_read`.
+    cascade reads via :func:`_provider_lookup_positional` /
+    ``_provider_read``.
     Each entry in *paths* is interpreted relative to *workdir* (or
     treated as absolute if already absolute).  Missing files are skipped
     silently — the cascade modules tolerate missing keys by their own
@@ -155,7 +136,6 @@ def workdir_provider_for_paths(
 __all__ = [
     "_emit",
     "_provider_key",
-    "_provider_open",
     "_provider_lookup_positional",
     "workdir_provider_for_paths",
 ]

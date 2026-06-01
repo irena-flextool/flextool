@@ -23,7 +23,6 @@ in ``tests/engine_polars/test_writer_port_phase1.py``.
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,7 +31,6 @@ import polars as pl
 from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
-    _provider_open,
 )
 from flextool.engine_polars import _provider_keys as K
 from flextool.engine_polars._provider_translators import read_handoff_frame
@@ -70,88 +68,127 @@ def _ed_value_frame(
 
 
 # ---------------------------------------------------------------------------
-# Shared CSV readers (mirror legacy helpers byte-for-byte).
+# Native-frame readers.
+#
+# These read the in-memory polars frame directly from the Provider via
+# ``provider.get(_provider_key(path))`` instead of round-tripping through
+# CSV text (the legacy ``_provider_open`` + ``csv.reader`` path).
+#
+# Type-fidelity contract — reproduce *exactly* what ``csv.reader`` over a
+# ``DataFrame.write_csv`` serialisation would have yielded:
+#
+#   * Key columns (the dict-key / structural string positions) were
+#     ``csv.reader`` strings.  ``write_csv`` serialises ``null`` → ``""``
+#     and any scalar (Enum / Int / Float / Utf8) → its string form.  We
+#     coerce each key cell with :func:`_cell_str` and apply the original
+#     truthiness guard to the *string* form so a null cell is skipped
+#     (matching the legacy ``if row[i]`` test) while a literal ``"0"`` is
+#     kept.
+#   * Value columns were re-coerced with ``float(...)`` / ``int(...)``.
+#     We apply the same coercion to the native cell and widen the legacy
+#     ``except ValueError`` to ``except (ValueError, TypeError)`` so a
+#     null value cell is skipped (matching the legacy CSV behaviour where
+#     the empty-string value cell raised ``ValueError``).
+#
+# ``provider.get`` returns data rows only (no header), so there is no
+# header row to skip; an empty / missing frame yields the same empty
+# output the legacy loop produced.
 # ---------------------------------------------------------------------------
+
+
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a ``csv.reader`` cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; ``csv.reader`` then reads those
+    strings back.  Mirror that here so dict keys / structural strings stay
+    byte-identical to the legacy CSV round-trip.
+    """
+    return "" if value is None else str(value)
 
 
 def _read_singles(path: Path,
                   *, provider: "object | None" = None) -> list[str]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        return [r[0] for r in reader if r and r[0]]
+    out: list[str] = []
+    for row in df.iter_rows():
+        if not row:
+            continue
+        c0 = _cell_str(row[0])
+        if c0:
+            out.append(c0)
+    return out
 
 
 def _read_pairs(path: Path,
                 *, provider: "object | None" = None) -> list[tuple[str, str]]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str]] = []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.append((row[0], row[1]))
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.append((c0, c1))
     return out
 
 
 def _read_triples(path: Path,
                   *, provider: "object | None" = None) -> list[tuple[str, str, str]]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str, str]] = []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 3 and row[0] and row[1] and row[2]:
-                out.append((row[0], row[1], row[2]))
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1, c2 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2])
+        if c0 and c1 and c2:
+            out.append((c0, c1, c2))
     return out
 
 
 def _load_ed_value_csv(path: Path,
                        *, provider: "object | None" = None,
                        ) -> dict[tuple[str, str], float]:
-    """``[entity, period, value]`` (header + rows) → ``{(e, d): v}``."""
+    """``[entity, period, value]`` (data rows) → ``{(e, d): v}``."""
     out: dict[tuple[str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for r in reader:
-            if len(r) >= 3 and r[0] and r[1]:
-                try:
-                    out[(r[0], r[1])] = float(r[2])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            try:
+                out[(c0, c1)] = float(row[2])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _load_e_value_csv(path: Path,
                       *, provider: "object | None" = None,
                       ) -> dict[str, float]:
-    """``[entity, value]`` (header + rows) → ``{e: v}``."""
+    """``[entity, value]`` (data rows) → ``{e: v}``."""
     out: dict[str, float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for r in reader:
-            if len(r) >= 2 and r[0]:
-                try:
-                    out[r[0]] = float(r[1])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0 = _cell_str(row[0])
+        if c0:
+            try:
+                out[c0] = float(row[1])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -163,24 +200,21 @@ def _load_param_value_at(
     """``[..., param, ..., value]`` filtered to rows where column ``param_col``
     equals ``param_value`` → ``{tuple(row[c] for c in key_cols): value}``."""
     out: dict[tuple[str, ...], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for r in reader:
-            if len(r) <= max(param_col, value_col, *key_cols):
-                continue
-            if r[param_col] != param_value:
-                continue
-            key = tuple(r[c] for c in key_cols)
-            if not all(key):
-                continue
-            try:
-                out[key] = float(r[value_col])
-            except ValueError:
-                continue
+    for row in df.iter_rows():
+        if len(row) <= max(param_col, value_col, *key_cols):
+            continue
+        if _cell_str(row[param_col]) != param_value:
+            continue
+        key = tuple(_cell_str(row[c]) for c in key_cols)
+        if not all(key):
+            continue
+        try:
+            out[key] = float(row[value_col])
+        except (ValueError, TypeError):
+            continue
     return out
 
 
@@ -188,18 +222,15 @@ def _read_solve_first_flag(solve_data_dir: Path,
                            *, provider: "object | None" = None) -> bool:
     """Read ``solve_data/p_model.csv`` for the ``solveFirst`` flag."""
     pm_path = solve_data_dir / "p_model.csv"
-    seeded = _provider_open(provider, _provider_key(pm_path), pm_path)
-    if seeded is None:
+    df = provider.get(_provider_key(pm_path))
+    if df is None:
         return False
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for r in reader:
-            if len(r) >= 2 and r[0] == "solveFirst":
-                try:
-                    return bool(int(r[1]))
-                except ValueError:
-                    return False
+    for row in df.iter_rows():
+        if len(row) >= 2 and _cell_str(row[0]) == "solveFirst":
+            try:
+                return bool(int(row[1]))
+            except (ValueError, TypeError):
+                return False
     return False
 
 
@@ -701,20 +732,17 @@ def _compute_p_entity_capacity_max_chain(
 
     p_unc = 1000000.0
     pmaxf_path = input_dir / "p_max_flow_for_unconstrained_variables.csv"
-    pmaxf_seeded = _provider_open(provider, _provider_key(pmaxf_path), pmaxf_path)
-    if pmaxf_seeded is not None:
+    pmaxf_df = provider.get(_provider_key(pmaxf_path))
+    if pmaxf_df is not None:
         max_v: float | None = None
-        with pmaxf_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for r in reader:
-                if len(r) >= 2 and r[0]:
-                    try:
-                        v = float(r[1])
-                    except ValueError:
-                        continue
-                    if max_v is None or v > max_v:
-                        max_v = v
+        for row in pmaxf_df.iter_rows():
+            if len(row) >= 2 and _cell_str(row[0]):
+                try:
+                    v = float(row[1])
+                except (ValueError, TypeError):
+                    continue
+                if max_v is None or v > max_v:
+                    max_v = v
         if max_v is not None:
             p_unc = max_v
 

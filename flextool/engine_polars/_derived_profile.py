@@ -65,7 +65,6 @@ Architectural notes
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -86,6 +85,17 @@ from ._axis_enums import (
 # ContextVar) when this is ``None``, so substrate sites pick up
 # activation set by ``load_flextool`` automatically.
 _enums: "dict | None" = None
+
+
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a ``csv.reader`` cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; ``csv.reader`` then reads those
+    strings back.  Mirror that here so dict keys/values stay byte-identical
+    to the legacy CSV round-trip.
+    """
+    return "" if value is None else str(value)
 
 
 def _provider_has_key(provider, path: "Path") -> bool:
@@ -581,27 +591,16 @@ def _read_pairs(path: Path, key_col: str, val_col: str,
         return {}
     out: dict[str, list[str]] = {}
     try:
-        from ._emit_provider_io import _provider_open
-        fh_ctx = _provider_open(provider, _provider_key(path), path)
-        if fh_ctx is None:
-            return {}
-        with fh_ctx as fh:
-            reader = csv.reader(fh)
-            header = next(reader, None)
-            if header is None:
-                return out
-            # Find column indices.
-            try:
-                ki = header.index(key_col)
-                vi = header.index(val_col)
-            except ValueError:
-                return out
-            for row in reader:
-                if len(row) > max(ki, vi):
-                    k = row[ki]
-                    v = row[vi]
-                    if k and v:
-                        out.setdefault(k, []).append(v)
+        df = _provider_read(provider, path)
+        # The frame carries the header names as ``df.columns``; map by
+        # name exactly as the legacy ``header.index(...)`` lookup did.
+        if key_col not in df.columns or val_col not in df.columns:
+            return out
+        for k_cell, v_cell in df.select(key_col, val_col).iter_rows():
+            k = _cell_str(k_cell)
+            v = _cell_str(v_cell)
+            if k and v:
+                out.setdefault(k, []).append(v)
     except Exception:
         return {}
     return out

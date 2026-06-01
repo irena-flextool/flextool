@@ -49,7 +49,6 @@ import polars as pl
 from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
-    _provider_open,
 )
 
 
@@ -82,75 +81,106 @@ def _to_utf8_frame(
 
 
 # ---------------------------------------------------------------------------
-# Tiny CSV I/O — same shape as _emit_inflow_scaling helpers.  The legacy
-# emitter writes plain text with ``repr(v)`` and the parity surface is
-# small enough that a dict-of-rows pass is the simplest correct path.
+# Native-frame readers — same shape as _emit_inflow_scaling / _pdt_lookup
+# helpers.  The legacy emitter wrote plain text with ``repr(v)``; these
+# read the in-memory polars frame directly via
+# ``provider.get(_provider_key(path))`` instead of round-tripping through
+# CSV text.
+#
+# Type-fidelity contract — reproduce *exactly* what ``line.split(",")``
+# over a ``DataFrame.write_csv`` serialisation would have yielded:
+#
+#   * Key columns (dict-key / structural string positions) were string
+#     cells.  ``write_csv`` serialises ``null`` → ``""`` and any scalar
+#     to its textual form; we coerce each key cell with :func:`_cell_str`
+#     and apply the original truthiness guard to the *string* form so a
+#     null cell is skipped while a literal ``"0"`` is kept.
+#   * Value columns were re-coerced with ``float(...)``.  We apply the same
+#     coercion to the native cell and widen the legacy ``except
+#     ValueError`` to ``except (ValueError, TypeError)`` so a null value
+#     cell is skipped (matching the legacy empty-string ``ValueError``).
+#
+# ``provider.get`` returns data rows only (no header), so there is no
+# header row to skip; an empty / missing frame yields the same empty
+# output the legacy loop produced.
 # ---------------------------------------------------------------------------
+
+
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a CSV cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; the legacy ``line.split(",")`` then
+    read those strings back.  Mirror that here so dict keys / structural
+    strings stay byte-identical to the legacy CSV round-trip.
+    """
+    return "" if value is None else str(value)
 
 
 def _read_singles(path: Path,
                   *, provider: "object | None" = None) -> list[str]:
-    """First-column header-less reader (skip header row)."""
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    """First-column reader (data rows only)."""
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[str] = []
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if parts and parts[0]:
-                out.append(parts[0])
+    for row in df.iter_rows():
+        if not row:
+            continue
+        c0 = _cell_str(row[0])
+        if c0:
+            out.append(c0)
     return out
 
 
 def _read_pairs(path: Path,
                 *, provider: "object | None" = None) -> list[tuple[str, str]]:
-    """First-two-column header-less reader (skip header row)."""
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    """First-two-column reader (data rows only)."""
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str]] = []
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 2 and parts[0] and parts[1]:
-                out.append((parts[0], parts[1]))
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.append((c0, c1))
     return out
 
 
 def _read_n_col(path: Path, n: int,
                 *, provider: "object | None" = None) -> list[tuple[str, ...]]:
-    """First-n-column header-less reader; rows with any empty key skipped."""
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    """First-n-column reader; rows with any empty key skipped."""
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, ...]] = []
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= n and all(parts[i] for i in range(n)):
-                out.append(tuple(parts[:n]))
+    for row in df.iter_rows():
+        if len(row) < n:
+            continue
+        cells = tuple(_cell_str(row[i]) for i in range(n))
+        if all(cells):
+            out.append(cells)
     return out
 
 
 def _read_pairs_to_dict(path: Path, key_col: int,
                         *, provider: "object | None" = None,
                         ) -> dict[str, list[str]]:
-    """Two-col CSV → {row[key_col]: [row[other_col], ...]} preserving order."""
+    """Two-col frame → {row[key_col]: [row[other_col], ...]} preserving order."""
     out: dict[str, list[str]] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
     other_col = 1 - key_col
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 2 and parts[0] and parts[1]:
-                out.setdefault(parts[key_col], []).append(parts[other_col])
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            cells = (c0, c1)
+            out.setdefault(cells[key_col], []).append(cells[other_col])
     return out
 
 
@@ -162,19 +192,18 @@ def _read_pbt_reserve(
     {(r, ud, g, param, branch, ts, t): float}.  Malformed / non-numeric
     rows silently skipped (matches legacy)."""
     out: dict[tuple[str, str, str, str, str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 8 and all(parts[i] for i in range(7)):
-                try:
-                    out[(parts[0], parts[1], parts[2], parts[3],
-                         parts[4], parts[5], parts[6])] = float(parts[7])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 8:
+            continue
+        c = [_cell_str(row[i]) for i in range(7)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2], c[3], c[4], c[5], c[6])] = float(row[7])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -185,19 +214,18 @@ def _read_pt_reserve(
     """``pt_reserve__upDown__group.csv`` →
     {(r, ud, g, param, t): float}."""
     out: dict[tuple[str, str, str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 6 and all(parts[i] for i in range(5)):
-                try:
-                    out[(parts[0], parts[1], parts[2],
-                         parts[3], parts[4])] = float(parts[5])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 6:
+            continue
+        c = [_cell_str(row[i]) for i in range(5)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2], c[3], c[4])] = float(row[5])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -207,19 +235,18 @@ def _read_p_reserve(
 ) -> dict[tuple[str, str, str, str], float]:
     """``p_reserve__upDown__group.csv`` → {(r, ud, g, param): float}."""
     out: dict[tuple[str, str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 5 and all(parts[i] for i in range(4)):
-                try:
-                    out[(parts[0], parts[1], parts[2],
-                         parts[3])] = float(parts[4])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 5:
+            continue
+        c = [_cell_str(row[i]) for i in range(4)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2], c[3])] = float(row[4])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -379,20 +406,17 @@ def _compute_process_reserve_active(
     active ``(p, r, ud, n)`` list and the ``dt`` pair list."""
     pdt_reserve: dict[tuple[str, str, str, str, str, str], float] = {}
     pdt_path = solve_data_dir / "pdtReserve_upDown_group.csv"
-    pdt_seeded = _provider_open(provider, _provider_key(pdt_path), pdt_path)
-    if pdt_seeded is not None:
-        with pdt_seeded as fh:
-            next(fh, None)
-            for line in fh:
-                parts = line.rstrip("\n").split(",")
-                if len(parts) >= 7 and all(parts[i] for i in range(6)):
-                    try:
-                        pdt_reserve[(
-                            parts[0], parts[1], parts[2],
-                            parts[3], parts[4], parts[5],
-                        )] = float(parts[6])
-                    except ValueError:
-                        continue
+    pdt_df = provider.get(_provider_key(pdt_path))
+    if pdt_df is not None:
+        for row in pdt_df.iter_rows():
+            if len(row) < 7:
+                continue
+            c = [_cell_str(row[i]) for i in range(6)]
+            if all(c):
+                try:
+                    pdt_reserve[(c[0], c[1], c[2], c[3], c[4], c[5])] = float(row[6])
+                except (ValueError, TypeError):
+                    continue
 
     rug_by_ru: dict[tuple[str, str], list[str]] = {}
     for r, ud, g in _read_n_col(
@@ -497,19 +521,18 @@ def _read_p_process_reserve(
     """``p_process__reserve__upDown__node.csv`` →
     {(process, reserve, upDown, node, param): float}."""
     out: dict[tuple[str, str, str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 6 and all(parts[i] for i in range(5)):
-                try:
-                    out[(parts[0], parts[1], parts[2],
-                         parts[3], parts[4])] = float(parts[5])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 6:
+            continue
+        c = [_cell_str(row[i]) for i in range(5)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2], c[3], c[4])] = float(row[5])
+            except (ValueError, TypeError):
+                continue
     return out
 
 

@@ -19,7 +19,6 @@ parity tests — but we keep the structure for forward-compatibility.
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import polars as pl
@@ -27,8 +26,22 @@ import polars as pl
 from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
-    _provider_open,
 )
+
+
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a ``csv.reader`` cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; ``csv.reader`` then reads those
+    strings back.  Mirror that here so dict keys / structural string
+    columns stay byte-identical to the legacy CSV round-trip — ``None`` →
+    ``""`` (skipped by the original truthiness guards) while a literal
+    ``"0"`` is kept.  ``provider.get`` returns DATA rows only (no header
+    row to skip); an empty / missing frame yields the same empty output
+    the legacy loop produced.
+    """
+    return "" if value is None else str(value)
 
 
 def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
@@ -51,27 +64,29 @@ def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
 
 def _read_singles(path: Path,
                   *, provider: "object | None" = None) -> list[str]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        return [r[0] for r in reader if r and r[0]]
+    out: list[str] = []
+    for row in df.iter_rows():
+        c0 = _cell_str(row[0]) if row else ""
+        if c0:
+            out.append(c0)
+    return out
 
 
 def _read_pairs(path: Path,
                 *, provider: "object | None" = None) -> list[tuple[str, str]]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str]] = []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.append((row[0], row[1]))
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.append((c0, c1))
     return out
 
 
@@ -80,16 +95,17 @@ def _read_pairs_to_dict(path: Path, key_col: int,
                         ) -> dict[str, list[str]]:
     """Generic two-col CSV → ``key_col → list[other_col]``."""
     out: dict[str, list[str]] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
     other_col = 1 - key_col
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.setdefault(row[key_col], []).append(row[other_col])
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            cells = (c0, c1)
+            out.setdefault(cells[key_col], []).append(cells[other_col])
     return out
 
 
@@ -102,17 +118,15 @@ def _read_stochastic_entities(group_entity_csv: Path,
         _read_singles(group_stochastic_csv, provider=provider)
     )
     out: set[str] = set()
-    seeded = _provider_open(
-        provider, _provider_key(group_entity_csv), group_entity_csv,
-    )
-    if seeded is None:
+    df = provider.get(_provider_key(group_entity_csv))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] in stoch_groups and row[1]:
-                out.add(row[1])
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 in stoch_groups and c1:
+            out.add(c1)
     return out
 
 
@@ -181,67 +195,69 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     # pbt_node_inflow{(n, branch, ts, t) → value}
     pbt_inflow: dict[tuple[str, str, str, str], float] = {}
     pbt_path = input_dir / "pbt_node_inflow.csv"
-    pbt_seeded = _provider_open(provider, _provider_key(pbt_path), pbt_path)
-    if pbt_seeded is not None:
-        with pbt_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 5 and row[0] and row[1] and row[2] and row[3]:
-                    try:
-                        pbt_inflow[(row[0], row[1], row[2], row[3])] = float(row[4])
-                    except ValueError:
-                        continue
+    pbt_df = provider.get(_provider_key(pbt_path))
+    if pbt_df is not None:
+        for row in pbt_df.iter_rows():
+            if len(row) < 5:
+                continue
+            c0, c1, c2, c3 = (_cell_str(row[0]), _cell_str(row[1]),
+                              _cell_str(row[2]), _cell_str(row[3]))
+            if c0 and c1 and c2 and c3:
+                try:
+                    pbt_inflow[(c0, c1, c2, c3)] = float(row[4])
+                except (ValueError, TypeError):
+                    continue
 
     # ptNode_inflow{(n, t) → value}
     pt_inflow: dict[tuple[str, str], float] = {}
     pti_path = solve_data_dir / "ptNode_inflow.csv"
-    pti_seeded = _provider_open(provider, _provider_key(pti_path), pti_path)
-    if pti_seeded is not None:
-        with pti_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 3 and row[0] and row[1]:
-                    try:
-                        pt_inflow[(row[0], row[1])] = float(row[2])
-                    except ValueError:
-                        continue
+    pti_df = provider.get(_provider_key(pti_path))
+    if pti_df is not None:
+        for row in pti_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    pt_inflow[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
 
     # pdNode lookup limited to (annual_flow, peak_inflow).
     pdNode_af: dict[tuple[str, str], float] = {}
     pdNode_pk: dict[tuple[str, str], float] = {}
     pdn_path = solve_data_dir / "pdNode.csv"
-    pdn_seeded = _provider_open(provider, _provider_key(pdn_path), pdn_path)
-    if pdn_seeded is not None:
-        with pdn_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 4 and row[0]:
-                    try:
-                        v = float(row[3])
-                    except ValueError:
-                        continue
-                    if row[1] == "annual_flow":
-                        pdNode_af[(row[0], row[2])] = v
-                    elif row[1] == "peak_inflow":
-                        pdNode_pk[(row[0], row[2])] = v
+    pdn_df = provider.get(_provider_key(pdn_path))
+    if pdn_df is not None:
+        for row in pdn_df.iter_rows():
+            if len(row) < 4:
+                continue
+            c0 = _cell_str(row[0])
+            if c0:
+                try:
+                    v = float(row[3])
+                except (ValueError, TypeError):
+                    continue
+                c1, c2 = _cell_str(row[1]), _cell_str(row[2])
+                if c1 == "annual_flow":
+                    pdNode_af[(c0, c2)] = v
+                elif c1 == "peak_inflow":
+                    pdNode_pk[(c0, c2)] = v
 
     def _read_2_keyed_value(path: Path) -> dict[tuple[str, str], float]:
         out: dict[tuple[str, str], float] = {}
-        seeded = _provider_open(provider, _provider_key(path), path)
-        if seeded is None:
+        df = provider.get(_provider_key(path))
+        if df is None:
             return out
-        with seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 3 and row[0] and row[1]:
-                    try:
-                        out[(row[0], row[1])] = float(row[2])
-                    except ValueError:
-                        continue
+        for row in df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    out[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
         return out
 
     pfa = _read_2_keyed_value(
@@ -359,43 +375,44 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
     # pbt / pt / p loaders.
     pbt_profile: dict[tuple[str, str, str, str], float] = {}
     pbt_path = input_dir / "pbt_profile.csv"
-    pbt_seeded = _provider_open(provider, _provider_key(pbt_path), pbt_path)
-    if pbt_seeded is not None:
-        with pbt_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 5 and row[0] and row[1] and row[2] and row[3]:
-                    try:
-                        pbt_profile[(row[0], row[1], row[2], row[3])] = float(row[4])
-                    except ValueError:
-                        continue
+    pbt_df = provider.get(_provider_key(pbt_path))
+    if pbt_df is not None:
+        for row in pbt_df.iter_rows():
+            if len(row) < 5:
+                continue
+            c0, c1, c2, c3 = (_cell_str(row[0]), _cell_str(row[1]),
+                              _cell_str(row[2]), _cell_str(row[3]))
+            if c0 and c1 and c2 and c3:
+                try:
+                    pbt_profile[(c0, c1, c2, c3)] = float(row[4])
+                except (ValueError, TypeError):
+                    continue
     pt_profile: dict[tuple[str, str], float] = {}
     pt_path = solve_data_dir / "pt_profile.csv"
-    pt_seeded = _provider_open(provider, _provider_key(pt_path), pt_path)
-    if pt_seeded is not None:
-        with pt_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 3 and row[0] and row[1]:
-                    try:
-                        pt_profile[(row[0], row[1])] = float(row[2])
-                    except ValueError:
-                        continue
+    pt_df = provider.get(_provider_key(pt_path))
+    if pt_df is not None:
+        for row in pt_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    pt_profile[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
     p_profile: dict[str, float] = {}
     p_path = input_dir / "p_profile.csv"
-    p_seeded = _provider_open(provider, _provider_key(p_path), p_path)
-    if p_seeded is not None:
-        with p_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2 and row[0]:
-                    try:
-                        p_profile[row[0]] = float(row[1])
-                    except ValueError:
-                        continue
+    p_df = provider.get(_provider_key(p_path))
+    if p_df is not None:
+        for row in p_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0 = _cell_str(row[0])
+            if c0:
+                try:
+                    p_profile[c0] = float(row[1])
+                except (ValueError, TypeError):
+                    continue
 
     # Branch indices.
     ts_for_d = _read_pairs_to_dict(
@@ -425,32 +442,32 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
     )
     stoch_profile: set[str] = set()
     pp_path = input_dir / "process__profile__profile_method.csv"
-    pp_seeded = _provider_open(provider, _provider_key(pp_path), pp_path)
-    if pp_seeded is not None:
-        with pp_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2 and row[0] in stoch_processes and row[1]:
-                    stoch_profile.add(row[1])
+    pp_df = provider.get(_provider_key(pp_path))
+    if pp_df is not None:
+        for row in pp_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 in stoch_processes and c1:
+                stoch_profile.add(c1)
     np_path = input_dir / "node__profile__profile_method.csv"
-    np_seeded = _provider_open(provider, _provider_key(np_path), np_path)
-    if np_seeded is not None:
-        with np_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2 and row[0] in stoch_nodes and row[1]:
-                    stoch_profile.add(row[1])
+    np_df = provider.get(_provider_key(np_path))
+    if np_df is not None:
+        for row in np_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 in stoch_nodes and c1:
+                stoch_profile.add(c1)
     pnp_path = input_dir / "process__node__profile__profile_method.csv"
-    pnp_seeded = _provider_open(provider, _provider_key(pnp_path), pnp_path)
-    if pnp_seeded is not None:
-        with pnp_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 3 and row[0] in stoch_processes and row[2]:
-                    stoch_profile.add(row[2])
+    pnp_df = provider.get(_provider_key(pnp_path))
+    if pnp_df is not None:
+        for row in pnp_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c2 = _cell_str(row[0]), _cell_str(row[2])
+            if c0 in stoch_processes and c2:
+                stoch_profile.add(c2)
 
     profiles_col: list[str] = []
     periods_col: list[str] = []
@@ -548,25 +565,26 @@ def _derive_conversion_trio(
     min_load: dict[tuple[str, str, str], float] = {}
     eff_min: dict[tuple[str, str, str], float] = {}
     pdt_path = solve_data_dir / "pdtProcess.csv"
-    pdt_seeded = _provider_open(provider, _provider_key(pdt_path), pdt_path)
-    if pdt_seeded is not None:
-        with pdt_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) < 5 or not row[0]:
-                    continue
-                try:
-                    v = float(row[4])
-                except ValueError:
-                    continue
-                key = (row[0], row[2], row[3])  # (process, period, time)
-                if row[1] == "efficiency":
-                    eff[key] = v
-                elif row[1] == "min_load":
-                    min_load[key] = v
-                elif row[1] == "efficiency_at_min_load":
-                    eff_min[key] = v
+    pdt_df = provider.get(_provider_key(pdt_path))
+    if pdt_df is not None:
+        for row in pdt_df.iter_rows():
+            if len(row) < 5:
+                continue
+            c0 = _cell_str(row[0])
+            if not c0:
+                continue
+            try:
+                v = float(row[4])
+            except (ValueError, TypeError):
+                continue
+            c1, c2, c3 = _cell_str(row[1]), _cell_str(row[2]), _cell_str(row[3])
+            key = (c0, c2, c3)  # (process, period, time)
+            if c1 == "efficiency":
+                eff[key] = v
+            elif c1 == "min_load":
+                min_load[key] = v
+            elif c1 == "efficiency_at_min_load":
+                eff_min[key] = v
 
     # pdtConversion_rate columns + intermediate conv_rate dict.
     conv_rate: dict[tuple[str, str, str], float] = {}
@@ -718,18 +736,18 @@ def _read_p_2(path: Path,
     Mirrors legacy ``_read_p_2`` (entity_period_calc_params.py L1965).
     """
     out: dict[tuple[str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 3 and row[0] and row[1]:
-                try:
-                    out[(row[0], row[1])] = float(row[2])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            try:
+                out[(c0, c1)] = float(row[2])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -738,18 +756,18 @@ def _read_pd_2(path: Path,
                ) -> dict[tuple[str, str, str], float]:
     """Read a 4-col CSV ``(k1, k2, k3, value)`` into a dict."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 4 and all(row[i] for i in range(3)):
-                try:
-                    out[(row[0], row[1], row[2])] = float(row[3])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 4:
+            continue
+        c = [_cell_str(row[i]) for i in range(3)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2])] = float(row[3])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -759,17 +777,15 @@ def _read_branches_for_d(period_branch_csv: Path,
     """``period__branch.csv`` is ``(branch_period, period)`` — index by
     the child period (column 1) and gather branch list."""
     out: dict[str, list[str]] = {}
-    seeded = _provider_open(
-        provider, _provider_key(period_branch_csv), period_branch_csv,
-    )
-    if seeded is None:
+    df = provider.get(_provider_key(period_branch_csv))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.setdefault(row[1], []).append(row[0])
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.setdefault(c1, []).append(c0)
     return out
 
 
@@ -965,19 +981,17 @@ def _derive_positive_negative_inflow(
 
     pdt_inflow: dict[tuple[str, str, str], float] = {}
     pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
-    pdtni_seeded = _provider_open(
-        provider, _provider_key(pdtni_path), pdtni_path,
-    )
-    if pdtni_seeded is not None:
-        with pdtni_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 4 and row[0] and row[1] and row[2]:
-                    try:
-                        pdt_inflow[(row[0], row[1], row[2])] = float(row[3])
-                    except ValueError:
-                        continue
+    pdtni_df = provider.get(_provider_key(pdtni_path))
+    if pdtni_df is not None:
+        for row in pdtni_df.iter_rows():
+            if len(row) < 4:
+                continue
+            c0, c1, c2 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2])
+            if c0 and c1 and c2:
+                try:
+                    pdt_inflow[(c0, c1, c2)] = float(row[3])
+                except (ValueError, TypeError):
+                    continue
 
     pos_n: list[str] = []
     pos_d: list[str] = []
@@ -1061,16 +1075,16 @@ def emit_p_positive_negative_inflow(
 def _read_triples(path: Path,
                   *, provider: "object | None" = None,
                   ) -> list[tuple[str, str, str]]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str, str]] = []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 3 and row[0] and row[1] and row[2]:
-                out.append((row[0], row[1], row[2]))
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1, c2 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2])
+        if c0 and c1 and c2:
+            out.append((c0, c1, c2))
     return out
 
 
@@ -1080,22 +1094,20 @@ def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
                        *, provider: "object | None" = None,
                        ) -> dict[tuple, float]:
     """Read a long-format pdtX CSV, filter rows where col[param_col] ==
-    param_value, return dict[tuple(row[c] for c in key_cols)] = float(row[val_col]).
+    param_value, return dict[tuple(_cell_str(row[c]) for c in key_cols)] =
+    float(row[val_col]).
     """
     out: dict[tuple, float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if (len(row) > max(param_col, val_col, *key_cols)
-                    and row[param_col] == param_value):
-                try:
-                    out[tuple(row[c] for c in key_cols)] = float(row[val_col])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if (len(row) > max(param_col, val_col, *key_cols)
+                and _cell_str(row[param_col]) == param_value):
+            try:
+                out[tuple(_cell_str(row[c]) for c in key_cols)] = float(row[val_col])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -1254,17 +1266,17 @@ def _derive_pssdt_varCost_filters(
     )
     varcost: dict[tuple[str, str, str, str, str], float] = {}
     vp = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
-    vp_seeded = _provider_open(provider, _provider_key(vp), vp)
-    if vp_seeded is not None:
-        with vp_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 6 and all(row[i] for i in range(5)):
-                    try:
-                        varcost[(row[0], row[1], row[2], row[3], row[4])] = float(row[5])
-                    except ValueError:
-                        continue
+    vp_df = provider.get(_provider_key(vp))
+    if vp_df is not None:
+        for row in vp_df.iter_rows():
+            if len(row) < 6:
+                continue
+            c = [_cell_str(row[i]) for i in range(5)]
+            if all(c):
+                try:
+                    varcost[(c[0], c[1], c[2], c[3], c[4])] = float(row[5])
+                except (ValueError, TypeError):
+                    continue
 
     proc_src = frozenset(
         _read_pairs(input_dir / "process__source.csv", provider=provider)
@@ -1369,18 +1381,18 @@ def _read_p_side_3(path: Path,
                    ) -> dict[tuple[str, str, str], float]:
     """Per-side 4-col CSV ``(k1, k2, k3, value)`` → ``(k1, k2, k3) → v``."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 4 and all(row[i] for i in range(3)):
-                try:
-                    out[(row[0], row[1], row[2])] = float(row[3])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 4:
+            continue
+        c = [_cell_str(row[i]) for i in range(3)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2])] = float(row[3])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -1399,17 +1411,17 @@ def _cap_reduction_inputs(
     """Shared input loading for the 4 cap-reduction derives."""
     p_process: dict[tuple[str, str], float] = {}
     pp_path = input_dir / "p_process.csv"
-    pp_seeded = _provider_open(provider, _provider_key(pp_path), pp_path)
-    if pp_seeded is not None:
-        with pp_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 3 and row[0] and row[1]:
-                    try:
-                        p_process[(row[0], row[1])] = float(row[2])
-                    except ValueError:
-                        continue
+    pp_df = provider.get(_provider_key(pp_path))
+    if pp_df is not None:
+        for row in pp_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    p_process[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
 
     p_process_source = _read_p_side_3(
         input_dir / "p_process_source.csv", provider=provider,
@@ -1425,17 +1437,17 @@ def _cap_reduction_inputs(
 
     dt_with_dur: list[tuple[str, str, float]] = []
     su_path = solve_data_dir / "steps_in_use.csv"
-    su_seeded = _provider_open(provider, _provider_key(su_path), su_path)
-    if su_seeded is not None:
-        with su_seeded as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 3 and row[0] and row[1]:
-                    try:
-                        dt_with_dur.append((row[0], row[1], float(row[2])))
-                    except ValueError:
-                        continue
+    su_df = provider.get(_provider_key(su_path))
+    if su_df is not None:
+        for row in su_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    dt_with_dur.append((c0, c1, float(row[2])))
+                except (ValueError, TypeError):
+                    continue
     return (p_process, p_process_source, p_process_sink, process_online,
             proc_src, proc_snk, dt_with_dur)
 
@@ -1551,16 +1563,16 @@ def emit_cap_reduction_params(
 def _read_ed_pairs(path: Path,
                    *, provider: "object | None" = None,
                    ) -> list[tuple[str, str]]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str]] = []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.append((row[0], row[1]))
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.append((c0, c1))
     return out
 
 

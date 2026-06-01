@@ -4843,18 +4843,24 @@ def _read_period_set(path: Path,
                        *,
                        provider: "object | None" = None) -> set[str]:
     """Read a single-column period CSV (header row, then one period per row)."""
-    _p = Path(path)
-    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
-    fh = _provider_open(provider, name, path)
-    if fh is None:
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
+    name = _provider_key(path)
+    if not _provider_has(provider, name, path):
+        return set()
+    try:
+        df = _provider_read(provider, name, path)
+    except pl.exceptions.NoDataError:
         return set()
     out: set[str] = set()
-    with fh:
-        reader = __import__("csv").reader(fh)
-        next(reader, None)
-        for r in reader:
-            if r and r[0]:
-                out.add(r[0])
+    if df.width == 0:
+        return out
+    col0 = df.columns[0]
+    for value in df.get_column(col0):
+        c0 = _cell_str(value)
+        if c0:
+            out.add(c0)
     return out
 
 
@@ -4873,23 +4879,23 @@ def _read_realized_dispatch_periods(path: Path,
                                        *,
                                        provider: "object | None" = None) -> set[str]:
     """Read distinct periods from ``realized_dispatch.csv`` (cols include ``period``)."""
-    _p = Path(path)
-    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
-    fh = _provider_open(provider, name, path)
-    if fh is None:
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
+    name = _provider_key(path)
+    if not _provider_has(provider, name, path):
+        return set()
+    try:
+        df = _provider_read(provider, name, path)
+    except pl.exceptions.NoDataError:
+        return set()
+    if "period" not in df.columns:
         return set()
     out: set[str] = set()
-    csv = __import__("csv")
-    with fh:
-        reader = csv.reader(fh)
-        header = next(reader, None) or []
-        try:
-            i = header.index("period")
-        except ValueError:
-            return set()
-        for r in reader:
-            if len(r) > i and r[i]:
-                out.add(r[i])
+    for value in df.get_column("period"):
+        c = _cell_str(value)
+        if c:
+            out.add(c)
     return out
 
 
@@ -4918,29 +4924,28 @@ def _read_solve_first(work_folder: Path,
     by ``Σ pre_existing`` per extra sub-solve and zeroing out demand on
     sub-solves 3+ of fixtures like ``wind_battery_invest_lifetime_renew_4solve``.
     """
-    csv = __import__("csv")
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
     for cand in ("solve_data/p_model.csv", "input/p_model.csv"):
         path = work_folder / cand
         # cand already has the parent prefix and the suffix; pass as-is
-        # (suffix stripped by Provider).
-        name = cand
-        fh = _provider_open(provider, name, path)
-        if fh is None:
+        # (suffix stripped by Provider via _provider_key).
+        name = _provider_key(path)
+        if not _provider_has(provider, name, path):
             continue
-        with fh:
-            reader = csv.reader(fh)
-            header = next(reader, None) or []
-            try:
-                param_idx = header.index("modelParam")
-                value_idx = header.index("p_model")
-            except ValueError:
-                return True
-            for r in reader:
-                if len(r) > max(param_idx, value_idx) and r[param_idx] == "solveFirst":
-                    try:
-                        return bool(int(r[value_idx]))
-                    except (ValueError, TypeError):
-                        return True
+        try:
+            df = _provider_read(provider, name, path)
+        except pl.exceptions.NoDataError:
+            return True
+        if "modelParam" not in df.columns or "p_model" not in df.columns:
+            return True
+        for r in df.iter_rows(named=True):
+            if _cell_str(r["modelParam"]) == "solveFirst":
+                try:
+                    return bool(int(_cell_str(r["p_model"])))
+                except (ValueError, TypeError):
+                    return True
         # File existed but didn't contain the flag — treat as default.
         return True
     return True
@@ -4994,21 +4999,28 @@ def _read_pre_existing_long(work_folder: Path,
     Returns ``{(period, entity): value}`` to match
     flextool's ``_load_pre_existing`` key order (``[d, e]`` lookup).
     """
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
     path = work_folder / "solve_data" / "p_entity_pre_existing.csv"
-    fh = _provider_open(provider, "solve_data/p_entity_pre_existing", path)
-    if fh is None:
+    name = "solve_data/p_entity_pre_existing"
+    if not _provider_has(provider, name, path):
         return {}
-    csv = __import__("csv")
+    try:
+        df = _provider_read(provider, name, path)
+    except pl.exceptions.NoDataError:
+        return {}
     out: dict[tuple[str, str], float] = {}
-    with fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for r in reader:
-            if len(r) >= 3 and r[0] and r[1]:
-                try:
-                    out[(str(r[1]), str(r[0]))] = float(r[2])
-                except ValueError:
-                    continue
+    if df.width < 3:
+        return out
+    c0, c1, c2 = df.columns[0], df.columns[1], df.columns[2]
+    for r in df.iter_rows(named=True):
+        e0, e1, v2 = _cell_str(r[c0]), _cell_str(r[c1]), r[c2]
+        if e0 and e1:
+            try:
+                out[(str(e1), str(e0))] = float(v2)
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -5016,16 +5028,25 @@ def _read_singles_csv(path: Path,
                        *,
                        provider: "object | None" = None) -> list[str]:
     """Read a single-column CSV (header row, then one value per row)."""
-    _p = Path(path)
-    name = f"{_p.parent.name}/{_p.stem}" if _p.parent.name else _p.stem
-    fh = _provider_open(provider, name, path)
-    if fh is None:
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
+    name = _provider_key(path)
+    if not _provider_has(provider, name, path):
         return []
-    csv = __import__("csv")
-    with fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        return [r[0] for r in reader if r and r[0]]
+    try:
+        df = _provider_read(provider, name, path)
+    except pl.exceptions.NoDataError:
+        return []
+    if df.width == 0:
+        return []
+    col0 = df.columns[0]
+    out: list[str] = []
+    for value in df.get_column(col0):
+        c0 = _cell_str(value)
+        if c0:
+            out.append(c0)
+    return out
 
 
 def _step_duration_frame(
