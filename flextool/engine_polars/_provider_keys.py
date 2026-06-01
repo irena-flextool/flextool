@@ -55,9 +55,6 @@ SOLVE_DATA_FIX_STORAGE_QUANTITY = "solve_data/fix_storage_quantity"
 SOLVE_DATA_FIX_STORAGE_PRICE = "solve_data/fix_storage_price"
 SOLVE_DATA_FIX_STORAGE_USAGE = "solve_data/fix_storage_usage"
 SOLVE_DATA_P_ENTITY_PRE_EXISTING = "solve_data/p_entity_pre_existing"
-SOLVE_DATA_P_ENTITY_DIVEST_CUMULATIVE_MAX = (
-    "solve_data/p_entity_divest_cumulative_max"
-)
 SOLVE_DATA_P_ENTITY_INVESTED = "solve_data/p_entity_invested"
 SOLVE_DATA_P_ENTITY_DIVESTED = "solve_data/p_entity_divested"
 SOLVE_DATA_P_ENTITY_PERIOD_EXISTING_CAPACITY = (

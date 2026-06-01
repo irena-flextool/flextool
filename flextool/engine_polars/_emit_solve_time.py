@@ -225,9 +225,6 @@ def run(
         input_dir, solve_data_dir, provider=provider,
     )
     _ck("process_source_is_node_sink_1way_no_sink_or_more_than_1_source")
-    # ── L4 batch 38: p_entity_divest_cumulative_max ───────────────────
-    _chain.emit_p_entity_divest_cumulative_max(input_dir, solve_data_dir, provider=provider)
-    _ck("p_entity_divest_cumulative_max")
     # ── L4 batches 39-41 ──────────────────────────────────────────────
     _arc.emit_ed_history_realized_first(input_dir, solve_data_dir, provider=provider)
     _ck("ed_history_realized_first")

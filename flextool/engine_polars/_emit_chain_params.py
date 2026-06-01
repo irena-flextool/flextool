@@ -1,13 +1,12 @@
 """Chain-cluster entity-period parameter writers.
 
-Four ``write_*`` helpers emitting the per-(entity, period)
-existing/divest/capacity-max chain that the LP build consumes via
+Three ``write_*`` helpers emitting the per-(entity, period)
+existing/capacity-max chain that the LP build consumes via
 ``p_entity_*_existing_*`` and ``p_entity_*_capacity_*`` parameters:
 
 * :func:`write_p_entity_pre_existing`           (12-branch).
-* :func:`write_p_entity_divest_cumulative_max`  (3-branch).
-* :func:`write_p_entity_existing_chain`         (5 outputs).
-* :func:`write_p_entity_capacity_max_chain`     (4 outputs).
+* :func:`write_p_entity_existing_chain`         (3 live emits).
+* :func:`write_p_entity_capacity_max_chain`     (2 live emits).
 
 The chain-existing / chain-cap-max writers are the most state-dependent
 writers in Phase 1: they straddle the per-solve handoff boundary (prior
@@ -379,91 +378,6 @@ def emit_p_entity_pre_existing(
 
 
 # ---------------------------------------------------------------------------
-# write_p_entity_divest_cumulative_max — mod L1920-1933 (3-branch sum,
-# cumulative ceiling on v_divest by dispatch period).
-# ---------------------------------------------------------------------------
-
-
-def derive_p_entity_divest_cumulative_max(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Cumulative ceiling on ``v_divest`` summed by dispatch period ``d``.
-
-    Three-branch split per legacy comment (only one fires per (e, d)
-    given the ``e_divest_total`` membership / cardinality of
-    ``ed_divest_period`` for ``e``):
-
-        if e ∉ e_divest_total:
-            Σ_{(e, d_div) ∈ ed_divest_period,
-               p_years_d[d_div] ≤ p_years_d[d]}
-                ed_divest_max_period[e, d_div]
-        elif ed_divest_period has no rows for e:
-            e_divest_max_total[e]
-        else:
-            max(period_sum, e_divest_max_total[e])
-
-    Domain: ``entityDivest × period_in_use``.
-    """
-    entityDivest = _read_singles(solve_data_dir / "entityDivest.csv",
-                                   provider=provider)
-    e_divest_total = frozenset(
-        _read_singles(solve_data_dir / "e_divest_total.csv", provider=provider)
-    )
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
-                                   provider=provider)
-
-    ed_divest_period = _read_pairs(solve_data_dir / "ed_divest_period.csv",
-                                     provider=provider)
-    div_periods_for_e: dict[str, list[str]] = {}
-    for e_, d_ in ed_divest_period:
-        div_periods_for_e.setdefault(e_, []).append(d_)
-
-    p_years_d = _load_e_value_csv(solve_data_dir / "p_years_d.csv",
-                                    provider=provider)
-    ed_divest_max = _load_ed_value_csv(
-        solve_data_dir / "ed_divest_max_period.csv",
-        provider=provider,
-    )
-    e_divest_max_total = _load_e_value_csv(
-        solve_data_dir / "e_divest_max_total.csv",
-        provider=provider,
-    )
-
-    rows: list[tuple[str, str, float]] = []
-    for e in entityDivest:
-        in_total = e in e_divest_total
-        e_div_periods = div_periods_for_e.get(e, [])
-        e_total_max = e_divest_max_total.get(e, 0.0)
-        for d in period_in_use:
-            d_years = p_years_d.get(d, 0.0)
-            period_sum = sum(
-                ed_divest_max.get((e, d_div), 0.0)
-                for d_div in e_div_periods
-                if p_years_d.get(d_div, 0.0) <= d_years
-            )
-            if not in_total:
-                v = period_sum
-            elif not e_div_periods:
-                v = e_total_max
-            else:
-                v = max(period_sum, e_total_max)
-            rows.append((e, d, v))
-
-    return _ed_value_frame(rows)
-
-
-def emit_p_entity_divest_cumulative_max(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider,
-) -> None:
-    """Emit ``p_entity_divest_cumulative_max`` to the Provider."""
-    _emit(provider, "solve_data/p_entity_divest_cumulative_max.csv",
-          derive_p_entity_divest_cumulative_max(input_dir, solve_data_dir,
-                                                  provider=provider))
-
-
-# ---------------------------------------------------------------------------
 # write_p_entity_existing_chain — mod L1680-1697 (5 cascading entity-capacity
 # params; straddles the per-solve handoff boundary).
 # ---------------------------------------------------------------------------
@@ -649,7 +563,7 @@ def emit_p_entity_existing_chain(
     *, provider,
 ) -> None:
     """Emit ``p_entity_existing_chain`` to the Provider."""
-    later_rows, all_rows, count_rows, int_rows, prev_rows = (
+    later_rows, all_rows, _count_rows, _int_rows, prev_rows = (
         _compute_p_entity_existing_chain(
             input_dir, solve_data_dir, provider=provider,
         )
@@ -659,10 +573,6 @@ def emit_p_entity_existing_chain(
           _ed_value_frame(later_rows))
     _emit(provider, "solve_data/p_entity_all_existing.csv",
           _ed_value_frame(all_rows))
-    _emit(provider, "solve_data/p_entity_existing_count.csv",
-          _ed_value_frame(count_rows))
-    _emit(provider, "solve_data/p_entity_existing_integer_count.csv",
-          _ed_value_frame(int_rows))
     _emit(provider,
           "solve_data/p_entity_previously_invested_capacity.csv",
           _ed_value_frame(prev_rows))
@@ -877,14 +787,10 @@ def emit_p_entity_capacity_max_chain(
     *, provider,
 ) -> None:
     """Emit ``p_entity_capacity_max_chain`` to the Provider."""
-    mc_rows, mu_rows, icm_rows, dcm_rows = _compute_p_entity_capacity_max_chain(
+    _mc_rows, mu_rows, _icm_rows, dcm_rows = _compute_p_entity_capacity_max_chain(
         input_dir, solve_data_dir, provider=provider,
     )
-    _emit(provider, "solve_data/p_entity_max_capacity.csv",
-          _ed_value_frame(mc_rows))
     _emit(provider, "solve_data/p_entity_max_units.csv",
           _ed_value_frame(mu_rows))
-    _emit(provider, "solve_data/p_entity_invest_cumulative_max.csv",
-          _ed_value_frame(icm_rows))
     _emit(provider, "solve_data/p_entity_dispatch_capacity_max.csv",
           _ed_value_frame(dcm_rows))
