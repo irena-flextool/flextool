@@ -459,7 +459,6 @@ def _compute_inflow_scaling_frames(
     rows_opmax: list[tuple[str, str, float]] = []
     rows_opmin: list[tuple[str, str, float]] = []
     rows_ops: list[tuple[str, str, float]] = []
-    rows_op: list[tuple[str, str, float]] = []
     rows_npop: list[tuple[str, str, float]] = []
     rows_npopinflow: list[tuple[str, str, float]] = []
 
@@ -480,7 +479,6 @@ def _compute_inflow_scaling_frames(
             rows_opmin.append((n, d, op_min_by_n[n]))
             rows_ops.append((n, d, op_sign_by_n[n]))
             old_peak_val = old_peak_by_n[n]
-            rows_op.append((n, d, old_peak_val))
             if old_peak_val == 0.0:
                 # Legacy skips downstream rows when old_peak is 0 (avoids
                 # division by zero) — npop / npopinflow remain absent.
@@ -505,14 +503,8 @@ def _compute_inflow_scaling_frames(
     out["old_peak_sign.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_ops,
     )
-    out["old_peak.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_op,
-    )
     out["new_peak_divided_by_old_peak.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_npop,
-    )
-    out["new_peak_divide_by_old_peak_sum_inflow.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_npopinflow,
     )
 
     # ── new_peak_inflow_sum, new_old_multiplier/slope/section ─────────
