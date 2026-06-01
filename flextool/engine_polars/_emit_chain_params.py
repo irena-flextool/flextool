@@ -528,26 +528,6 @@ def derive_p_entity_all_existing(
     return _ed_value_frame(all_rows)
 
 
-def derive_p_entity_existing_count(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    _, _, count_rows, _, _ = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_value_frame(count_rows)
-
-
-def derive_p_entity_existing_integer_count(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    _, _, _, int_rows, _ = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_value_frame(int_rows)
-
-
 def derive_p_entity_previously_invested_capacity(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
@@ -754,25 +734,11 @@ def _compute_p_entity_capacity_max_chain(
     return mc_rows, mu_rows, icm_rows, dcm_rows
 
 
-def derive_p_entity_max_capacity(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    mc_rows, _, _, _ = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
-    return _ed_value_frame(mc_rows)
-
-
 def derive_p_entity_max_units(
     input_dir: Path, solve_data_dir: Path,
 ) -> pl.DataFrame:
     _, mu_rows, _, _ = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
     return _ed_value_frame(mu_rows)
-
-
-def derive_p_entity_invest_cumulative_max(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    _, _, icm_rows, _ = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
-    return _ed_value_frame(icm_rows)
 
 
 def derive_p_entity_dispatch_capacity_max(
