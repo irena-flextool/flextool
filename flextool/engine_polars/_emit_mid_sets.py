@@ -748,46 +748,6 @@ def emit_ci_ladder_cumulative(input_dir: Path, solve_data_dir: Path,
 # Family 12 — structural_filters (legacy: preprocessing/structural_filters.py)
 # ===========================================================================
 
-def derive_connection_param(input_dir: Path,
-                              *, provider: "object | None" = None,
-                              ) -> pl.DataFrame:
-    """connection__param = process__param filtered by p ∈ process_connection.
-
-    p_process.csv layout: (process, processParam, value).  We project the
-    first two columns and filter by the connection-process membership.
-    """
-    pp = _read_csv(input_dir / "p_process.csv", ["process", "processParam"],
-                   provider=provider)
-    pp = _drop_blank_rows(pp, ["process", "processParam"])
-    connections = _read_csv(input_dir / "process_connection.csv", ["process"],
-                             provider=provider)
-    conn_set = (
-        connections.filter(pl.col("process") != "")
-                   .get_column("process").to_list()
-    )
-    return (
-        pp.filter(pl.col("process").is_in(conn_set))
-          .unique(maintain_order=True)
-    )
-
-
-def derive_nodegroup_dispatch_node(input_dir: Path,
-                                     *, provider: "object | None" = None,
-                                     ) -> pl.DataFrame:
-    """nodeGroupDispatch ∩ ``{g : ∃ n with (g, n) in group__node}``."""
-    groups = _read_csv(input_dir / "nodeGroupDispatch.csv", ["group"],
-                        provider=provider)
-    groups = _drop_blank_rows(groups, ["group"])
-    gn = _read_csv(input_dir / "group__node.csv", ["group", "node"],
-                    provider=provider)
-    gn = _drop_blank_rows(gn, ["group", "node"])
-    groups_with_nodes = gn.select("group").unique()
-    return (
-        groups.join(groups_with_nodes, on="group", how="semi")
-              .unique(maintain_order=True)
-    )
-
-
 def derive_commodity_node_co2(input_dir: Path,
                                 *, provider: "object | None" = None,
                                 ) -> pl.DataFrame:
@@ -815,56 +775,6 @@ def derive_commodity_node_co2(input_dir: Path,
     return (
         cn.join(co2, on="commodity", how="semi")
           .unique(maintain_order=True)
-    )
-
-
-def derive_process__commodity__node(input_dir: Path,
-                                       *, provider: "object | None" = None,
-                                       ) -> pl.DataFrame:
-    """process × commodity_node where (p, n) is an arc endpoint of p.
-
-    flextool.mod:2009.  Iteration order: process.csv × commodity__node.csv.
-    """
-    processes = _read_csv(input_dir / "process.csv", ["process"],
-                           provider=provider)
-    processes = _drop_blank_rows(processes, ["process"])
-    cn = _read_csv(input_dir / "commodity__node.csv", ["commodity", "node"],
-                    provider=provider)
-    cn = _drop_blank_rows(cn, ["commodity", "node"])
-    sources = _read_csv(input_dir / "process__source.csv", ["process", "node"],
-                         provider=provider)
-    sources = _drop_blank_rows(sources, ["process", "node"])
-    sinks = _read_csv(input_dir / "process__sink.csv", ["process", "node"],
-                       provider=provider)
-    sinks = _drop_blank_rows(sinks, ["process", "node"])
-
-    # arc_endpoints[p] = set of nodes (source ∪ sink)
-    arc_endpoints: dict[str, set[str]] = {}
-    for p, n in sources.iter_rows():
-        arc_endpoints.setdefault(p, set()).add(n)
-    for p, n in sinks.iter_rows():
-        arc_endpoints.setdefault(p, set()).add(n)
-
-    cn_rows = list(cn.iter_rows())
-    rows: list[tuple[str, str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
-    for p in processes.get_column("process").to_list():
-        nodes_for_p = arc_endpoints.get(p)
-        if not nodes_for_p:
-            continue
-        for c, n in cn_rows:
-            if n in nodes_for_p:
-                key = (p, c, n)
-                if key not in seen:
-                    seen.add(key)
-                    rows.append(key)
-    return pl.DataFrame(
-        {
-            "process":   [r[0] for r in rows],
-            "commodity": [r[1] for r in rows],
-            "node":      [r[2] for r in rows],
-        },
-        schema={"process": pl.Utf8, "commodity": pl.Utf8, "node": pl.Utf8},
     )
 
 
@@ -917,36 +827,12 @@ def derive_process_sink_coeff_zero(input_dir: Path,
     )
 
 
-def emit_connection_param(input_dir: Path, solve_data_dir: Path,
-                           *, provider) -> None:
-    """Emit ``connection_param`` to the Provider."""
-    del solve_data_dir
-    _emit(provider, "solve_data/connection__param.csv",
-          derive_connection_param(input_dir, provider=provider))
-
-
-def emit_nodegroup_dispatch_node(input_dir: Path, solve_data_dir: Path,
-                                   *, provider) -> None:
-    """Emit ``nodegroup_dispatch_node`` to the Provider."""
-    del solve_data_dir
-    _emit(provider, "solve_data/nodeGroupDispatch_node.csv",
-          derive_nodegroup_dispatch_node(input_dir, provider=provider))
-
-
 def emit_commodity_node_co2(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
     """Emit ``commodity_node_co2`` to the Provider."""
     del solve_data_dir
     _emit(provider, "solve_data/commodity_node_co2.csv",
           derive_commodity_node_co2(input_dir, provider=provider))
-
-
-def emit_process__commodity__node(input_dir: Path, solve_data_dir: Path,
-                                    *, provider) -> None:
-    """Emit ``process__commodity__node`` to the Provider."""
-    del solve_data_dir
-    _emit(provider, "solve_data/process__commodity__node.csv",
-          derive_process__commodity__node(input_dir, provider=provider))
 
 
 def emit_process_coeff_zero_sets(input_dir: Path, solve_data_dir: Path,

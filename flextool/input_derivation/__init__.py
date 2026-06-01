@@ -234,14 +234,10 @@ def run(
         _calc.emit_process_arc_method_joins(input_dir, provider=provider)
         _calc.emit_process_profile_method_joins(input_dir, provider=provider)
         _mid.emit_reserve_partitions(input_dir, solve_data_dir, provider=provider)
-        _mid.emit_connection_param(input_dir, solve_data_dir, provider=provider)
-        _mid.emit_nodegroup_dispatch_node(input_dir, solve_data_dir, provider=provider)
         _mid.emit_commodity_node_co2(input_dir, solve_data_dir, provider=provider)
-        _mid.emit_process__commodity__node(input_dir, solve_data_dir, provider=provider)
         _mid.emit_process_coeff_zero_sets(input_dir, solve_data_dir, provider=provider)
         _leaf.emit_def_optional_yes(input_dir, solve_data_dir, provider=provider)
         _leaf.emit_process_delayed(input_dir, solve_data_dir, provider=provider)
-        _leaf.emit_process_side(solve_data_dir, provider=provider)
         _leaf.emit_simple_setof_projections(input_dir, solve_data_dir, provider=provider)
         # emit_period_solve depends on solve_data outputs from
         # emit_simple_setof_projections, so must run after.
@@ -249,12 +245,10 @@ def run(
         _leaf.emit_time_set(input_dir, solve_data_dir, provider=provider)
         _leaf.emit_enable_optional_outputs(solve_data_dir, provider=provider)
         _leaf.emit_node_state_subsets(solve_data_dir, provider=provider)
-        _leaf.emit_commodity_tier_sets(input_dir, solve_data_dir, provider=provider)
         _mid.emit_dc_angle_bounds(input_dir, solve_data_dir, provider=provider)
         _mid.emit_invest_total_sets(input_dir, solve_data_dir, provider=provider)
         _mid.emit_ci_ladder_cumulative(input_dir, solve_data_dir, provider=provider)
         _disp.emit_process_arc_unions(input_dir, solve_data_dir, provider=provider)
-        _arc.emit_group_commodity_node_period_co2_total(input_dir, solve_data_dir, provider=provider)
         _arc.emit_param_in_use_sets(input_dir, solve_data_dir, provider=provider)
 
         _mem("preprocessing_writers_end", "Preprocessing writers done")

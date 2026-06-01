@@ -310,11 +310,6 @@ def derive_process_delayed(solve_data_dir: Path,
     )
 
 
-def derive_process_side() -> pl.DataFrame:
-    """Literal 2-element constant set."""
-    return pl.DataFrame({"side": ["source", "sink"]})
-
-
 def derive_period_solve(solve_data_dir: Path,
                          *, provider: "object | None" = None,
                          ) -> pl.DataFrame:
@@ -395,33 +390,6 @@ def derive_node_state_subset(
     )
 
 
-def derive_commodity_tier(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """commodity__tier = commodity__tier_cum ∪ commodity__tier_ann."""
-    cum = _read_csv(
-        input_dir / "commodity_ladder_cumulative.csv",
-        ["commodity", "tier"],
-        provider=provider,
-    )
-    ann = _read_csv(
-        solve_data_dir / "commodity__tier_ann.csv",
-        ["commodity", "tier"],
-        provider=provider,
-    )
-    return (
-        pl.concat([cum, ann], how="vertical")
-          .filter((pl.col("commodity") != "") & (pl.col("tier") != ""))
-          .select("commodity", "tier")
-          .unique(maintain_order=True)
-    )
-
-
-def derive_tier(commodity_tier: pl.DataFrame) -> pl.DataFrame:
-    return commodity_tier.select("tier").unique(maintain_order=True)
-
-
 # --- simple_setof_projections: 4 trivial single-column projections ---------
 
 def derive_solve_period(input_dir: Path,
@@ -451,19 +419,6 @@ def derive_timeline(input_dir: Path,
     return (
         df.filter(pl.col("timeline") != "")
           .select("timeline")
-          .unique(maintain_order=True)
-    )
-
-
-def derive_timeline_steps(input_dir: Path,
-                           *, provider: "object | None" = None,
-                           ) -> pl.DataFrame:
-    """(timeline, step) projected from input/timeline.csv."""
-    df = _read_csv(input_dir / "timeline.csv",
-                   ["timeline", "step"], provider=provider)
-    return (
-        df.filter((pl.col("timeline") != "") & (pl.col("step") != ""))
-          .select("timeline", "step")
           .unique(maintain_order=True)
     )
 
@@ -531,12 +486,6 @@ def emit_process_delayed(input_dir: Path, solve_data_dir: Path,
           derive_process_delayed(solve_data_dir, provider=provider))
 
 
-def emit_process_side(solve_data_dir: Path, *, provider) -> None:
-    """Emit ``process_side`` to the Provider."""
-    del solve_data_dir
-    _emit(provider, "solve_data/process_side.csv", derive_process_side())
-
-
 def emit_period_solve(solve_data_dir: Path, *, provider) -> None:
     """Emit ``period_solve`` to the Provider."""
     _emit(provider, "solve_data/period_solve.csv",
@@ -589,14 +538,6 @@ def emit_node_state_subsets(solve_data_dir: Path,
     _emit(provider, "solve_data/nodeStateBlock.csv", block)
 
 
-def emit_commodity_tier_sets(input_dir: Path, solve_data_dir: Path,
-                              *, provider) -> None:
-    """Emit ``commodity_tier_sets`` to the Provider."""
-    ct = derive_commodity_tier(input_dir, solve_data_dir, provider=provider)
-    _emit(provider, "solve_data/commodity__tier.csv", ct)
-    _emit(provider, "solve_data/tier.csv", derive_tier(ct))
-
-
 def emit_simple_setof_projections(input_dir: Path, solve_data_dir: Path,
                                     *, provider) -> None:
     """Emit ``simple_setof_projections`` to the Provider."""
@@ -605,7 +546,5 @@ def emit_simple_setof_projections(input_dir: Path, solve_data_dir: Path,
           derive_solve_period(input_dir, provider=provider))
     _emit(provider, "solve_data/timeline.csv",
           derive_timeline(input_dir, provider=provider))
-    _emit(provider, "solve_data/timeline_steps.csv",
-          derive_timeline_steps(input_dir, provider=provider))
     _emit(provider, "solve_data/commodity__tier_ann.csv",
           derive_commodity_tier_ann(input_dir, provider=provider))
