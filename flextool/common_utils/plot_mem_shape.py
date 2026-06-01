@@ -54,13 +54,13 @@ def main():
         t, priv, color="red", linewidth=1.0,
         label=f"priv_dirty (live set)  {priv_lo:.1f}–{priv_hi:.1f} GB",
     )
-    ax.plot(
-        t, rss, color="tab:blue", linewidth=1.0,
-        label=f"rss  {rss_lo:.1f}–{rss_hi:.1f} GB",
-    )
+    #ax.plot(
+    #    t, rss, color="tab:blue", linewidth=1.0,
+    #    label=f"rss  {rss_lo:.1f}–{rss_hi:.1f} GB",
+    #)
 
     ax.set_xlim(min(t), max(t))
-    ax.set_ylim(0, max(rss_hi, priv_hi) * 1.15)
+    ax.set_ylim(0, priv_hi * 1.1)
     ax.set_xlabel("wall time (s)")
     ax.set_ylabel("GB")
     ax.margins(x=0)

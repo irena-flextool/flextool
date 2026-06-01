@@ -3137,7 +3137,24 @@ def _drive_cascade(
                     if _level_exhausted or _same_level_older:
                         if _step.solution is not None:
                             try:
-                                _step.solution.highs = None
+                                # Null the WHOLE solution, not just
+                                # ``.highs``.  A superseded prior step's
+                                # ``polar_high.Solution`` retains the
+                                # ``col_names``/``row_names`` lists and the
+                                # ``col_value``/``row_dual``/``col_dual``
+                                # numpy arrays — all O(LP size) (~1.26 GB
+                                # per roll on the real DES).  Nulling only
+                                # ``.highs`` released the HiGHS handle but
+                                # left those arrays parked for the whole
+                                # cascade; dropping the whole object is the
+                                # per-roll floor-ratchet release.  Warm
+                                # reuse is unaffected — it runs off
+                                # ``self._warm_problem``, never off parked
+                                # step solutions; and ``handoff`` /
+                                # ``captured_vars`` (the only per-step state
+                                # later consumers need) live on the step,
+                                # not inside ``solution``.
+                                _step.solution = None
                             except Exception:  # noqa: BLE001
                                 pass
                         _step.flex_data_provider = None

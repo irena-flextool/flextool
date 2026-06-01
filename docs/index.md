@@ -22,6 +22,10 @@ The **Spine Toolbox workflow** is the alternative for advanced users who combine
 
 **Excel / LibreOffice** spreadsheets are supported for spreadsheet-driven data entry and bulk edits alongside either interface ([Excel interface](excel_interface.md)).
 
+# Pure-Python optimisation core
+
+FlexTool's optimisation core is **pure Python**: it builds the LP/MIP matrix in [polars](https://pola.rs/) DataFrames with [polar-high](https://github.com/nodal-tools/polar-high) and solves it directly with [HiGHS](https://highs.dev/). This `engine_polars` backend replaces the older GLPSOL-based pre-processing and is a lot faster on the model-build side (the solver itself is unchanged).
+
 # Video tutorials
 
 !!! warning "Video tutorials may be out of date"
