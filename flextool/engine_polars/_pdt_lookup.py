@@ -31,213 +31,249 @@ Branching semantics:
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
-from flextool.engine_polars._emit_provider_io import (
-    _provider_key,
-    _provider_open,
-)
+from flextool.engine_polars._emit_provider_io import _provider_key
 
 
 # ---------------------------------------------------------------------------
-# Shared CSV readers (mirror legacy helpers byte-for-byte).
+# Native-frame row helpers.
+#
+# These read the in-memory polars frame directly from the Provider via
+# ``provider.get(_provider_key(path))`` instead of round-tripping through
+# CSV text (the legacy ``_provider_open`` + ``csv.reader`` path).
+#
+# Type-fidelity contract — reproduce *exactly* what ``csv.reader`` over a
+# ``DataFrame.write_csv`` serialisation would have yielded:
+#
+#   * Key columns (the dict-key positions) were ``csv.reader`` strings.
+#     ``write_csv`` serialises ``null`` → ``""`` and any scalar (Enum /
+#     Int / Float / Utf8) → its string form.  We therefore coerce each
+#     key cell with :func:`_cell_str` (``None`` → ``""``, else ``str``)
+#     and apply the original truthiness guard to the *string* form so a
+#     null cell is skipped (matching the legacy ``if row[i]`` test) while
+#     a literal ``"0"`` is kept.
+#   * Value columns were re-coerced with ``float(...)``.  We apply
+#     ``float(...)`` to the native cell — harmless on an already-float
+#     frame, necessary on an int frame, and identical to the legacy
+#     ``float(str_cell)`` on a stringified-value frame.  A value that
+#     cannot be parsed as a float is skipped (matching the legacy
+#     ``except ValueError: continue``).
+#
+# ``provider.get`` returns data rows only (no header), so there is no
+# header row to skip; an empty / missing frame yields the same empty
+# dict / list the legacy loop produced.
 # ---------------------------------------------------------------------------
+
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a ``csv.reader`` cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; ``csv.reader`` then reads those
+    strings back.  Mirror that here so dict keys stay byte-identical to
+    the legacy CSV round-trip.
+    """
+    return "" if value is None else str(value)
+
 
 def _read_pd(path: Path,
               *, provider: "object | None" = None) -> dict[tuple[str, str, str], float]:
-    """4-col CSV: (entity, param, period, value)."""
+    """4-col frame: (entity, param, period, value)."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 4 and row[0] and row[1] and row[2]:
-                try:
-                    out[(row[0], row[1], row[2])] = float(row[3])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 4:
+            continue
+        c0, c1, c2 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2])
+        if c0 and c1 and c2:
+            try:
+                out[(c0, c1, c2)] = float(row[3])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_p(path: Path,
              *, provider: "object | None" = None) -> dict[tuple[str, str], float]:
-    """3-col CSV: (entity, param, value)."""
+    """3-col frame: (entity, param, value)."""
     out: dict[tuple[str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 3 and row[0] and row[1]:
-                try:
-                    out[(row[0], row[1])] = float(row[2])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            try:
+                out[(c0, c1)] = float(row[2])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_pt(path: Path,
               *, provider: "object | None" = None) -> dict[tuple[str, str, str], float]:
-    """4-col CSV: (entity, param, time, value)."""
+    """4-col frame: (entity, param, time, value)."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 4 and row[0] and row[1] and row[2]:
-                try:
-                    out[(row[0], row[1], row[2])] = float(row[3])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 4:
+            continue
+        c0, c1, c2 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2])
+        if c0 and c1 and c2:
+            try:
+                out[(c0, c1, c2)] = float(row[3])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_pbt(path: Path,
                *, provider: "object | None" = None) -> dict[tuple[str, str, str, str, str], float]:
-    """6-col CSV: (entity, param, branch, time_start, time, value)."""
+    """6-col frame: (entity, param, branch, time_start, time, value)."""
     out: dict[tuple[str, str, str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 6 and row[0] and row[1] and row[2] and row[3] and row[4]:
-                try:
-                    out[(row[0], row[1], row[2], row[3], row[4])] = float(row[5])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 6:
+            continue
+        c = [_cell_str(row[i]) for i in range(5)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2], c[3], c[4])] = float(row[5])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_pd_3(path: Path,
                 *, provider: "object | None" = None) -> dict[tuple[str, str, str, str], float]:
-    """5-col CSV: (e1, e2, param, period, value)."""
+    """5-col frame: (e1, e2, param, period, value)."""
     out: dict[tuple[str, str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 5 and all(row[i] for i in range(4)):
-                try:
-                    out[(row[0], row[1], row[2], row[3])] = float(row[4])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 5:
+            continue
+        c = [_cell_str(row[i]) for i in range(4)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2], c[3])] = float(row[4])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_pt_3(path: Path,
                 *, provider: "object | None" = None) -> dict[tuple[str, str, str, str], float]:
-    """5-col CSV: (e1, e2, param, time, value)."""
+    """5-col frame: (e1, e2, param, time, value)."""
     out: dict[tuple[str, str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 5 and all(row[i] for i in range(4)):
-                try:
-                    out[(row[0], row[1], row[2], row[3])] = float(row[4])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 5:
+            continue
+        c = [_cell_str(row[i]) for i in range(4)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2], c[3])] = float(row[4])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_p_3(path: Path,
                *, provider: "object | None" = None) -> dict[tuple[str, str, str], float]:
-    """4-col CSV: (e1, e2, param, value)."""
+    """4-col frame: (e1, e2, param, value)."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 4 and all(row[i] for i in range(3)):
-                try:
-                    out[(row[0], row[1], row[2])] = float(row[3])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 4:
+            continue
+        c = [_cell_str(row[i]) for i in range(3)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2])] = float(row[3])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_pbt_3(path: Path,
                  *, provider: "object | None" = None) -> dict[tuple[str, str, str, str, str, str], float]:
-    """7-col CSV: (e1, e2, param, branch, time_start, time, value)."""
+    """7-col frame: (e1, e2, param, branch, time_start, time, value)."""
     out: dict[tuple[str, str, str, str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 7 and all(row[i] for i in range(6)):
-                try:
-                    out[(row[0], row[1], row[2], row[3], row[4], row[5])] = float(row[6])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 7:
+            continue
+        c = [_cell_str(row[i]) for i in range(6)]
+        if all(c):
+            try:
+                out[(c[0], c[1], c[2], c[3], c[4], c[5])] = float(row[6])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_pairs_to_dict(path: Path, key_col: int,
                          *, provider: "object | None" = None) -> dict[str, list[str]]:
-    """Generic two-col CSV → ``key_col → list[other_col]``."""
+    """Generic two-col frame → ``key_col → list[other_col]``."""
     out: dict[str, list[str]] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
     other_col = 1 - key_col
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.setdefault(row[key_col], []).append(row[other_col])
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.setdefault((c0, c1)[key_col], []).append((c0, c1)[other_col])
     return out
 
 
 def _read_period_branch(path: Path,
                          *, provider: "object | None" = None) -> dict[str, list[str]]:
-    """Build ``d → [db]`` from ``period__branch.csv`` (col0=db, col1=d)."""
+    """Build ``d → [db]`` from ``period__branch`` (col0=db, col1=d)."""
     out: dict[str, list[str]] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0] and row[1]:
-                out.setdefault(row[1], []).append(row[0])
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.setdefault(c1, []).append(c0)
     return out
 
 
 def _read_singles(path: Path,
                    *, provider: "object | None" = None) -> list[str]:
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        return [r[0] for r in reader if r and r[0]]
+    out: list[str] = []
+    for row in df.iter_rows():
+        if not row:
+            continue
+        c0 = _cell_str(row[0])
+        if c0:
+            out.append(c0)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -253,18 +289,18 @@ def read_class_defaults(path: Path, class_name: str,
                          *, provider: "object | None" = None) -> dict[str, float]:
     """Read ``input/default_values.csv`` filtered to ``class_name``."""
     out: dict[str, float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        reader = csv.reader(fh)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 3 and row[0] == class_name and row[1]:
-                try:
-                    out[row[1]] = float(row[2])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 == class_name and c1:
+            try:
+                out[c1] = float(row[2])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
@@ -356,14 +392,14 @@ class PdtLookup:
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
         groups_stoch = frozenset(_read_singles(group_stochastic_csv, provider=provider))
         self._stoch_entity: set[str] = set()
-        ge_seeded = _provider_open(provider, _provider_key(group_entity_csv), group_entity_csv)
-        if ge_seeded is not None:
-            with ge_seeded as fh:
-                reader = csv.reader(fh)
-                next(reader, None)
-                for row in reader:
-                    if len(row) >= 2 and row[0] in groups_stoch and row[1]:
-                        self._stoch_entity.add(row[1])
+        ge_df = provider.get(_provider_key(group_entity_csv))
+        if ge_df is not None:
+            for row in ge_df.iter_rows():
+                if len(row) < 2:
+                    continue
+                c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+                if c0 in groups_stoch and c1:
+                    self._stoch_entity.add(c1)
         self._param_def1 = param_def1
         self._time_first = time_first_priority
         self._class_defaults = class_default_values or {}
@@ -462,14 +498,14 @@ class PdtLookupPerSide:
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
         groups_stoch = frozenset(_read_singles(group_stochastic_csv, provider=provider))
         self._stoch_process: set[str] = set()
-        gp_seeded = _provider_open(provider, _provider_key(group_process_csv), group_process_csv)
-        if gp_seeded is not None:
-            with gp_seeded as fh:
-                reader = csv.reader(fh)
-                next(reader, None)
-                for row in reader:
-                    if len(row) >= 2 and row[0] in groups_stoch and row[1]:
-                        self._stoch_process.add(row[1])
+        gp_df = provider.get(_provider_key(group_process_csv))
+        if gp_df is not None:
+            for row in gp_df.iter_rows():
+                if len(row) < 2:
+                    continue
+                c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+                if c0 in groups_stoch and c1:
+                    self._stoch_process.add(c1)
 
     def get(self, p: str, side: str, param: str, d: str, t: str) -> float:
         if p in self._stoch_process:
