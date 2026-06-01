@@ -1,3 +1,18 @@
+> [!IMPORTANT]
+> **Development has moved to the `main` branch; this `master` version is
+> deprecated.** `main` is a lot faster, adds the FlexTool GUI for building
+> models and browsing results, and uses a pure-Python core
+> ([polar-high](https://github.com/nodal-tools/polar-high) + HiGHS). It is not
+> the default yet because it has been tested well on Linux only (Windows/macOS
+> not yet fully validated). To try it without disturbing this setup, install a
+> fresh parallel clone in its own venv. On Windows (PowerShell):
+> `git clone https://github.com/irena-flextool/flextool.git flextool_main`,
+> `cd flextool_main`, `git checkout main`, `py -m venv .venv`,
+> `.\.venv\Scripts\Activate.ps1`, `pip install -e .` (Python 3.11+; polar-high
+> is pulled from PyPI). On Linux/macOS use `python3 -m venv .venv` and
+> `. .venv/bin/activate`. See the
+> [`main` README](https://github.com/irena-flextool/flextool/blob/main/README.md).
+
 ![IRENA FlexTool logo](./irena_flextool_logo.png)
 
 IRENA FlexTool is an energy systems optimisation model developed for power and energy systems with high shares of wind and solar power. It can be used to find cost-effective sources of flexibility across the energy system to mitigate the increasing variability arising from the power systems. It can perform multi-year capacity expansion as well as unit commitment and economic dispatch in a user-defined sequence of solves. The aim has been to make it fast to learn and easy to use while including lot of functionality especially in the time scales relevant for investment planning and operational scheduling of energy systems.

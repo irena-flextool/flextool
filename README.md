@@ -3,6 +3,38 @@
 
 ![IRENA FlexTool logo](./docs/flextool_logo.png)
 
+> [!IMPORTANT]
+> **This `master` branch is being deprecated. Active development has moved to `main`.**
+>
+> `main` is a lot faster, ships an easy-to-use new interface (the FlexTool GUI)
+> for building models and browsing results, and runs on a pure-Python core that
+> generates the optimisation matrix with
+> [polar-high](https://github.com/nodal-tools/polar-high) and solves it with
+> HiGHS. `master` will stop receiving updates.
+>
+> `main` is not the default branch yet because it has so far been **tested well
+> on Linux only** — Windows and macOS are not yet fully validated. If you are on
+> Linux, switching now is encouraged; on other systems, expect rough edges and
+> please report them.
+>
+> **Try `main` as a fresh parallel install** (separate directory and venv —
+> leaves this `master` setup untouched). Requires Python 3.11+. On Windows
+> (PowerShell):
+> ```powershell
+> git clone https://github.com/irena-flextool/flextool.git flextool_main
+> cd flextool_main
+> git checkout main
+> py -m venv .venv
+> .\.venv\Scripts\Activate.ps1
+> python -m pip install --upgrade pip
+> pip install -e .                       # pulls polar-high from PyPI
+> ```
+> On Linux/macOS the only differences are `python3 -m venv .venv` and
+> `. .venv/bin/activate`. Update later with `git pull origin main` (the editable
+> install picks up source changes automatically). Then run `python -m flextool.gui`.
+> Full instructions and a smoke test:
+> [`main` README](https://github.com/irena-flextool/flextool/blob/main/README.md).
+
 IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.
 
 This is IRENA FlexTool v3.x.x (see current version from RELEASE.md) in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
