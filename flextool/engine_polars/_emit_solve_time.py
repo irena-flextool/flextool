@@ -283,8 +283,6 @@ def run(
     _ck("pdGroup")
     _period.emit_pdtGroup(input_dir, solve_data_dir, provider=provider)
     _ck("pdtGroup")
-    _period.emit_pdCommodity(input_dir, solve_data_dir, provider=provider)
-    _ck("pdCommodity")
     # ── L0 batch 53 ───────────────────────────────────────────────────
     _pdt.emit_pdtNode(input_dir, solve_data_dir, provider=provider)
     _ck("pdtNode")
@@ -294,9 +292,6 @@ def run(
     # ── L0 batch 55 ───────────────────────────────────────────────────
     _period.emit_pdtProfile(input_dir, solve_data_dir, provider=provider)
     _ck("pdtProfile")
-    # ── L1 batch 56 ───────────────────────────────────────────────────
-    _period.emit_pdtProcess_source_sink(input_dir, solve_data_dir, provider=provider)
-    _ck("pdtProcess_source_sink")
     # ── L1/L2/L3 batch 57 ─────────────────────────────────────────────
     _period.emit_pdtConversion_rate_section_slope(input_dir, solve_data_dir, provider=provider)
     _ck("pdtConversion_rate_section_slope")
