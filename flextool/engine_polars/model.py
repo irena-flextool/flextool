@@ -46,7 +46,8 @@ _LOG = logging.getLogger(__name__)
 
 def _build_prof(label: str) -> None:
     """Env-gated (FLEXTOOL_BUILD_PROFILE=1) RSS print to stderr. No-op otherwise."""
-    import os, sys
+    import os
+    import sys
     if os.environ.get("FLEXTOOL_BUILD_PROFILE") != "1":
         return
     try:

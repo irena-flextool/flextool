@@ -51,7 +51,8 @@ from ._input_source import read_csv_fallback
 
 def _loadflex_prof(label: str) -> None:
     """Env-gated (FLEXTOOL_LOADFLEX_PROFILE=1) RSS print to stderr. No-op otherwise."""
-    import os, sys
+    import os
+    import sys
     if os.environ.get("FLEXTOOL_LOADFLEX_PROFILE") != "1":
         return
     try:
