@@ -1,6 +1,8 @@
-## Release 4.0.0b3 (unreleased) — solver backend: bounded-memory autoscale + block-COO
+## Release 4.0.0b3 (1.6.2026) — solver backend: bounded-memory autoscale + block-COO; plot & GUI fixes
 
-Engine / solver-backend release. Requires **polar-high >= 2.4.0**.
+### Solver backend — bounded-memory autoscale + block-COO
+
+Requires **polar-high >= 2.4.0**.
 
 FlexTool's automatic scaling (Layers 1-3) and LP coefficient build no longer
 materialise wide coefficient products to read magnitude statistics. polar-high's
@@ -11,13 +13,34 @@ constraint spine in bounded row-batches. On the large RETO-Africa **DES** scenar
 faster, with **every solve objective byte-identical** to the previous release. No
 model or input changes.
 
-- `engine_polars/autoscale/_layer2.py` now buckets coefficient magnitudes through
-  the bounded walk; the size-blind family-row skip is gone (no family's range is
+- `engine_polars/autoscale/_layer2.py` buckets coefficient magnitudes through the
+  bounded walk; the size-blind family-row skip is gone (no family's range is
   silently dropped from the scaling decision).
+- The scaling decision is cached per rolling-group LP shape, skipping the per-roll
+  range traversal on shape-identical interior rolls; between-solve transient peaks
+  are flattened and prior solve-level state is released before the next build.
 - Requires polar-high >= 2.4.0 (`declare_dense_axes` + the bounded walk); the
   interim capability guards have been dropped.
-- The only golden affected is `test_a_lot` — a benign alternate-optimum dispatch
-  reshuffle (objective unchanged); regenerate its golden.
+
+### Plot output
+
+- Grouped-bar plots: deterministic y-axis label, aligned grouped-bar rows, value
+  axis sized to label width, compact engineering value labels, and thicker bars
+  when value labels are enabled.
+
+### Desktop GUI
+
+- Update dialog: an OK button to save settings without updating; smarter handling
+  of no-tracking branches and no-op updates.
+- Execution log no longer unresponsive / unselectable (refreshes coalesced).
+- Status icons, spinners and checkboxes use Windows-renderable glyphs.
+
+### Fixes
+
+- Migration: the `timeblockSet` -> `timeset` timeline collapse is now deterministic.
+- Input: `p_section` wired on the synthetic-solve early return.
+- The `test_a_lot` scenario golden was regenerated — a benign alternate-optimum
+  dispatch reshuffle (objective byte-identical), not a model change.
 
 ## Release 4.0.0b2 (29.5.2026) — desktop GUI: in-app updates, safer migration, macOS fix
 
