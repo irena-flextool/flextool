@@ -416,6 +416,20 @@ def native_run_model(state, solver) -> int:
     # ``_full_dt.BRANCHED_*`` keys — NEVER disturbing the un-branched
     # ``steps_complete_solve`` consumers.
     cached_branched_complete_frames: dict = {}
+    # R5 — per-``complete_solve`` eviction tracker.  The two caches above
+    # are keyed by ``cs`` and (before R5) were NEVER evicted, so a
+    # multi-``cs`` run (decomposition / multiple top-level solves)
+    # accumulated EVERY complete-solve's full-domain frames for the whole
+    # run (heavy: pdtProcess ~441 MB / cs).  This holds the ``cs`` whose
+    # full-domain frames are currently materialized; when the loop reaches
+    # a different ``cs`` we evict the prior one's entries (see the loop
+    # head below).  Separate from ``previous_complete_solve`` (which gates
+    # timeline re-aggregation at L820) so the two concerns stay decoupled.
+    # Re-population is automatic: the per-family ``if name not in`` /
+    # ``setdefault`` guards recompute on demand, so eviction is
+    # correctness-safe for ANY solve ordering (worst case: a
+    # non-contiguous ``cs`` recomputes its frames).
+    _full_dt_cache_cs: str | None = None
 
     # Pre-compute per-iter level keys.  Same-key consecutive iters are
     # rolling continuations of one base solve; a key change marks a
@@ -531,6 +545,34 @@ def native_run_model(state, solver) -> int:
                 state.timeline.timesets__timeline,
             )
         complete_active_time_lists = cached_complete_active_time_lists[cs]
+        # R5 — evict the PRIOR ``cs``'s full-domain frames at the
+        # ``complete_solve`` boundary.  Without this, both ``cs``-keyed
+        # caches grow with every complete-solve in a multi-``cs`` run, so
+        # a decomposition / multi-top-level run pins EVERY cs's heavy
+        # full-domain frames (pdtProcess ~441 MB/cs) for the whole run.
+        # Dropping the prior cs's dict entries releases the Python refs to
+        # those polars frames; the explicit ``malloc_trim(0)`` (the same
+        # glibc page-return helper the cascade post-solve path uses) hands
+        # the freed pages back to the OS now rather than waiting for the
+        # jemalloc decay timer.  Re-population is automatic (the per-family
+        # ``if name not in`` guard below), so this is safe regardless of
+        # solve ordering.  Kept localized so it does not touch the populate
+        # logic or the per-iter logging.
+        if _full_dt_cache_cs is not None and _full_dt_cache_cs != cs:
+            cached_full_dt_frames.pop(_full_dt_cache_cs, None)
+            cached_branched_complete_frames.pop(_full_dt_cache_cs, None)
+            # Drop the stale reference so the just-evicted cs's frames are
+            # not kept alive through ``state`` until the next assignment.
+            if getattr(state, "current_full_dt_frames", None) is not None:
+                state.current_full_dt_frames = None
+            try:
+                from flextool.engine_polars._orchestration import (
+                    _try_malloc_trim,
+                )
+                _try_malloc_trim()
+            except Exception:  # noqa: BLE001
+                pass
+        _full_dt_cache_cs = cs
         # full_dt cache (specs §10.1): ensure a per-``cs`` slot exists.
         # In the scaffold commit this only creates an empty dict that no
         # family reads or writes → no behaviour change; converted families
