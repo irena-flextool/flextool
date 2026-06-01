@@ -775,6 +775,38 @@ class SpineDbReader:
         if not rows:
             return {}, [], None
 
+        # Drop explicitly-null parameter values before shape discovery.
+        #
+        # A Spine ``null`` value (parsed to Python ``None`` by
+        # ``from_database``) carries no data — it is how a
+        # higher-priority alternative *clears* a value set in the base
+        # alternative (e.g. ``S4_Dry`` nulling out a base Map on
+        # ``node.constraint_invested_capacity_coeff``).  Such a row must
+        # resolve to "unset" for that entity, NOT to a value-less scalar
+        # row.  Left in place, a scalar-``None`` row overriding a base
+        # Map makes index discovery see no index column (a scalar
+        # discovers ``[]``); the frame then comes back as ``[name,
+        # value]`` and the downstream shape resolver (e.g.
+        # ``_resolve_constraint_index_col``) raises on the missing index
+        # axis.  Routing whole-null values to absence instead makes them
+        # behave exactly like an unset parameter — already the common,
+        # well-handled case (most parameters are absent in most
+        # scenarios; every consumer guards ``df.height == 0``).
+        #
+        # SCOPE: this drops only a *whole* null value (``v is None``),
+        # never a null *leaf* inside a Map / TimeSeries / Array — those
+        # parse to container objects (not ``None``) and pass through
+        # untouched, so a Map's key-set / domain is never silently
+        # shrunk here.  A null leaf inside a Map does not trigger the
+        # bug anyway: the sibling structure still yields the index
+        # column, so the shape resolver is satisfied.  Dropping whole-
+        # null rows here (before discovery) is lossless for index
+        # discovery because a scalar ``None`` contributes no index
+        # column regardless (``_discover_index_cols(None) == []``).
+        rows = [(eid, v) for eid, v in rows if v is not None]
+        if not rows:
+            return {}, [], None
+
         # Discover index columns from the widest-shaped row (spec
         # §5.2.5).  In practice flextool's params don't mix shapes
         # within one scenario — but we're defensive.

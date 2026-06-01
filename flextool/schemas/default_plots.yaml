@@ -424,13 +424,13 @@ plots:
         ylabel: NodeGroup
         xlabel: MW (weighted average)
         skip_data_with_only_zeroes: true
-
-  # Curtailments
         scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, z_eu]
           max_items_per_plot: 40
-  'Curtaiment amount':
+
+  # Curtailments
+  'Curtailment amount':
     group: 1
     order: 0
     unit_curtailment_outputNode_d_ee:
@@ -490,12 +490,13 @@ plots:
           plot_name: 'Unit curtailment weekly avg'
           legend: shared
           ylabel: MWh
-      unit_details:
+      debug:
         variant: l
         map_dimensions_for_plots: [dt_ee, tt_uu]
         legend: shared
         max_items_per_plot: 10
         ylabel: MWh
+        skip_data_with_only_zeroes: true
         scenario_rule: l
 
   'Curtailment share of VRE':
@@ -1816,16 +1817,6 @@ plots:
           subplots_per_row: 1
           max_subplots_per_file: 1
           base_length: 8
-      unit_details:
-        variant: p
-        map_dimensions_for_plots: [d_e, b_e]
-        legend: shared
-        subplots_per_row: 1
-        max_items_per_plot: 40
-        max_subplots_per_file: 1
-        base_length: 8
-        xlabel: number of units started up
-        scenario_rule: g
   'Connection losses':
     group: 8
     order: 6

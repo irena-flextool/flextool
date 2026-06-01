@@ -1,0 +1,43 @@
+{
+  "entity_classes": [
+    ["node", [], "Minimal node class for the null-override reader regression.", null, true]
+  ],
+  "entities": [
+    ["node", "node_keep"],
+    ["node", "node_cleared"],
+    ["node", "node_partial"]
+  ],
+  "parameter_definitions": [
+    ["node", "constraint_invested_capacity_coeff", ["bnVsbA==", null], null, "Per-(node, constraint) coefficient Map; default null."]
+  ],
+  "alternatives": [
+    ["map_keep", "Base Map for node_keep (never overridden)."],
+    ["map_cleared", "Base Map for node_cleared (nulled by 'clear')."],
+    ["map_partial", "Base Map for node_partial with one null leaf."],
+    ["clear", "Higher-priority alternative that nulls node_cleared's Map."]
+  ],
+  "scenarios": [
+    ["with_map", false, "All three nodes carry their base Map."],
+    ["nulled_mixed", false, "node_cleared nulled; node_keep + node_partial survive."],
+    ["nulled_only", false, "Only node_cleared present, then nulled -> empty."]
+  ],
+  "scenario_alternatives": [
+    ["with_map", "map_keep", "map_cleared"],
+    ["with_map", "map_cleared", "map_partial"],
+    ["with_map", "map_partial", null],
+
+    ["nulled_mixed", "map_keep", "map_cleared"],
+    ["nulled_mixed", "map_cleared", "map_partial"],
+    ["nulled_mixed", "map_partial", "clear"],
+    ["nulled_mixed", "clear", null],
+
+    ["nulled_only", "map_cleared", "clear"],
+    ["nulled_only", "clear", null]
+  ],
+  "parameter_values": [
+    ["node", "node_keep", "constraint_invested_capacity_coeff", ["eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJrZWVwX2xpbmsiLCAyLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9", "map"], "map_keep"],
+    ["node", "node_cleared", "constraint_invested_capacity_coeff", ["eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjbGVhcmVkX2xpbmsiLCAtMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==", "map"], "map_cleared"],
+    ["node", "node_partial", "constraint_invested_capacity_coeff", ["eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwYXJ0aWFsX2EiLCAzLjBdLCBbInBhcnRpYWxfYiIsIG51bGxdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9", "map"], "map_partial"],
+    ["node", "node_cleared", "constraint_invested_capacity_coeff", ["bnVsbA==", null], "clear"]
+  ]
+}
