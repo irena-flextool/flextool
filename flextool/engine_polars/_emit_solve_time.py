@@ -240,7 +240,17 @@ def run(
     )
     _ck("process_reserve_upDown_node_active_and_prundt")
     # ── L0 batches 45 / 46 ────────────────────────────────────────────
-    _pdt.emit_pdtProcess_source(input_dir, solve_data_dir, provider=provider)
+    # full_dt "solve as picker" (R4): slice the cached branch-expanded
+    # complete-timeline per-side frames to the roll window, else fall back to
+    # the legacy per-roll derivation.
+    _pdtProcess_source_full = (
+        _fdt_frames.get("pdtProcess_source")
+        if _fdt_frames is not None else None
+    )
+    _pdt.emit_pdtProcess_source(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frame=_pdtProcess_source_full,
+    )
     _ck("pdtProcess_source")
     _pdt.emit_pdtProcess_sink(input_dir, solve_data_dir, provider=provider)
     _ck("pdtProcess_sink")

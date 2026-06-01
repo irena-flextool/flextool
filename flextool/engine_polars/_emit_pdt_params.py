@@ -361,10 +361,20 @@ def _derive_pdtProcess_side(
     group_process_csv: Path,
     group_stochastic_csv: Path,
     domain_csv: Path,
-    dt_csv: Path,
+    dt: list[tuple[str, str]],
     side_col: str,
     provider: "object | None" = None,
 ) -> pl.DataFrame:
+    """Core per-side derivation over an explicit ``(period, time)`` list *dt*
+    and explicit branch-map CSV paths.
+
+    The value at ``(process, side, param, d, t)`` is a pure coordinate lookup
+    (the :class:`PdtLookupPerSide` cascade) over fixed inputs — ZERO window
+    aggregation — so the result is coordinate-stable (specs §9.5): deriving
+    over the complete (branch-expanded) timeline and slicing to a roll yields
+    exactly the same rows as deriving over the roll window directly, PROVIDED
+    the branch maps span the branch-periods the value depends on.
+    """
     lookup = PdtLookupPerSide(
         pbt_csv=pbt_csv,
         pd_csv=pd_csv,
@@ -378,7 +388,6 @@ def _derive_pdtProcess_side(
         provider=provider,
     )
     domain = _read_triples(domain_csv, provider=provider)
-    dt = _read_pairs(dt_csv, provider=provider)
 
     n = len(domain) * len(dt)
     processes: list[str] = [""] * n
@@ -418,39 +427,127 @@ def _derive_pdtProcess_side(
     )
 
 
-def derive_pdtProcess_source(
+def _derive_pdtProcess_side_roll(
     input_dir: Path, solve_data_dir: Path,
     *,
+    side: str,
     provider: "object | None" = None,
 ) -> pl.DataFrame:
-    """Materialise ``pdtProcess_source`` (mod L1265, 6-branch per-side).
-
-    Columns: ``process, source, param, period, time, value`` (all Utf8).
-    Domain: ``process_source_sourceSinkTimeParam_in_use × steps_in_use``.
-    """
+    """Per-roll per-side derivation (over the roll's ``steps_in_use`` window
+    + per-roll branch maps).  Shared body for ``source`` / ``sink``; *side*
+    selects the input shard prefix, domain CSV, and side column name."""
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
     return _derive_pdtProcess_side(
-        pbt_csv=input_dir / "pbt_process_source.csv",
-        pd_csv=input_dir / "pd_process_source.csv",
-        pt_csv=input_dir / "pt_process_source.csv",
-        p_csv=input_dir / "p_process_source.csv",
+        pbt_csv=input_dir / f"pbt_process_{side}.csv",
+        pd_csv=input_dir / f"pd_process_{side}.csv",
+        pt_csv=input_dir / f"pt_process_{side}.csv",
+        p_csv=input_dir / f"p_process_{side}.csv",
         period_time_first_csv=solve_data_dir / "first_timesteps.csv",
         solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
         period_branch_csv=solve_data_dir / "period__branch.csv",
         group_process_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
-        domain_csv=solve_data_dir / "process_source_sourceSinkTimeParam_in_use.csv",
-        dt_csv=solve_data_dir / "steps_in_use.csv",
-        side_col="source",
+        domain_csv=solve_data_dir
+        / f"process_{side}_sourceSinkTimeParam_in_use.csv",
+        dt=dt,
+        side_col=side,
         provider=provider,
     )
 
 
+def _derive_pdtProcess_side_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *,
+    side: str,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Per-side derivation over the BRANCH-EXPANDED COMPLETE timeline (R4).
+
+    Identical to :func:`_derive_pdtProcess_side_roll` except the ``(d, t)``
+    grid is the branch-expanded complete timeline and the branch maps are the
+    complete-timeline ``period__branch`` / ``solve_branch__time_branch`` /
+    ``first_timesteps`` — all read from the ``_full_dt_branched/`` Provider
+    keys the runner populates once per ``complete_solve`` (see
+    :func:`flextool.engine_polars._full_dt.build_branch_expanded_complete_frames`).
+    Because the per-side lookup resolves DISTINCT per-branch values at the
+    branch-periods, deriving over the BASE ``steps_complete_solve`` would drop
+    those rows; the branch-expanded complete timeline carries them, so the
+    per-roll slice is value-identical to the legacy per-roll derivation."""
+    from flextool.engine_polars import _full_dt as _fdt
+    dt = _read_pairs(
+        _fdt.branched_path(solve_data_dir, "steps_complete_solve_branched"),
+        provider=provider,
+    )
+    return _derive_pdtProcess_side(
+        pbt_csv=input_dir / f"pbt_process_{side}.csv",
+        pd_csv=input_dir / f"pd_process_{side}.csv",
+        pt_csv=input_dir / f"pt_process_{side}.csv",
+        p_csv=input_dir / f"p_process_{side}.csv",
+        period_time_first_csv=_fdt.branched_path(
+            solve_data_dir, "first_timesteps"),
+        solve_branch_csv=_fdt.branched_path(
+            solve_data_dir, "solve_branch__time_branch"),
+        period_branch_csv=_fdt.branched_path(
+            solve_data_dir, "period__branch"),
+        group_process_csv=input_dir / "group__process.csv",
+        group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+        domain_csv=solve_data_dir
+        / f"process_{side}_sourceSinkTimeParam_in_use.csv",
+        dt=dt,
+        side_col=side,
+        provider=provider,
+    )
+
+
+def derive_pdtProcess_source(
+    input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Materialise ``pdtProcess_source`` over the ROLL window (mod L1265,
+    6-branch per-side).
+
+    Columns: ``process, source, param, period, time, value`` (all Utf8).
+    Domain: ``process_source_sourceSinkTimeParam_in_use × steps_in_use``.
+    Legacy per-roll derivation, retained as the :func:`emit_pdtProcess_source`
+    fallback when no cached full-domain frame is present.
+    """
+    return _derive_pdtProcess_side_roll(
+        input_dir, solve_data_dir, side="source", provider=provider,
+    )
+
+
+def derive_pdtProcess_source_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Materialise ``pdtProcess_source`` over the BRANCH-EXPANDED COMPLETE
+    timeline (R4); computed once per ``complete_solve`` and sliced per roll
+    via :func:`flextool.engine_polars._full_dt.slice_full_dt`."""
+    return _derive_pdtProcess_side_full_dt(
+        input_dir, solve_data_dir, side="source", provider=provider,
+    )
+
+
 def emit_pdtProcess_source(input_dir: Path, solve_data_dir: Path,
-                            *, provider) -> None:
-    """Emit ``pdtProcess_source`` to the Provider."""
-    _emit(
-        provider, "solve_data/pdtProcess_source.csv",
-        derive_pdtProcess_source(input_dir, solve_data_dir, provider=provider),
+                           *, provider,
+                           full_dt_frame: "pl.DataFrame | None" = None) -> None:
+    """Emit ``pdtProcess_source`` to the Provider.
+
+    When *full_dt_frame* is supplied (the branch-expanded complete-timeline
+    frame cached on the runner state) the roll's frame is the slice of it to
+    the roll's ``steps_in_use`` window; else the legacy per-roll derivation
+    runs.  Either way the result is byte-identical (coordinate-stable family;
+    specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    _family = next(
+        f for f in _fdt.FULL_DT_FAMILIES if f.name == "pdtProcess_source"
+    )
+    _fdt.emit_via_full_dt(
+        _family, input_dir, solve_data_dir,
+        provider=provider, full_dt_frame=full_dt_frame,
     )
 
 
@@ -459,25 +556,16 @@ def derive_pdtProcess_sink(
     *,
     provider: "object | None" = None,
 ) -> pl.DataFrame:
-    """Materialise ``pdtProcess_sink`` (mod L1279, 6-branch per-side).
+    """Materialise ``pdtProcess_sink`` over the ROLL window (mod L1279,
+    6-branch per-side).
 
     Columns: ``process, sink, param, period, time, value`` (all Utf8).
     Domain: ``process_sink_sourceSinkTimeParam_in_use × steps_in_use``.
+    Legacy per-roll derivation, retained as the :func:`emit_pdtProcess_sink`
+    fallback when no cached full-domain frame is present.
     """
-    return _derive_pdtProcess_side(
-        pbt_csv=input_dir / "pbt_process_sink.csv",
-        pd_csv=input_dir / "pd_process_sink.csv",
-        pt_csv=input_dir / "pt_process_sink.csv",
-        p_csv=input_dir / "p_process_sink.csv",
-        period_time_first_csv=solve_data_dir / "first_timesteps.csv",
-        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
-        period_branch_csv=solve_data_dir / "period__branch.csv",
-        group_process_csv=input_dir / "group__process.csv",
-        group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
-        domain_csv=solve_data_dir / "process_sink_sourceSinkTimeParam_in_use.csv",
-        dt_csv=solve_data_dir / "steps_in_use.csv",
-        side_col="sink",
-        provider=provider,
+    return _derive_pdtProcess_side_roll(
+        input_dir, solve_data_dir, side="sink", provider=provider,
     )
 
 

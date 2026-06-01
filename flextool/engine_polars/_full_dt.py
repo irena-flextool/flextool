@@ -427,3 +427,24 @@ register_family(
     ).derive_pdtProcess,
     emit_key="solve_data/pdtProcess.csv",
 )
+
+# pdtProcess_source — BRANCH-DEPENDENT per-side family (R4); same
+# ``PdtLookupPerSide`` cascade as pdtProcess.  Its domain
+# (``process_source_sourceSinkTimeParam_in_use``) is solve-invariant and
+# pre-seeded by ``input_derivation`` (``emit_param_in_use_sets``), so it is
+# present at full_dt compute time.  Its ``derive_*_full_dt`` reads the
+# branch-expanded complete timeline + complete branch maps, so the per-roll
+# slice carries the branch-period rows with correct DISTINCT per-branch
+# values.
+register_family(
+    "pdtProcess_source",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_pdt_params",
+        fromlist=["derive_pdtProcess_source_full_dt"],
+    ).derive_pdtProcess_source_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_pdt_params",
+        fromlist=["derive_pdtProcess_source"],
+    ).derive_pdtProcess_source,
+    emit_key="solve_data/pdtProcess_source.csv",
+)
