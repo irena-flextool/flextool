@@ -933,18 +933,34 @@ def emit_pdGroup(input_dir: Path, solve_data_dir: Path,
 # ---------------------------------------------------------------------------
 
 
-def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
-                    *, provider: "object | None" = None) -> pl.DataFrame:
-    """Materialise the ``pdtGroup`` frame.
+def _derive_pdtGroup_over_dt(
+    input_dir: Path,
+    dt: list[tuple[str, str]],
+    *, provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Core of :func:`derive_pdtGroup`: build the frame over an explicit
+    ``(period, time)`` list *dt*.
 
-    Branches: ``pt_group[g, param, t]`` → ``pd_group[g, param, d]`` →
-    ``p_group[g, param]`` → 0.
+    The value at ``(g, param, d, t)`` is a pure ``(d, t)`` coordinate lookup
+    (``pt_group[g, param, t]`` → ``pd_group[g, param, d]`` →
+    ``p_group[g, param]`` → 0) with ZERO window aggregation, so the result is
+    coordinate-stable: deriving over the complete timeline and slicing to a
+    roll yields exactly the same rows as deriving over the roll window
+    directly (specs §9.5).  Both :func:`derive_pdtGroup` (roll window,
+    ``steps_in_use``) and :func:`derive_pdtGroup_full_dt` (branch-expanded
+    complete timeline) call this with the appropriate *dt*.
+
+    pdtGroup has NO branch fold-in (no ``pbt_group``), but on a stochastic
+    roll ``steps_in_use`` carries branch-period ``(d, t)`` rows whose value
+    simply falls through ``pd_group[g, param, period1_lower]`` → … → 0.  So
+    the full_dt grid must be the BRANCH-EXPANDED complete timeline (which
+    carries those branch-period coordinates), else slicing to a stochastic
+    roll would drop them.
     """
     pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)  # same (k1, k2, k3, v) shape
     pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
     p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
     groups = _read_singles(input_dir / "group.csv", provider=provider)
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     g_col: list[str] = []
     p_col: list[str] = []
@@ -973,11 +989,63 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
+                    *, provider: "object | None" = None) -> pl.DataFrame:
+    """Materialise the ``pdtGroup`` frame over the ROLL window.
+
+    Branches: ``pt_group[g, param, t]`` → ``pd_group[g, param, d]`` →
+    ``p_group[g, param]`` → 0.  Domain: ``group.csv × groupTimeParam × dt``
+    (``steps_in_use``).  This is the legacy per-roll derivation, retained as
+    the :func:`emit_pdtGroup` fallback when no cached full-domain frame is
+    present.
+    """
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    return _derive_pdtGroup_over_dt(input_dir, dt, provider=provider)
+
+
+def derive_pdtGroup_full_dt(input_dir: Path, solve_data_dir: Path,
+                            *, provider: "object | None" = None,
+                            ) -> pl.DataFrame:
+    """Materialise the ``pdtGroup`` frame over the BRANCH-EXPANDED COMPLETE
+    timeline (R4); computed once per ``complete_solve`` and sliced per roll
+    via :func:`flextool.engine_polars._full_dt.slice_full_dt`.
+
+    pdtGroup has no branch fold-in, but a stochastic roll's ``steps_in_use``
+    carries branch-period ``(d, t)`` coordinates; the BASE
+    ``steps_complete_solve`` does not.  So the ``(d, t)`` grid is the
+    branch-expanded complete timeline (``steps_complete_solve_branched`` from
+    the ``_full_dt_branched/`` Provider keys the runner populates once per
+    ``complete_solve``), which carries those coordinates — the per-roll slice
+    is therefore value-identical to the legacy per-roll derivation, INCLUDING
+    branch-period rows (specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    dt = _read_pairs(
+        _fdt.branched_path(solve_data_dir, "steps_complete_solve_branched"),
+        provider=provider,
+    )
+    return _derive_pdtGroup_over_dt(input_dir, dt, provider=provider)
+
+
 def emit_pdtGroup(input_dir: Path, solve_data_dir: Path,
-                   *, provider) -> None:
-    """Emit ``pdtGroup`` to the Provider."""
-    _emit(provider, "solve_data/pdtGroup.csv",
-          derive_pdtGroup(input_dir, solve_data_dir, provider=provider))
+                  *, provider,
+                  full_dt_frame: "pl.DataFrame | None" = None) -> None:
+    """Emit ``pdtGroup`` to the Provider.
+
+    When *full_dt_frame* is supplied (the branch-expanded complete-timeline
+    frame cached on the runner state) the roll's frame is the slice of it to
+    the roll's ``steps_in_use`` window; else the legacy per-roll derivation
+    runs.  Either way the result is byte-identical (coordinate-stable family;
+    specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    _family = next(
+        f for f in _fdt.FULL_DT_FAMILIES if f.name == "pdtGroup"
+    )
+    _fdt.emit_via_full_dt(
+        _family, input_dir, solve_data_dir,
+        provider=provider, full_dt_frame=full_dt_frame,
+    )
 
 
 # ---------------------------------------------------------------------------

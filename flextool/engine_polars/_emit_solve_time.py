@@ -291,7 +291,14 @@ def run(
     # ── L0 batch 52 ───────────────────────────────────────────────────
     _period.emit_pdGroup(input_dir, solve_data_dir, provider=provider)
     _ck("pdGroup")
-    _period.emit_pdtGroup(input_dir, solve_data_dir, provider=provider)
+    _pdtGroup_full = (
+        _fdt_frames.get("pdtGroup")
+        if _fdt_frames is not None else None
+    )
+    _period.emit_pdtGroup(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frame=_pdtGroup_full,
+    )
     _ck("pdtGroup")
     # ── L0 batch 53 ───────────────────────────────────────────────────
     _pdt.emit_pdtNode(input_dir, solve_data_dir, provider=provider)

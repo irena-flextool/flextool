@@ -466,6 +466,26 @@ register_family(
     emit_key="solve_data/pdtProcess_sink.csv",
 )
 
+# pdtGroup — pure ``(d,t)`` lookup (pt → pd → p → 0), NO branch fold-in;
+# DOMAIN (``input/group.csv``) is a solve-invariant input present at full_dt
+# compute.  But a stochastic roll's ``steps_in_use`` carries branch-period
+# ``(d, t)`` coordinates the BASE ``steps_complete_solve`` lacks, so its
+# ``derive_*_full_dt`` reads the BRANCH-EXPANDED complete timeline
+# (``steps_complete_solve_branched``) to carry those coordinate rows; the
+# values still fall through pd/p/0 exactly as the legacy per-roll derive.
+register_family(
+    "pdtGroup",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=["derive_pdtGroup_full_dt"],
+    ).derive_pdtGroup_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=["derive_pdtGroup"],
+    ).derive_pdtGroup,
+    emit_key="solve_data/pdtGroup.csv",
+)
+
 # pdtProfile — BRANCH-DEPENDENT (d,t) family (R4).  Its stochastic /
 # parent-period fold-in resolves DISTINCT per-branch values at the
 # branch-periods, so its ``derive_*_full_dt`` reads the branch-expanded
