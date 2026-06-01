@@ -448,3 +448,20 @@ register_family(
     ).derive_pdtProcess_source,
     emit_key="solve_data/pdtProcess_source.csv",
 )
+
+# pdtProcess_sink — BRANCH-DEPENDENT per-side family (R4); mirror of
+# pdtProcess_source on the sink side.  Domain
+# (``process_sink_sourceSinkTimeParam_in_use``) is likewise solve-invariant
+# and pre-seeded by ``input_derivation``.
+register_family(
+    "pdtProcess_sink",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_pdt_params",
+        fromlist=["derive_pdtProcess_sink_full_dt"],
+    ).derive_pdtProcess_sink_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_pdt_params",
+        fromlist=["derive_pdtProcess_sink"],
+    ).derive_pdtProcess_sink,
+    emit_key="solve_data/pdtProcess_sink.csv",
+)

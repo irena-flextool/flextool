@@ -569,10 +569,35 @@ def derive_pdtProcess_sink(
     )
 
 
+def derive_pdtProcess_sink_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Materialise ``pdtProcess_sink`` over the BRANCH-EXPANDED COMPLETE
+    timeline (R4); computed once per ``complete_solve`` and sliced per roll
+    via :func:`flextool.engine_polars._full_dt.slice_full_dt`."""
+    return _derive_pdtProcess_side_full_dt(
+        input_dir, solve_data_dir, side="sink", provider=provider,
+    )
+
+
 def emit_pdtProcess_sink(input_dir: Path, solve_data_dir: Path,
-                          *, provider) -> None:
-    """Emit ``pdtProcess_sink`` to the Provider."""
-    _emit(
-        provider, "solve_data/pdtProcess_sink.csv",
-        derive_pdtProcess_sink(input_dir, solve_data_dir, provider=provider),
+                         *, provider,
+                         full_dt_frame: "pl.DataFrame | None" = None) -> None:
+    """Emit ``pdtProcess_sink`` to the Provider.
+
+    When *full_dt_frame* is supplied (the branch-expanded complete-timeline
+    frame cached on the runner state) the roll's frame is the slice of it to
+    the roll's ``steps_in_use`` window; else the legacy per-roll derivation
+    runs.  Either way the result is byte-identical (coordinate-stable family;
+    specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    _family = next(
+        f for f in _fdt.FULL_DT_FAMILIES if f.name == "pdtProcess_sink"
+    )
+    _fdt.emit_via_full_dt(
+        _family, input_dir, solve_data_dir,
+        provider=provider, full_dt_frame=full_dt_frame,
     )

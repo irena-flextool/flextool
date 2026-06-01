@@ -252,7 +252,14 @@ def run(
         full_dt_frame=_pdtProcess_source_full,
     )
     _ck("pdtProcess_source")
-    _pdt.emit_pdtProcess_sink(input_dir, solve_data_dir, provider=provider)
+    _pdtProcess_sink_full = (
+        _fdt_frames.get("pdtProcess_sink")
+        if _fdt_frames is not None else None
+    )
+    _pdt.emit_pdtProcess_sink(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frame=_pdtProcess_sink_full,
+    )
     _ck("pdtProcess_sink")
     # ── L4 batch 47 ───────────────────────────────────────────────────
     _period.emit_pdtProcess__source__sink__dt_varCost_pair(
