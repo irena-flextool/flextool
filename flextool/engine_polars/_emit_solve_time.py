@@ -247,7 +247,18 @@ def run(
     )
     _ck("process_reserve_filters_and_reliability")
     # ── L0 batch 51 ───────────────────────────────────────────────────
-    _period.emit_pdtCommodity(input_dir, solve_data_dir, provider=provider)
+    # full_dt PoC (specs §9/§10): if the runner cached the complete-timeline
+    # pdtCommodity frame for this ``complete_solve``, slice it to the roll
+    # window; else fall back to the legacy per-roll derivation.
+    _full_dt_frames = getattr(state, "current_full_dt_frames", None)
+    _pdtCommodity_full = (
+        _full_dt_frames.get("pdtCommodity")
+        if _full_dt_frames is not None else None
+    )
+    _period.emit_pdtCommodity(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frame=_pdtCommodity_full,
+    )
     _ck("pdtCommodity")
     # ── L0 batch 52 ───────────────────────────────────────────────────
     _period.emit_pdGroup(input_dir, solve_data_dir, provider=provider)

@@ -46,6 +46,7 @@ from flextool.engine_polars._blocks import emit_block_data_for_solve
 from flextool.engine_polars import (
     _emit_solve_time as preprocessing_solve_time,
 )
+from flextool.engine_polars import _emit_period_params
 from flextool.engine_polars._solve_state import (
     FlexToolConfigError,
     FlexToolSolveError,
@@ -1172,6 +1173,28 @@ def native_run_model(state, solver) -> int:
         if _mem_cp is not None:
             _mem_cp("prep_before_solve_time_dispatcher",
                     "prep: block + rp/timeset + status + empty writers done")
+        # full_dt "solve as picker" (specs §9/§10): compute the
+        # complete-timeline parameter frames ONCE per ``complete_solve``
+        # and cache them, so each roll slices the cached frame instead of
+        # re-deriving over its window.  The complete timeline
+        # (``solve_data/steps_complete_solve.csv``) and the ``input/*``
+        # frames the derivation reads are already in ``sub_solve_provider``
+        # by this point (the timeline writers + cascade-input seed ran
+        # above).  Each converted family adds its compute here; the
+        # per-roll emit (in ``preprocessing_solve_time.run``) slices it,
+        # falling back to the legacy per-roll derivation if the cache slot
+        # is absent.  pdtCommodity is the proof-of-concept family.
+        _cs_full_dt = cached_full_dt_frames[cs]
+        if "pdtCommodity" not in _cs_full_dt:
+            _cs_full_dt["pdtCommodity"] = (
+                _emit_period_params.derive_pdtCommodity_full_dt(
+                    wf / "input", wf / "solve_data",
+                    provider=sub_solve_provider,
+                )
+            )
+        # Expose this ``cs``'s cached full-domain frames to the per-solve
+        # preprocessing dispatcher (read in ``_emit_solve_time.run``).
+        state.current_full_dt_frames = _cs_full_dt
         # Step 1-f — preprocessing emits directly into
         # ``sub_solve_provider`` via the threaded ``provider=`` keyword;
         # the Provider is the sole in-memory carrier.

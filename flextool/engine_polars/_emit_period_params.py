@@ -901,18 +901,27 @@ def emit_pdtGroup(input_dir: Path, solve_data_dir: Path,
 _COMMODITY_TIME_PARAM: tuple[str, ...] = ("price",)
 
 
-def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
-                        *, provider: "object | None" = None) -> pl.DataFrame:
-    """Materialise the ``pdtCommodity`` frame.
+def _derive_pdtCommodity_over_dt(
+    input_dir: Path,
+    dt: list[tuple[str, str]],
+    *, provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Core of :func:`derive_pdtCommodity`: build the frame over an
+    explicit ``(period, time)`` list *dt*.
 
-    Domain: commodity × commodityTimeParam × dt.
-    Branches: ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → 0.
+    The value at ``(c, "price", d, t)`` is a pure ``(d, t)`` coordinate
+    lookup (``price_t`` ?? ``price_d`` ?? ``price_scalar`` ?? 0) with ZERO
+    window aggregation, so the result is coordinate-stable: deriving over
+    the complete timeline and slicing to a roll yields exactly the same
+    rows as deriving over the roll window directly (specs §9.5).  Both
+    :func:`derive_pdtCommodity` (roll window, ``steps_in_use``) and
+    :func:`derive_pdtCommodity_full_dt` (complete timeline,
+    ``steps_complete_solve``) call this with the appropriate *dt*.
     """
     pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
     pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
     p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
     commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     c_col: list[str] = []
     p_col: list[str] = []
@@ -938,11 +947,63 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
+                        *, provider: "object | None" = None) -> pl.DataFrame:
+    """Materialise the ``pdtCommodity`` frame over the ROLL window.
+
+    Domain: commodity × commodityTimeParam × dt (``steps_in_use``).
+    Branches: ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → 0.
+    This is the legacy per-roll derivation, retained as the fallback for
+    :func:`emit_pdtCommodity` when no cached full-domain frame is present.
+    """
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    return _derive_pdtCommodity_over_dt(input_dir, dt, provider=provider)
+
+
+def derive_pdtCommodity_full_dt(input_dir: Path, solve_data_dir: Path,
+                                *, provider: "object | None" = None,
+                                ) -> pl.DataFrame:
+    """Materialise the ``pdtCommodity`` frame over the COMPLETE timeline.
+
+    Identical to :func:`derive_pdtCommodity` except the ``(d, t)`` grid is
+    the complete-solve timeline (``steps_complete_solve.csv``) rather than
+    the roll window (``steps_in_use.csv``).  Computed once per
+    ``complete_solve`` and sliced per roll via
+    :func:`flextool.engine_polars._full_dt.slice_full_dt`; the slice is
+    value-identical to the legacy per-roll derivation because the value is
+    a pure ``(d, t)`` lookup (specs §9.5).
+    """
+    dt = _read_pairs(solve_data_dir / "steps_complete_solve.csv",
+                     provider=provider)
+    return _derive_pdtCommodity_over_dt(input_dir, dt, provider=provider)
+
+
 def emit_pdtCommodity(input_dir: Path, solve_data_dir: Path,
-                       *, provider) -> None:
-    """Emit ``pdtCommodity`` to the Provider."""
-    _emit(provider, "solve_data/pdtCommodity.csv",
-          derive_pdtCommodity(input_dir, solve_data_dir, provider=provider))
+                      *, provider,
+                      full_dt_frame: "pl.DataFrame | None" = None) -> None:
+    """Emit ``pdtCommodity`` to the Provider under ``solve_data/``.
+
+    When *full_dt_frame* is supplied (the complete-timeline frame computed
+    once per ``complete_solve`` and cached on the runner state) the roll's
+    frame is obtained by slicing it to the roll's ``steps_in_use`` window
+    via :func:`slice_full_dt` — compute-once-over-full_dt + slice-per-roll.
+    When it is absent the legacy per-roll :func:`derive_pdtCommodity` runs
+    as a fallback, keeping the conversion revertible and safe.  Either way
+    the emitted key and frame content are byte-identical.
+    """
+    if full_dt_frame is not None:
+        from flextool.engine_polars._full_dt import slice_full_dt
+        roll_dt = provider.get(_provider_key(solve_data_dir / "steps_in_use.csv"))
+        if roll_dt is None:
+            roll_dt = pl.DataFrame(
+                {"period": [], "step": []},
+                schema={"period": pl.Utf8, "step": pl.Utf8},
+            )
+        frame = slice_full_dt(full_dt_frame, roll_dt)
+    else:
+        frame = derive_pdtCommodity(input_dir, solve_data_dir,
+                                    provider=provider)
+    _emit(provider, "solve_data/pdtCommodity.csv", frame)
 
 
 # ---------------------------------------------------------------------------
