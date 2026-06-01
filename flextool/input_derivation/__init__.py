@@ -249,7 +249,6 @@ def run(
         _mid.emit_invest_total_sets(input_dir, solve_data_dir, provider=provider)
         _mid.emit_ci_ladder_cumulative(input_dir, solve_data_dir, provider=provider)
         _disp.emit_process_arc_unions(input_dir, solve_data_dir, provider=provider)
-        _arc.emit_group_commodity_node_period_co2_total(input_dir, solve_data_dir, provider=provider)
         _arc.emit_param_in_use_sets(input_dir, solve_data_dir, provider=provider)
 
         _mem("preprocessing_writers_end", "Preprocessing writers done")

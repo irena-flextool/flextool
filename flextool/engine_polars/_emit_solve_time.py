@@ -146,8 +146,6 @@ def run(
     _ck("ci_ladder_cumulative")
     _disp.emit_process_arc_unions(input_dir, solve_data_dir, provider=provider)
     _ck("process_arc_unions")
-    _arc.emit_group_commodity_node_period_co2_total(input_dir, solve_data_dir, provider=provider)
-    _ck("group_commodity_node_period_co2_total")
     _arc.emit_param_in_use_sets(input_dir, solve_data_dir, provider=provider)
     _ck("param_in_use_sets")
 
@@ -182,9 +180,6 @@ def run(
     # ── L2 batch 22 ───────────────────────────────────────────────────
     _arc.emit_node_time_param_in_use(input_dir, solve_data_dir, provider=provider)
     _ck("node_time_param_in_use")
-    # ── L2 batch 25 ───────────────────────────────────────────────────
-    _arc.emit_process_source_sink_param_t(solve_data_dir, provider=provider)
-    _ck("process_source_sink_param_t")
     # ── L2 batch 26: p_entity_pre_existing ────────────────────────────
     from flextool.engine_polars import _emit_chain_params as _chain
     _chain.emit_p_entity_pre_existing(input_dir, solve_data_dir, provider=provider)
@@ -201,8 +196,6 @@ def run(
     _ck("process_source_sink_ramp_family")
     _arc.emit_process_source_sink_coeff_zero(solve_data_dir, provider=provider)
     _ck("process_source_sink_coeff_zero")
-    _arc.emit_process_source_sink_ramp_method(input_dir, solve_data_dir, provider=provider)
-    _ck("process_source_sink_ramp_method")
     _arc.emit_node_group_dispatch_process_fully_inside(input_dir, solve_data_dir, provider=provider)
     _ck("node_group_dispatch_process_fully_inside")
     # ── L5/L6 batch 62: 12 remaining nodeGroupDispatch sets ───────────
@@ -222,8 +215,6 @@ def run(
     # ── L4 batches 39-41 ──────────────────────────────────────────────
     _arc.emit_ed_history_realized_first(input_dir, solve_data_dir, provider=provider)
     _ck("ed_history_realized_first")
-    _arc.emit_process_method_sources_sinks(input_dir, solve_data_dir, provider=provider)
-    _ck("process_method_sources_sinks")
     _arc.emit_peedt(solve_data_dir, provider=provider)
     _ck("peedt")
     # ── L0 batches 42 / 43 ────────────────────────────────────────────
@@ -256,8 +247,6 @@ def run(
     )
     _ck("process_reserve_filters_and_reliability")
     # ── L0 batch 51 ───────────────────────────────────────────────────
-    _arc.emit_pProcess_source_sink(input_dir, solve_data_dir, provider=provider)
-    _ck("pProcess_source_sink")
     _period.emit_pdtCommodity(input_dir, solve_data_dir, provider=provider)
     _ck("pdtCommodity")
     # ── L0 batch 52 ───────────────────────────────────────────────────
@@ -291,31 +280,17 @@ def run(
     # ── L9/L10 batch 60: capacity max chain ───────────────────────────
     _chain.emit_p_entity_capacity_max_chain(input_dir, solve_data_dir, provider=provider)
     _ck("p_entity_capacity_max_chain")
-    # ── L4/L5 batch 61: process_source_sink_ramp_unions ───────────────
-    _arc.emit_process_source_sink_ramp_unions(solve_data_dir, provider=provider)
-    _ck("process_source_sink_ramp_unions")
-    # ── L0/L1 batch 63: branch weights + delay weight + co2 ───────────
+    # ── L0/L1 batch 63: branch weights + delay weight ─────────────────
     _period_calc.emit_branch_weights(input_dir, solve_data_dir, provider=provider)
     _ck("branch_weights")
     _arc.emit_p_process_delay_weight(input_dir, solve_data_dir, provider=provider)
     _ck("p_process_delay_weight")
-    _arc.emit_gcndt_co2_price(input_dir, solve_data_dir, provider=provider)
-    _ck("gcndt_co2_price")
-    _arc.emit_group_commodity_node_period_co2_period(input_dir, solve_data_dir, provider=provider)
-    _ck("group_commodity_node_period_co2_period")
-    # ── L0/L1 batch 64: instant-flow sets ─────────────────────────────
-    _arc.emit_gdt_instant_flow_sets(solve_data_dir, provider=provider)
-    _ck("gdt_instant_flow_sets")
     # ── L0/L1 batch 65: small set derivations ─────────────────────────
     _arc.emit_small_set_derivations(solve_data_dir, provider=provider)
     _ck("small_set_derivations")
-    # ── L1 batch 66: state slack share + storage state reference price ─
-    _arc.emit_p_state_slack_share(input_dir, solve_data_dir, provider=provider)
-    _ck("p_state_slack_share")
+    # ── L1 batch 66: storage state reference price ────────────────────
     _arc.emit_p_storage_state_reference_price(input_dir, solve_data_dir, provider=provider)
     _ck("p_storage_state_reference_price")
-    # ── L2 batch 67: p_flow_min + p_flow_max ──────────────────────────
-    _arc.emit_p_flow_min(input_dir, solve_data_dir, provider=provider)
-    _ck("p_flow_min")
+    # ── L2 batch 67: p_flow_max ───────────────────────────────────────
     _arc.emit_p_flow_max(input_dir, solve_data_dir, provider=provider)
     _ck("p_flow_max")
