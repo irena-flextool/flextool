@@ -355,22 +355,32 @@ def emit_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
 # ---------------------------------------------------------------------------
 
 
-def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
-                      *, provider: "object | None" = None) -> pl.DataFrame:
-    """Materialise the ``pdtProfile`` frame.
+def _derive_pdtProfile_over_dt(
+    input_dir: Path, solve_data_dir: Path,
+    dt: list[tuple[str, str]],
+    *,
+    first_timesteps_csv: Path,
+    solve_branch_csv: Path,
+    period_branch_csv: Path,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Core of :func:`derive_pdtProfile`: build the frame over an explicit
+    ``(period, time)`` list *dt* and explicit branch-map CSV paths.
 
-    Branches:
-      1. Stochastic fold-in (any of process / node / process_node refs
-         the profile under a stochastic group).
-      2. Parent-period fold-in.
-      3. ``pt_profile[p, t]``.
-      4. ``p_profile[p]``.
-      5. 0.
-
-    Domain: every profile in ``input/profile.csv`` × ``dt``.
+    The value at ``(profile, d, t)`` is a coordinate lookup with a per-``(d,
+    t)`` stochastic / parent-period branch fold-in (the ``pbt_profile`` sum
+    is over BRANCHES and the period's first-timesteps at a FIXED ``t``, NOT
+    over the solve's time window) followed by the ``pt_profile`` →
+    ``p_profile`` → 0 cascade — ZERO window aggregation.  So the result is
+    coordinate-stable (specs §9.5): deriving over the branch-expanded
+    complete timeline and slicing to a roll yields exactly the same rows as
+    deriving over the roll window directly, PROVIDED the branch maps span the
+    branch-periods the value depends on.  Both :func:`derive_pdtProfile`
+    (roll window + per-roll branch maps) and :func:`derive_pdtProfile_full_dt`
+    (branch-expanded complete timeline + complete branch maps) call this with
+    the appropriate *dt* and branch-map paths.
     """
     profiles = _read_singles(input_dir / "profile.csv", provider=provider)
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     # pbt / pt / p loaders.
     pbt_profile: dict[tuple[str, str, str, str], float] = {}
@@ -416,15 +426,15 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
 
     # Branch indices.
     ts_for_d = _read_pairs_to_dict(
-        solve_data_dir / "first_timesteps.csv", key_col=0,
+        first_timesteps_csv, key_col=0,
         provider=provider,
     )
     tb_for_d = _read_pairs_to_dict(
-        solve_data_dir / "solve_branch__time_branch.csv", key_col=0,
+        solve_branch_csv, key_col=0,
         provider=provider,
     )
     pe_for_d = _read_pairs_to_dict(
-        solve_data_dir / "period__branch.csv", key_col=1,
+        period_branch_csv, key_col=1,
         provider=provider,
     )
 
@@ -530,11 +540,88 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
+                      *, provider: "object | None" = None) -> pl.DataFrame:
+    """Materialise the ``pdtProfile`` frame over the ROLL window.
+
+    Branches:
+      1. Stochastic fold-in (any of process / node / process_node refs
+         the profile under a stochastic group).
+      2. Parent-period fold-in.
+      3. ``pt_profile[p, t]``.
+      4. ``p_profile[p]``.
+      5. 0.
+
+    Domain: every profile in ``input/profile.csv`` × ``dt``
+    (``steps_in_use``).  This is the legacy per-roll derivation, retained as
+    the :func:`emit_pdtProfile` fallback when no cached full-domain frame is
+    present.
+    """
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    return _derive_pdtProfile_over_dt(
+        input_dir, solve_data_dir, dt,
+        first_timesteps_csv=solve_data_dir / "first_timesteps.csv",
+        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
+    )
+
+
+def derive_pdtProfile_full_dt(input_dir: Path, solve_data_dir: Path,
+                              *, provider: "object | None" = None,
+                              ) -> pl.DataFrame:
+    """Materialise the ``pdtProfile`` frame over the BRANCH-EXPANDED COMPLETE
+    timeline (R4); computed once per ``complete_solve`` and sliced per roll
+    via :func:`flextool.engine_polars._full_dt.slice_full_dt`.
+
+    Branch-dependent (the stochastic / parent-period fold-in resolves
+    DISTINCT per-branch values at the branch-periods), so the ``(d, t)`` grid
+    is the branch-expanded complete timeline and the branch maps are the
+    complete-timeline ``first_timesteps`` / ``solve_branch__time_branch`` /
+    ``period__branch`` — all read from the ``_full_dt_branched/`` Provider
+    keys the runner populates once per ``complete_solve`` (see
+    :func:`flextool.engine_polars._full_dt.build_branch_expanded_complete_frames`).
+    Deriving over the BASE ``steps_complete_solve`` would drop the
+    branch-period rows; the branch-expanded complete timeline carries them,
+    so the per-roll slice is value-identical to the legacy per-roll
+    derivation (specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    dt = _read_pairs(
+        _fdt.branched_path(solve_data_dir, "steps_complete_solve_branched"),
+        provider=provider,
+    )
+    return _derive_pdtProfile_over_dt(
+        input_dir, solve_data_dir, dt,
+        first_timesteps_csv=_fdt.branched_path(
+            solve_data_dir, "first_timesteps"),
+        solve_branch_csv=_fdt.branched_path(
+            solve_data_dir, "solve_branch__time_branch"),
+        period_branch_csv=_fdt.branched_path(
+            solve_data_dir, "period__branch"),
+        provider=provider,
+    )
+
+
 def emit_pdtProfile(input_dir: Path, solve_data_dir: Path,
-                     *, provider) -> None:
-    """Emit ``pdtProfile`` to the Provider."""
-    _emit(provider, "solve_data/pdtProfile.csv",
-          derive_pdtProfile(input_dir, solve_data_dir, provider=provider))
+                     *, provider,
+                     full_dt_frame: "pl.DataFrame | None" = None) -> None:
+    """Emit ``pdtProfile`` to the Provider.
+
+    When *full_dt_frame* is supplied (the branch-expanded complete-timeline
+    frame cached on the runner state) the roll's frame is the slice of it to
+    the roll's ``steps_in_use`` window; else the legacy per-roll derivation
+    runs.  Either way the result is byte-identical (coordinate-stable family;
+    specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    _family = next(
+        f for f in _fdt.FULL_DT_FAMILIES if f.name == "pdtProfile"
+    )
+    _fdt.emit_via_full_dt(
+        _family, input_dir, solve_data_dir,
+        provider=provider, full_dt_frame=full_dt_frame,
+    )
 
 
 # ---------------------------------------------------------------------------

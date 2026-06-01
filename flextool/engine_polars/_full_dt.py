@@ -465,3 +465,22 @@ register_family(
     ).derive_pdtProcess_sink,
     emit_key="solve_data/pdtProcess_sink.csv",
 )
+
+# pdtProfile — BRANCH-DEPENDENT (d,t) family (R4).  Its stochastic /
+# parent-period fold-in resolves DISTINCT per-branch values at the
+# branch-periods, so its ``derive_*_full_dt`` reads the branch-expanded
+# complete timeline + complete branch maps (``_full_dt_branched/`` Provider
+# keys), exactly like pdtProcess.  Its DOMAIN (``input/profile.csv``) is a
+# solve-invariant input, present at full_dt compute time.
+register_family(
+    "pdtProfile",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=["derive_pdtProfile_full_dt"],
+    ).derive_pdtProfile_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=["derive_pdtProfile"],
+    ).derive_pdtProfile,
+    emit_key="solve_data/pdtProfile.csv",
+)

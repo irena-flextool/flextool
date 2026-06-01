@@ -300,7 +300,14 @@ def run(
     _period.emit_pdtNodeInflow(input_dir, solve_data_dir, provider=provider)
     _ck("pdtNodeInflow")
     # ── L0 batch 55 ───────────────────────────────────────────────────
-    _period.emit_pdtProfile(input_dir, solve_data_dir, provider=provider)
+    _pdtProfile_full = (
+        _fdt_frames.get("pdtProfile")
+        if _fdt_frames is not None else None
+    )
+    _period.emit_pdtProfile(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frame=_pdtProfile_full,
+    )
     _ck("pdtProfile")
     # ── L1/L2/L3 batch 57 ─────────────────────────────────────────────
     _period.emit_pdtConversion_rate_section_slope(input_dir, solve_data_dir, provider=provider)
