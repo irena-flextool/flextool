@@ -576,33 +576,26 @@ def _read_solve_first(work_folder: Path,
     Reads ``modelParam == 'solveFirst'`` from ``p_model.csv``.  Resolves
     in order: ``solve_data/p_model.csv`` → ``input/p_model.csv`` → True.
     """
-    import csv as _csv
-    from flextool.engine_polars._emit_provider_io import (
-        _provider_key, _provider_open,
-    )
+    from flextool.engine_polars._emit_provider_io import _provider_key
+
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
 
     for cand in ("solve_data/p_model.csv", "input/p_model.csv"):
         path = work_folder / cand
-        seeded = _provider_open(provider, _provider_key(path), path)
-        if seeded is None:
+        key = _provider_key(path)
+        if not provider.has(key):
             continue
-        with seeded as fh:
-            reader = _csv.reader(fh)
-            header = next(reader, None) or []
-            try:
-                param_idx = header.index("modelParam")
-                value_idx = header.index("p_model")
-            except ValueError:
-                return True
-            for r in reader:
-                if (
-                    len(r) > max(param_idx, value_idx)
-                    and r[param_idx] == "solveFirst"
-                ):
-                    try:
-                        return bool(int(r[value_idx]))
-                    except (ValueError, TypeError):
-                        return True
+        df = provider.get(key)
+        if "modelParam" not in df.columns or "p_model" not in df.columns:
+            return True
+        for r in df.iter_rows(named=True):
+            if _cell_str(r["modelParam"]) == "solveFirst":
+                try:
+                    return bool(int(_cell_str(r["p_model"])))
+                except (ValueError, TypeError):
+                    return True
+        # Frame existed but didn't contain the flag — treat as default.
         return True
     return True
 
@@ -610,46 +603,45 @@ def _read_solve_first(work_folder: Path,
 def _read_period_set(path: Path,
                       *, provider: "object | None" = None) -> set[str]:
     """Read a single-column period CSV (header row, then one period per row)."""
-    import csv as _csv
-    from flextool.engine_polars._emit_provider_io import (
-        _provider_key, _provider_open,
-    )
+    from flextool.engine_polars._emit_provider_io import _provider_key
 
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
+    key = _provider_key(path)
+    if not provider.has(key):
         return set()
+    df = provider.get(key)
     out: set[str] = set()
-    with seeded as fh:
-        reader = _csv.reader(fh)
-        next(reader, None)
-        for r in reader:
-            if r and r[0]:
-                out.add(r[0])
+    if df.width == 0:
+        return out
+    col0 = df.columns[0]
+    for value in df.get_column(col0):
+        c0 = _cell_str(value)
+        if c0:
+            out.add(c0)
     return out
 
 
 def _read_realized_dispatch_periods(path: Path,
                                      *, provider: "object | None" = None) -> set[str]:
     """Read distinct periods from ``realized_dispatch.csv``."""
-    import csv as _csv
-    from flextool.engine_polars._emit_provider_io import (
-        _provider_key, _provider_open,
-    )
+    from flextool.engine_polars._emit_provider_io import _provider_key
 
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
+    key = _provider_key(path)
+    if not provider.has(key):
+        return set()
+    df = provider.get(key)
+    if "period" not in df.columns:
         return set()
     out: set[str] = set()
-    with seeded as fh:
-        reader = _csv.reader(fh)
-        header = next(reader, None) or []
-        try:
-            i = header.index("period")
-        except ValueError:
-            return set()
-        for r in reader:
-            if len(r) > i and r[i]:
-                out.add(r[i])
+    for value in df.get_column("period"):
+        c = _cell_str(value)
+        if c:
+            out.add(c)
     return out
 
 
