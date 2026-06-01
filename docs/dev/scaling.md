@@ -28,6 +28,17 @@ audit so you can see what it did:
    multiplies each bucket by a power-of-2 scaler that compresses the
    median value onto O(1). The output writer applies the inverse so
    downstream consumers see absolute units.
+
+Both readouts (the Layer 1 ranges and the Layer 2 magnitude buckets)
+are **memory-bounded**. Rather than materialise the whole coefficient
+product just to read a statistic, they walk the constraint / column
+spine in fixed row-batches — only one batch's coefficients are ever
+held in memory at once. This requires `polar-high >= 2.4.0`, which
+FlexTool now depends on; on the large RETO-Africa DES scenario it cuts
+the autoscale peak working set roughly in half. There is no longer a
+size cap that skips very large families: every family's coefficients are
+read and folded into the scaling decision, so no family is silently
+left out.
 3. **Layer 3 — HiGHS native + escape-tier folding.** Picks an integer
    `user_bound_scale` exponent (within HiGHS's safe range) and folds
    the unbounded-slack escape valve into the same pass.

@@ -283,6 +283,20 @@ tuples in `model.py`:
 If a switch is set but a required field is missing, `build_flextool` raises
 `ValueError` rather than silently degrading.
 
+#### Block-COO dense-axis contract
+
+`build_flextool` declares FlexTool's dense trailing axes once, up front, via
+`m.declare_dense_axes(("d", "t"))` — `(period, timestep)`. This is an
+unconditional call requiring **polar-high>=2.4.0** (the interim `hasattr`
+capability guard has been dropped; the pin lives in `pyproject.toml`). With the
+axes declared, polar-high's canonical-matrix build slices the pre-sorted dense
+axis as contiguous numpy blocks and multiplies coefficient factors with ufuncs
+(the block-COO slice path) instead of wide relational joins. `Sum`-wrapped
+chains — FlexTool's `Sum`-heavy families (nodeBalance, reserves, co2) — evaluate
+in one pass via a captured `SumBlockMeta` recipe with a relabel fast-path. The
+block-COO output is bit-identical to the legacy polars path; the win is purely
+the peak-memory and wall-time of the build.
+
 #### Cross-solve state (Provider keys + `SolveHandoff`)
 
 Inside the cascade everything moves through `FlexDataProvider`. The
@@ -675,14 +689,26 @@ slack semantics.
      computes matrix / cost / bound / RHS log10 ranges plus a
      cross-group max-ratio. Always emitted to the YAML audit; the
      `trigger` flag tells the orchestrator whether Layers 2/3 should
-     run.
+     run. The range readout routes through polar-high's
+     `bounded_coefficient_walk` (requires polar-high>=2.4.0): the
+     constraint / column spine is iterated in fixed row-batches and the
+     `(rid/col_id, coef)` product is rebuilt per batch, so the wide
+     coefficient product is never materialised to read its min/max. The
+     former size-blind family-row cap (`POLAR_HIGH_RANGES_MAX_FAMILY_ROWS`
+     / `_skip_unbounded_over_cap`) is gone — every family's range is now
+     bounded and folded into the report, so no shape is silently dropped.
    - **Layer 2 — semantic per-type scaling** (`_layer2.py`,
      `_quantity_types.py`). Buckets matrix columns by quantity-type
      (energy, capacity, monetary, …) and applies a power-of-2 scaler
      per type to compress the median-of-type onto O(1). Has structural
      limits: cannot compress within-type spread, and the Rivendell
      guard prevents over-shrinking columns with mixed-magnitude
-     coefficients on a single row.
+     coefficients on a single row. Like Layer 1, the magnitude-bucketing
+     readout walks the spine in bounded row-batches via
+     `bounded_coefficient_walk` (the log2-magnitude histogram reducer)
+     rather than collecting the wide product — and with the family-row
+     cap retired, every family's magnitudes are folded into the scaling
+     decision (no silent coverage gap).
 
      **Registry contract — read this before adding any `add_var` /
      `add_cstr` / parameter.** Layer 2 looks up the quantity-type of every

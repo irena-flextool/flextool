@@ -1,3 +1,24 @@
+## Release 4.0.0b3 (unreleased) — solver backend: bounded-memory autoscale + block-COO
+
+Engine / solver-backend release. Requires **polar-high >= 2.4.0**.
+
+FlexTool's automatic scaling (Layers 1-3) and LP coefficient build no longer
+materialise wide coefficient products to read magnitude statistics. polar-high's
+new block-COO evaluation slices the pre-sorted `(period, timestep)` dense axis as
+contiguous numpy blocks, and the autoscale range / bucket readouts walk the
+constraint spine in bounded row-batches. On the large RETO-Africa **DES** scenario
+(9 rolling solves): autoscale peak working set dropped **~46 -> ~23 GB**, ~15%
+faster, with **every solve objective byte-identical** to the previous release. No
+model or input changes.
+
+- `engine_polars/autoscale/_layer2.py` now buckets coefficient magnitudes through
+  the bounded walk; the size-blind family-row skip is gone (no family's range is
+  silently dropped from the scaling decision).
+- Requires polar-high >= 2.4.0 (`declare_dense_axes` + the bounded walk); the
+  interim capability guards have been dropped.
+- The only golden affected is `test_a_lot` — a benign alternate-optimum dispatch
+  reshuffle (objective unchanged); regenerate its golden.
+
 ## Release 4.0.0b2 (29.5.2026) — desktop GUI: in-app updates, safer migration, macOS fix
 
 This beta focuses on the standalone Tkinter desktop application.

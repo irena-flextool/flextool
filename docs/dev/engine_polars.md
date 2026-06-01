@@ -156,6 +156,20 @@ engine**: to add a new feature, declare its required-field tuple,
 populate those fields in the loader / writer ports, and gate every
 model element you add on the `has_<feature>` boolean.
 
+Before the first feature block, `build_flextool` declares FlexTool's
+dense trailing axes once with `m.declare_dense_axes(("d", "t"))` —
+`(period, timestep)`. This is an unconditional call requiring
+**polar-high>=2.4.0** (the interim `hasattr` capability guard has been
+dropped; the version pin lives in `pyproject.toml`). Declaring the dense
+axes lets polar-high build the canonical matrix via the block-COO slice
+path: the pre-sorted dense axis is sliced as contiguous numpy blocks and
+the coefficient factors are multiplied with ufuncs, instead of wide
+relational joins. `Sum`-wrapped chains (FlexTool's `Sum`-heavy
+nodeBalance / reserves / co2 families) evaluate in a single pass via a
+captured `SumBlockMeta` recipe with a relabel fast-path. The block-COO
+output is bit-identical to the legacy polars path — the gain is the LP
+build's peak memory and wall time, not the LP itself.
+
 ### Worked example: STORAGE
 
 The storage block is a representative case:
@@ -719,9 +733,18 @@ runs on every solve and is documented end-to-end in
 
 - `autoscale._ranges.compute_ranges` (Layer 1) walks the assembled
   LP and reports matrix / cost / bound / RHS log10 ranges and the
-  cross-group max-ratio that gates whether Layers 2/3 fire.
+  cross-group max-ratio that gates whether Layers 2/3 fire. The range
+  readout routes through polar-high's `bounded_coefficient_walk`
+  (requires polar-high>=2.4.0): it iterates the constraint / column
+  spine in fixed row-batches and never materialises the wide coefficient
+  product to read its min/max. The former size-blind family-row cap is
+  retired, so every family's range is bounded and folded into the report.
 - `autoscale._layer2.apply_layer2` (Layer 2) applies per-quantity-type
-  power-of-2 column scalers; `autoscale._layer3.apply_layer3`
+  power-of-2 column scalers; its magnitude-bucketing readout also walks
+  the spine in bounded row-batches via `bounded_coefficient_walk` (the
+  log2-magnitude histogram reducer) instead of collecting the wide
+  product, and with the cap gone every family's magnitudes feed the
+  scaling decision (no silent coverage gap). `autoscale._layer3.apply_layer3`
   (Layer 3) folds the HiGHS-native `user_bound_scale` and the escape
   valve in a single pass.
 - `--scaling={off,solver_only,basic,full}` (or `FLEXTOOL_SCALING=<mode>`)
