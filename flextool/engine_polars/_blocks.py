@@ -1242,6 +1242,18 @@ def emit_block_data(
 # ---------------------------------------------------------------------------
 
 
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a ``csv.reader`` cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; ``csv.reader`` then reads those
+    strings back.  Mirror that here so the row-of-strings shape stays
+    byte-identical to the legacy CSV round-trip the block-assembly code
+    indexes positionally and compares against.
+    """
+    return "" if value is None else str(value)
+
+
 def _read_input_rows(
     inp: Path,
     basename: str,
@@ -1258,24 +1270,23 @@ def _read_input_rows(
     """
     path = inp / basename
     stem = basename[:-4] if basename.endswith(".csv") else basename
-    # Route every read through ``_provider_open`` so the Provider serves
-    # the bytes when it carries the frame and disk is consulted only as
-    # the legacy fallback for non-cascade callers (``provider is None``).
+    # Provider arm: read the in-memory frame natively instead of
+    # round-tripping through ``DataFrame.write_csv`` + ``csv.reader``.
     # Try the canonical ``input/<stem>`` first (post-Δ.20 input writer),
-    # then the bare ``<stem>`` for the legacy alias; finally let
-    # ``_provider_open`` open *path* from disk when neither key resolves.
+    # then the bare ``<stem>`` for the legacy alias; first non-None
+    # frame wins.  ``provider.get`` returns DATA rows only (no header),
+    # so no header is skipped.  Frames never carry empty rows, so the
+    # legacy ``if row`` blank-row filter is a no-op here.  When neither
+    # key resolves, fall through to the unchanged disk-fallback arm.
     if provider is not None:
         for key in (f"input/{stem}", stem):
             try:
-                fh = _provider_open(provider, key, path)
+                df = provider.get(key)
             except Exception:  # pragma: no cover — defensive only
-                fh = None
-            if fh is None:
+                df = None
+            if df is None:
                 continue
-            with fh as f:
-                reader = csv.reader(f)
-                next(reader, None)
-                return [row for row in reader if row]
+            return [[_cell_str(c) for c in row] for row in df.iter_rows()]
     fh = _provider_open(None, basename, path)
     if fh is None:
         return []
@@ -1330,24 +1341,25 @@ def emit_block_data_for_solve(
     p_group_rows = _read_input_rows(inp, "p_group.csv", provider)
     p_group_csv = inp / "p_group.csv"
     p_group_header: list[str] | None = None
-    # Route the header probe through ``_provider_open`` so the cascade
-    # serves the bytes via the Provider when available; the legacy disk
-    # arm is exercised only when ``provider is None``.
-    p_group_fh = None
-    for key in ("input/p_group", "p_group"):
-        if provider is None:
-            break
-        try:
-            p_group_fh = _provider_open(provider, key, p_group_csv)
-        except Exception:  # pragma: no cover — defensive only
-            p_group_fh = None
-        if p_group_fh is not None:
-            break
-    if p_group_fh is None:
+    # Provider arm: the frame carries the column NAMES, so the "header"
+    # is ``list(df.columns)`` — exactly what ``next(csv.reader(f), None)``
+    # returned for the header row.  Same key-candidate order
+    # (``input/p_group`` before bare ``p_group``); first non-None frame
+    # wins.  When no frame resolves, fall to the unchanged disk arm.
+    if provider is not None:
+        for key in ("input/p_group", "p_group"):
+            try:
+                df = provider.get(key)
+            except Exception:  # pragma: no cover — defensive only
+                df = None
+            if df is not None:
+                p_group_header = list(df.columns)
+                break
+    if p_group_header is None:
         p_group_fh = _provider_open(None, "p_group", p_group_csv)
-    if p_group_fh is not None:
-        with p_group_fh as f:
-            p_group_header = next(csv.reader(f), None)
+        if p_group_fh is not None:
+            with p_group_fh as f:
+                p_group_header = next(csv.reader(f), None)
     if p_group_header is None:
         p_group_header = ["group", "groupParam", "p_group"]
 
@@ -1366,27 +1378,25 @@ def emit_block_data_for_solve(
     p_group_decomp_csv = inp / "p_group_decomposition.csv"
     p_group_decomp_header: list[str] | None = None
     # Same Provider-first / disk-fallback shape as the ``p_group`` header
-    # probe above so the cascade meta-test sees every ``csv.reader`` call
-    # served by a ``_provider_open`` handle.
-    p_group_decomp_fh = None
-    for key in ("input/p_group_decomposition", "p_group_decomposition"):
-        if provider is None:
-            break
-        try:
-            p_group_decomp_fh = _provider_open(
-                provider, key, p_group_decomp_csv,
-            )
-        except Exception:  # pragma: no cover — defensive only
-            p_group_decomp_fh = None
-        if p_group_decomp_fh is not None:
-            break
-    if p_group_decomp_fh is None:
+    # probe above: the frame's column NAMES are the header.  Same
+    # key-candidate order; first non-None frame wins; otherwise fall to
+    # the unchanged disk arm.
+    if provider is not None:
+        for key in ("input/p_group_decomposition", "p_group_decomposition"):
+            try:
+                df = provider.get(key)
+            except Exception:  # pragma: no cover — defensive only
+                df = None
+            if df is not None:
+                p_group_decomp_header = list(df.columns)
+                break
+    if p_group_decomp_header is None:
         p_group_decomp_fh = _provider_open(
             None, "p_group_decomposition", p_group_decomp_csv,
         )
-    if p_group_decomp_fh is not None:
-        with p_group_decomp_fh as f:
-            p_group_decomp_header = next(csv.reader(f), None)
+        if p_group_decomp_fh is not None:
+            with p_group_decomp_fh as f:
+                p_group_decomp_header = next(csv.reader(f), None)
     if p_group_decomp_header is None:
         p_group_decomp_header = ["group", "groupParam", "p_group"]
     for row in _read_input_rows(inp, "p_group_decomposition.csv", provider):
