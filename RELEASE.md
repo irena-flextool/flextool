@@ -39,6 +39,11 @@ model or input changes.
 
 - Migration: the `timeblockSet` -> `timeset` timeline collapse is now deterministic.
 - Input: `p_section` wired on the synthetic-solve early return.
+- Input: an explicit `null` parameter value in a higher-priority alternative —
+  the way a scenario *clears* a value set in the base alternative (e.g. nulling
+  a node's `constraint_invested_capacity_coeff` Map) — now resolves to "unset"
+  instead of crashing the solve with a misleading "Unrecognised Map index
+  column(s) []" error.
 - The `test_a_lot` scenario golden was regenerated — a benign alternate-optimum
   dispatch reshuffle (objective byte-identical), not a model change.
 
