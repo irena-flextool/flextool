@@ -868,26 +868,33 @@ def _read_branches_for_d(period_branch_csv: Path,
 # ---------------------------------------------------------------------------
 
 
-def derive_pdGroup(input_dir: Path, solve_data_dir: Path,
-                   *, provider: "object | None" = None) -> pl.DataFrame:
-    """Materialise the ``pdGroup`` frame (5-branch fallback per (g, param, d)).
+def _derive_pdGroup_over_periods(
+    input_dir: Path,
+    period_in_use: list[str],
+    *,
+    period_branch_csv: Path,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Core of :func:`derive_pdGroup`: build the frame over an explicit
+    period list *period_in_use* and an explicit branch-map CSV path.
 
-    Branches:
-      1. ``pd_group[g, param, d]``                        — direct.
-      2. ``sum_{db ∈ branches_for_d[d]} pd_group[g, param, db]`` — fold.
-      3. ``p_group[g, param]``                            — scalar fallback.
-      4. ``5000`` when ``param`` is a 5000-default penalty.
-      5. ``0``.
+    The value at ``(g, param, d)`` is a per-PERIOD coordinate lookup with a
+    branch fold-in (``sum_{db ∈ branches_for_d[d]}`` is over BRANCHES at a
+    FIXED period ``d``, NOT over the solve's period window) — ZERO window
+    aggregation — so the result is coordinate-stable on the period axis
+    (specs §9.5): deriving over the complete period set and slicing to a
+    roll's periods yields exactly the same rows as deriving over the roll's
+    period set directly, PROVIDED the branch map spans the branch-periods the
+    value depends on.  Both :func:`derive_pdGroup` (roll periods + per-roll
+    branch map) and :func:`derive_pdGroup_full_dt` (branch-expanded complete
+    period set + complete branch map) call this with the appropriate inputs.
     """
     pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
     p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
     branches_for_d = _read_branches_for_d(
-        solve_data_dir / "period__branch.csv", provider=provider,
+        period_branch_csv, provider=provider,
     )
     groups = _read_singles(input_dir / "group.csv", provider=provider)
-    period_in_use = _read_singles(
-        solve_data_dir / "period_in_use_set.csv", provider=provider,
-    )
 
     g_col: list[str] = []
     p_col: list[str] = []
@@ -921,11 +928,92 @@ def derive_pdGroup(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdGroup(input_dir: Path, solve_data_dir: Path,
+                   *, provider: "object | None" = None) -> pl.DataFrame:
+    """Materialise the ``pdGroup`` frame over the ROLL window (5-branch
+    fallback per (g, param, d)).
+
+    Branches:
+      1. ``pd_group[g, param, d]``                        — direct.
+      2. ``sum_{db ∈ branches_for_d[d]} pd_group[g, param, db]`` — fold.
+      3. ``p_group[g, param]``                            — scalar fallback.
+      4. ``5000`` when ``param`` is a 5000-default penalty.
+      5. ``0``.
+
+    Domain: ``group.csv × groupPeriodParam × period_in_use`` (distinct
+    periods of ``steps_in_use``).  This is the legacy per-roll derivation,
+    retained as the :func:`emit_pdGroup` fallback when no cached full-domain
+    frame is present.
+    """
+    period_in_use = _read_singles(
+        solve_data_dir / "period_in_use_set.csv", provider=provider,
+    )
+    return _derive_pdGroup_over_periods(
+        input_dir, period_in_use,
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
+    )
+
+
+def derive_pdGroup_full_dt(input_dir: Path, solve_data_dir: Path,
+                           *, provider: "object | None" = None,
+                           ) -> pl.DataFrame:
+    """Materialise the ``pdGroup`` frame over the BRANCH-EXPANDED COMPLETE
+    period set (R4); computed once per ``complete_solve`` and sliced per roll
+    (on the PERIOD axis) via
+    :func:`flextool.engine_polars._full_dt.slice_full_dt`.
+
+    pdGroup is PERIOD-ONLY (``group, param, period, value`` — no time axis).
+    Its branch fold-in resolves per-branch values at the branch-periods, so
+    the period set is the DISTINCT periods of the branch-expanded complete
+    timeline (``steps_complete_solve_branched``) and the branch map is the
+    complete-timeline ``period__branch`` — both read from the
+    ``_full_dt_branched/`` Provider keys the runner populates once per
+    ``complete_solve``.  Deriving over the BASE complete period set would
+    drop the branch-period rows a stochastic roll carries; the branch-
+    expanded period set carries them, so the per-roll period slice is
+    value-identical to the legacy per-roll derivation (specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    # Distinct periods of the branch-expanded complete timeline, in first-
+    # seen order (mirrors ``period_in_use_set`` = distinct col-0 of steps).
+    steps = _read_pairs(
+        _fdt.branched_path(solve_data_dir, "steps_complete_solve_branched"),
+        provider=provider,
+    )
+    seen: set[str] = set()
+    period_in_use: list[str] = []
+    for d, _t in steps:
+        if d not in seen:
+            seen.add(d)
+            period_in_use.append(d)
+    return _derive_pdGroup_over_periods(
+        input_dir, period_in_use,
+        period_branch_csv=_fdt.branched_path(
+            solve_data_dir, "period__branch"),
+        provider=provider,
+    )
+
+
 def emit_pdGroup(input_dir: Path, solve_data_dir: Path,
-                  *, provider) -> None:
-    """Emit ``pdGroup`` to the Provider."""
-    _emit(provider, "solve_data/pdGroup.csv",
-          derive_pdGroup(input_dir, solve_data_dir, provider=provider))
+                 *, provider,
+                 full_dt_frame: "pl.DataFrame | None" = None) -> None:
+    """Emit ``pdGroup`` to the Provider.
+
+    When *full_dt_frame* is supplied (the branch-expanded complete-period
+    frame cached on the runner state) the roll's frame is the slice of it to
+    the roll's periods (period-axis slice); else the legacy per-roll
+    derivation runs.  Either way the result is byte-identical (coordinate-
+    stable on the period axis; specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    _family = next(
+        f for f in _fdt.FULL_DT_FAMILIES if f.name == "pdGroup"
+    )
+    _fdt.emit_via_full_dt(
+        _family, input_dir, solve_data_dir,
+        provider=provider, full_dt_frame=full_dt_frame,
+    )
 
 
 # ---------------------------------------------------------------------------

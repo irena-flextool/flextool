@@ -72,6 +72,45 @@ def test_empty_roll_yields_empty_with_schema():
     assert out.schema == full.schema
 
 
+def test_period_only_slice_on_period_axis():
+    """A period-only frame (no ``time`` column, e.g. pdGroup) is sliced on
+    the PERIOD coordinate alone — the roll's distinct periods are the
+    membership set, regardless of the roll's per-step rows."""
+    full = pl.DataFrame(
+        {
+            "group": ["g1", "g1", "g2", "g2"],
+            "param": ["co2_price", "co2_price", "co2_price", "co2_price"],
+            "period": ["d1", "d2", "d1", "d3"],
+            "value": ["10", "11", "12", "13"],
+        },
+        schema={c: pl.Utf8 for c in ("group", "param", "period", "value")},
+    )
+    # Roll covers periods d1 and d2 (across several steps); d3 is excluded.
+    roll = _roll([("d1", "t1"), ("d1", "t2"), ("d2", "t1")])
+    out = slice_full_dt(full, roll)
+    expected = full.filter(pl.col("period").is_in(["d1", "d2"]))
+    assert out.equals(expected)
+    # d3 (g2=13) is gone; row order of the left frame is preserved.
+    assert out["value"].to_list() == ["10", "11", "12"]
+
+
+def test_period_only_empty_roll_yields_empty_with_schema():
+    """An empty roll window on a period-only frame yields zero rows but the
+    full frame's schema (period-axis analogue of the (d,t) empty case)."""
+    full = pl.DataFrame(
+        {
+            "group": ["g1"],
+            "param": ["co2_price"],
+            "period": ["d1"],
+            "value": ["10"],
+        },
+        schema={c: pl.Utf8 for c in ("group", "param", "period", "value")},
+    )
+    out = slice_full_dt(full, _roll([]))
+    assert out.height == 0
+    assert out.schema == full.schema
+
+
 def test_row_order_preserved():
     """The semi-join keeps the left (full) frame's row order."""
     # Deliberately interleave commodities and (d,t) so a reordering would

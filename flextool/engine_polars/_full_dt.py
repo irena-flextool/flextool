@@ -221,9 +221,32 @@ def slice_full_dt(
     schema_names = full_lazy.collect_schema().names()
 
     period_col, time_col = dt_cols
+    roll_period_col, roll_time_col = roll_dt_cols
     # strict_static: no (d,t) axis at all → solve-invariant, identity.
     if period_col not in schema_names and time_col not in schema_names:
         return full_lazy.collect()
+
+    # period_only: the full frame carries the period axis but NOT the time
+    # axis (e.g. pdGroup — ``group, param, period, value``).  Slice on the
+    # PERIOD coordinate alone; the roll-window's distinct periods are the
+    # membership set.  This is the period-axis analogue of the (d,t) slice
+    # and is value-preserving for the same reason (a period-keyed value is a
+    # coordinate lookup with zero window aggregation, specs §9.5).
+    if time_col not in schema_names:
+        roll_periods = (
+            roll_dt.lazy()
+            .select(roll_period_col)
+            .unique()
+        )
+        return (
+            full_lazy.join(
+                roll_periods,
+                left_on=[period_col],
+                right_on=[roll_period_col],
+                how="semi",
+            )
+            .collect()
+        )
 
     # slice_static: semi-join on the (d,t) coordinate.  Select + unique
     # the roll window down to just its join keys so the semi-join filters
@@ -464,6 +487,27 @@ register_family(
         fromlist=["derive_pdtProcess_sink"],
     ).derive_pdtProcess_sink,
     emit_key="solve_data/pdtProcess_sink.csv",
+)
+
+# pdGroup — PERIOD-ONLY family (``group, param, period, value`` — no time
+# axis) with a per-period branch fold-in (R4).  DOMAIN (``input/group.csv``)
+# is a solve-invariant input present at full_dt compute.  Its
+# ``derive_*_full_dt`` reads the branch-expanded complete period set +
+# complete branch map (``_full_dt_branched/`` keys), so the per-roll PERIOD
+# slice carries the branch-period rows with correct per-branch values.  The
+# slice is on the period axis only: ``slice_full_dt`` detects the absent
+# ``time`` column and semi-joins on ``period`` alone.
+register_family(
+    "pdGroup",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=["derive_pdGroup_full_dt"],
+    ).derive_pdGroup_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=["derive_pdGroup"],
+    ).derive_pdGroup,
+    emit_key="solve_data/pdGroup.csv",
 )
 
 # pdtGroup — pure ``(d,t)`` lookup (pt → pd → p → 0), NO branch fold-in;

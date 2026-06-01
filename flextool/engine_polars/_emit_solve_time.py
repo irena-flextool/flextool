@@ -289,7 +289,14 @@ def run(
     )
     _ck("pdtCommodity")
     # ── L0 batch 52 ───────────────────────────────────────────────────
-    _period.emit_pdGroup(input_dir, solve_data_dir, provider=provider)
+    _pdGroup_full = (
+        _fdt_frames.get("pdGroup")
+        if _fdt_frames is not None else None
+    )
+    _period.emit_pdGroup(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frame=_pdGroup_full,
+    )
     _ck("pdGroup")
     _pdtGroup_full = (
         _fdt_frames.get("pdtGroup")
