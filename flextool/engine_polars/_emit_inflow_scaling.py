@@ -49,112 +49,147 @@ import polars as pl
 from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
-    _provider_open,
 )
 
 
 # ---------------------------------------------------------------------------
-# Tiny CSV I/O — mirrors the legacy helpers' behaviour exactly so the
-# parity surface is the same set of trimmed string rows.  No polars used
-# here: the legacy emitter writes plain text with ``repr(v)`` and the
-# parity surface is tiny per-(n, d) — a dict-of-rows pass is the
-# simplest correct path.
+# Native-frame row helpers.
+#
+# These read the in-memory polars frame directly from the Provider via
+# ``provider.get(_provider_key(path))`` instead of round-tripping through
+# CSV text (the legacy ``_provider_open`` + manual ``line.split(",")``
+# path, which had no quoted-field handling).
+#
+# Type-fidelity contract — reproduce *exactly* what the legacy
+# ``line.rstrip("\n").split(",")`` over a ``DataFrame.write_csv``
+# serialisation would have yielded:
+#
+#   * Key columns (single-value entries and dict-key positions) were
+#     split strings.  ``write_csv`` serialises ``null`` → ``""`` and any
+#     scalar (Enum / Int / Float / Utf8) → its string form.  We coerce
+#     each key cell with :func:`_cell_str` (``None`` → ``""``, else
+#     ``str``) and apply the original truthiness guard to the *string*
+#     form so a null cell is skipped (matching the legacy ``if parts[i]``
+#     test) while a literal ``"0"`` is kept.
+#   * Value columns were re-coerced with ``float(...)``.  We apply
+#     ``float(...)`` to the native cell — harmless on an already-float
+#     frame, necessary on an int frame, and identical to the legacy
+#     ``float(str_cell)`` on a stringified-value frame.  A value that
+#     cannot be parsed as a float is skipped: the legacy ``except
+#     ValueError`` is widened to ``except (ValueError, TypeError)`` so a
+#     native ``None`` value cell (``float(None)`` raises ``TypeError``)
+#     is skipped exactly as the legacy ``float("")`` ``ValueError`` was.
+#
+# ``provider.get`` returns data rows only (no header), so there is no
+# header row to skip; an empty / missing frame yields the same empty
+# list / dict the legacy loop produced.
 # ---------------------------------------------------------------------------
+
+
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a split CSV cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; the legacy ``line.split(",")`` then
+    read those strings back.  Mirror that here so dict keys / single
+    values stay byte-identical to the legacy CSV round-trip.
+    """
+    return "" if value is None else str(value)
 
 
 def _read_singles(path: Path,
                   *, provider: "object | None" = None) -> list[str]:
-    """First-column header-less reader (skip header row)."""
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    """First-column reader → list of non-empty first-column strings."""
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[str] = []
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if parts and parts[0]:
-                out.append(parts[0])
+    for row in df.iter_rows():
+        if not row:
+            continue
+        c0 = _cell_str(row[0])
+        if c0:
+            out.append(c0)
     return out
 
 
 def _read_pairs(path: Path,
                 *, provider: "object | None" = None) -> list[tuple[str, str]]:
-    """First-two-column header-less reader (skip header row)."""
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    """First-two-column reader → list of (c0, c1) with both non-empty."""
+    df = provider.get(_provider_key(path))
+    if df is None:
         return []
     out: list[tuple[str, str]] = []
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 2 and parts[0] and parts[1]:
-                out.append((parts[0], parts[1]))
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            out.append((c0, c1))
     return out
 
 
 def _read_keyed2_float(path: Path,
                        *, provider: "object | None" = None,
                        ) -> dict[tuple[str, str], float]:
-    """Three-col CSV (key1, key2, value) → {(k1, k2): float}.
+    """Three-col frame (key1, key2, value) → {(k1, k2): float}.
 
     Mirrors legacy ``_read_p`` / ``_read_pt_node_inflow``: malformed
     or non-numeric rows silently skipped.
     """
     out: dict[tuple[str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 3 and parts[0] and parts[1]:
-                try:
-                    out[(parts[0], parts[1])] = float(parts[2])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if c0 and c1:
+            try:
+                out[(c0, c1)] = float(row[2])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_keyed3_float(path: Path,
                        *, provider: "object | None" = None,
                        ) -> dict[tuple[str, str, str], float]:
-    """Four-col CSV (k1, k2, k3, value) → {(k1, k2, k3): float}."""
+    """Four-col frame (k1, k2, k3, value) → {(k1, k2, k3): float}."""
     out: dict[tuple[str, str, str], float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 4 and parts[0] and parts[1] and parts[2]:
-                try:
-                    out[(parts[0], parts[1], parts[2])] = float(parts[3])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 4:
+            continue
+        c0, c1, c2 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2])
+        if c0 and c1 and c2:
+            try:
+                out[(c0, c1, c2)] = float(row[3])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
 def _read_keyed_float(path: Path,
                       *, provider: "object | None" = None,
                       ) -> dict[str, float]:
-    """Two-col CSV (key, value) → {key: float}."""
+    """Two-col frame (key, value) → {key: float}."""
     out: dict[str, float] = {}
-    seeded = _provider_open(provider, _provider_key(path), path)
-    if seeded is None:
+    df = provider.get(_provider_key(path))
+    if df is None:
         return out
-    with seeded as fh:
-        next(fh, None)
-        for line in fh:
-            parts = line.rstrip("\n").split(",")
-            if len(parts) >= 2 and parts[0]:
-                try:
-                    out[parts[0]] = float(parts[1])
-                except ValueError:
-                    continue
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        c0 = _cell_str(row[0])
+        if c0:
+            try:
+                out[c0] = float(row[1])
+            except (ValueError, TypeError):
+                continue
     return out
 
 
