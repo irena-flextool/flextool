@@ -76,6 +76,8 @@ from __future__ import annotations
 import logging
 import math
 import os
+import sys
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -92,6 +94,29 @@ from ._quantity_types import QuantityType
 
 
 _logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Capability gate for the bounded coefficient-walk (Phase D-5 step 3).
+#
+# ``bucket_coefficients`` prefers ``polar_high.autoscale._coef_walk`` to walk
+# the block-COO ``(rid/col_id, coef)`` stream in bounded slices instead of
+# materialising the full ``Var ⋈ P1 ⋈ P2 …`` product (see its docstring).
+# The walk ships in polar-high>=2.4.0 (pinned in pyproject), so the import
+# is guaranteed.  The capability detect below is retained as a defensive
+# no-op: if a user force-downgrades polar-high, ``bucket_coefficients``
+# falls back to the materialising ``_collect_term_agg`` collect for every
+# term (correct, just unbounded) rather than raising ``ImportError``.
+try:  # pragma: no cover - exercised by both-polar_high verification runs
+    from polar_high.autoscale._coef_walk import (  # noqa: F401
+        CoefWalkRecipe as _CoefWalkRecipe,
+        Log2HistogramReducer as _Log2HistogramReducer,
+        bounded_coefficient_walk as _bounded_coefficient_walk,
+    )
+
+    _HAVE_COEF_WALK = True
+except ImportError:
+    _HAVE_COEF_WALK = False
 
 
 # Clamp on the chosen per-type exponents.  ±20 keeps the scale factors
@@ -344,6 +369,187 @@ def _merge_into_accumulator(
         )
 
 
+# ---------------------------------------------------------------------------
+# Bounded coefficient-walk wiring (Phase D-5 step 3).
+#
+# ``_collect_term_agg`` above materialises the merged ``Var ⋈ P1 ⋈ P2 …``
+# (or RHS Param) chain per term to reduce it to a per-type
+# ``(Σlog2|coef|, count, min, max)`` histogram.  On the FlexTool DES LP the
+# polars streaming planner cannot push the group-by into the deep product,
+# so the product materialises — the residual ~46 GB autoscale peak.
+#
+# The walk below replaces that materialising collect with
+# :func:`polar_high.autoscale._coef_walk.bounded_coefficient_walk` driven by
+# :class:`Log2HistogramReducer`: each term's ``(rid/col_id, coef)`` stream is
+# walked in bounded ``_WALK_BATCH_ROWS`` slices and folded into the same
+# per-bucket ``(Σlog2, count, min, max)`` accumulator.  ``scale=(None,0,None)``
+# — bucketing uses RAW ``|coef|`` (no side-vector scaling).  The reducer's
+# ``classify`` reproduces the ``col_id → eff_t`` mapping the old
+# ``_collect_term_agg`` joined: for the objective ``eff_t = column_type``; for
+# a matrix family ``eff_t = rhs_type`` when the column carries a multiplier
+# param (and the family has an rhs_type), else ``column_type``.
+#
+# Terms with no recoverable block-COO recipe (a fully-collapsed
+# ``Sum(over=ALL)`` term clears ``var_source`` / ``sum_block_meta`` and ends
+# up ``over is None`` / ``dims == ()``) cannot be rebuilt by the walk; they
+# keep the existing ``_collect_term_agg`` collect as a backstop — bounded by
+# the (tiny) per-type aggregate, the same envelope as before.
+
+# 256k keeps each batch's block-COO product comfortably small while
+# amortising per-batch overhead.  The histogram's per-batch Σlog2 reassociates
+# vs a single whole-collect sum, so a coefficient on a half-integer log2
+# boundary may shift a chosen exponent by ±1 → a different (objective-
+# invariant) scaling.  Accepted per the step-3 correctness bar.
+_WALK_BATCH_ROWS = 256_000
+
+
+def _layer2_bucket_profiler() -> Any:
+    """Return an ``emit(family, term_idx, **extras)`` callable when
+    ``POLAR_HIGH_LAYER2_PROFILE=1`` and ``psutil`` is importable, else
+    ``None``.
+
+    Mirrors the ``[ranges-stream profile]`` instrument in
+    :mod:`polar_high.autoscale._ranges`: one ``[layer2-bucket profile]``
+    stderr line per walked term carrying ``family``, ``term_idx``,
+    ``over_height`` / ``n``, the post-walk wall clock, and an RSS sample —
+    so the final DES run can CONFIRM this site was the ~46 GB driver and is
+    now bounded.
+    """
+    if os.environ.get("POLAR_HIGH_LAYER2_PROFILE") != "1":
+        return None
+    try:
+        import psutil
+    except ImportError:
+        return None
+    proc = psutil.Process()
+    t0 = time.monotonic()
+
+    def _emit(family: str, term_idx: int, **extras: Any) -> None:
+        rss = proc.memory_info().rss / (1024 ** 3)
+        wall = time.monotonic() - t0
+        extras_str = "\t".join(f"{k}={v}" for k, v in extras.items())
+        print(
+            f"[layer2-bucket profile]\tfamily={family}\tterm_idx={term_idx}"
+            f"\trss_gb={rss:.2f}\twall_s={wall:.2f}"
+            + (f"\t{extras_str}" if extras_str else ""),
+            file=sys.stderr,
+            flush=True,
+        )
+
+    return _emit
+
+
+def _build_col_id_eff_t(problem: Any) -> dict[int, tuple[QuantityType, bool]]:
+    """Per-``col_id`` ``(column_type, has_multiplier_param)`` lookup.
+
+    Drives the walk's ``classify`` closures — the Python-side analogue of
+    the ``col_id → (column_type_id, has_multiplier_param)`` classification
+    table :func:`_build_col_id_classification` joins into the lazy plan.
+    """
+    out: dict[int, tuple[QuantityType, bool]] = {}
+    for name, var in problem._vars.items():
+        fam = lookup_var(name)  # KeyError already filtered by the caller.
+        ct = fam.column_type
+        mp = fam.multiplier_param is not None
+        for cid in var.frame["col_id"].to_numpy().tolist():
+            out[int(cid)] = (ct, mp)
+    return out
+
+
+def _classify_matrix(
+    col_eff: dict[int, tuple[QuantityType, bool]],
+    rhs_t: QuantityType | None,
+):
+    """Return a ``col_id -> QuantityType | None`` classifier for a matrix
+    family with row type ``rhs_t``.
+
+    Reproduces :func:`_effective_matrix_type`'s branch row-for-row: when the
+    column carries a multiplier param AND the family has an ``rhs_type`` the
+    entry buckets against the row's type, else against the column's own type.
+    A ``col_id`` with no registered family classifies to ``None`` (the
+    reducer drops it — same as the old inner-join missing the row).
+    """
+
+    def classify(cid: int):
+        ent = col_eff.get(int(cid))
+        if ent is None:
+            return None
+        col_t, has_mp = ent
+        if has_mp and rhs_t is not None:
+            return rhs_t
+        return col_t
+
+    return classify
+
+
+def _classify_cost(col_eff: dict[int, tuple[QuantityType, bool]]):
+    """Return a ``col_id -> column_type | None`` classifier for the
+    objective (cost) walk — ``eff_t == column_type`` (no rhs_type)."""
+
+    def classify(cid: int):
+        ent = col_eff.get(int(cid))
+        return None if ent is None else ent[0]
+
+    return classify
+
+
+def _merge_hist_into_accumulator(
+    acc: dict[QuantityType, _AccVal],
+    hist: dict[QuantityType, tuple[float, int, float, float]],
+) -> None:
+    """Fold one walked term's :class:`Log2HistogramReducer` result into the
+    per-type accumulator.
+
+    The reducer keys directly by :class:`QuantityType` (the classify
+    closures return ``QuantityType`` values), and packs each bucket as
+    ``(Σlog2|coef|, count, abs_min, abs_max)`` — the SAME packing the
+    accumulator carries — so the fold is a direct combine.
+    """
+    for t, (slog, cnt, amin, amax) in hist.items():
+        if t is None or cnt == 0:
+            continue
+        ps, pn, pmin, pmax = acc.get(t, _INIT_ACC)
+        acc[t] = (
+            ps + float(slog),
+            pn + int(cnt),
+            min(pmin, float(amin)),
+            max(pmax, float(amax)),
+        )
+
+
+def _obj_term_recipe(term: Any):
+    """Return a column-mode ``(recipe, spine)`` for an objective term, or
+    ``None`` if the term cannot route through the walk.
+
+    Routes when the term carries a Var seed the column-mode walk can rebuild:
+    a non-Sum term (``var_source`` set) or a pure-RELABEL Sum term
+    (``sum_block_meta`` set, ``reduce_dims ⊆ var.dims``, no map-effect Where)
+    — exactly the regime ``_ranges._obj_chain_bounded`` admits, where every
+    ``col_id`` group is single-element so the per-cell product equals the
+    reduced coef.  A fully-collapsed ``Sum(over=ALL)`` term (``var_source``
+    and ``sum_block_meta`` both cleared) returns ``None`` → the caller keeps
+    the existing collect.
+    """
+    from polar_high.autoscale._coef_walk import CoefWalkRecipe
+
+    meta = getattr(term, "sum_block_meta", None)
+    if meta is not None:
+        var = meta.var_source
+        if var is None:
+            return None
+        if meta.where_map_frames is not None:
+            return None
+        if not set(meta.reduce_dims).issubset(set(var.dims)):
+            return None
+        recipe = CoefWalkRecipe.from_term(term)
+        return recipe, var.frame
+    var = getattr(term, "var_source", None)
+    if var is None:
+        return None
+    recipe = CoefWalkRecipe.from_term(term)
+    return recipe, var.frame
+
+
 def bucket_coefficients(
     problem: Any,
 ) -> tuple[
@@ -368,17 +574,30 @@ def bucket_coefficients(
       by :func:`apply_layer2` to push per-column factors back into the
       lazy term plans.
 
-    Implementation note (rewrite 2026-05-27): aggregation happens
-    inside polars via ``group_by(eff_t).agg(sum/count/min/max of
-    log2|coef|)`` *per term*, with the streaming engine preferred and
-    a per-term non-streaming fallback.  We never materialise a
-    Python-list of every nonzero — only the (tiny) per-type aggregate
-    frame, dropping peak RSS from O(nnz) to O(types · terms).
+    Implementation note (rewrite 2026-05-31, Phase D-5 step 3): per term
+    the per-type histogram is accumulated by walking the block-COO
+    ``(rid/col_id, coef)`` stream in bounded ``_WALK_BATCH_ROWS`` slices via
+    :func:`polar_high.autoscale._coef_walk.bounded_coefficient_walk` +
+    :class:`Log2HistogramReducer`, NEVER materialising the merged
+    ``Var ⋈ P1 ⋈ P2 …`` product.  Peak RSS is bounded by one batch's product
+    (not the full chain) — this is the change that removes the residual DES
+    autoscale spike and lets the previously-skipped huge families be bucketed
+    at all.  Terms with no recoverable recipe (fully-collapsed
+    ``Sum(over=ALL)`` ⇒ ``over is None`` / ``dims == ()``) keep the bounded
+    ``_collect_term_agg`` per-term collect as a backstop.
+
+    Capability gate: the bounded walk requires ``polar_high.autoscale.
+    _coef_walk`` (block-COO).  When that module is absent (older polar_high,
+    detected once at import as ``_HAVE_COEF_WALK``) this falls back to the
+    pre-step-3 behaviour — the materialising ``_collect_term_agg`` collect for
+    every term, including the >1M per-family size skip — so the solve still
+    autoscales correctly (just unbounded) instead of raising ``ImportError``.
     """
     classification = _build_col_id_classification(problem)
     classification_lazy = classification.lazy()
 
-    # ── col_id → column QuantityType (consumed by apply_layer2).
+    # ── col_id → column QuantityType (consumed by apply_layer2).  Built
+    # before the capability branch so both paths share it.
     col_id_to_type: dict[int, QuantityType] = {}
     for name, var in problem._vars.items():
         fam = lookup_var(name)  # KeyError already filtered above.
@@ -390,7 +609,8 @@ def bucket_coefficients(
     bound_acc: dict[QuantityType, _AccVal] = {}
 
     # ── Variable bounds: small (≤ 2 per var family); keep in Python
-    # but match the (sum_log2, count, min, max) accumulator shape.
+    # but match the (sum_log2, count, min, max) accumulator shape.  Bounds
+    # never went through the walk, so this is identical on both paths.
     for name, var in problem._vars.items():
         fam = lookup_var(name)
         for b in (var.lower, var.upper):
@@ -405,38 +625,119 @@ def bucket_coefficients(
                 ps + lv, pn + 1, min(pmin, av), max(pmax, av),
             )
 
-    # ── Objective: rhs_t is N/A → eff_t == column_type_id.
-    for term in problem._obj_terms:
-        agg = _collect_term_agg(
-            term.lazy, classification_lazy=classification_lazy, rhs_t_id=None,
+    if not _HAVE_COEF_WALK:
+        # ── Capability fallback: this polar_high has no block-COO
+        # ``_coef_walk`` (e.g. released ``main``).  Reproduce the pre-step-3
+        # ``bucket_coefficients`` exactly — the materialising
+        # ``_collect_term_agg`` collect for every objective and matrix term,
+        # including the >1M per-family size skip (driven by the same
+        # ``POLAR_HIGH_RANGES_MAX_FAMILY_ROWS`` env var as Layer 1's skip).
+        _logger.debug(
+            "Layer 2: polar_high lacks _coef_walk; bucketing via the "
+            "pre-step-3 per-term collect (unbounded peak, but correct)."
         )
-        if agg is not None:
-            _merge_into_accumulator(cost_acc, agg)
+        for term in problem._obj_terms:
+            agg = _collect_term_agg(
+                term.lazy,
+                classification_lazy=classification_lazy,
+                rhs_t_id=None,
+            )
+            if agg is not None:
+                _merge_into_accumulator(cost_acc, agg)
+
+        try:
+            _max_family_rows = int(
+                os.environ.get("POLAR_HIGH_RANGES_MAX_FAMILY_ROWS", "1000000")
+            )
+        except (ValueError, TypeError):
+            _max_family_rows = 1_000_000
+
+        for cname, proto, over in problem._cstrs:
+            row_count = 0 if over is None else int(over.height)
+            if _max_family_rows > 0 and row_count > _max_family_rows:
+                continue
+            try:
+                rhs_t = resolve_cstr_rhs_type(cname)
+            except KeyError as exc:
+                raise KeyError(
+                    f"Layer 2: constraint {cname!r} not in CONSTRAINT_FAMILIES "
+                    "— register it in _layer2_types.py before solving."
+                ) from exc
+            rhs_t_id = _qty_to_id(rhs_t)
+            for term in proto.expr.terms:
+                agg = _collect_term_agg(
+                    term.lazy,
+                    classification_lazy=classification_lazy,
+                    rhs_t_id=rhs_t_id,
+                )
+                if agg is not None:
+                    _merge_into_accumulator(matrix_acc, agg)
+
+        return matrix_acc, cost_acc, bound_acc, col_id_to_type
+
+    # ── Bounded coefficient-walk path (Phase D-5 step 3).  Reached only when
+    # this polar_high ships ``_coef_walk`` (gated above at import).
+    col_eff = _build_col_id_eff_t(problem)
+    dense_axes = getattr(problem, "_dense_axes", None)
+    profile = _layer2_bucket_profiler()
+
+    from polar_high.autoscale._coef_walk import (
+        Log2HistogramReducer,
+        bounded_coefficient_walk,
+    )
+
+    # ``scale=(None, 0, None)`` — bucketing uses RAW |coef| (no side-vector
+    # scaling); the reducer's ``_scaled_abs`` then returns ``|coef|`` verbatim.
+    _RAW_SCALE: tuple[Any, int, Any] = (None, 0, None)
+
+    # ── Objective: rhs_t is N/A → eff_t == column_type.  Route each term
+    # through the bounded column-mode walk when it carries a Var seed the
+    # walk can rebuild; otherwise (fully-collapsed Sum) keep the collect.
+    cost_classify = _classify_cost(col_eff)
+    for ti, term in enumerate(problem._obj_terms):
+        if term.lazy is None:
+            continue
+        routed = _obj_term_recipe(term)
+        if routed is not None:
+            recipe, spine = routed
+            (hist,) = bounded_coefficient_walk(
+                spine,
+                recipe,
+                _RAW_SCALE,
+                [Log2HistogramReducer(_RAW_SCALE, cost_classify)],
+                batch_rows=_WALK_BATCH_ROWS,
+                dense_axes=dense_axes,
+            )
+            _merge_hist_into_accumulator(cost_acc, hist)
+            if profile is not None:
+                profile(
+                    "<objective>", ti, n=int(spine.height), path="walk",
+                )
+        else:
+            agg = _collect_term_agg(
+                term.lazy,
+                classification_lazy=classification_lazy,
+                rhs_t_id=None,
+            )
+            if agg is not None:
+                _merge_into_accumulator(cost_acc, agg)
+            if profile is not None:
+                profile("<objective>", ti, path="collect")
 
     # ── Matrix: per-family walk of the expression terms.
     #
-    # Family-size guard: families above ``POLAR_HIGH_RANGES_MAX_FAMILY_ROWS``
-    # are skipped in the matrix bucket walk for the same reason
-    # ``polar_high.autoscale._ranges._ranges_via_streaming`` skips them —
-    # polars' streaming engine intermittently fails to push the row-key
-    # semi-join into deep multi-Param product chains, so a single term
-    # collect can allocate >30 GB before failing on very large families
-    # (the FlexTool DES LP's ``profile_flow_upper_limit`` is the canonical
-    # offender).  Skipping means the Layer 2 buckets are based on the
-    # families they could read; the per-quantity exponent decisions
-    # ride on the included families' magnitudes.  Override with the
-    # same env var that drives Layer 1's skip — set to ``0`` to disable.
-    try:
-        _max_family_rows = int(
-            os.environ.get("POLAR_HIGH_RANGES_MAX_FAMILY_ROWS", "1000000")
-        )
-    except (ValueError, TypeError):
-        _max_family_rows = 1_000_000
+    # NO blanket family-size skip (Phase D-5 step 3): the bounded
+    # coefficient walk below caps the per-term peak at one batch's product,
+    # so the old >1M skip — which silently dropped the biggest families
+    # (e.g. the DES LP's ``profile_flow_upper_limit``, 1.5M rows × multi-
+    # Param) from the scaling decision — is no longer needed.  Every family's
+    # dim-bound LHS terms are now folded into the histogram.  Terms the walk
+    # cannot rebuild (scalar / no-over / fully-collapsed Sum) take the bounded
+    # ``_collect_term_agg`` collect; those are small by construction (no deep
+    # product to materialise — the Sum already reduced it).
+    from polar_high.autoscale._coef_walk import CoefWalkRecipe
 
     for cname, proto, over in problem._cstrs:
-        row_count = 0 if over is None else int(over.height)
-        if _max_family_rows > 0 and row_count > _max_family_rows:
-            continue
         try:
             rhs_t = resolve_cstr_rhs_type(cname)
         except KeyError as exc:
@@ -445,14 +746,52 @@ def bucket_coefficients(
                 "— register it in _layer2_types.py before solving."
             ) from exc
         rhs_t_id = _qty_to_id(rhs_t)
-        for term in proto.expr.terms:
-            agg = _collect_term_agg(
-                term.lazy,
-                classification_lazy=classification_lazy,
-                rhs_t_id=rhs_t_id,
+        matrix_classify = _classify_matrix(col_eff, rhs_t)
+        for ti, term in enumerate(proto.expr.terms):
+            # Route a dim-bound LHS term (real ``over`` grid, open dims, a
+            # rebuildable Var/Sum recipe) through the bounded walk; anything
+            # else (scalar, no ``over``, fully-collapsed Sum with no recipe)
+            # keeps the bounded per-term collect backstop.
+            # Routability mirrors ``CoefWalkRecipe.from_term``'s exact
+            # precondition via ``is_buildable`` (meta present →
+            # ``meta.var_source is not None``; else ``term.var_source is not
+            # None``).  The earlier SHALLOW ``var_source or sum_block_meta``
+            # check let a fully-collapsed ``Sum`` (meta present, but
+            # ``meta.var_source`` None) through, then ``from_term`` raised.
+            routable = (
+                over is not None
+                and bool(term.dims)
+                and CoefWalkRecipe.is_buildable(term)
             )
-            if agg is not None:
-                _merge_into_accumulator(matrix_acc, agg)
+            if routable:
+                recipe = CoefWalkRecipe.from_term(term)
+                (hist,) = bounded_coefficient_walk(
+                    over,
+                    recipe,
+                    _RAW_SCALE,
+                    [Log2HistogramReducer(_RAW_SCALE, matrix_classify)],
+                    batch_rows=_WALK_BATCH_ROWS,
+                    dense_axes=dense_axes,
+                )
+                _merge_hist_into_accumulator(matrix_acc, hist)
+                if profile is not None:
+                    profile(
+                        cname, ti, over_height=int(over.height), path="walk",
+                    )
+            else:
+                agg = _collect_term_agg(
+                    term.lazy,
+                    classification_lazy=classification_lazy,
+                    rhs_t_id=rhs_t_id,
+                )
+                if agg is not None:
+                    _merge_into_accumulator(matrix_acc, agg)
+                if profile is not None:
+                    profile(
+                        cname, ti,
+                        over_height=(0 if over is None else int(over.height)),
+                        path="collect",
+                    )
 
     return matrix_acc, cost_acc, bound_acc, col_id_to_type
 
