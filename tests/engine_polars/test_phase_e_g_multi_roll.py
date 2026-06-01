@@ -19,9 +19,11 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
+import numpy as np
 import pytest
 
 from flextool.engine_polars import run_chain_from_db
+from flextool.lean_parquet import read_lean_parquet
 
 
 _SCEN = "fullYear_roll"
@@ -100,4 +102,144 @@ def test_fullYear_roll_csv_dump_per_roll_parity(scenario_workdir) -> None:
             f"  {n}: default={o:.6e} dump={f:.6e} rel={r:.2e}"
             for n, o, f, r in mismatches
         )
+    )
+
+
+def _step_obj(step) -> float:
+    """Objective for a step, robust to keep_solutions slimming (the scalar
+    ``obj`` survives the slim even when ``solution`` is dropped)."""
+    o = step.obj if step.obj is not None else getattr(
+        getattr(step, "solution", None), "obj", None
+    )
+    assert o is not None, "step has no objective"
+    return float(o)
+
+
+def _compare_output_raw(wf_ref: Path, wf_sub: Path) -> list[str]:
+    """Cell-by-cell compare every ``output_raw/*.parquet`` between two
+    work folders.  Returns a list of human-readable mismatch strings
+    (empty == full output parity)."""
+    raw_ref = wf_ref / "output_raw"
+    raw_sub = wf_sub / "output_raw"
+    ref_files = {p.name for p in raw_ref.glob("*.parquet")}
+    sub_files = {p.name for p in raw_sub.glob("*.parquet")}
+    problems: list[str] = []
+    if ref_files != sub_files:
+        only_ref = sorted(ref_files - sub_files)
+        only_sub = sorted(sub_files - ref_files)
+        problems.append(
+            f"output_raw file set differs: only_ref={only_ref} "
+            f"only_sub={only_sub}"
+        )
+    # We assert on at least one variable output beyond v_obj so that the
+    # comparison covers decision-variable values, not just the scalar.
+    assert any(
+        n.startswith("v_flow") or n.startswith("v_trade")
+        or n.startswith("v_state")
+        for n in ref_files
+    ), (
+        "fullYear_roll produced no decision-variable output_raw parquets — "
+        "output-parity assertion would be vacuous"
+    )
+    for name in sorted(ref_files & sub_files):
+        df_ref = read_lean_parquet(raw_ref / name)
+        df_sub = read_lean_parquet(raw_sub / name)
+        if list(df_ref.columns) != list(df_sub.columns):
+            problems.append(f"{name}: column layout differs")
+            continue
+        if df_ref.shape != df_sub.shape:
+            problems.append(
+                f"{name}: shape {df_ref.shape} vs {df_sub.shape}"
+            )
+            continue
+        a = df_ref.to_numpy()
+        b = df_sub.to_numpy()
+        # Numeric cells: exact-ish compare (the slim is memory-only, so
+        # the LP and its solution are bit-identical between the two
+        # modes; allow only floating round-trip noise).
+        try:
+            af = a.astype(float)
+            bf = b.astype(float)
+        except (ValueError, TypeError):
+            # Mixed / object cells (index labels embedded) — fall back to
+            # element-wise equality.
+            if not (a == b).all():
+                problems.append(f"{name}: object-cell mismatch")
+            continue
+        if not np.allclose(af, bf, rtol=1e-9, atol=1e-9, equal_nan=True):
+            diff = np.nanmax(np.abs(af - bf))
+            problems.append(f"{name}: max abs cell diff {diff:.3e}")
+    return problems
+
+
+def test_inloop_solution_null_preserves_results(scenario_workdir) -> None:
+    """In-loop whole-``solution`` nulling (the per-roll floor-ratchet
+    release) must not change any cascade result.
+
+    ``fullYear_roll`` is a 72-roll SAME-LEVEL warm cascade, so on the
+    ``keep_solutions=False`` run every prior roll's parked
+    ``OrchestrationStep.solution`` is nulled IN-LOOP by the warm slim
+    (``_same_level_older`` predicate) the moment the next roll parks —
+    long before the post-cascade final slim runs.  This is the path the
+    end-state-only tests do NOT cover.  ``keep_solutions=True`` retains
+    every solution (slim gated off) and is the ground truth.
+
+    Asserts both halves of the parity contract:
+      (i)  per-roll objective parity, and
+      (ii) full decision-variable output parity (every
+           ``output_raw/*.parquet`` cell matches between the two modes).
+    """
+    db = scenario_workdir(_SCEN) / "tests.sqlite"
+    with tempfile.TemporaryDirectory() as t:
+        wf_keep = Path(t) / "keep"
+        wf_slim = Path(t) / "slim"
+
+        # Reference: keep_solutions=True — slim gated off, every parked
+        # step retains its full Solution.
+        ref = run_chain_from_db(
+            db, scenario_name=_SCEN, work_folder=wf_keep,
+            warm=True, keep_solutions=True,
+        )
+        # Subject: keep_solutions=False — in-loop whole-solution nulling
+        # active (the fix under test).
+        sub = run_chain_from_db(
+            db, scenario_name=_SCEN, work_folder=wf_slim,
+            warm=True, keep_solutions=False,
+        )
+
+        # Compare the on-disk outputs WHILE the temp dirs still exist.
+        out_problems = _compare_output_raw(wf_keep, wf_slim)
+
+    # Sanity: this scenario really is a multi-roll cascade (>=3 rolls so
+    # multiple prior steps are slimmed in-loop), and the modes produced
+    # the same solve-name set.
+    assert list(ref.keys()) == list(sub.keys())
+    assert len(ref) >= 3, (
+        f"fullYear_roll yielded only {len(ref)} rolls; need >=3 same-level "
+        "rolls to exercise in-loop slimming of multiple prior steps"
+    )
+
+    # (i) per-roll objective parity.
+    obj_mismatches: list[str] = []
+    for name in ref:
+        o_ref = _step_obj(ref[name])
+        o_sub = _step_obj(sub[name])
+        if o_ref == 0.0:
+            if abs(o_sub) > 1e-6:
+                obj_mismatches.append(f"{name}: {o_ref} vs {o_sub}")
+            continue
+        if abs(o_sub - o_ref) / abs(o_ref) > 1e-9:
+            obj_mismatches.append(
+                f"{name}: {o_ref:.9e} vs {o_sub:.9e}"
+            )
+    assert not obj_mismatches, (
+        "in-loop solution nulling changed per-roll objectives "
+        "(release must be memory-only):\n  " + "\n  ".join(obj_mismatches)
+    )
+
+    # (ii) full decision-variable output parity (computed in-block above,
+    # while the temp work folders still existed).
+    assert not out_problems, (
+        "in-loop solution nulling changed decision-variable output "
+        "(release must be memory-only):\n  " + "\n  ".join(out_problems)
     )
