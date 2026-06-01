@@ -308,7 +308,16 @@ def run(
     )
     _ck("pdtGroup")
     # ── L0 batch 53 ───────────────────────────────────────────────────
-    _pdt.emit_pdtNode(input_dir, solve_data_dir, provider=provider)
+    # full_dt "solve as picker" (R4/R6a): slice the cached branch-expanded
+    # complete-timeline pdtNode frame to the roll window, else fall back to the
+    # legacy per-roll derivation.
+    _pdtNode_full = (
+        _fdt_frames.get("pdtNode") if _fdt_frames is not None else None
+    )
+    _pdt.emit_pdtNode(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frame=_pdtNode_full,
+    )
     _ck("pdtNode")
     # ── L8 batch 54 ───────────────────────────────────────────────────
     _period.emit_pdtNodeInflow(input_dir, solve_data_dir, provider=provider)

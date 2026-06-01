@@ -48,7 +48,6 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine_polars._emit_provider_io import (
-    _emit,
     _provider_key,
 )
 from flextool.engine_polars._pdt_lookup import (
@@ -274,22 +273,39 @@ def emit_pdtProcess(input_dir: Path, solve_data_dir: Path,
 # Family — pdtNode (mod L1176; time-first + class default).
 # ---------------------------------------------------------------------------
 
-def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
-                    *,
-                    provider: "object | None" = None) -> pl.DataFrame:
-    """Materialise the ``pdtNode`` frame.
+def _derive_pdtNode_over(
+    input_dir: Path,
+    solve_data_dir: Path,
+    *,
+    dt: list[tuple[str, str]],
+    domain: list[tuple[str, str]],
+    period_time_first_csv: Path,
+    solve_branch_csv: Path,
+    period_branch_csv: Path,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Core of :func:`derive_pdtNode`: build the frame over an explicit
+    ``(period, time)`` list *dt*, an explicit ``(node, param)`` *domain*, and
+    explicit branch-map CSV paths.
 
-    Columns: ``node, param, period, time, value`` — all ``Utf8``.
-    Domain: ``node__TimeParam_in_use × steps_in_use``.
+    The value at ``(node, param, d, t)`` is a pure coordinate lookup (the
+    :class:`PdtLookup` cascade) over fixed inputs — ZERO window aggregation —
+    so the result is coordinate-stable (specs §9.5): deriving over the
+    complete (branch-expanded) timeline and slicing to a roll yields exactly
+    the same rows as deriving over the roll window directly, PROVIDED the
+    branch maps span the branch-periods the value depends on.
+    :func:`derive_pdtNode` passes the per-roll ``steps_in_use`` + per-roll
+    branch maps; :func:`derive_pdtNode_full_dt` passes the branch-EXPANDED
+    complete timeline + complete branch maps.
     """
     lookup = PdtLookup(
         pbt_csv=input_dir / "pbt_node.csv",
         pd_csv=input_dir / "pd_node.csv",
         pt_csv=input_dir / "pt_node.csv",
         p_csv=input_dir / "p_node.csv",
-        period_time_first_csv=solve_data_dir / "first_timesteps.csv",
-        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
-        period_branch_csv=solve_data_dir / "period__branch.csv",
+        period_time_first_csv=period_time_first_csv,
+        solve_branch_csv=solve_branch_csv,
+        period_branch_csv=period_branch_csv,
         group_entity_csv=input_dir / "group__node.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=NODE_PARAM_DEF1,
@@ -299,10 +315,6 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
         ),
         provider=provider,
     )
-    domain = _read_pairs(
-        solve_data_dir / "node__TimeParam_in_use.csv", provider=provider,
-    )
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     n = len(domain) * len(dt)
     nodes: list[str] = [""] * n
@@ -338,11 +350,124 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
     )
 
 
+def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
+                    *,
+                    provider: "object | None" = None) -> pl.DataFrame:
+    """Materialise the ``pdtNode`` frame over the ROLL window.
+
+    Columns: ``node, param, period, time, value`` — all ``Utf8``.
+    Domain: ``node__TimeParam_in_use × steps_in_use``.  This is the legacy
+    per-roll derivation, retained as the :func:`emit_pdtNode` fallback when no
+    cached full-domain frame is present; its domain is read from the per-solve
+    ``node__TimeParam_in_use.csv`` written by
+    :func:`flextool.engine_polars._emit_arc_unions.emit_node_time_param_in_use`.
+    """
+    domain = _read_pairs(
+        solve_data_dir / "node__TimeParam_in_use.csv", provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    return _derive_pdtNode_over(
+        input_dir, solve_data_dir, dt=dt, domain=domain,
+        period_time_first_csv=solve_data_dir / "first_timesteps.csv",
+        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+        provider=provider,
+    )
+
+
+def derive_pdtNode_full_dt(input_dir: Path, solve_data_dir: Path,
+                           *,
+                           provider: "object | None" = None,
+                           ) -> pl.DataFrame:
+    """Materialise the ``pdtNode`` frame over the BRANCH-EXPANDED COMPLETE
+    timeline (R4 / R6a).
+
+    Identical to :func:`derive_pdtNode` except:
+
+    * the ``(d, t)`` grid is the branch-expanded complete timeline and the
+      ``PdtLookup`` branch maps are the complete-timeline ``period__branch`` /
+      ``solve_branch__time_branch`` / ``first_timesteps`` — all read from the
+      ``_full_dt_branched/`` Provider keys the runner populates once per
+      ``complete_solve`` (see
+      :func:`flextool.engine_polars._full_dt.build_branch_expanded_complete_frames`),
+      exactly like :func:`derive_pdtProcess_full_dt`; and
+    * the ``(node, param)`` DOMAIN is RECONSTRUCTED here (R6a) by calling
+      :func:`flextool.engine_polars._emit_arc_unions.derive_node_time_param_in_use`
+      directly, rather than reading the per-solve
+      ``node__TimeParam_in_use.csv``.  That per-solve CSV is emitted by the
+      per-roll dispatcher (``_emit_solve_time`` L2 batch 22) and is therefore
+      ABSENT at full_dt compute time (first roll, before the dispatcher runs).
+      Its inputs — ``node.csv`` / ``node__storage_solve_horizon_method.csv``
+      (solve-invariant inputs) and the node-type partitions
+      ``nodeBalance`` / ``nodeBalancePeriod`` / ``nodeState`` (emitted by
+      ``emit_node_type_sets`` purely from ``node.csv`` + ``p_node_type.csv``,
+      discarding ``solve_data_dir``, hence solve-INVARIANT) — are all present
+      in the Provider at compute time, so the domain reconstructs identically
+      to the per-solve value.  The domain is solve-invariant, so a single
+      complete-timeline reconstruction is value-identical to every roll's
+      ``node__TimeParam_in_use``.
+
+    Because pdtNode resolves DISTINCT per-branch values at the branch-periods,
+    deriving over the BASE ``steps_complete_solve`` would drop those rows; the
+    branch-expanded complete timeline carries them, so the per-roll slice is
+    value-identical to the legacy per-roll derivation.
+
+    Computed once per ``complete_solve`` and sliced per roll via
+    :func:`flextool.engine_polars._full_dt.slice_full_dt`.
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    from flextool.engine_polars._emit_arc_unions import (
+        derive_node_time_param_in_use,
+    )
+    # R6a: reconstruct the (node, param) domain from solve-invariant inputs
+    # present at full_dt compute time, NOT from the per-solve CSV (absent here).
+    domain_df = derive_node_time_param_in_use(
+        input_dir, solve_data_dir, provider=provider,
+    )
+    domain = list(
+        zip(
+            domain_df.get_column("node").to_list(),
+            domain_df.get_column("param").to_list(),
+        )
+    )
+    dt = _read_pairs(
+        _fdt.branched_path(solve_data_dir, "steps_complete_solve_branched"),
+        provider=provider,
+    )
+    return _derive_pdtNode_over(
+        input_dir, solve_data_dir, dt=dt, domain=domain,
+        period_time_first_csv=_fdt.branched_path(
+            solve_data_dir, "first_timesteps"),
+        solve_branch_csv=_fdt.branched_path(
+            solve_data_dir, "solve_branch__time_branch"),
+        period_branch_csv=_fdt.branched_path(
+            solve_data_dir, "period__branch"),
+        provider=provider,
+    )
+
+
 def emit_pdtNode(input_dir: Path, solve_data_dir: Path,
-                  *, provider) -> None:
-    """Emit ``pdtNode`` to the Provider."""
-    _emit(provider, "solve_data/pdtNode.csv",
-          derive_pdtNode(input_dir, solve_data_dir, provider=provider))
+                  *, provider,
+                  full_dt_frame: "pl.DataFrame | None" = None) -> None:
+    """Emit ``pdtNode`` to the Provider.
+
+    When *full_dt_frame* is supplied (the branch-expanded complete-timeline
+    frame computed once per ``complete_solve`` and cached on the runner state)
+    the roll's frame is obtained by slicing it to the roll's ``steps_in_use``
+    window via :func:`slice_full_dt` — compute-once-over-full_dt +
+    slice-per-roll.  When it is absent the legacy per-roll
+    :func:`derive_pdtNode` runs as a fallback.  Either way the emitted key and
+    frame content are byte-identical (the slice is value-preserving for this
+    coordinate-stable family; specs §9.5).
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    _family = next(
+        f for f in _fdt.FULL_DT_FAMILIES if f.name == "pdtNode"
+    )
+    _fdt.emit_via_full_dt(
+        _family, input_dir, solve_data_dir,
+        provider=provider, full_dt_frame=full_dt_frame,
+    )
 
 
 # ---------------------------------------------------------------------------

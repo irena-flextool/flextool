@@ -489,6 +489,35 @@ register_family(
     emit_key="solve_data/pdtProcess_sink.csv",
 )
 
+# pdtNode — BRANCH-DEPENDENT (d,t) family (R4); same ``PdtLookup`` cascade as
+# pdtProcess.  Its ``derive_*_full_dt`` reads the branch-expanded complete
+# timeline + complete branch maps so the per-roll slice carries the
+# branch-period rows with correct DISTINCT per-branch values.
+#
+# R6a: pdtNode's DOMAIN (``node__TimeParam_in_use``) is NOT a pre-seeded input
+# like pdtProcess's ``process_TimeParam_in_use`` — it is derived PER-SOLVE by
+# the dispatcher (``_emit_arc_unions.emit_node_time_param_in_use``, L2 batch
+# 22) and is therefore ABSENT at full_dt compute time (first roll, before the
+# dispatcher).  ``derive_pdtNode_full_dt`` resolves this by RECONSTRUCTING the
+# domain in-place via ``derive_node_time_param_in_use`` from its solve-invariant
+# inputs (``node.csv`` / ``node__storage_solve_horizon_method.csv`` + the
+# node-type partitions ``nodeBalance`` / ``nodeBalancePeriod`` / ``nodeState``,
+# all emitted purely from inputs and present in the Provider at compute time).
+# The domain is solve-invariant, so the single complete-timeline reconstruction
+# is value-identical to every roll's per-solve ``node__TimeParam_in_use``.
+register_family(
+    "pdtNode",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_pdt_params",
+        fromlist=["derive_pdtNode_full_dt"],
+    ).derive_pdtNode_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_pdt_params",
+        fromlist=["derive_pdtNode"],
+    ).derive_pdtNode,
+    emit_key="solve_data/pdtNode.csv",
+)
+
 # pdGroup — PERIOD-ONLY family (``group, param, period, value`` — no time
 # axis) with a per-period branch fold-in (R4).  DOMAIN (``input/group.csv``)
 # is a solve-invariant input present at full_dt compute.  Its
