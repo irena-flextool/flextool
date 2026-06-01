@@ -46,7 +46,7 @@ from flextool.engine_polars._blocks import emit_block_data_for_solve
 from flextool.engine_polars import (
     _emit_solve_time as preprocessing_solve_time,
 )
-from flextool.engine_polars import _emit_period_params
+from flextool.engine_polars import _full_dt
 from flextool.engine_polars._solve_state import (
     FlexToolConfigError,
     FlexToolSolveError,
@@ -1183,15 +1183,17 @@ def native_run_model(state, solver) -> int:
         # above).  Each converted family adds its compute here; the
         # per-roll emit (in ``preprocessing_solve_time.run``) slices it,
         # falling back to the legacy per-roll derivation if the cache slot
-        # is absent.  pdtCommodity is the proof-of-concept family.
+        # is absent.  This loop is the ONLY full_dt edit in this file and is
+        # GENERIC: converting a new family is adding a registry entry in
+        # ``_full_dt.py`` (+ a ``derive_*_full_dt`` fn + a slice-or-fallback
+        # in its ``emit_*``) — never editing this loop.
         _cs_full_dt = cached_full_dt_frames[cs]
-        if "pdtCommodity" not in _cs_full_dt:
-            _cs_full_dt["pdtCommodity"] = (
-                _emit_period_params.derive_pdtCommodity_full_dt(
+        for _family in _full_dt.FULL_DT_FAMILIES:
+            if _family.name not in _cs_full_dt:
+                _cs_full_dt[_family.name] = _family.derive_full_dt(
                     wf / "input", wf / "solve_data",
                     provider=sub_solve_provider,
                 )
-            )
         # Expose this ``cs``'s cached full-domain frames to the per-solve
         # preprocessing dispatcher (read in ``_emit_solve_time.run``).
         state.current_full_dt_frames = _cs_full_dt

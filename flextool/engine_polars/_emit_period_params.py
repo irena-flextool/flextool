@@ -990,20 +990,17 @@ def emit_pdtCommodity(input_dir: Path, solve_data_dir: Path,
     When it is absent the legacy per-roll :func:`derive_pdtCommodity` runs
     as a fallback, keeping the conversion revertible and safe.  Either way
     the emitted key and frame content are byte-identical.
+
+    pdtCommodity is the first family on the generic full_dt registry
+    (``_full_dt.FULL_DT_FAMILIES``); the slice-or-fallback + emit is the
+    shared :func:`flextool.engine_polars._full_dt.emit_via_full_dt` helper.
     """
-    if full_dt_frame is not None:
-        from flextool.engine_polars._full_dt import slice_full_dt
-        roll_dt = provider.get(_provider_key(solve_data_dir / "steps_in_use.csv"))
-        if roll_dt is None:
-            roll_dt = pl.DataFrame(
-                {"period": [], "step": []},
-                schema={"period": pl.Utf8, "step": pl.Utf8},
-            )
-        frame = slice_full_dt(full_dt_frame, roll_dt)
-    else:
-        frame = derive_pdtCommodity(input_dir, solve_data_dir,
-                                    provider=provider)
-    _emit(provider, "solve_data/pdtCommodity.csv", frame)
+    from flextool.engine_polars import _full_dt as _fdt
+    _family = next(f for f in _fdt.FULL_DT_FAMILIES if f.name == "pdtCommodity")
+    _fdt.emit_via_full_dt(
+        _family, input_dir, solve_data_dir,
+        provider=provider, full_dt_frame=full_dt_frame,
+    )
 
 
 # ---------------------------------------------------------------------------
