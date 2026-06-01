@@ -407,6 +407,15 @@ def native_run_model(state, solver) -> int:
     # sub-dict is created (below); no family reads or writes a frame yet →
     # zero behaviour change.
     cached_full_dt_frames: dict = {}
+    # Branch-expanded complete timeline + branch maps per ``cs`` (R4): the
+    # SEPARATE artifact branch-dependent full_dt families (pdtProcess, …)
+    # derive over, so their branch-period rows resolve DISTINCT per-branch
+    # values.  Built once per ``cs`` (reusing
+    # ``StochasticSolver.create_stochastic_periods`` over the complete
+    # timeline) and threaded into the per-roll Provider under the
+    # ``_full_dt.BRANCHED_*`` keys — NEVER disturbing the un-branched
+    # ``steps_complete_solve`` consumers.
+    cached_branched_complete_frames: dict = {}
 
     # Pre-compute per-iter level keys.  Same-key consecutive iters are
     # rolling continuations of one base solve; a key change marks a
@@ -1187,6 +1196,31 @@ def native_run_model(state, solver) -> int:
         # GENERIC: converting a new family is adding a registry entry in
         # ``_full_dt.py`` (+ a ``derive_*_full_dt`` fn + a slice-or-fallback
         # in its ``emit_*``) — never editing this loop.
+        # Branch-expanded complete timeline (R4): build once per ``cs`` and
+        # thread the four branch artifacts into the per-roll Provider under
+        # distinct ``_full_dt.BRANCHED_*`` keys, so branch-dependent full_dt
+        # families (pdtProcess, …) derive their branch-period rows with
+        # correct DISTINCT per-branch values WITHOUT disturbing the
+        # un-branched ``steps_complete_solve`` consumers.  Cached per ``cs``;
+        # re-put into each roll's Provider (the derive below reads them).
+        _branched = cached_branched_complete_frames.get(cs)
+        if _branched is None:
+            _branched = _full_dt.build_branch_expanded_complete_frames(
+                state, cs, complete_active_time_lists,
+            )
+            cached_branched_complete_frames[cs] = _branched
+        sub_solve_provider.put(_full_dt.BRANCHED_STEPS_KEY, _branched["steps"])
+        sub_solve_provider.put(
+            _full_dt.BRANCHED_PERIOD_BRANCH_KEY, _branched["period_branch"],
+        )
+        sub_solve_provider.put(
+            _full_dt.BRANCHED_SOLVE_BRANCH_KEY, _branched["solve_branch"],
+        )
+        sub_solve_provider.put(
+            _full_dt.BRANCHED_FIRST_TIMESTEPS_KEY,
+            _branched["first_timesteps"],
+        )
+
         _cs_full_dt = cached_full_dt_frames[cs]
         for _family in _full_dt.FULL_DT_FAMILIES:
             if _family.name not in _cs_full_dt:

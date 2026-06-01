@@ -39,7 +39,139 @@ __all__ = [
     "FULL_DT_FAMILIES",
     "register_family",
     "emit_via_full_dt",
+    "build_branch_expanded_complete_frames",
+    "BRANCHED_STEPS_KEY",
+    "BRANCHED_PERIOD_BRANCH_KEY",
+    "BRANCHED_SOLVE_BRANCH_KEY",
+    "BRANCHED_FIRST_TIMESTEPS_KEY",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Branch-expanded COMPLETE timeline (R4) — separate artifact for the
+# branch-dependent ``PdtLookup`` families (pdtProcess / pdtNode / …).
+# ---------------------------------------------------------------------------
+#
+# Branch-dependent families resolve DISTINCT per-branch values at the
+# stochastic branch-periods (``period1_lower`` / ``period1_mid`` / …).  The
+# per-roll ``steps_in_use.csv`` carries those branch-periods; the COMPLETE
+# ``steps_complete_solve.csv`` carries the BASE periods only.  Deriving a
+# branch-dependent family over ``steps_complete_solve`` would therefore drop
+# every branch-period row.
+#
+# The fix is a SEPARATE branch-expanded complete timeline: the base complete
+# timeline with the stochastic branch-periods folded in, mirroring exactly
+# what :meth:`StochasticSolver.create_stochastic_periods` does per-roll.  We
+# REUSE that method (rather than re-implementing branch folding) by running
+# it over the complete timeline as a synthetic single solve, then derive the
+# branch maps (``period__branch`` / ``solve_branch__time_branch`` /
+# ``first_timesteps``) the ``PdtLookup`` cascade reads, so branch values
+# resolve over the complete timeline.
+#
+# These frames are written into the per-roll Provider under DISTINCT keys
+# (the ``BRANCHED_*`` constants below) so they NEVER disturb the existing
+# ``steps_complete_solve`` consumers (inflow / peak / lp scaling) which keep
+# reading the un-branched ``solve_data/steps_complete_solve.csv``.
+
+# Provider keys for the branch-expanded complete artifacts.  They live under
+# a distinct ``_full_dt_branched/`` parent so they NEVER collide with the
+# manifest-tracked ``solve_data/*.csv`` keys — the Provider matches keys
+# EXACTLY (no bare↔qualified fallback), so a sibling parent fully isolates
+# them.  Each key is the canonical ``_provider_key`` form (``parent/stem``,
+# no ``.csv``) of the path the branch-dependent ``derive_*_full_dt`` reads
+# (``solve_data_dir / "_full_dt_branched" / "<stem>.csv"``).
+_BRANCHED_PARENT = "_full_dt_branched"
+BRANCHED_STEPS_KEY = f"{_BRANCHED_PARENT}/steps_complete_solve_branched"
+BRANCHED_PERIOD_BRANCH_KEY = f"{_BRANCHED_PARENT}/period__branch"
+BRANCHED_SOLVE_BRANCH_KEY = f"{_BRANCHED_PARENT}/solve_branch__time_branch"
+BRANCHED_FIRST_TIMESTEPS_KEY = f"{_BRANCHED_PARENT}/first_timesteps"
+
+
+def branched_path(solve_data_dir: "Path | str", stem: str) -> Path:
+    """Path whose :func:`_provider_key` is the matching ``BRANCHED_*`` key.
+
+    The branch-dependent ``derive_*_full_dt`` functions read the branched
+    artifacts through the same ``provider.get(_provider_key(path))`` contract
+    every reader uses; this builds the path so its key resolves to the
+    ``BRANCHED_*`` slot the runner ``put`` it under.
+    """
+    return Path(solve_data_dir) / _BRANCHED_PARENT / f"{stem}.csv"
+
+
+def build_branch_expanded_complete_frames(
+    state: "object",
+    cs: str,
+    complete_active_time_list: "dict",
+) -> "dict[str, pl.DataFrame]":
+    """Build the branch-expanded COMPLETE timeline + branch maps for ``cs``.
+
+    Runs :meth:`StochasticSolver.create_stochastic_periods` over the complete
+    base timeline (``complete_active_time_list``) as a synthetic single-solve
+    expansion — REUSING the exact per-roll branch-folding logic rather than
+    re-implementing it — and returns the four frames the branch-dependent
+    ``derive_*_full_dt`` functions read:
+
+    * ``steps`` — the branch-expanded complete ``(period, step, step_duration)``
+      grid (branch-periods folded in; base-only when the solve is
+      non-stochastic).
+    * ``period_branch`` — ``(period, branch)`` over the complete timeline.
+    * ``solve_branch`` — ``(period, branch)`` realized-branch map.
+    * ``first_timesteps`` — ``(period, step)`` first step per (branch-)period.
+
+    The returned dict is keyed ``"steps" / "period_branch" / "solve_branch" /
+    "first_timesteps"``.  ``create_stochastic_periods`` mutates
+    ``state.timeline.stochastic_timesteps[cs]``; we snapshot and restore that
+    slot so the synthetic expansion leaves no residue on the runner state.
+    """
+    from flextool.engine_polars._stochastic import StochasticSolver
+    from flextool.engine_polars import _emit_solve_writers as _sw
+
+    # Snapshot the stochastic_timesteps slot that create_stochastic_periods
+    # appends to under the synthetic ``cs`` key, so the synthetic expansion
+    # leaves the runner state untouched.
+    _st = state.timeline.stochastic_timesteps
+    _had_slot = cs in _st
+    _saved = list(_st[cs]) if _had_slot else None
+
+    solver = StochasticSolver(state)
+    (
+        period__branch_lists,
+        solve_branch__time_branch_lists,
+        active_time_lists_out,
+        _jump_lists,
+        _fix_storage,
+        _realized,
+        _branch_start,
+    ) = solver.create_stochastic_periods(
+        state.solve.stochastic_branches,
+        [cs],
+        {cs: cs},
+        {cs: complete_active_time_list},
+        {cs: {}},
+        {cs: {}},
+    )
+
+    # Restore the stochastic_timesteps slot to its pre-call value.
+    if _had_slot:
+        _st[cs] = _saved
+    else:
+        _st.pop(cs, None)
+
+    expanded_atl = active_time_lists_out[cs]
+    steps = _sw.derive_active_timelines(expanded_atl, complete=False)
+    period_branch = _sw.derive_branch__period_relationship(
+        period__branch_lists[cs]
+    )
+    solve_branch = _sw.derive_solve_branch__time_branch(
+        solve_branch__time_branch_lists[cs]
+    )
+    first_timesteps = _sw.derive_period_boundary_step(expanded_atl, last=False)
+    return {
+        "steps": steps,
+        "period_branch": period_branch,
+        "solve_branch": solve_branch,
+        "first_timesteps": first_timesteps,
+    }
 
 
 def slice_full_dt(
@@ -276,4 +408,22 @@ register_family(
         fromlist=["derive_pdtCommodity"],
     ).derive_pdtCommodity,
     emit_key="solve_data/pdtCommodity.csv",
+)
+
+# pdtProcess — first BRANCH-DEPENDENT family on the registry (R4).  Its
+# ``derive_*_full_dt`` reads the branch-expanded complete timeline + complete
+# branch maps (``build_branch_expanded_complete_frames`` →
+# ``_full_dt_branched/`` Provider keys), so the per-roll slice carries the
+# branch-period rows with correct DISTINCT per-branch values.
+register_family(
+    "pdtProcess",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_pdt_params",
+        fromlist=["derive_pdtProcess_full_dt"],
+    ).derive_pdtProcess_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_pdt_params",
+        fromlist=["derive_pdtProcess"],
+    ).derive_pdtProcess,
+    emit_key="solve_data/pdtProcess.csv",
 )

@@ -219,7 +219,18 @@ def run(
     _ck("peedt")
     # ── L0 batches 42 / 43 ────────────────────────────────────────────
     from flextool.engine_polars import _emit_pdt_params as _pdt
-    _pdt.emit_pdtProcess(input_dir, solve_data_dir, provider=provider)
+    # full_dt "solve as picker" (R4): if the runner cached the
+    # branch-expanded complete-timeline pdtProcess frame for this
+    # ``complete_solve``, slice it to the roll window; else fall back to the
+    # legacy per-roll derivation.
+    _fdt_frames = getattr(state, "current_full_dt_frames", None)
+    _pdtProcess_full = (
+        _fdt_frames.get("pdtProcess") if _fdt_frames is not None else None
+    )
+    _pdt.emit_pdtProcess(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frame=_pdtProcess_full,
+    )
     _ck("pdtProcess")
     _reserve.emit_pdtReserve_upDown_group(input_dir, solve_data_dir, provider=provider)
     _ck("pdtReserve_upDown_group")
