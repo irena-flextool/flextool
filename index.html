@@ -607,29 +607,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="terminal_workflow/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Terminal workflow
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -674,6 +651,22 @@
   
 
 
+<blockquote>
+<p>[!IMPORTANT]
+<strong>Development has moved to the <code>main</code> branch; this <code>master</code> version is
+deprecated.</strong> <code>main</code> is a lot faster, adds the FlexTool GUI for building
+models and browsing results, and uses a pure-Python core
+(<a href="https://github.com/nodal-tools/polar-high">polar-high</a> + HiGHS). It is not
+the default yet because it has been tested well on Linux only (Windows/macOS
+not yet fully validated). To try it without disturbing this setup, install a
+fresh parallel clone in its own venv. On Windows (PowerShell):
+<code>git clone https://github.com/irena-flextool/flextool.git flextool_main</code>,
+<code>cd flextool_main</code>, <code>git checkout main</code>, <code>py -m venv .venv</code>,
+<code>.\.venv\Scripts\Activate.ps1</code>, <code>pip install -e .</code> (Python 3.11+; polar-high
+is pulled from PyPI). On Linux/macOS use <code>python3 -m venv .venv</code> and
+<code>. .venv/bin/activate</code>. See the
+<a href="https://github.com/irena-flextool/flextool/blob/main/README.md"><code>main</code> README</a>.</p>
+</blockquote>
 <p><img alt="IRENA FlexTool logo" src="irena_flextool_logo.png" /></p>
 <p>IRENA FlexTool is an energy systems optimisation model developed for power and energy systems with high shares of wind and solar power. It can be used to find cost-effective sources of flexibility across the energy system to mitigate the increasing variability arising from the power systems. It can perform multi-year capacity expansion as well as unit commitment and economic dispatch in a user-defined sequence of solves. The aim has been to make it fast to learn and easy to use while including lot of functionality especially in the time scales relevant for investment planning and operational scheduling of energy systems.</p>
 <h1 id="documentation-structure">Documentation structure</h1>
