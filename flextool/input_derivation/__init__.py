@@ -241,7 +241,6 @@ def run(
         _mid.emit_process_coeff_zero_sets(input_dir, solve_data_dir, provider=provider)
         _leaf.emit_def_optional_yes(input_dir, solve_data_dir, provider=provider)
         _leaf.emit_process_delayed(input_dir, solve_data_dir, provider=provider)
-        _leaf.emit_process_side(solve_data_dir, provider=provider)
         _leaf.emit_simple_setof_projections(input_dir, solve_data_dir, provider=provider)
         # emit_period_solve depends on solve_data outputs from
         # emit_simple_setof_projections, so must run after.
@@ -249,7 +248,6 @@ def run(
         _leaf.emit_time_set(input_dir, solve_data_dir, provider=provider)
         _leaf.emit_enable_optional_outputs(solve_data_dir, provider=provider)
         _leaf.emit_node_state_subsets(solve_data_dir, provider=provider)
-        _leaf.emit_commodity_tier_sets(input_dir, solve_data_dir, provider=provider)
         _mid.emit_dc_angle_bounds(input_dir, solve_data_dir, provider=provider)
         _mid.emit_invest_total_sets(input_dir, solve_data_dir, provider=provider)
         _mid.emit_ci_ladder_cumulative(input_dir, solve_data_dir, provider=provider)

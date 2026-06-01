@@ -53,16 +53,12 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "group_loss_share.csv",
     "def_optional_yes.csv",
     "process_delayed.csv",
-    "process_side.csv",
     "period_solve.csv",
     "time.csv",
     "enable_optional_outputs.csv",
     "nodeState_rp.csv",
     "nodeStateBlock.csv",
-    "commodity__tier.csv",
-    "tier.csv",
     "timeline.csv",
-    "timeline_steps.csv",
     "commodity__tier_ann.csv",
     # _emit_mid_sets — thin writers.
     #
