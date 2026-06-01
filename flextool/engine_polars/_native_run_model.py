@@ -397,6 +397,15 @@ def native_run_model(state, solver) -> int:
     previous_complete_solve = None
     last_captured_solve: str | None = None
     cached_complete_active_time_lists: dict = {}
+    # full_dt "solve as picker" cache (specs §10.1): per-``complete_solve``
+    # full-domain parameter frames, computed once over the COMPLETE
+    # timeline and sliced per roll.  Keyed ``cs -> {family -> frame}``.
+    # Declared here (sibling to ``cached_complete_active_time_lists``) so
+    # it lives on the same runner-loop state; populated per family as each
+    # family is converted.  In the scaffold commit only an empty per-``cs``
+    # sub-dict is created (below); no family reads or writes a frame yet →
+    # zero behaviour change.
+    cached_full_dt_frames: dict = {}
 
     # Pre-compute per-iter level keys.  Same-key consecutive iters are
     # rolling continuations of one base solve; a key change marks a
@@ -512,6 +521,11 @@ def native_run_model(state, solver) -> int:
                 state.timeline.timesets__timeline,
             )
         complete_active_time_lists = cached_complete_active_time_lists[cs]
+        # full_dt cache (specs §10.1): ensure a per-``cs`` slot exists.
+        # In the scaffold commit this only creates an empty dict that no
+        # family reads or writes → no behaviour change; converted families
+        # populate ``cached_full_dt_frames[cs][<family>]`` here.
+        cached_full_dt_frames.setdefault(cs, {})
 
         # Combined period/timeset list including history periods.
         period__timesets_with_history = list(
