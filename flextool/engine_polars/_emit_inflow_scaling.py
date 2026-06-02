@@ -1084,81 +1084,97 @@ def _compute_inflow_scaling_frames_vectorized(
     out["new_peak_divided_by_old_peak.csv"] = _ordered_value_frame(
         npop_df, ("node", "period", "value"), ["__eo", "__po"],
     )
+    # NOTE: stages 9-12 are now vectorized below and read the peak-family
+    # FRAMES (peak_domain_df / npop_df) directly, so no scalar op_sign /
+    # npop / npopinflow dict reconstruction is needed.  The DEAD
+    # npopinflow intermediate is rebuilt as ``npopis_df`` below (computed,
+    # never assigned to ``out``).
 
-    # ── Reconstruct dicts for downstream legacy stages (C3 → C4 bridge) ─
-    op_sign_dict = {
-        (r[0], r[1]): r[2]
-        for r in peak_domain_df.select(
-            ["node", "period", "op_sign"]).iter_rows()
-    }
-    # rows_nps as the new_peak_sign keyset (entity-major order preserved).
-    rows_nps = [
-        (r[0], r[1], r[2])
-        for r in peak_domain_df.select([
-            "node", "period",
-            pl.when(pl.col("v_peak") >= 0.0)
-            .then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias("nps"),
-        ]).iter_rows()
-    ]
-    # npop_dict: peak / old_peak over the old_peak!=0 keyset.
-    npop_dict = {
-        (r[0], r[1]): r[2]
-        for r in npop_df.select(
-            ["node", "period", "value_f"]).iter_rows()
-    }
-    # DEAD npopinflow intermediate — COMPUTED (C4 stage 10 reads it), never
-    # out[...]='d.  npopis = npop * orig_flow_sum / cpsoy (0 when cpsoy==0).
-    npopinflow_dict: dict[tuple[str, str], float] = {}
-    for (n, d), npop in npop_dict.items():
-        ofs = orig_flow_sum.get((n, d), 0.0)
-        cps = cpsoy.get(d, 0.0)
-        npopinflow_dict[(n, d)] = (npop * ofs / cps) if cps != 0.0 else 0.0
-
-    # ── Stages 9-12 (LEGACY — vectorized in C4) ────────────────────────
-    npis_dict = {
-        (n, d): pdNode.get((n, "peak_inflow", d), 0.0) * 8760.0
-        for n, d, _ in rows_nps
-    }
-    rows_npis = [(n, d, npis_dict.get((n, d), 0.0)) for n, d, _ in rows_nps]
-    out["new_peak_inflow_sum.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_npis,
+    # ── Stages 9-12 (Tier-B; same keyset as the peak domain / rows_nps) ─
+    # All four stages iterate the new_peak_sign keyset (peak_domain_df) and
+    # read prior outputs with ``.get(k, 0.0)`` where the row STILL EXISTS →
+    # left-join + fill_null(0.0).  Build the npopinflow (DEAD) intermediate
+    # as a frame: npopis = npop * orig_flow_sum / cpsoy (0 when cpsoy==0),
+    # over the old_peak!=0 keyset; rows absent from npop_df ⇒ npopis = 0.
+    ofs_lk = pl.DataFrame(
+        {"node": [k[0] for k in orig_flow_sum],
+         "period": [k[1] for k in orig_flow_sum],
+         "v_ofs": list(orig_flow_sum.values())},
+        schema={"node": pl.Utf8, "period": pl.Utf8, "v_ofs": pl.Float64},
+    )
+    npopis_df = (
+        npop_df.select(["node", "period",
+                        pl.col("value_f").alias("v_npop")])
+        .join(ofs_lk, on=["node", "period"], how="left")
+        .join(cpsoy_lk, on="period", how="left")
+        .with_columns(
+            pl.col("v_ofs").fill_null(0.0).alias("v_ofs"),
+            pl.col("v_cpsoy").fill_null(0.0).alias("v_cpsoy"),
+        )
+        .with_columns(
+            pl.when(pl.col("v_cpsoy") != 0.0)
+            .then(pl.col("v_npop") * pl.col("v_ofs") / pl.col("v_cpsoy"))
+            .otherwise(pl.lit(0.0))
+            .alias("v_npopis"),
+        )
+        .select(["node", "period", "v_npopis"])
     )
 
-    # op_sign_dict / npopinflow_dict / npop_dict are reconstructed in the
-    # C3 peak-family block above (from the vectorized frames).
-    rows_nom: list[tuple[str, str, float]] = []
-    for n, d, _ in rows_nps:
-        npis = npis_dict.get((n, d), 0.0)
-        npopis = npopinflow_dict.get((n, d), 0.0)
-        os_sign = op_sign_dict.get((n, d), 0.0)
-        af = pdNode.get((n, "annual_flow", d), 0.0)
-        denom = npis - npopis
-        if denom == 0.0:
-            v = 0.0
-        else:
-            v = os_sign * (os_sign * npopis - af) / denom
-        rows_nom.append((n, d, v))
-    out["new_old_multiplier.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_nom,
+    # Base frame for stages 9-12: the peak-domain keyset with the per-cell
+    # ingredients joined (npop / npopis fill to 0 on absent old_peak==0).
+    base912 = (
+        peak_domain_df
+        .with_columns((pl.col("v_peak") * 8760.0).alias("v_npis"))
+        .join(
+            npop_df.select(["node", "period",
+                            pl.col("value_f").alias("v_npop")]),
+            on=["node", "period"], how="left")
+        .join(npopis_df, on=["node", "period"], how="left")
+        .with_columns(
+            pl.col("v_npop").fill_null(0.0).alias("v_npop"),
+            pl.col("v_npopis").fill_null(0.0).alias("v_npopis"),
+        )
     )
 
-    nom_dict = {(n, d): v for n, d, v in rows_nom}
-    rows_nos = [
-        (n, d, npop_dict.get((n, d), 0.0)
-                * (1.0 + nom_dict.get((n, d), 0.0)))
-        for n, d, _ in rows_nps
-    ]
-    out["new_old_slope.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_nos,
+    # Stage 9 — new_peak_inflow_sum = peak * 8760 (Tier A).
+    out["new_peak_inflow_sum.csv"] = _ordered_value_frame(
+        base912.with_columns(pl.col("v_npis").alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
     )
 
-    rows_nosec = [
-        (n, d, pdNode.get((n, "peak_inflow", d), 0.0)
-                * nom_dict.get((n, d), 0.0))
-        for n, d, _ in rows_nps
-    ]
-    out["new_old_section.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_nosec,
+    # Stage 10 — new_old_multiplier.  denom = npis - npopis; v = 0 when
+    # denom == 0 else os_sign*(os_sign*npopis - af)/denom.
+    nom_df = (
+        base912
+        .with_columns(
+            (pl.col("v_npis") - pl.col("v_npopis")).alias("v_denom"))
+        .with_columns(
+            pl.when(pl.col("v_denom") == 0.0)
+            .then(pl.lit(0.0))
+            .otherwise(
+                pl.col("op_sign")
+                * (pl.col("op_sign") * pl.col("v_npopis") - pl.col("v_af"))
+                / pl.col("v_denom"))
+            .alias("v_nom"),
+        )
+    )
+    out["new_old_multiplier.csv"] = _ordered_value_frame(
+        nom_df.with_columns(pl.col("v_nom").alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
+    )
+
+    # Stage 11 — new_old_slope = npop * (1 + nom).
+    out["new_old_slope.csv"] = _ordered_value_frame(
+        nom_df.with_columns(
+            (pl.col("v_npop") * (1.0 + pl.col("v_nom"))).alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
+    )
+
+    # Stage 12 — new_old_section = peak * nom.
+    out["new_old_section.csv"] = _ordered_value_frame(
+        nom_df.with_columns(
+            (pl.col("v_peak") * pl.col("v_nom")).alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
     )
 
     return out
@@ -1305,10 +1321,14 @@ def emit_node_inflow_scaling_params(
     *, provider,
 ) -> None:
     """Emit ``node_inflow_scaling_params`` to the Provider.
-    Emits the same 17 frames under ``solve_data/<basename>`` keys via
-    :func:`_emit` (dual-key registration).
+
+    Emits the 15 LIVE frames under ``solve_data/<basename>`` keys via
+    :func:`_emit` (dual-key registration).  Uses the vectorized compute
+    (:func:`_compute_inflow_scaling_frames_vectorized`); the legacy
+    :func:`_compute_inflow_scaling_frames` is retained as the parity
+    oracle (``tests/engine_polars/test_vectorize_inflow_scaling_parity.py``).
     """
-    frames = _compute_inflow_scaling_frames(input_dir, solve_data_dir,
-                                              provider=provider)
+    frames = _compute_inflow_scaling_frames_vectorized(
+        input_dir, solve_data_dir, provider=provider)
     for basename, df in frames.items():
         _emit(provider, f"solve_data/{basename}", df)
