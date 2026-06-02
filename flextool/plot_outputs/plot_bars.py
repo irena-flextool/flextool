@@ -110,38 +110,52 @@ def _bar_label_width_inches(
 ) -> float:
     """Inches to reserve for the category tick-label column of *effective_plots*.
 
-    Sized to the ACTUAL widest drawn label (group folded into each bar label,
-    each component middle-truncated): per subplot, combine that subplot's
-    longest bar label with the longest group label present in it, then take
-    the max. Passed every subplot across all files so the margin is shared
-    (the plot area keeps the same horizontal position when paging), while
-    still being the tight true-max rather than a summed over-estimate.
+    Sized to the longest label that is ACTUALLY drawn — the widest real
+    "group | … | bar" combination over the bars that have data. It is NOT an
+    upper bound like (longest group anywhere) + (longest bar anywhere): those
+    two can live on different rows, so summing them over-reserves and leaves
+    empty space even on the widest real row. Each component is middle-
+    truncated, exactly as drawn.
+
+    Passed every subplot across all files so the margin is shared (the plot
+    area keeps the same horizontal position when paging through files).
     """
-    def _subplot_group_chars(df_sub_cols) -> int:
+    def _group_value(columns, col):
+        """The expand-level value(s) of *col* — what gets folded into labels."""
         if not (expand_axis_levels and expand_axis_level_names):
-            return 0
+            return None
+        if not isinstance(columns, pd.MultiIndex):
+            return col
         try:
-            if len(expand_axis_level_names) == 1:
-                groups = df_sub_cols.get_level_values(expand_axis_level_names[0]).unique()
-                lengths = [len(_format_bar_label(g)) for g in groups]
-            else:
-                gf = df_sub_cols.to_frame()[expand_axis_level_names].drop_duplicates()
-                lengths = [len(_format_bar_label(tuple(r))) for r in gf.values]
-        except KeyError:
-            return 0
-        return max(lengths, default=0)
+            pos = [columns.names.index(n) for n in expand_axis_level_names]
+        except ValueError:
+            return col
+        vals = tuple(col[p] for p in pos)
+        return vals[0] if len(vals) == 1 else vals
 
     max_chars = 0
     for _, df_sub in effective_plots:
-        df_sub_clean = df_sub.dropna(how='all')
-        if df_sub_clean.empty:
+        clean = df_sub.dropna(how='all')
+        if clean.empty:
             continue
-        bar_chars = max(
-            (len(_format_bar_label(iv)) for iv in df_sub_clean.index), default=0
-        )
-        grp_chars = _subplot_group_chars(df_sub_clean.columns)
-        sub_chars = bar_chars + (3 + grp_chars if grp_chars else 0)
-        max_chars = max(max_chars, sub_chars)
+        if not (expand_axis_levels and expand_axis_level_names):
+            for iv in clean.index:
+                max_chars = max(max_chars, len(_format_bar_label(iv)))
+            continue
+        # Group is constant per column; the widest label in a column is its
+        # group joined with the longest bar that actually has data there.
+        unit_len = {iv: len(_format_bar_label(iv)) for iv in clean.index}
+        for col in clean.columns:
+            series = clean[col]
+            if isinstance(series, pd.DataFrame):  # duplicate column labels
+                present = clean.index[series.notna().any(axis=1)]
+            else:
+                present = clean.index[series.notna()]
+            if len(present) == 0:
+                continue
+            widest = max(present, key=lambda iv: unit_len[iv])
+            gval = _group_value(clean.columns, col)
+            max_chars = max(max_chars, len(_format_bar_label(widest, gval)))
     return max_chars * CHAR_WIDTH
 
 
