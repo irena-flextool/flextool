@@ -423,24 +423,25 @@ def native_run_model(state, solver) -> int:
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()
 
-        # Blank line at level-group boundaries only.  Within-group
-        # rolling iters print only the marker line, so a blank line
-        # between them would fragment the marker block visually.
-        if i > 0 and level_keys[i] != level_keys[i - 1]:
+        # Blank line before every roll/solve (i > 0).  Each iter now
+        # emits its own four phase checkpoints (see the per-iter flag
+        # below), so a blank line per boundary cleanly separates one
+        # roll's marker block from the next rather than fragmenting a
+        # shared block.
+        if i > 0:
             print("", flush=True)
 
-        # Between-solves memory snapshot — fires at level-group
-        # boundaries (where the previous iter just emitted the four
-        # phase checkpoints, ending in ``Outputs written``).  Shows
-        # what's left in memory at the solve boundary so cross-solve
-        # retention is visible in the standard log.  The Δ columns
-        # are taken vs. the previous emitted line (``Outputs
+        # Between-solves memory snapshot — fires before every roll/solve
+        # (i > 0).  The previous iter now always emits the four phase
+        # checkpoints (ending in ``Outputs written``), so this shows
+        # what's left in memory at each solve boundary and cross-solve
+        # retention is visible per roll in the standard log.  The Δ
+        # columns are taken vs. the previous emitted line (``Outputs
         # written``), so positive Δrss here is memory the previous
         # solve's outputs phase did not release.
         _memrec_iter = getattr(state, "_memory_recorder", None)
         if (
             i > 0
-            and level_keys[i] != level_keys[i - 1]
             and _memrec_iter is not None
         ):
             try:
@@ -1210,14 +1211,13 @@ def native_run_model(state, solver) -> int:
             complete_solve.get(_parent_solve) if _parent_solve else None
         )
 
-        # Tell the solver whether to emit the four per-iter phase
-        # checkpoints (FlexData built / Matrix built / Solver /
-        # Outputs written).  Fires on the last iter of each level group
-        # so the recorded deltas aggregate across all rolls in the group.
-        state.emit_phase_checkpoints_this_iter = (
-            i == len(all_solves) - 1
-            or level_keys[i + 1] != _level_key
-        )
+        # Tell the solver to emit the four per-iter phase checkpoints
+        # (FlexData built / Matrix built / Solver / Outputs written) on
+        # EVERY iter, so each roll/solve reports its own deltas rather
+        # than aggregating across the whole level group.  This makes the
+        # per-roll time/memory breakdown visible between solves (the
+        # ``Solve cleanup`` snapshot above closes each boundary).
+        state.emit_phase_checkpoints_this_iter = True
         # Phase 2 — expose the current iter's position in the level_keys
         # sequence so the per-solve callback can decide whether to retain
         # or drop this level's ``Solution.highs`` / ``flex_data_provider``
