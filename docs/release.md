@@ -1,3 +1,3 @@
 # Release notes
 
---8<-- "RELEASE.md"
+--8<-- "CHANGELOG.md"

@@ -12,7 +12,7 @@ For the high-level test-layout inventory see
 [`architecture.md`](architecture.md) ("Test layout and fixture
 architecture"). For the engine internals being tested see
 [`engine_polars.md`](engine_polars.md). For the JSON-fixture rollout
-narrative see the `RELEASE.md` entry for v3.47.0.
+narrative see the `CHANGELOG.md` entry for v3.47.0.
 
 ## Layer 1 — engine_polars unit & integration
 
@@ -305,5 +305,5 @@ test so scenarios that share solve names cannot cross-contaminate.
 - [`db_schema.md`](db_schema.md) — schema migration chain that
   `sync_master_json_template --verify` enforces
 - [`decomposition.md`](decomposition.md) — Lagrangian parity context
-- `RELEASE.md` 3.47.0 entry — the JSON-fixture architecture rollout
-- `RELEASE.md` 3.33.0 entry — the original test-pyramid rollout
+- `CHANGELOG.md` 3.47.0 entry — the JSON-fixture architecture rollout
+- `CHANGELOG.md` 3.33.0 entry — the original test-pyramid rollout

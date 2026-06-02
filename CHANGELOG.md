@@ -1,3 +1,41 @@
+## Release 4.0.0b4 (2.6.2026) — vectorized per-roll preprocessing; glpsol scaffolding removed
+
+### Per-roll preprocessing — vectorized
+
+Every heavy per-roll preprocessing parameter/set emitter now derives its output
+frame with vectorized polars — a dense `(entity × dt)` or `(entity × period)` grid,
+a left-join for each parameter source, a priority `coalesce` across the cascade
+branches, and group-by-sum folds for stochastic / parent-period terms — once per
+roll over that roll's own window, replacing the per-cell Python loops. There is no
+cache and no full-domain frame. On the RETO-Africa **DES** scenario (9 rolling
+solves) the run is ~25% faster end-to-end, with **every output byte-identical** to
+the previous release and the global peak working set unchanged (~18 GB). No model or
+input changes.
+
+- New shared module `engine_polars/_vectorize.py`: the entity×dt / entity×period grid
+  builders (carrying row-order keys), the dict→lookup lift, the stochastic +
+  parent-period fold, and `repr`-based value rendering.
+- Converted families: `pdtProcess`, `pdtNode`, `pdtProcess_source` / `pdtProcess_sink`,
+  `pdtCommodity`, `pdtGroup` / `pdGroup` / `pdtProfile`, the varCost pair +
+  `pssdt_varCost` filters, `pdtNodeInflow`, and the inflow- and lp-scaling pipelines.
+- Each heavy derive is gated by a per-family parity test against a reference
+  implementation: strict byte-equality for the lookup/coalesce families, `rtol≈1e-12`
+  tolerance for the genuinely-summing families (inflow / lp scaling, multi-term folds).
+
+### Solver / packaging
+
+- Removed the leftover scaffolding for the already-retired glpsol binary: the
+  `build-glpsol.yml` workflow, the `bin/glpsol` CI permission step, and the GLPK
+  clauses in `LICENSE.txt`. HiGHS (via `highspy`) is the only solver. The DB migration
+  that rewrites a legacy `solver=glpsol` to `highs` is unchanged.
+
+### Docs
+
+- `docs/dev/engine_polars.md` documents the vectorized per-roll emit; `CONTRIBUTING.md`
+  and `CLAUDE.md` record the parity-test obligation and the byte-parity invariants.
+
+---
+
 ## Release 4.0.0b3 (1.6.2026) — solver backend: bounded-memory autoscale + block-COO; plot & GUI fixes
 
 ### Solver backend — bounded-memory autoscale + block-COO

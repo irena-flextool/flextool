@@ -178,7 +178,7 @@ docs/                              MkDocs documentation site:
 .github/workflows/                 CI/CD (tests + verify hooks).
 pyproject.toml, mkdocs.yml,        Build config, doc config, citation,
 CITATION.cff, LICENSE.txt,         license, readme, release notes.
-README.md, RELEASE.md
+README.md, CHANGELOG.md
 ```
 
 ## Module details

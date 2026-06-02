@@ -481,7 +481,7 @@ by `_add_non_anticipativity_constraints` in `model.py`. See
 
 The 3.29.0–3.33.0 release cycle is the relevant window for these
 features. Quick map (full text in
-[release.md](../release.md) or `RELEASE.md`):
+[release.md](../release.md) or `CHANGELOG.md`):
 
 - **3.29.0** — Flex-temporal decomposition lands. `v50` migration
   moves `new_stepduration` from `timeset` to `solve`. `v51` adds

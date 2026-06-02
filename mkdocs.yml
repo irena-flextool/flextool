@@ -74,7 +74,7 @@ nav:
     - 'Testing': dev/testing.md
     - 'Environment variables': dev/env_vars.md
     - 'Injecting parameters between solves': dev/inject_between_solves.md
-  - 'Release notes': release.md
+  - 'Changelog': release.md
   - Archived:
     - 'Web interface (deprecated)': archived/browser_interface.md
     - 'Web interface install (deprecated)': archived/install_web_interface.md
