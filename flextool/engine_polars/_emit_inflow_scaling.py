@@ -2,22 +2,26 @@
 
 Called per-solve from ``_emit_solve_time.run`` (batch 17).
 
-Output CSVs (15 total):
+Output CSVs (6 emitted — the 6 with a downstream consumer):
 
 * ``ptNode_inflow.csv``                            — (n, t) merged inflow
 * ``_node_cap_inflow_fallback.csv``                — (n, d) abs(max)
-* ``orig_flow_sum.csv``                            — (n, d) sum over complete time
-* ``period_share_of_annual_flow.csv``              — (n, d) abs(sum/dt) / annual_flow
 * ``period_flow_annual_multiplier.csv``            — (n, d) cpsoy / psaf
 * ``period_flow_proportional_multiplier.csv``      — (n, d) af / (abs(sum_t)/tdy)
-* ``new_peak_sign.csv``                            — (n, d) sign(peak_inflow)
-* ``old_peak_max.csv`` / ``old_peak_min.csv``      — (n, d) inflow series bounds
-* ``old_peak_sign.csv``                            — (n, d) sign per dominant peak
-* ``new_peak_divided_by_old_peak.csv``             — (n, d) peak / old_peak
-* ``new_peak_inflow_sum.csv``                      — (n, d) peak * 8760
-* ``new_old_multiplier.csv``                       — (n, d) affine coefficient
 * ``new_old_slope.csv``                            — (n, d) npop * (1 + nom)
 * ``new_old_section.csv``                          — (n, d) peak * nom
+
+These feed ``derive_pdtNodeInflow`` (5) and the lp-scaling emitter (1).
+
+The 9 internal middle parameters that used to be emitted as scratch CSVs
+— ``orig_flow_sum``, ``period_share_of_annual_flow``, ``new_peak_sign``,
+``old_peak_max``, ``old_peak_min``, ``old_peak_sign``,
+``new_peak_divided_by_old_peak``, ``new_peak_inflow_sum``,
+``new_old_multiplier`` — have NO external consumer (all internal middle
+parameters); they are computed in-memory where still needed to feed the 6
+consumed outputs, but no longer written.  The legacy oracle
+``_compute_inflow_scaling_frames`` still materialises all 15 as the
+independent parity reference for the 6 consumed outputs.
 
 Reuse note (Phase 2 sub-dispatch 4 brief)
 -----------------------------------------
@@ -564,17 +568,18 @@ def _compute_inflow_scaling_frames(
 # Vectorized twin of _compute_inflow_scaling_frames (vectorize-per-roll).
 #
 # Built as a FULL COPY of the legacy body, with each stage's COMPUTE
-# replaced by vectorized polars incrementally, stage-group by stage-group.
-# The in-memory dicts the legacy stages consume are reconstructed from each
-# vectorized frame right after it is built, so any not-yet-vectorized
-# downstream stage still works at every commit (full-15-key parity-gateable
-# per commit).  The legacy _compute_inflow_scaling_frames is KEPT as the
-# parity oracle.
+# replaced by vectorized polars.  Only the 6 CONSUMED outputs are emitted;
+# the 9 internal middle parameters are computed in-memory where still needed
+# (orig_flow_sum / psaf dicts, inline fused912 npop/npis/nom) but never
+# written.  The legacy _compute_inflow_scaling_frames is KEPT as the parity
+# oracle (it still materialises all 15; the test compares the 6).
 #
 # Tier policy: ptNode_inflow + _node_cap_inflow_fallback are sum-free
 # (coalesce / max-abs) and MUST stay byte-identical (Tier A — read by the
 # already-vectorized pdtNodeInflow and by lp-scaling).  The sum-bearing
-# stages are Tier B (last-ULP drift tolerated).
+# consumed stages (period_flow_annual_multiplier,
+# period_flow_proportional_multiplier, new_old_slope, new_old_section) are
+# Tier B (last-ULP drift tolerated).
 # ---------------------------------------------------------------------------
 
 
@@ -613,11 +618,19 @@ def _compute_inflow_scaling_frames_vectorized(
 ) -> dict[str, pl.DataFrame]:
     """Vectorized twin of :func:`_compute_inflow_scaling_frames`.
 
-    Same reader block, same in-memory dicts, same stage order, same 15
-    LIVE ``out[...]=`` assignments (the 2 DEAD outputs are never
-    assigned).  Each vectorized stage reconstructs the in-memory dict its
-    legacy downstream consumer reads, so the function is internally
-    consistent at every commit.
+    Same reader block, same in-memory dicts, same stage order.  Only the
+    6 CONSUMED outputs are assigned to ``out`` (``ptNode_inflow``,
+    ``_node_cap_inflow_fallback``, ``period_flow_annual_multiplier``,
+    ``period_flow_proportional_multiplier``, ``new_old_slope``,
+    ``new_old_section``).  The 9 internal middle parameters
+    (``orig_flow_sum``, ``period_share_of_annual_flow``, ``new_peak_sign``,
+    ``old_peak_max``, ``old_peak_min``, ``old_peak_sign``,
+    ``new_peak_divided_by_old_peak``, ``new_peak_inflow_sum``,
+    ``new_old_multiplier``) have no external consumer and are no longer
+    emitted; the values still needed downstream live in-memory only
+    (``orig_flow_sum`` dict, ``psaf`` dict, and the inline fused912
+    ``v_npop`` / ``v_npis`` / ``v_nom``).  The legacy oracle
+    materialises all 15 and gates the 6 consumed.
     """
     out: dict[str, pl.DataFrame] = {}
 
@@ -814,35 +827,24 @@ def _compute_inflow_scaling_frames_vectorized(
         .agg(pl.col("v_pti").sum().alias("v_complete"))
     )
 
-    # ── Stage 3: orig_flow_sum (Tier B; S5 int-0 on empty timeline) ────
+    # ── Stage 3: orig_flow_sum (in-memory only — feeds npopis) ─────────
     # Domain: annual_eligible AND pdNode annual_flow != 0 (DROP on 0/miss).
-    # value = per-node complete-timeline sum (period-independent).
+    # value = per-node complete-timeline sum (period-independent).  NOT
+    # emitted (no external consumer); only the dict below is used (by the
+    # fused912 npopis).  Because the CSV is no longer written there is no
+    # byte-parity contract — the empty-timeline ``sum(())`` int-0 ``"0"``
+    # vs ``"0.0"`` special-case (which existed ONLY to byte-match the
+    # dropped CSV) is gone; value_f is a plain Float64 sum.
     orig_df = (
         annual_eligible_eo
         .join(period_po, how="cross")
         .join(af_lk, on=["node", "period"], how="left")
         .filter(pl.col("v_af").fill_null(0.0) != 0.0)
         .join(complete_sum_df, on="node", how="left")
-        # A node with NO complete-timeline rows still emits its sum: the
-        # legacy ``sum(())`` over an empty complete_time_in_use is 0.
+        # A node with NO complete-timeline rows contributes 0: the legacy
+        # ``sum(())`` over an empty complete_time_in_use is 0.
         .with_columns(pl.col("v_complete").fill_null(0.0).alias("value_f"))
     )
-    if len(complete_time_in_use) == 0:
-        # S5 int-0: ``sum(())`` is the int ``0`` → ``repr`` ``"0"`` (a
-        # Float64 sum would render ``"0.0"``).  Emit the value column as
-        # the literal ``"0"`` for these rows (1-line guard, NOT a Float64
-        # round-trip).  orig_flow_sum is the ONLY int-0 output.
-        orig_df = orig_df.sort(["__eo", "__po"])
-        out["orig_flow_sum.csv"] = orig_df.select(
-            ["node", "period"],
-        ).with_columns(
-            pl.lit("0", dtype=pl.Utf8).alias("value"),
-        ) if orig_df.height else _empty_value_frame(
-            ("node", "period", "value"))
-    else:
-        out["orig_flow_sum.csv"] = _ordered_value_frame(
-            orig_df, ("node", "period", "value"), ["__eo", "__po"],
-        )
     # Reconstruct orig_flow_sum dict (float values) for downstream stages.
     orig_flow_sum = {
         (r[0], r[1]): r[2]
@@ -879,9 +881,8 @@ def _compute_inflow_scaling_frames_vectorized(
             .alias("value_f"),
         )
     )
-    out["period_share_of_annual_flow.csv"] = _ordered_value_frame(
-        psaf_df, ("node", "period", "value"), ["__eo", "__po"],
-    )
+    # NOT emitted (no external consumer); only the psaf dict below is used
+    # (by stage 5 = period_flow_annual_multiplier).
     psaf = {
         (r[0], r[1]): r[2]
         for r in psaf_df.select(["node", "period", "value_f"]).iter_rows()
@@ -1031,7 +1032,9 @@ def _compute_inflow_scaling_frames_vectorized(
             .then(pl.col("op_max")).otherwise(pl.col("op_min"))
             .alias("old_peak"),
         )
-        .select(["node", "op_max", "op_min", "op_sign", "old_peak"])
+        # op_max / op_min were only needed to DERIVE op_sign / old_peak
+        # above; nothing downstream reads them, so drop them here.
+        .select(["node", "op_sign", "old_peak"])
     )
 
     # ── Stage 8: peak-domain family ────────────────────────────────────
@@ -1053,37 +1056,13 @@ def _compute_inflow_scaling_frames_vectorized(
         .join(precomp, on="node", how="left")
         .sort(["__eo", "__po"])
     )
-    # new_peak_sign / old_peak_max / old_peak_min / old_peak_sign — the
-    # FULL peak-domain keyset (the old_peak==0 drop fires AFTER these).
-    out["new_peak_sign.csv"] = _ordered_value_frame(
-        peak_domain_df.with_columns(
-            pl.when(pl.col("v_peak") >= 0.0)
-            .then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias("value_f")),
-        ("node", "period", "value"), ["__eo", "__po"],
-    )
-    out["old_peak_max.csv"] = _ordered_value_frame(
-        peak_domain_df.with_columns(pl.col("op_max").alias("value_f")),
-        ("node", "period", "value"), ["__eo", "__po"],
-    )
-    out["old_peak_min.csv"] = _ordered_value_frame(
-        peak_domain_df.with_columns(pl.col("op_min").alias("value_f")),
-        ("node", "period", "value"), ["__eo", "__po"],
-    )
-    out["old_peak_sign.csv"] = _ordered_value_frame(
-        peak_domain_df.with_columns(pl.col("op_sign").alias("value_f")),
-        ("node", "period", "value"), ["__eo", "__po"],
-    )
-    # new_peak_divided_by_old_peak — drops the old_peak==0 rows (drop
-    # asymmetry: FEWER rows than new_peak_sign).  npop = peak / old_peak.
-    npop_df = (
-        peak_domain_df
-        .filter(pl.col("old_peak") != 0.0)
-        .with_columns(
-            (pl.col("v_peak") / pl.col("old_peak")).alias("value_f"))
-    )
-    out["new_peak_divided_by_old_peak.csv"] = _ordered_value_frame(
-        npop_df, ("node", "period", "value"), ["__eo", "__po"],
-    )
+    # The per-cell peak ingredients new_peak_sign / old_peak_max /
+    # old_peak_min / old_peak_sign and new_peak_divided_by_old_peak (npop)
+    # are NOT emitted (no external consumer).  op_sign / old_peak are
+    # carried on ``peak_domain_df`` from stage-7 ``precomp``;
+    # npop is computed INLINE in the fused912 graph below (as ``v_npop``,
+    # fill-0 on old_peak==0) feeding slope/section.  No separate scratch
+    # frame is built.
     # ── Stages 9-12 (Tier-B): ONE fused closed-form graph ──────────────
     # The whole sub-pipeline runs over the FULL peak-domain keyset
     # (peak_domain_df == new_peak_sign keyset).  npop and npopis are
@@ -1160,16 +1139,9 @@ def _compute_inflow_scaling_frames_vectorized(
         )
     )
 
-    # Stage 9 — new_peak_inflow_sum = peak * 8760 (Tier A).
-    out["new_peak_inflow_sum.csv"] = _ordered_value_frame(
-        fused912.with_columns(pl.col("v_npis").alias("value_f")),
-        ("node", "period", "value"), ["__eo", "__po"],
-    )
-    # Stage 10 — new_old_multiplier = nom.
-    out["new_old_multiplier.csv"] = _ordered_value_frame(
-        fused912.with_columns(pl.col("v_nom").alias("value_f")),
-        ("node", "period", "value"), ["__eo", "__po"],
-    )
+    # Stage 9 — new_peak_inflow_sum (npis = peak * 8760) and Stage 10 —
+    # new_old_multiplier (nom) are NOT emitted (no external consumer); both
+    # remain inline on ``fused912`` (v_npis / v_nom) feeding slope/section.
     # Stage 11 — new_old_slope = npop * (1 + nom).
     out["new_old_slope.csv"] = _ordered_value_frame(
         fused912.with_columns(pl.col("v_slope").alias("value_f")),
@@ -1190,7 +1162,7 @@ def emit_node_inflow_scaling_params(
 ) -> None:
     """Emit ``node_inflow_scaling_params`` to the Provider.
 
-    Emits the 15 LIVE frames under ``solve_data/<basename>`` keys via
+    Emits the 6 consumed frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).  Uses the vectorized compute
     (:func:`_compute_inflow_scaling_frames_vectorized`); the legacy
     :func:`_compute_inflow_scaling_frames` is retained as the parity

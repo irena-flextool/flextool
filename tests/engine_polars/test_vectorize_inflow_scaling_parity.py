@@ -1,25 +1,33 @@
 """Parity gate for the vectorized inflow-scaling emitter.
 
 The inflow-scaling family (``_compute_inflow_scaling_frames``) is the
-HARDEST in the vectorize-per-roll effort: 15 LIVE outputs, 12 stateful
-stages, Tier B.  This test gates ``_compute_inflow_scaling_frames_vectorized``
-against the legacy ``_compute_inflow_scaling_frames`` ORACLE, key-by-key.
+HARDEST in the vectorize-per-roll effort: 12 stateful stages, Tier B.
+Only the 6 CONSUMED outputs are emitted by
+``_compute_inflow_scaling_frames_vectorized`` (the 9 internal middle
+parameters have no external consumer and are no longer written).  This
+test gates the 6 emitted outputs against the legacy
+``_compute_inflow_scaling_frames`` ORACLE, key-by-key, and asserts the 9
+dropped outputs are ABSENT from the vectorized dict.
+
+The legacy oracle is UNCHANGED — it still materialises all 15 internally,
+so it remains a faithful reference for both the 6 emitted values AND the 9
+dropped intermediates (used below to re-express the branch-coverage
+asserts as observable consequences on the kept consumed outputs).
 
 Tier policy (design §1):
 
 * **Tier A — byte-exact** (``df_vec.equals(df_legacy)``): the sum-free
-  outputs (``ptNode_inflow``, ``_node_cap_inflow_fallback``,
-  ``new_peak_sign``, ``old_peak_max``, ``old_peak_min``, ``old_peak_sign``,
-  ``new_peak_inflow_sum``).  ``ptNode_inflow`` + ``_node_cap_inflow_fallback``
-  MUST stay Tier A — they feed the already-vectorized pdtNodeInflow and the
-  lp-scaling emitter; drift there propagates.
+  consumed outputs (``ptNode_inflow``, ``_node_cap_inflow_fallback``).
+  They feed the already-vectorized pdtNodeInflow and the lp-scaling
+  emitter; drift there propagates.
 * **Tier B — last-ULP tolerance** (parse both ``value`` cols to float,
-  ``rtol/atol ≤ 1e-12``): the sum-bearing outputs.
+  ``rtol/atol ≤ 1e-12``): the sum-bearing consumed outputs
+  (``period_flow_annual_multiplier``,
+  ``period_flow_proportional_multiplier``, ``new_old_slope``,
+  ``new_old_section``).
 
-The 2 DEAD outputs (``old_peak.csv``,
-``new_peak_divide_by_old_peak_sum_inflow.csv``) are NEVER assigned to the
-out-dict — both dicts must contain exactly the 15 LIVE keys and NEITHER
-dead key (guard).
+The 9 DROPPED outputs and the 2 historical DEAD outputs are NEVER
+assigned to the vectorized out-dict (guard).
 """
 from __future__ import annotations
 
@@ -33,13 +41,21 @@ from flextool.engine_polars._emit_inflow_scaling import (
     _compute_inflow_scaling_frames_vectorized,
 )
 
+# The 6 outputs with a downstream consumer — emitted + parity-gated.
 _LIVE_KEYS = [
     "ptNode_inflow.csv",
     "_node_cap_inflow_fallback.csv",
-    "orig_flow_sum.csv",
-    "period_share_of_annual_flow.csv",
     "period_flow_annual_multiplier.csv",
     "period_flow_proportional_multiplier.csv",
+    "new_old_slope.csv",
+    "new_old_section.csv",
+]
+# The 9 internal middle parameters — NO external consumer, NOT emitted.
+# Their branch coverage is re-expressed below as observable asserts on the
+# kept consumed outputs (slope/section) against the unchanged oracle.
+_DROPPED_KEYS = [
+    "orig_flow_sum.csv",
+    "period_share_of_annual_flow.csv",
     "new_peak_sign.csv",
     "old_peak_max.csv",
     "old_peak_min.csv",
@@ -47,22 +63,18 @@ _LIVE_KEYS = [
     "new_peak_divided_by_old_peak.csv",
     "new_peak_inflow_sum.csv",
     "new_old_multiplier.csv",
-    "new_old_slope.csv",
-    "new_old_section.csv",
 ]
+# Historical never-assigned keys (typo-trap guard, retained).
 _DEAD_KEYS = [
     "old_peak.csv",
     "new_peak_divide_by_old_peak_sum_inflow.csv",
 ]
-# Outputs that MUST be byte-exact (sum-free coalesce / max-abs / sign).
+# Keys that must be ABSENT from the vectorized dict (dropped + dead).
+_ABSENT_KEYS = _DROPPED_KEYS + _DEAD_KEYS
+# Consumed outputs that MUST be byte-exact (sum-free coalesce / max-abs).
 _TIER_A_KEYS = {
     "ptNode_inflow.csv",
     "_node_cap_inflow_fallback.csv",
-    "new_peak_sign.csv",
-    "old_peak_max.csv",
-    "old_peak_min.csv",
-    "old_peak_sign.csv",
-    "new_peak_inflow_sum.csv",
 }
 
 
@@ -129,17 +141,28 @@ def _assert_parity(df_legacy: pl.DataFrame, df_vec: pl.DataFrame,
 
 
 def _gate_dicts(legacy: dict, vec: dict, fixture: str) -> dict[str, str]:
-    """Assert both dicts hold exactly the 15 LIVE keys (no DEAD) and gate
-    every LIVE key with :func:`_assert_parity`.  Returns per-key tier."""
-    assert set(legacy.keys()) == set(_LIVE_KEYS), (
-        f"{fixture}: legacy oracle key set != 15 LIVE keys; "
+    """Gate the 6 CONSUMED outputs vec-vs-oracle, and assert the vectorized
+    dict emits EXACTLY those 6 (the 9 dropped + 2 dead keys are absent).
+
+    The legacy oracle is unchanged: it still materialises all 15 outputs,
+    so it must contain the 6 consumed keys AND the 9 dropped keys (the
+    latter are the faithful reference the branch-coverage asserts read).
+    Returns per-consumed-key tier."""
+    # Oracle still produces all 15 (6 consumed + 9 dropped); no dead keys.
+    assert set(legacy.keys()) == set(_LIVE_KEYS) | set(_DROPPED_KEYS), (
+        f"{fixture}: legacy oracle key set != 15 (6 consumed + 9 dropped); "
         f"got {sorted(legacy.keys())}")
+    # Vectorized path emits EXACTLY the 6 consumed outputs.
     assert set(vec.keys()) == set(_LIVE_KEYS), (
-        f"{fixture}: vectorized key set != 15 LIVE keys; "
+        f"{fixture}: vectorized key set != 6 CONSUMED keys; "
         f"got {sorted(vec.keys())}")
+    # The 9 dropped + 2 historical-dead keys must NOT be emitted.
+    for absent in _ABSENT_KEYS:
+        assert absent not in vec, (
+            f"{fixture}: {absent} must NOT be emitted by the vectorized "
+            f"path (no external consumer)")
     for dead in _DEAD_KEYS:
         assert dead not in legacy, f"{fixture}: DEAD {dead} in legacy"
-        assert dead not in vec, f"{fixture}: DEAD {dead} in vectorized"
 
     tiers: dict[str, str] = {}
     for k in _LIVE_KEYS:
@@ -395,37 +418,97 @@ def test_inflow_scaling_synthetic_coverage(tmp_path):
     vec = _compute_inflow_scaling_frames_vectorized(inp, sdd, provider=p)
     tiers = _gate_dicts(legacy, vec, "synthetic")
 
-    # Oracle sanity: the differentiating branches landed where expected.
+    # The dropped scratch CSVs are no longer emitted, so their old
+    # drop-asymmetry / sign asserts are RE-EXPRESSED as observable
+    # consequences on the KEPT consumed outputs of the VECTORIZED dict.
+    # The unchanged legacy oracle supplies the exact reference float for
+    # each cell (it still materialises the intermediates internally).
     def keyset(frame):
         return {(r[0], r[1]) for r in frame.iter_rows()}
 
-    # Defect A — propN is in stage 6 but NOT stage 5; annN vice-versa.
-    s5 = keyset(legacy["period_flow_annual_multiplier.csv"])
-    s6 = keyset(legacy["period_flow_proportional_multiplier.csv"])
-    assert ("annN", "d1") in s5 and ("annN", "d1") not in s6, s5
-    assert ("propN", "d1") in s6 and ("propN", "d1") not in s5, s6
-    # annAf0 (af==0.0 real key) dropped from stages 3/4/5.
-    assert ("annAf0", "d1") not in keyset(legacy["orig_flow_sum.csv"])
-    assert ("annAf0", "d1") not in s5
-    # annPsaf0 (psaf==0) dropped from stage 5 but PRESENT in stage 4.
-    assert ("annPsaf0", "d1") in keyset(
-        legacy["period_share_of_annual_flow.csv"])
-    assert ("annPsaf0", "d1") not in s5
-    # peakPk0 (peak==0) entirely absent from the peak family.
-    nps = keyset(legacy["new_peak_sign.csv"])
-    assert ("peakPk0", "d1") not in nps
-    # Drop asymmetry: peakOld0 in new_peak_sign but NOT in npop.
-    npop = keyset(legacy["new_peak_divided_by_old_peak.csv"])
-    assert ("peakOld0", "d1") in nps
-    assert ("peakOld0", "d1") not in npop
-    assert legacy["new_peak_sign.csv"].height > legacy[
-        "new_peak_divided_by_old_peak.csv"].height, (
-        "drop asymmetry not exercised — new_peak_sign should have MORE "
-        "rows than new_peak_divided_by_old_peak")
-    # Negative scalar-default sign path.
-    ops = {(r[0], r[1]): r[2]
-           for r in legacy["old_peak_sign.csv"].iter_rows()}
-    assert ops[("peakScalarNeg", "d1")] == repr(-1.0), ops
+    def cell(frame, n, d):
+        m = {(r[0], r[1]): r[2] for r in frame.iter_rows()}
+        return m.get((n, d))
+
+    # --- Defect A (distinct method masks) re-expressed on consumed outs ---
+    # propN flows through period_flow_proportional_multiplier (stage 6) but
+    # NOT period_flow_annual_multiplier (stage 5); annN vice-versa.  Assert
+    # on the VECTORIZED consumed outputs, with the oracle as value ref.
+    v_s5 = keyset(vec["period_flow_annual_multiplier.csv"])
+    v_s6 = keyset(vec["period_flow_proportional_multiplier.csv"])
+    assert ("annN", "d1") in v_s5 and ("annN", "d1") not in v_s6, v_s5
+    assert ("propN", "d1") in v_s6 and ("propN", "d1") not in v_s5, v_s6
+    assert cell(vec["period_flow_annual_multiplier.csv"], "annN", "d1") == (
+        cell(legacy["period_flow_annual_multiplier.csv"], "annN", "d1"))
+    # annAf0 (af==0.0 real key) dropped from the annual stages.
+    assert ("annAf0", "d1") not in v_s5
+    # annPsaf0 (psaf==0) dropped from stage 5 (the stage-4 psaf==0 path is
+    # the cause — re-expressed as: annPsaf0 ABSENT from the consumed
+    # period_flow_annual_multiplier).
+    assert ("annPsaf0", "d1") not in v_s5
+    # peakPk0 (peak==0) entirely absent from the peak family → absent from
+    # the consumed slope/section.
+    v_slope = keyset(vec["new_old_slope.csv"])
+    assert ("peakPk0", "d1") not in v_slope
+
+    # --- peakOld0 (old_peak==0) re-expressed (was: drop asymmetry between
+    # new_peak_sign and new_peak_divided_by_old_peak).  The dropped npop CSV
+    # excluded old_peak==0 rows; the live fused path FILLS npop=0 for them,
+    # so the (node, period) row SURVIVES into slope/section.  Observable
+    # consequence: peakOld0 EXISTS in new_old_slope with slope == 0.0, and
+    # new_old_section == -op_sign*af/8760 (the oracle's value for that cell,
+    # which is the faithful hand-derived reference). ---
+    assert ("peakOld0", "d1") in v_slope, (
+        "old_peak==0 row must SURVIVE (fill-0) into new_old_slope")
+    nos_peakOld0 = cell(vec["new_old_slope.csv"], "peakOld0", "d1")
+    assert nos_peakOld0 == repr(0.0), (
+        f"peakOld0 slope must be 0.0 (npop filled 0 on old_peak==0); "
+        f"got {nos_peakOld0}")
+    # new_old_section == peak * nom; with npop=0 → npopis=0 → denom=npis
+    # → nom = op_sign*(0 - af)/npis = -op_sign*af/(peak*8760).  Section =
+    # peak * nom = -op_sign*af/8760.  Hand-derive from the fixture:
+    # peakOld0 inflow all 0 → op_max=op_min=0 → op_sign=+1 (|0|>=|0|);
+    # af=80, peak=9 → section = -(1)*80/8760.
+    expected_sec = -1.0 * 80.0 / 8760.0
+    sec_peakOld0_legacy = cell(
+        legacy["new_old_section.csv"], "peakOld0", "d1")
+    sec_peakOld0_vec = cell(vec["new_old_section.csv"], "peakOld0", "d1")
+    assert sec_peakOld0_legacy == repr(expected_sec), (
+        f"oracle section for peakOld0 must be -op_sign*af/8760="
+        f"{expected_sec!r}; got {sec_peakOld0_legacy}")
+    # vec is Tier-B (rtol 1e-12) vs oracle — compare as floats.
+    assert abs(float(sec_peakOld0_vec) - expected_sec) <= 1e-12, (
+        f"vectorized peakOld0 section {sec_peakOld0_vec} != {expected_sec}")
+
+    # --- peakScalarNeg (was: old_peak_sign == -1 on the negative scalar-
+    # default path).  No explicit (n,t) rows → has_node_time_inflow False →
+    # scalar default -4.0 → op_sign=-1, op_max=op_min=-4 → old_peak=-4.
+    # Observable consequence on consumed outputs: the negative sign flows
+    # through new_old_slope / new_old_section.  Assert the vectorized values
+    # equal the unchanged oracle (faithful sign-bearing reference). ---
+    assert ("peakScalarNeg", "d1") in v_slope, (
+        "peakScalarNeg must be present (old_peak=-4 != 0)")
+    slope_neg_legacy = cell(legacy["new_old_slope.csv"], "peakScalarNeg", "d1")
+    slope_neg_vec = cell(vec["new_old_slope.csv"], "peakScalarNeg", "d1")
+    sec_neg_legacy = cell(legacy["new_old_section.csv"], "peakScalarNeg", "d1")
+    sec_neg_vec = cell(vec["new_old_section.csv"], "peakScalarNeg", "d1")
+    assert abs(float(slope_neg_vec) - float(slope_neg_legacy)) <= 1e-12, (
+        f"peakScalarNeg slope {slope_neg_vec} != oracle {slope_neg_legacy}")
+    assert abs(float(sec_neg_vec) - float(sec_neg_legacy)) <= 1e-12, (
+        f"peakScalarNeg section {sec_neg_vec} != oracle {sec_neg_legacy}")
+    # The negative sign must be observable INDEPENDENTLY of the oracle, so a
+    # sign regression in the vectorized path is caught even if the oracle
+    # were to drift.  The SLOPE is the negative-bearing quantity here:
+    #   npop = peak/old_peak = 9/-4 = -2.25 < 0, and slope = npop*(1+nom),
+    # so new_old_slope is negative for this fixture (op_sign=-1, old_peak=-4,
+    # peak=9).  (The SECTION, by contrast, is positive here, ≈ +0.0132 — it
+    # is NOT the negative quantity.)  Pin the vectorized slope sign directly:
+    assert float(slope_neg_vec) < 0.0, (
+        f"peakScalarNeg vectorized slope must be negative "
+        f"(npop=9/-4<0), got {slope_neg_vec}")
+    assert sec_neg_legacy is not None and float(sec_neg_legacy) != 0.0, (
+        "peakScalarNeg section must be non-zero (negative-sign path "
+        "exercised)")
 
     print(f"\n[inflow-scaling parity] synthetic coverage tiers: {tiers}")
 
@@ -476,18 +559,38 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
     tiers = _assert_dict_parity(provider, "synthetic-cpsoy0")
     legacy = _compute_inflow_scaling_frames(
         Path("input"), Path("solve_data"), provider=provider)
+    vec = _compute_inflow_scaling_frames_vectorized(
+        Path("input"), Path("solve_data"), provider=provider)
+    # cpsoy==0: stage-5 numerator survives with 0 → the CONSUMED
+    # period_flow_annual_multiplier emits 0.0.  Assert on BOTH paths.
     pfam = {(r[0], r[1]): r[2]
             for r in legacy["period_flow_annual_multiplier.csv"].iter_rows()}
+    pfam_v = {(r[0], r[1]): r[2]
+              for r in vec["period_flow_annual_multiplier.csv"].iter_rows()}
     assert pfam.get(("annN", "d0")) == repr(0.0), (
-        f"cpsoy==0 numerator must survive with 0.0; got {pfam}")
+        f"cpsoy==0 numerator must survive with 0.0 (oracle); got {pfam}")
+    assert pfam_v.get(("annN", "d0")) == repr(0.0), (
+        f"cpsoy==0 numerator must survive with 0.0 (vectorized); "
+        f"got {pfam_v}")
+    # tdy_sum==0 DROPS propN from the CONSUMED
+    # period_flow_proportional_multiplier — assert on BOTH paths.
     assert ("propN", "d0") not in {
         (r[0], r[1])
         for r in legacy[
             "period_flow_proportional_multiplier.csv"].iter_rows()}, (
-        "tdy_sum==0 must DROP propN from stage 6")
+        "tdy_sum==0 must DROP propN from stage 6 (oracle)")
+    assert ("propN", "d0") not in {
+        (r[0], r[1])
+        for r in vec[
+            "period_flow_proportional_multiplier.csv"].iter_rows()}, (
+        "tdy_sum==0 must DROP propN from stage 6 (vectorized)")
     print(f"\n[inflow-scaling parity] synthetic cpsoy0/tdy0 tiers: {tiers}")
 
-    # --- S5 int-0: empty complete_time_in_use → orig_flow_sum emits "0" -
+    # --- empty complete_time_in_use edge case (formerly the S5 int-0
+    # ``"0"`` vs ``"0.0"`` probe).  orig_flow_sum is no longer emitted, so
+    # the int-0 byte special-case is GONE — re-expressed as: the
+    # consumed-output parity gate still holds for an empty complete timeline
+    # AND orig_flow_sum is ABSENT from the vectorized dict. ----------------
     provider2 = FlexDataProvider()
 
     def put2(parent, stem, df):
@@ -522,19 +625,14 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
         "period": ["d1"], "time": ["t1"]}))
 
     tiers2 = _assert_dict_parity(provider2, "synthetic-int0")
-    legacy2 = _compute_inflow_scaling_frames(
-        Path("input"), Path("solve_data"), provider=provider2)
-    ofs = {(r[0], r[1]): r[2]
-           for r in legacy2["orig_flow_sum.csv"].iter_rows()}
-    assert ofs.get(("annN", "d1")) == "0", (
-        f"S5 int-0: empty complete timeline must emit '0' not '0.0'; "
-        f"got {ofs}")
     vec2 = _compute_inflow_scaling_frames_vectorized(
         Path("input"), Path("solve_data"), provider=provider2)
-    ofs_v = {(r[0], r[1]): r[2]
-             for r in vec2["orig_flow_sum.csv"].iter_rows()}
-    assert ofs_v.get(("annN", "d1")) == "0", (
-        f"S5 int-0 (vectorized): must emit '0' not '0.0'; got {ofs_v}")
+    # orig_flow_sum is an internal middle parameter with no consumer here
+    # (annN is scale_to_annual_flow, not a peak node) — it must NOT be
+    # emitted, and the empty-complete-timeline path must not break parity.
+    assert "orig_flow_sum.csv" not in vec2, (
+        "orig_flow_sum must NOT be emitted (no external consumer); the S5 "
+        "int-0 byte special-case is retired")
     print(f"\n[inflow-scaling parity] synthetic int-0 tiers: {tiers2}")
 
     # --- stage-10 denom==0 (npis - npopis == 0 → new_old_multiplier 0) --
@@ -580,8 +678,24 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
     tiers3 = _assert_dict_parity(provider3, "synthetic-denom0")
     legacy3 = _compute_inflow_scaling_frames(
         Path("input"), Path("solve_data"), provider=provider3)
+    vec3 = _compute_inflow_scaling_frames_vectorized(
+        Path("input"), Path("solve_data"), provider=provider3)
+    # denom==0 → nom=0 (oracle reference, on the dropped middle param).
     nom3 = {(r[0], r[1]): r[2]
             for r in legacy3["new_old_multiplier.csv"].iter_rows()}
     assert nom3.get(("peakD0", "d1")) == repr(0.0), (
-        f"denom==0 must yield new_old_multiplier 0.0; got {nom3}")
+        f"denom==0 must yield new_old_multiplier 0.0 (oracle); got {nom3}")
+    # Observable consequence on the CONSUMED outputs: nom=0 →
+    # new_old_section = peak*nom = 0.0, and new_old_slope = npop*(1+0) =
+    # npop = peak/old_peak = 1/6.  Assert on the VECTORIZED dict.
+    sec3 = {(r[0], r[1]): r[2]
+            for r in vec3["new_old_section.csv"].iter_rows()}
+    slope3 = {(r[0], r[1]): r[2]
+              for r in vec3["new_old_slope.csv"].iter_rows()}
+    assert ("peakD0", "d1") in sec3 and float(sec3[("peakD0", "d1")]) == 0.0, (
+        f"denom==0 → new_old_section must be 0.0 (vectorized); got {sec3}")
+    expected_slope = 1.0 / 6.0
+    assert abs(float(slope3[("peakD0", "d1")]) - expected_slope) <= 1e-12, (
+        f"denom==0 → new_old_slope must be npop=1/6 (vectorized); "
+        f"got {slope3}")
     print(f"\n[inflow-scaling parity] synthetic denom0 tiers: {tiers3}")

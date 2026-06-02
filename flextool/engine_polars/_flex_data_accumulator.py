@@ -204,20 +204,15 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "ed_entity_annual_divest_discounted.csv",
     "ed_lifetime_fixed_cost.csv",
     "ed_lifetime_fixed_cost_divest.csv",
-    # _emit_inflow_scaling — Phase E-b lifted (17-CSV monolith)
+    # _emit_inflow_scaling — only the 6 CONSUMED outputs are emitted; the 9
+    # internal middle parameters (orig_flow_sum, period_share_of_annual_flow,
+    # new_peak_sign, old_peak_max, old_peak_min, old_peak_sign,
+    # new_peak_divided_by_old_peak, new_peak_inflow_sum, new_old_multiplier)
+    # have no external consumer and are no longer written.
     "ptNode_inflow.csv",
     "_node_cap_inflow_fallback.csv",
-    "orig_flow_sum.csv",
-    "period_share_of_annual_flow.csv",
     "period_flow_annual_multiplier.csv",
     "period_flow_proportional_multiplier.csv",
-    "new_peak_sign.csv",
-    "old_peak_max.csv",
-    "old_peak_min.csv",
-    "old_peak_sign.csv",
-    "new_peak_divided_by_old_peak.csv",
-    "new_peak_inflow_sum.csv",
-    "new_old_multiplier.csv",
     "new_old_slope.csv",
     "new_old_section.csv",
     # _emit_lp_scaling — Phase E-b lifted (9-CSV monolith)
