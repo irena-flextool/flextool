@@ -276,6 +276,48 @@ Representative entries:
 | `_emit_period_calc.py` | `p_period_share`, `complete_period_share_of_year`, `p_timeline_duration_in_years`. |
 | `_emit_reserve.py` | Reserve-up / reserve-down set machinery for `_reserve.py`. |
 | `_emit_provider_io.py` | The single Provider-funnel (`_emit`, `_provider_key`, `_provider_open`) every emitter routes through. |
+| `_vectorize.py` | Shared per-roll vectorize helpers: the entity × dt and entity × period grids (carrying `__eo` / `__to` / `__po` order keys), the dict→lookup lift, the stochastic / parent-period fold, and the `repr()`-based value rendering. |
+
+### Vectorized per-roll emit
+
+The heavy per-step parameter families — `pdtProcess`, `pdtNode`, the
+`pdtProcess_{source,sink}` per-side variants, `pdtCommodity`,
+`pdtGroup`, and friends — each produce a dense `(entity × dt)` (or
+`(entity × period)`) frame. They are derived with vectorized polars,
+once per roll, over that roll's own window: there is no cache and no
+full-domain frame.
+
+The recipe is the same for every family. First build the dense grid
+for the roll with `build_entity_dt_grid` (or `build_entity_period_grid`
+for the period-only families) from `_vectorize.py`. The grid is the
+cross-product of the entity list and the roll's `(period, time)` list,
+and it carries integer order keys (`__eo` for the entity position,
+`__to` / `__po` for the time or period position) so that a final
+`.sort` on those keys reproduces the intended entity-major,
+time-within-entity row order. Next, lift each parameter source into a
+small polars lookup frame with `lift_dict_to_lookup` and left-join it
+onto the grid. Where a family also has stochastic or parent-period
+terms, `build_fold_frame` computes those as a group-by-sum and joins
+the result in as one more candidate column. Then `coalesce_value`
+picks the first non-null candidate across the cascade branches in
+priority order, and `collect_value_frame` collects the graph to a
+single Float64 value column, sorts by the order keys, and renders each
+value to a string. `derive_pdtProcess_vectorized` in
+`_emit_pdt_params.py` is a representative example, and `emit_pdtProcess`
+simply publishes its output to the Provider.
+
+Two rules keep the rendered output exact:
+
+- **Render values with the `repr()` loop, never `.cast(Utf8)`.**
+  `_render_value_column` walks the value column and emits `repr(v)`
+  per cell. A polars `.cast(Utf8)` diverges from `repr` on
+  scientific-notation exponent padding and on `NaN`/`nan`, which would
+  silently corrupt the emitted text.
+- **Lift lookups from the de-duplicated parameter dict, not raw CSV.**
+  The parameter dicts the family already builds are last-wins-deduped.
+  Lifting a lookup frame straight from the raw CSV would re-introduce
+  duplicate join keys and explode the left-join (one grid row matching
+  many lookup rows). Always lift from the dict.
 
 ### Writer → emitter rename (Phases 1–5)
 
@@ -644,15 +686,16 @@ in two places:
   *which* timesteps and periods the next LP build will see. They are
   computed once per `load_flextool` / per orchestration step and
   reused throughout.
-- `_pdt_lookup.py` — the period × time-instant lookup family.
-  `PdLookup`, `PdtLookup`, and `PdtLookupPerSide` implement the
-  legacy 4-branch / 7-branch / 6-branch fallback cascades that the
-  retired `entity_period_calc_params` module used (period-only
-  defaults, period+time defaults, per-side defaults, class-level
-  defaults). The cascade is encoded as a layered `dict[tuple, float]`
-  rather than a polars join chain — at the small fixture sizes used
-  by these writers it is significantly faster, and the legacy
-  branching semantics are easier to read in dict form.
+- `_pdt_lookup.py` — the period × time-instant parameter family
+  (`pdtProcess`, `pdtNode`, the per-side variants, …). For each
+  parameter there is a priority cascade: a period+time default falls
+  back to a period default, then a time default, then a class-level
+  default, with stochastic and parent-period folds layered on top. The
+  derive that actually produces these frames is vectorized and runs
+  per roll over the roll's own window — see
+  [Vectorized per-roll emit](#vectorized-per-roll-emit) under
+  Emitters for how the cascade is evaluated with polars left-joins and
+  `coalesce` rather than a per-cell scalar loop.
 
 Together these two modules are how "logical model time" (period
 identifiers like `y2025`, branch suffixes like `y2025_low`) is

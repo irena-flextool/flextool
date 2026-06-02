@@ -233,6 +233,7 @@ elif next_version == N:
 
 - **Focused changes** — one feature, one bug fix, or one refactoring per PR. Don't mix unrelated changes.
 - **Tests** — add or update tests for any new or changed functionality. If you're fixing a bug, add a test that would have caught it.
+- **Vectorized derive parity** — when you change a heavy `_emit_*` preprocessing derive, gate the vectorized derive against a reference implementation with a `tests/engine_polars/test_vectorize_<family>_parity.py` test, under a two-tier policy: **Tier A** strict byte-equality (`df_vec.equals(df_legacy)`) for pure lookup/coalesce families, **Tier B** tolerance (`rtol≈1e-12`, parsing both sides' rendered values back to float) for families that sum many terms. Run that per-family parity test in the inner loop.
 - **Updated golden files** — if your change affects solver outputs, regenerate the affected golden files and include them in the PR.
 - **Updated master template** — if your change modifies the database schema, include the regenerated `schemas/spinedb_schema.json`.
 - **Clear description** — explain what the PR does and why. Reference any related issues.
@@ -247,6 +248,7 @@ elif next_version == N:
 - [ ] New `add_var` / `add_cstr` / schema parameter is registered in the autoscale registries (`flextool/engine_polars/autoscale/_layer2_types.py`, `_quantity_types.py`); ran the affected tests with `FLEXTOOL_AUTOSCALE_STRICT=1`. A missing entry silently degrades the solve to an un-scaled LP — see [architecture.md "Numerical scaling"](docs/dev/architecture.md).
 - [ ] Any parameter broadcast over `(d,t)` goes through `_param_shapes` (`resolve_param_shape` / `broadcast_to_period_time` / `promote_param_to_dt`), never column-name axis detection — see [architecture.md "Parameter shapes & (d,t) broadcasting"](docs/dev/architecture.md).
 - [ ] New / changed tests build their DB from JSON or schema under `tmp_path` (no checked-in `.sqlite` dependency).
+- [ ] A changed heavy `_emit_*` derive is gated by a `tests/engine_polars/test_vectorize_<family>_parity.py` test against a reference implementation (Tier A `.equals` for pure lookup/coalesce families, Tier B `rtol≈1e-12` for many-term sums).
 
 ### Review Process
 
@@ -254,13 +256,10 @@ elif next_version == N:
 - At least one review approval is recommended before merging.
 - Prefer merge commits over squash to preserve commit history.
 
-## Solver Binaries
+## Solver
 
-FlexTool uses two solvers:
-- **HiGHS** — called via the `highspy` Python package (installed automatically via pip).
-- **GLPK (glpsol)** — a custom build from [mingodad/GLPK](https://github.com/mingodad/GLPK). Platform-specific binaries are in `bin/`. The macOS binary can be rebuilt via the `build-glpsol.yml` GitHub Actions workflow.
+FlexTool uses the HiGHS solver, called via the `highspy` Python package (installed automatically via pip).
 
 ## CI Workflows
 
 - **`tests.yml`** — runs pytest on all three platforms and verifies the master template is up to date. Triggered on push/PR to `master`.
-- **`build-glpsol.yml`** — builds the glpsol binary for macOS arm64. Triggered manually.

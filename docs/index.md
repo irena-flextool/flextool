@@ -1,6 +1,6 @@
 ![IRENA FlexTool logo](./img/irena_flextool_logo.png)
 
-IRENA FlexTool is an energy systems optimisation model for power and energy systems with high shares of wind and solar power, designed to find cost-effective sources of flexibility across the whole system. It performs multi-year capacity expansion as well as unit commitment and economic dispatch in a user-defined sequence of solves. The aim has been to make it fast to learn and easy to use while covering the time scales relevant for investment planning and operational scheduling.
+IRENA FlexTool is an energy systems optimisation model for power and energy systems with high shares of wind and solar power, designed to find cost-effective sources of flexibility across the whole system. It performs multi-year capacity expansion as well as unit commitment and economic dispatch in a user-defined sequence of solves. The aim has been to make it fast to learn and easy to use while covering the time scales relevant for investment planning and operational scheduling. The data structure allows you to build scenarios up from alternative datasets (no data repetition, think of base data + easily combinable variations - or multiple base data sets if you want).
 
 # Getting started
 
@@ -16,7 +16,7 @@ New to FlexTool? Pick the row that matches what you want to do next — each lin
 
 # Two interfaces
 
-The **FlexTool GUI** is the default, recommended front-end — a standalone Tkinter application launched with `python -m flextool.gui` that walks you through building, solving and inspecting a model ([install](install_gui.md), [interface guide](flextool_gui_interface.md)).
+The **FlexTool GUI** is the default, recommended front-end — a standalone Tkinter application launched with `python -m flextool.gui` that walks you through building, solving and inspecting a model ([install](install_gui.md), [interface guide](flextool_gui_interface.md)). Can use both Excel/LibreOffice input files (FlexTool specific template) or Spine DB input files (FlexTool specific, has all the entity classes and parameters baked in).
 
 The **Spine Toolbox workflow** is the alternative for advanced users who combine FlexTool with other models or build custom input/output processing pipelines ([install](install_toolbox.md), [workflow guide](spine_toolbox.md)).
 
@@ -24,7 +24,7 @@ The **Spine Toolbox workflow** is the alternative for advanced users who combine
 
 # Pure-Python optimisation core
 
-FlexTool's optimisation core is **pure Python**: it builds the LP/MIP matrix in [polars](https://pola.rs/) DataFrames with [polar-high](https://github.com/nodal-tools/polar-high) and solves it directly with [HiGHS](https://highs.dev/). This `engine_polars` backend replaces the older GLPSOL-based pre-processing and is a lot faster on the model-build side (the solver itself is unchanged).
+FlexTool's optimisation core is **pure Python**: it builds the LP/MIP matrix in [polars](https://pola.rs/) DataFrames with [polar-high](https://github.com/nodal-tools/polar-high) and solves it directly with [HiGHS](https://highs.dev/). This `engine_polars` backend has replaced the older GLPSOL-based pre-processing and is a lot (~3-10x) faster on the model-build side (the solver itself is unchanged).
 
 # Video tutorials
 

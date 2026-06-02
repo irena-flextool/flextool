@@ -47,6 +47,17 @@ the authoritative sources before non-trivial work:
    (carry old + new during the migration window), and the migration code
    in `flextool/update_flextool/db_migration.py`.
 
+5. **Vectorized per-roll emit must stay byte-parity.** Render value
+   columns with the `repr()` loop (`_render_value_column`), never
+   `.cast(Utf8)` — a cast silently diverges on sci-notation padding and
+   `NaN`. Lift cascade lookups from the de-duplicated dict
+   (`lift_dict_to_lookup`), never raw CSV — duplicate keys explode the
+   join. Preserve domain/period order (don't `.unique()` the source
+   lists) and the `__eo` / `__to` sort keys. Every heavy `_emit_*`
+   derive is gated by a `test_vectorize_<family>_parity.py` (Tier A
+   `.equals` / Tier B `rtol≈1e-12`).
+   → docs/dev/engine_polars.md "Vectorized per-roll emit".
+
 ## Running / testing
 See `CONTRIBUTING.md` "Running Tests". Inner loop is the area-specific
 suite (`tests/engine_polars/<area>/`); the full `tests/` integration
