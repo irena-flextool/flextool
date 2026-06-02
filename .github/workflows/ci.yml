@@ -37,7 +37,6 @@ jobs:
 
       - name: Set solver binary permissions
         run: |
-          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
           if [ -f bin/highs ]; then chmod +x bin/highs; fi
 
       - name: Run smoke gate
@@ -64,7 +63,6 @@ jobs:
 
       - name: Set solver binary permissions
         run: |
-          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
           if [ -f bin/highs ]; then chmod +x bin/highs; fi
 
       - name: Run full Layer-1 (excluding slow)
@@ -97,7 +95,6 @@ jobs:
 
       - name: Set solver binary permissions
         run: |
-          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
           if [ -f bin/highs ]; then chmod +x bin/highs; fi
 
       - name: Run slow tests

@@ -15,7 +15,5 @@ Author: Juha Kiviluoma (2017-2022), VTT Technical Research Centre of Finland
 
 
 -----------------------------------------------
-IRENA FlexTool uses GLPSOL (part of the GLPK package) and HiGHS solver. Each of them have their own licenses. 
-GLPK source code, license information, is included as it the GNU General Public License requires that. 
-IRENA FlexTool is using GLPK version from https://github.com/mingodad/GLPK/.
+IRENA FlexTool uses the HiGHS solver, which has its own license.
 HiGHS is licensed with MIT license. Please see https://github.com/ERGO-Code/HiGHS for more information.
