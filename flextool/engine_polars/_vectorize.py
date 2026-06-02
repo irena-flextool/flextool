@@ -291,6 +291,23 @@ def build_fold_frame(
     # Stoch: (period, tb, ts) for ts in ts_for_d[d], tb in tb_for_d[d].
     # Parent: (period, pe, tb, ts) for ts in ts_for_d[d], pe in pe_for_d[d],
     #         tb in tb_for_d[pe].  Keep pe (S2 multiplicity).
+    #
+    # The expansion is a function of the DISTINCT period set: the legacy
+    # scalar cascade recomputes the same fold value for every ``(d, t)``
+    # cell of a period, so the per-output-key group-by-sum below must see
+    # each ``(period, tb, ts)`` / ``(period, pe, tb, ts)`` term exactly
+    # once per period — NOT once per ``(d, t)`` cell.  *periods* is the
+    # caller's ``[d for (d, _t) in dt]`` list, which repeats a period once
+    # per timestep; de-duplicate it order-preserving here so a multi-
+    # timestep period does not inflate the fold by its timestep count.
+    # (This is distinct from the S3 ``tb``/``ts``/``pe`` duplicate-row
+    # invariant, which is preserved verbatim within a single period.)
+    seen: set[str] = set()
+    uniq_periods: list[str] = []
+    for d in periods:
+        if d not in seen:
+            seen.add(d)
+            uniq_periods.append(d)
     stoch_period: list[str] = []
     stoch_tb: list[str] = []
     stoch_ts: list[str] = []
@@ -298,7 +315,7 @@ def build_fold_frame(
     par_pe: list[str] = []
     par_tb: list[str] = []
     par_ts: list[str] = []
-    for d in periods:
+    for d in uniq_periods:
         ts_list = ts_for_d.get(d, ())
         tb_list = tb_for_d.get(d, ())
         pe_list = pe_for_d.get(d, ())

@@ -30,6 +30,7 @@ from flextool.engine_polars._emit_provider_io import (
 from flextool.engine_polars._vectorize import (
     build_entity_dt_grid,
     build_entity_period_grid,
+    build_fold_frame,
     coalesce_value,
     collect_value_frame,
     lift_dict_to_lookup,
@@ -537,11 +538,184 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
+                                 *,
+                                 provider: "object | None" = None,
+                                 engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtProfile`` derive — parity with the legacy.
+
+    Replaces the per-cell 5-branch scalar cascade in
+    :func:`derive_pdtProfile` with vectorized polars (left-joins +
+    ``coalesce`` in cascade-priority order + the group-by-sum folds),
+    still per roll over the roll's own window.  Output is byte-identical
+    to :func:`derive_pdtProfile`: columns ``profile, period, time,
+    value`` all ``Utf8``, entity-major row order, ``repr(v)`` value
+    cells.
+
+    Entity key = ``profile`` (single Utf8 col), NO param axis.  Branches
+    (priority): (1) stochastic fold, (2) parent-period fold, (3)
+    ``pt_profile[(profile, time)]``, (4) ``p_profile[profile]``, (5)
+    literal ``0.0``.  The ``pbt_profile`` key is a 4-tuple
+    ``(profile, tb, ts, t)`` (NO param), so the fold key cols are the
+    single ``["profile"]`` column.
+
+    The reader blocks (``pbt`` / ``pt`` / ``p`` loaders, the three fold-
+    index dicts, and the stochastic-profile UNION over process / node /
+    process_node bindings) are copied verbatim from
+    :func:`derive_pdtProfile` so the deduped dicts / stoch set match
+    byte-for-byte.
+    """
+    profiles = _read_singles(input_dir / "profile.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    # pbt / pt / p loaders.
+    pbt_profile: dict[tuple[str, str, str, str], float] = {}
+    pbt_path = input_dir / "pbt_profile.csv"
+    pbt_df = provider.get(_provider_key(pbt_path))
+    if pbt_df is not None:
+        for row in pbt_df.iter_rows():
+            if len(row) < 5:
+                continue
+            c0, c1, c2, c3 = (_cell_str(row[0]), _cell_str(row[1]),
+                              _cell_str(row[2]), _cell_str(row[3]))
+            if c0 and c1 and c2 and c3:
+                try:
+                    pbt_profile[(c0, c1, c2, c3)] = float(row[4])
+                except (ValueError, TypeError):
+                    continue
+    pt_profile: dict[tuple[str, str], float] = {}
+    pt_path = solve_data_dir / "pt_profile.csv"
+    pt_df = provider.get(_provider_key(pt_path))
+    if pt_df is not None:
+        for row in pt_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    pt_profile[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
+    p_profile: dict[str, float] = {}
+    p_path = input_dir / "p_profile.csv"
+    p_df = provider.get(_provider_key(p_path))
+    if p_df is not None:
+        for row in p_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0 = _cell_str(row[0])
+            if c0:
+                try:
+                    p_profile[c0] = float(row[1])
+                except (ValueError, TypeError):
+                    continue
+
+    # Branch indices.
+    ts_for_d = _read_pairs_to_dict(
+        solve_data_dir / "first_timesteps.csv", key_col=0,
+        provider=provider,
+    )
+    tb_for_d = _read_pairs_to_dict(
+        solve_data_dir / "solve_branch__time_branch.csv", key_col=0,
+        provider=provider,
+    )
+    pe_for_d = _read_pairs_to_dict(
+        solve_data_dir / "period__branch.csv", key_col=1,
+        provider=provider,
+    )
+
+    # Stochastic profile UNION: any profile referenced via a stochastic
+    # process / node / process_node binding.
+    stoch_processes = _read_stochastic_entities(
+        input_dir / "group__process.csv",
+        input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
+    )
+    stoch_nodes = _read_stochastic_entities(
+        input_dir / "group__node.csv",
+        input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
+    )
+    stoch_profile: set[str] = set()
+    pp_path = input_dir / "process__profile__profile_method.csv"
+    pp_df = provider.get(_provider_key(pp_path))
+    if pp_df is not None:
+        for row in pp_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 in stoch_processes and c1:
+                stoch_profile.add(c1)
+    np_path = input_dir / "node__profile__profile_method.csv"
+    np_df = provider.get(_provider_key(np_path))
+    if np_df is not None:
+        for row in np_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 in stoch_nodes and c1:
+                stoch_profile.add(c1)
+    pnp_path = input_dir / "process__node__profile__profile_method.csv"
+    pnp_df = provider.get(_provider_key(pnp_path))
+    if pnp_df is not None:
+        for row in pnp_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c2 = _cell_str(row[0]), _cell_str(row[2])
+            if c0 in stoch_processes and c2:
+                stoch_profile.add(c2)
+
+    # --- vectorized assembly ----------------------------------------------
+    key_cols = ["profile"]
+    out_cols = [*key_cols, "period", "time"]
+    periods = [d for (d, _t) in dt]
+
+    grid = build_entity_dt_grid(
+        [(p,) for p in profiles], dt, key_cols=key_cols)
+
+    pt_df_lk = lift_dict_to_lookup(pt_profile, ["profile", "time"], "v_pt")
+    p_df_lk = lift_dict_to_lookup(p_profile, ["profile"], "v_p")
+
+    fold = build_fold_frame(
+        pbt=pbt_profile,
+        pbt_key_cols=["profile"],
+        out_key_cols=out_cols,
+        ts_for_d=ts_for_d,
+        tb_for_d=tb_for_d,
+        pe_for_d=pe_for_d,
+        stoch_entities=stoch_profile,
+        stoch_filter_cols=["profile"],
+        periods=periods,
+    )
+
+    out = (
+        grid
+        .join(pt_df_lk, on=["profile", "time"], how="left")
+        .join(p_df_lk, on=["profile"], how="left")
+    )
+    if fold is not None:
+        out = out.join(fold, on=out_cols, how="left")
+    else:
+        out = out.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("v_fold"))
+
+    out = out.with_columns(
+        coalesce_value([
+            pl.col("v_fold"),   # branches 1-2 (stoch + parent fold)
+            pl.col("v_pt"),     # branch 3 (pt_profile)
+            pl.col("v_p"),      # branch 4 (p_profile)
+            pl.lit(0.0),        # branch 5 (literal 0.0)
+        ])
+    )
+    return collect_value_frame(out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtProfile(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
     """Emit ``pdtProfile`` to the Provider."""
     _emit(provider, "solve_data/pdtProfile.csv",
-          derive_pdtProfile(input_dir, solve_data_dir, provider=provider))
+          derive_pdtProfile_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
