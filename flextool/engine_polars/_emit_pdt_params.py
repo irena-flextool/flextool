@@ -425,6 +425,114 @@ def _derive_pdtProcess_side(
     )
 
 
+def _derive_pdtProcess_side_vectorized(
+    *,
+    pbt_csv: Path,
+    pd_csv: Path,
+    pt_csv: Path,
+    p_csv: Path,
+    period_time_first_csv: Path,
+    solve_branch_csv: Path,
+    period_branch_csv: Path,
+    group_process_csv: Path,
+    group_stochastic_csv: Path,
+    domain_csv: Path,
+    dt_csv: Path,
+    side_col: str,
+    provider: "object | None" = None,
+    engine: str = "eager",
+) -> pl.DataFrame:
+    """Vectorized per-side derive — byte-parity with ``_derive_pdtProcess_side``.
+
+    Replaces the per-cell ``PdtLookupPerSide.get`` loop with vectorized
+    polars (left-joins + ``coalesce`` in cascade-priority order + the
+    group-by-sum folds), still per roll over the roll's own window.
+    Output is byte-identical to :func:`_derive_pdtProcess_side`: columns
+    ``process, <side_col>, param, period, time, value`` all ``Utf8``,
+    entity-major row order, ``repr(v)`` value cells.
+
+    Cascade (``PdtLookupPerSide`` 6-branch, period-first; NO def1 / NO
+    class-default):
+    fold(branch1 stoch + branch2 parent) → ``pd`` → ``pt`` → ``p`` → ``0.0``.
+
+    The 3-col entity key is ``(process, <side_col>, param)``.  Per the
+    M1 quirk (design §4) the stochastic-fold membership test keys on the
+    ``process`` column ALONE (``p ∈ _stoch_process``), even though the
+    pbt join key is the full ``(process, side, param, tb, ts, t)``.  The
+    physical ``side`` column carries the lookup-internal name ``"side"``
+    throughout the join graph and is renamed to *side_col* only at the
+    very end, so the join keys stay aligned regardless of the public
+    column name.
+    """
+    lookup = PdtLookupPerSide(
+        pbt_csv=pbt_csv,
+        pd_csv=pd_csv,
+        pt_csv=pt_csv,
+        p_csv=p_csv,
+        period_time_first_csv=period_time_first_csv,
+        solve_branch_csv=solve_branch_csv,
+        period_branch_csv=period_branch_csv,
+        group_process_csv=group_process_csv,
+        group_stochastic_csv=group_stochastic_csv,
+        provider=provider,
+    )
+    domain = _read_triples(domain_csv, provider=provider)
+    dt = _read_pairs(dt_csv, provider=provider)
+
+    # Internal key uses "side" (not side_col) so the join keys are stable;
+    # the public side_col name is applied only on the final select.
+    key_cols = ["process", "side", "param"]
+    out_cols = [*key_cols, "period", "time"]
+
+    grid = build_entity_dt_grid(domain, dt, key_cols=key_cols)
+
+    pd_df = lift_dict_to_lookup(
+        lookup._pd, ["process", "side", "param", "period"], "v_pd")
+    pt_df = lift_dict_to_lookup(
+        lookup._pt, ["process", "side", "param", "time"], "v_pt")
+    p_df = lift_dict_to_lookup(
+        lookup._p, ["process", "side", "param"], "v_p")
+
+    periods = [d for (d, _t) in dt]
+    fold = build_fold_frame(
+        pbt=lookup._pbt,
+        pbt_key_cols=key_cols,
+        out_key_cols=out_cols,
+        ts_for_d=lookup._ts_for_d,
+        tb_for_d=lookup._tb_for_d,
+        pe_for_d=lookup._pe_for_d,
+        stoch_entities=lookup._stoch_process,
+        stoch_filter_cols=["process"],  # M1: process-only stoch filter.
+        periods=periods,
+    )
+
+    out = (
+        grid
+        .join(pd_df, on=["process", "side", "param", "period"], how="left")
+        .join(pt_df, on=["process", "side", "param", "time"], how="left")
+        .join(p_df, on=["process", "side", "param"], how="left")
+    )
+    if fold is not None:
+        out = out.join(fold, on=out_cols, how="left")
+    else:
+        out = out.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("v_fold"))
+
+    out = out.with_columns(
+        coalesce_value([
+            pl.col("v_fold"),   # branches 1-2 (fold)
+            pl.col("v_pd"),     # branch 3 (period-first)
+            pl.col("v_pt"),     # branch 4
+            pl.col("v_p"),      # branch 5
+            pl.lit(0.0),        # branch 6 (no def1 / no class-default)
+        ])
+    )
+    rendered = collect_value_frame(out, key_cols=out_cols, engine=engine)
+    # Apply the public side column name only at the end.
+    return rendered.rename({"side": side_col}).select(
+        ["process", side_col, "param", "period", "time", "value"])
+
+
 def derive_pdtProcess_source(
     input_dir: Path, solve_data_dir: Path,
     *,
@@ -457,7 +565,23 @@ def emit_pdtProcess_source(input_dir: Path, solve_data_dir: Path,
     """Emit ``pdtProcess_source`` to the Provider."""
     _emit(
         provider, "solve_data/pdtProcess_source.csv",
-        derive_pdtProcess_source(input_dir, solve_data_dir, provider=provider),
+        _derive_pdtProcess_side_vectorized(
+            pbt_csv=input_dir / "pbt_process_source.csv",
+            pd_csv=input_dir / "pd_process_source.csv",
+            pt_csv=input_dir / "pt_process_source.csv",
+            p_csv=input_dir / "p_process_source.csv",
+            period_time_first_csv=solve_data_dir / "first_timesteps.csv",
+            solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+            period_branch_csv=solve_data_dir / "period__branch.csv",
+            group_process_csv=input_dir / "group__process.csv",
+            group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+            domain_csv=(
+                solve_data_dir
+                / "process_source_sourceSinkTimeParam_in_use.csv"),
+            dt_csv=solve_data_dir / "steps_in_use.csv",
+            side_col="source",
+            provider=provider,
+        ),
     )
 
 
@@ -493,5 +617,21 @@ def emit_pdtProcess_sink(input_dir: Path, solve_data_dir: Path,
     """Emit ``pdtProcess_sink`` to the Provider."""
     _emit(
         provider, "solve_data/pdtProcess_sink.csv",
-        derive_pdtProcess_sink(input_dir, solve_data_dir, provider=provider),
+        _derive_pdtProcess_side_vectorized(
+            pbt_csv=input_dir / "pbt_process_sink.csv",
+            pd_csv=input_dir / "pd_process_sink.csv",
+            pt_csv=input_dir / "pt_process_sink.csv",
+            p_csv=input_dir / "p_process_sink.csv",
+            period_time_first_csv=solve_data_dir / "first_timesteps.csv",
+            solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+            period_branch_csv=solve_data_dir / "period__branch.csv",
+            group_process_csv=input_dir / "group__process.csv",
+            group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+            domain_csv=(
+                solve_data_dir
+                / "process_sink_sourceSinkTimeParam_in_use.csv"),
+            dt_csv=solve_data_dir / "steps_in_use.csv",
+            side_col="sink",
+            provider=provider,
+        ),
     )
