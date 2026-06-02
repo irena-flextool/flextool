@@ -143,8 +143,9 @@ def _compute_lp_scaling_frames(
     """Compute every LP-scaling CSV in one pass, returning a dict keyed
     by output basename.
 
-    Used by both the wrapper (each frame fed to ``_write``) and the
-    standalone ``derive_*`` functions (which index this dict).  The 9
+    Retained as the parity ORACLE for
+    :func:`_compute_lp_scaling_frames_vectorized` (see
+    ``tests/engine_polars/test_vectorize_lp_scaling_parity.py``).  The 9
     CSVs share heavy cross-CSV state (``raw_dict`` -> ``pow10_dict`` ->
     ``ncfs_dict`` -> ``grp_raw`` -> ``grp_pow10`` -> group_capacity);
     the dict-of-frames adapter pattern from the audit doc is the
@@ -680,87 +681,6 @@ def _compute_lp_scaling_frames_vectorized(
     )
 
     return out
-
-
-# ---- Phase E-b — derive_X family for each emitted CSV --------------------
-#
-# Each derive_* delegates to the shared :func:`_compute_lp_scaling_frames`
-# pass and indexes the resulting dict.  The shared compute is the path
-# of least re-walking — splitting into 9 standalone derive_* would
-# re-scan ``process_source_sink`` and the (n, d) cross-product per call.
-
-
-def _derive(input_dir: Path, solve_data_dir: Path,
-            basename: str) -> pl.DataFrame:
-    return _compute_lp_scaling_frames(input_dir, solve_data_dir)[basename]
-
-
-def derive__node_cap_unitsize_sum(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``_node_cap_unitsize_sum.csv`` — Σ p_entity_unitsize for each
-    arc-end ∈ nodes, broadcast across period_in_use."""
-    return _derive(input_dir, solve_data_dir, "_node_cap_unitsize_sum.csv")
-
-
-def derive__node_cap_raw(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``_node_cap_raw.csv`` — unitsize_sum if > 0, else inflow_fallback,
-    else 1."""
-    return _derive(input_dir, solve_data_dir, "_node_cap_raw.csv")
-
-
-def derive__node_cap_pow10(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``_node_cap_pow10.csv`` — pow-10 round-clamp of _node_cap_raw."""
-    return _derive(input_dir, solve_data_dir, "_node_cap_pow10.csv")
-
-
-def derive_node_capacity_for_scaling(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``node_capacity_for_scaling.csv`` — _node_cap_pow10 gated by
-    scaling_active (Mode A collapses to 1)."""
-    return _derive(input_dir, solve_data_dir, "node_capacity_for_scaling.csv")
-
-
-def derive_inv_node_cap(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``inv_node_cap.csv`` — 1 / node_capacity_for_scaling."""
-    return _derive(input_dir, solve_data_dir, "inv_node_cap.csv")
-
-
-def derive__group_cap_raw(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``_group_cap_raw.csv`` — Σ over nodes_for_group of
-    node_capacity_for_scaling."""
-    return _derive(input_dir, solve_data_dir, "_group_cap_raw.csv")
-
-
-def derive__group_cap_pow10(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``_group_cap_pow10.csv`` — pow-10 round-clamp of _group_cap_raw."""
-    return _derive(input_dir, solve_data_dir, "_group_cap_pow10.csv")
-
-
-def derive_group_capacity_for_scaling(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``group_capacity_for_scaling.csv`` — _group_cap_pow10 gated by
-    scaling_active."""
-    return _derive(input_dir, solve_data_dir, "group_capacity_for_scaling.csv")
-
-
-def derive_inv_group_cap(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``inv_group_cap.csv`` — 1 / group_capacity_for_scaling."""
-    return _derive(input_dir, solve_data_dir, "inv_group_cap.csv")
 
 
 def emit_lp_scaling_params(
