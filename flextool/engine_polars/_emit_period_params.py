@@ -1118,28 +1118,6 @@ def _derive_conversion_trio(
     return conv_frame, section_frame, slope_frame
 
 
-def derive_pdtProcess_section(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Materialise just the ``pdtProcess_section`` frame."""
-    _conv, sec, _slope = _derive_conversion_trio(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return sec
-
-
-def derive_pdtProcess_slope(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Materialise just the ``pdtProcess_slope`` frame."""
-    _conv, _sec, slope = _derive_conversion_trio(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return slope
-
-
 def emit_pdtConversion_rate_section_slope(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -1738,28 +1716,6 @@ def _derive_positive_negative_inflow(
     return pos_frame, neg_frame
 
 
-def derive_p_positive_inflow(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Materialise just the ``p_positive_inflow`` frame."""
-    pos, _neg = _derive_positive_negative_inflow(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return pos
-
-
-def derive_p_negative_inflow(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Materialise just the ``p_negative_inflow`` frame."""
-    _pos, neg = _derive_positive_negative_inflow(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return neg
-
-
 def emit_p_positive_negative_inflow(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -2051,29 +2007,6 @@ def _derive_varCost_pair_vectorized(
     return _build_vec(pss, always=False), _build_vec(pss_always, always=True)
 
 
-def derive_pdtProcess__source__sink__dt_varCost(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Materialise the ``pdtProcess__source__sink__dt_varCost`` frame."""
-    basic, _always = _derive_varCost_pair(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return basic
-
-
-def derive_pdtProcess__source__sink__dt_varCost_alwaysProcess(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Materialise the ``pdtProcess__source__sink__dt_varCost_alwaysProcess``
-    frame."""
-    _basic, always = _derive_varCost_pair(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return always
-
-
 def emit_pdtProcess__source__sink__dt_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -2332,42 +2265,6 @@ def _derive_pssdt_varCost_filters_vectorized(
     return (no_eff, eff_src, eff_snk, eff_conn)
 
 
-def derive_pssdt_varCost_noEff(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    return _derive_pssdt_varCost_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )[0]
-
-
-def derive_pssdt_varCost_eff_unit_source(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    return _derive_pssdt_varCost_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )[1]
-
-
-def derive_pssdt_varCost_eff_unit_sink(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    return _derive_pssdt_varCost_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )[2]
-
-
-def derive_pssdt_varCost_eff_connection(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    return _derive_pssdt_varCost_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )[3]
-
-
 def emit_pssdt_varCost_filters(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -2488,66 +2385,6 @@ def _ed_period_inputs(input_dir: Path, solve_data_dir: Path,
         solve_data_dir / "ed_divest.csv", provider=provider,
     )
     return pp, pn, process_set, node_set, ed_invest_pairs, ed_divest_pairs
-
-
-def derive_ed_invest_max_period(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    pp, pn, ps, ns, inv, _div = _ed_period_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_period_compute(inv, "invest_max_period", pp, pn, ps, ns)
-
-
-def derive_ed_invest_min_period(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    pp, pn, ps, ns, inv, _div = _ed_period_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_period_compute(inv, "invest_min_period", pp, pn, ps, ns)
-
-
-def derive_ed_divest_max_period(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    pp, pn, ps, ns, _inv, div = _ed_period_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_period_compute(div, "retire_max_period", pp, pn, ps, ns)
-
-
-def derive_ed_divest_min_period(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    pp, pn, ps, ns, _inv, div = _ed_period_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_period_compute(div, "retire_min_period", pp, pn, ps, ns)
-
-
-def derive_ed_cumulative_max_capacity(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    pp, pn, ps, ns, inv, _div = _ed_period_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_period_compute(inv, "cumulative_max_capacity", pp, pn, ps, ns)
-
-
-def derive_ed_cumulative_min_capacity(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    pp, pn, ps, ns, inv, _div = _ed_period_inputs(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_period_compute(inv, "cumulative_min_capacity", pp, pn, ps, ns)
 
 
 def emit_ed_period_params(
