@@ -411,9 +411,8 @@ def _compute_lp_scaling_frames_vectorized(
     )
     group_node = _read_pairs(input_dir / "group__node.csv",
                               provider=provider)
-    nodes_for_group: dict[str, list[str]] = {}
-    for g, n in group_node:
-        nodes_for_group.setdefault(g, []).append(n)
+    # (the legacy ``nodes_for_group`` per-group node list is NOT built: the
+    # vectorized group chain joins the ``group_node`` pairs directly.)
 
     node_set = frozenset(nodes)
 
@@ -566,50 +565,118 @@ def _compute_lp_scaling_frames_vectorized(
     out["inv_node_cap.csv"] = _ordered_value_frame(
         inc_df, ("node", "period", "value"), ["__eo", "__po"],
     )
-    # Reconstruct ncfs_dict {(n, d): float} for the still-legacy group
-    # chain (which sums ncfs over a group's member nodes).
-    ncfs_dict: dict[tuple[str, str], float] = {
-        (r[0], r[1]): r[2]
-        for r in ncfs_df.select(["node", "period", "value_f"]).iter_rows()
+    # (ncfs_dict is not reconstructed: the vectorized group chain reads the
+    # ncfs FRAME directly when summing ncfs over a group's member nodes.)
+
+    # Group order frame (group list position → __eo).
+    group_eo = pl.DataFrame(
+        {"group": list(groups), "__eo": list(range(len(groups)))},
+        schema={"group": pl.Utf8, "__eo": pl.Int64},
+    )
+
+    # ── _group_cap_raw (Tier B + S5 int-0) — UNCONDITIONAL (Defect Y) ───
+    # v = sum(ncfs_dict.get((n, d), 1.0) for n in nodes_for_group.get(g,()))
+    # Join group_node→ncfs on node (left-join + fill_null(1.0) reproduces
+    # the .get((n, d), 1.0) default for a member node absent from ncfs),
+    # group_by([group, period]).sum, densify over group × period.
+    # S5 int-0: a group with NO member nodes → sum(()) == int 0 → emit the
+    # literal "0" (NOT "0.0").  GR is NOT gated by scaling_active.
+    ncfs_lk = ncfs_df.select(
+        ["node", "period", pl.col("value_f").alias("v_ncfs")])
+    gn_df = pl.DataFrame(
+        {"group": [g for g, _n in group_node],
+         "node": [n for _g, n in group_node]},
+        schema={"group": pl.Utf8, "node": pl.Utf8},
+    )
+    # group × member-node × period, then sum the ncfs default-1.0 value.
+    gn_member_sum = (
+        gn_df
+        .join(period_po, how="cross")
+        .join(ncfs_lk, on=["node", "period"], how="left")
+        .with_columns(pl.col("v_ncfs").fill_null(1.0))
+        .group_by(["group", "period"])
+        .agg(pl.col("v_ncfs").sum().alias("v_graw"))
+    )
+    graw_grid = (
+        group_eo.join(period_po, how="cross")
+        .join(gn_member_sum, on=["group", "period"], how="left")
+    )
+    # Split member-less (null group-sum → int-0 "0") from member-bearing
+    # (render the Float64 sum via repr); concat + re-sort by [__eo, __po].
+    if graw_grid.height:
+        member_rows = graw_grid.filter(pl.col("v_graw").is_not_null())
+        memberless_rows = graw_grid.filter(pl.col("v_graw").is_null())
+        parts: list[pl.DataFrame] = []
+        if member_rows.height:
+            parts.append(
+                member_rows.with_columns(
+                    _render_value_column(member_rows["v_graw"]).alias(
+                        "value"))
+                .select(["group", "period", "value", "__eo", "__po"]))
+        if memberless_rows.height:
+            parts.append(
+                memberless_rows.with_columns(
+                    pl.lit("0", dtype=pl.Utf8).alias("value"))
+                .select(["group", "period", "value", "__eo", "__po"]))
+        graw_out = (
+            pl.concat(parts, how="vertical")
+            .sort(["__eo", "__po"])
+            .select(["group", "period", "value"])
+        )
+    else:
+        graw_out = _empty_value_frame(("group", "period", "value"))
+    out["_group_cap_raw.csv"] = graw_out
+    # Reconstruct grp_raw {(g, d): float} (member-less → 0.0; the int/float
+    # distinction is irrelevant to the downstream ``v > 0`` GP10 test).
+    grp_raw: dict[tuple[str, str], float] = {
+        (r[0], r[1]): (r[2] if r[2] is not None else 0.0)
+        for r in graw_grid.select(["group", "period", "v_graw"]).iter_rows()
     }
 
-    # ── _group_cap_raw (LEGACY — C3) ───────────────────────────────────
-    grp_raw: dict[tuple[str, str], float] = {}
-    rows_graw: list[tuple[str, str, float]] = []
-    for g in groups:
-        for d in period_in_use:
-            v = sum(ncfs_dict.get((n, d), 1.0)
-                    for n in nodes_for_group.get(g, ()))
-            grp_raw[(g, d)] = v
-            rows_graw.append((g, d, v))
-    out["_group_cap_raw.csv"] = _rows_to_frame(
-        ("group", "period", "value"), rows_graw,
+    # ── _group_cap_pow10 — UNCONDITIONAL (Defect Y), scalar UDF ─────────
+    # _pow10_round_clamped(graw) if graw > 0 else 1.0.  Reuse the SAME
+    # scalar UDF (note: it already returns 1.0 for v <= 0, so the explicit
+    # ``if graw > 0 else 1.0`` is subsumed by the UDF — apply it directly).
+    gpow10_grid = (
+        group_eo.join(period_po, how="cross")
+        .join(
+            pl.DataFrame(
+                {"group": [k[0] for k in grp_raw],
+                 "period": [k[1] for k in grp_raw],
+                 "raw": list(grp_raw.values())},
+                schema={"group": pl.Utf8, "period": pl.Utf8,
+                        "raw": pl.Float64}),
+            on=["group", "period"], how="left")
     )
+    gpow10_grid = _pow10_value_column(gpow10_grid)
+    out["_group_cap_pow10.csv"] = _ordered_value_frame(
+        gpow10_grid, ("group", "period", "value"), ["__eo", "__po"],
+    )
+    # (grp_pow10 is not reconstructed: the vectorized GCFS stage reads the
+    # gpow10 FRAME directly.)
 
-    # ── _group_cap_pow10 (LEGACY — C3) ─────────────────────────────────
-    grp_pow10: dict[tuple[str, str], float] = {}
-    rows_gpow10: list[tuple[str, str, float]] = []
-    for (g, d), v in grp_raw.items():
-        p10 = _pow10_round_clamped(v) if v > 0 else 1.0
-        grp_pow10[(g, d)] = p10
-        rows_gpow10.append((g, d, p10))
-    out["_group_cap_pow10.csv"] = _rows_to_frame(
-        ("group", "period", "value"), rows_gpow10,
+    # ── group_capacity_for_scaling + inv_group_cap (Tier B) ────────────
+    # gcfs = grp_pow10 if scaling_active else 1.0 (scaling_active is a
+    # Python bool); igc = 1/gcfs if gcfs != 0 else 0.0.  GCFS IS gated.
+    if scaling_active:
+        gcfs_df = gpow10_grid.select(
+            ["group", "period", "__eo", "__po",
+             pl.col("value_f")])
+    else:
+        gcfs_df = group_eo.join(period_po, how="cross").with_columns(
+            pl.lit(1.0, dtype=pl.Float64).alias("value_f"),
+        )
+    out["group_capacity_for_scaling.csv"] = _ordered_value_frame(
+        gcfs_df, ("group", "period", "value"), ["__eo", "__po"],
     )
-
-    # ── group_capacity_for_scaling + inv_group_cap (LEGACY — C3) ───────
-    rows_gcfs: list[tuple[str, str, float]] = []
-    rows_igc: list[tuple[str, str, float]] = []
-    for g in groups:
-        for d in period_in_use:
-            v = grp_pow10.get((g, d), 1.0) if scaling_active else 1.0
-            rows_gcfs.append((g, d, v))
-            rows_igc.append((g, d, 1.0 / v if v != 0 else 0.0))
-    out["group_capacity_for_scaling.csv"] = _rows_to_frame(
-        ("group", "period", "value"), rows_gcfs,
+    igc_df = gcfs_df.with_columns(
+        pl.when(pl.col("value_f") != 0.0)
+        .then(1.0 / pl.col("value_f"))
+        .otherwise(pl.lit(0.0))
+        .alias("value_f"),
     )
-    out["inv_group_cap.csv"] = _rows_to_frame(
-        ("group", "period", "value"), rows_igc,
+    out["inv_group_cap.csv"] = _ordered_value_frame(
+        igc_df, ("group", "period", "value"), ["__eo", "__po"],
     )
 
     return out

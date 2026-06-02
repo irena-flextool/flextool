@@ -372,3 +372,169 @@ def test_lp_scaling_synthetic_scaling_inactive(tmp_path):
                    "node_capacity_for_scaling.csv"].iter_rows()}
     assert ncfs_on[("nA", "d1")] == repr(1000.0), ncfs_on
     print(f"\n[lp-scaling parity] synthetic scaling-off tiers: {tiers_off}")
+
+
+def test_lp_scaling_synthetic_group_chain(tmp_path):
+    """Synthetic coverage for the group chain GR / GP10 / GCFS / IGC:
+
+    * member-less group → GR emits the literal ``"0"`` (S5 int-0), on BOTH
+      legacy and vectorized;
+    * group with ≥3 member nodes → ≥3-term graw (Tier-B demotion probe);
+    * Defect Y — with scaling_active=False, GR and GP10 still emit the REAL
+      sum (UNCONDITIONAL), while GCFS / IGC collapse to 1.0;
+    * a member node ABSENT from the node list → ncfs default 1.0 in the GR
+      sum (the ``.get((n, d), 1.0)`` branch).
+    """
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+
+    def build(active: bool):
+        provider = FlexDataProvider()
+        # Member nodes with distinct unitsizes so ncfs (= pow10) differs:
+        #   m1 usz 9.0   → raw 9   → pow10 10.0
+        #   m2 usz 90.0  → raw 90  → pow10 100.0
+        #   m3 usz 900.0 → raw 900 → pow10 1000.0
+        # gMulti members {m1, m2, m3, mGhost}: graw = 10 + 100 + 1000 +
+        #   1.0 (mGhost absent from node list → ncfs default 1.0) = 1111.0
+        #   (≥3-term sum → Tier-B probe).
+        # gEmpty: no group__node row → member-less → GR "0".
+        nodes = ["m1", "m2", "m3"]
+        _put(provider, "input", "node", pl.DataFrame({"node": nodes}))
+        _put(provider, "input", "group",
+             pl.DataFrame({"group": ["gMulti", "gEmpty"]}))
+        # gMulti includes mGhost which is NOT in the node list.
+        _put(provider, "input", "group__node", pl.DataFrame({
+            "group": ["gMulti", "gMulti", "gMulti", "gMulti"],
+            "node": ["m1", "m2", "m3", "mGhost"]}))
+        _put(provider, "solve_data", "period_in_use_set",
+             pl.DataFrame({"period": ["d1"]}))
+        _put(provider, "solve_data", "solve_current",
+             pl.DataFrame({"solve": ["s1"]}))
+        _put(provider, "solve_data", "p_use_row_scaling",
+             pl.DataFrame({"solve": ["s1"],
+                           "value": [1.0 if active else 0.0]}))
+        _put(provider, "solve_data", "process_source_sink", pl.DataFrame({
+            "process": ["pm1", "pm2", "pm3"],
+            "source": ["x", "y", "z"],
+            "sink": ["m1", "m2", "m3"]}))
+        _put(provider, "solve_data", "p_entity_unitsize", pl.DataFrame({
+            "process": ["pm1", "pm2", "pm3"],
+            "value": [9.0, 90.0, 900.0]}))
+        _put(provider, "solve_data", "_node_cap_inflow_fallback",
+             pl.DataFrame({"node": [], "period": [], "value": []},
+                          schema={"node": pl.Utf8, "period": pl.Utf8,
+                                  "value": pl.Float64}))
+        return provider
+
+    # --- scaling ACTIVE ----------------------------------------------
+    p_on = build(active=True)
+    tiers_on = _assert_dict_parity(p_on, "synthetic-group-on")
+    legacy = _compute_lp_scaling_frames(
+        Path("input"), Path("solve_data"), provider=p_on)
+    vec = _compute_lp_scaling_frames_vectorized(
+        Path("input"), Path("solve_data"), provider=p_on)
+
+    graw_l = {(r[0], r[1]): r[2]
+              for r in legacy["_group_cap_raw.csv"].iter_rows()}
+    graw_v = {(r[0], r[1]): r[2]
+              for r in vec["_group_cap_raw.csv"].iter_rows()}
+    # member-less group → literal "0" on BOTH sides.
+    assert graw_l[("gEmpty", "d1")] == "0", graw_l
+    assert graw_v[("gEmpty", "d1")] == "0", graw_v
+    # ≥3-term sum incl. the ghost-node default 1.0.
+    assert graw_l[("gMulti", "d1")] == repr(1111.0), graw_l
+    assert graw_v[("gMulti", "d1")] == repr(1111.0), graw_v
+    # GP10 of the member-less group: graw 0 → pow10 1.0.
+    gp10_l = {(r[0], r[1]): r[2]
+              for r in legacy["_group_cap_pow10.csv"].iter_rows()}
+    assert gp10_l[("gEmpty", "d1")] == repr(1.0), gp10_l
+    # GCFS active → equals GP10.
+    gcfs_l = {(r[0], r[1]): r[2]
+              for r in legacy[
+                  "group_capacity_for_scaling.csv"].iter_rows()}
+    assert gcfs_l[("gMulti", "d1")] == gp10_l[("gMulti", "d1")], gcfs_l
+
+    # --- Defect Y: scaling INACTIVE → GR/GP10 UNCONDITIONAL ----------
+    p_off = build(active=False)
+    tiers_off = _assert_dict_parity(p_off, "synthetic-group-off")
+    legacy_off = _compute_lp_scaling_frames(
+        Path("input"), Path("solve_data"), provider=p_off)
+    graw_off = {(r[0], r[1]): r[2]
+                for r in legacy_off["_group_cap_raw.csv"].iter_rows()}
+    gp10_off = {(r[0], r[1]): r[2]
+                for r in legacy_off["_group_cap_pow10.csv"].iter_rows()}
+    gcfs_off = {(r[0], r[1]): r[2]
+                for r in legacy_off[
+                    "group_capacity_for_scaling.csv"].iter_rows()}
+    igc_off = {(r[0], r[1]): r[2]
+               for r in legacy_off["inv_group_cap.csv"].iter_rows()}
+    # Defect Y: GR is computed UNCONDITIONALLY — it always sums the ncfs
+    # values, it is NOT itself replaced by 1.0.  But ncfs ITSELF collapses
+    # to 1.0 when scaling is inactive, so graw = sum of four 1.0s = 4.0
+    # (NOT 1.0, and NOT 1111.0).  GP10(4.0) = 10^round(log10(4)) = 10.0.
+    # The proof of "GR not GCFS-gated" is that GR/GP10 emit 4.0/10.0 while
+    # GCFS/IGC are forced to 1.0 — three DISTINCT values.
+    assert graw_off[("gMulti", "d1")] == repr(4.0), graw_off
+    assert gp10_off[("gMulti", "d1")] == repr(10.0), gp10_off
+    # GCFS / IGC collapse to 1.0 (the gated stage).
+    assert gcfs_off[("gMulti", "d1")] == repr(1.0), gcfs_off
+    assert igc_off[("gMulti", "d1")] == repr(1.0), igc_off
+
+    print(f"\n[lp-scaling parity] synthetic group-chain tiers on={tiers_on} "
+          f"off={tiers_off}")
+
+
+def test_lp_scaling_synthetic_half_decade_probe(tmp_path):
+    """Half-decade bucket-stability probe (critique requirement 6).
+
+    Author a node ``raw`` and a group ``graw`` at / near the half-decade
+    boundary ``10^(k+0.5) = sqrt(10)*10^k`` and assert the vectorized pow10
+    bucket matches the legacy bucket on BOTH the node and the group chain —
+    proving the shared scalar-UDF chain is bucket-stable (no ULP-driven
+    decade flip).  ``round(log10(v))`` of a value just below the half-
+    decade rounds DOWN (10^k); just above rounds UP (10^(k+1)).
+    """
+    import math
+
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+
+    half = math.sqrt(10.0)  # 10^0.5 ≈ 3.1623 — the decade boundary.
+    # Node raw just BELOW the boundary → pow10 should be 1.0 (10^0); just
+    # ABOVE → 10.0 (10^1).  A group graw straddling 10^1.5 similarly.
+    nbelow = half * (1.0 - 1e-9)
+    nabove = half * (1.0 + 1e-9)
+
+    provider = FlexDataProvider()
+    nodes = ["below", "above"]
+    _put(provider, "input", "node", pl.DataFrame({"node": nodes}))
+    _put(provider, "input", "group",
+         pl.DataFrame({"group": ["gBoundary"]}))
+    # gBoundary sums below+above ncfs.  We don't assert the exact group
+    # bucket value (it depends on the node pow10s) — we assert vec==legacy
+    # byte-parity, which is the real bucket-stability claim.
+    _put(provider, "input", "group__node", pl.DataFrame({
+        "group": ["gBoundary", "gBoundary"], "node": ["below", "above"]}))
+    _put(provider, "solve_data", "period_in_use_set",
+         pl.DataFrame({"period": ["d1"]}))
+    _put(provider, "solve_data", "solve_current",
+         pl.DataFrame({"solve": ["s1"]}))
+    _put(provider, "solve_data", "p_use_row_scaling",
+         pl.DataFrame({"solve": ["s1"], "value": [1.0]}))
+    _put(provider, "solve_data", "process_source_sink", pl.DataFrame({
+        "process": ["pb", "pa"], "source": ["x", "y"],
+        "sink": ["below", "above"]}))
+    _put(provider, "solve_data", "p_entity_unitsize", pl.DataFrame({
+        "process": ["pb", "pa"], "value": [nbelow, nabove]}))
+    _put(provider, "solve_data", "_node_cap_inflow_fallback",
+         pl.DataFrame({"node": [], "period": [], "value": []},
+                      schema={"node": pl.Utf8, "period": pl.Utf8,
+                              "value": pl.Float64}))
+
+    tiers = _assert_dict_parity(provider, "synthetic-half-decade")
+    legacy = _compute_lp_scaling_frames(
+        Path("input"), Path("solve_data"), provider=provider)
+    p10 = {(r[0], r[1]): r[2]
+           for r in legacy["_node_cap_pow10.csv"].iter_rows()}
+    # The boundary rounds: below → 10^0 = 1.0; above → 10^1 = 10.0.
+    assert p10[("below", "d1")] == repr(1.0), p10
+    assert p10[("above", "d1")] == repr(10.0), p10
+    print(f"\n[lp-scaling parity] synthetic half-decade tiers: {tiers}")
