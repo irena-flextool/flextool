@@ -508,40 +508,13 @@ def build_figure_from_plan(
     if plan.layout_type == 'line':
         layout = LineLayoutParams(**plan.layout_params)
     elif plan.layout_type == 'bar':
+        # The category-label margin is computed once at plan-build time
+        # (_compute_bar_layout → _bar_label_width_inches: the longest label
+        # ACTUALLY drawn across all pages, not a longest-group + longest-bar
+        # sum) and stored, so every page reserves the same margin — the plot
+        # area stays at the same horizontal position when paging, and render
+        # stays fast (no recompute).
         layout = BarLayoutParams(**plan.layout_params)
-        # Recompute the category-label margin at render time over EVERY page's
-        # subplots. It's the longest label ACTUALLY drawn (group folded into
-        # each bar, components capped) — not a (longest group)+(longest bar)
-        # sum, which over-reserves. Computing over all pages keeps it SHARED,
-        # so the plot area stays at the same horizontal position when paging;
-        # doing it here (not just trusting plan.layout_params) makes it immune
-        # to a stale stored layout from an older plan file.
-        from dataclasses import replace
-
-        from flextool.plot_outputs.plot_bars import _bar_label_width_inches
-        shared_w = getattr(plan, "_shared_bar_label_width", None)
-        if shared_w is None:
-            all_subs: list[tuple[str | None, pd.DataFrame]] = []
-            for _title, selector in plan.effective_plot_specs:
-                if isinstance(selector, dict):
-                    sub = _select_bar_rows(processed_df, selector.get('rows', []))
-                    col_sel = selector.get('cols')
-                    if col_sel:
-                        sub = _select_time_columns(sub, col_sel)
-                else:
-                    sub = _select_bar_rows(processed_df, selector)
-                all_subs.append((_title, sub))
-            shared_w = _bar_label_width_inches(
-                all_subs, plan.expand_axis_levels, plan.expand_axis_level_names,
-            )
-            try:
-                plan._shared_bar_label_width = shared_w
-            except Exception:
-                pass
-        if shared_w and shared_w > 0:
-            layout = replace(
-                layout, bar_label_width=shared_w, total_label_width=shared_w,
-            )
     else:
         return None
 
