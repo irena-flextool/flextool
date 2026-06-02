@@ -27,9 +27,9 @@ This module owns the ~36 ``emit_*`` functions that build the
   ``rp_base_last``, ``rp_block_first``, ``rp_block_last``,
   ``rp_block_start_last``, ``rp_cost_weight``).
 
-Each emitter builds an all-``Utf8`` polars frame via a companion
-``derive_*`` helper and registers it on the Provider with the dual
-``basename`` + ``parent/basename`` keys downstream readers expect.
+Each ``emit_*`` builds an all-``Utf8`` polars frame (inline or via a
+shared ``_compute_*`` helper) and registers it on the Provider with the
+dual ``basename`` + ``parent/basename`` keys downstream readers expect.
 When the cascade later flushes to disk (``--csv-dump``), the CRLF line
 terminator preserved through the snapshot path matches the legacy
 ``csv.writer`` + ``newline=""`` byte shape exactly.
@@ -344,44 +344,6 @@ def _compute_first_and_last_periods(
         pb[1] for pb in period__branch_list if pb[0] == period_first
     ]
     return period_last, period_first_of_solve_list, period_first_list
-
-
-def derive_period_last(
-    active_time_list: dict[str, list[tuple[str, ...]]],
-    period__timesets_in_this_solve: list[tuple[str, str]],
-    period__branch_list: list[tuple[str, str]],
-) -> pl.DataFrame:
-    """Build the ``period_last`` frame (period)."""
-    period_last, _, _ = _compute_first_and_last_periods(
-        active_time_list, period__timesets_in_this_solve, period__branch_list,
-    )
-    return _to_utf8_frame(("period",), [(p,) for p in period_last])
-
-
-def derive_period_first_of_solve(
-    active_time_list: dict[str, list[tuple[str, ...]]],
-    period__timesets_in_this_solve: list[tuple[str, str]],
-    period__branch_list: list[tuple[str, str]],
-) -> pl.DataFrame:
-    """Build the ``period_first_of_solve`` frame (period)."""
-    _, period_first_of_solve_list, _ = _compute_first_and_last_periods(
-        active_time_list, period__timesets_in_this_solve, period__branch_list,
-    )
-    return _to_utf8_frame(
-        ("period",), [(p,) for p in period_first_of_solve_list],
-    )
-
-
-def derive_period_first(
-    active_time_list: dict[str, list[tuple[str, ...]]],
-    period__timesets_in_this_solve: list[tuple[str, str]],
-    period__branch_list: list[tuple[str, str]],
-) -> pl.DataFrame:
-    """Build the ``period_first`` frame (period)."""
-    _, _, period_first_list = _compute_first_and_last_periods(
-        active_time_list, period__timesets_in_this_solve, period__branch_list,
-    )
-    return _to_utf8_frame(("period",), [(p,) for p in period_first_list])
 
 
 def emit_first_and_last_periods(
@@ -1171,18 +1133,6 @@ def _compute_rp_frames(
     return out
 
 
-def derive_rp_weights(
-    rp_weights: dict[str, dict[str, float]],
-    timeset_duration_entries: list[tuple[str, float]],
-    period_name: str,
-    timeline_steps: list[str],
-) -> pl.DataFrame:
-    """Build the ``rp_weights`` frame (base_start, rep_start, weight)."""
-    return _compute_rp_frames(
-        rp_weights, timeset_duration_entries, period_name, timeline_steps,
-    )["rp_weights.csv"]
-
-
 # Map from the basename keys produced by :func:`_compute_rp_frames`
 # to the canonical Provider keys (no ``.csv`` suffix, per the Phase 3b
 # convention in :mod:`flextool.engine_polars._provider_keys`).  Used by
@@ -1238,8 +1188,8 @@ def _compute_timeset_cost_weight_rows(
     timesets_used_by_solve: list[tuple[str, str]],
     timeset_weights: dict[str, dict[str, float]],
 ) -> tuple[list[tuple[Any, ...]], bool]:
-    """Shared compute for :func:`derive_timeset_cost_weight` and the
-    wrapper writer.  Returns ``(rows, any_written)``.
+    """Shared compute for :func:`emit_timeset_cost_weight`.
+    Returns ``(rows, any_written)``.
     """
     rows: list[tuple[Any, ...]] = []
     any_written = False
@@ -1258,22 +1208,6 @@ def _compute_timeset_cost_weight_rows(
             rows.append((period, step.timestep, f"{w * scale:.10g}"))
         any_written = True
     return rows, any_written
-
-
-def derive_timeset_cost_weight(
-    active_time_list: dict[str, list],
-    timesets_used_by_solve: list[tuple[str, str]],
-    timeset_weights: dict[str, dict[str, float]],
-) -> pl.DataFrame:
-    """Build the non-RP ``rp_cost_weight`` frame (period, time, weight).
-
-    Empty body when no active timeset on the current solve has
-    ``timeset_weights`` defined.
-    """
-    rows, _ = _compute_timeset_cost_weight_rows(
-        active_time_list, timesets_used_by_solve, timeset_weights,
-    )
-    return _to_utf8_frame(("period", "time", "weight"), rows)
 
 
 def emit_timeset_cost_weight(
