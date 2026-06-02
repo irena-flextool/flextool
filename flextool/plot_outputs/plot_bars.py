@@ -113,9 +113,9 @@ def _bar_label_width_inches(
     Sized to the ACTUAL widest drawn label (group folded into each bar label,
     each component middle-truncated): per subplot, combine that subplot's
     longest bar label with the longest group label present in it, then take
-    the max. Pass ONLY the current file's subplots to keep each file tight to
-    its own labels — sizing to every file's labels at once over-reserves and
-    leaves empty space even on a short file's longest row.
+    the max. Passed every subplot across all files so the margin is shared
+    (the plot area keeps the same horizontal position when paging), while
+    still being the tight true-max rather than a summed over-estimate.
     """
     def _subplot_group_chars(df_sub_cols) -> int:
         if not (expand_axis_levels and expand_axis_level_names):
@@ -160,11 +160,12 @@ def _compute_bar_layout(
 ) -> BarLayoutParams:
     """Compute layout parameters that must be consistent across file batches.
 
-    Examines the given effective_plots. Most margins (legend, value axis,
-    base bar length) are meant to be shared across a plot's files, so the
-    batch path passes every subplot. The category-label width, however, is
-    re-tightened per file by the plan render path (see
-    ``_bar_label_width_inches`` and ``build_figure_from_plan``).
+    Examines ALL effective_plots (every subplot across every file) so that
+    each file reserves the SAME margins — the plot area then stays at the
+    same horizontal location when paging through files. The category-label
+    width is the tight true-max across those subplots (see
+    ``_bar_label_width_inches``), with each label component capped, so the
+    shared margin is as narrow as a shared margin can be.
     """
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
