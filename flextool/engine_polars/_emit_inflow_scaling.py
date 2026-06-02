@@ -2,7 +2,7 @@
 
 Called per-solve from ``_emit_solve_time.run`` (batch 17).
 
-Output CSVs (17 total):
+Output CSVs (15 total):
 
 * ``ptNode_inflow.csv``                            — (n, t) merged inflow
 * ``_node_cap_inflow_fallback.csv``                — (n, d) abs(max)
@@ -13,9 +13,7 @@ Output CSVs (17 total):
 * ``new_peak_sign.csv``                            — (n, d) sign(peak_inflow)
 * ``old_peak_max.csv`` / ``old_peak_min.csv``      — (n, d) inflow series bounds
 * ``old_peak_sign.csv``                            — (n, d) sign per dominant peak
-* ``old_peak.csv``                                 — (n, d) signed dominant peak
 * ``new_peak_divided_by_old_peak.csv``             — (n, d) peak / old_peak
-* ``new_peak_divide_by_old_peak_sum_inflow.csv``   — (n, d) npop * ofs / cpsoy
 * ``new_peak_inflow_sum.csv``                      — (n, d) peak * 8760
 * ``new_old_multiplier.csv``                       — (n, d) affine coefficient
 * ``new_old_slope.csv``                            — (n, d) npop * (1 + nom)
@@ -227,12 +225,14 @@ def _compute_inflow_scaling_frames(
     """Compute every inflow-scaling CSV in one pass, returning a dict
     keyed by output basename.
 
-    Used by both the wrapper (each frame is fed to ``_write``) and the
-    standalone ``derive_*`` functions (which index this dict).  The
-    cross-CSV state (peak family, npop / nom / etc) is heavy enough that
-    splitting into independent derive_* calls would re-walk the time
-    axis O(N) times — the dict-of-frames pattern from the audit doc is
-    the appropriate adapter here.
+    Retained as the parity oracle for
+    :func:`_compute_inflow_scaling_frames_vectorized`
+    (``tests/engine_polars/test_vectorize_inflow_scaling_parity.py``); the
+    live emit path is the vectorized twin.  The cross-CSV state (peak
+    family, npop / nom / etc) is heavy enough that splitting into
+    independent per-CSV passes would re-walk the time axis O(N) times — the
+    dict-of-frames pattern from the audit doc is the appropriate adapter
+    here.
     """
     out: dict[str, pl.DataFrame] = {}
 
@@ -1178,142 +1178,6 @@ def _compute_inflow_scaling_frames_vectorized(
     )
 
     return out
-
-
-# ---- Phase E-b — derive_X family for each emitted CSV --------------------
-#
-# Each derive_* delegates to the shared :func:`_compute_inflow_scaling_frames`
-# pass and indexes the resulting dict.  The shared compute is the path of
-# least re-walking — splitting into 17 standalone derive_* would re-scan
-# the t-axis O(N) times per call.  Public derive_* are thin lookups for
-# Phase D / E-a seed consumers.
-
-
-def _derive(input_dir: Path, solve_data_dir: Path,
-            basename: str) -> pl.DataFrame:
-    return _compute_inflow_scaling_frames(input_dir, solve_data_dir)[basename]
-
-
-def derive_ptNode_inflow(input_dir: Path, solve_data_dir: Path) -> pl.DataFrame:
-    """``ptNode_inflow.csv`` — (n, t) merged inflow with scalar fallback."""
-    return _derive(input_dir, solve_data_dir, "ptNode_inflow.csv")
-
-
-def derive_node_cap_inflow_fallback(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``_node_cap_inflow_fallback.csv`` — per-(n, d) max abs inflow."""
-    return _derive(input_dir, solve_data_dir, "_node_cap_inflow_fallback.csv")
-
-
-def derive_orig_flow_sum(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``orig_flow_sum.csv`` — Σ ptNode_inflow over complete_time_in_use."""
-    return _derive(input_dir, solve_data_dir, "orig_flow_sum.csv")
-
-
-def derive_period_share_of_annual_flow(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``period_share_of_annual_flow.csv`` — abs(Σ_t inflow) / annual_flow."""
-    return _derive(input_dir, solve_data_dir, "period_share_of_annual_flow.csv")
-
-
-def derive_period_flow_annual_multiplier(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``period_flow_annual_multiplier.csv`` — cpsoy / psaf."""
-    return _derive(input_dir, solve_data_dir, "period_flow_annual_multiplier.csv")
-
-
-def derive_period_flow_proportional_multiplier(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``period_flow_proportional_multiplier.csv`` — annual_flow / (abs(Σ_t)/tdy)."""
-    return _derive(
-        input_dir, solve_data_dir, "period_flow_proportional_multiplier.csv",
-    )
-
-
-def derive_new_peak_sign(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``new_peak_sign.csv`` — sign(peak_inflow)."""
-    return _derive(input_dir, solve_data_dir, "new_peak_sign.csv")
-
-
-def derive_old_peak_max(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``old_peak_max.csv`` — max_t inflow per (n, d)."""
-    return _derive(input_dir, solve_data_dir, "old_peak_max.csv")
-
-
-def derive_old_peak_min(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``old_peak_min.csv`` — min_t inflow per (n, d)."""
-    return _derive(input_dir, solve_data_dir, "old_peak_min.csv")
-
-
-def derive_old_peak_sign(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``old_peak_sign.csv`` — +1 if max-abs is positive, else -1."""
-    return _derive(input_dir, solve_data_dir, "old_peak_sign.csv")
-
-
-def derive_old_peak(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``old_peak.csv`` — signed dominant peak."""
-    return _derive(input_dir, solve_data_dir, "old_peak.csv")
-
-
-def derive_new_peak_divided_by_old_peak(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``new_peak_divided_by_old_peak.csv`` — peak / old_peak."""
-    return _derive(input_dir, solve_data_dir, "new_peak_divided_by_old_peak.csv")
-
-
-def derive_new_peak_divide_by_old_peak_sum_inflow(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``new_peak_divide_by_old_peak_sum_inflow.csv`` — npop * ofs / cpsoy."""
-    return _derive(
-        input_dir, solve_data_dir,
-        "new_peak_divide_by_old_peak_sum_inflow.csv",
-    )
-
-
-def derive_new_peak_inflow_sum(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``new_peak_inflow_sum.csv`` — peak_inflow * 8760."""
-    return _derive(input_dir, solve_data_dir, "new_peak_inflow_sum.csv")
-
-
-def derive_new_old_multiplier(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``new_old_multiplier.csv`` — affine coefficient (npis - npopis basis)."""
-    return _derive(input_dir, solve_data_dir, "new_old_multiplier.csv")
-
-
-def derive_new_old_slope(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``new_old_slope.csv`` — npop * (1 + nom)."""
-    return _derive(input_dir, solve_data_dir, "new_old_slope.csv")
-
-
-def derive_new_old_section(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``new_old_section.csv`` — peak * nom."""
-    return _derive(input_dir, solve_data_dir, "new_old_section.csv")
 
 
 def emit_node_inflow_scaling_params(
