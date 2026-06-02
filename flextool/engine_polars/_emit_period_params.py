@@ -27,6 +27,12 @@ from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
 )
+from flextool.engine_polars._vectorize import (
+    build_entity_dt_grid,
+    coalesce_value,
+    collect_value_frame,
+    lift_dict_to_lookup,
+)
 
 
 def _cell_str(value: "object | None") -> str:
@@ -938,11 +944,68 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtCommodity_vectorized(input_dir: Path, solve_data_dir: Path,
+                                   *,
+                                   provider: "object | None" = None,
+                                   engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtCommodity`` derive — byte-parity with the legacy.
+
+    Replaces the per-cell cascade loop in :func:`derive_pdtCommodity`
+    with vectorized polars (left-joins + ``coalesce`` in cascade-priority
+    order), still per roll over the roll's own window.  Output is
+    byte-identical to :func:`derive_pdtCommodity`: columns ``commodity,
+    param, period, time, value`` all ``Utf8``, entity-major row order,
+    ``repr(v)`` value cells.
+
+    Cascade (inline 3-branch, time-first):
+    ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → ``0.0``.
+    """
+    pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
+    pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
+    p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
+    commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    key_cols = ["commodity", "param"]
+    out_cols = [*key_cols, "period", "time"]
+
+    # Domain = commodity × _COMMODITY_TIME_PARAM, preserving legacy
+    # iteration order (commodity-major, param from the tuple) and never
+    # ``.unique()``-d.
+    domain = [(c, param) for c in commodities for param in _COMMODITY_TIME_PARAM]
+
+    grid = build_entity_dt_grid(domain, dt, key_cols=key_cols)
+
+    pt_df = lift_dict_to_lookup(
+        pt, ["commodity", "param", "time"], "v_pt")
+    pd_df = lift_dict_to_lookup(
+        pd_, ["commodity", "param", "period"], "v_pd")
+    p_df = lift_dict_to_lookup(
+        p, ["commodity", "param"], "v_p")
+
+    out = (
+        grid
+        .join(pt_df, on=["commodity", "param", "time"], how="left")
+        .join(pd_df, on=["commodity", "param", "period"], how="left")
+        .join(p_df, on=["commodity", "param"], how="left")
+        .with_columns(
+            coalesce_value([
+                pl.col("v_pt"),   # branch 1 (time-first)
+                pl.col("v_pd"),   # branch 2 (period)
+                pl.col("v_p"),    # branch 3
+                pl.lit(0.0),      # branch 4 (default)
+            ])
+        )
+    )
+    return collect_value_frame(out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtCommodity(input_dir: Path, solve_data_dir: Path,
                        *, provider) -> None:
     """Emit ``pdtCommodity`` to the Provider."""
     _emit(provider, "solve_data/pdtCommodity.csv",
-          derive_pdtCommodity(input_dir, solve_data_dir, provider=provider))
+          derive_pdtCommodity_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
