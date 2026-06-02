@@ -1380,13 +1380,17 @@ def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
                        key_cols: tuple[int, ...],
                        val_col: int,
                        *, provider: "object | None" = None,
+                       frame: "pl.DataFrame | None" = None,
                        ) -> dict[tuple, float]:
     """Read a long-format pdtX CSV, filter rows where col[param_col] ==
     param_value, return dict[tuple(_cell_str(row[c]) for c in key_cols)] =
     float(row[val_col]).
+
+    When *frame* is supplied it is consumed directly (the full-domain cached
+    frame for the full_dt path), bypassing the per-roll ``provider.get``.
     """
     out: dict[tuple, float] = {}
-    df = provider.get(_provider_key(path))
+    df = frame if frame is not None else provider.get(_provider_key(path))
     if df is None:
         return out
     for row in df.iter_rows():
@@ -1404,28 +1408,44 @@ def _read_pdt_at_param(path: Path, param_col: int, param_value: str,
 def _derive_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
+    full_dt_cache: "dict | None" = None,
+    dt_override: "list[tuple[str, str]] | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Build both ``pdtProcess__source__sink__dt_varCost`` frames in one
     pass — the basic and ``_alwaysProcess`` variants share the same
     OOC dictionaries / proc_src / proc_snk lookups.
+
+    full_dt path (R6b): when *full_dt_cache* is supplied the upstream pdt
+    value frames are read from the cached FULL-domain frames
+    (``pdtProcess`` / ``pdtProcess_source`` / ``pdtProcess_sink``) rather than
+    the per-roll ``solve_data/*.csv``, the ``(p, src, snk)`` DOMAINS are
+    RECONSTRUCTED in-place from solve-invariant topology inputs (R6a), and the
+    ``(d, t)`` grid is *dt_override* (the branch-expanded complete timeline).
+    The value at ``(p, src, snk, d, t)`` is a pure coordinate lookup with ZERO
+    window aggregation, so deriving over the complete timeline and slicing to a
+    roll is value-identical to the per-roll derivation (specs §9.5).
     """
+    _fdt = full_dt_cache
     pdt = _read_pdt_at_param(
         solve_data_dir / "pdtProcess.csv",
         param_col=1, param_value="other_operational_cost",
         key_cols=(0, 2, 3), val_col=4,
         provider=provider,
+        frame=_fdt.get("pdtProcess") if _fdt is not None else None,
     )  # (process, period, time) → value
     pdt_src = _read_pdt_at_param(
         solve_data_dir / "pdtProcess_source.csv",
         param_col=2, param_value="other_operational_cost",
         key_cols=(0, 1, 3, 4), val_col=5,
         provider=provider,
+        frame=_fdt.get("pdtProcess_source") if _fdt is not None else None,
     )  # (process, source, period, time) → value
     pdt_snk = _read_pdt_at_param(
         solve_data_dir / "pdtProcess_sink.csv",
         param_col=2, param_value="other_operational_cost",
         key_cols=(0, 1, 3, 4), val_col=5,
         provider=provider,
+        frame=_fdt.get("pdtProcess_sink") if _fdt is not None else None,
     )  # (process, sink, period, time) → value
     proc_src = frozenset(
         _read_pairs(input_dir / "process__source.csv", provider=provider)
@@ -1433,14 +1453,35 @@ def _derive_varCost_pair(
     proc_snk = frozenset(
         _read_pairs(input_dir / "process__sink.csv", provider=provider)
     )
-    pss = _read_triples(
-        solve_data_dir / "process_source_sink.csv", provider=provider,
-    )
-    pss_always = _read_triples(
-        solve_data_dir / "process_source_sink_alwaysProcess.csv",
-        provider=provider,
-    )
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    if _fdt is not None:
+        # R6a: reconstruct the (p, src, snk) domains in-place from the
+        # solve-invariant topology inputs present at full_dt compute time,
+        # NOT from the per-solve ``process_source_sink*.csv`` (emitted later
+        # by the per-roll dispatcher, absent at full_dt compute time).
+        from flextool.engine_polars import _emit_dispatchers as _disp
+        pss = [
+            tuple(r) for r in _disp.reconstruct_process_source_sink(
+                input_dir, provider=provider,
+            ).iter_rows()
+        ]
+        pss_always = [
+            tuple(r)
+            for r in _disp.reconstruct_process_source_sink_alwaysProcess(
+                input_dir, provider=provider,
+            ).iter_rows()
+        ]
+    else:
+        pss = _read_triples(
+            solve_data_dir / "process_source_sink.csv", provider=provider,
+        )
+        pss_always = _read_triples(
+            solve_data_dir / "process_source_sink_alwaysProcess.csv",
+            provider=provider,
+        )
+    if dt_override is not None:
+        dt = dt_override
+    else:
+        dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     def _build(rows_iter: list[tuple[str, str, str]],
                always: bool) -> pl.DataFrame:
@@ -1499,11 +1540,76 @@ def derive_pdtProcess__source__sink__dt_varCost_alwaysProcess(
     return always
 
 
+def _varCost_full_dt_grid(
+    solve_data_dir: Path, *, provider: "object | None" = None,
+) -> list[tuple[str, str]]:
+    """The branch-expanded COMPLETE ``(period, time)`` grid the full_dt
+    varCost families compose over — the same timeline its upstream pdt
+    frames span (see :func:`derive_pdtProcess_full_dt`)."""
+    from flextool.engine_polars import _full_dt as _fdt
+    return _read_pairs(
+        _fdt.branched_path(solve_data_dir, "steps_complete_solve_branched"),
+        provider=provider,
+    )
+
+
+def derive_pdtProcess__source__sink__dt_varCost_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+    full_dt_cache: "dict | None" = None,
+) -> pl.DataFrame:
+    """``pdtProcess__source__sink__dt_varCost`` over the BRANCH-EXPANDED
+    COMPLETE timeline (R6b): upstream pdt value frames from *full_dt_cache*,
+    domain reconstructed in-place (R6a), one frame per ``complete_solve``,
+    sliced per roll via :func:`slice_full_dt`."""
+    basic, _always = _derive_varCost_pair(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_cache=full_dt_cache,
+        dt_override=_varCost_full_dt_grid(solve_data_dir, provider=provider),
+    )
+    return basic
+
+
+def derive_pdtProcess__source__sink__dt_varCost_alwaysProcess_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+    full_dt_cache: "dict | None" = None,
+) -> pl.DataFrame:
+    """``pdtProcess__source__sink__dt_varCost_alwaysProcess`` over the
+    branch-expanded complete timeline (R6b)."""
+    _basic, always = _derive_varCost_pair(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_cache=full_dt_cache,
+        dt_override=_varCost_full_dt_grid(solve_data_dir, provider=provider),
+    )
+    return always
+
+
 def emit_pdtProcess__source__sink__dt_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
+    full_dt_frames: "dict | None" = None,
 ) -> None:
-    """Emit ``pdtProcess__source__sink__dt_varCost_pair`` to the Provider."""
+    """Emit ``pdtProcess__source__sink__dt_varCost_pair`` to the Provider.
+
+    When *full_dt_frames* carries the two cached complete-timeline frames
+    (keyed by family name) the per-roll frames are sliced from them via
+    :func:`slice_full_dt`; otherwise the legacy per-roll derivation runs.
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    if full_dt_frames is not None:
+        for name in (
+            "pdtProcess__source__sink__dt_varCost",
+            "pdtProcess__source__sink__dt_varCost_alwaysProcess",
+        ):
+            _family = next(
+                f for f in _fdt.FULL_DT_FAMILIES if f.name == name
+            )
+            _fdt.emit_via_full_dt(
+                _family, input_dir, solve_data_dir,
+                provider=provider, full_dt_frame=full_dt_frames.get(name),
+            )
+        return
     basic, always = _derive_varCost_pair(
         input_dir, solve_data_dir, provider=provider,
     )
@@ -1532,29 +1638,50 @@ def _filter_rows_to_frame(
 def _derive_pssdt_varCost_filters(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
+    full_dt_cache: "dict | None" = None,
+    dt_override: "list[tuple[str, str]] | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Build all four ``pssdt_varCost_*`` filter frames in one pass."""
+    """Build all four ``pssdt_varCost_*`` filter frames in one pass.
+
+    full_dt path (R6b): when *full_dt_cache* is supplied the upstream pdt
+    value frames and the ``varcost`` lookup are read from the cached
+    FULL-domain frames (``pdtProcess`` / ``pdtProcess_source`` /
+    ``pdtProcess_sink`` / ``pdtProcess__source__sink__dt_varCost``) rather than
+    the per-roll ``solve_data/*.csv``; the ``process_source_sink_noEff`` /
+    ``_eff`` DOMAINS are RECONSTRUCTED in-place (R6a) from solve-invariant
+    topology inputs; and the ``(d, t)`` grid is *dt_override* (the
+    branch-expanded complete timeline).  Each filter row is a pure coordinate
+    predicate (zero window aggregation), so the slice is value-preserving
+    (specs §9.5).
+    """
+    _fdt = full_dt_cache
     pdt = _read_pdt_at_param(
         solve_data_dir / "pdtProcess.csv",
         param_col=1, param_value="other_operational_cost",
         key_cols=(0, 2, 3), val_col=4,
         provider=provider,
+        frame=_fdt.get("pdtProcess") if _fdt is not None else None,
     )
     pdt_src = _read_pdt_at_param(
         solve_data_dir / "pdtProcess_source.csv",
         param_col=2, param_value="other_operational_cost",
         key_cols=(0, 1, 3, 4), val_col=5,
         provider=provider,
+        frame=_fdt.get("pdtProcess_source") if _fdt is not None else None,
     )
     pdt_snk = _read_pdt_at_param(
         solve_data_dir / "pdtProcess_sink.csv",
         param_col=2, param_value="other_operational_cost",
         key_cols=(0, 1, 3, 4), val_col=5,
         provider=provider,
+        frame=_fdt.get("pdtProcess_sink") if _fdt is not None else None,
     )
     varcost: dict[tuple[str, str, str, str, str], float] = {}
     vp = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
-    vp_df = provider.get(_provider_key(vp))
+    vp_df = (
+        _fdt.get("pdtProcess__source__sink__dt_varCost")
+        if _fdt is not None else provider.get(_provider_key(vp))
+    )
     if vp_df is not None:
         for row in vp_df.iter_rows():
             if len(row) < 6:
@@ -1572,13 +1699,31 @@ def _derive_pssdt_varCost_filters(
     proc_snk = frozenset(
         _read_pairs(input_dir / "process__sink.csv", provider=provider)
     )
-    pss_noEff = _read_triples(
-        solve_data_dir / "process_source_sink_noEff.csv", provider=provider,
-    )
-    pss_eff = _read_triples(
-        solve_data_dir / "process_source_sink_eff.csv", provider=provider,
-    )
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    if _fdt is not None:
+        # R6a: reconstruct the eff/noEff domains in-place from solve-invariant
+        # topology inputs (absent at full_dt compute time as per-solve CSVs).
+        from flextool.engine_polars import _emit_dispatchers as _disp
+        pss_noEff = [
+            tuple(r) for r in _disp.reconstruct_process_source_sink_noEff(
+                input_dir, provider=provider,
+            ).iter_rows()
+        ]
+        pss_eff = [
+            tuple(r) for r in _disp.reconstruct_process_source_sink_eff(
+                input_dir, provider=provider,
+            ).iter_rows()
+        ]
+    else:
+        pss_noEff = _read_triples(
+            solve_data_dir / "process_source_sink_noEff.csv", provider=provider,
+        )
+        pss_eff = _read_triples(
+            solve_data_dir / "process_source_sink_eff.csv", provider=provider,
+        )
+    if dt_override is not None:
+        dt = dt_override
+    else:
+        dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
 
     no_eff: list[tuple[str, str, str, str, str]] = []
     for (p, src, snk) in pss_noEff:
@@ -1648,11 +1793,93 @@ def derive_pssdt_varCost_eff_connection(
     )[3]
 
 
+_PSSDT_VARCOST_FAMILIES = (
+    "pssdt_varCost_noEff",
+    "pssdt_varCost_eff_unit_source",
+    "pssdt_varCost_eff_unit_sink",
+    "pssdt_varCost_eff_connection",
+)
+
+
+def derive_pssdt_varCost_noEff_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+    full_dt_cache: "dict | None" = None,
+) -> pl.DataFrame:
+    """``pssdt_varCost_noEff`` over the branch-expanded complete timeline
+    (R6b): reads upstream pdt / varCost full frames from *full_dt_cache*,
+    reconstructs its filter domains in-place (R6a)."""
+    return _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_cache=full_dt_cache,
+        dt_override=_varCost_full_dt_grid(solve_data_dir, provider=provider),
+    )[0]
+
+
+def derive_pssdt_varCost_eff_unit_source_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+    full_dt_cache: "dict | None" = None,
+) -> pl.DataFrame:
+    """``pssdt_varCost_eff_unit_source`` over the branch-expanded complete
+    timeline (R6b)."""
+    return _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_cache=full_dt_cache,
+        dt_override=_varCost_full_dt_grid(solve_data_dir, provider=provider),
+    )[1]
+
+
+def derive_pssdt_varCost_eff_unit_sink_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+    full_dt_cache: "dict | None" = None,
+) -> pl.DataFrame:
+    """``pssdt_varCost_eff_unit_sink`` over the branch-expanded complete
+    timeline (R6b)."""
+    return _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_cache=full_dt_cache,
+        dt_override=_varCost_full_dt_grid(solve_data_dir, provider=provider),
+    )[2]
+
+
+def derive_pssdt_varCost_eff_connection_full_dt(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+    full_dt_cache: "dict | None" = None,
+) -> pl.DataFrame:
+    """``pssdt_varCost_eff_connection`` over the branch-expanded complete
+    timeline (R6b)."""
+    return _derive_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_cache=full_dt_cache,
+        dt_override=_varCost_full_dt_grid(solve_data_dir, provider=provider),
+    )[3]
+
+
 def emit_pssdt_varCost_filters(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
+    full_dt_frames: "dict | None" = None,
 ) -> None:
-    """Emit ``pssdt_varCost_filters`` to the Provider."""
+    """Emit ``pssdt_varCost_filters`` to the Provider.
+
+    When *full_dt_frames* carries the four cached complete-timeline filter
+    frames (keyed by family name) the per-roll frames are sliced from them
+    via :func:`slice_full_dt`; otherwise the legacy per-roll derivation runs.
+    """
+    from flextool.engine_polars import _full_dt as _fdt
+    if full_dt_frames is not None:
+        for name in _PSSDT_VARCOST_FAMILIES:
+            _family = next(
+                f for f in _fdt.FULL_DT_FAMILIES if f.name == name
+            )
+            _fdt.emit_via_full_dt(
+                _family, input_dir, solve_data_dir,
+                provider=provider, full_dt_frame=full_dt_frames.get(name),
+            )
+        return
     no_eff, eff_src, eff_snk, eff_conn = _derive_pssdt_varCost_filters(
         input_dir, solve_data_dir, provider=provider,
     )

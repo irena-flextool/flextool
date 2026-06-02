@@ -1266,9 +1266,13 @@ def native_run_model(state, solver) -> int:
         _cs_full_dt = cached_full_dt_frames[cs]
         for _family in _full_dt.FULL_DT_FAMILIES:
             if _family.name not in _cs_full_dt:
+                # R6b: pass the partially-built per-cs cache so a family
+                # registered after its upstreams can read their full-domain
+                # frames (forwarded only to derivers that accept it).
                 _cs_full_dt[_family.name] = _family.derive_full_dt(
                     wf / "input", wf / "solve_data",
                     provider=sub_solve_provider,
+                    full_dt_cache=_cs_full_dt,
                 )
         # Expose this ``cs``'s cached full-domain frames to the per-solve
         # preprocessing dispatcher (read in ``_emit_solve_time.run``).

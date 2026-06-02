@@ -262,12 +262,22 @@ def run(
     )
     _ck("pdtProcess_sink")
     # ── L4 batch 47 ───────────────────────────────────────────────────
+    # full_dt "solve as picker" (R6b): slice the cached complete-timeline
+    # varCost frames (computed once over full_dt, reading the upstream
+    # pdtProcess/source/sink full frames from the per-cs cache) to the roll
+    # window; else fall back to the legacy per-roll derivation.
     _period.emit_pdtProcess__source__sink__dt_varCost_pair(
         input_dir, solve_data_dir, provider=provider,
+        full_dt_frames=_fdt_frames,
     )
     _ck("pdtProcess__source__sink__dt_varCost_pair")
     # ── L2/L5 batch 48 ────────────────────────────────────────────────
-    _period.emit_pssdt_varCost_filters(input_dir, solve_data_dir, provider=provider)
+    # full_dt "solve as picker" (R6b): slice the cached complete-timeline
+    # filter frames to the roll window; else fall back to legacy per-roll.
+    _period.emit_pssdt_varCost_filters(
+        input_dir, solve_data_dir, provider=provider,
+        full_dt_frames=_fdt_frames,
+    )
     _ck("pssdt_varCost_filters")
     # ── L0/L2 batch 49 ────────────────────────────────────────────────
     _reserve.emit_process_reserve_filters_and_reliability(

@@ -602,6 +602,192 @@ def derive_process__source__sink__profile__profile_method_direct(
     )
 
 
+# ---- R6a in-place domain reconstruction (full_dt) --------------------------
+#
+# The four ``process_source_sink{,_alwaysProcess,_eff,_noEff}`` domains are
+# SOLVE-INVARIANT — they are unions of arc relations derived purely from the
+# topology/method inputs (``process_method`` / ``process__source`` /
+# ``process__sink``), none reading per-solve timeline/period/entity selection.
+# At full_dt compute time (the per-``cs`` populate loop, BEFORE the per-roll
+# dispatcher runs) the per-solve ``solve_data/*.csv`` arc lists the legacy
+# ``_disk_arc_lists`` / ``_arc_unions_inputs`` read are ABSENT.  These helpers
+# RECONSTRUCT the same arc lists + 5-tuple bundle purely from the ``input/``
+# frames (present in the Provider at compute time) by calling the calc-params
+# derivers in-memory, so the reconstructed domains are value-identical to the
+# per-solve CSVs (R6a, mirroring ``derive_node_time_param_in_use`` for
+# pdtNode).
+
+
+def _disk_arc_lists_in_memory(input_dir: Path,
+                              *, provider: "object | None" = None) -> dict:
+    """The six arc lists ``_disk_arc_lists`` reads from ``solve_data``,
+    reconstructed in-memory from ``input/`` topology (R6a)."""
+    from flextool.engine_polars import _emit_calc_params as _cp
+
+    def _rows(df: pl.DataFrame, n: int) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for row in df.iter_rows():
+            if len(row) < n:
+                continue
+            cells = tuple(_cell_str(row[i]) for i in range(n))
+            if all(cells):
+                out.append(cells)
+        return out
+
+    return {
+        "sst": _rows(
+            _cp.derive_process_source_toSink(input_dir, provider=provider), 3),
+        "sts": _rows(
+            _cp.derive_process_sink_toSource(input_dir, provider=provider), 3),
+        "snk_to_proc": _rows(
+            _cp.derive_process_sink_toProcess(input_dir, provider=provider), 3),
+        "proc_to_src": _rows(
+            _cp.derive_process_process_toSource(input_dir, provider=provider),
+            3),
+        "proc_to_snk_noConv": _rows(
+            _cp.derive_process_process_toSink_noConversion(
+                input_dir, provider=provider), 3),
+        "src_to_proc_noConv": _rows(
+            _cp.derive_process_source_toProcess_noConversion(
+                input_dir, provider=provider), 3),
+    }
+
+
+def _arc_unions_inputs_in_memory(input_dir: Path,
+                                 *, provider: "object | None" = None) -> dict:
+    """The ``_arc_unions_inputs`` bundle with the two 5-tuple profile
+    projections reconstructed in-memory from ``input/`` topology (R6a)."""
+    from flextool.engine_polars import _emit_calc_params as _cp
+    METHOD_INDIRECT = _METHOD_INDIRECT
+    METHOD_DIRECT = _METHOD_DIRECT
+    process_method = _read_pairs(input_dir / "process_method.csv",
+                                 provider=provider)
+    sources = _read_pairs(input_dir / "process__source.csv",
+                          provider=provider)
+    sinks = _read_pairs(input_dir / "process__sink.csv",
+                        provider=provider)
+    five_to_sink = [
+        tuple(_cell_str(c) for c in row)
+        for row in _cp
+        .derive_process_profileProcess_toSink_profile_profile_method(
+            input_dir, provider=provider).iter_rows()
+    ]
+    five_to_source = [
+        tuple(_cell_str(c) for c in row)
+        for row in _cp
+        .derive_process_source_toProfileProcess_profile_profile_method(
+            input_dir, provider=provider).iter_rows()
+    ]
+    return {
+        "process_method": process_method,
+        "sources": sources,
+        "sinks": sinks,
+        "p_with_indirect": frozenset(
+            p for p, m in process_method if m in METHOD_INDIRECT),
+        "p_with_direct": frozenset(
+            p for p, m in process_method if m in METHOD_DIRECT),
+        "has_sink": frozenset(p for p, _ in sinks),
+        "has_source": frozenset(p for p, _ in sources),
+        "processes": _read_singles(input_dir / "process.csv",
+                                    provider=provider),
+        "five_tuple_to_sink": five_to_sink,
+        "five_tuple_to_source": five_to_source,
+        "input_dir": input_dir,
+        "solve_data_dir": None,
+    }
+
+
+def _direct_arc_lists_in_memory(input_dir: Path,
+                                *, provider: "object | None" = None) -> dict:
+    """The four ``_direct`` arc lists the ``_alwaysProcess`` union reads,
+    reconstructed in-memory from ``input/`` topology (R6a)."""
+    from flextool.engine_polars import _emit_calc_params as _cp
+
+    def _rows(df: pl.DataFrame, n: int) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for row in df.iter_rows():
+            if len(row) < n:
+                continue
+            cells = tuple(_cell_str(row[i]) for i in range(n))
+            if all(cells):
+                out.append(cells)
+        return out
+
+    return {
+        "src_to_proc_d": _rows(
+            _cp.derive_process_source_toProcess_direct(
+                input_dir, provider=provider), 3),
+        "proc_to_snk_d": _rows(
+            _cp.derive_process_process_toSink_direct(
+                input_dir, provider=provider), 3),
+        "snk_to_proc_d": _rows(
+            _cp.derive_process_sink_toProcess_direct(
+                input_dir, provider=provider), 3),
+        "proc_to_src_d": _rows(
+            _cp.derive_process_process_toSource_direct(
+                input_dir, provider=provider), 3),
+    }
+
+
+def reconstruct_process_source_sink(
+    input_dir: Path, *, provider: "object | None" = None,
+) -> pl.DataFrame:
+    """``process_source_sink`` reconstructed purely from ``input/`` topology
+    (R6a) — value-identical to the per-solve CSV, available at full_dt
+    compute time."""
+    return _compute_process_source_sink(
+        _arc_unions_inputs_in_memory(input_dir, provider=provider),
+        _disk_arc_lists_in_memory(input_dir, provider=provider),
+    )
+
+
+def reconstruct_process_source_sink_alwaysProcess(
+    input_dir: Path, *, provider: "object | None" = None,
+) -> pl.DataFrame:
+    """``process_source_sink_alwaysProcess`` reconstructed purely from
+    ``input/`` topology (R6a)."""
+    inp = _arc_unions_inputs_in_memory(input_dir, provider=provider)
+    disk = _disk_arc_lists_in_memory(input_dir, provider=provider)
+    d = _direct_arc_lists_in_memory(input_dir, provider=provider)
+    src_to_proc = _rows_source_toProcess(inp)
+    proc_to_snk = _rows_process_toSink(inp)
+    profile_to_sink_3 = _profile_to_sink_3(inp)
+    source_to_profile_3 = _source_to_profile_3(inp)
+    pssa: dict[tuple[str, ...], None] = {}
+    for r in (d["src_to_proc_d"] + d["proc_to_snk_d"] + d["snk_to_proc_d"]
+              + d["proc_to_src_d"]
+              + src_to_proc + proc_to_snk
+              + disk["snk_to_proc"] + disk["proc_to_src"]
+              + profile_to_sink_3 + source_to_profile_3
+              + disk["proc_to_snk_noConv"] + disk["src_to_proc_noConv"]):
+        pssa.setdefault(tuple(r), None)
+    return _to_frame(list(pssa.keys()), ("process", "source", "sink"))
+
+
+def reconstruct_process_source_sink_eff(
+    input_dir: Path, *, provider: "object | None" = None,
+) -> pl.DataFrame:
+    """``process_source_sink_eff`` reconstructed purely from ``input/``
+    topology (R6a)."""
+    disk = _disk_arc_lists_in_memory(input_dir, provider=provider)
+    union: dict[tuple[str, ...], None] = {}
+    for r in disk["sst"]:
+        union.setdefault(tuple(r), None)
+    for r in disk["sts"]:
+        union.setdefault(tuple(r), None)
+    return _to_frame(list(union.keys()), ("process", "source", "sink"))
+
+
+def reconstruct_process_source_sink_noEff(
+    input_dir: Path, *, provider: "object | None" = None,
+) -> pl.DataFrame:
+    """``process_source_sink_noEff`` reconstructed purely from ``input/``
+    topology (R6a)."""
+    inp = _arc_unions_inputs_in_memory(input_dir, provider=provider)
+    disk = _disk_arc_lists_in_memory(input_dir, provider=provider)
+    return _compute_process_source_sink_noEff(inp, disk)
+
+
 # ---- Wrapper ---------------------------------------------------------------
 
 

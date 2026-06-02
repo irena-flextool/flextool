@@ -301,6 +301,34 @@ def slice_full_dt(
 _LazyFn = Callable[[], Callable[..., "pl.DataFrame"]]
 
 
+def _accepts_full_dt_cache(fn: "Callable") -> bool:
+    """True if *fn* declares a ``full_dt_cache`` keyword parameter (R6b).
+
+    Cached per function object so the ``inspect`` cost is paid once.
+    """
+    cache = _accepts_full_dt_cache._cache  # type: ignore[attr-defined]
+    hit = cache.get(fn)
+    if hit is None:
+        import inspect
+        try:
+            params = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            hit = False
+        else:
+            hit = (
+                "full_dt_cache" in params
+                or any(
+                    p.kind is inspect.Parameter.VAR_KEYWORD
+                    for p in params.values()
+                )
+            )
+        cache[fn] = hit
+    return hit
+
+
+_accepts_full_dt_cache._cache = {}  # type: ignore[attr-defined]
+
+
 @dataclass(frozen=True)
 class FullDtFamily:
     """A parameter family that is computed once over full_dt and sliced.
@@ -319,11 +347,24 @@ class FullDtFamily:
     def derive_full_dt(
         self, input_dir: "Path | str", solve_data_dir: "Path | str",
         *, provider: "object | None" = None,
+        full_dt_cache: "dict | None" = None,
     ) -> "pl.DataFrame":
-        """Compute the family over the COMPLETE timeline (one per ``cs``)."""
-        return self._derive_full_dt_resolver()(
-            input_dir, solve_data_dir, provider=provider,
-        )
+        """Compute the family over the COMPLETE timeline (one per ``cs``).
+
+        *full_dt_cache* (R6b) is the partially-built per-``cs`` dict of
+        upstream families' complete-timeline frames, populated in registration
+        order so a family registered AFTER its upstreams sees their frames.
+        It is forwarded only to derivers whose signature accepts a
+        ``full_dt_cache`` keyword (introspected once), so families that don't
+        read upstream caches keep their existing two-arg signature.
+        """
+        fn = self._derive_full_dt_resolver()
+        if _accepts_full_dt_cache(fn):
+            return fn(
+                input_dir, solve_data_dir, provider=provider,
+                full_dt_cache=full_dt_cache,
+            )
+        return fn(input_dir, solve_data_dir, provider=provider)
 
     def legacy_derive(
         self, input_dir: "Path | str", solve_data_dir: "Path | str",
@@ -577,3 +618,101 @@ register_family(
     ).derive_pdtProfile,
     emit_key="solve_data/pdtProfile.csv",
 )
+
+# pdtProcess__source__sink__dt_varCost (+ _alwaysProcess) — R6b CACHE-READ
+# families: their ``derive_*_full_dt`` reads the UPSTREAM pdtProcess /
+# pdtProcess_source / pdtProcess_sink FULL-domain frames from the in-progress
+# per-``cs`` cache (``full_dt_cache``) rather than the per-roll
+# ``solve_data/*.csv`` — so they MUST register AFTER those three families
+# (the populate loop runs in registration order, so the upstream frames are
+# present when these compute).  The varCost value at ``(p, src, snk, d, t)``
+# is a pure coordinate lookup with ZERO window aggregation, so the slice is
+# value-preserving (specs §9.5).  Their ``(p, src, snk)`` DOMAINS
+# (``process_source_sink`` / ``process_source_sink_alwaysProcess``) are
+# SOLVE-INVARIANT — derived purely from topology/method inputs
+# (process_method / process__source / process__sink + the topology arc lists,
+# none read per-solve timeline/period/entity selection) — so they are
+# RECONSTRUCTED in-place (R6a) at full_dt compute time, identically to every
+# roll's per-solve domain.
+register_family(
+    "pdtProcess__source__sink__dt_varCost",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=["derive_pdtProcess__source__sink__dt_varCost_full_dt"],
+    ).derive_pdtProcess__source__sink__dt_varCost_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=["derive_pdtProcess__source__sink__dt_varCost"],
+    ).derive_pdtProcess__source__sink__dt_varCost,
+    emit_key="solve_data/pdtProcess__source__sink__dt_varCost.csv",
+)
+register_family(
+    "pdtProcess__source__sink__dt_varCost_alwaysProcess",
+    derive_full_dt=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=[
+            "derive_pdtProcess__source__sink__dt_varCost_alwaysProcess_full_dt",
+        ],
+    ).derive_pdtProcess__source__sink__dt_varCost_alwaysProcess_full_dt,
+    legacy_derive=lambda: __import__(
+        "flextool.engine_polars._emit_period_params",
+        fromlist=[
+            "derive_pdtProcess__source__sink__dt_varCost_alwaysProcess",
+        ],
+    ).derive_pdtProcess__source__sink__dt_varCost_alwaysProcess,
+    emit_key=(
+        "solve_data/pdtProcess__source__sink__dt_varCost_alwaysProcess.csv"
+    ),
+)
+
+# pssdt_varCost_{noEff,eff_unit_source,eff_unit_sink,eff_connection} — R6b
+# CACHE-READ filter families downstream of the varCost producer.  Their
+# ``derive_*_full_dt`` reads the cached complete-timeline
+# ``pdtProcess__source__sink__dt_varCost`` frame (+ the pdt frames) from
+# ``full_dt_cache``, so they MUST register AFTER that producer.  Their filter
+# DOMAINS (``process_source_sink_noEff`` / ``_eff``) are SOLVE-INVARIANT
+# (topology/method-only, same STEP-0 argument as ``process_source_sink``) and
+# RECONSTRUCTED in-place (R6a).  Each filter row is a pure coordinate
+# predicate (zero window aggregation), so the slice is value-preserving.
+for _vc_name, _vc_full, _vc_legacy, _vc_key in (
+    (
+        "pssdt_varCost_noEff",
+        "derive_pssdt_varCost_noEff_full_dt",
+        "derive_pssdt_varCost_noEff",
+        "solve_data/pssdt_varCost_noEff.csv",
+    ),
+    (
+        "pssdt_varCost_eff_unit_source",
+        "derive_pssdt_varCost_eff_unit_source_full_dt",
+        "derive_pssdt_varCost_eff_unit_source",
+        "solve_data/pssdt_varCost_eff_unit_source.csv",
+    ),
+    (
+        "pssdt_varCost_eff_unit_sink",
+        "derive_pssdt_varCost_eff_unit_sink_full_dt",
+        "derive_pssdt_varCost_eff_unit_sink",
+        "solve_data/pssdt_varCost_eff_unit_sink.csv",
+    ),
+    (
+        "pssdt_varCost_eff_connection",
+        "derive_pssdt_varCost_eff_connection_full_dt",
+        "derive_pssdt_varCost_eff_connection",
+        "solve_data/pssdt_varCost_eff_connection.csv",
+    ),
+):
+    register_family(
+        _vc_name,
+        derive_full_dt=(
+            lambda _f=_vc_full: __import__(
+                "flextool.engine_polars._emit_period_params",
+                fromlist=[_f],
+            ).__dict__[_f]
+        ),
+        legacy_derive=(
+            lambda _l=_vc_legacy: __import__(
+                "flextool.engine_polars._emit_period_params",
+                fromlist=[_l],
+            ).__dict__[_l]
+        ),
+        emit_key=_vc_key,
+    )
