@@ -368,10 +368,10 @@ class TestPeriodOrdering:
         )
         ordered_labels = [lbl for lbl, _ in pairs]
         # The expand-group level (scen) is folded into each tick label as
-        # "<bar> | <group>" (group last). Bar (period) portion reads
+        # "<group> | <bar>" (group first). Bar (period) portion reads
         # left-to-right within each group; the first group (scA) is left-most.
-        bar_parts = [lbl.split(" | ")[0] for lbl in ordered_labels]
-        group_parts = [lbl.split(" | ")[1] for lbl in ordered_labels]
+        group_parts = [lbl.split(" | ")[0] for lbl in ordered_labels]
+        bar_parts = [lbl.split(" | ")[1] for lbl in ordered_labels]
         assert bar_parts == periods + periods
         assert group_parts[:3] == ["scA"] * 3
         assert group_parts[3:] == ["scB"] * 3
@@ -400,11 +400,11 @@ class TestPeriodOrdering:
         )
         ordered_labels = [lbl for lbl, _ in pairs]
         # The expand-group level (scen) is now folded into each tick label as
-        # "<bar> | <group>" (group last) instead of a separate label to the
-        # left of the axis. The bar (period) portion still reads top-to-bottom
-        # within each group, and the first group (scA) is on top.
-        bar_parts = [lbl.split(" | ")[0] for lbl in ordered_labels]
-        group_parts = [lbl.split(" | ")[1] for lbl in ordered_labels]
+        # "<group> | <bar>" (group first, outer→inner) instead of a separate
+        # label to the left of the axis. The bar (period) portion still reads
+        # top-to-bottom within each group, and the first group (scA) is on top.
+        group_parts = [lbl.split(" | ")[0] for lbl in ordered_labels]
+        bar_parts = [lbl.split(" | ")[1] for lbl in ordered_labels]
         assert bar_parts == periods + periods
         assert group_parts[:3] == ["scA"] * 3
         assert group_parts[3:] == ["scB"] * 3

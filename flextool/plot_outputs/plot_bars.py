@@ -75,15 +75,23 @@ def _truncate_middle(text: str, cap: int = BAR_LABEL_MAX_CHARS) -> str:
 
 
 def _bar_label_components(idx_val, group=None) -> list[str]:
-    """Flatten a bar's index value (+ optional expand group) into string parts."""
-    parts = list(idx_val) if isinstance(idx_val, tuple) else [idx_val]
+    """Flatten an expand group (outer) + a bar's index value (inner) into parts.
+
+    The expand-group level(s) come FIRST, then the bar index level(s), so the
+    label reads outer→inner (e.g. ``node | unit``) — matching the old
+    "groups" layout where the group label sat to the left of the bar label.
+    Both group and idx_val may be tuples (2+ dimensions), each contributing
+    its levels in order.
+    """
+    parts: list = []
     if group is not None:
         parts += list(group) if isinstance(group, tuple) else [group]
+    parts += list(idx_val) if isinstance(idx_val, tuple) else [idx_val]
     return [str(p) for p in parts]
 
 
 def _format_bar_label(idx_val, group=None, *, truncate: bool = True) -> str:
-    """Build a bar's display label as ``comp1 | comp2 | …`` (expand group last).
+    """Build a bar's display label as ``group | … | bar`` (expand group first).
 
     With ``truncate`` each component is middle-ellipsised to
     ``BAR_LABEL_MAX_CHARS``. ``truncate=False`` yields the full label used for
@@ -116,33 +124,42 @@ def _compute_bar_layout(
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
-    # ── bar-label width (max DRAWN label across ALL subplots) ──
-    # The drawn tick label includes the expand-group level (folded in with
-    # " | ", group last) and is middle-truncated per component, so size the
-    # column to that — not to the raw index text — to keep the grid uniform.
+    # ── bar-label width (widest DRAWN label across ALL subplots) ──
+    # The drawn tick label folds the expand-group level into each bar label
+    # ("group | … | bar") and is middle-truncated per component. Size the
+    # column to the ACTUAL widest drawn label: per subplot, combine that
+    # subplot's longest bar label with the longest group label *present in
+    # it*, then take the global max. (Summing the global-max bar with the
+    # global-max group would over-reserve when, e.g., the long unit lives in
+    # one node's subplot and the long node name in another's.)
+    def _subplot_group_chars(df_sub_cols) -> int:
+        if not (expand_axis_levels and expand_axis_level_names):
+            return 0
+        try:
+            if len(expand_axis_level_names) == 1:
+                groups = df_sub_cols.get_level_values(expand_axis_level_names[0]).unique()
+                lengths = [len(_format_bar_label(g)) for g in groups]
+            else:
+                gf = df_sub_cols.to_frame()[expand_axis_level_names].drop_duplicates()
+                lengths = [len(_format_bar_label(tuple(r))) for r in gf.values]
+        except KeyError:
+            return 0
+        return max(lengths, default=0)
+
     max_bar_label_chars = 0
     for _, df_sub in effective_plots:
         df_sub_clean = df_sub.dropna(how='all')
         if df_sub_clean.empty:
             continue
-        for idx_val in df_sub_clean.index:
-            max_bar_label_chars = max(
-                max_bar_label_chars, len(_format_bar_label(idx_val))
-            )
-
-    # ── expand-group width (folded into the tick label, not a separate column) ──
-    if expand_axis_levels:
-        not_expand = list(set(range(len(df.columns.names))) - set(expand_axis_levels))
-        expand_names = df.columns.droplevel(not_expand)
-        if isinstance(expand_names, pd.MultiIndex):
-            group_drawn = [_format_bar_label(tuple(g)) for g in expand_names]
-        else:
-            group_drawn = [_format_bar_label(g) for g in expand_names]
-        max_group_chars = max((len(s) for s in group_drawn), default=0)
-        max_bar_label_chars += 3 + max_group_chars  # " | " separator + group
+        bar_chars = max(
+            (len(_format_bar_label(iv)) for iv in df_sub_clean.index), default=0
+        )
+        grp_chars = _subplot_group_chars(df_sub_clean.columns)
+        sub_chars = bar_chars + (3 + grp_chars if grp_chars else 0)
+        max_bar_label_chars = max(max_bar_label_chars, sub_chars)
 
     bar_label_width = max_bar_label_chars * CHAR_WIDTH
-    group_label_width = 0.0  # group is now part of the tick label
+    group_label_width = 0.0  # group is now folded into the tick label
     total_label_width = bar_label_width
 
     # ── legend width and height (max across ALL subplots) ──
