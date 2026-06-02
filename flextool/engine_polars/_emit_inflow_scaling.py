@@ -767,82 +767,217 @@ def _compute_inflow_scaling_frames_vectorized(
         return (_has_method(n, "scale_to_annual_flow")
                 or _has_method(n, "scale_to_annual_and_peak_flow"))
 
-    # ── Stage 3: orig_flow_sum (LEGACY — vectorized in C2) ─────────────
-    rows_orig: list[tuple[str, str, float]] = []
-    sum_complete_inflow: dict[str, float] = {}
-    for n in nodes:
-        if not _annual_eligible(n):
-            continue
-        sum_complete_inflow[n] = sum(
-            pti[(n, t)] for t in complete_time_in_use
+    # ── Shared C2 building blocks ──────────────────────────────────────
+    # FOUR DISTINCT method masks (Defect A — do NOT collapse onto one):
+    #   annual_eligible        → stages 3, 4
+    #   scale_to_annual_flow   → stage 5 (a peak-only node is EXCLUDED)
+    #   scale_in_proportion    → stage 6 (disjoint from the annual methods)
+    #   scale_to_annual_and_peak_flow → stages 7, 8 (C3 peak family)
+    # Each as an ordered ``(node, __eo)`` frame so the entity-major
+    # emission order survives the joins.
+    _node_idx = {n: i for i, n in enumerate(nodes)}
+
+    def _ordered_node_frame(pred) -> pl.DataFrame:
+        sel = [n for n in nodes if pred(n)]
+        return pl.DataFrame(
+            {"node": sel, "__eo": [_node_idx[n] for n in sel]},
+            schema={"node": pl.Utf8, "__eo": pl.Int64},
         )
-    for n in nodes:
-        if not _annual_eligible(n):
-            continue
-        s = sum_complete_inflow[n]
-        for d in period_in_use:
-            if pdNode.get((n, "annual_flow", d), 0.0) == 0.0:
-                continue
-            rows_orig.append((n, d, s))
-    out["orig_flow_sum.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_orig,
-    )
-    orig_flow_sum = {(n, d): v for n, d, v in rows_orig}
 
-    # ── Stage 4: period_share_of_annual_flow (LEGACY — vectorized C2) ──
-    rows_psaf: list[tuple[str, str, float]] = []
-    for n in nodes:
-        if not _annual_eligible(n):
-            continue
-        for d in period_in_use:
-            af = pdNode.get((n, "annual_flow", d), 0.0)
-            if af == 0.0:
-                continue
-            s = sum(pti[(n, t)] for t in dt_complete_for_d.get(d, ()))
-            rows_psaf.append((n, d, abs(s) / af))
-    out["period_share_of_annual_flow.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_psaf,
-    )
-    psaf = {(n, d): v for n, d, v in rows_psaf}
+    annual_eligible_eo = _ordered_node_frame(_annual_eligible)
+    annual_flow_only_eo = _ordered_node_frame(
+        lambda n: _has_method(n, "scale_to_annual_flow"))
+    proportion_eo = _ordered_node_frame(
+        lambda n: _has_method(n, "scale_in_proportion"))
 
-    # ── Stage 5: period_flow_annual_multiplier (LEGACY — vectorized C2) ─
-    rows_pfam: list[tuple[str, str, float]] = []
-    for n in nodes:
-        if not _has_method(n, "scale_to_annual_flow"):
-            continue
-        for d in period_in_use:
-            if pdNode.get((n, "annual_flow", d), 0.0) == 0.0:
-                continue
-            denom = psaf.get((n, d), 0.0)
-            if denom == 0.0:
-                continue
-            rows_pfam.append((n, d, cpsoy.get(d, 0.0) / denom))
-    out["period_flow_annual_multiplier.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_pfam,
+    # pdNode annual_flow lookup keyed (node, period) → af.
+    af_keys = [(k[0], k[2]) for k in pdNode if k[1] == "annual_flow"]
+    af_vals = [v for k, v in pdNode.items() if k[1] == "annual_flow"]
+    af_lk = pl.DataFrame(
+        {"node": [k[0] for k in af_keys],
+         "period": [k[1] for k in af_keys],
+         "v_af": af_vals},
+        schema={"node": pl.Utf8, "period": pl.Utf8, "v_af": pl.Float64},
     )
 
-    # ── Stage 6: period_flow_proportional_multiplier (LEGACY — C2) ─────
-    rows_pfpm: list[tuple[str, str, float]] = []
-    sum_time_inflow_by_n: dict[str, float] = {}
-    for n in nodes:
-        if not _has_method(n, "scale_in_proportion"):
-            continue
-        sum_time_inflow_by_n[n] = sum(pti[(n, t)] for t in time_set)
-    for n in nodes:
-        if not _has_method(n, "scale_in_proportion"):
-            continue
-        time_sum = sum_time_inflow_by_n[n]
-        for d in period_in_use:
-            af = pdNode.get((n, "annual_flow", d), 0.0)
-            if af == 0.0:
-                continue
-            tdy_sum = sum(p_tdy.get(tl, 0.0)
-                          for tl in timelines_for_d.get(d, ()))
-            if tdy_sum == 0.0 or time_sum == 0.0:
-                continue
-            rows_pfpm.append((n, d, af / (abs(time_sum) / tdy_sum)))
-    out["period_flow_proportional_multiplier.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_pfpm,
+    # Per-node complete-timeline t-sum (period-independent): the legacy
+    # ``sum(pti[(n,t)] for t in complete_time_in_use)``.  Lift the t-list
+    # to a frame and inner-join the per-node inflow series, then group-sum.
+    cti_lk = pl.DataFrame(
+        {"time": list(complete_time_in_use)},
+        schema={"time": pl.Utf8},
+    )
+    # pti as a (node, time, v_pti) frame restricted to the per-node series.
+    pti_series = pti_df.select(["node", "time", "value_f"]).rename(
+        {"value_f": "v_pti"})
+    complete_sum_df = (
+        pti_series.join(cti_lk, on="time", how="inner")
+        .group_by("node")
+        .agg(pl.col("v_pti").sum().alias("v_complete"))
+    )
+
+    # ── Stage 3: orig_flow_sum (Tier B; S5 int-0 on empty timeline) ────
+    # Domain: annual_eligible AND pdNode annual_flow != 0 (DROP on 0/miss).
+    # value = per-node complete-timeline sum (period-independent).
+    orig_df = (
+        annual_eligible_eo
+        .join(period_po, how="cross")
+        .join(af_lk, on=["node", "period"], how="left")
+        .filter(pl.col("v_af").fill_null(0.0) != 0.0)
+        .join(complete_sum_df, on="node", how="left")
+        # A node with NO complete-timeline rows still emits its sum: the
+        # legacy ``sum(())`` over an empty complete_time_in_use is 0.
+        .with_columns(pl.col("v_complete").fill_null(0.0).alias("value_f"))
+    )
+    if len(complete_time_in_use) == 0:
+        # S5 int-0: ``sum(())`` is the int ``0`` → ``repr`` ``"0"`` (a
+        # Float64 sum would render ``"0.0"``).  Emit the value column as
+        # the literal ``"0"`` for these rows (1-line guard, NOT a Float64
+        # round-trip).  orig_flow_sum is the ONLY int-0 output.
+        orig_df = orig_df.sort(["__eo", "__po"])
+        out["orig_flow_sum.csv"] = orig_df.select(
+            ["node", "period"],
+        ).with_columns(
+            pl.lit("0", dtype=pl.Utf8).alias("value"),
+        ) if orig_df.height else _empty_value_frame(
+            ("node", "period", "value"))
+    else:
+        out["orig_flow_sum.csv"] = _ordered_value_frame(
+            orig_df, ("node", "period", "value"), ["__eo", "__po"],
+        )
+    # Reconstruct orig_flow_sum dict (float values) for downstream stages.
+    orig_flow_sum = {
+        (r[0], r[1]): r[2]
+        for r in orig_df.select(["node", "period", "value_f"]).iter_rows()
+    }
+
+    # ── Stage 4: period_share_of_annual_flow (Tier B) ──────────────────
+    # Domain: annual_eligible AND af != 0 (DROP on 0/miss).
+    # value = abs(sum_{t in dt_complete[d]} pti[(n,t)]) / af.
+    # Per-(node, period) dt_complete sum: lift the (period, time) pairs.
+    dtc_pairs = pl.DataFrame(
+        {"period": [d for d, _t in dt_complete_pairs],
+         "time": [t for _d, t in dt_complete_pairs]},
+        schema={"period": pl.Utf8, "time": pl.Utf8},
+    )
+    # node × (period, time) restricted to annual_eligible nodes only, then
+    # group-sum the inflow series per (node, period).
+    dtc_sum_df = (
+        annual_eligible_eo.select("node")
+        .join(pti_series, on="node", how="inner")
+        .join(dtc_pairs, on="time", how="inner")
+        .group_by(["node", "period"])
+        .agg(pl.col("v_pti").sum().alias("v_dtc"))
+    )
+    psaf_df = (
+        annual_eligible_eo
+        .join(period_po, how="cross")
+        .join(af_lk, on=["node", "period"], how="left")
+        .filter(pl.col("v_af").fill_null(0.0) != 0.0)
+        .join(dtc_sum_df, on=["node", "period"], how="left")
+        # A (node, period) with no dt_complete rows: legacy sum(()) == 0.
+        .with_columns(
+            (pl.col("v_dtc").fill_null(0.0).abs() / pl.col("v_af"))
+            .alias("value_f"),
+        )
+    )
+    out["period_share_of_annual_flow.csv"] = _ordered_value_frame(
+        psaf_df, ("node", "period", "value"), ["__eo", "__po"],
+    )
+    psaf = {
+        (r[0], r[1]): r[2]
+        for r in psaf_df.select(["node", "period", "value_f"]).iter_rows()
+    }
+
+    # ── Stage 6: period_flow_proportional_multiplier (Tier B) ──────────
+    # Domain: scale_in_proportion AND af != 0; DROP if tdy_sum==0 OR
+    # time_sum==0.  value = af / (abs(time_sum) / tdy_sum).
+    # Per-node time-axis sum over the WHOLE time_set.
+    time_sum_df = (
+        proportion_eo.select("node")
+        .join(pti_series, on="node", how="inner")
+        .group_by("node")
+        .agg(pl.col("v_pti").sum().alias("v_timesum"))
+    )
+    # Per-period tdy sum: sum p_tdy over timelines_for_d[d].
+    pt_pairs = pl.DataFrame(
+        {"period": [d for d, _tl in period_timeline],
+         "timeline": [tl for _d, tl in period_timeline]},
+        schema={"period": pl.Utf8, "timeline": pl.Utf8},
+    )
+    tdy_lk = pl.DataFrame(
+        {"timeline": list(p_tdy.keys()), "v_tdy": list(p_tdy.values())},
+        schema={"timeline": pl.Utf8, "v_tdy": pl.Float64},
+    )
+    tdy_sum_df = (
+        pt_pairs
+        .join(tdy_lk, on="timeline", how="left")
+        .group_by("period")
+        .agg(pl.col("v_tdy").fill_null(0.0).sum().alias("v_tdysum"))
+    )
+    pfpm_df = (
+        proportion_eo
+        .join(period_po, how="cross")
+        .join(af_lk, on=["node", "period"], how="left")
+        .filter(pl.col("v_af").fill_null(0.0) != 0.0)
+        .join(time_sum_df, on="node", how="left")
+        .join(tdy_sum_df, on="period", how="left")
+        # A node missing the time-sum join means no inflow rows ⇒ legacy
+        # sum(()) == 0.0; a period missing tdy_sum ⇒ legacy sum(()) == 0.0.
+        .with_columns(
+            pl.col("v_timesum").fill_null(0.0).alias("v_timesum"),
+            pl.col("v_tdysum").fill_null(0.0).alias("v_tdysum"),
+        )
+        .filter(
+            (pl.col("v_tdysum") != 0.0) & (pl.col("v_timesum") != 0.0))
+        .with_columns(
+            (pl.col("v_af")
+             / (pl.col("v_timesum").abs() / pl.col("v_tdysum")))
+            .alias("value_f"),
+        )
+    )
+    out["period_flow_proportional_multiplier.csv"] = _ordered_value_frame(
+        pfpm_df, ("node", "period", "value"), ["__eo", "__po"],
+    )
+
+    # ── Stage 5: period_flow_annual_multiplier (Tier B) ────────────────
+    # Domain: scale_to_annual_flow ONLY (Defect A — a peak-only node is
+    # annual_eligible but EXCLUDED here).  THREE filters, TWO semantics
+    # (Defect B):
+    #   (a) af==0 → DROP (inner-join af_lk + filter af!=0),
+    #   (b) psaf.get((n,d),0.0)==0 → DROP (inner-join psaf + filter !=0 →
+    #       drops BOTH a miss AND an exact-0),
+    #   (c) cpsoy.get(d,0.0) numerator → SURVIVE-with-0 (left-join cpsoy +
+    #       fill_null(0.0)).
+    # value = cpsoy_filled / psaf.
+    psaf_lk = pl.DataFrame(
+        {"node": [k[0] for k in psaf],
+         "period": [k[1] for k in psaf],
+         "v_psaf": list(psaf.values())},
+        schema={"node": pl.Utf8, "period": pl.Utf8, "v_psaf": pl.Float64},
+    )
+    cpsoy_lk = pl.DataFrame(
+        {"period": list(cpsoy.keys()), "v_cpsoy": list(cpsoy.values())},
+        schema={"period": pl.Utf8, "v_cpsoy": pl.Float64},
+    )
+    pfam_df = (
+        annual_flow_only_eo
+        .join(period_po, how="cross")
+        # (a) af==0/miss → DROP.
+        .join(af_lk, on=["node", "period"], how="left")
+        .filter(pl.col("v_af").fill_null(0.0) != 0.0)
+        # (b) psaf miss OR exact-0 → DROP.
+        .join(psaf_lk, on=["node", "period"], how="left")
+        .filter(pl.col("v_psaf").fill_null(0.0) != 0.0)
+        # (c) cpsoy numerator → survive-with-0.
+        .join(cpsoy_lk, on="period", how="left")
+        .with_columns(
+            (pl.col("v_cpsoy").fill_null(0.0) / pl.col("v_psaf"))
+            .alias("value_f"),
+        )
+    )
+    out["period_flow_annual_multiplier.csv"] = _ordered_value_frame(
+        pfam_df, ("node", "period", "value"), ["__eo", "__po"],
     )
 
     # ── Stages 7-8: peak family (LEGACY — vectorized in C3) ────────────
