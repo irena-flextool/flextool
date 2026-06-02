@@ -12,15 +12,11 @@ From ``process_arc_unions.py``:
 * ``write_process_source_sink_param_t``                              (~38 LOC)
 * ``write_node_time_param_in_use``                                   (~44 LOC)
 * ``write_process_source_delayed_partition``                         (~18 LOC)
-* ``write_process_source_sink_param``                                (~62 LOC)
 * ``write_process_source_sink_profile_method_connection``            (~35 LOC)
 * ``write_process_method_sources_sinks``                             (~56 LOC)
 * ``write_ed_history_realized_first``                                (~56 LOC)
-* ``write_process_source_is_node_sink_1way_no_sink_or_more_than_1_source``
-                                                                     (~50 LOC)
 * ``write_process_source_sink_ramp_method``                          (~32 LOC)
 * ``write_process_source_sink_coeff_zero``                           (~24 LOC)
-* ``write_process_source_sink_is_node_family``                       (~46 LOC)
 * ``write_process_source_sink_delayed_partition``                    (~18 LOC)
 
 From ``entity_period_calc_params.py``:
@@ -154,13 +150,6 @@ _PROCESS_TIME_PARAM: frozenset[str] = frozenset((
     "other_operational_cost", "availability",
 ))
 
-# flextool_base.dat:155 — SOURCE_SINK_PARAM
-_SOURCE_SINK_PARAM: frozenset[str] = frozenset((
-    "efficiency", "efficiency_at_min_load", "min_load", "coefficient",
-    "flow_unitsize", "other_operational_cost", "ramp_cost",
-    "ramp_speed_up", "ramp_speed_down", "inertia_constant",
-))
-
 # flextool_base.dat:178 — NODE_TIME_PARAM
 _NODE_TIME_PARAM: frozenset[str] = frozenset((
     "inflow", "penalty_down", "penalty_up", "self_discharge_loss",
@@ -175,21 +164,6 @@ _NODE_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
 # preprocessing/_method_constants.py L90 / L93 — speed/cost-gated subsets.
 _RAMP_LIMIT_METHOD: frozenset[str] = frozenset(("ramp_limit", "both"))
 _RAMP_COST_METHOD: frozenset[str] = frozenset(("ramp_cost", "both"))
-
-# flextool_base.dat:69-70 — METHOD_1WAY
-_METHOD_1WAY: frozenset[str] = frozenset((
-    "method_1way_1var_off", "method_1way_1var_LP", "method_1way_1var_MIP",
-    "method_1way_nvar_off", "method_1way_nvar_LP", "method_1way_nvar_MIP",
-))
-
-# flextool_base.dat:84 — METHOD_2WAY_1VAR
-_METHOD_2WAY_1VAR: frozenset[str] = frozenset(("method_2way_1var_off",))
-
-# flextool_base.dat:85 — METHOD_2WAY_2VAR
-_METHOD_2WAY_2VAR: frozenset[str] = frozenset((
-    "method_2way_2var_off", "method_2way_2var_exclude",
-    "method_2way_2var_MIP_exclude",
-))
 
 
 # ===========================================================================
@@ -317,86 +291,6 @@ def emit_process_source_delayed_partition(
     )
     _emit(provider, "solve_data/process_source_delayed.csv", delayed)
     _emit(provider, "solve_data/process_source_undelayed.csv", undelayed)
-
-
-# ---- process__source__sink__param (mod L1185-1189) -------------------------
-
-def derive_process_source_sink_param(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``process_source_sink × SOURCE_SINK_PARAM`` admitted if param row
-    exists on EITHER side, OR via connection-process ``p_process``.
-    """
-    triples = _read_n_col_rows(
-        solve_data_dir / "process_source_sink.csv",
-        ["process", "source", "sink"],
-        provider=provider,
-    )
-
-    src_param = _drop_blank_rows(
-        _read_csv(
-            input_dir / "p_process_source.csv",
-            ["process", "source", "param"],
-            provider=provider,
-        ),
-        ["process", "source", "param"],
-    )
-    sink_param = _drop_blank_rows(
-        _read_csv(
-            input_dir / "p_process_sink.csv",
-            ["process", "sink", "param"],
-            provider=provider,
-        ),
-        ["process", "sink", "param"],
-    )
-    proc_param = _drop_blank_rows(
-        _read_csv(
-            input_dir / "p_process.csv", ["process", "param"],
-            provider=provider,
-        ),
-        ["process", "param"],
-    )
-    proc_conn = frozenset(
-        _drop_blank_rows(
-            _read_csv(
-                input_dir / "process_connection.csv", ["process"],
-                provider=provider,
-            ),
-            ["process"],
-        ).get_column("process").to_list()
-    )
-
-    src_set: set[tuple[str, str, str]] = set(src_param.iter_rows())
-    sink_set: set[tuple[str, str, str]] = set(sink_param.iter_rows())
-    proc_set: set[tuple[str, str]] = set(proc_param.iter_rows())
-
-    rows: list[tuple[str, str, str, str]] = []
-    for p, src, sink in triples:
-        for param in _SOURCE_SINK_PARAM:
-            if ((p, src, param) in src_set
-                    or (p, sink, param) in sink_set
-                    or ((p, param) in proc_set and p in proc_conn)):
-                rows.append((p, src, sink, param))
-    return pl.DataFrame(
-        {
-            "process": [r[0] for r in rows],
-            "source":  [r[1] for r in rows],
-            "sink":    [r[2] for r in rows],
-            "param":   [r[3] for r in rows],
-        },
-        schema={"process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "param": pl.Utf8},
-    )
-
-
-def emit_process_source_sink_param(input_dir: Path, solve_data_dir: Path,
-                                     *, provider) -> None:
-    """Emit ``process_source_sink_param`` to the Provider."""
-    _emit(provider, "solve_data/process__source__sink__param.csv",
-          derive_process_source_sink_param(
-              input_dir, solve_data_dir, provider=provider,
-          ))
 
 
 # ---- process__source__sink__profile__profile_method_connection
@@ -555,77 +449,6 @@ def emit_ed_history_realized_first(
           ))
 
 
-# ---- process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source
-#      (mod L1152-1155) -----------------------------------------------------
-
-def derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``process_source_sink`` filtered for 1-way processes whose source
-    is a real node-side endpoint, with no sink OR ≥2 sources.
-    """
-    triples = _read_n_col_rows(
-        solve_data_dir / "process_source_sink.csv",
-        ["process", "source", "sink"],
-        provider=provider,
-    )
-    pm = _read_n_col_rows(
-        input_dir / "process_method.csv", ["process", "method"],
-        provider=provider,
-    )
-    methods_of_p: dict[str, set[str]] = {}
-    for p, m in pm:
-        methods_of_p.setdefault(p, set()).add(m)
-    has_1way = {p: bool(ms & _METHOD_1WAY) for p, ms in methods_of_p.items()}
-
-    proc_source_pairs = frozenset(_read_n_col_rows(
-        input_dir / "process__source.csv", ["process", "source"],
-        provider=provider,
-    ))
-    sources_of_p: dict[str, int] = {}
-    for p, _ in proc_source_pairs:
-        sources_of_p[p] = sources_of_p.get(p, 0) + 1
-    sinks_of_p: dict[str, int] = {}
-    for p, _ in _read_n_col_rows(
-        input_dir / "process__sink.csv", ["process", "sink"],
-        provider=provider,
-    ):
-        sinks_of_p[p] = sinks_of_p.get(p, 0) + 1
-
-    rows: list[tuple[str, str, str]] = []
-    for p, src, sink in triples:
-        if not has_1way.get(p, False):
-            continue
-        if (p, src) not in proc_source_pairs:
-            continue
-        if sinks_of_p.get(p, 0) == 0 or sources_of_p.get(p, 0) >= 2:
-            rows.append((p, src, sink))
-    return pl.DataFrame(
-        {
-            "process": [r[0] for r in rows],
-            "source":  [r[1] for r in rows],
-            "sink":    [r[2] for r in rows],
-        },
-        schema={"process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8},
-    )
-
-
-def emit_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider,
-) -> None:
-    """Emit ``process_source_is_node_sink_1way_no_sink_or_more_than_1_source`` to the Provider."""
-    _emit(
-        provider,
-        "solve_data/process__sourceIsNode__sink_1way_noSinkOrMoreThan1Source.csv",
-        derive_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
-            input_dir, solve_data_dir, provider=provider,
-        ),
-    )
-
-
 # ---- process_source_sink_coeff_zero (mod L1973) ---------------------------
 
 def derive_process_source_sink_coeff_zero(
@@ -671,68 +494,6 @@ def emit_process_source_sink_coeff_zero(
     _emit(provider, "solve_data/process_source_sink_coeff_zero.csv",
           derive_process_source_sink_coeff_zero(solve_data_dir,
                                                   provider=provider))
-
-
-# ---- process__source__sinkIsNode_* family (mod L1071, L1153-1158) ---------
-
-def derive_process_source_sink_is_node_family(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Emit the 4-frame ``process__source__sinkIsNode*`` family.
-
-    Returns (base, two_way_1var, not_two_way_1var, two_way_2var).
-    """
-    triples = _read_n_col_rows(
-        solve_data_dir / "process_source_sink.csv",
-        ["process", "source", "sink"],
-        provider=provider,
-    )
-    sinks = frozenset(_read_n_col_rows(
-        input_dir / "process__sink.csv", ["process", "sink"],
-        provider=provider,
-    ))
-    pm = _read_n_col_rows(
-        input_dir / "process_method.csv", ["process", "method"],
-        provider=provider,
-    )
-    methods_of_p: dict[str, set[str]] = {}
-    for p, m in pm:
-        methods_of_p.setdefault(p, set()).add(m)
-    has_2way_1var = {p: bool(ms & _METHOD_2WAY_1VAR) for p, ms in methods_of_p.items()}
-    has_not_2way_1var = {p: bool(ms - _METHOD_2WAY_1VAR) for p, ms in methods_of_p.items()}
-    has_2way_2var = {p: bool(ms & _METHOD_2WAY_2VAR) for p, ms in methods_of_p.items()}
-
-    base_rows = [(p, src, sink) for p, src, sink in triples if (p, sink) in sinks]
-
-    def _to_df(rows: list[tuple[str, str, str]]) -> pl.DataFrame:
-        return pl.DataFrame(
-            {
-                "process": [r[0] for r in rows],
-                "source":  [r[1] for r in rows],
-                "sink":    [r[2] for r in rows],
-            },
-            schema={"process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8},
-        )
-
-    return (
-        _to_df(base_rows),
-        _to_df([r for r in base_rows if has_2way_1var.get(r[0], False)]),
-        _to_df([r for r in base_rows if has_not_2way_1var.get(r[0], False)]),
-        _to_df([r for r in base_rows if has_2way_2var.get(r[0], False)]),
-    )
-
-
-def emit_process_source_sink_is_node_family(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider,
-) -> None:
-    """Emit ``process_source_sink_is_node_family`` to the Provider."""
-    _base, two1, _not21, _two2 = derive_process_source_sink_is_node_family(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _emit(provider, "solve_data/process__source__sinkIsNode_2way1var.csv", two1)
 
 
 # ---- process_source_sink_{delayed,undelayed} (mod L1096-1097) --------------

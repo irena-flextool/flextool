@@ -85,10 +85,8 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "node__TimeParam_in_use.csv",
     "process_source_delayed.csv",
     "process_source_undelayed.csv",
-    "process__source__sink__param.csv",
     "process__source__sink__profile__profile_method_connection.csv",
     "ed_history_realized_first.csv",
-    "process__source__sinkIsNode_2way1var.csv",
     "process_source_sink_coeff_zero.csv",
     "process_source_sink_delayed.csv",
     "process_source_sink_undelayed.csv",
@@ -126,8 +124,8 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
     # _emit_chain_params — Phase E-b lifted streamed writers
     "p_entity_pre_existing.csv",
-    # — 3-CSV existing chain (count/integer_count emits pruned — dead)
-    "p_entity_existing_capacity_later_solves.csv",
+    # — 2-CSV existing chain (count/integer_count/later_solves emits
+    #   pruned — dead)
     "p_entity_all_existing.csv",
     "p_entity_previously_invested_capacity.csv",
     # — 2-CSV capacity max chain (max_capacity/invest_cumulative_max pruned — dead)
@@ -157,7 +155,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "p_positive_inflow.csv",
     "p_negative_inflow.csv",
     "pdtProcess__source__sink__dt_varCost.csv",
-    "pdtProcess__source__sink__dt_varCost_alwaysProcess.csv",
     "pssdt_varCost_noEff.csv",
     "pssdt_varCost_eff_unit_source.csv",
     "pssdt_varCost_eff_unit_sink.csv",

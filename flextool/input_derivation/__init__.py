@@ -245,7 +245,6 @@ def run(
         _leaf.emit_time_set(input_dir, solve_data_dir, provider=provider)
         _leaf.emit_enable_optional_outputs(solve_data_dir, provider=provider)
         _leaf.emit_node_state_subsets(solve_data_dir, provider=provider)
-        _mid.emit_dc_angle_bounds(input_dir, solve_data_dir, provider=provider)
         _mid.emit_invest_total_sets(input_dir, solve_data_dir, provider=provider)
         _mid.emit_ci_ladder_cumulative(input_dir, solve_data_dir, provider=provider)
         _disp.emit_process_arc_unions(input_dir, solve_data_dir, provider=provider)

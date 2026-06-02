@@ -185,45 +185,6 @@ def emit_process_delayed__duration(input_dir: Path, solve_data_dir: Path,
 
 
 # ===========================================================================
-# Family 7 — dc_angle_bounds (legacy: preprocessing/dc_angle_bounds.py)
-# ===========================================================================
-
-# 8-digit truncation of π from flextool.mod:2262.  Do NOT replace with
-# math.pi — bit-exact MPS parity requires this exact decimal string.
-_PI_LITERAL = "3.14159265"
-
-
-def derive_dc_angle_bounds(input_dir: Path,
-                            *, provider: "object | None" = None,
-                            ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Return (lower, upper) frames for nodes participating in DC flow.
-
-    ref nodes pin both bounds to ``0``; other DC nodes get ``±π``.
-    """
-    dc = _read_csv(input_dir / "node_dc_power_flow.csv", ["node"],
-                   provider=provider)
-    dc = _drop_blank_rows(dc, ["node"])
-    ref = _read_csv(input_dir / "node_reference_angle.csv", ["node"],
-                    provider=provider)
-    ref_set = ref.filter(pl.col("node") != "").get_column("node").to_list()
-
-    lower_values = pl.when(pl.col("node").is_in(ref_set)).then(pl.lit("0")).otherwise(pl.lit(f"-{_PI_LITERAL}"))
-    upper_values = pl.when(pl.col("node").is_in(ref_set)).then(pl.lit("0")).otherwise(pl.lit(_PI_LITERAL))
-    lower = dc.with_columns(value=lower_values).select("node", "value")
-    upper = dc.with_columns(value=upper_values).select("node", "value")
-    return lower, upper
-
-
-def emit_dc_angle_bounds(input_dir: Path, solve_data_dir: Path,
-                          *, provider) -> None:
-    """Emit ``dc_angle_bounds`` to the Provider."""
-    del solve_data_dir
-    lower, upper = derive_dc_angle_bounds(input_dir, provider=provider)
-    _emit(provider, "solve_data/p_angle_lower.csv", lower)
-    _emit(provider, "solve_data/p_angle_upper.csv", upper)
-
-
-# ===========================================================================
 # Family 8 — reserve_method_partitions
 # (legacy: preprocessing/reserve_method_partitions.py)
 # ===========================================================================

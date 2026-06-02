@@ -138,8 +138,6 @@ def run(
     _ck("enable_optional_outputs")
     _leaf.emit_node_state_subsets(solve_data_dir, provider=provider)
     _ck("node_state_subsets")
-    _mid.emit_dc_angle_bounds(input_dir, solve_data_dir, provider=provider)
-    _ck("dc_angle_bounds")
     _mid.emit_invest_total_sets(input_dir, solve_data_dir, provider=provider)
     _ck("invest_total_sets")
     _mid.emit_ci_ladder_cumulative(input_dir, solve_data_dir, provider=provider)
@@ -190,8 +188,6 @@ def run(
     # ── L4 batches 28-33 ──────────────────────────────────────────────
     _arc.emit_process_source_sink_delayed_partition(solve_data_dir, provider=provider)
     _ck("process_source_sink_delayed_partition")
-    _arc.emit_process_source_sink_is_node_family(input_dir, solve_data_dir, provider=provider)
-    _ck("process_source_sink_is_node_family")
     _arc.emit_process_source_sink_ramp_family(input_dir, solve_data_dir, provider=provider)
     _ck("process_source_sink_ramp_family")
     _arc.emit_process_source_sink_coeff_zero(solve_data_dir, provider=provider)
@@ -202,16 +198,10 @@ def run(
     _arc.emit_node_group_dispatch_sets(input_dir, solve_data_dir, provider=provider)
     _ck("node_group_dispatch_sets")
     # ── L4 batches 34-37 ──────────────────────────────────────────────
-    _arc.emit_process_source_sink_param(input_dir, solve_data_dir, provider=provider)
-    _ck("process_source_sink_param")
     _arc.emit_process_source_sink_profile_method_connection(
         input_dir, solve_data_dir, provider=provider,
     )
     _ck("process_source_sink_profile_method_connection")
-    _arc.emit_process_source_is_node_sink_1way_no_sink_or_more_than_1_source(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _ck("process_source_is_node_sink_1way_no_sink_or_more_than_1_source")
     # ── L4 batches 39-41 ──────────────────────────────────────────────
     _arc.emit_ed_history_realized_first(input_dir, solve_data_dir, provider=provider)
     _ck("ed_history_realized_first")

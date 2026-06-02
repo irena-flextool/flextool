@@ -415,13 +415,12 @@ def _compute_p_entity_existing_chain(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
 ) -> tuple[
-    list[tuple[str, str, float]],  # later_solves rows
     list[tuple[str, str, float]],  # all_existing rows
     list[tuple[str, str, float]],  # count rows
     list[tuple[str, str, int]],    # integer_count rows (legacy emits int repr)
     list[tuple[str, str, float]],  # previously_invested rows
 ]:
-    """Compute the five row-streams emitted by
+    """Compute the four row-streams emitted by
     :func:`emit_p_entity_existing_chain` in their canonical
     (entity-major, period-in-use-minor) order.
 
@@ -479,7 +478,6 @@ def _compute_p_entity_existing_chain(
                 later_existing[(e, d)] = tot_e
                 later_invested[(e, d)] = tot_i
 
-    later_rows: list[tuple[str, str, float]] = []
     all_rows: list[tuple[str, str, float]] = []
     count_rows: list[tuple[str, str, float]] = []
     int_count_rows: list[tuple[str, str, int]] = []
@@ -487,8 +485,6 @@ def _compute_p_entity_existing_chain(
     for e in entities:
         us = unitsize.get(e, 0.0)
         for d in periods_in_use:
-            v_later = 0.0 if solve_first else later_existing.get((e, d), 0.0)
-            later_rows.append((e, d, v_later))
             if solve_first:
                 v_all = pre_existing.get((e, d), 0.0)
             else:
@@ -504,7 +500,7 @@ def _compute_p_entity_existing_chain(
             v_prev = 0.0 if solve_first else later_invested.get((e, d), 0.0)
             prev_inv_rows.append((e, d, v_prev))
 
-    return later_rows, all_rows, count_rows, int_count_rows, prev_inv_rows
+    return all_rows, count_rows, int_count_rows, prev_inv_rows
 
 
 def emit_p_entity_existing_chain(
@@ -512,14 +508,11 @@ def emit_p_entity_existing_chain(
     *, provider,
 ) -> None:
     """Emit ``p_entity_existing_chain`` to the Provider."""
-    later_rows, all_rows, _count_rows, _int_rows, prev_rows = (
+    all_rows, _count_rows, _int_rows, prev_rows = (
         _compute_p_entity_existing_chain(
             input_dir, solve_data_dir, provider=provider,
         )
     )
-    _emit(provider,
-          "solve_data/p_entity_existing_capacity_later_solves.csv",
-          _ed_value_frame(later_rows))
     _emit(provider, "solve_data/p_entity_all_existing.csv",
           _ed_value_frame(all_rows))
     _emit(provider,

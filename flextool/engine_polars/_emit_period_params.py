@@ -2012,14 +2012,11 @@ def emit_pdtProcess__source__sink__dt_varCost_pair(
     *, provider,
 ) -> None:
     """Emit ``pdtProcess__source__sink__dt_varCost_pair`` to the Provider."""
-    basic, always = _derive_varCost_pair_vectorized(
+    basic, _always = _derive_varCost_pair_vectorized(
         input_dir, solve_data_dir, provider=provider,
     )
     _emit(provider, "solve_data/pdtProcess__source__sink__dt_varCost.csv",
           basic)
-    _emit(provider,
-          "solve_data/pdtProcess__source__sink__dt_varCost_alwaysProcess.csv",
-          always)
 
 
 # ---- write_pssdt_varCost_filters (mod L1498-1501) -------------------------
