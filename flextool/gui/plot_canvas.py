@@ -52,9 +52,9 @@ class PlotCanvas(ttk.Frame):
         self._resize_pending: str | None = None
         self._natural_size_inches: tuple[float, float] = (6.0, 4.0)
 
-        # Detect system DPI so matplotlib renders at the correct scale.
-        # On Windows with e.g. 150% scaling the system DPI is 144 while
-        # matplotlib defaults to 100, making text appear ~30% too small.
+        # Render figures at the same DPI Tk uses for its own widget fonts,
+        # so a 10-pt figure label matches a 10-pt UI label (see
+        # _detect_system_dpi for the full rationale).
         self._system_dpi: float = self._detect_system_dpi()
 
         # ── Scrollable container ──────────────────────────────────
@@ -131,22 +131,36 @@ class PlotCanvas(ttk.Frame):
         self._scroll_canvas.unbind_all("<Button-4>")
         self._scroll_canvas.unbind_all("<Button-5>")
 
-    @staticmethod
-    def _detect_system_dpi() -> float:
-        """Return the system DPI, falling back to matplotlib's default.
+    def _detect_system_dpi(self) -> float:
+        """Return the DPI to render figures at, matched to Tk's font DPI.
 
-        On Windows with display scaling (e.g. 150% → 144 DPI) this
-        ensures matplotlib renders text at the correct size.  On Linux
-        and macOS the system DPI is usually 96 which is close to
-        matplotlib's 100 default.
+        The figure bitmap is blitted 1:1 into the Tk canvas, so for figure
+        text to match the surrounding widget text both must use the same
+        pixels-per-point.  Tk renders fonts at ``tk scaling`` px/pt, i.e.
+        ``winfo_fpixels('1i')`` px/inch — so we render the figure at that
+        same DPI.
+
+        The previous code pinned the figure to the raw OS system DPI
+        (``GetDpiForSystem`` on Windows, e.g. 144 at 150% scaling).  But
+        ``apply_dpi_scaling`` deliberately keeps ``tk scaling`` lower than
+        the geometric system value, so the figure ended up rendered at a
+        *higher* DPI than the rest of the UI and its text/axes looked
+        ~1.5x oversized next to the Tk widgets.  Tying both to
+        ``winfo_fpixels`` removes that decoupling at any scaling factor.
+
+        macOS is left on matplotlib's default: Tk uses a 72-DPI logical
+        space there and handles Retina at the backing-store level, so
+        ``winfo_fpixels`` would under-report.
         """
         import sys
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                return float(ctypes.windll.user32.GetDpiForSystem())  # type: ignore[attr-defined]
-            except Exception:
-                pass
+        if sys.platform == "darwin":
+            return matplotlib.rcParams.get("figure.dpi", 100)
+        try:
+            dpi = float(self.tk.call("winfo", "fpixels", self._w, "1i"))
+            if dpi > 0:
+                return dpi
+        except (tk.TclError, AttributeError):
+            pass
         return matplotlib.rcParams.get("figure.dpi", 100)
 
     # X11 pixmaps are limited to 32767 px per side (signed 16-bit). At

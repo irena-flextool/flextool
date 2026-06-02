@@ -76,10 +76,12 @@ def _unlink_sqlite(db_path: Path) -> None:
                 time.sleep(0.5)
 
 
-# Unicode checkbox characters for Treeview checkbox simulation
-# Using geometric shapes (U+25A1 / U+25A3) which render noticeably larger
-# than ballot box characters at the same font size.
-CHECK_ON = "\u25a3"   # ▣
+# Unicode checkbox characters for Treeview checkbox simulation.
+# Checked = filled square U+25A0, unchecked = empty square U+25A1. Solid-vs-empty
+# is the highest-contrast pair and both render large; the previous checked glyph
+# U+25A3 differed from U+25A1 only by a small inner mark, so it read as "small /
+# hard to tell if checked", most acutely on Windows.
+CHECK_ON = "\u25a0"   # ■
 CHECK_OFF = "\u25a1"  # □
 STATUS_OK = "\u2713"      # ✓
 STATUS_ERR = "\u2717"     # ✗

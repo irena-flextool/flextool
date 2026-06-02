@@ -168,7 +168,7 @@ class _PlotSection:
     # ── Public helpers ────────────────────────────────────────────
 
     # Unicode checkbox characters (same as main window)
-    _CHECK_ON = "\u25a3"   # ▣
+    _CHECK_ON = "\u25a0"   # ■
     _CHECK_OFF = "\u25a1"  # □
 
     def collect(self) -> PlotSettings:

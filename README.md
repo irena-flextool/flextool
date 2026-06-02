@@ -66,12 +66,13 @@ own directory and virtual environment.
 git clone https://github.com/irena-flextool/flextool.git flextool_main
 cd flextool_main
 git checkout main
-py -m venv .venv
+py -m venv .venv            # Could also be 'python' instead of 'py'
 .\.venv\Scripts\Activate.ps1
 # If PowerShell blocks the activate script, run once per user:
 #   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pip install --upgrade pip
 pip install -e .            # resolves the polar-high pin from PyPI
+python -m update-flextool --skip-git  # Creates template and example input databases
 ```
 
 **Linux / macOS** — identical, with two exceptions:
