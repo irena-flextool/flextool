@@ -1220,6 +1220,15 @@ class ResultViewer(tk.Toplevel):
 
         box_w = self._char_width * 2
 
+        # Draw the letters in the *same* font the themed tree rows use, not
+        # the bare TkDefaultFont. Under sv_ttk a ttk.Treeview renders its
+        # cells in SunValleyBodyFont (≈14pt) while TkDefaultFont is ≈10pt,
+        # so a hard-coded TkDefaultFont made the variant letters look 2-3
+        # sizes smaller than the adjacent tree text on every platform.
+        letter_font = str(
+            ttk.Style().lookup("PlotTree.Treeview", "font")
+        ) or "TkDefaultFont"
+
         # Determine focus state
         try:
             canvas_has_focus = (self.focus_get() is self._variant_canvas)
@@ -1295,7 +1304,7 @@ class ResultViewer(tk.Toplevel):
                     display = letter if letter else "?"
                     self._variant_canvas.create_text(
                         x + box_w // 2, y + row_h // 2,
-                        text=display, fill=text_color, font=("TkDefaultFont",),
+                        text=display, fill=text_color, font=letter_font,
                     )
 
     def _on_variant_canvas_click(self, event: tk.Event) -> None:
@@ -3130,7 +3139,7 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     # Unicode check glyphs — matches the main window's input/executed trees.
-    _COMP_CHECK_ON = "\u25a3"   # ▣
+    _COMP_CHECK_ON = "\u25a0"   # ■
     _COMP_CHECK_OFF = "\u25a1"  # □
 
     def _get_comparison_scenarios(self) -> list[str]:
