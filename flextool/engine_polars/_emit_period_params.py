@@ -29,6 +29,7 @@ from flextool.engine_polars._emit_provider_io import (
 )
 from flextool.engine_polars._vectorize import (
     build_entity_dt_grid,
+    build_entity_period_grid,
     coalesce_value,
     collect_value_frame,
     lift_dict_to_lookup,
@@ -840,11 +841,150 @@ def derive_pdGroup(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdGroup_vectorized(input_dir: Path, solve_data_dir: Path,
+                              *,
+                              provider: "object | None" = None,
+                              engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdGroup`` derive — period-only, branch-sum, dedup-safe.
+
+    Replaces the per-cell cascade loop in :func:`derive_pdGroup` with
+    vectorized polars (left-joins + a group-by-sum for the branch fold +
+    ``coalesce`` in cascade-priority order), still per roll over the
+    roll's own window.  Output columns ``group, param, period, value``
+    all ``Utf8`` (NO time axis), entity-major row order, ``repr(v)``
+    value cells.
+
+    Domain = ``group × _GROUP_PERIOD_PARAM`` (the live module frozenset,
+    so iteration order matches legacy — S4) preserving order and
+    duplicates; period axis = ``period_in_use`` (order + duplicates
+    preserved).
+
+    Cascade per ``(g, param, d)`` (5-branch):
+
+    1. ``pd_group[g, param, d]``                                — direct.
+    2. ``sum_{db ∈ branches_for_d[d], (g,param,db)∈pd_group}
+        pd_group[g, param, db]``                               — fold,
+       only when NON-empty.
+    3. ``p_group[g, param]``                                   — scalar.
+    4. ``5000`` when ``param ∈ _GROUP_PARAM_DEFAULT_5000``.
+    5. ``0``.
+
+    The branch-sum (D3 critique fix) is computed on the **de-duplicated**
+    ``(group, param)`` set so a duplicated ``group`` entry in
+    ``group.csv`` does NOT double-count the fold; the dup-preserving final
+    grid then left-joins the per-``(group,param,period)`` sum back,
+    re-expanding to every output row.
+    """
+    pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
+    p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
+    branches_for_d = _read_branches_for_d(
+        solve_data_dir / "period__branch.csv", provider=provider,
+    )
+    groups = _read_singles(input_dir / "group.csv", provider=provider)
+    period_in_use = _read_singles(
+        solve_data_dir / "period_in_use_set.csv", provider=provider,
+    )
+
+    key_cols = ["group", "param"]
+    out_cols = [*key_cols, "period"]
+
+    # Domain = group × _GROUP_PERIOD_PARAM, referencing the LIVE frozenset
+    # object so iteration order matches the legacy loop (S4); preserve the
+    # group list order + duplicates, never ``.unique()``.
+    domain = [
+        (g, param) for g in groups for param in list(_GROUP_PERIOD_PARAM)
+    ]
+
+    grid = build_entity_period_grid(
+        domain, period_in_use, key_cols=key_cols,
+    )
+
+    # Branch 1 — direct pd_group[(g, param, d)].
+    pd_df = lift_dict_to_lookup(pd_g, ["group", "param", "period"], "v_pd")
+
+    # Branch 3 — scalar p_group[(g, param)].
+    p_df = lift_dict_to_lookup(p_g, ["group", "param"], "v_p")
+
+    # Branch 4 — 5000 default for the penalty params.
+    def5000_params = list(_GROUP_PARAM_DEFAULT_5000)
+    def5000_df = pl.DataFrame(
+        {
+            "param": def5000_params,
+            "v_5000": [5000.0] * len(def5000_params),
+        },
+        schema={"param": pl.Utf8, "v_5000": pl.Float64},
+    )
+
+    # Branch 2 — branch-sum.  Expand (period d → branch period db),
+    # preserving duplicate (d, db) rows (D2: duplicates must double-count
+    # to match the legacy ``sum(...)`` over the branches list).
+    exp_period: list[str] = []
+    exp_db: list[str] = []
+    for d in period_in_use:
+        for db in branches_for_d.get(d, ()):
+            exp_period.append(d)
+            exp_db.append(db)
+    exp = pl.DataFrame(
+        {"period": exp_period, "db": exp_db},
+        schema={"period": pl.Utf8, "db": pl.Utf8},
+    )
+
+    if exp.height > 0:
+        pd_db = lift_dict_to_lookup(
+            pd_g, ["group", "param", "db"], "v_pddb")
+        # D3: de-dup the (group, param) set for the SUM ONLY so a
+        # duplicated group does not double-count; the dup-preserving grid
+        # re-expands the result back to every output row via the final
+        # left-join.
+        gp_unique = grid.select(["group", "param"]).unique()
+        bsum = (
+            gp_unique
+            .join(exp, how="cross")
+            # INNER join drops non-matching (g, param, db) → reproduces
+            # both the ``if (g,param,db) in pd_g`` gate and the
+            # ``if branched:`` non-empty gate.
+            .join(pd_db, on=["group", "param", "db"], how="inner")
+            .group_by(["group", "param", "period"])
+            .agg(pl.col("v_pddb").sum().alias("v_branch"))
+        )
+    else:
+        bsum = pl.DataFrame(
+            {"group": [], "param": [], "period": [], "v_branch": []},
+            schema={
+                "group": pl.Utf8,
+                "param": pl.Utf8,
+                "period": pl.Utf8,
+                "v_branch": pl.Float64,
+            },
+        )
+
+    out = (
+        grid
+        .join(pd_df, on=["group", "param", "period"], how="left")
+        .join(bsum, on=["group", "param", "period"], how="left")
+        .join(p_df, on=["group", "param"], how="left")
+        .join(def5000_df, on=["param"], how="left")
+        .with_columns(
+            coalesce_value([
+                pl.col("v_pd"),      # branch 1 (direct)
+                pl.col("v_branch"),  # branch 2 (branch-sum, non-empty)
+                pl.col("v_p"),       # branch 3 (scalar)
+                pl.col("v_5000"),    # branch 4 (5000 default set)
+                pl.lit(0.0),         # branch 5 (default)
+            ])
+        )
+    )
+    return collect_value_frame(
+        out, key_cols=out_cols, sort_cols=["__eo", "__po"], engine=engine,
+    )
+
+
 def emit_pdGroup(input_dir: Path, solve_data_dir: Path,
                   *, provider) -> None:
     """Emit ``pdGroup`` to the Provider."""
     _emit(provider, "solve_data/pdGroup.csv",
-          derive_pdGroup(input_dir, solve_data_dir, provider=provider))
+          derive_pdGroup_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------

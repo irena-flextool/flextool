@@ -31,6 +31,7 @@ import polars as pl
 
 __all__ = [
     "build_entity_dt_grid",
+    "build_entity_period_grid",
     "lift_dict_to_lookup",
     "build_fold_frame",
     "coalesce_value",
@@ -106,6 +107,61 @@ def build_entity_dt_grid(
     ).with_columns(pl.lit(1, dtype=pl.Int8).alias("__one"))
 
     return base.join(dt_df, on="__one", how="inner").drop("__one")
+
+
+# ---------------------------------------------------------------------------
+# Base grid — entity-major ``domain × period`` (period-only, no time).
+# ---------------------------------------------------------------------------
+
+def build_entity_period_grid(
+    domain: list[tuple],
+    periods: list[str],
+    *,
+    key_cols: list[str],
+) -> pl.DataFrame:
+    """Build the entity-major ``domain × period`` grid (no time axis).
+
+    Mirror of :func:`build_entity_dt_grid` but with a single ``period``
+    axis instead of ``(period, time)`` — for the period-only families
+    (e.g. ``pdGroup``).  *domain* is the legacy entity list (order AND
+    duplicates preserved — never ``.unique()`` it: S-M2), its tuples
+    carrying the entity-key columns named by *key_cols*.  *periods* is the
+    ``period_in_use`` list (order AND duplicates preserved — never
+    ``.unique()`` it either).
+
+    The result carries two integer order keys:
+
+    * ``__eo`` — the domain row position (entity-major ordering key),
+    * ``__po`` — the ``periods`` row position,
+
+    so the final ``.sort([__eo, __po])`` reproduces the legacy nested
+    ``for entity: for d:`` emission order even under streaming (which may
+    reorder).  An empty domain or periods list yields a zero-row grid with
+    the correct schema (all key cols Utf8 + period Utf8 + the two order
+    keys).
+    """
+    n_keys = len(key_cols)
+    base_data: dict[str, list] = {
+        key_cols[i]: [row[i] for row in domain] for i in range(n_keys)
+    }
+    base_data["__eo"] = list(range(len(domain)))
+    base = pl.DataFrame(
+        base_data,
+        schema={
+            **{c: pl.Utf8 for c in key_cols},
+            "__eo": pl.Int64,
+        },
+    ).with_columns(pl.lit(1, dtype=pl.Int8).alias("__one"))
+
+    period_df = pl.DataFrame(
+        {
+            "period": list(periods),
+            "__po": list(range(len(periods))),
+        },
+        schema={"period": pl.Utf8, "__po": pl.Int64},
+    ).with_columns(pl.lit(1, dtype=pl.Int8).alias("__one"))
+
+    return base.join(period_df, on="__one", how="inner").drop("__one")
 
 
 # ---------------------------------------------------------------------------
