@@ -150,6 +150,11 @@ class ResultViewer(tk.Toplevel):
         # Async figure building
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="plot")
         self._render_gen = 0  # incremented on each replot; stale results discarded
+        # Pending "Rendering…" placeholder after() id. The placeholder is
+        # shown only if a render takes longer than _PLACEHOLDER_DELAY_MS, so
+        # quick switches flip straight between figures (better for spotting
+        # plot-to-plot differences) instead of flashing text on every switch.
+        self._placeholder_after_id: str | None = None
         self._figure_cache: dict[tuple, plt.Figure] = {}  # prefetched figures
         self._figure_cache_lock = threading.Lock()
 
@@ -2727,9 +2732,7 @@ class ResultViewer(tk.Toplevel):
                 # UI thread stays responsive.
                 self._render_gen += 1
                 gen = self._render_gen
-                self._plot_canvas.show_message(
-                    f"Rendering {variant.full_name}…"
-                )
+                self._schedule_placeholder(gen, f"Rendering {variant.full_name}…")
                 self._executor.submit(
                     self._build_figure_from_plan_async,
                     gen, plan, self._file_index, plot_rows, variant,
@@ -2752,6 +2755,7 @@ class ResultViewer(tk.Toplevel):
             cached_fig = self._figure_cache.pop(cache_key, None)
 
         if cached_fig is not None:
+            self._cancel_placeholder()
             self._plot_canvas.display_figure(cached_fig)
             logger.info("Plot %s: CACHED [file %d]", variant.result_key, self._file_index)
             self._prefetch_adjacent(scenario, variant, df, config, plot_name, break_times, start, duration)
@@ -2760,6 +2764,7 @@ class ResultViewer(tk.Toplevel):
         # 3. Invalidate stale in-flight builds
         self._render_gen += 1
         gen = self._render_gen
+        self._schedule_placeholder(gen, f"Rendering {variant.full_name}…")
 
         # 4. Submit build to background thread
         self._executor.submit(
@@ -2798,6 +2803,7 @@ class ResultViewer(tk.Toplevel):
         """Main-thread display callback for a plan-path build."""
         if generation != self._render_gen:
             return  # stale — user moved on
+        self._cancel_placeholder()
         if fig is not None:
             self._plot_canvas.display_figure(fig)
         else:
@@ -2836,6 +2842,7 @@ class ResultViewer(tk.Toplevel):
         if generation != self._render_gen:
             return  # stale result — figure will be garbage-collected
 
+        self._cancel_placeholder()
         self._file_count = max(total_count, 1)
         self._file_index = min(self._file_index, max(0, self._file_count - 1))
         self._update_file_nav()
@@ -2858,8 +2865,44 @@ class ResultViewer(tk.Toplevel):
         """Main-thread callback: show error if still current."""
         if generation != self._render_gen:
             return
+        self._cancel_placeholder()
         logger.error("prepare_plot_data failed for '%s': %s", result_key, error_msg)
         self._plot_canvas.show_message(f"Plot error: {error_msg}")
+
+    # ── Deferred "Rendering…" placeholder ────────────────────────────────
+    # Showing the placeholder text immediately on every plot switch wipes the
+    # current figure, which makes flipping back and forth to spot differences
+    # jarring. Instead we keep the previous figure up and only fall back to
+    # text if the new render hasn't arrived within this delay.
+    _PLACEHOLDER_DELAY_MS = 300
+
+    def _schedule_placeholder(self, generation: int, text: str) -> None:
+        """Show *text* on the canvas, but only after _PLACEHOLDER_DELAY_MS.
+
+        Cancels any previously scheduled placeholder first. The fire is gated
+        on *generation* so a stale timer never overwrites a newer render.
+        """
+        self._cancel_placeholder()
+
+        def _fire() -> None:
+            self._placeholder_after_id = None
+            if generation != self._render_gen:
+                return
+            try:
+                self._plot_canvas.show_message(text)
+            except tk.TclError:
+                pass  # viewer closed mid-flight
+
+        self._placeholder_after_id = self.after(self._PLACEHOLDER_DELAY_MS, _fire)
+
+    def _cancel_placeholder(self) -> None:
+        """Cancel a pending deferred placeholder, if any."""
+        if self._placeholder_after_id is not None:
+            try:
+                self.after_cancel(self._placeholder_after_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._placeholder_after_id = None
 
     def _prefetch_adjacent(
         self, scenario, variant, df, config, plot_name, break_times, start, duration,
