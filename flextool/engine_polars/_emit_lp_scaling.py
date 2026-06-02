@@ -537,29 +537,41 @@ def _compute_lp_scaling_frames_vectorized(
     out["_node_cap_pow10.csv"] = _ordered_value_frame(
         pow10_grid, ("node", "period", "value"), ["__eo", "__po"],
     )
-    # Reconstruct pow10_dict {(n, d): float}.
-    pow10_dict: dict[tuple[str, str], float] = {
-        (r[0], r[1]): r[2]
-        for r in pow10_grid.select(
-            ["node", "period", "value_f"]).iter_rows()
-    }
+    # (pow10_dict is not reconstructed: the vectorized NCFS stage reads
+    # ``pow10_grid`` directly rather than iterating a scalar dict.)
 
-    # ── node_capacity_for_scaling + inv_node_cap (LEGACY — C2) ─────────
-    ncfs_dict: dict[tuple[str, str], float] = {}
-    rows_ncfs: list[tuple[str, str, float]] = []
-    rows_inc: list[tuple[str, str, float]] = []
-    for n in nodes:
-        for d in period_in_use:
-            v = pow10_dict.get((n, d), 1.0) if scaling_active else 1.0
-            ncfs_dict[(n, d)] = v
-            rows_ncfs.append((n, d, v))
-            rows_inc.append((n, d, 1.0 / v if v != 0 else 0.0))
-    out["node_capacity_for_scaling.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_ncfs,
+    # ── node_capacity_for_scaling + inv_node_cap (Tier B) ──────────────
+    # ncfs = pow10 if scaling_active else 1.0 (scaling_active is a Python
+    # bool — branch in Python); inc = 1/ncfs if ncfs != 0 else 0.0.  Dense
+    # over node × period.  When scaling_active the value frame is the
+    # already-computed pow10_grid (every (n, d) is present, no .get default
+    # needed); otherwise a constant-1.0 dense grid.
+    if scaling_active:
+        ncfs_df = pow10_grid.select(
+            ["node", "period", "__eo", "__po",
+             pl.col("value_f")])
+    else:
+        ncfs_df = node_eo.join(period_po, how="cross").with_columns(
+            pl.lit(1.0, dtype=pl.Float64).alias("value_f"),
+        )
+    out["node_capacity_for_scaling.csv"] = _ordered_value_frame(
+        ncfs_df, ("node", "period", "value"), ["__eo", "__po"],
     )
-    out["inv_node_cap.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_inc,
+    inc_df = ncfs_df.with_columns(
+        pl.when(pl.col("value_f") != 0.0)
+        .then(1.0 / pl.col("value_f"))
+        .otherwise(pl.lit(0.0))
+        .alias("value_f"),
     )
+    out["inv_node_cap.csv"] = _ordered_value_frame(
+        inc_df, ("node", "period", "value"), ["__eo", "__po"],
+    )
+    # Reconstruct ncfs_dict {(n, d): float} for the still-legacy group
+    # chain (which sums ncfs over a group's member nodes).
+    ncfs_dict: dict[tuple[str, str], float] = {
+        (r[0], r[1]): r[2]
+        for r in ncfs_df.select(["node", "period", "value_f"]).iter_rows()
+    }
 
     # ── _group_cap_raw (LEGACY — C3) ───────────────────────────────────
     grp_raw: dict[tuple[str, str], float] = {}

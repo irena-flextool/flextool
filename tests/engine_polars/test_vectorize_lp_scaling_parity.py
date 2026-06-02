@@ -311,3 +311,64 @@ def test_lp_scaling_synthetic_node_chain(tmp_path):
     assert raw[("missNode", "d1")] == repr(1.0), raw    # fb miss → 1.0
     assert raw[("selfLoop", "d1")] == repr(14.0), raw   # usz>0 branch
     print(f"\n[lp-scaling parity] synthetic node-chain tiers: {tiers}")
+
+
+def test_lp_scaling_synthetic_scaling_inactive(tmp_path):
+    """``scaling_active=False`` collapse: node_capacity_for_scaling and
+    inv_node_cap collapse to 1.0 regardless of the pow10 value (the
+    scaling_active Python branch).  The same provider as a control where
+    scaling IS active proves the gate distinguishes the two."""
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+
+    def build(active: bool):
+        provider = FlexDataProvider()
+        _put(provider, "input", "node", pl.DataFrame({"node": ["nA"]}))
+        _put(provider, "input", "group", pl.DataFrame({"group": ["g1"]}))
+        _put(provider, "input", "group__node",
+             pl.DataFrame({"group": ["g1"], "node": ["nA"]}))
+        _put(provider, "solve_data", "period_in_use_set",
+             pl.DataFrame({"period": ["d1"]}))
+        _put(provider, "solve_data", "solve_current",
+             pl.DataFrame({"solve": ["s1"]}))
+        # p_use_row_scaling sum < 0.5 → scaling_active False.
+        _put(provider, "solve_data", "p_use_row_scaling",
+             pl.DataFrame({"solve": ["s1"],
+                           "value": [1.0 if active else 0.0]}))
+        # nA: usz 500.0 → raw 500 → pow10 1000 (a value clearly != 1.0).
+        _put(provider, "solve_data", "process_source_sink", pl.DataFrame({
+            "process": ["p1"], "source": ["x"], "sink": ["nA"]}))
+        _put(provider, "solve_data", "p_entity_unitsize", pl.DataFrame({
+            "process": ["p1"], "value": [500.0]}))
+        _put(provider, "solve_data", "_node_cap_inflow_fallback",
+             pl.DataFrame({"node": [], "period": [], "value": []},
+                          schema={"node": pl.Utf8, "period": pl.Utf8,
+                                  "value": pl.Float64}))
+        return provider
+
+    # --- scaling INACTIVE: NCFS / INC collapse to 1.0 ------------------
+    p_off = build(active=False)
+    tiers_off = _assert_dict_parity(p_off, "synthetic-scaling-off")
+    legacy_off = _compute_lp_scaling_frames(
+        Path("input"), Path("solve_data"), provider=p_off)
+    ncfs_off = {(r[0], r[1]): r[2]
+                for r in legacy_off[
+                    "node_capacity_for_scaling.csv"].iter_rows()}
+    inc_off = {(r[0], r[1]): r[2]
+               for r in legacy_off["inv_node_cap.csv"].iter_rows()}
+    assert ncfs_off[("nA", "d1")] == repr(1.0), ncfs_off
+    assert inc_off[("nA", "d1")] == repr(1.0), inc_off
+    # pow10 is still the REAL value (1000) — the collapse is NCFS-only.
+    p10_off = {(r[0], r[1]): r[2]
+               for r in legacy_off["_node_cap_pow10.csv"].iter_rows()}
+    assert p10_off[("nA", "d1")] == repr(1000.0), p10_off
+
+    # --- control: scaling ACTIVE → NCFS == pow10 ----------------------
+    p_on = build(active=True)
+    _assert_dict_parity(p_on, "synthetic-scaling-on")
+    legacy_on = _compute_lp_scaling_frames(
+        Path("input"), Path("solve_data"), provider=p_on)
+    ncfs_on = {(r[0], r[1]): r[2]
+               for r in legacy_on[
+                   "node_capacity_for_scaling.csv"].iter_rows()}
+    assert ncfs_on[("nA", "d1")] == repr(1000.0), ncfs_on
+    print(f"\n[lp-scaling parity] synthetic scaling-off tiers: {tiers_off}")
