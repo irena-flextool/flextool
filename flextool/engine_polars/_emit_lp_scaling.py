@@ -19,6 +19,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine_polars._emit_provider_io import _emit
+from flextool.engine_polars._vectorize import _render_value_column
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +300,388 @@ def _compute_lp_scaling_frames(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Vectorized twin of _compute_lp_scaling_frames (vectorize-per-roll).
+#
+# Built as a FULL COPY of the legacy body, with each stage's COMPUTE
+# replaced by vectorized polars incrementally (node chain → node
+# capacity-for-scaling → group chain).  The in-memory dicts the legacy
+# stages consume (``cap_unitsize``, ``raw_dict``, ``pow10_dict``,
+# ``ncfs_dict``, ``grp_raw``, ``grp_pow10``) are reconstructed from each
+# vectorized frame right after it is built, so any not-yet-vectorized
+# downstream stage still works at every commit (full-9-key parity-gateable
+# per commit).  The legacy :func:`_compute_lp_scaling_frames` is KEPT as
+# the parity oracle.
+#
+# Tier policy (critique Defect X): NO lp key is hard-asserted Tier A.  On
+# real fixtures the unitsize / group sums are exact-integer so no ULP drift
+# occurs and the LP-coefficient keys land Tier A byte-exact in practice,
+# but a pathological sum landing on a half-decade ``10^(k+0.5)`` could flip
+# a ``_pow10_round_clamped`` decade bucket → factor-10 gap → the parity
+# gate RAISES (loud, correct — never masked).  The pow10 stages reuse the
+# SAME scalar :func:`_pow10_round_clamped` UDF for byte-fidelity.
+# ---------------------------------------------------------------------------
+
+
+def _empty_value_frame(header: tuple[str, str, str]) -> pl.DataFrame:
+    """An explicit all-Utf8 empty 3-col frame (key1, key2, value)."""
+    return pl.DataFrame(
+        {h: [] for h in header},
+        schema={h: pl.Utf8 for h in header},
+    )
+
+
+def _ordered_value_frame(
+    df: pl.DataFrame,
+    header: tuple[str, str, str],
+    order_cols: list[str],
+) -> pl.DataFrame:
+    """Sort *df* by *order_cols*, render its ``value_f`` Float64 column via
+    ``repr`` and project to the all-Utf8 ``(key1, key2, value)`` shape.
+
+    *df* must carry the two key columns named ``header[0]``/``header[1]``,
+    a Float64 ``value_f`` column, and the integer *order_cols*.  An empty
+    *df* yields the explicit empty schema.
+    """
+    if df.height == 0:
+        return _empty_value_frame(header)
+    df = df.sort(order_cols)
+    value = _render_value_column(df["value_f"])
+    return df.select([header[0], header[1]]).with_columns(
+        value.alias(header[2]),
+    )
+
+
+def _pow10_value_column(df: pl.DataFrame) -> pl.DataFrame:
+    """Add a ``value_f`` column = ``_pow10_round_clamped(raw)`` per row.
+
+    Applies the EXACT legacy scalar UDF per cell (critique-corrected: the
+    same Python fn guarantees byte-identical bits — it re-derives the
+    clamp / ``v<=0`` / NaN edge cases identically; a re-implemented polars
+    ``log10().round()`` would risk diverging on those edges).  The Float64
+    ``raw`` lifted from the dict is bit-identical to the legacy Python
+    float, so ``round(math.log10(v))`` matches.
+    """
+    raw = df["raw"].to_list()
+    return df.with_columns(
+        pl.Series("value_f", [_pow10_round_clamped(v) for v in raw],
+                  dtype=pl.Float64),
+    )
+
+
+def _compute_lp_scaling_frames_vectorized(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+) -> dict[str, pl.DataFrame]:
+    """Vectorized twin of :func:`_compute_lp_scaling_frames`.
+
+    Same reader block, same in-memory dicts, same stage order, same 9
+    LIVE ``out[...]=`` assignments.  Each vectorized stage reconstructs
+    the in-memory dict its legacy downstream consumer reads, so the
+    function is internally consistent (full-9-key parity-gateable) at
+    every commit.
+    """
+    out: dict[str, pl.DataFrame] = {}
+
+    # ── Sources (copied verbatim from the legacy reader block) ─────────
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    groups = _read_singles(input_dir / "group.csv", provider=provider)
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+
+    p_use_row_scaling = _read_keyed_value(
+        solve_data_dir / "p_use_row_scaling.csv",
+        provider=provider,
+    )
+    solve_current = _read_singles(solve_data_dir / "solve_current.csv",
+                                   provider=provider)
+    scaling_active = sum(
+        p_use_row_scaling.get(c, 0.0) for c in solve_current
+    ) >= 0.5
+
+    pss = _read_triples(solve_data_dir / "process_source_sink.csv",
+                         provider=provider)
+    p_entity_unitsize = _read_keyed_value(
+        solve_data_dir / "p_entity_unitsize.csv",
+        provider=provider,
+    )
+    inflow_fallback = _read_node_period_value(
+        solve_data_dir / "_node_cap_inflow_fallback.csv",
+        provider=provider,
+    )
+    group_node = _read_pairs(input_dir / "group__node.csv",
+                              provider=provider)
+    # (the legacy ``nodes_for_group`` per-group node list is NOT built: the
+    # vectorized group chain joins the ``group_node`` pairs directly.)
+
+    node_set = frozenset(nodes)
+
+    # ── Shared order frames (node list order, group order, period order) ─
+    node_eo = pl.DataFrame(
+        {"node": list(nodes), "__eo": list(range(len(nodes)))},
+        schema={"node": pl.Utf8, "__eo": pl.Int64},
+    )
+    period_po = pl.DataFrame(
+        {"period": list(period_in_use),
+         "__po": list(range(len(period_in_use)))},
+        schema={"period": pl.Utf8, "__po": pl.Int64},
+    )
+
+    # ── Stage U: _node_cap_unitsize_sum (Tier B) ───────────────────────
+    # cap_unitsize pre-seeded {n: 0.0}; for each pss (p, source, sink) with
+    # usz = p_entity_unitsize.get(p, 0.0): TWO INDEPENDENT ifs —
+    #   if sink   in node_set: cap_unitsize[sink]   += usz
+    #   if source in node_set: cap_unitsize[source] += usz
+    # (a self-loop source==sink adds TWICE).  Vectorize as TWO concatenated
+    # contributions so the double-count survives (do NOT struct-union /
+    # .unique()), group-by-sum, then densify over node × period.
+    pss_df = pl.DataFrame(
+        {"process": [p for p, _s, _k in pss],
+         "source": [s for _p, s, _k in pss],
+         "sink": [k for _p, _s, k in pss]},
+        schema={"process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8},
+    )
+    usz_lk = pl.DataFrame(
+        {"process": list(p_entity_unitsize.keys()),
+         "v_usz": list(p_entity_unitsize.values())},
+        schema={"process": pl.Utf8, "v_usz": pl.Float64},
+    )
+    node_list = list(node_set)
+    pss_usz = pss_df.join(usz_lk, on="process", how="left").with_columns(
+        pl.col("v_usz").fill_null(0.0),
+    )
+    sink_contrib = (
+        pss_usz.filter(pl.col("sink").is_in(node_list))
+        .select(pl.col("sink").alias("node"), pl.col("v_usz"))
+    )
+    source_contrib = (
+        pss_usz.filter(pl.col("source").is_in(node_list))
+        .select(pl.col("source").alias("node"), pl.col("v_usz"))
+    )
+    contrib = pl.concat([sink_contrib, source_contrib], how="vertical")
+    if contrib.height:
+        unitsize_sum_df = (
+            contrib.group_by("node")
+            .agg(pl.col("v_usz").sum().alias("v_unitsize"))
+        )
+    else:
+        unitsize_sum_df = pl.DataFrame(
+            {"node": [], "v_unitsize": []},
+            schema={"node": pl.Utf8, "v_unitsize": pl.Float64},
+        )
+    # Densify over node × period; pre-seeded 0.0 → arc-less node emits
+    # "0.0" (a float, NOT int-0).
+    unitsize_grid = (
+        node_eo.join(period_po, how="cross")
+        .join(unitsize_sum_df, on="node", how="left")
+        .with_columns(pl.col("v_unitsize").fill_null(0.0).alias("value_f"))
+    )
+    out["_node_cap_unitsize_sum.csv"] = _ordered_value_frame(
+        unitsize_grid, ("node", "period", "value"), ["__eo", "__po"],
+    )
+    # Reconstruct cap_unitsize {n: float} (period-independent) for legacy
+    # downstream stages still in scalar form.
+    cap_unitsize: dict[str, float] = {n: 0.0 for n in nodes}
+    for n, v in unitsize_sum_df.select(["node", "v_unitsize"]).iter_rows():
+        cap_unitsize[n] = v
+
+    # ── Stage R: _node_cap_raw (Tier A on real fixtures) ───────────────
+    # usz = cap_unitsize.get(n, 0.0); per (n, d):
+    #   v = usz if usz > 0 else (fb if (fb := inflow_fallback[(n,d)]) > 0
+    #                            else 1.0)
+    # Dense over node × period, no drop.
+    usz_lk2 = pl.DataFrame(
+        {"node": list(nodes),
+         "v_usz": [cap_unitsize.get(n, 0.0) for n in nodes]},
+        schema={"node": pl.Utf8, "v_usz": pl.Float64},
+    )
+    fb_lk = pl.DataFrame(
+        {"node": [k[0] for k in inflow_fallback],
+         "period": [k[1] for k in inflow_fallback],
+         "v_fb": list(inflow_fallback.values())},
+        schema={"node": pl.Utf8, "period": pl.Utf8, "v_fb": pl.Float64},
+    )
+    raw_grid = (
+        node_eo.join(period_po, how="cross")
+        .join(usz_lk2, on="node", how="left")
+        .join(fb_lk, on=["node", "period"], how="left")
+        .with_columns(
+            pl.col("v_usz").fill_null(0.0),
+            pl.col("v_fb").fill_null(0.0),
+        )
+        .with_columns(
+            pl.when(pl.col("v_usz") > 0.0)
+            .then(pl.col("v_usz"))
+            .otherwise(
+                pl.when(pl.col("v_fb") > 0.0)
+                .then(pl.col("v_fb"))
+                .otherwise(pl.lit(1.0)))
+            .alias("value_f"),
+        )
+    )
+    out["_node_cap_raw.csv"] = _ordered_value_frame(
+        raw_grid, ("node", "period", "value"), ["__eo", "__po"],
+    )
+    # (raw_dict is not reconstructed: the vectorized P10 stage reads
+    # ``raw_grid`` directly rather than iterating a scalar dict.)
+
+    # ── Stage P10: _node_cap_pow10 ─────────────────────────────────────
+    # _pow10_round_clamped(raw) per cell — reuse the SAME scalar UDF for
+    # byte-fidelity (the Float64 raw lifted above is bit-identical to the
+    # legacy Python float).
+    pow10_src = raw_grid.select(
+        ["node", "period", "__eo", "__po",
+         pl.col("value_f").alias("raw")])
+    pow10_grid = _pow10_value_column(pow10_src)
+    out["_node_cap_pow10.csv"] = _ordered_value_frame(
+        pow10_grid, ("node", "period", "value"), ["__eo", "__po"],
+    )
+    # (pow10_dict is not reconstructed: the vectorized NCFS stage reads
+    # ``pow10_grid`` directly rather than iterating a scalar dict.)
+
+    # ── node_capacity_for_scaling + inv_node_cap (Tier B) ──────────────
+    # ncfs = pow10 if scaling_active else 1.0 (scaling_active is a Python
+    # bool — branch in Python); inc = 1/ncfs if ncfs != 0 else 0.0.  Dense
+    # over node × period.  When scaling_active the value frame is the
+    # already-computed pow10_grid (every (n, d) is present, no .get default
+    # needed); otherwise a constant-1.0 dense grid.
+    if scaling_active:
+        ncfs_df = pow10_grid.select(
+            ["node", "period", "__eo", "__po",
+             pl.col("value_f")])
+    else:
+        ncfs_df = node_eo.join(period_po, how="cross").with_columns(
+            pl.lit(1.0, dtype=pl.Float64).alias("value_f"),
+        )
+    out["node_capacity_for_scaling.csv"] = _ordered_value_frame(
+        ncfs_df, ("node", "period", "value"), ["__eo", "__po"],
+    )
+    inc_df = ncfs_df.with_columns(
+        pl.when(pl.col("value_f") != 0.0)
+        .then(1.0 / pl.col("value_f"))
+        .otherwise(pl.lit(0.0))
+        .alias("value_f"),
+    )
+    out["inv_node_cap.csv"] = _ordered_value_frame(
+        inc_df, ("node", "period", "value"), ["__eo", "__po"],
+    )
+    # (ncfs_dict is not reconstructed: the vectorized group chain reads the
+    # ncfs FRAME directly when summing ncfs over a group's member nodes.)
+
+    # Group order frame (group list position → __eo).
+    group_eo = pl.DataFrame(
+        {"group": list(groups), "__eo": list(range(len(groups)))},
+        schema={"group": pl.Utf8, "__eo": pl.Int64},
+    )
+
+    # ── _group_cap_raw (Tier B + S5 int-0) — UNCONDITIONAL (Defect Y) ───
+    # v = sum(ncfs_dict.get((n, d), 1.0) for n in nodes_for_group.get(g,()))
+    # Join group_node→ncfs on node (left-join + fill_null(1.0) reproduces
+    # the .get((n, d), 1.0) default for a member node absent from ncfs),
+    # group_by([group, period]).sum, densify over group × period.
+    # S5 int-0: a group with NO member nodes → sum(()) == int 0 → emit the
+    # literal "0" (NOT "0.0").  GR is NOT gated by scaling_active.
+    ncfs_lk = ncfs_df.select(
+        ["node", "period", pl.col("value_f").alias("v_ncfs")])
+    gn_df = pl.DataFrame(
+        {"group": [g for g, _n in group_node],
+         "node": [n for _g, n in group_node]},
+        schema={"group": pl.Utf8, "node": pl.Utf8},
+    )
+    # group × member-node × period, then sum the ncfs default-1.0 value.
+    gn_member_sum = (
+        gn_df
+        .join(period_po, how="cross")
+        .join(ncfs_lk, on=["node", "period"], how="left")
+        .with_columns(pl.col("v_ncfs").fill_null(1.0))
+        .group_by(["group", "period"])
+        .agg(pl.col("v_ncfs").sum().alias("v_graw"))
+    )
+    graw_grid = (
+        group_eo.join(period_po, how="cross")
+        .join(gn_member_sum, on=["group", "period"], how="left")
+    )
+    # Split member-less (null group-sum → int-0 "0") from member-bearing
+    # (render the Float64 sum via repr); concat + re-sort by [__eo, __po].
+    if graw_grid.height:
+        member_rows = graw_grid.filter(pl.col("v_graw").is_not_null())
+        memberless_rows = graw_grid.filter(pl.col("v_graw").is_null())
+        parts: list[pl.DataFrame] = []
+        if member_rows.height:
+            parts.append(
+                member_rows.with_columns(
+                    _render_value_column(member_rows["v_graw"]).alias(
+                        "value"))
+                .select(["group", "period", "value", "__eo", "__po"]))
+        if memberless_rows.height:
+            parts.append(
+                memberless_rows.with_columns(
+                    pl.lit("0", dtype=pl.Utf8).alias("value"))
+                .select(["group", "period", "value", "__eo", "__po"]))
+        graw_out = (
+            pl.concat(parts, how="vertical")
+            .sort(["__eo", "__po"])
+            .select(["group", "period", "value"])
+        )
+    else:
+        graw_out = _empty_value_frame(("group", "period", "value"))
+    out["_group_cap_raw.csv"] = graw_out
+    # Reconstruct grp_raw {(g, d): float} (member-less → 0.0; the int/float
+    # distinction is irrelevant to the downstream ``v > 0`` GP10 test).
+    grp_raw: dict[tuple[str, str], float] = {
+        (r[0], r[1]): (r[2] if r[2] is not None else 0.0)
+        for r in graw_grid.select(["group", "period", "v_graw"]).iter_rows()
+    }
+
+    # ── _group_cap_pow10 — UNCONDITIONAL (Defect Y), scalar UDF ─────────
+    # _pow10_round_clamped(graw) if graw > 0 else 1.0.  Reuse the SAME
+    # scalar UDF (note: it already returns 1.0 for v <= 0, so the explicit
+    # ``if graw > 0 else 1.0`` is subsumed by the UDF — apply it directly).
+    gpow10_grid = (
+        group_eo.join(period_po, how="cross")
+        .join(
+            pl.DataFrame(
+                {"group": [k[0] for k in grp_raw],
+                 "period": [k[1] for k in grp_raw],
+                 "raw": list(grp_raw.values())},
+                schema={"group": pl.Utf8, "period": pl.Utf8,
+                        "raw": pl.Float64}),
+            on=["group", "period"], how="left")
+    )
+    gpow10_grid = _pow10_value_column(gpow10_grid)
+    out["_group_cap_pow10.csv"] = _ordered_value_frame(
+        gpow10_grid, ("group", "period", "value"), ["__eo", "__po"],
+    )
+    # (grp_pow10 is not reconstructed: the vectorized GCFS stage reads the
+    # gpow10 FRAME directly.)
+
+    # ── group_capacity_for_scaling + inv_group_cap (Tier B) ────────────
+    # gcfs = grp_pow10 if scaling_active else 1.0 (scaling_active is a
+    # Python bool); igc = 1/gcfs if gcfs != 0 else 0.0.  GCFS IS gated.
+    if scaling_active:
+        gcfs_df = gpow10_grid.select(
+            ["group", "period", "__eo", "__po",
+             pl.col("value_f")])
+    else:
+        gcfs_df = group_eo.join(period_po, how="cross").with_columns(
+            pl.lit(1.0, dtype=pl.Float64).alias("value_f"),
+        )
+    out["group_capacity_for_scaling.csv"] = _ordered_value_frame(
+        gcfs_df, ("group", "period", "value"), ["__eo", "__po"],
+    )
+    igc_df = gcfs_df.with_columns(
+        pl.when(pl.col("value_f") != 0.0)
+        .then(1.0 / pl.col("value_f"))
+        .otherwise(pl.lit(0.0))
+        .alias("value_f"),
+    )
+    out["inv_group_cap.csv"] = _ordered_value_frame(
+        igc_df, ("group", "period", "value"), ["__eo", "__po"],
+    )
+
+    return out
+
+
 # ---- Phase E-b — derive_X family for each emitted CSV --------------------
 #
 # Each derive_* delegates to the shared :func:`_compute_lp_scaling_frames`
@@ -388,7 +771,7 @@ def emit_lp_scaling_params(
     Emits the same 9 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).
     """
-    frames = _compute_lp_scaling_frames(input_dir, solve_data_dir,
-                                          provider=provider)
+    frames = _compute_lp_scaling_frames_vectorized(
+        input_dir, solve_data_dir, provider=provider)
     for basename, df in frames.items():
         _emit(provider, f"solve_data/{basename}", df)

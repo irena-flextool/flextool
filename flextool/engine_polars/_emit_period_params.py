@@ -27,6 +27,14 @@ from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
 )
+from flextool.engine_polars._vectorize import (
+    build_entity_dt_grid,
+    build_entity_period_grid,
+    build_fold_frame,
+    coalesce_value,
+    collect_value_frame,
+    lift_dict_to_lookup,
+)
 
 
 def _cell_str(value: "object | None") -> str:
@@ -343,11 +351,295 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
+                                    *,
+                                    provider: "object | None" = None,
+                                    engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtNodeInflow`` derive — parity with the legacy.
+
+    Replaces the per-cell 3-branch scalar cascade in
+    :func:`derive_pdtNodeInflow` with vectorized polars, still per roll
+    over the roll's own window.  Output is byte-identical to
+    :func:`derive_pdtNodeInflow`: columns ``node, period, time, value``
+    all ``Utf8``, entity-major row order, ``repr(v)`` value cells.
+
+    This family composes two already-proven patterns:
+
+    * the single-``node``-key grid + ``build_fold_frame`` fold skeleton
+      (branches 1 & 2 — stochastic + parent-period fold, identical to
+      :func:`derive_pdtProfile_vectorized`); and
+    * the gated additive SUM of branch 3 (the four inflow-scaling
+      methods), assembled membership-gated-left-join + ``fill_null(0.0)``
+      with a signed-zero normalization (identical mechanics to
+      :func:`_derive_varCost_pair_vectorized`).
+
+    The fold (branches 1-2) takes priority over the branch-3 deterministic
+    sum, which is always non-null (its 0.0 floor for non-balance / no-
+    method nodes), so ``coalesce(v_fold, v_b3)`` reproduces the legacy
+    ``emit_v`` priority exactly.
+
+    The reader block is copied VERBATIM from :func:`derive_pdtNodeInflow`
+    so the deduped dicts / stoch set / float parses are byte-for-byte
+    identical, and the vectorized lookups are lifted from those dicts (not
+    re-read from the CSVs).
+    """
+    # --- Step 1: reader block copied VERBATIM from derive_pdtNodeInflow ----
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    inflow_method_pairs = frozenset(
+        _read_pairs(solve_data_dir / "node__inflow_method.csv",
+                    provider=provider)
+    )
+    n_balance = frozenset(
+        _read_singles(solve_data_dir / "nodeBalance.csv", provider=provider)
+    )
+    n_balance_period = frozenset(
+        _read_singles(solve_data_dir / "nodeBalancePeriod.csv",
+                      provider=provider)
+    )
+    balance_union = n_balance | n_balance_period
+
+    stoch_node = _read_stochastic_entities(
+        input_dir / "group__node.csv",
+        input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
+    )
+
+    ts_for_d = _read_pairs_to_dict(
+        solve_data_dir / "first_timesteps.csv", key_col=0,
+        provider=provider,
+    )
+    tb_for_d = _read_pairs_to_dict(
+        solve_data_dir / "solve_branch__time_branch.csv", key_col=0,
+        provider=provider,
+    )
+    # period__branch.csv stores (db, d) — child key column is 1.
+    pe_for_d = _read_pairs_to_dict(
+        solve_data_dir / "period__branch.csv", key_col=1,
+        provider=provider,
+    )
+
+    # pbt_node_inflow{(n, branch, ts, t) → value}
+    pbt_inflow: dict[tuple[str, str, str, str], float] = {}
+    pbt_path = input_dir / "pbt_node_inflow.csv"
+    pbt_df = provider.get(_provider_key(pbt_path))
+    if pbt_df is not None:
+        for row in pbt_df.iter_rows():
+            if len(row) < 5:
+                continue
+            c0, c1, c2, c3 = (_cell_str(row[0]), _cell_str(row[1]),
+                              _cell_str(row[2]), _cell_str(row[3]))
+            if c0 and c1 and c2 and c3:
+                try:
+                    pbt_inflow[(c0, c1, c2, c3)] = float(row[4])
+                except (ValueError, TypeError):
+                    continue
+
+    # ptNode_inflow{(n, t) → value}
+    pt_inflow: dict[tuple[str, str], float] = {}
+    pti_path = solve_data_dir / "ptNode_inflow.csv"
+    pti_df = provider.get(_provider_key(pti_path))
+    if pti_df is not None:
+        for row in pti_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    pt_inflow[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
+
+    # pdNode lookup limited to (annual_flow, peak_inflow).
+    pdNode_af: dict[tuple[str, str], float] = {}
+    pdNode_pk: dict[tuple[str, str], float] = {}
+    pdn_path = solve_data_dir / "pdNode.csv"
+    pdn_df = provider.get(_provider_key(pdn_path))
+    if pdn_df is not None:
+        for row in pdn_df.iter_rows():
+            if len(row) < 4:
+                continue
+            c0 = _cell_str(row[0])
+            if c0:
+                try:
+                    v = float(row[3])
+                except (ValueError, TypeError):
+                    continue
+                c1, c2 = _cell_str(row[1]), _cell_str(row[2])
+                if c1 == "annual_flow":
+                    pdNode_af[(c0, c2)] = v
+                elif c1 == "peak_inflow":
+                    pdNode_pk[(c0, c2)] = v
+
+    def _read_2_keyed_value(path: Path) -> dict[tuple[str, str], float]:
+        out: dict[tuple[str, str], float] = {}
+        df = provider.get(_provider_key(path))
+        if df is None:
+            return out
+        for row in df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    out[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
+        return out
+
+    pfa = _read_2_keyed_value(
+        solve_data_dir / "period_flow_annual_multiplier.csv"
+    )
+    pfp = _read_2_keyed_value(
+        solve_data_dir / "period_flow_proportional_multiplier.csv"
+    )
+    nos_slope = _read_2_keyed_value(solve_data_dir / "new_old_slope.csv")
+    nos_section = _read_2_keyed_value(solve_data_dir / "new_old_section.csv")
+
+    eligible_nodes = [
+        n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
+    ]
+
+    # --- Step 2: grid + fold (branches 1 & 2), pdtProfile-shaped ----------
+    key_cols = ["node"]
+    out_cols = [*key_cols, "period", "time"]
+    periods = [d for (d, _t) in dt]
+
+    grid = build_entity_dt_grid(
+        [(n,) for n in eligible_nodes], dt, key_cols=key_cols)
+
+    fold = build_fold_frame(
+        pbt=pbt_inflow,
+        pbt_key_cols=["node"],
+        out_key_cols=out_cols,
+        ts_for_d=ts_for_d,
+        tb_for_d=tb_for_d,
+        pe_for_d=pe_for_d,
+        stoch_entities=stoch_node,
+        stoch_filter_cols=["node"],
+        periods=periods,
+    )
+
+    # --- Step 3: branch 3 — deterministic gated additive sum --------------
+    # Lift the Float64 value lookups from the deduped dicts.
+    pti_df_lk = lift_dict_to_lookup(pt_inflow, ["node", "time"], "v_pti")
+    pfa_df = lift_dict_to_lookup(pfa, ["node", "period"], "v_pfa")
+    pfp_df = lift_dict_to_lookup(pfp, ["node", "period"], "v_pfp")
+    slope_df = lift_dict_to_lookup(nos_slope, ["node", "period"], "v_slope")
+    sect_df = lift_dict_to_lookup(nos_section, ["node", "period"], "v_sect")
+    af_df = lift_dict_to_lookup(pdNode_af, ["node", "period"], "v_af")
+    pk_df = lift_dict_to_lookup(pdNode_pk, ["node", "period"], "v_pk")
+
+    # Per-node Boolean membership frames with EXPLICIT schema (an empty set
+    # must NOT yield an all-Null frame).  The four ``has_*`` gates are
+    # per-node memberships ``(n, method) ∈ inflow_method_pairs``.
+    def _bool_frame(names: "set[str] | list[str]", col: str) -> pl.DataFrame:
+        names = list(names)
+        return pl.DataFrame(
+            {"node": names, col: [True] * len(names)},
+            schema={"node": pl.Utf8, col: pl.Boolean},
+        )
+
+    in_bal_df = _bool_frame(balance_union, "__in_bal")
+    m_ann_df = _bool_frame(
+        {n for (n, m) in inflow_method_pairs
+         if m == "scale_to_annual_flow"}, "__m_ann")
+    m_prop_df = _bool_frame(
+        {n for (n, m) in inflow_method_pairs
+         if m == "scale_in_proportion"}, "__m_prop")
+    m_peak_df = _bool_frame(
+        {n for (n, m) in inflow_method_pairs
+         if m == "scale_to_annual_and_peak_flow"}, "__m_peak")
+    m_orig_df = _bool_frame(
+        {n for (n, m) in inflow_method_pairs
+         if m == "use_original"}, "__m_orig")
+
+    out = (
+        grid
+        .join(in_bal_df, on=["node"], how="left")
+        .join(m_ann_df, on=["node"], how="left")
+        .join(m_prop_df, on=["node"], how="left")
+        .join(m_peak_df, on=["node"], how="left")
+        .join(m_orig_df, on=["node"], how="left")
+        .join(pti_df_lk, on=["node", "time"], how="left")
+        .join(pfa_df, on=["node", "period"], how="left")
+        .join(pfp_df, on=["node", "period"], how="left")
+        .join(slope_df, on=["node", "period"], how="left")
+        .join(sect_df, on=["node", "period"], how="left")
+        .join(af_df, on=["node", "period"], how="left")
+        .join(pk_df, on=["node", "period"], how="left")
+    )
+
+    pti = pl.col("v_pti").fill_null(0.0)
+    # Gate on the VALUE being non-zero (NEVER ``is_not_null``): a real
+    # 0.0-valued af / pk key must gate the term OFF, matching the legacy
+    # ``if ... pdNode_af.get((n, d), 0.0):`` truthiness guard.
+    af_ok = pl.col("v_af").fill_null(0.0) != 0.0
+    pk_ok = pl.col("v_pk").fill_null(0.0) != 0.0
+
+    t_ann = (
+        pl.when(pl.col("__m_ann").fill_null(False) & af_ok)
+        .then(pl.col("v_pfa").fill_null(0.0) * pti)
+        .otherwise(0.0)
+    )
+    t_prop = (
+        pl.when(pl.col("__m_prop").fill_null(False) & af_ok)
+        .then(pl.col("v_pfp").fill_null(0.0) * pti)
+        .otherwise(0.0)
+    )
+    t_peak = (
+        pl.when(pl.col("__m_peak").fill_null(False) & af_ok & pk_ok)
+        .then(pl.col("v_slope").fill_null(0.0) * pti
+              - pl.col("v_sect").fill_null(0.0))
+        .otherwise(0.0)
+    )
+    t_orig = (
+        pl.when(pl.col("__m_orig").fill_null(False))
+        .then(pti)
+        .otherwise(0.0)
+    )
+    # Fixed add order (matches legacy :330-340).
+    branch3 = t_ann + t_prop + t_peak + t_orig
+    # Non-balance-union nodes get the 0.0 floor (legacy L328 guard).
+    v_b3 = (
+        pl.when(pl.col("__in_bal").fill_null(False))
+        .then(branch3)
+        .otherwise(0.0)
+    )
+    # Signed-zero normalization: the legacy seeds ``value = 0.0`` so any
+    # ``±0.0`` term collapses to ``+0.0`` (legacy never emits ``"-0.0"``);
+    # the peak term ``slope*pti - section`` can produce ``-0.0``.  Wrap
+    # ``when(== 0.0).then(lit(0.0))`` (NOT ``lit(0.0) + sum`` — that form
+    # leaves ``-0.0`` across rows; proven broken in the varCost round).
+    v_b3 = (
+        pl.when(v_b3 == 0.0)
+        .then(pl.lit(0.0))
+        .otherwise(v_b3)
+    )
+
+    # --- Step 4: coalesce (fold-priority) + collect -----------------------
+    if fold is not None:
+        out = out.join(fold, on=out_cols, how="left")
+    else:
+        out = out.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("v_fold"))
+
+    out = out.with_columns(
+        coalesce_value([
+            pl.col("v_fold"),   # branches 1-2 (stoch + parent fold)
+            v_b3,               # branch 3 (always non-null = 0.0 floor)
+        ])
+    )
+    return collect_value_frame(out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
                         *, provider) -> None:
     """Emit ``pdtNodeInflow`` to the Provider."""
     _emit(provider, "solve_data/pdtNodeInflow.csv",
-          derive_pdtNodeInflow(input_dir, solve_data_dir, provider=provider))
+          derive_pdtNodeInflow_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
@@ -530,11 +822,184 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
+                                 *,
+                                 provider: "object | None" = None,
+                                 engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtProfile`` derive — parity with the legacy.
+
+    Replaces the per-cell 5-branch scalar cascade in
+    :func:`derive_pdtProfile` with vectorized polars (left-joins +
+    ``coalesce`` in cascade-priority order + the group-by-sum folds),
+    still per roll over the roll's own window.  Output is byte-identical
+    to :func:`derive_pdtProfile`: columns ``profile, period, time,
+    value`` all ``Utf8``, entity-major row order, ``repr(v)`` value
+    cells.
+
+    Entity key = ``profile`` (single Utf8 col), NO param axis.  Branches
+    (priority): (1) stochastic fold, (2) parent-period fold, (3)
+    ``pt_profile[(profile, time)]``, (4) ``p_profile[profile]``, (5)
+    literal ``0.0``.  The ``pbt_profile`` key is a 4-tuple
+    ``(profile, tb, ts, t)`` (NO param), so the fold key cols are the
+    single ``["profile"]`` column.
+
+    The reader blocks (``pbt`` / ``pt`` / ``p`` loaders, the three fold-
+    index dicts, and the stochastic-profile UNION over process / node /
+    process_node bindings) are copied verbatim from
+    :func:`derive_pdtProfile` so the deduped dicts / stoch set match
+    byte-for-byte.
+    """
+    profiles = _read_singles(input_dir / "profile.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    # pbt / pt / p loaders.
+    pbt_profile: dict[tuple[str, str, str, str], float] = {}
+    pbt_path = input_dir / "pbt_profile.csv"
+    pbt_df = provider.get(_provider_key(pbt_path))
+    if pbt_df is not None:
+        for row in pbt_df.iter_rows():
+            if len(row) < 5:
+                continue
+            c0, c1, c2, c3 = (_cell_str(row[0]), _cell_str(row[1]),
+                              _cell_str(row[2]), _cell_str(row[3]))
+            if c0 and c1 and c2 and c3:
+                try:
+                    pbt_profile[(c0, c1, c2, c3)] = float(row[4])
+                except (ValueError, TypeError):
+                    continue
+    pt_profile: dict[tuple[str, str], float] = {}
+    pt_path = solve_data_dir / "pt_profile.csv"
+    pt_df = provider.get(_provider_key(pt_path))
+    if pt_df is not None:
+        for row in pt_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    pt_profile[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
+    p_profile: dict[str, float] = {}
+    p_path = input_dir / "p_profile.csv"
+    p_df = provider.get(_provider_key(p_path))
+    if p_df is not None:
+        for row in p_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0 = _cell_str(row[0])
+            if c0:
+                try:
+                    p_profile[c0] = float(row[1])
+                except (ValueError, TypeError):
+                    continue
+
+    # Branch indices.
+    ts_for_d = _read_pairs_to_dict(
+        solve_data_dir / "first_timesteps.csv", key_col=0,
+        provider=provider,
+    )
+    tb_for_d = _read_pairs_to_dict(
+        solve_data_dir / "solve_branch__time_branch.csv", key_col=0,
+        provider=provider,
+    )
+    pe_for_d = _read_pairs_to_dict(
+        solve_data_dir / "period__branch.csv", key_col=1,
+        provider=provider,
+    )
+
+    # Stochastic profile UNION: any profile referenced via a stochastic
+    # process / node / process_node binding.
+    stoch_processes = _read_stochastic_entities(
+        input_dir / "group__process.csv",
+        input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
+    )
+    stoch_nodes = _read_stochastic_entities(
+        input_dir / "group__node.csv",
+        input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
+    )
+    stoch_profile: set[str] = set()
+    pp_path = input_dir / "process__profile__profile_method.csv"
+    pp_df = provider.get(_provider_key(pp_path))
+    if pp_df is not None:
+        for row in pp_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 in stoch_processes and c1:
+                stoch_profile.add(c1)
+    np_path = input_dir / "node__profile__profile_method.csv"
+    np_df = provider.get(_provider_key(np_path))
+    if np_df is not None:
+        for row in np_df.iter_rows():
+            if len(row) < 2:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 in stoch_nodes and c1:
+                stoch_profile.add(c1)
+    pnp_path = input_dir / "process__node__profile__profile_method.csv"
+    pnp_df = provider.get(_provider_key(pnp_path))
+    if pnp_df is not None:
+        for row in pnp_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c2 = _cell_str(row[0]), _cell_str(row[2])
+            if c0 in stoch_processes and c2:
+                stoch_profile.add(c2)
+
+    # --- vectorized assembly ----------------------------------------------
+    key_cols = ["profile"]
+    out_cols = [*key_cols, "period", "time"]
+    periods = [d for (d, _t) in dt]
+
+    grid = build_entity_dt_grid(
+        [(p,) for p in profiles], dt, key_cols=key_cols)
+
+    pt_df_lk = lift_dict_to_lookup(pt_profile, ["profile", "time"], "v_pt")
+    p_df_lk = lift_dict_to_lookup(p_profile, ["profile"], "v_p")
+
+    fold = build_fold_frame(
+        pbt=pbt_profile,
+        pbt_key_cols=["profile"],
+        out_key_cols=out_cols,
+        ts_for_d=ts_for_d,
+        tb_for_d=tb_for_d,
+        pe_for_d=pe_for_d,
+        stoch_entities=stoch_profile,
+        stoch_filter_cols=["profile"],
+        periods=periods,
+    )
+
+    out = (
+        grid
+        .join(pt_df_lk, on=["profile", "time"], how="left")
+        .join(p_df_lk, on=["profile"], how="left")
+    )
+    if fold is not None:
+        out = out.join(fold, on=out_cols, how="left")
+    else:
+        out = out.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("v_fold"))
+
+    out = out.with_columns(
+        coalesce_value([
+            pl.col("v_fold"),   # branches 1-2 (stoch + parent fold)
+            pl.col("v_pt"),     # branch 3 (pt_profile)
+            pl.col("v_p"),      # branch 4 (p_profile)
+            pl.lit(0.0),        # branch 5 (literal 0.0)
+        ])
+    )
+    return collect_value_frame(out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtProfile(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
     """Emit ``pdtProfile`` to the Provider."""
     _emit(provider, "solve_data/pdtProfile.csv",
-          derive_pdtProfile(input_dir, solve_data_dir, provider=provider))
+          derive_pdtProfile_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
@@ -834,11 +1299,150 @@ def derive_pdGroup(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdGroup_vectorized(input_dir: Path, solve_data_dir: Path,
+                              *,
+                              provider: "object | None" = None,
+                              engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdGroup`` derive — period-only, branch-sum, dedup-safe.
+
+    Replaces the per-cell cascade loop in :func:`derive_pdGroup` with
+    vectorized polars (left-joins + a group-by-sum for the branch fold +
+    ``coalesce`` in cascade-priority order), still per roll over the
+    roll's own window.  Output columns ``group, param, period, value``
+    all ``Utf8`` (NO time axis), entity-major row order, ``repr(v)``
+    value cells.
+
+    Domain = ``group × _GROUP_PERIOD_PARAM`` (the live module frozenset,
+    so iteration order matches legacy — S4) preserving order and
+    duplicates; period axis = ``period_in_use`` (order + duplicates
+    preserved).
+
+    Cascade per ``(g, param, d)`` (5-branch):
+
+    1. ``pd_group[g, param, d]``                                — direct.
+    2. ``sum_{db ∈ branches_for_d[d], (g,param,db)∈pd_group}
+        pd_group[g, param, db]``                               — fold,
+       only when NON-empty.
+    3. ``p_group[g, param]``                                   — scalar.
+    4. ``5000`` when ``param ∈ _GROUP_PARAM_DEFAULT_5000``.
+    5. ``0``.
+
+    The branch-sum (D3 critique fix) is computed on the **de-duplicated**
+    ``(group, param)`` set so a duplicated ``group`` entry in
+    ``group.csv`` does NOT double-count the fold; the dup-preserving final
+    grid then left-joins the per-``(group,param,period)`` sum back,
+    re-expanding to every output row.
+    """
+    pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
+    p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
+    branches_for_d = _read_branches_for_d(
+        solve_data_dir / "period__branch.csv", provider=provider,
+    )
+    groups = _read_singles(input_dir / "group.csv", provider=provider)
+    period_in_use = _read_singles(
+        solve_data_dir / "period_in_use_set.csv", provider=provider,
+    )
+
+    key_cols = ["group", "param"]
+    out_cols = [*key_cols, "period"]
+
+    # Domain = group × _GROUP_PERIOD_PARAM, referencing the LIVE frozenset
+    # object so iteration order matches the legacy loop (S4); preserve the
+    # group list order + duplicates, never ``.unique()``.
+    domain = [
+        (g, param) for g in groups for param in list(_GROUP_PERIOD_PARAM)
+    ]
+
+    grid = build_entity_period_grid(
+        domain, period_in_use, key_cols=key_cols,
+    )
+
+    # Branch 1 — direct pd_group[(g, param, d)].
+    pd_df = lift_dict_to_lookup(pd_g, ["group", "param", "period"], "v_pd")
+
+    # Branch 3 — scalar p_group[(g, param)].
+    p_df = lift_dict_to_lookup(p_g, ["group", "param"], "v_p")
+
+    # Branch 4 — 5000 default for the penalty params.
+    def5000_params = list(_GROUP_PARAM_DEFAULT_5000)
+    def5000_df = pl.DataFrame(
+        {
+            "param": def5000_params,
+            "v_5000": [5000.0] * len(def5000_params),
+        },
+        schema={"param": pl.Utf8, "v_5000": pl.Float64},
+    )
+
+    # Branch 2 — branch-sum.  Expand (period d → branch period db),
+    # preserving duplicate (d, db) rows (D2: duplicates must double-count
+    # to match the legacy ``sum(...)`` over the branches list).
+    exp_period: list[str] = []
+    exp_db: list[str] = []
+    for d in period_in_use:
+        for db in branches_for_d.get(d, ()):
+            exp_period.append(d)
+            exp_db.append(db)
+    exp = pl.DataFrame(
+        {"period": exp_period, "db": exp_db},
+        schema={"period": pl.Utf8, "db": pl.Utf8},
+    )
+
+    if exp.height > 0:
+        pd_db = lift_dict_to_lookup(
+            pd_g, ["group", "param", "db"], "v_pddb")
+        # D3: de-dup the (group, param) set for the SUM ONLY so a
+        # duplicated group does not double-count; the dup-preserving grid
+        # re-expands the result back to every output row via the final
+        # left-join.
+        gp_unique = grid.select(["group", "param"]).unique()
+        bsum = (
+            gp_unique
+            .join(exp, how="cross")
+            # INNER join drops non-matching (g, param, db) → reproduces
+            # both the ``if (g,param,db) in pd_g`` gate and the
+            # ``if branched:`` non-empty gate.
+            .join(pd_db, on=["group", "param", "db"], how="inner")
+            .group_by(["group", "param", "period"])
+            .agg(pl.col("v_pddb").sum().alias("v_branch"))
+        )
+    else:
+        bsum = pl.DataFrame(
+            {"group": [], "param": [], "period": [], "v_branch": []},
+            schema={
+                "group": pl.Utf8,
+                "param": pl.Utf8,
+                "period": pl.Utf8,
+                "v_branch": pl.Float64,
+            },
+        )
+
+    out = (
+        grid
+        .join(pd_df, on=["group", "param", "period"], how="left")
+        .join(bsum, on=["group", "param", "period"], how="left")
+        .join(p_df, on=["group", "param"], how="left")
+        .join(def5000_df, on=["param"], how="left")
+        .with_columns(
+            coalesce_value([
+                pl.col("v_pd"),      # branch 1 (direct)
+                pl.col("v_branch"),  # branch 2 (branch-sum, non-empty)
+                pl.col("v_p"),       # branch 3 (scalar)
+                pl.col("v_5000"),    # branch 4 (5000 default set)
+                pl.lit(0.0),         # branch 5 (default)
+            ])
+        )
+    )
+    return collect_value_frame(
+        out, key_cols=out_cols, sort_cols=["__eo", "__po"], engine=engine,
+    )
+
+
 def emit_pdGroup(input_dir: Path, solve_data_dir: Path,
                   *, provider) -> None:
     """Emit ``pdGroup`` to the Provider."""
     _emit(provider, "solve_data/pdGroup.csv",
-          derive_pdGroup(input_dir, solve_data_dir, provider=provider))
+          derive_pdGroup_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
@@ -886,11 +1490,69 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtGroup_vectorized(input_dir: Path, solve_data_dir: Path,
+                               *,
+                               provider: "object | None" = None,
+                               engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtGroup`` derive — byte-parity with the legacy.
+
+    Replaces the per-cell cascade loop in :func:`derive_pdtGroup` with
+    vectorized polars (left-joins + ``coalesce`` in cascade-priority
+    order), still per roll over the roll's own window.  Output is
+    byte-identical to :func:`derive_pdtGroup`: columns ``group, param,
+    period, time, value`` all ``Utf8``, entity-major row order,
+    ``repr(v)`` value cells.
+
+    Domain = ``group × _GROUP_TIME_PARAM`` (the live module frozenset, so
+    iteration order matches legacy — S4) preserving order and duplicates,
+    crossed with ``dt`` from ``steps_in_use``.
+
+    Cascade (inline 4-branch, time-first):
+    ``pt_group`` → ``pd_group`` → ``p_group`` → ``0.0``.
+    """
+    pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)
+    pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
+    p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
+    groups = _read_singles(input_dir / "group.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    key_cols = ["group", "param"]
+    out_cols = [*key_cols, "period", "time"]
+
+    # Domain = group × _GROUP_TIME_PARAM, referencing the LIVE frozenset
+    # object so iteration order matches the legacy loop (S4); preserve the
+    # group list order + duplicates, never ``.unique()``.
+    domain = [(g, param) for g in groups for param in list(_GROUP_TIME_PARAM)]
+
+    grid = build_entity_dt_grid(domain, dt, key_cols=key_cols)
+
+    pt_df = lift_dict_to_lookup(pt_g, ["group", "param", "time"], "v_pt")
+    pd_df = lift_dict_to_lookup(pd_g, ["group", "param", "period"], "v_pd")
+    p_df = lift_dict_to_lookup(p_g, ["group", "param"], "v_p")
+
+    out = (
+        grid
+        .join(pt_df, on=["group", "param", "time"], how="left")
+        .join(pd_df, on=["group", "param", "period"], how="left")
+        .join(p_df, on=["group", "param"], how="left")
+        .with_columns(
+            coalesce_value([
+                pl.col("v_pt"),   # branch 1 (time-first)
+                pl.col("v_pd"),   # branch 2 (period)
+                pl.col("v_p"),    # branch 3
+                pl.lit(0.0),      # branch 4 (default)
+            ])
+        )
+    )
+    return collect_value_frame(out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtGroup(input_dir: Path, solve_data_dir: Path,
                    *, provider) -> None:
     """Emit ``pdtGroup`` to the Provider."""
     _emit(provider, "solve_data/pdtGroup.csv",
-          derive_pdtGroup(input_dir, solve_data_dir, provider=provider))
+          derive_pdtGroup_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
@@ -938,11 +1600,68 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtCommodity_vectorized(input_dir: Path, solve_data_dir: Path,
+                                   *,
+                                   provider: "object | None" = None,
+                                   engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtCommodity`` derive — byte-parity with the legacy.
+
+    Replaces the per-cell cascade loop in :func:`derive_pdtCommodity`
+    with vectorized polars (left-joins + ``coalesce`` in cascade-priority
+    order), still per roll over the roll's own window.  Output is
+    byte-identical to :func:`derive_pdtCommodity`: columns ``commodity,
+    param, period, time, value`` all ``Utf8``, entity-major row order,
+    ``repr(v)`` value cells.
+
+    Cascade (inline 3-branch, time-first):
+    ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → ``0.0``.
+    """
+    pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
+    pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
+    p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
+    commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    key_cols = ["commodity", "param"]
+    out_cols = [*key_cols, "period", "time"]
+
+    # Domain = commodity × _COMMODITY_TIME_PARAM, preserving legacy
+    # iteration order (commodity-major, param from the tuple) and never
+    # ``.unique()``-d.
+    domain = [(c, param) for c in commodities for param in _COMMODITY_TIME_PARAM]
+
+    grid = build_entity_dt_grid(domain, dt, key_cols=key_cols)
+
+    pt_df = lift_dict_to_lookup(
+        pt, ["commodity", "param", "time"], "v_pt")
+    pd_df = lift_dict_to_lookup(
+        pd_, ["commodity", "param", "period"], "v_pd")
+    p_df = lift_dict_to_lookup(
+        p, ["commodity", "param"], "v_p")
+
+    out = (
+        grid
+        .join(pt_df, on=["commodity", "param", "time"], how="left")
+        .join(pd_df, on=["commodity", "param", "period"], how="left")
+        .join(p_df, on=["commodity", "param"], how="left")
+        .with_columns(
+            coalesce_value([
+                pl.col("v_pt"),   # branch 1 (time-first)
+                pl.col("v_pd"),   # branch 2 (period)
+                pl.col("v_p"),    # branch 3
+                pl.lit(0.0),      # branch 4 (default)
+            ])
+        )
+    )
+    return collect_value_frame(out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtCommodity(input_dir: Path, solve_data_dir: Path,
                        *, provider) -> None:
     """Emit ``pdtCommodity`` to the Provider."""
     _emit(provider, "solve_data/pdtCommodity.csv",
-          derive_pdtCommodity(input_dir, solve_data_dir, provider=provider))
+          derive_pdtCommodity_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
@@ -1175,6 +1894,163 @@ def _derive_varCost_pair(
     return _build(pss, always=False), _build(pss_always, always=True)
 
 
+def _derive_varCost_pair_vectorized(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None, engine: str = "eager",
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Vectorized twin of :func:`_derive_varCost_pair` (design §5 / S7).
+
+    Both the ``basic`` and ``_alwaysProcess`` variants are a
+    membership-GATED SUM of three terms — NOT a coalesce cascade:
+
+        v = 0.0
+        if (p, src) ∈ proc_src: v += pdt_src[(p, src, d, t)]
+        if (p, snk) ∈ proc_snk: v += pdt_snk[(p, snk, d, t)]
+        basic:  v += pdt[(p, d, t)]                       # unconditional
+        always: if (p, snk) ∈ proc_snk or (p, snk) ∈ proc_src:
+                    v += pdt[(p, d, t)]
+
+    Reproduced per cell as ``build_entity_dt_grid`` ⨯ membership/value
+    left-joins ⨯ ``fill_null(0.0)`` ⨯ a fixed-order ``src + snk + pdt``
+    add, then a SIGNED-ZERO normalization (critique D1): the legacy
+    accumulator seeds ``v = 0.0`` so ``0.0 + (-0.0)`` already kills the
+    sign on the first add → legacy never emits ``"-0.0"``; ``pl.lit(0.0)
+    + sum`` does NOT reproduce this (polars leaves ``-0.0`` as ``-0.0``
+    across rows), so the value is wrapped
+    ``when(value_f == 0.0).then(0.0)`` to canonicalize ``±0.0 → +0.0``.
+
+    The two variants have DIFFERENT domains (``pss`` vs ``pss_always``)
+    and a DIFFERENT pdt gate, so they are assembled separately and
+    returned as a pair (mirroring the legacy shared producer).
+    """
+    pdt = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess.csv",
+        param_col=1, param_value="other_operational_cost",
+        key_cols=(0, 2, 3), val_col=4,
+        provider=provider,
+    )  # (process, period, time) → value
+    pdt_src = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_source.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
+    )  # (process, source, period, time) → value
+    pdt_snk = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_sink.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
+    )  # (process, sink, period, time) → value
+    proc_src = frozenset(
+        _read_pairs(input_dir / "process__source.csv", provider=provider)
+    )
+    proc_snk = frozenset(
+        _read_pairs(input_dir / "process__sink.csv", provider=provider)
+    )
+    pss = _read_triples(
+        solve_data_dir / "process_source_sink.csv", provider=provider,
+    )
+    pss_always = _read_triples(
+        solve_data_dir / "process_source_sink_alwaysProcess.csv",
+        provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    # Lift the three value dicts (last-wins-deduped) to lookup frames.
+    src_df = lift_dict_to_lookup(
+        pdt_src, ["process", "source", "period", "time"], "v_src")
+    snk_df = lift_dict_to_lookup(
+        pdt_snk, ["process", "sink", "period", "time"], "v_snk")
+    pdt_df = lift_dict_to_lookup(
+        pdt, ["process", "period", "time"], "v_pdt")
+
+    # Membership frames built from the frozensets with EXPLICIT schemas
+    # (critique D7): an empty frozenset must NOT yield an all-Null frame.
+    ps_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_src],
+            "source": [b for (_a, b) in proc_src],
+            "__in_src": [True] * len(proc_src),
+        },
+        schema={"process": pl.Utf8, "source": pl.Utf8,
+                "__in_src": pl.Boolean},
+    )
+    pk_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_snk],
+            "sink": [b for (_a, b) in proc_snk],
+            "__in_snk": [True] * len(proc_snk),
+        },
+        schema={"process": pl.Utf8, "sink": pl.Utf8,
+                "__in_snk": pl.Boolean},
+    )
+    # proc_src arcs renamed source→sink: expresses ``(p, snk) ∈ proc_src``
+    # for the always-variant pdt gate (critique D2 — both gate terms key
+    # on ``snk``, including against proc_src).
+    ps_snk_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_src],
+            "sink": [b for (_a, b) in proc_src],
+            "__snk_in_src": [True] * len(proc_src),
+        },
+        schema={"process": pl.Utf8, "sink": pl.Utf8,
+                "__snk_in_src": pl.Boolean},
+    )
+
+    def _build_vec(domain: list[tuple[str, str, str]],
+                   always: bool) -> pl.DataFrame:
+        grid = build_entity_dt_grid(
+            domain, dt, key_cols=["process", "source", "sink"])
+        out = (
+            grid
+            .join(ps_df, on=["process", "source"], how="left")
+            .join(src_df, on=["process", "source", "period", "time"],
+                  how="left")
+            .join(pk_df, on=["process", "sink"], how="left")
+            .join(snk_df, on=["process", "sink", "period", "time"],
+                  how="left")
+            .join(pdt_df, on=["process", "period", "time"], how="left")
+        )
+        t_src = (
+            pl.when(pl.col("__in_src").fill_null(False))
+            .then(pl.col("v_src").fill_null(0.0))
+            .otherwise(0.0)
+        )
+        t_snk = (
+            pl.when(pl.col("__in_snk").fill_null(False))
+            .then(pl.col("v_snk").fill_null(0.0))
+            .otherwise(0.0)
+        )
+        if always:
+            out = out.join(ps_snk_df, on=["process", "sink"], how="left")
+            t_pdt = (
+                pl.when(
+                    pl.col("__in_snk").fill_null(False)
+                    | pl.col("__snk_in_src").fill_null(False)
+                )
+                .then(pl.col("v_pdt").fill_null(0.0))
+                .otherwise(0.0)
+            )
+        else:
+            t_pdt = pl.col("v_pdt").fill_null(0.0)
+        # Fixed add order src + snk + pdt, then normalize signed zero so
+        # ``±0.0`` renders ``"0.0"`` (legacy never emits ``"-0.0"``).
+        value_raw = t_src + t_snk + t_pdt
+        out = out.with_columns(
+            pl.when(value_raw == 0.0)
+            .then(pl.lit(0.0))
+            .otherwise(value_raw)
+            .alias("value_f")
+        )
+        return collect_value_frame(
+            out,
+            key_cols=["process", "source", "sink", "period", "time"],
+            value_f_col="value_f", engine=engine,
+        )
+
+    return _build_vec(pss, always=False), _build_vec(pss_always, always=True)
+
+
 def derive_pdtProcess__source__sink__dt_varCost(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
@@ -1203,7 +2079,7 @@ def emit_pdtProcess__source__sink__dt_varCost_pair(
     *, provider,
 ) -> None:
     """Emit ``pdtProcess__source__sink__dt_varCost_pair`` to the Provider."""
-    basic, always = _derive_varCost_pair(
+    basic, always = _derive_varCost_pair_vectorized(
         input_dir, solve_data_dir, provider=provider,
     )
     _emit(provider, "solve_data/pdtProcess__source__sink__dt_varCost.csv",
@@ -1311,6 +2187,151 @@ def _derive_pssdt_varCost_filters(
     )
 
 
+def _derive_pssdt_varCost_filters_vectorized(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None, engine: str = "eager",
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Vectorized twin of :func:`_derive_pssdt_varCost_filters`.
+
+    Each of the four outputs is a KEY-only coordinate predicate (no value
+    column): for a ``(p, src, snk) × (d, t)`` grid keep the cell iff a
+    membership-gated ``value ≠ 0`` predicate holds.  The ``≠ 0`` test
+    runs on the PARSED-FLOAT lifted value (NOT the rendered Utf8) so it
+    matches the legacy truthiness exactly (``-0.0`` excluded, ``NaN``
+    kept).  Output: ``process, source, sink, period, time`` — all Utf8,
+    entity-major order (``__eo, __to``), the order keys dropped.
+    """
+    pdt = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess.csv",
+        param_col=1, param_value="other_operational_cost",
+        key_cols=(0, 2, 3), val_col=4,
+        provider=provider,
+    )
+    pdt_src = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_source.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
+    )
+    pdt_snk = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_sink.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
+    )
+    varcost: dict[tuple[str, str, str, str, str], float] = {}
+    vp = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
+    vp_df = provider.get(_provider_key(vp))
+    if vp_df is not None:
+        for row in vp_df.iter_rows():
+            if len(row) < 6:
+                continue
+            c = [_cell_str(row[i]) for i in range(5)]
+            if all(c):
+                try:
+                    varcost[(c[0], c[1], c[2], c[3], c[4])] = float(row[5])
+                except (ValueError, TypeError):
+                    continue
+
+    proc_src = frozenset(
+        _read_pairs(input_dir / "process__source.csv", provider=provider)
+    )
+    proc_snk = frozenset(
+        _read_pairs(input_dir / "process__sink.csv", provider=provider)
+    )
+    pss_noEff = _read_triples(
+        solve_data_dir / "process_source_sink_noEff.csv", provider=provider,
+    )
+    pss_eff = _read_triples(
+        solve_data_dir / "process_source_sink_eff.csv", provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    key5 = ["process", "source", "sink", "period", "time"]
+
+    # Lift predicate value sources.
+    vc_df = lift_dict_to_lookup(
+        varcost, ["process", "source", "sink", "period", "time"], "v_vc")
+    src_df = lift_dict_to_lookup(
+        pdt_src, ["process", "source", "period", "time"], "v_src")
+    snk_df = lift_dict_to_lookup(
+        pdt_snk, ["process", "sink", "period", "time"], "v_snk")
+    pdt_df = lift_dict_to_lookup(
+        pdt, ["process", "period", "time"], "v_pdt")
+
+    # Membership frames (explicit schemas — critique D7).
+    ps_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_src],
+            "source": [b for (_a, b) in proc_src],
+            "__in_src": [True] * len(proc_src),
+        },
+        schema={"process": pl.Utf8, "source": pl.Utf8,
+                "__in_src": pl.Boolean},
+    )
+    pk_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_snk],
+            "sink": [b for (_a, b) in proc_snk],
+            "__in_snk": [True] * len(proc_snk),
+        },
+        schema={"process": pl.Utf8, "sink": pl.Utf8,
+                "__in_snk": pl.Boolean},
+    )
+
+    def _finish(df: pl.DataFrame, predicate: pl.Expr) -> pl.DataFrame:
+        out = (
+            df.filter(predicate)
+            .sort(["__eo", "__to"])
+            .select(key5)
+        )
+        return out.with_columns(
+            [pl.col(c).cast(pl.Utf8) for c in key5]
+        )
+
+    # 1. noEff: varcost[(p, src, snk, d, t)] ≠ 0.
+    g_no = build_entity_dt_grid(
+        pss_noEff, dt, key_cols=["process", "source", "sink"])
+    g_no = g_no.join(vc_df, on=key5, how="left")
+    no_eff = _finish(g_no, pl.col("v_vc").fill_null(0.0) != 0.0)
+
+    # 2. eff_unit_source: (p, src) ∈ proc_src AND pdt_src ≠ 0.
+    g_src = build_entity_dt_grid(
+        pss_eff, dt, key_cols=["process", "source", "sink"])
+    g_src = (
+        g_src
+        .join(ps_df, on=["process", "source"], how="left")
+        .join(src_df, on=["process", "source", "period", "time"], how="left")
+    )
+    eff_src = _finish(
+        g_src,
+        pl.col("__in_src").fill_null(False)
+        & (pl.col("v_src").fill_null(0.0) != 0.0),
+    )
+
+    # 3. eff_unit_sink: (p, snk) ∈ proc_snk AND pdt_snk ≠ 0.
+    g_snk = build_entity_dt_grid(
+        pss_eff, dt, key_cols=["process", "source", "sink"])
+    g_snk = (
+        g_snk
+        .join(pk_df, on=["process", "sink"], how="left")
+        .join(snk_df, on=["process", "sink", "period", "time"], how="left")
+    )
+    eff_snk = _finish(
+        g_snk,
+        pl.col("__in_snk").fill_null(False)
+        & (pl.col("v_snk").fill_null(0.0) != 0.0),
+    )
+
+    # 4. eff_connection: pdt[(p, d, t)] ≠ 0 (NO membership gate).
+    g_conn = build_entity_dt_grid(
+        pss_eff, dt, key_cols=["process", "source", "sink"])
+    g_conn = g_conn.join(pdt_df, on=["process", "period", "time"], how="left")
+    eff_conn = _finish(g_conn, pl.col("v_pdt").fill_null(0.0) != 0.0)
+
+    return (no_eff, eff_src, eff_snk, eff_conn)
+
+
 def derive_pssdt_varCost_noEff(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
@@ -1352,8 +2373,10 @@ def emit_pssdt_varCost_filters(
     *, provider,
 ) -> None:
     """Emit ``pssdt_varCost_filters`` to the Provider."""
-    no_eff, eff_src, eff_snk, eff_conn = _derive_pssdt_varCost_filters(
-        input_dir, solve_data_dir, provider=provider,
+    no_eff, eff_src, eff_snk, eff_conn = (
+        _derive_pssdt_varCost_filters_vectorized(
+            input_dir, solve_data_dir, provider=provider,
+        )
     )
     _emit(provider, "solve_data/pssdt_varCost_noEff.csv", no_eff)
     _emit(provider, "solve_data/pssdt_varCost_eff_unit_source.csv", eff_src)
