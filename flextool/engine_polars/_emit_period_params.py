@@ -1610,6 +1610,163 @@ def _derive_varCost_pair(
     return _build(pss, always=False), _build(pss_always, always=True)
 
 
+def _derive_varCost_pair_vectorized(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None, engine: str = "eager",
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Vectorized twin of :func:`_derive_varCost_pair` (design §5 / S7).
+
+    Both the ``basic`` and ``_alwaysProcess`` variants are a
+    membership-GATED SUM of three terms — NOT a coalesce cascade:
+
+        v = 0.0
+        if (p, src) ∈ proc_src: v += pdt_src[(p, src, d, t)]
+        if (p, snk) ∈ proc_snk: v += pdt_snk[(p, snk, d, t)]
+        basic:  v += pdt[(p, d, t)]                       # unconditional
+        always: if (p, snk) ∈ proc_snk or (p, snk) ∈ proc_src:
+                    v += pdt[(p, d, t)]
+
+    Reproduced per cell as ``build_entity_dt_grid`` ⨯ membership/value
+    left-joins ⨯ ``fill_null(0.0)`` ⨯ a fixed-order ``src + snk + pdt``
+    add, then a SIGNED-ZERO normalization (critique D1): the legacy
+    accumulator seeds ``v = 0.0`` so ``0.0 + (-0.0)`` already kills the
+    sign on the first add → legacy never emits ``"-0.0"``; ``pl.lit(0.0)
+    + sum`` does NOT reproduce this (polars leaves ``-0.0`` as ``-0.0``
+    across rows), so the value is wrapped
+    ``when(value_f == 0.0).then(0.0)`` to canonicalize ``±0.0 → +0.0``.
+
+    The two variants have DIFFERENT domains (``pss`` vs ``pss_always``)
+    and a DIFFERENT pdt gate, so they are assembled separately and
+    returned as a pair (mirroring the legacy shared producer).
+    """
+    pdt = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess.csv",
+        param_col=1, param_value="other_operational_cost",
+        key_cols=(0, 2, 3), val_col=4,
+        provider=provider,
+    )  # (process, period, time) → value
+    pdt_src = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_source.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
+    )  # (process, source, period, time) → value
+    pdt_snk = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_sink.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
+    )  # (process, sink, period, time) → value
+    proc_src = frozenset(
+        _read_pairs(input_dir / "process__source.csv", provider=provider)
+    )
+    proc_snk = frozenset(
+        _read_pairs(input_dir / "process__sink.csv", provider=provider)
+    )
+    pss = _read_triples(
+        solve_data_dir / "process_source_sink.csv", provider=provider,
+    )
+    pss_always = _read_triples(
+        solve_data_dir / "process_source_sink_alwaysProcess.csv",
+        provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    # Lift the three value dicts (last-wins-deduped) to lookup frames.
+    src_df = lift_dict_to_lookup(
+        pdt_src, ["process", "source", "period", "time"], "v_src")
+    snk_df = lift_dict_to_lookup(
+        pdt_snk, ["process", "sink", "period", "time"], "v_snk")
+    pdt_df = lift_dict_to_lookup(
+        pdt, ["process", "period", "time"], "v_pdt")
+
+    # Membership frames built from the frozensets with EXPLICIT schemas
+    # (critique D7): an empty frozenset must NOT yield an all-Null frame.
+    ps_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_src],
+            "source": [b for (_a, b) in proc_src],
+            "__in_src": [True] * len(proc_src),
+        },
+        schema={"process": pl.Utf8, "source": pl.Utf8,
+                "__in_src": pl.Boolean},
+    )
+    pk_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_snk],
+            "sink": [b for (_a, b) in proc_snk],
+            "__in_snk": [True] * len(proc_snk),
+        },
+        schema={"process": pl.Utf8, "sink": pl.Utf8,
+                "__in_snk": pl.Boolean},
+    )
+    # proc_src arcs renamed source→sink: expresses ``(p, snk) ∈ proc_src``
+    # for the always-variant pdt gate (critique D2 — both gate terms key
+    # on ``snk``, including against proc_src).
+    ps_snk_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_src],
+            "sink": [b for (_a, b) in proc_src],
+            "__snk_in_src": [True] * len(proc_src),
+        },
+        schema={"process": pl.Utf8, "sink": pl.Utf8,
+                "__snk_in_src": pl.Boolean},
+    )
+
+    def _build_vec(domain: list[tuple[str, str, str]],
+                   always: bool) -> pl.DataFrame:
+        grid = build_entity_dt_grid(
+            domain, dt, key_cols=["process", "source", "sink"])
+        out = (
+            grid
+            .join(ps_df, on=["process", "source"], how="left")
+            .join(src_df, on=["process", "source", "period", "time"],
+                  how="left")
+            .join(pk_df, on=["process", "sink"], how="left")
+            .join(snk_df, on=["process", "sink", "period", "time"],
+                  how="left")
+            .join(pdt_df, on=["process", "period", "time"], how="left")
+        )
+        t_src = (
+            pl.when(pl.col("__in_src").fill_null(False))
+            .then(pl.col("v_src").fill_null(0.0))
+            .otherwise(0.0)
+        )
+        t_snk = (
+            pl.when(pl.col("__in_snk").fill_null(False))
+            .then(pl.col("v_snk").fill_null(0.0))
+            .otherwise(0.0)
+        )
+        if always:
+            out = out.join(ps_snk_df, on=["process", "sink"], how="left")
+            t_pdt = (
+                pl.when(
+                    pl.col("__in_snk").fill_null(False)
+                    | pl.col("__snk_in_src").fill_null(False)
+                )
+                .then(pl.col("v_pdt").fill_null(0.0))
+                .otherwise(0.0)
+            )
+        else:
+            t_pdt = pl.col("v_pdt").fill_null(0.0)
+        # Fixed add order src + snk + pdt, then normalize signed zero so
+        # ``±0.0`` renders ``"0.0"`` (legacy never emits ``"-0.0"``).
+        value_raw = t_src + t_snk + t_pdt
+        out = out.with_columns(
+            pl.when(value_raw == 0.0)
+            .then(pl.lit(0.0))
+            .otherwise(value_raw)
+            .alias("value_f")
+        )
+        return collect_value_frame(
+            out,
+            key_cols=["process", "source", "sink", "period", "time"],
+            value_f_col="value_f", engine=engine,
+        )
+
+    return _build_vec(pss, always=False), _build_vec(pss_always, always=True)
+
+
 def derive_pdtProcess__source__sink__dt_varCost(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
@@ -1638,7 +1795,7 @@ def emit_pdtProcess__source__sink__dt_varCost_pair(
     *, provider,
 ) -> None:
     """Emit ``pdtProcess__source__sink__dt_varCost_pair`` to the Provider."""
-    basic, always = _derive_varCost_pair(
+    basic, always = _derive_varCost_pair_vectorized(
         input_dir, solve_data_dir, provider=provider,
     )
     _emit(provider, "solve_data/pdtProcess__source__sink__dt_varCost.csv",
@@ -1746,6 +1903,151 @@ def _derive_pssdt_varCost_filters(
     )
 
 
+def _derive_pssdt_varCost_filters_vectorized(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None, engine: str = "eager",
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Vectorized twin of :func:`_derive_pssdt_varCost_filters`.
+
+    Each of the four outputs is a KEY-only coordinate predicate (no value
+    column): for a ``(p, src, snk) × (d, t)`` grid keep the cell iff a
+    membership-gated ``value ≠ 0`` predicate holds.  The ``≠ 0`` test
+    runs on the PARSED-FLOAT lifted value (NOT the rendered Utf8) so it
+    matches the legacy truthiness exactly (``-0.0`` excluded, ``NaN``
+    kept).  Output: ``process, source, sink, period, time`` — all Utf8,
+    entity-major order (``__eo, __to``), the order keys dropped.
+    """
+    pdt = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess.csv",
+        param_col=1, param_value="other_operational_cost",
+        key_cols=(0, 2, 3), val_col=4,
+        provider=provider,
+    )
+    pdt_src = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_source.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
+    )
+    pdt_snk = _read_pdt_at_param(
+        solve_data_dir / "pdtProcess_sink.csv",
+        param_col=2, param_value="other_operational_cost",
+        key_cols=(0, 1, 3, 4), val_col=5,
+        provider=provider,
+    )
+    varcost: dict[tuple[str, str, str, str, str], float] = {}
+    vp = solve_data_dir / "pdtProcess__source__sink__dt_varCost.csv"
+    vp_df = provider.get(_provider_key(vp))
+    if vp_df is not None:
+        for row in vp_df.iter_rows():
+            if len(row) < 6:
+                continue
+            c = [_cell_str(row[i]) for i in range(5)]
+            if all(c):
+                try:
+                    varcost[(c[0], c[1], c[2], c[3], c[4])] = float(row[5])
+                except (ValueError, TypeError):
+                    continue
+
+    proc_src = frozenset(
+        _read_pairs(input_dir / "process__source.csv", provider=provider)
+    )
+    proc_snk = frozenset(
+        _read_pairs(input_dir / "process__sink.csv", provider=provider)
+    )
+    pss_noEff = _read_triples(
+        solve_data_dir / "process_source_sink_noEff.csv", provider=provider,
+    )
+    pss_eff = _read_triples(
+        solve_data_dir / "process_source_sink_eff.csv", provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    key5 = ["process", "source", "sink", "period", "time"]
+
+    # Lift predicate value sources.
+    vc_df = lift_dict_to_lookup(
+        varcost, ["process", "source", "sink", "period", "time"], "v_vc")
+    src_df = lift_dict_to_lookup(
+        pdt_src, ["process", "source", "period", "time"], "v_src")
+    snk_df = lift_dict_to_lookup(
+        pdt_snk, ["process", "sink", "period", "time"], "v_snk")
+    pdt_df = lift_dict_to_lookup(
+        pdt, ["process", "period", "time"], "v_pdt")
+
+    # Membership frames (explicit schemas — critique D7).
+    ps_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_src],
+            "source": [b for (_a, b) in proc_src],
+            "__in_src": [True] * len(proc_src),
+        },
+        schema={"process": pl.Utf8, "source": pl.Utf8,
+                "__in_src": pl.Boolean},
+    )
+    pk_df = pl.DataFrame(
+        {
+            "process": [a for (a, _b) in proc_snk],
+            "sink": [b for (_a, b) in proc_snk],
+            "__in_snk": [True] * len(proc_snk),
+        },
+        schema={"process": pl.Utf8, "sink": pl.Utf8,
+                "__in_snk": pl.Boolean},
+    )
+
+    def _finish(df: pl.DataFrame, predicate: pl.Expr) -> pl.DataFrame:
+        out = (
+            df.filter(predicate)
+            .sort(["__eo", "__to"])
+            .select(key5)
+        )
+        return out.with_columns(
+            [pl.col(c).cast(pl.Utf8) for c in key5]
+        )
+
+    # 1. noEff: varcost[(p, src, snk, d, t)] ≠ 0.
+    g_no = build_entity_dt_grid(
+        pss_noEff, dt, key_cols=["process", "source", "sink"])
+    g_no = g_no.join(vc_df, on=key5, how="left")
+    no_eff = _finish(g_no, pl.col("v_vc").fill_null(0.0) != 0.0)
+
+    # 2. eff_unit_source: (p, src) ∈ proc_src AND pdt_src ≠ 0.
+    g_src = build_entity_dt_grid(
+        pss_eff, dt, key_cols=["process", "source", "sink"])
+    g_src = (
+        g_src
+        .join(ps_df, on=["process", "source"], how="left")
+        .join(src_df, on=["process", "source", "period", "time"], how="left")
+    )
+    eff_src = _finish(
+        g_src,
+        pl.col("__in_src").fill_null(False)
+        & (pl.col("v_src").fill_null(0.0) != 0.0),
+    )
+
+    # 3. eff_unit_sink: (p, snk) ∈ proc_snk AND pdt_snk ≠ 0.
+    g_snk = build_entity_dt_grid(
+        pss_eff, dt, key_cols=["process", "source", "sink"])
+    g_snk = (
+        g_snk
+        .join(pk_df, on=["process", "sink"], how="left")
+        .join(snk_df, on=["process", "sink", "period", "time"], how="left")
+    )
+    eff_snk = _finish(
+        g_snk,
+        pl.col("__in_snk").fill_null(False)
+        & (pl.col("v_snk").fill_null(0.0) != 0.0),
+    )
+
+    # 4. eff_connection: pdt[(p, d, t)] ≠ 0 (NO membership gate).
+    g_conn = build_entity_dt_grid(
+        pss_eff, dt, key_cols=["process", "source", "sink"])
+    g_conn = g_conn.join(pdt_df, on=["process", "period", "time"], how="left")
+    eff_conn = _finish(g_conn, pl.col("v_pdt").fill_null(0.0) != 0.0)
+
+    return (no_eff, eff_src, eff_snk, eff_conn)
+
+
 def derive_pssdt_varCost_noEff(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
@@ -1787,8 +2089,10 @@ def emit_pssdt_varCost_filters(
     *, provider,
 ) -> None:
     """Emit ``pssdt_varCost_filters`` to the Provider."""
-    no_eff, eff_src, eff_snk, eff_conn = _derive_pssdt_varCost_filters(
-        input_dir, solve_data_dir, provider=provider,
+    no_eff, eff_src, eff_snk, eff_conn = (
+        _derive_pssdt_varCost_filters_vectorized(
+            input_dir, solve_data_dir, provider=provider,
+        )
     )
     _emit(provider, "solve_data/pssdt_varCost_noEff.csv", no_eff)
     _emit(provider, "solve_data/pssdt_varCost_eff_unit_source.csv", eff_src)
