@@ -728,11 +728,9 @@ def _compute_inflow_scaling_frames_vectorized(
     out["ptNode_inflow.csv"] = _ordered_value_frame(
         pti_df, ("node", "time", "value"), ["__eo", "__to"],
     )
-    # Reconstruct the pti dict for downstream legacy stages.
-    pti: dict[tuple[str, str], float] = {
-        (r[0], r[1]): r[2]
-        for r in pti_df.select(["node", "time", "value_f"]).iter_rows()
-    }
+    # NOTE: every downstream consumer of the per-(n, t) inflow series is now
+    # vectorized (it reads ``pti_df`` / ``pti_series`` directly), so the
+    # scalar ``pti`` dict is no longer reconstructed here.
 
     # ── Stage 2: _node_cap_inflow_fallback{n, d} (Tier A) ──────────────
     # value = max_t abs(pti[(n, t)]); 0.0 if no time.
@@ -980,81 +978,141 @@ def _compute_inflow_scaling_frames_vectorized(
         pfam_df, ("node", "period", "value"), ["__eo", "__po"],
     )
 
-    # ── Stages 7-8: peak family (LEGACY — vectorized in C3) ────────────
-    has_node_time_inflow: dict[str, bool] = {
-        n: any(nn == n for (nn, _t) in node_time_inflow) for n in nodes
-    }
-    op_max_by_n: dict[str, float] = {}
-    op_min_by_n: dict[str, float] = {}
-    op_sign_by_n: dict[str, float] = {}
-    old_peak_by_n: dict[str, float] = {}
-    for n in nodes:
-        if has_node_time_inflow[n]:
-            inflow_vals = [pti[(n, t)] for t in time_set]
-            op_max = max(inflow_vals) if inflow_vals else 0.0
-            op_min = min(inflow_vals) if inflow_vals else 0.0
-        else:
-            scalar = p_node_inflow_default[n]
-            op_max = scalar
-            op_min = scalar
-        op_max_by_n[n] = op_max
-        op_min_by_n[n] = op_min
-        if has_node_time_inflow[n]:
-            op_sign = 1.0 if abs(op_max) >= abs(op_min) else -1.0
-        else:
-            op_sign = 1.0 if p_node_inflow_default[n] >= 0 else -1.0
-        op_sign_by_n[n] = op_sign
-        old_peak_by_n[n] = op_max if op_sign >= 0 else op_min
-
-    rows_nps: list[tuple[str, str, float]] = []
-    rows_opmax: list[tuple[str, str, float]] = []
-    rows_opmin: list[tuple[str, str, float]] = []
-    rows_ops: list[tuple[str, str, float]] = []
-    rows_npop: list[tuple[str, str, float]] = []
-    rows_npopinflow: list[tuple[str, str, float]] = []
-
-    def _peak_domain(n: str, d: str) -> bool:
-        return (
-            _has_method(n, "scale_to_annual_and_peak_flow")
-            and pdNode.get((n, "annual_flow", d), 0.0) != 0.0
-            and pdNode.get((n, "peak_inflow", d), 0.0) != 0.0
+    # ── Stage 7: per-node peak precompute (Tier A: max/min/sign) ───────
+    # has_node_time_inflow[n] = node has ANY explicit (n, t) inflow row.
+    peak_eo = _ordered_node_frame(
+        lambda n: _has_method(n, "scale_to_annual_and_peak_flow"))
+    hnti_nodes = {nn for (nn, _t) in node_time_inflow}
+    # Per-node max/min over the WHOLE time series (dense grid).  When
+    # time_set is empty the group has no rows → null → fill 0.0 (matches
+    # the legacy ``max(inflow_vals) if inflow_vals else 0.0``).
+    minmax_df = (
+        pti_df.group_by("node")
+        .agg(
+            pl.col("value_f").max().alias("v_tmax"),
+            pl.col("value_f").min().alias("v_tmin"),
         )
+    )
+    # Per-node precompute over ALL nodes (the legacy loop iterates nodes).
+    precomp = (
+        node_eo
+        .join(minmax_df, on="node", how="left")
+        .with_columns(
+            pl.col("node").is_in(list(hnti_nodes)).alias("__hnti"),
+            pl.col("node").replace_strict(
+                p_node_inflow_default, default=0.0,
+                return_dtype=pl.Float64).alias("v_dflt"),
+        )
+        .with_columns(
+            # op_max / op_min: time-series bound when has_node_time_inflow
+            # (null → 0.0 for an empty time_set), else the scalar default.
+            pl.when(pl.col("__hnti"))
+            .then(pl.col("v_tmax").fill_null(0.0))
+            .otherwise(pl.col("v_dflt")).alias("op_max"),
+            pl.when(pl.col("__hnti"))
+            .then(pl.col("v_tmin").fill_null(0.0))
+            .otherwise(pl.col("v_dflt")).alias("op_min"),
+        )
+        .with_columns(
+            # op_sign: has_node_time_inflow → 1 if |max|>=|min| else -1;
+            # else 1 if default >= 0 else -1.
+            pl.when(pl.col("__hnti"))
+            .then(
+                pl.when(pl.col("op_max").abs() >= pl.col("op_min").abs())
+                .then(pl.lit(1.0)).otherwise(pl.lit(-1.0)))
+            .otherwise(
+                pl.when(pl.col("v_dflt") >= 0.0)
+                .then(pl.lit(1.0)).otherwise(pl.lit(-1.0)))
+            .alias("op_sign"),
+        )
+        .with_columns(
+            # old_peak = op_max if op_sign >= 0 else op_min.
+            pl.when(pl.col("op_sign") >= 0.0)
+            .then(pl.col("op_max")).otherwise(pl.col("op_min"))
+            .alias("old_peak"),
+        )
+        .select(["node", "op_max", "op_min", "op_sign", "old_peak"])
+    )
 
-    for n in nodes:
-        for d in period_in_use:
-            if not _peak_domain(n, d):
-                continue
-            peak = pdNode.get((n, "peak_inflow", d), 0.0)
-            rows_nps.append((n, d, 1.0 if peak >= 0 else -1.0))
-            rows_opmax.append((n, d, op_max_by_n[n]))
-            rows_opmin.append((n, d, op_min_by_n[n]))
-            rows_ops.append((n, d, op_sign_by_n[n]))
-            old_peak_val = old_peak_by_n[n]
-            if old_peak_val == 0.0:
-                continue
-            npop = peak / old_peak_val
-            rows_npop.append((n, d, npop))
+    # ── Stage 8: peak-domain family ────────────────────────────────────
+    # peak_domain = scale_to_annual_and_peak_flow AND af!=0 AND peak!=0.
+    peak_lk_keys = [(k[0], k[2]) for k in pdNode if k[1] == "peak_inflow"]
+    peak_lk = pl.DataFrame(
+        {"node": [k[0] for k in peak_lk_keys],
+         "period": [k[1] for k in peak_lk_keys],
+         "v_peak": [v for k, v in pdNode.items() if k[1] == "peak_inflow"]},
+        schema={"node": pl.Utf8, "period": pl.Utf8, "v_peak": pl.Float64},
+    )
+    peak_domain_df = (
+        peak_eo
+        .join(period_po, how="cross")
+        .join(af_lk, on=["node", "period"], how="left")
+        .filter(pl.col("v_af").fill_null(0.0) != 0.0)
+        .join(peak_lk, on=["node", "period"], how="left")
+        .filter(pl.col("v_peak").fill_null(0.0) != 0.0)
+        .join(precomp, on="node", how="left")
+        .sort(["__eo", "__po"])
+    )
+    # new_peak_sign / old_peak_max / old_peak_min / old_peak_sign — the
+    # FULL peak-domain keyset (the old_peak==0 drop fires AFTER these).
+    out["new_peak_sign.csv"] = _ordered_value_frame(
+        peak_domain_df.with_columns(
+            pl.when(pl.col("v_peak") >= 0.0)
+            .then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
+    )
+    out["old_peak_max.csv"] = _ordered_value_frame(
+        peak_domain_df.with_columns(pl.col("op_max").alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
+    )
+    out["old_peak_min.csv"] = _ordered_value_frame(
+        peak_domain_df.with_columns(pl.col("op_min").alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
+    )
+    out["old_peak_sign.csv"] = _ordered_value_frame(
+        peak_domain_df.with_columns(pl.col("op_sign").alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
+    )
+    # new_peak_divided_by_old_peak — drops the old_peak==0 rows (drop
+    # asymmetry: FEWER rows than new_peak_sign).  npop = peak / old_peak.
+    npop_df = (
+        peak_domain_df
+        .filter(pl.col("old_peak") != 0.0)
+        .with_columns(
+            (pl.col("v_peak") / pl.col("old_peak")).alias("value_f"))
+    )
+    out["new_peak_divided_by_old_peak.csv"] = _ordered_value_frame(
+        npop_df, ("node", "period", "value"), ["__eo", "__po"],
+    )
 
-            ofs = orig_flow_sum.get((n, d), 0.0)
-            cps = cpsoy.get(d, 0.0)
-            npopis = (npop * ofs / cps) if cps != 0.0 else 0.0
-            rows_npopinflow.append((n, d, npopis))
-
-    out["new_peak_sign.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_nps,
-    )
-    out["old_peak_max.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_opmax,
-    )
-    out["old_peak_min.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_opmin,
-    )
-    out["old_peak_sign.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_ops,
-    )
-    out["new_peak_divided_by_old_peak.csv"] = _rows_to_frame(
-        ("node", "period", "value"), rows_npop,
-    )
+    # ── Reconstruct dicts for downstream legacy stages (C3 → C4 bridge) ─
+    op_sign_dict = {
+        (r[0], r[1]): r[2]
+        for r in peak_domain_df.select(
+            ["node", "period", "op_sign"]).iter_rows()
+    }
+    # rows_nps as the new_peak_sign keyset (entity-major order preserved).
+    rows_nps = [
+        (r[0], r[1], r[2])
+        for r in peak_domain_df.select([
+            "node", "period",
+            pl.when(pl.col("v_peak") >= 0.0)
+            .then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias("nps"),
+        ]).iter_rows()
+    ]
+    # npop_dict: peak / old_peak over the old_peak!=0 keyset.
+    npop_dict = {
+        (r[0], r[1]): r[2]
+        for r in npop_df.select(
+            ["node", "period", "value_f"]).iter_rows()
+    }
+    # DEAD npopinflow intermediate — COMPUTED (C4 stage 10 reads it), never
+    # out[...]='d.  npopis = npop * orig_flow_sum / cpsoy (0 when cpsoy==0).
+    npopinflow_dict: dict[tuple[str, str], float] = {}
+    for (n, d), npop in npop_dict.items():
+        ofs = orig_flow_sum.get((n, d), 0.0)
+        cps = cpsoy.get(d, 0.0)
+        npopinflow_dict[(n, d)] = (npop * ofs / cps) if cps != 0.0 else 0.0
 
     # ── Stages 9-12 (LEGACY — vectorized in C4) ────────────────────────
     npis_dict = {
@@ -1066,8 +1124,8 @@ def _compute_inflow_scaling_frames_vectorized(
         ("node", "period", "value"), rows_npis,
     )
 
-    op_sign_dict = {(n, d): v for n, d, v in rows_ops}
-    npopinflow_dict = {(n, d): v for n, d, v in rows_npopinflow}
+    # op_sign_dict / npopinflow_dict / npop_dict are reconstructed in the
+    # C3 peak-family block above (from the vectorized frames).
     rows_nom: list[tuple[str, str, float]] = []
     for n, d, _ in rows_nps:
         npis = npis_dict.get((n, d), 0.0)
@@ -1085,7 +1143,6 @@ def _compute_inflow_scaling_frames_vectorized(
     )
 
     nom_dict = {(n, d): v for n, d, v in rows_nom}
-    npop_dict = {(n, d): v for n, d, v in rows_npop}
     rows_nos = [
         (n, d, npop_dict.get((n, d), 0.0)
                 * (1.0 + nom_dict.get((n, d), 0.0)))
