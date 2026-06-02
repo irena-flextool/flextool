@@ -400,67 +400,6 @@ def _rows_lifetime_fixed_cost_divest(inp: dict) -> list[tuple[str, str, float]]:
     return rows
 
 
-# ---- Public derive_* (each rebuilds its own input bundle) ----
-
-def derive_ed_entity_annual(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``ed_entity_annual.csv`` — per-(entity, period) annuity sum across
-    allowed invest methods, gated by entity class (node vs process)."""
-    rows, _ = _ann_pair(_entity_annual_inputs(input_dir, solve_data_dir, provider=provider))
-    return _rows_to_frame(rows)
-
-
-def derive_ed_entity_annual_discounted(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``ed_entity_annual_discounted.csv`` — annuity scaled by the
-    inflation-window sum keyed by reinvest_choice / no_investment / reinvest_automatic."""
-    _, rows_disc = _ann_pair(_entity_annual_inputs(input_dir, solve_data_dir, provider=provider))
-    return _rows_to_frame(rows_disc)
-
-
-def derive_ed_entity_annual_divest(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``ed_entity_annual_divest.csv`` — divest-side annuity sum."""
-    rows, _ = _div_pair(_entity_annual_inputs(input_dir, solve_data_dir, provider=provider))
-    return _rows_to_frame(rows)
-
-
-def derive_ed_entity_annual_divest_discounted(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``ed_entity_annual_divest_discounted.csv`` — divest annuity scaled
-    by the inflation-window sum (always closed window)."""
-    _, rows_disc = _div_pair(_entity_annual_inputs(input_dir, solve_data_dir, provider=provider))
-    return _rows_to_frame(rows_disc)
-
-
-def derive_ed_lifetime_fixed_cost(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``ed_lifetime_fixed_cost.csv`` — per-(entity, period) lifetime
-    fixed-cost using p_inflation_factor_OPERATIONS_yearly."""
-    return _rows_to_frame(_rows_lifetime_fixed_cost(
-        _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)))
-
-
-def derive_ed_lifetime_fixed_cost_divest(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``ed_lifetime_fixed_cost_divest.csv`` — divest variant; uses
-    p_inflation_factor_INVESTMENT_yearly per mod L1651 (asymmetric)."""
-    return _rows_to_frame(_rows_lifetime_fixed_cost_divest(
-        _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)))
-
-
 def emit_entity_annual_calc_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
