@@ -50,6 +50,7 @@ from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
 )
+from flextool.engine_polars._vectorize import _render_value_column
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +510,418 @@ def _compute_inflow_scaling_frames(
 
     # ── new_peak_inflow_sum, new_old_multiplier/slope/section ─────────
     # Same domain as rows_nps; values derived from peak / npop / npopis.
+    npis_dict = {
+        (n, d): pdNode.get((n, "peak_inflow", d), 0.0) * 8760.0
+        for n, d, _ in rows_nps
+    }
+    rows_npis = [(n, d, npis_dict.get((n, d), 0.0)) for n, d, _ in rows_nps]
+    out["new_peak_inflow_sum.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_npis,
+    )
+
+    op_sign_dict = {(n, d): v for n, d, v in rows_ops}
+    npopinflow_dict = {(n, d): v for n, d, v in rows_npopinflow}
+    rows_nom: list[tuple[str, str, float]] = []
+    for n, d, _ in rows_nps:
+        npis = npis_dict.get((n, d), 0.0)
+        npopis = npopinflow_dict.get((n, d), 0.0)
+        os_sign = op_sign_dict.get((n, d), 0.0)
+        af = pdNode.get((n, "annual_flow", d), 0.0)
+        denom = npis - npopis
+        if denom == 0.0:
+            v = 0.0
+        else:
+            v = os_sign * (os_sign * npopis - af) / denom
+        rows_nom.append((n, d, v))
+    out["new_old_multiplier.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_nom,
+    )
+
+    nom_dict = {(n, d): v for n, d, v in rows_nom}
+    npop_dict = {(n, d): v for n, d, v in rows_npop}
+    rows_nos = [
+        (n, d, npop_dict.get((n, d), 0.0)
+                * (1.0 + nom_dict.get((n, d), 0.0)))
+        for n, d, _ in rows_nps
+    ]
+    out["new_old_slope.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_nos,
+    )
+
+    rows_nosec = [
+        (n, d, pdNode.get((n, "peak_inflow", d), 0.0)
+                * nom_dict.get((n, d), 0.0))
+        for n, d, _ in rows_nps
+    ]
+    out["new_old_section.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_nosec,
+    )
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Vectorized twin of _compute_inflow_scaling_frames (vectorize-per-roll).
+#
+# Built as a FULL COPY of the legacy body, with each stage's COMPUTE
+# replaced by vectorized polars incrementally, stage-group by stage-group.
+# The in-memory dicts the legacy stages consume are reconstructed from each
+# vectorized frame right after it is built, so any not-yet-vectorized
+# downstream stage still works at every commit (full-15-key parity-gateable
+# per commit).  The legacy _compute_inflow_scaling_frames is KEPT as the
+# parity oracle.
+#
+# Tier policy: ptNode_inflow + _node_cap_inflow_fallback are sum-free
+# (coalesce / max-abs) and MUST stay byte-identical (Tier A — read by the
+# already-vectorized pdtNodeInflow and by lp-scaling).  The sum-bearing
+# stages are Tier B (last-ULP drift tolerated).
+# ---------------------------------------------------------------------------
+
+
+def _empty_value_frame(header: tuple[str, str, str]) -> pl.DataFrame:
+    """An explicit all-Utf8 empty 3-col frame (key1, key2, value)."""
+    return pl.DataFrame(
+        {h: [] for h in header},
+        schema={h: pl.Utf8 for h in header},
+    )
+
+
+def _ordered_value_frame(
+    df: pl.DataFrame,
+    header: tuple[str, str, str],
+    order_cols: list[str],
+) -> pl.DataFrame:
+    """Sort *df* by *order_cols*, render its ``value_f`` Float64 column via
+    ``repr`` and project to the all-Utf8 ``(key1, key2, value)`` shape.
+
+    *df* must carry the two key columns named ``header[0]``/``header[1]``,
+    a Float64 ``value_f`` column, and the integer *order_cols*.  An empty
+    *df* yields the explicit empty schema.
+    """
+    if df.height == 0:
+        return _empty_value_frame(header)
+    df = df.sort(order_cols)
+    value = _render_value_column(df["value_f"])
+    return df.select([header[0], header[1]]).with_columns(
+        value.alias(header[2]),
+    )
+
+
+def _compute_inflow_scaling_frames_vectorized(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+) -> dict[str, pl.DataFrame]:
+    """Vectorized twin of :func:`_compute_inflow_scaling_frames`.
+
+    Same reader block, same in-memory dicts, same stage order, same 15
+    LIVE ``out[...]=`` assignments (the 2 DEAD outputs are never
+    assigned).  Each vectorized stage reconstructs the in-memory dict its
+    legacy downstream consumer reads, so the function is internally
+    consistent at every commit.
+    """
+    out: dict[str, pl.DataFrame] = {}
+
+    # ── Sources (copied verbatim from the legacy reader block) ─────────
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+    time_set = _read_singles(solve_data_dir / "time.csv", provider=provider)
+    p_node = _read_keyed2_float(input_dir / "p_node.csv", provider=provider)
+    pt_node_inflow = _read_keyed2_float(
+        solve_data_dir / "pt_node_inflow.csv", provider=provider,
+    )
+    node_time_inflow = frozenset(_read_pairs(
+        solve_data_dir / "pt_node_inflow.csv", provider=provider,
+    ))
+
+    inflow_method = _read_pairs(solve_data_dir / "node__inflow_method.csv",
+                                provider=provider)
+    methods_for_node: dict[str, set[str]] = {}
+    for n, m in inflow_method:
+        methods_for_node.setdefault(n, set()).add(m)
+
+    pdNode = _read_keyed3_float(solve_data_dir / "pdNode.csv", provider=provider)
+    cpsoy = _read_keyed_float(
+        solve_data_dir / "complete_period_share_of_year_calc.csv",
+        provider=provider,
+    )
+    p_tdy = _read_keyed_float(
+        solve_data_dir / "p_timeline_duration_in_years.csv",
+        provider=provider,
+    )
+
+    period_timeline = _read_pairs(solve_data_dir / "period__timeline_set.csv",
+                                   provider=provider)
+    timelines_for_d: dict[str, list[str]] = {}
+    for d, tl in period_timeline:
+        timelines_for_d.setdefault(d, []).append(tl)
+
+    complete_time_in_use = _read_singles(
+        solve_data_dir / "complete_time_in_use_set.csv",
+        provider=provider,
+    )
+
+    dt_complete_pairs = _read_pairs(
+        solve_data_dir / "steps_complete_solve.csv",
+        provider=provider,
+    )
+    dt_complete_for_d: dict[str, list[str]] = {}
+    for d, t in dt_complete_pairs:
+        dt_complete_for_d.setdefault(d, []).append(t)
+
+    # ── Shared order frames (node list order, period order, time order) ─
+    node_eo = pl.DataFrame(
+        {"node": list(nodes), "__eo": list(range(len(nodes)))},
+        schema={"node": pl.Utf8, "__eo": pl.Int64},
+    )
+    period_po = pl.DataFrame(
+        {"period": list(period_in_use),
+         "__po": list(range(len(period_in_use)))},
+        schema={"period": pl.Utf8, "__po": pl.Int64},
+    )
+    time_to = pl.DataFrame(
+        {"time": list(time_set), "__to": list(range(len(time_set)))},
+        schema={"time": pl.Utf8, "__to": pl.Int64},
+    )
+
+    # ── Stage 1: ptNode_inflow{n in node, t in time} (Tier A) ──────────
+    # value = pt_node_inflow[(n, t)] if (n, t) in node_time_inflow
+    #         else p_node[(n, "inflow")] (per-node scalar default).
+    p_node_inflow_default = {
+        n: p_node.get((n, "inflow"), 0.0) for n in nodes
+    }
+    nt_grid = node_eo.join(time_to, how="cross")
+    # pt_node_inflow lookup frame (value present when (n, t) explicit).
+    pti_lk = pl.DataFrame(
+        {"node": [k[0] for k in pt_node_inflow],
+         "time": [k[1] for k in pt_node_inflow],
+         "v_pti": list(pt_node_inflow.values())},
+        schema={"node": pl.Utf8, "time": pl.Utf8, "v_pti": pl.Float64},
+    )
+    # explicit-set membership frame (presence in node_time_inflow).
+    nti_lk = pl.DataFrame(
+        {"node": [k[0] for k in node_time_inflow],
+         "time": [k[1] for k in node_time_inflow],
+         "__nti": [True] * len(node_time_inflow)},
+        schema={"node": pl.Utf8, "time": pl.Utf8, "__nti": pl.Boolean},
+    )
+    # per-node scalar default frame.
+    dflt_lk = pl.DataFrame(
+        {"node": list(nodes),
+         "v_dflt": [p_node_inflow_default[n] for n in nodes]},
+        schema={"node": pl.Utf8, "v_dflt": pl.Float64},
+    )
+    pti_df = (
+        nt_grid
+        .join(nti_lk, on=["node", "time"], how="left")
+        .join(pti_lk, on=["node", "time"], how="left")
+        .join(dflt_lk, on="node", how="left")
+        .with_columns(
+            pl.when(pl.col("__nti").fill_null(False))  # noqa: FBT003
+            # explicit: pt_node_inflow.get((n,t), 0.0)
+            .then(pl.col("v_pti").fill_null(0.0))
+            # else: per-node scalar default
+            .otherwise(pl.col("v_dflt").fill_null(0.0))
+            .alias("value_f"),
+        )
+    )
+    out["ptNode_inflow.csv"] = _ordered_value_frame(
+        pti_df, ("node", "time", "value"), ["__eo", "__to"],
+    )
+    # Reconstruct the pti dict for downstream legacy stages.
+    pti: dict[tuple[str, str], float] = {
+        (r[0], r[1]): r[2]
+        for r in pti_df.select(["node", "time", "value_f"]).iter_rows()
+    }
+
+    # ── Stage 2: _node_cap_inflow_fallback{n, d} (Tier A) ──────────────
+    # value = max_t abs(pti[(n, t)]); 0.0 if no time.
+    if not time_set:
+        nd_grid = node_eo.join(period_po, how="cross").with_columns(
+            pl.lit(0.0, dtype=pl.Float64).alias("value_f"),
+        )
+        out["_node_cap_inflow_fallback.csv"] = _ordered_value_frame(
+            nd_grid, ("node", "period", "value"), ["__eo", "__po"],
+        )
+    else:
+        max_abs_df = (
+            pti_df.group_by("node")
+            .agg(pl.col("value_f").abs().max().alias("v_maxabs"))
+        )
+        nd_grid = (
+            node_eo.join(period_po, how="cross")
+            .join(max_abs_df, on="node", how="left")
+            .with_columns(
+                pl.col("v_maxabs").fill_null(0.0).alias("value_f"),
+            )
+        )
+        out["_node_cap_inflow_fallback.csv"] = _ordered_value_frame(
+            nd_grid, ("node", "period", "value"), ["__eo", "__po"],
+        )
+
+    # Helper: does node n have inflow method m? (legacy parity)
+    def _has_method(n: str, m: str) -> bool:
+        return m in methods_for_node.get(n, ())
+
+    def _annual_eligible(n: str) -> bool:
+        return (_has_method(n, "scale_to_annual_flow")
+                or _has_method(n, "scale_to_annual_and_peak_flow"))
+
+    # ── Stage 3: orig_flow_sum (LEGACY — vectorized in C2) ─────────────
+    rows_orig: list[tuple[str, str, float]] = []
+    sum_complete_inflow: dict[str, float] = {}
+    for n in nodes:
+        if not _annual_eligible(n):
+            continue
+        sum_complete_inflow[n] = sum(
+            pti[(n, t)] for t in complete_time_in_use
+        )
+    for n in nodes:
+        if not _annual_eligible(n):
+            continue
+        s = sum_complete_inflow[n]
+        for d in period_in_use:
+            if pdNode.get((n, "annual_flow", d), 0.0) == 0.0:
+                continue
+            rows_orig.append((n, d, s))
+    out["orig_flow_sum.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_orig,
+    )
+    orig_flow_sum = {(n, d): v for n, d, v in rows_orig}
+
+    # ── Stage 4: period_share_of_annual_flow (LEGACY — vectorized C2) ──
+    rows_psaf: list[tuple[str, str, float]] = []
+    for n in nodes:
+        if not _annual_eligible(n):
+            continue
+        for d in period_in_use:
+            af = pdNode.get((n, "annual_flow", d), 0.0)
+            if af == 0.0:
+                continue
+            s = sum(pti[(n, t)] for t in dt_complete_for_d.get(d, ()))
+            rows_psaf.append((n, d, abs(s) / af))
+    out["period_share_of_annual_flow.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_psaf,
+    )
+    psaf = {(n, d): v for n, d, v in rows_psaf}
+
+    # ── Stage 5: period_flow_annual_multiplier (LEGACY — vectorized C2) ─
+    rows_pfam: list[tuple[str, str, float]] = []
+    for n in nodes:
+        if not _has_method(n, "scale_to_annual_flow"):
+            continue
+        for d in period_in_use:
+            if pdNode.get((n, "annual_flow", d), 0.0) == 0.0:
+                continue
+            denom = psaf.get((n, d), 0.0)
+            if denom == 0.0:
+                continue
+            rows_pfam.append((n, d, cpsoy.get(d, 0.0) / denom))
+    out["period_flow_annual_multiplier.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_pfam,
+    )
+
+    # ── Stage 6: period_flow_proportional_multiplier (LEGACY — C2) ─────
+    rows_pfpm: list[tuple[str, str, float]] = []
+    sum_time_inflow_by_n: dict[str, float] = {}
+    for n in nodes:
+        if not _has_method(n, "scale_in_proportion"):
+            continue
+        sum_time_inflow_by_n[n] = sum(pti[(n, t)] for t in time_set)
+    for n in nodes:
+        if not _has_method(n, "scale_in_proportion"):
+            continue
+        time_sum = sum_time_inflow_by_n[n]
+        for d in period_in_use:
+            af = pdNode.get((n, "annual_flow", d), 0.0)
+            if af == 0.0:
+                continue
+            tdy_sum = sum(p_tdy.get(tl, 0.0)
+                          for tl in timelines_for_d.get(d, ()))
+            if tdy_sum == 0.0 or time_sum == 0.0:
+                continue
+            rows_pfpm.append((n, d, af / (abs(time_sum) / tdy_sum)))
+    out["period_flow_proportional_multiplier.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_pfpm,
+    )
+
+    # ── Stages 7-8: peak family (LEGACY — vectorized in C3) ────────────
+    has_node_time_inflow: dict[str, bool] = {
+        n: any(nn == n for (nn, _t) in node_time_inflow) for n in nodes
+    }
+    op_max_by_n: dict[str, float] = {}
+    op_min_by_n: dict[str, float] = {}
+    op_sign_by_n: dict[str, float] = {}
+    old_peak_by_n: dict[str, float] = {}
+    for n in nodes:
+        if has_node_time_inflow[n]:
+            inflow_vals = [pti[(n, t)] for t in time_set]
+            op_max = max(inflow_vals) if inflow_vals else 0.0
+            op_min = min(inflow_vals) if inflow_vals else 0.0
+        else:
+            scalar = p_node_inflow_default[n]
+            op_max = scalar
+            op_min = scalar
+        op_max_by_n[n] = op_max
+        op_min_by_n[n] = op_min
+        if has_node_time_inflow[n]:
+            op_sign = 1.0 if abs(op_max) >= abs(op_min) else -1.0
+        else:
+            op_sign = 1.0 if p_node_inflow_default[n] >= 0 else -1.0
+        op_sign_by_n[n] = op_sign
+        old_peak_by_n[n] = op_max if op_sign >= 0 else op_min
+
+    rows_nps: list[tuple[str, str, float]] = []
+    rows_opmax: list[tuple[str, str, float]] = []
+    rows_opmin: list[tuple[str, str, float]] = []
+    rows_ops: list[tuple[str, str, float]] = []
+    rows_npop: list[tuple[str, str, float]] = []
+    rows_npopinflow: list[tuple[str, str, float]] = []
+
+    def _peak_domain(n: str, d: str) -> bool:
+        return (
+            _has_method(n, "scale_to_annual_and_peak_flow")
+            and pdNode.get((n, "annual_flow", d), 0.0) != 0.0
+            and pdNode.get((n, "peak_inflow", d), 0.0) != 0.0
+        )
+
+    for n in nodes:
+        for d in period_in_use:
+            if not _peak_domain(n, d):
+                continue
+            peak = pdNode.get((n, "peak_inflow", d), 0.0)
+            rows_nps.append((n, d, 1.0 if peak >= 0 else -1.0))
+            rows_opmax.append((n, d, op_max_by_n[n]))
+            rows_opmin.append((n, d, op_min_by_n[n]))
+            rows_ops.append((n, d, op_sign_by_n[n]))
+            old_peak_val = old_peak_by_n[n]
+            if old_peak_val == 0.0:
+                continue
+            npop = peak / old_peak_val
+            rows_npop.append((n, d, npop))
+
+            ofs = orig_flow_sum.get((n, d), 0.0)
+            cps = cpsoy.get(d, 0.0)
+            npopis = (npop * ofs / cps) if cps != 0.0 else 0.0
+            rows_npopinflow.append((n, d, npopis))
+
+    out["new_peak_sign.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_nps,
+    )
+    out["old_peak_max.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_opmax,
+    )
+    out["old_peak_min.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_opmin,
+    )
+    out["old_peak_sign.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_ops,
+    )
+    out["new_peak_divided_by_old_peak.csv"] = _rows_to_frame(
+        ("node", "period", "value"), rows_npop,
+    )
+
+    # ── Stages 9-12 (LEGACY — vectorized in C4) ────────────────────────
     npis_dict = {
         (n, d): pdNode.get((n, "peak_inflow", d), 0.0) * 8760.0
         for n, d, _ in rows_nps
