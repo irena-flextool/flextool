@@ -376,11 +376,16 @@ def _compute_lp_scaling_frames_vectorized(
 ) -> dict[str, pl.DataFrame]:
     """Vectorized twin of :func:`_compute_lp_scaling_frames`.
 
-    Same reader block, same in-memory dicts, same stage order, same 9
-    LIVE ``out[...]=`` assignments.  Each vectorized stage reconstructs
-    the in-memory dict its legacy downstream consumer reads, so the
-    function is internally consistent (full-9-key parity-gateable) at
-    every commit.
+    Same reader block, same in-memory dicts, same stage order.  Of the 9
+    stage frames the legacy twin computes, only the 3 CONSUMED outputs are
+    emitted: ``node_capacity_for_scaling``, ``group_capacity_for_scaling``,
+    ``inv_group_cap``.  The 6 stage-to-stage middle-products
+    (``_node_cap_unitsize_sum``, ``_node_cap_raw``, ``_node_cap_pow10``,
+    ``inv_node_cap``, ``_group_cap_raw``, ``_group_cap_pow10``) have no
+    functional reader and are no longer written; every in-memory
+    frame/dict that feeds a survivor is retained, so the surviving outputs
+    are byte-identical.  (The legacy twin still computes all 9 frames
+    in-memory — the parity test's oracle for the dropped stages.)
     """
     out: dict[str, pl.DataFrame] = {}
 
@@ -470,16 +475,9 @@ def _compute_lp_scaling_frames_vectorized(
             {"node": [], "v_unitsize": []},
             schema={"node": pl.Utf8, "v_unitsize": pl.Float64},
         )
-    # Densify over node × period; pre-seeded 0.0 → arc-less node emits
-    # "0.0" (a float, NOT int-0).
-    unitsize_grid = (
-        node_eo.join(period_po, how="cross")
-        .join(unitsize_sum_df, on="node", how="left")
-        .with_columns(pl.col("v_unitsize").fill_null(0.0).alias("value_f"))
-    )
-    out["_node_cap_unitsize_sum.csv"] = _ordered_value_frame(
-        unitsize_grid, ("node", "period", "value"), ["__eo", "__po"],
-    )
+    # (``_node_cap_unitsize_sum.csv`` is a dead stage-to-stage middle-product
+    # — no functional reader — so it is no longer emitted.  ``unitsize_sum_df``
+    # is retained: it feeds the ``cap_unitsize`` dict consumed by Stage R.)
     # Reconstruct cap_unitsize {n: float} (period-independent) for legacy
     # downstream stages still in scalar form.
     cap_unitsize: dict[str, float] = {n: 0.0 for n in nodes}
@@ -520,10 +518,9 @@ def _compute_lp_scaling_frames_vectorized(
             .alias("value_f"),
         )
     )
-    out["_node_cap_raw.csv"] = _ordered_value_frame(
-        raw_grid, ("node", "period", "value"), ["__eo", "__po"],
-    )
-    # (raw_dict is not reconstructed: the vectorized P10 stage reads
+    # (``_node_cap_raw.csv`` is a dead middle-product — no functional reader —
+    # so it is no longer emitted.  ``raw_grid`` is retained: it feeds P10.
+    # raw_dict is not reconstructed: the vectorized P10 stage reads
     # ``raw_grid`` directly rather than iterating a scalar dict.)
 
     # ── Stage P10: _node_cap_pow10 ─────────────────────────────────────
@@ -534,10 +531,9 @@ def _compute_lp_scaling_frames_vectorized(
         ["node", "period", "__eo", "__po",
          pl.col("value_f").alias("raw")])
     pow10_grid = _pow10_value_column(pow10_src)
-    out["_node_cap_pow10.csv"] = _ordered_value_frame(
-        pow10_grid, ("node", "period", "value"), ["__eo", "__po"],
-    )
-    # (pow10_dict is not reconstructed: the vectorized NCFS stage reads
+    # (``_node_cap_pow10.csv`` is a dead middle-product — no functional reader —
+    # so it is no longer emitted.  ``pow10_grid`` is retained: it feeds NCFS.
+    # pow10_dict is not reconstructed: the vectorized NCFS stage reads
     # ``pow10_grid`` directly rather than iterating a scalar dict.)
 
     # ── node_capacity_for_scaling + inv_node_cap (Tier B) ──────────────
@@ -557,15 +553,9 @@ def _compute_lp_scaling_frames_vectorized(
     out["node_capacity_for_scaling.csv"] = _ordered_value_frame(
         ncfs_df, ("node", "period", "value"), ["__eo", "__po"],
     )
-    inc_df = ncfs_df.with_columns(
-        pl.when(pl.col("value_f") != 0.0)
-        .then(1.0 / pl.col("value_f"))
-        .otherwise(pl.lit(0.0))
-        .alias("value_f"),
-    )
-    out["inv_node_cap.csv"] = _ordered_value_frame(
-        inc_df, ("node", "period", "value"), ["__eo", "__po"],
-    )
+    # (``inv_node_cap.csv`` and its ``inc_df`` build are a dead leaf — no
+    # functional reader, and absent from the output meta-files copy — so
+    # neither the 1/ncfs frame nor its emit is produced.)
     # (ncfs_dict is not reconstructed: the vectorized group chain reads the
     # ncfs FRAME directly when summing ncfs over a group's member nodes.)
 
@@ -602,31 +592,10 @@ def _compute_lp_scaling_frames_vectorized(
         group_eo.join(period_po, how="cross")
         .join(gn_member_sum, on=["group", "period"], how="left")
     )
-    # Split member-less (null group-sum → int-0 "0") from member-bearing
-    # (render the Float64 sum via repr); concat + re-sort by [__eo, __po].
-    if graw_grid.height:
-        member_rows = graw_grid.filter(pl.col("v_graw").is_not_null())
-        memberless_rows = graw_grid.filter(pl.col("v_graw").is_null())
-        parts: list[pl.DataFrame] = []
-        if member_rows.height:
-            parts.append(
-                member_rows.with_columns(
-                    _render_value_column(member_rows["v_graw"]).alias(
-                        "value"))
-                .select(["group", "period", "value", "__eo", "__po"]))
-        if memberless_rows.height:
-            parts.append(
-                memberless_rows.with_columns(
-                    pl.lit("0", dtype=pl.Utf8).alias("value"))
-                .select(["group", "period", "value", "__eo", "__po"]))
-        graw_out = (
-            pl.concat(parts, how="vertical")
-            .sort(["__eo", "__po"])
-            .select(["group", "period", "value"])
-        )
-    else:
-        graw_out = _empty_value_frame(("group", "period", "value"))
-    out["_group_cap_raw.csv"] = graw_out
+    # (``_group_cap_raw.csv`` is a dead middle-product — no functional reader,
+    # and never in the manifest — so it is no longer rendered/emitted.
+    # ``graw_grid`` is retained: it feeds the ``grp_raw`` dict consumed by
+    # GP10.)
     # Reconstruct grp_raw {(g, d): float} (member-less → 0.0; the int/float
     # distinction is irrelevant to the downstream ``v > 0`` GP10 test).
     grp_raw: dict[tuple[str, str], float] = {
@@ -650,11 +619,10 @@ def _compute_lp_scaling_frames_vectorized(
             on=["group", "period"], how="left")
     )
     gpow10_grid = _pow10_value_column(gpow10_grid)
-    out["_group_cap_pow10.csv"] = _ordered_value_frame(
-        gpow10_grid, ("group", "period", "value"), ["__eo", "__po"],
-    )
-    # (grp_pow10 is not reconstructed: the vectorized GCFS stage reads the
-    # gpow10 FRAME directly.)
+    # (``_group_cap_pow10.csv`` is a dead middle-product — no functional
+    # reader — so it is no longer emitted.  ``gpow10_grid`` is retained: it
+    # feeds GCFS.  grp_pow10 is not reconstructed: the vectorized GCFS stage
+    # reads the gpow10 FRAME directly.)
 
     # ── group_capacity_for_scaling + inv_group_cap (Tier B) ────────────
     # gcfs = grp_pow10 if scaling_active else 1.0 (scaling_active is a
@@ -688,7 +656,7 @@ def emit_lp_scaling_params(
     *, provider,
 ) -> None:
     """Emit ``lp_scaling_params`` to the Provider.
-    Emits the same 9 frames under ``solve_data/<basename>`` keys via
+    Emits the 3 CONSUMED frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).
     """
     frames = _compute_lp_scaling_frames_vectorized(

@@ -1,23 +1,35 @@
 """Parity gate for the vectorized lp-scaling emitter.
 
-The lp-scaling family (``_compute_lp_scaling_frames``) is the LAST in the
-vectorize-per-roll effort: 9 LIVE outputs, linear threaded stages, Tier B.
-This test gates ``_compute_lp_scaling_frames_vectorized`` against the
-legacy ``_compute_lp_scaling_frames`` ORACLE, key-by-key.
+The lp-scaling family computes 9 stage frames, but only 3 are CONSUMED
+and emitted: ``node_capacity_for_scaling``, ``group_capacity_for_scaling``,
+``inv_group_cap``.  The other 6 (``_node_cap_unitsize_sum``,
+``_node_cap_raw``, ``_node_cap_pow10``, ``inv_node_cap``,
+``_group_cap_raw``, ``_group_cap_pow10``) are stage-to-stage
+middle-products with no functional reader; the vectorized emitter no
+longer writes them.
+
+The legacy ``_compute_lp_scaling_frames`` ORACLE STILL computes all 9
+frames in-memory — it is the source of truth both for the 3 emitted
+survivors (parity-gated key-by-key) and for the per-stage diagnostics on
+the 6 dropped frames (read from the oracle dict, never from the vec dict
+which no longer holds them).  This preserves the Defect-X half-decade,
+Defect-Y scaling-off-unconditional, self-loop double-count, fallback-
+branch and int-"0" coverage without re-emitting dead CSVs.
 
 Tier policy (critique Defect X):
 
-* NO lp key is hard-asserted Tier A.  On real fixtures the unitsize /
-  group sums are exact-integer so no ULP drift occurs and the LP-
-  coefficient keys (node_capacity_for_scaling / inv_node_cap /
-  group_capacity_for_scaling / inv_group_cap) land Tier A byte-exact in
-  practice.  But a pathological sum landing exactly on a half-decade
-  ``10^(k+0.5)`` could flip a ``_pow10_round_clamped`` decade bucket →
-  factor-10 gap → ``_assert_parity`` RAISES (loud, correct — never
-  masked).  ``_TIER_A_KEYS`` is therefore EMPTY: ``_assert_parity``
-  reports the achieved tier per key; we assert only structural + ≤1e-12.
+* NO lp key is hard-asserted Tier A in :func:`_gate_dicts`.  On real
+  fixtures the unitsize / group sums are exact-integer so no ULP drift
+  occurs and the surviving LP-coefficient keys
+  (node_capacity_for_scaling / group_capacity_for_scaling /
+  inv_group_cap) land Tier A byte-exact in practice.  But a pathological
+  sum landing exactly on a half-decade ``10^(k+0.5)`` could flip a
+  ``_pow10_round_clamped`` decade bucket → factor-10 gap →
+  ``_assert_parity`` RAISES (loud, correct — never masked).
+  ``_TIER_A_KEYS`` is therefore EMPTY: ``_assert_parity`` reports the
+  achieved tier per key; we assert only structural + ≤1e-12.
 
-The 9 LIVE outputs (NO DEAD in lp): all 3-col all-Utf8, value = repr(v).
+The 3 SURVIVING outputs: all 3-col all-Utf8, value = repr(v).
 """
 from __future__ import annotations
 
@@ -30,22 +42,26 @@ from flextool.engine_polars._emit_lp_scaling import (
     _compute_lp_scaling_frames_vectorized,
 )
 
+# The 3 CONSUMED outputs the vectorized emitter still produces.
 _LIVE_KEYS = [
+    "node_capacity_for_scaling.csv",
+    "group_capacity_for_scaling.csv",
+    "inv_group_cap.csv",
+]
+# The 6 dropped stage-to-stage middle-products: still in the legacy ORACLE
+# dict (read for diagnostics), MUST be absent from the vectorized dict.
+_DROPPED_KEYS = [
     "_node_cap_unitsize_sum.csv",
     "_node_cap_raw.csv",
     "_node_cap_pow10.csv",
-    "node_capacity_for_scaling.csv",
     "inv_node_cap.csv",
     "_group_cap_raw.csv",
     "_group_cap_pow10.csv",
-    "group_capacity_for_scaling.csv",
-    "inv_group_cap.csv",
 ]
 # The LP-coefficient keys expected byte-exact (Tier A) on real fixtures —
 # exact-integer sums, so no ULP drift.  Reported, not hard-asserted.
 _LP_COEFF_KEYS = {
     "node_capacity_for_scaling.csv",
-    "inv_node_cap.csv",
     "group_capacity_for_scaling.csv",
     "inv_group_cap.csv",
 }
@@ -119,14 +135,24 @@ def _assert_parity(df_legacy: pl.DataFrame, df_vec: pl.DataFrame,
 
 
 def _gate_dicts(legacy: dict, vec: dict, fixture: str) -> dict[str, str]:
-    """Assert both dicts hold exactly the 9 LIVE keys and gate every LIVE
-    key with :func:`_assert_parity`.  Returns per-key tier."""
-    assert set(legacy.keys()) == set(_LIVE_KEYS), (
-        f"{fixture}: legacy oracle key set != 9 LIVE keys; "
+    """Gate the 3 SURVIVING keys with :func:`_assert_parity`.
+
+    The legacy ORACLE still computes all 9 frames (3 survivors + 6 dropped
+    middle-products) — assert it holds exactly that 9-key set.  The
+    vectorized dict must hold EXACTLY the 3 survivors and NONE of the 6
+    dropped keys.  Returns per-key tier for the survivors."""
+    assert set(legacy.keys()) == set(_LIVE_KEYS) | set(_DROPPED_KEYS), (
+        f"{fixture}: legacy oracle key set != 9 (3 live + 6 dropped) keys; "
         f"got {sorted(legacy.keys())}")
     assert set(vec.keys()) == set(_LIVE_KEYS), (
-        f"{fixture}: vectorized key set != 9 LIVE keys; "
+        f"{fixture}: vectorized key set != 3 SURVIVING keys; "
         f"got {sorted(vec.keys())}")
+    # The 6 dropped middle-products must be ABSENT from the vectorized dict
+    # (reading any of them from vec would KeyError — they are oracle-only).
+    for k in _DROPPED_KEYS:
+        assert k not in vec, (
+            f"{fixture}: dropped middle-product {k!r} unexpectedly present "
+            f"in the vectorized dict")
 
     tiers: dict[str, str] = {}
     for k in _LIVE_KEYS:
@@ -428,26 +454,24 @@ def test_lp_scaling_synthetic_group_chain(tmp_path):
     # --- scaling ACTIVE ----------------------------------------------
     p_on = build(active=True)
     tiers_on = _assert_dict_parity(p_on, "synthetic-group-on")
+    # GR / GP10 are dropped middle-products → read from the ORACLE dict only
+    # (the vec dict no longer holds them; _gate_dicts already proved the
+    # surviving GCFS/IGC byte-parity).
     legacy = _compute_lp_scaling_frames(
-        Path("input"), Path("solve_data"), provider=p_on)
-    vec = _compute_lp_scaling_frames_vectorized(
         Path("input"), Path("solve_data"), provider=p_on)
 
     graw_l = {(r[0], r[1]): r[2]
               for r in legacy["_group_cap_raw.csv"].iter_rows()}
-    graw_v = {(r[0], r[1]): r[2]
-              for r in vec["_group_cap_raw.csv"].iter_rows()}
-    # member-less group → literal "0" on BOTH sides.
+    # member-less group → literal "0" (S5 int-0).
     assert graw_l[("gEmpty", "d1")] == "0", graw_l
-    assert graw_v[("gEmpty", "d1")] == "0", graw_v
     # ≥3-term sum incl. the ghost-node default 1.0.
     assert graw_l[("gMulti", "d1")] == repr(1111.0), graw_l
-    assert graw_v[("gMulti", "d1")] == repr(1111.0), graw_v
     # GP10 of the member-less group: graw 0 → pow10 1.0.
     gp10_l = {(r[0], r[1]): r[2]
               for r in legacy["_group_cap_pow10.csv"].iter_rows()}
     assert gp10_l[("gEmpty", "d1")] == repr(1.0), gp10_l
-    # GCFS active → equals GP10.
+    # GCFS active → equals GP10 (when scaling_active, the SURVIVING
+    # group_capacity_for_scaling output reproduces the GP10 stage value).
     gcfs_l = {(r[0], r[1]): r[2]
               for r in legacy[
                   "group_capacity_for_scaling.csv"].iter_rows()}

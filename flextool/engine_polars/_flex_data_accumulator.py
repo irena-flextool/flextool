@@ -215,23 +215,11 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "period_flow_proportional_multiplier.csv",
     "new_old_slope.csv",
     "new_old_section.csv",
-    # _emit_lp_scaling — Phase E-b lifted (9-CSV monolith)
-    #
-    # NB ``_group_cap_raw.csv`` is captured by the accumulator hook but
-    # is NOT in this manifest: the legacy emitter writes ``"0"`` (int
-    # via ``repr(sum(()))``) for empty groups, while the polars
-    # ``write_csv`` round-trip through ``pl.read_csv`` -> Float64 ->
-    # Utf8 cast in the parity test yields ``"0.0"``.  Disk byte-parity
-    # is preserved; the captured frame is functionally usable (Phase D
-    # consumers parse the Utf8 numerically) but the byte-string-compare
-    # parity test cannot validate it.  See _emit_lp_scaling for the
-    # corresponding code note.
-    "_node_cap_unitsize_sum.csv",
-    "_node_cap_raw.csv",
-    "_node_cap_pow10.csv",
+    # _emit_lp_scaling — only the 3 CONSUMED outputs are emitted; the 6
+    # stage-to-stage middle-products (_node_cap_unitsize_sum, _node_cap_raw,
+    # _node_cap_pow10, inv_node_cap, _group_cap_raw, _group_cap_pow10) have
+    # no functional reader and are no longer written.
     "node_capacity_for_scaling.csv",
-    "inv_node_cap.csv",
-    "_group_cap_pow10.csv",
     "group_capacity_for_scaling.csv",
     "inv_group_cap.csv",
     # _emit_solve_writers — Phase E-b7 (34 small per-solve CSVs)
