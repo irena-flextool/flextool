@@ -421,13 +421,12 @@ def _compute_p_entity_existing_chain(
     list[tuple[str, str, int]],    # integer_count rows (legacy emits int repr)
     list[tuple[str, str, float]],  # previously_invested rows
 ]:
-    """Compute the five row-streams emitted by ``write_p_entity_existing_chain``
-    in their canonical (entity-major, period-in-use-minor) order.
+    """Compute the five row-streams emitted by
+    :func:`emit_p_entity_existing_chain` in their canonical
+    (entity-major, period-in-use-minor) order.
 
-    Pulled out so each per-CSV ``derive_*`` can call this once via a module-
-    level cache key keyed on the inputs; the orchestrator
-    :func:`write_p_entity_existing_chain` runs the compute once and then
-    funnels each row-stream through :func:`_write` so the per-sub-solve
+    Kept as a single compute so the orchestrator runs it once and funnels
+    each row-stream through :func:`_emit`, so the per-sub-solve
     :mod:`._flex_data_accumulator` captures the resulting frames.
     """
     solve_first = _read_solve_first_flag(solve_data_dir, provider=provider)
@@ -508,36 +507,6 @@ def _compute_p_entity_existing_chain(
     return later_rows, all_rows, count_rows, int_count_rows, prev_inv_rows
 
 
-def derive_p_entity_existing_capacity_later_solves(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    later_rows, _, _, _, _ = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_value_frame(later_rows)
-
-
-def derive_p_entity_all_existing(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    _, all_rows, _, _, _ = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_value_frame(all_rows)
-
-
-def derive_p_entity_previously_invested_capacity(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    _, _, _, _, prev_rows = _compute_p_entity_existing_chain(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _ed_value_frame(prev_rows)
-
-
 def emit_p_entity_existing_chain(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -574,11 +543,10 @@ def _compute_p_entity_capacity_max_chain(
     list[tuple[str, str, float]],  # dispatch_capacity_max rows
 ]:
     """Compute the four row-streams emitted by
-    :func:`write_p_entity_capacity_max_chain` in their canonical order.
+    :func:`emit_p_entity_capacity_max_chain` in their canonical order.
 
-    Extracted so each per-CSV ``derive_*`` returns a frame on demand and
-    the orchestrator funnels each stream through :func:`_write` for
-    accumulator capture.
+    Kept as a single compute so the orchestrator funnels each stream
+    through :func:`_emit` for accumulator capture.
     """
     entities = _read_singles(input_dir / "entity.csv", provider=provider)
     periods = _read_singles(solve_data_dir / "period_set.csv", provider=provider)
@@ -732,20 +700,6 @@ def _compute_p_entity_capacity_max_chain(
             dcm_rows.append((e, d, v))
 
     return mc_rows, mu_rows, icm_rows, dcm_rows
-
-
-def derive_p_entity_max_units(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    _, mu_rows, _, _ = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
-    return _ed_value_frame(mu_rows)
-
-
-def derive_p_entity_dispatch_capacity_max(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    _, _, _, dcm_rows = _compute_p_entity_capacity_max_chain(input_dir, solve_data_dir)
-    return _ed_value_frame(dcm_rows)
 
 
 def emit_p_entity_capacity_max_chain(
