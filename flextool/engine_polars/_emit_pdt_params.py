@@ -58,6 +58,13 @@ from flextool.engine_polars._pdt_lookup import (
     PdtLookupPerSide,
     read_class_defaults,
 )
+from flextool.engine_polars._vectorize import (
+    build_entity_dt_grid,
+    build_fold_frame,
+    coalesce_value,
+    collect_value_frame,
+    lift_dict_to_lookup,
+)
 
 
 def _cell_str(value: "object | None") -> str:
@@ -174,11 +181,100 @@ def derive_pdtProcess(input_dir: Path, solve_data_dir: Path,
     )
 
 
+def derive_pdtProcess_vectorized(input_dir: Path, solve_data_dir: Path,
+                                  *,
+                                  provider: "object | None" = None,
+                                  engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtProcess`` derive — byte-parity with the legacy.
+
+    Replaces the per-cell ``PdtLookup.get`` loop in
+    :func:`derive_pdtProcess` with vectorized polars (left-joins +
+    ``coalesce`` in cascade-priority order + the group-by-sum folds),
+    still per roll over the roll's own window.  Output is byte-identical
+    to :func:`derive_pdtProcess`: columns ``process, param, period,
+    time, value`` all ``Utf8``, entity-major row order, ``repr(v)``
+    value cells.
+
+    Cascade (``PdtLookup`` 7-branch, period-first):
+    fold(branch1 stoch + branch2 parent) → ``pd`` → ``pt`` → ``p`` →
+    ``param ∈ PROCESS_PARAM_DEF1`` → ``1.0`` → ``0.0``.
+    """
+    lookup = PdtLookup(
+        pbt_csv=input_dir / "pbt_process.csv",
+        pd_csv=input_dir / "pd_process.csv",
+        pt_csv=input_dir / "pt_process.csv",
+        p_csv=input_dir / "p_process.csv",
+        period_time_first_csv=solve_data_dir / "first_timesteps.csv",
+        solve_branch_csv=solve_data_dir / "solve_branch__time_branch.csv",
+        period_branch_csv=solve_data_dir / "period__branch.csv",
+        group_entity_csv=input_dir / "group__process.csv",
+        group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
+        param_def1=PROCESS_PARAM_DEF1,
+        provider=provider,
+    )
+    domain = _read_pairs(
+        solve_data_dir / "process_TimeParam_in_use.csv", provider=provider,
+    )
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    key_cols = ["process", "param"]
+    out_cols = [*key_cols, "period", "time"]
+
+    grid = build_entity_dt_grid(domain, dt, key_cols=key_cols)
+
+    pd_df = lift_dict_to_lookup(
+        lookup._pd, ["process", "param", "period"], "v_pd")
+    pt_df = lift_dict_to_lookup(
+        lookup._pt, ["process", "param", "time"], "v_pt")
+    p_df = lift_dict_to_lookup(
+        lookup._p, ["process", "param"], "v_p")
+
+    periods = [d for (d, _t) in dt]
+    fold = build_fold_frame(
+        pbt=lookup._pbt,
+        pbt_key_cols=key_cols,
+        out_key_cols=out_cols,
+        ts_for_d=lookup._ts_for_d,
+        tb_for_d=lookup._tb_for_d,
+        pe_for_d=lookup._pe_for_d,
+        stoch_entities=lookup._stoch_entity,
+        stoch_filter_cols=["process"],
+        periods=periods,
+    )
+
+    out = (
+        grid
+        .join(pd_df, on=["process", "param", "period"], how="left")
+        .join(pt_df, on=["process", "param", "time"], how="left")
+        .join(p_df, on=["process", "param"], how="left")
+    )
+    if fold is not None:
+        out = out.join(fold, on=out_cols, how="left")
+    else:
+        out = out.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("v_fold"))
+
+    def1 = list(PROCESS_PARAM_DEF1)
+    out = out.with_columns(
+        coalesce_value([
+            pl.col("v_fold"),   # branches 1-2 (fold)
+            pl.col("v_pd"),     # branch 3 (period-first)
+            pl.col("v_pt"),     # branch 4
+            pl.col("v_p"),      # branch 5
+            pl.when(pl.col("param").is_in(def1))
+              .then(pl.lit(1.0)).otherwise(pl.lit(0.0)),  # branch 6 / 8
+        ])
+    )
+    return collect_value_frame(
+        out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtProcess(input_dir: Path, solve_data_dir: Path,
                      *, provider) -> None:
     """Emit ``pdtProcess`` to the Provider."""
     _emit(provider, "solve_data/pdtProcess.csv",
-          derive_pdtProcess(input_dir, solve_data_dir, provider=provider))
+          derive_pdtProcess_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
