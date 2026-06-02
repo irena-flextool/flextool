@@ -892,11 +892,69 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtGroup_vectorized(input_dir: Path, solve_data_dir: Path,
+                               *,
+                               provider: "object | None" = None,
+                               engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtGroup`` derive — byte-parity with the legacy.
+
+    Replaces the per-cell cascade loop in :func:`derive_pdtGroup` with
+    vectorized polars (left-joins + ``coalesce`` in cascade-priority
+    order), still per roll over the roll's own window.  Output is
+    byte-identical to :func:`derive_pdtGroup`: columns ``group, param,
+    period, time, value`` all ``Utf8``, entity-major row order,
+    ``repr(v)`` value cells.
+
+    Domain = ``group × _GROUP_TIME_PARAM`` (the live module frozenset, so
+    iteration order matches legacy — S4) preserving order and duplicates,
+    crossed with ``dt`` from ``steps_in_use``.
+
+    Cascade (inline 4-branch, time-first):
+    ``pt_group`` → ``pd_group`` → ``p_group`` → ``0.0``.
+    """
+    pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)
+    pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
+    p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
+    groups = _read_singles(input_dir / "group.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    key_cols = ["group", "param"]
+    out_cols = [*key_cols, "period", "time"]
+
+    # Domain = group × _GROUP_TIME_PARAM, referencing the LIVE frozenset
+    # object so iteration order matches the legacy loop (S4); preserve the
+    # group list order + duplicates, never ``.unique()``.
+    domain = [(g, param) for g in groups for param in list(_GROUP_TIME_PARAM)]
+
+    grid = build_entity_dt_grid(domain, dt, key_cols=key_cols)
+
+    pt_df = lift_dict_to_lookup(pt_g, ["group", "param", "time"], "v_pt")
+    pd_df = lift_dict_to_lookup(pd_g, ["group", "param", "period"], "v_pd")
+    p_df = lift_dict_to_lookup(p_g, ["group", "param"], "v_p")
+
+    out = (
+        grid
+        .join(pt_df, on=["group", "param", "time"], how="left")
+        .join(pd_df, on=["group", "param", "period"], how="left")
+        .join(p_df, on=["group", "param"], how="left")
+        .with_columns(
+            coalesce_value([
+                pl.col("v_pt"),   # branch 1 (time-first)
+                pl.col("v_pd"),   # branch 2 (period)
+                pl.col("v_p"),    # branch 3
+                pl.lit(0.0),      # branch 4 (default)
+            ])
+        )
+    )
+    return collect_value_frame(out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtGroup(input_dir: Path, solve_data_dir: Path,
                    *, provider) -> None:
     """Emit ``pdtGroup`` to the Provider."""
     _emit(provider, "solve_data/pdtGroup.csv",
-          derive_pdtGroup(input_dir, solve_data_dir, provider=provider))
+          derive_pdtGroup_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
