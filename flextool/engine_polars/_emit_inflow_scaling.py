@@ -1084,27 +1084,31 @@ def _compute_inflow_scaling_frames_vectorized(
     out["new_peak_divided_by_old_peak.csv"] = _ordered_value_frame(
         npop_df, ("node", "period", "value"), ["__eo", "__po"],
     )
-    # NOTE: stages 9-12 are now vectorized below and read the peak-family
-    # FRAMES (peak_domain_df / npop_df) directly, so no scalar op_sign /
-    # npop / npopinflow dict reconstruction is needed.  The DEAD
-    # npopinflow intermediate is rebuilt as ``npopis_df`` below (computed,
-    # never assigned to ``out``).
-
-    # ── Stages 9-12 (Tier-B; same keyset as the peak domain / rows_nps) ─
-    # All four stages iterate the new_peak_sign keyset (peak_domain_df) and
-    # read prior outputs with ``.get(k, 0.0)`` where the row STILL EXISTS →
-    # left-join + fill_null(0.0).  Build the npopinflow (DEAD) intermediate
-    # as a frame: npopis = npop * orig_flow_sum / cpsoy (0 when cpsoy==0),
-    # over the old_peak!=0 keyset; rows absent from npop_df ⇒ npopis = 0.
+    # ── Stages 9-12 (Tier-B): ONE fused closed-form graph ──────────────
+    # The whole sub-pipeline runs over the FULL peak-domain keyset
+    # (peak_domain_df == new_peak_sign keyset).  npop and npopis are
+    # computed INLINE as ``when(old_peak == 0.0)`` expressions — an
+    # old_peak==0 row is a FILL-to-0 (npop=0, npopis=0), NOT a row drop
+    # (constraint 1): the row survives into slope/section/nom exactly as
+    # the legacy left-join + fill_null(0.0) did, with the smaller
+    # new_peak_divided_by_old_peak emit (npop_df, old_peak!=0 only) already
+    # written above untouched (constraint 2).  Collapsing ``npopis_df`` +
+    # ``base912`` + the two npop/npopis re-joins into this single graph
+    # removes the round-trip joins while preserving the exact float op
+    # order / parenthesization (constraint 3) and the ``== 0.0`` guards
+    # (constraint 4).  op_sign / old_peak come from stage-7 ``precomp``,
+    # carried on peak_domain_df, unchanged (constraint 5).
     ofs_lk = pl.DataFrame(
         {"node": [k[0] for k in orig_flow_sum],
          "period": [k[1] for k in orig_flow_sum],
          "v_ofs": list(orig_flow_sum.values())},
         schema={"node": pl.Utf8, "period": pl.Utf8, "v_ofs": pl.Float64},
     )
-    npopis_df = (
-        npop_df.select(["node", "period",
-                        pl.col("value_f").alias("v_npop")])
+    fused912 = (
+        peak_domain_df
+        # Per-cell ingredients: orig_flow_sum (.get(k, 0.0)) + cpsoy
+        # (.get(d, 0.0)) — left-join + fill_null(0.0) reproduces the dict
+        # defaults the legacy stages read.
         .join(ofs_lk, on=["node", "period"], how="left")
         .join(cpsoy_lk, on="period", how="left")
         .with_columns(
@@ -1112,43 +1116,35 @@ def _compute_inflow_scaling_frames_vectorized(
             pl.col("v_cpsoy").fill_null(0.0).alias("v_cpsoy"),
         )
         .with_columns(
-            pl.when(pl.col("v_cpsoy") != 0.0)
+            # npis = peak * 8760.0 (constraint 3).
+            (pl.col("v_peak") * 8760.0).alias("v_npis"),
+            # npop = 0.0 if old_peak == 0.0 else peak / old_peak.  FILL,
+            # not drop (constraint 1); exact ``== 0.0`` guard (constraint 4).
+            pl.when(pl.col("old_peak") == 0.0)
+            .then(pl.lit(0.0))
+            .otherwise(pl.col("v_peak") / pl.col("old_peak"))
+            .alias("v_npop"),
+        )
+        .with_columns(
+            # npopis = 0.0 if (cps == 0.0 or old_peak == 0.0) else
+            #          (npop * ofs) / cps.  Left-to-right multiply-then-
+            #          divide (constraint 3).  old_peak==0 ⇒ npop==0 above,
+            #          but the legacy code never reached the cps branch on
+            #          old_peak==0 (the row was skipped), defaulting npopis
+            #          to 0 — so guard old_peak==0 here too (constraint 1).
+            pl.when((pl.col("v_cpsoy") != 0.0)
+                    & (pl.col("old_peak") != 0.0))
             .then(pl.col("v_npop") * pl.col("v_ofs") / pl.col("v_cpsoy"))
             .otherwise(pl.lit(0.0))
             .alias("v_npopis"),
         )
-        .select(["node", "period", "v_npopis"])
-    )
-
-    # Base frame for stages 9-12: the peak-domain keyset with the per-cell
-    # ingredients joined (npop / npopis fill to 0 on absent old_peak==0).
-    base912 = (
-        peak_domain_df
-        .with_columns((pl.col("v_peak") * 8760.0).alias("v_npis"))
-        .join(
-            npop_df.select(["node", "period",
-                            pl.col("value_f").alias("v_npop")]),
-            on=["node", "period"], how="left")
-        .join(npopis_df, on=["node", "period"], how="left")
         .with_columns(
-            pl.col("v_npop").fill_null(0.0).alias("v_npop"),
-            pl.col("v_npopis").fill_null(0.0).alias("v_npopis"),
-        )
-    )
-
-    # Stage 9 — new_peak_inflow_sum = peak * 8760 (Tier A).
-    out["new_peak_inflow_sum.csv"] = _ordered_value_frame(
-        base912.with_columns(pl.col("v_npis").alias("value_f")),
-        ("node", "period", "value"), ["__eo", "__po"],
-    )
-
-    # Stage 10 — new_old_multiplier.  denom = npis - npopis; v = 0 when
-    # denom == 0 else os_sign*(os_sign*npopis - af)/denom.
-    nom_df = (
-        base912
-        .with_columns(
+            # denom = npis - npopis; exact ``== 0.0`` guard (constraint 4).
             (pl.col("v_npis") - pl.col("v_npopis")).alias("v_denom"))
         .with_columns(
+            # nom = 0.0 if denom == 0.0 else
+            #       op_sign * (op_sign * npopis - af) / denom.  Inner parens
+            #       + multiply-before-divide preserved (constraint 3).
             pl.when(pl.col("v_denom") == 0.0)
             .then(pl.lit(0.0))
             .otherwise(
@@ -1157,23 +1153,31 @@ def _compute_inflow_scaling_frames_vectorized(
                 / pl.col("v_denom"))
             .alias("v_nom"),
         )
-    )
-    out["new_old_multiplier.csv"] = _ordered_value_frame(
-        nom_df.with_columns(pl.col("v_nom").alias("value_f")),
-        ("node", "period", "value"), ["__eo", "__po"],
+        .with_columns(
+            # slope = npop * (1.0 + nom); section = peak * nom (constraint 3).
+            (pl.col("v_npop") * (1.0 + pl.col("v_nom"))).alias("v_slope"),
+            (pl.col("v_peak") * pl.col("v_nom")).alias("v_section"),
+        )
     )
 
+    # Stage 9 — new_peak_inflow_sum = peak * 8760 (Tier A).
+    out["new_peak_inflow_sum.csv"] = _ordered_value_frame(
+        fused912.with_columns(pl.col("v_npis").alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
+    )
+    # Stage 10 — new_old_multiplier = nom.
+    out["new_old_multiplier.csv"] = _ordered_value_frame(
+        fused912.with_columns(pl.col("v_nom").alias("value_f")),
+        ("node", "period", "value"), ["__eo", "__po"],
+    )
     # Stage 11 — new_old_slope = npop * (1 + nom).
     out["new_old_slope.csv"] = _ordered_value_frame(
-        nom_df.with_columns(
-            (pl.col("v_npop") * (1.0 + pl.col("v_nom"))).alias("value_f")),
+        fused912.with_columns(pl.col("v_slope").alias("value_f")),
         ("node", "period", "value"), ["__eo", "__po"],
     )
-
     # Stage 12 — new_old_section = peak * nom.
     out["new_old_section.csv"] = _ordered_value_frame(
-        nom_df.with_columns(
-            (pl.col("v_peak") * pl.col("v_nom")).alias("value_f")),
+        fused912.with_columns(pl.col("v_section").alias("value_f")),
         ("node", "period", "value"), ["__eo", "__po"],
     )
 
