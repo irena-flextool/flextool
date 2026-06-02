@@ -52,6 +52,48 @@ LEGEND_GAP = 0.15           # Gap between drawing area and legend box
 TITLE_PAD = 0.3             # Top margin for subplot title above axes
 BOTTOM_PAD = 0.35           # Bottom margin for x-axis ticks/labels below axes
 
+# Category (bar) tick labels are middle-ellipsised to at most this many
+# characters PER index/group component. A single pathological name (e.g.
+# "EGNGSC_Shoubra_El-Kheima_Steam_Turbines") would otherwise set the left
+# margin for every subplot in the grid, squeezing all the bars. Middle
+# truncation keeps both the head and the tail so the name stays
+# recognisable; the GUI shows the full text on hover.
+BAR_LABEL_MAX_CHARS = 28
+_ELLIPSIS = "…"
+
+
+def _truncate_middle(text: str, cap: int = BAR_LABEL_MAX_CHARS) -> str:
+    """Shorten *text* to *cap* chars keeping head and tail, ellipsis in between."""
+    if len(text) <= cap:
+        return text
+    if cap <= 1:
+        return text[:cap]
+    keep = cap - 1  # one char spent on the ellipsis
+    head = (keep + 1) // 2
+    tail = keep - head
+    return text[:head] + _ELLIPSIS + (text[-tail:] if tail else "")
+
+
+def _bar_label_components(idx_val, group=None) -> list[str]:
+    """Flatten a bar's index value (+ optional expand group) into string parts."""
+    parts = list(idx_val) if isinstance(idx_val, tuple) else [idx_val]
+    if group is not None:
+        parts += list(group) if isinstance(group, tuple) else [group]
+    return [str(p) for p in parts]
+
+
+def _format_bar_label(idx_val, group=None, *, truncate: bool = True) -> str:
+    """Build a bar's display label as ``comp1 | comp2 | …`` (expand group last).
+
+    With ``truncate`` each component is middle-ellipsised to
+    ``BAR_LABEL_MAX_CHARS``. ``truncate=False`` yields the full label used for
+    the GUI hover tooltip.
+    """
+    parts = _bar_label_components(idx_val, group)
+    if truncate:
+        parts = [_truncate_middle(p) for p in parts]
+    return " | ".join(parts)
+
 
 def _compute_bar_layout(
     effective_plots: list[tuple[str | None, pd.DataFrame]],
@@ -74,33 +116,34 @@ def _compute_bar_layout(
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
-    # ── bar-label width (max across ALL subplots) ──
+    # ── bar-label width (max DRAWN label across ALL subplots) ──
+    # The drawn tick label includes the expand-group level (folded in with
+    # " | ", group last) and is middle-truncated per component, so size the
+    # column to that — not to the raw index text — to keep the grid uniform.
     max_bar_label_chars = 0
     for _, df_sub in effective_plots:
         df_sub_clean = df_sub.dropna(how='all')
         if df_sub_clean.empty:
             continue
-        if isinstance(df_sub_clean.index, pd.MultiIndex):
-            labels = df_sub_clean.index.map(lambda x: ' | '.join(map(str, x)))
-        else:
-            labels = df_sub_clean.index.astype(str)
-        longest = max(len(s) for s in labels) if len(labels) else 0
-        max_bar_label_chars = max(max_bar_label_chars, longest)
-    bar_label_width = max_bar_label_chars * CHAR_WIDTH
+        for idx_val in df_sub_clean.index:
+            max_bar_label_chars = max(
+                max_bar_label_chars, len(_format_bar_label(idx_val))
+            )
 
-    # ── group-label width ──
+    # ── expand-group width (folded into the tick label, not a separate column) ──
     if expand_axis_levels:
         not_expand = list(set(range(len(df.columns.names))) - set(expand_axis_levels))
         expand_names = df.columns.droplevel(not_expand)
         if isinstance(expand_names, pd.MultiIndex):
-            joined = expand_names.map(' | '.join).tolist()
+            group_drawn = [_format_bar_label(tuple(g)) for g in expand_names]
         else:
-            joined = expand_names.astype(str).tolist()
-        group_label_width = max(len(s) for s in joined) * CHAR_WIDTH
-    else:
-        group_label_width = 0.0
+            group_drawn = [_format_bar_label(g) for g in expand_names]
+        max_group_chars = max((len(s) for s in group_drawn), default=0)
+        max_bar_label_chars += 3 + max_group_chars  # " | " separator + group
 
-    total_label_width = bar_label_width + group_label_width
+    bar_label_width = max_bar_label_chars * CHAR_WIDTH
+    group_label_width = 0.0  # group is now part of the tick label
+    total_label_width = bar_label_width
 
     # ── legend width and height (max across ALL subplots) ──
     legend_width = 0.0
@@ -515,17 +558,17 @@ def _build_bar_figure(
         if expand_axis_levels:
             if reverse_order:
                 groups = groups[::-1]
-        else:
-            group_labels = []
 
-        # Get bar labels from this subplot's index (not the global df)
-        if isinstance(df_sub.index, pd.MultiIndex):
-            subplot_bar_labels = df_sub.index.map(lambda x: ' | '.join(map(str, x))).to_list()
-        else:
-            subplot_bar_labels = df_sub.index.astype(str).tolist()
+        # Get bar labels from this subplot's index (not the global df).
+        # Each index component is middle-truncated (full text shown on hover).
+        subplot_bar_labels = [_format_bar_label(x) for x in df_sub.index]
+        subplot_bar_full_labels = [
+            _format_bar_label(x, truncate=False) for x in df_sub.index
+        ]
         # Reverse to match the reversed groups order (horizontal only)
         if reverse_order:
             subplot_bar_labels = subplot_bar_labels[::-1]
+            subplot_bar_full_labels = subplot_bar_full_labels[::-1]
 
         # Build list of all bars (for y-axis positioning).
         # Zero pruning already done on df_sub above (if skip_data_with_only_zeroes).
@@ -563,11 +606,6 @@ def _build_bar_figure(
                     groups_with_bars.append((group, row_items))
                     for idx_val in row_items:
                         all_bars.append([group, idx_val])
-            # Format group labels from the filtered groups only
-            group_labels = [
-                ' | '.join(str(v) for v in g) if isinstance(g, tuple) else str(g)
-                for g, _ in groups_with_bars
-            ]
 
         # Skip subplot if no bars have data (avoids zero-height axes)
         if not all_bars:
@@ -720,17 +758,29 @@ def _build_bar_figure(
                               thickness_mult=thickness_mult)
 
         # Set up axis with groups and bars
-        # Build bar labels for display (matching all_bars structure)
+        # Build bar labels for display (matching all_bars structure). The
+        # expand-group level is folded into each tick label as "bar | group"
+        # (group last, like the non-expand "extended" pathway) instead of a
+        # separate label to the left of the axis, which collided with long
+        # bar labels and inflated the left margin. Full (untruncated) labels
+        # are stashed on the axes for the GUI hover tooltip.
         if not expand_axis_levels:
             display_bar_labels = subplot_bar_labels
+            full_bar_labels = subplot_bar_full_labels
         else:
-            # Build labels from filtered all_bars (each entry has its own label)
-            display_bar_labels = []
-            for _, idx_val in all_bars:
-                if isinstance(idx_val, tuple):
-                    display_bar_labels.append(' | '.join(map(str, idx_val)))
-                else:
-                    display_bar_labels.append(str(idx_val))
+            display_bar_labels = [
+                _format_bar_label(idx_val, group) for group, idx_val in all_bars
+            ]
+            full_bar_labels = [
+                _format_bar_label(idx_val, group, truncate=False)
+                for group, idx_val in all_bars
+            ]
+        # Expose label data to the embedding GUI (truncated → full) so a
+        # hover tooltip can reveal names cut by BAR_LABEL_MAX_CHARS.
+        ax._flextool_bar_labels = list(display_bar_labels)
+        ax._flextool_bar_labels_full = list(full_bar_labels)
+        ax._flextool_bar_positions = list(y_positions)
+        ax._flextool_bar_orientation = bar_orientation
 
         # Set main axis for individual bars (use cumulative y_positions).
         # Use FixedLocator/FixedFormatter rather than ax.set_yticks(...) so
@@ -753,59 +803,27 @@ def _build_bar_figure(
             ax.tick_params(labelsize=10)
             plt.setp(ax.get_xticklabels(), rotation=90, ha='center')
 
-        if expand_axis_levels:
-            # Multiple groups - add two-level axis
-            # Compute bar slot boundaries, group centers, and group boundaries
-            # from cumulative y_positions.
+        if expand_axis_levels and len(groups_with_bars) > 1:
+            # The expand-group name is folded into each tick label (above), so
+            # we no longer draw a separate group label to the left of the
+            # axis (it collided with long bar labels). Keep only thin
+            # separators between groups to keep the blocks visually distinct.
             bar_boundaries = [y_positions[0] - per_bar_heights[0] / 2]
             for i in range(len(y_positions)):
                 bar_boundaries.append(y_positions[i] + per_bar_heights[i] / 2)
 
-            group_centers = []
             group_boundaries = []
             pos_idx = 0
             for _, row_items in groups_with_bars:
-                n_in_group = len(row_items)
-                first_y = y_positions[pos_idx]
-                last_y = y_positions[pos_idx + n_in_group - 1]
-                group_centers.append((first_y + last_y) / 2)
                 group_boundaries.append(bar_boundaries[pos_idx])
-                pos_idx += n_in_group
+                pos_idx += len(row_items)
             group_boundaries.append(bar_boundaries[-1])
 
-            if bar_orientation == 'horizontal':
-                group_label_pad = (layout.bar_label_width * 72 + 10
-                                   if layout.bar_label_width > 0 and layout.group_label_width > 0
-                                   else 10)
-
-                # Group labels — plain text instead of secondary axis ticks
-                for center, label in zip(group_centers, group_labels):
-                    ax.annotate(
-                        label, xy=(0, center), xycoords=("axes fraction", "data"),
-                        xytext=(-group_label_pad, 0), textcoords="offset points",
-                        ha="right", va="center", fontsize=10, annotation_clip=False,
-                    )
-                # Group separators — thin lines
-                for boundary in group_boundaries:
+            # Interior separators only (skip the two outer edges).
+            for boundary in group_boundaries[1:-1]:
+                if bar_orientation == 'horizontal':
                     ax.axhline(y=boundary, color="grey", linewidth=0.8, linestyle="-")
-            else:  # vertical
-                if layout.bar_label_width > 0 and layout.group_label_width > 0:
-                    layout.bar_label_width * 72
-                    layout.total_label_width * 72
-                    group_label_pad = layout.bar_label_width * 72 + 10
                 else:
-                    group_label_pad = 10
-
-                # Group labels — plain text instead of secondary axis ticks
-                for center, label in zip(group_centers, group_labels):
-                    ax.annotate(
-                        label, xy=(center, 0), xycoords=("data", "axes fraction"),
-                        xytext=(0, -group_label_pad), textcoords="offset points",
-                        ha="center", va="top", fontsize=10, rotation=90,
-                        annotation_clip=False,
-                    )
-                # Group separators — thin lines
-                for boundary in group_boundaries:
                     ax.axvline(x=boundary, color="grey", linewidth=0.8, linestyle="-")
 
         # Subplot title (only for actual subplot dimensions, not the figure title)

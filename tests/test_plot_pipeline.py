@@ -367,14 +367,14 @@ class TestPeriodOrdering:
             key=lambda x: x[1],
         )
         ordered_labels = [lbl for lbl, _ in pairs]
-        # Two groups × three periods in natural order
-        assert ordered_labels == periods + periods
-        # Group annotations: scA should be at smaller x than scB
-        group_x = {}
-        for child in ax.get_children():
-            if hasattr(child, "get_text") and child.get_text() in ("scA", "scB"):
-                group_x[child.get_text()] = child.xy[0]
-        assert group_x["scA"] < group_x["scB"]
+        # The expand-group level (scen) is folded into each tick label as
+        # "<bar> | <group>" (group last). Bar (period) portion reads
+        # left-to-right within each group; the first group (scA) is left-most.
+        bar_parts = [lbl.split(" | ")[0] for lbl in ordered_labels]
+        group_parts = [lbl.split(" | ")[1] for lbl in ordered_labels]
+        assert bar_parts == periods + periods
+        assert group_parts[:3] == ["scA"] * 3
+        assert group_parts[3:] == ["scB"] * 3
 
     def test_horizontal_expand_axis_groups_top_to_bottom(self):
         from flextool.plot_outputs.plot_bars import build_bar_figures
@@ -399,13 +399,15 @@ class TestPeriodOrdering:
             key=lambda x: -x[1],
         )
         ordered_labels = [lbl for lbl, _ in pairs]
-        assert ordered_labels == periods + periods
-        group_y = {}
-        for child in ax.get_children():
-            if hasattr(child, "get_text") and child.get_text() in ("scA", "scB"):
-                group_y[child.get_text()] = child.xy[1]
-        # In horizontal bars, first group should be on top → higher y
-        assert group_y["scA"] > group_y["scB"]
+        # The expand-group level (scen) is now folded into each tick label as
+        # "<bar> | <group>" (group last) instead of a separate label to the
+        # left of the axis. The bar (period) portion still reads top-to-bottom
+        # within each group, and the first group (scA) is on top.
+        bar_parts = [lbl.split(" | ")[0] for lbl in ordered_labels]
+        group_parts = [lbl.split(" | ")[1] for lbl in ordered_labels]
+        assert bar_parts == periods + periods
+        assert group_parts[:3] == ["scA"] * 3
+        assert group_parts[3:] == ["scB"] * 3
 
 
 # ---------------------------------------------------------------------------
