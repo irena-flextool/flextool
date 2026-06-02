@@ -443,43 +443,6 @@ def _compute_process_reserve_active(
     return active_rows, dt
 
 
-def derive_process_reserve_upDown_node_active(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Build the ``process_reserve_upDown_node_active`` frame
-    ``(process, reserve, upDown, node)`` — entries from
-    ``process_reserve_upDown_node`` whose summed reservation across
-    the matching ``reserve__upDown__group × dt`` cross product is
-    nonzero.
-    """
-    active_rows, _dt = _compute_process_reserve_active(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _to_utf8_frame(
-        ("process", "reserve", "upDown", "node"), active_rows,
-    )
-
-
-def derive_prundt(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Build the ``prundt`` frame —
-    ``process_reserve_upDown_node_active × dt``.
-    """
-    active_rows, dt = _compute_process_reserve_active(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    rows: list[tuple[str, str, str, str, str, str]] = []
-    for (p, r, ud, n) in active_rows:
-        for (d, t) in dt:
-            rows.append((p, r, ud, n, d, t))
-    return _to_utf8_frame(
-        ("process", "reserve", "upDown", "node", "period", "time"), rows,
-    )
-
-
 def emit_process_reserve_upDown_node_active_and_prundt(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -573,57 +536,6 @@ def _compute_reserve_filters(
         (p,) for p in dict.fromkeys(p for (p, _, _, _) in lf_rows)
     ]
     return rel_rows, incr_rows, lf_rows, process_lf
-
-
-def derive_p_process_reserve_upDown_node_reliability(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Reliability fallback frame (process, reserve, upDown, node, value).
-    Default 1 with the legacy zero→1 collapse already applied."""
-    rel_rows, _i, _l, _p = _compute_reserve_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _to_utf8_frame(
-        ("process", "reserve", "upDown", "node", "value"), rel_rows,
-    )
-
-
-def derive_process_reserve_upDown_node_increase_reserve_ratio(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Frame of ``(p, r, ud, n)`` where ``increase_reserve_ratio > 0``."""
-    _r, incr_rows, _l, _p = _compute_reserve_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _to_utf8_frame(
-        ("process", "reserve", "upDown", "node"), incr_rows,
-    )
-
-
-def derive_process_reserve_upDown_node_large_failure_ratio(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Frame of ``(p, r, ud, n)`` where ``large_failure_ratio > 0``."""
-    _r, _i, lf_rows, _p = _compute_reserve_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _to_utf8_frame(
-        ("process", "reserve", "upDown", "node"), lf_rows,
-    )
-
-
-def derive_process_large_failure(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """First-column setof projection of the large_failure_ratio frame."""
-    _r, _i, _l, process_lf = _compute_reserve_filters(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    return _to_utf8_frame(("process",), process_lf)
 
 
 def emit_process_reserve_filters_and_reliability(
