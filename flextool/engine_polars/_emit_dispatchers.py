@@ -111,10 +111,9 @@ from flextool.input_derivation._method_constants import (  # noqa: E402
 # ---------------------------------------------------------------------------
 # emit_process_arc_unions — top-level dispatcher own-compute.
 #
-# Each of the 14 emitted CSVs flows through ``_emit`` (via a private
-# ``_compute_*`` helper).  Public ``derive_*`` functions are exposed for
-# standalone seed lookups; the wrapper builds the shared input bundle
-# once and threads intermediate frames so dependent CSVs don't re-scan.
+# Each emitted CSV flows through ``_emit`` (via a private ``_compute_*``
+# helper).  The wrapper builds the shared input bundle once and threads
+# intermediate frames so dependent CSVs don't re-scan.
 # ---------------------------------------------------------------------------
 
 
@@ -132,7 +131,7 @@ def _to_frame(rows, header: tuple[str, ...]) -> pl.DataFrame:
 
 def _arc_unions_inputs(input_dir: Path, solve_data_dir: Path,
                         *, provider: "object | None" = None) -> dict:
-    """Shared input bundle for the 14 derive_* in this monolith."""
+    """Shared input bundle for the arc-union computes in this monolith."""
     METHOD_INDIRECT = _METHOD_INDIRECT
     METHOD_DIRECT = _METHOD_DIRECT
     process_method = _read_pairs(input_dir / "process_method.csv",
@@ -185,16 +184,6 @@ def _compute_process__profileProcess__toSink(inp: dict) -> pl.DataFrame:
     )
 
 
-def derive_process__profileProcess__toSink(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process__profileProcess__toSink.csv`` — 3-col projection from
-    the 5-tuple ``process__profileProcess__toSink__profile__profile_method``."""
-    return _compute_process__profileProcess__toSink(
-        _arc_unions_inputs(input_dir, solve_data_dir),
-    )
-
-
 # ---- (2) process__source__toProfileProcess ----------------------------------
 
 def _source_to_profile_3(inp: dict) -> list[tuple[str, str, str]]:
@@ -210,16 +199,6 @@ def _compute_process__source__toProfileProcess(inp: dict) -> pl.DataFrame:
     )
 
 
-def derive_process__source__toProfileProcess(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process__source__toProfileProcess.csv`` — 3-col projection from
-    the 5-tuple ``process__source__toProfileProcess__profile__profile_method``."""
-    return _compute_process__source__toProfileProcess(
-        _arc_unions_inputs(input_dir, solve_data_dir),
-    )
-
-
 # ---- (3) process_profile ----------------------------------------------------
 
 def _compute_process_profile(inp: dict) -> pl.DataFrame:
@@ -229,16 +208,6 @@ def _compute_process_profile(inp: dict) -> pl.DataFrame:
     for p, _, _ in _profile_to_sink_3(inp):
         seen.setdefault(p, None)
     return _to_frame([(p,) for p in seen.keys()], ("process",))
-
-
-def derive_process_profile(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_profile.csv`` — set of ``process`` appearing in either
-    profile-source or profile-sink projections."""
-    return _compute_process_profile(
-        _arc_unions_inputs(input_dir, solve_data_dir),
-    )
 
 
 # ---- (4) process_source_toProcess + (5) process_process_toSink --------------
@@ -281,26 +250,6 @@ def _compute_process_process_toSink(inp: dict) -> pl.DataFrame:
     )
 
 
-def derive_process_source_toProcess(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_source_toProcess.csv`` — METHOD_INDIRECT or METHOD_DIRECT
-    sources gated by exclusion from the profile projection."""
-    return _compute_process_source_toProcess(
-        _arc_unions_inputs(input_dir, solve_data_dir),
-    )
-
-
-def derive_process_process_toSink(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_process_toSink.csv`` — symmetric counterpart of
-    process_source_toProcess for sinks."""
-    return _compute_process_process_toSink(
-        _arc_unions_inputs(input_dir, solve_data_dir),
-    )
-
-
 # ---- (6) process_source_sink_eff -------------------------------------------
 
 def _compute_process_source_sink_eff(
@@ -317,14 +266,6 @@ def _compute_process_source_sink_eff(
     for r in sts:
         union.setdefault(r, None)
     return _to_frame(list(union.keys()), ("process", "source", "sink"))
-
-
-def derive_process_source_sink_eff(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_source_sink_eff.csv`` — union of ``process_source_toSink``
-    and ``process_sink_toSource``."""
-    return _compute_process_source_sink_eff(solve_data_dir)
 
 
 # ---- Helper: shared 6-list bundle for 7/12/13 -------------------------------
@@ -369,16 +310,6 @@ def _compute_process_source_sink_noEff(
     return _to_frame(list(union2.keys()), ("process", "source", "sink"))
 
 
-def derive_process_source_sink_noEff(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_source_sink_noEff.csv`` — 8-way union over arc relations."""
-    return _compute_process_source_sink_noEff(
-        _arc_unions_inputs(input_dir, solve_data_dir),
-        _disk_arc_lists(solve_data_dir),
-    )
-
-
 # ---- (8) process_online ----------------------------------------------------
 
 def _compute_process_online(solve_data_dir: Path,
@@ -393,13 +324,6 @@ def _compute_process_online(solve_data_dir: Path,
     return _to_frame([(p,) for p in seen.keys()], ("process",))
 
 
-def derive_process_online(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_online.csv`` — union of online_linear and online_integer."""
-    return _compute_process_online(solve_data_dir)
-
-
 # ---- (9) process_minload ---------------------------------------------------
 
 def _compute_process_minload(inp: dict, solve_data_dir: Path,
@@ -411,16 +335,6 @@ def _compute_process_minload(inp: dict, solve_data_dir: Path,
     )
     minload = [p for p in inp["processes"] if p in p_with_min_load]
     return _to_frame([(p,) for p in minload], ("process",))
-
-
-def derive_process_minload(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_minload.csv`` — processes whose ct_method is
-    ``min_load_efficiency``, ordered by ``process.csv`` ordering."""
-    return _compute_process_minload(
-        _arc_unions_inputs(input_dir, solve_data_dir), solve_data_dir,
-    )
 
 
 # ---- (10) process__commodity__node_co2 + (11) process_co2 ------------------
@@ -462,26 +376,6 @@ def _compute_process_co2(inp: dict, solve_data_dir: Path,
     return _to_frame([(p,) for p in seen.keys()], ("process",))
 
 
-def derive_process__commodity__node_co2(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process__commodity__node_co2.csv`` — process-commodity-node
-    triples where the node is a CO2 commodity node and the process touches
-    that node via either a source or sink."""
-    return _compute_process__commodity__node_co2(
-        _arc_unions_inputs(input_dir, solve_data_dir), solve_data_dir,
-    )
-
-
-def derive_process_co2(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_co2.csv`` — set of ``process`` from process__commodity__node_co2."""
-    return _compute_process_co2(
-        _arc_unions_inputs(input_dir, solve_data_dir), solve_data_dir,
-    )
-
-
 # ---- (12) process_source_sink ----------------------------------------------
 
 def _compute_process_source_sink(
@@ -498,17 +392,6 @@ def _compute_process_source_sink(
               + disk["proc_to_snk_noConv"] + disk["src_to_proc_noConv"]):
         pss_union.setdefault(tuple(r), None)
     return _to_frame(list(pss_union.keys()), ("process", "source", "sink"))
-
-
-def derive_process_source_sink(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_source_sink.csv`` — 10-way union of every (process,
-    source, sink) triple appearing across the eff/noEff/profile families."""
-    return _compute_process_source_sink(
-        _arc_unions_inputs(input_dir, solve_data_dir),
-        _disk_arc_lists(solve_data_dir),
-    )
 
 
 # ---- (13) process_source_sink_alwaysProcess --------------------------------
@@ -547,18 +430,6 @@ def _compute_process_source_sink_alwaysProcess(
     return _to_frame(list(pssa.keys()), ("process", "source", "sink"))
 
 
-def derive_process_source_sink_alwaysProcess(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process_source_sink_alwaysProcess.csv`` — 12-way union including
-    the ``_direct`` arc lists."""
-    return _compute_process_source_sink_alwaysProcess(
-        _arc_unions_inputs(input_dir, solve_data_dir),
-        _disk_arc_lists(solve_data_dir),
-        solve_data_dir,
-    )
-
-
 # ---- (14) process__source__sink__profile__profile_method_direct ------------
 
 def _compute_process__source__sink__profile__profile_method_direct(
@@ -588,17 +459,6 @@ def _compute_process__source__sink__profile__profile_method_direct(
     return _to_frame(
         list(dict.fromkeys(rows)),
         ("process", "source", "sink", "profile", "profile_method"),
-    )
-
-
-def derive_process__source__sink__profile__profile_method_direct(
-    input_dir: Path, solve_data_dir: Path,
-) -> pl.DataFrame:
-    """``process__source__sink__profile__profile_method_direct.csv`` —
-    cross-product of process_source_toSink × profile/profile_method gated
-    by METHOD_DIRECT."""
-    return _compute_process__source__sink__profile__profile_method_direct(
-        _arc_unions_inputs(input_dir, solve_data_dir), solve_data_dir,
     )
 
 
@@ -638,23 +498,21 @@ def emit_process_arc_unions(input_dir: Path, solve_data_dir: Path,
 
 
 # ---------------------------------------------------------------------------
-# write_entity_period_calc_params — top-level dispatcher own-compute.
+# emit_entity_period_calc_params — top-level dispatcher own-compute.
 # ---------------------------------------------------------------------------
 
 
-# ---- Phase E-b — derive_X family for each emitted CSV --------------------
+# ---- Phase E-b — _compute_* family for each emitted CSV ------------------
 #
-# Each derive_X is standalone (rebuilds its own lookups) so it can be
-# called independently for accumulator capture.  The wrapper
-# :func:`write_entity_period_calc_params` constructs the shared input
-# bundle once via :func:`_entity_period_inputs` and feeds private
+# The wrapper :func:`emit_entity_period_calc_params` constructs the shared
+# input bundle once via :func:`_entity_period_inputs` and feeds private
 # ``_compute_*`` helpers to avoid recomputing the PdLookup scans across
 # the five outputs.
 
 
 def _entity_period_inputs(input_dir: Path, solve_data_dir: Path,
                             *, provider: "object | None" = None) -> dict:
-    """Shared input bundle for the 5 entity-period derives."""
+    """Shared input bundle for the 5 entity-period computes."""
     from flextool.engine_polars._pdt_lookup import PdLookup
 
     pp = PdLookup(
@@ -689,8 +547,8 @@ def _read_p_table(path: Path,
                   *, provider: "object | None" = None,
                   ) -> dict[tuple[str, str], float]:
     """Read a 3-col (entity, paramName, value) table, silently skipping
-    rows whose value isn't a float.  Mirrors the legacy local-loop in
-    :func:`write_entity_period_calc_params`."""
+    rows whose value isn't a float.  Mirrors the legacy local-loop that
+    preceded :func:`emit_entity_period_calc_params`."""
     out: dict[tuple[str, str], float] = {}
     df = provider.get(_provider_key(path))
     if df is None:
@@ -811,64 +669,6 @@ def _compute_p_entity_unitsize(input_dir: Path, inp: dict,
         {"entity": [r[0] for r in rows],
          "value":  [r[1] for r in rows]},
         schema={"entity": pl.Utf8, "value": pl.Utf8},
-    )
-
-
-# ---- Public derive_X (each rebuilds its own input bundle) ----
-
-def derive_pdProcess(input_dir: Path, solve_data_dir: Path,
-                       *, provider: "object | None" = None) -> pl.DataFrame:
-    """``pdProcess.csv`` — (process, param, period, value) for every
-    (process, param) in process__PeriodParam_in_use × period_with_history,
-    value pulled from PdLookup over (pd_process, p_process, period__branch).
-    """
-    return _compute_pdProcess(
-        _entity_period_inputs(input_dir, solve_data_dir, provider=provider))
-
-
-def derive_pdNode(input_dir: Path, solve_data_dir: Path,
-                   *, provider: "object | None" = None) -> pl.DataFrame:
-    """``pdNode.csv`` — node-side analogue of pdProcess."""
-    return _compute_pdNode(
-        _entity_period_inputs(input_dir, solve_data_dir, provider=provider))
-
-
-def derive_edEntity_lifetime(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``edEntity_lifetime.csv`` — per-entity lifetime per period_with_history.
-    Process entities pull from the process PdLookup, node entities from the
-    node PdLookup, others get 0.0.
-    """
-    return _compute_edEntity_lifetime(
-        _entity_period_inputs(input_dir, solve_data_dir, provider=provider),
-    )
-
-
-def derive_ed_fixed_cost(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``ed_fixed_cost.csv`` — entity fixed cost summed across the
-    process and node side, each side scaled by 1000 if the entity is
-    a member of that side."""
-    return _compute_ed_fixed_cost(
-        _entity_period_inputs(input_dir, solve_data_dir, provider=provider),
-    )
-
-
-def derive_p_entity_unitsize(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """``p_entity_unitsize.csv`` — per-entity ``virtual_unitsize`` first,
-    falling back to ``existing`` then to 1000.0; pulled from the
-    side-appropriate p_*.csv table."""
-    return _compute_p_entity_unitsize(
-        input_dir,
-        _entity_period_inputs(input_dir, solve_data_dir, provider=provider),
-        provider=provider,
     )
 
 
