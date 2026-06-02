@@ -351,11 +351,295 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     })
 
 
+def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
+                                    *,
+                                    provider: "object | None" = None,
+                                    engine: str = "eager") -> pl.DataFrame:
+    """Vectorized ``pdtNodeInflow`` derive — parity with the legacy.
+
+    Replaces the per-cell 3-branch scalar cascade in
+    :func:`derive_pdtNodeInflow` with vectorized polars, still per roll
+    over the roll's own window.  Output is byte-identical to
+    :func:`derive_pdtNodeInflow`: columns ``node, period, time, value``
+    all ``Utf8``, entity-major row order, ``repr(v)`` value cells.
+
+    This family composes two already-proven patterns:
+
+    * the single-``node``-key grid + ``build_fold_frame`` fold skeleton
+      (branches 1 & 2 — stochastic + parent-period fold, identical to
+      :func:`derive_pdtProfile_vectorized`); and
+    * the gated additive SUM of branch 3 (the four inflow-scaling
+      methods), assembled membership-gated-left-join + ``fill_null(0.0)``
+      with a signed-zero normalization (identical mechanics to
+      :func:`_derive_varCost_pair_vectorized`).
+
+    The fold (branches 1-2) takes priority over the branch-3 deterministic
+    sum, which is always non-null (its 0.0 floor for non-balance / no-
+    method nodes), so ``coalesce(v_fold, v_b3)`` reproduces the legacy
+    ``emit_v`` priority exactly.
+
+    The reader block is copied VERBATIM from :func:`derive_pdtNodeInflow`
+    so the deduped dicts / stoch set / float parses are byte-for-byte
+    identical, and the vectorized lookups are lifted from those dicts (not
+    re-read from the CSVs).
+    """
+    # --- Step 1: reader block copied VERBATIM from derive_pdtNodeInflow ----
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    inflow_method_pairs = frozenset(
+        _read_pairs(solve_data_dir / "node__inflow_method.csv",
+                    provider=provider)
+    )
+    n_balance = frozenset(
+        _read_singles(solve_data_dir / "nodeBalance.csv", provider=provider)
+    )
+    n_balance_period = frozenset(
+        _read_singles(solve_data_dir / "nodeBalancePeriod.csv",
+                      provider=provider)
+    )
+    balance_union = n_balance | n_balance_period
+
+    stoch_node = _read_stochastic_entities(
+        input_dir / "group__node.csv",
+        input_dir / "groupIncludeStochastics.csv",
+        provider=provider,
+    )
+
+    ts_for_d = _read_pairs_to_dict(
+        solve_data_dir / "first_timesteps.csv", key_col=0,
+        provider=provider,
+    )
+    tb_for_d = _read_pairs_to_dict(
+        solve_data_dir / "solve_branch__time_branch.csv", key_col=0,
+        provider=provider,
+    )
+    # period__branch.csv stores (db, d) — child key column is 1.
+    pe_for_d = _read_pairs_to_dict(
+        solve_data_dir / "period__branch.csv", key_col=1,
+        provider=provider,
+    )
+
+    # pbt_node_inflow{(n, branch, ts, t) → value}
+    pbt_inflow: dict[tuple[str, str, str, str], float] = {}
+    pbt_path = input_dir / "pbt_node_inflow.csv"
+    pbt_df = provider.get(_provider_key(pbt_path))
+    if pbt_df is not None:
+        for row in pbt_df.iter_rows():
+            if len(row) < 5:
+                continue
+            c0, c1, c2, c3 = (_cell_str(row[0]), _cell_str(row[1]),
+                              _cell_str(row[2]), _cell_str(row[3]))
+            if c0 and c1 and c2 and c3:
+                try:
+                    pbt_inflow[(c0, c1, c2, c3)] = float(row[4])
+                except (ValueError, TypeError):
+                    continue
+
+    # ptNode_inflow{(n, t) → value}
+    pt_inflow: dict[tuple[str, str], float] = {}
+    pti_path = solve_data_dir / "ptNode_inflow.csv"
+    pti_df = provider.get(_provider_key(pti_path))
+    if pti_df is not None:
+        for row in pti_df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    pt_inflow[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
+
+    # pdNode lookup limited to (annual_flow, peak_inflow).
+    pdNode_af: dict[tuple[str, str], float] = {}
+    pdNode_pk: dict[tuple[str, str], float] = {}
+    pdn_path = solve_data_dir / "pdNode.csv"
+    pdn_df = provider.get(_provider_key(pdn_path))
+    if pdn_df is not None:
+        for row in pdn_df.iter_rows():
+            if len(row) < 4:
+                continue
+            c0 = _cell_str(row[0])
+            if c0:
+                try:
+                    v = float(row[3])
+                except (ValueError, TypeError):
+                    continue
+                c1, c2 = _cell_str(row[1]), _cell_str(row[2])
+                if c1 == "annual_flow":
+                    pdNode_af[(c0, c2)] = v
+                elif c1 == "peak_inflow":
+                    pdNode_pk[(c0, c2)] = v
+
+    def _read_2_keyed_value(path: Path) -> dict[tuple[str, str], float]:
+        out: dict[tuple[str, str], float] = {}
+        df = provider.get(_provider_key(path))
+        if df is None:
+            return out
+        for row in df.iter_rows():
+            if len(row) < 3:
+                continue
+            c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+            if c0 and c1:
+                try:
+                    out[(c0, c1)] = float(row[2])
+                except (ValueError, TypeError):
+                    continue
+        return out
+
+    pfa = _read_2_keyed_value(
+        solve_data_dir / "period_flow_annual_multiplier.csv"
+    )
+    pfp = _read_2_keyed_value(
+        solve_data_dir / "period_flow_proportional_multiplier.csv"
+    )
+    nos_slope = _read_2_keyed_value(solve_data_dir / "new_old_slope.csv")
+    nos_section = _read_2_keyed_value(solve_data_dir / "new_old_section.csv")
+
+    eligible_nodes = [
+        n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
+    ]
+
+    # --- Step 2: grid + fold (branches 1 & 2), pdtProfile-shaped ----------
+    key_cols = ["node"]
+    out_cols = [*key_cols, "period", "time"]
+    periods = [d for (d, _t) in dt]
+
+    grid = build_entity_dt_grid(
+        [(n,) for n in eligible_nodes], dt, key_cols=key_cols)
+
+    fold = build_fold_frame(
+        pbt=pbt_inflow,
+        pbt_key_cols=["node"],
+        out_key_cols=out_cols,
+        ts_for_d=ts_for_d,
+        tb_for_d=tb_for_d,
+        pe_for_d=pe_for_d,
+        stoch_entities=stoch_node,
+        stoch_filter_cols=["node"],
+        periods=periods,
+    )
+
+    # --- Step 3: branch 3 — deterministic gated additive sum --------------
+    # Lift the Float64 value lookups from the deduped dicts.
+    pti_df_lk = lift_dict_to_lookup(pt_inflow, ["node", "time"], "v_pti")
+    pfa_df = lift_dict_to_lookup(pfa, ["node", "period"], "v_pfa")
+    pfp_df = lift_dict_to_lookup(pfp, ["node", "period"], "v_pfp")
+    slope_df = lift_dict_to_lookup(nos_slope, ["node", "period"], "v_slope")
+    sect_df = lift_dict_to_lookup(nos_section, ["node", "period"], "v_sect")
+    af_df = lift_dict_to_lookup(pdNode_af, ["node", "period"], "v_af")
+    pk_df = lift_dict_to_lookup(pdNode_pk, ["node", "period"], "v_pk")
+
+    # Per-node Boolean membership frames with EXPLICIT schema (an empty set
+    # must NOT yield an all-Null frame).  The four ``has_*`` gates are
+    # per-node memberships ``(n, method) ∈ inflow_method_pairs``.
+    def _bool_frame(names: "set[str] | list[str]", col: str) -> pl.DataFrame:
+        names = list(names)
+        return pl.DataFrame(
+            {"node": names, col: [True] * len(names)},
+            schema={"node": pl.Utf8, col: pl.Boolean},
+        )
+
+    in_bal_df = _bool_frame(balance_union, "__in_bal")
+    m_ann_df = _bool_frame(
+        {n for (n, m) in inflow_method_pairs
+         if m == "scale_to_annual_flow"}, "__m_ann")
+    m_prop_df = _bool_frame(
+        {n for (n, m) in inflow_method_pairs
+         if m == "scale_in_proportion"}, "__m_prop")
+    m_peak_df = _bool_frame(
+        {n for (n, m) in inflow_method_pairs
+         if m == "scale_to_annual_and_peak_flow"}, "__m_peak")
+    m_orig_df = _bool_frame(
+        {n for (n, m) in inflow_method_pairs
+         if m == "use_original"}, "__m_orig")
+
+    out = (
+        grid
+        .join(in_bal_df, on=["node"], how="left")
+        .join(m_ann_df, on=["node"], how="left")
+        .join(m_prop_df, on=["node"], how="left")
+        .join(m_peak_df, on=["node"], how="left")
+        .join(m_orig_df, on=["node"], how="left")
+        .join(pti_df_lk, on=["node", "time"], how="left")
+        .join(pfa_df, on=["node", "period"], how="left")
+        .join(pfp_df, on=["node", "period"], how="left")
+        .join(slope_df, on=["node", "period"], how="left")
+        .join(sect_df, on=["node", "period"], how="left")
+        .join(af_df, on=["node", "period"], how="left")
+        .join(pk_df, on=["node", "period"], how="left")
+    )
+
+    pti = pl.col("v_pti").fill_null(0.0)
+    # Gate on the VALUE being non-zero (NEVER ``is_not_null``): a real
+    # 0.0-valued af / pk key must gate the term OFF, matching the legacy
+    # ``if ... pdNode_af.get((n, d), 0.0):`` truthiness guard.
+    af_ok = pl.col("v_af").fill_null(0.0) != 0.0
+    pk_ok = pl.col("v_pk").fill_null(0.0) != 0.0
+
+    t_ann = (
+        pl.when(pl.col("__m_ann").fill_null(False) & af_ok)
+        .then(pl.col("v_pfa").fill_null(0.0) * pti)
+        .otherwise(0.0)
+    )
+    t_prop = (
+        pl.when(pl.col("__m_prop").fill_null(False) & af_ok)
+        .then(pl.col("v_pfp").fill_null(0.0) * pti)
+        .otherwise(0.0)
+    )
+    t_peak = (
+        pl.when(pl.col("__m_peak").fill_null(False) & af_ok & pk_ok)
+        .then(pl.col("v_slope").fill_null(0.0) * pti
+              - pl.col("v_sect").fill_null(0.0))
+        .otherwise(0.0)
+    )
+    t_orig = (
+        pl.when(pl.col("__m_orig").fill_null(False))
+        .then(pti)
+        .otherwise(0.0)
+    )
+    # Fixed add order (matches legacy :330-340).
+    branch3 = t_ann + t_prop + t_peak + t_orig
+    # Non-balance-union nodes get the 0.0 floor (legacy L328 guard).
+    v_b3 = (
+        pl.when(pl.col("__in_bal").fill_null(False))
+        .then(branch3)
+        .otherwise(0.0)
+    )
+    # Signed-zero normalization: the legacy seeds ``value = 0.0`` so any
+    # ``±0.0`` term collapses to ``+0.0`` (legacy never emits ``"-0.0"``);
+    # the peak term ``slope*pti - section`` can produce ``-0.0``.  Wrap
+    # ``when(== 0.0).then(lit(0.0))`` (NOT ``lit(0.0) + sum`` — that form
+    # leaves ``-0.0`` across rows; proven broken in the varCost round).
+    v_b3 = (
+        pl.when(v_b3 == 0.0)
+        .then(pl.lit(0.0))
+        .otherwise(v_b3)
+    )
+
+    # --- Step 4: coalesce (fold-priority) + collect -----------------------
+    if fold is not None:
+        out = out.join(fold, on=out_cols, how="left")
+    else:
+        out = out.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("v_fold"))
+
+    out = out.with_columns(
+        coalesce_value([
+            pl.col("v_fold"),   # branches 1-2 (stoch + parent fold)
+            v_b3,               # branch 3 (always non-null = 0.0 floor)
+        ])
+    )
+    return collect_value_frame(out, key_cols=out_cols, engine=engine)
+
+
 def emit_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
                         *, provider) -> None:
     """Emit ``pdtNodeInflow`` to the Provider."""
     _emit(provider, "solve_data/pdtNodeInflow.csv",
-          derive_pdtNodeInflow(input_dir, solve_data_dir, provider=provider))
+          derive_pdtNodeInflow_vectorized(
+              input_dir, solve_data_dir, provider=provider))
 
 
 # ---------------------------------------------------------------------------
