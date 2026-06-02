@@ -121,6 +121,20 @@ class PlotCanvas(ttk.Frame):
         self._toolbar = NavigationToolbar2Tk(self._canvas, toolbar_frame)
         self._toolbar.update()
 
+        # ── Hover tooltip for middle-truncated bar tick labels ──────
+        # plot_bars.py middle-ellipsises long category labels and stashes the
+        # full text on each axes (_flextool_bar_labels_full); reveal it when
+        # the cursor is over a truncated tick label.
+        self._tooltip_win: tk.Toplevel | None = None
+        self._tooltip_label: tk.Label | None = None
+        # Cached [(bbox, full_text)] for truncated tick labels, rebuilt lazily
+        # after each draw (None = needs rebuild).
+        self._label_hitmap: list[tuple[object, str]] | None = None
+        self._canvas.mpl_connect("motion_notify_event", self._on_motion_tooltip)
+        self._canvas.mpl_connect(
+            "figure_leave_event", lambda _e: self._hide_label_tooltip()
+        )
+
     def _bind_mousewheel(self, event: tk.Event) -> None:
         self._scroll_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         self._scroll_canvas.bind_all("<Button-4>", self._on_mousewheel)
@@ -246,6 +260,8 @@ class PlotCanvas(ttk.Frame):
 
     def _size_and_draw(self) -> None:
         """Set the figure to its natural pixel size, update scroll region, draw."""
+        self._label_hitmap = None  # tick-label geometry changes on redraw
+        self._hide_label_tooltip()
         dpi = self._figure.get_dpi() or 100
         nat_w, nat_h = self._natural_size_inches
         self._figure.set_size_inches(nat_w, nat_h, forward=False)
@@ -428,10 +444,97 @@ class PlotCanvas(ttk.Frame):
 
         self._canvas.draw_idle()
 
+    # ------------------------------------------------------------------
+    # Full-name hover tooltip for middle-truncated bar tick labels
+    # ------------------------------------------------------------------
+
+    def _build_label_hitmap(self) -> list[tuple[object, str]]:
+        """Collect display-space bboxes of *truncated* tick labels + full text.
+
+        Only labels whose drawn text differs from the stashed full text are
+        included, so plots without truncation produce an empty hitmap (and
+        never show a tooltip).
+        """
+        hitmap: list[tuple[object, str]] = []
+        try:
+            renderer = self._canvas.get_renderer()
+        except Exception:
+            return hitmap
+        for ax in self._figure.axes:
+            full = getattr(ax, "_flextool_bar_labels_full", None)
+            if not full:
+                continue
+            orient = getattr(ax, "_flextool_bar_orientation", "horizontal")
+            ticklabels = (ax.get_yticklabels() if orient == "horizontal"
+                          else ax.get_xticklabels())
+            for i, artist in enumerate(ticklabels):
+                if i >= len(full):
+                    break
+                if artist.get_text() == full[i]:
+                    continue  # not truncated → nothing to reveal
+                try:
+                    bbox = artist.get_window_extent(renderer)
+                except Exception:
+                    continue
+                hitmap.append((bbox, full[i]))
+        return hitmap
+
+    def _on_motion_tooltip(self, event) -> None:
+        """Show the full label while hovering a truncated tick label."""
+        if event is None or event.x is None or event.y is None:
+            self._hide_label_tooltip()
+            return
+        if self._label_hitmap is None:
+            self._label_hitmap = self._build_label_hitmap()
+        for bbox, full_text in self._label_hitmap:
+            try:
+                hit = bool(bbox.contains(event.x, event.y))
+            except Exception:
+                hit = False
+            if hit:
+                self._show_label_tooltip(full_text)
+                return
+        self._hide_label_tooltip()
+
+    def _show_label_tooltip(self, text: str) -> None:
+        if self._tooltip_win is None:
+            self._tooltip_win = tk.Toplevel(self)
+            self._tooltip_win.wm_overrideredirect(True)
+            try:
+                self._tooltip_win.attributes("-topmost", True)
+            except tk.TclError:
+                pass
+            self._tooltip_label = tk.Label(
+                self._tooltip_win, justify="left", background="#ffffe0",
+                relief="solid", borderwidth=1, font="TkTooltipFont",
+            )
+            self._tooltip_label.pack()
+        if self._tooltip_label.cget("text") != text:
+            self._tooltip_label.configure(text=text)
+        x = self.winfo_pointerx() + 14
+        y = self.winfo_pointery() + 12
+        self._tooltip_win.wm_geometry(f"+{x}+{y}")
+        self._tooltip_win.deiconify()
+
+    def _hide_label_tooltip(self) -> None:
+        if self._tooltip_win is not None:
+            try:
+                self._tooltip_win.withdraw()
+            except tk.TclError:
+                pass
+
     def cleanup(self) -> None:
         """Release matplotlib resources held by this canvas."""
         self._raw_line_data.clear()
         self._cache.clear()
+        self._label_hitmap = None
+        if self._tooltip_win is not None:
+            try:
+                self._tooltip_win.destroy()
+            except tk.TclError:
+                pass
+            self._tooltip_win = None
+            self._tooltip_label = None
 
     def clear(self) -> None:
         """Clear the display."""
