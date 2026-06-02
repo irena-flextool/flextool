@@ -58,7 +58,7 @@ BOTTOM_PAD = 0.35           # Bottom margin for x-axis ticks/labels below axes
 # margin for every subplot in the grid, squeezing all the bars. Middle
 # truncation keeps both the head and the tail so the name stays
 # recognisable; the GUI shows the full text on hover.
-BAR_LABEL_MAX_CHARS = 28
+BAR_LABEL_MAX_CHARS = 24
 _ELLIPSIS = "…"
 
 
@@ -103,6 +103,48 @@ def _format_bar_label(idx_val, group=None, *, truncate: bool = True) -> str:
     return " | ".join(parts)
 
 
+def _bar_label_width_inches(
+    effective_plots: list[tuple[str | None, "pd.DataFrame"]],
+    expand_axis_levels: list[int],
+    expand_axis_level_names: list[str],
+) -> float:
+    """Inches to reserve for the category tick-label column of *effective_plots*.
+
+    Sized to the ACTUAL widest drawn label (group folded into each bar label,
+    each component middle-truncated): per subplot, combine that subplot's
+    longest bar label with the longest group label present in it, then take
+    the max. Pass ONLY the current file's subplots to keep each file tight to
+    its own labels — sizing to every file's labels at once over-reserves and
+    leaves empty space even on a short file's longest row.
+    """
+    def _subplot_group_chars(df_sub_cols) -> int:
+        if not (expand_axis_levels and expand_axis_level_names):
+            return 0
+        try:
+            if len(expand_axis_level_names) == 1:
+                groups = df_sub_cols.get_level_values(expand_axis_level_names[0]).unique()
+                lengths = [len(_format_bar_label(g)) for g in groups]
+            else:
+                gf = df_sub_cols.to_frame()[expand_axis_level_names].drop_duplicates()
+                lengths = [len(_format_bar_label(tuple(r))) for r in gf.values]
+        except KeyError:
+            return 0
+        return max(lengths, default=0)
+
+    max_chars = 0
+    for _, df_sub in effective_plots:
+        df_sub_clean = df_sub.dropna(how='all')
+        if df_sub_clean.empty:
+            continue
+        bar_chars = max(
+            (len(_format_bar_label(iv)) for iv in df_sub_clean.index), default=0
+        )
+        grp_chars = _subplot_group_chars(df_sub_clean.columns)
+        sub_chars = bar_chars + (3 + grp_chars if grp_chars else 0)
+        max_chars = max(max_chars, sub_chars)
+    return max_chars * CHAR_WIDTH
+
+
 def _compute_bar_layout(
     effective_plots: list[tuple[str | None, pd.DataFrame]],
     df: pd.DataFrame,
@@ -118,8 +160,11 @@ def _compute_bar_layout(
 ) -> BarLayoutParams:
     """Compute layout parameters that must be consistent across file batches.
 
-    Examines ALL effective_plots (not just the current batch) so that every
-    file in a batch uses identical margins.
+    Examines the given effective_plots. Most margins (legend, value axis,
+    base bar length) are meant to be shared across a plot's files, so the
+    batch path passes every subplot. The category-label width, however, is
+    re-tightened per file by the plan render path (see
+    ``_bar_label_width_inches`` and ``build_figure_from_plan``).
     """
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
@@ -132,33 +177,9 @@ def _compute_bar_layout(
     # it*, then take the global max. (Summing the global-max bar with the
     # global-max group would over-reserve when, e.g., the long unit lives in
     # one node's subplot and the long node name in another's.)
-    def _subplot_group_chars(df_sub_cols) -> int:
-        if not (expand_axis_levels and expand_axis_level_names):
-            return 0
-        try:
-            if len(expand_axis_level_names) == 1:
-                groups = df_sub_cols.get_level_values(expand_axis_level_names[0]).unique()
-                lengths = [len(_format_bar_label(g)) for g in groups]
-            else:
-                gf = df_sub_cols.to_frame()[expand_axis_level_names].drop_duplicates()
-                lengths = [len(_format_bar_label(tuple(r))) for r in gf.values]
-        except KeyError:
-            return 0
-        return max(lengths, default=0)
-
-    max_bar_label_chars = 0
-    for _, df_sub in effective_plots:
-        df_sub_clean = df_sub.dropna(how='all')
-        if df_sub_clean.empty:
-            continue
-        bar_chars = max(
-            (len(_format_bar_label(iv)) for iv in df_sub_clean.index), default=0
-        )
-        grp_chars = _subplot_group_chars(df_sub_clean.columns)
-        sub_chars = bar_chars + (3 + grp_chars if grp_chars else 0)
-        max_bar_label_chars = max(max_bar_label_chars, sub_chars)
-
-    bar_label_width = max_bar_label_chars * CHAR_WIDTH
+    bar_label_width = _bar_label_width_inches(
+        effective_plots, expand_axis_levels, expand_axis_level_names
+    )
     group_label_width = 0.0  # group is now folded into the tick label
     total_label_width = bar_label_width
 

@@ -509,6 +509,19 @@ def build_figure_from_plan(
         layout = LineLayoutParams(**plan.layout_params)
     elif plan.layout_type == 'bar':
         layout = BarLayoutParams(**plan.layout_params)
+        # The stored layout sizes the category-label column to the widest
+        # label across ALL files of the plot, so a file with short labels gets
+        # empty space even on its longest row. Re-tighten the margin to THIS
+        # file's labels (other layout fields stay shared across files).
+        from dataclasses import replace
+        from flextool.plot_outputs.plot_bars import _bar_label_width_inches
+        per_file_w = _bar_label_width_inches(
+            effective_plots, plan.expand_axis_levels, plan.expand_axis_level_names,
+        )
+        if per_file_w > 0:
+            layout = replace(
+                layout, bar_label_width=per_file_w, total_label_width=per_file_w,
+            )
     else:
         return None
 
