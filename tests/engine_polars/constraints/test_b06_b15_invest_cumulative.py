@@ -309,3 +309,115 @@ def test_min_invest_and_no_investment_eq(toy_invest_3d):
     assert by_d["d1"] == pytest.approx(0.0, abs=1e-7)
     assert by_d["d2"] == pytest.approx(1.0, rel=1e-7)
     assert by_d["d3"] == pytest.approx(0.0, abs=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# B6-3 — maxInvest_entity_period RHS-convention / dual-unit regression.
+#
+# Increment 1 of the invest-dual unification (specs/invest_dual_unification.md):
+# the four period-cap families now emit ``v_invest * unitsize <= cap`` (coef =
+# unitsize on the LHS, RHS = raw MW), matching every other invest constraint —
+# instead of the old pre-divided ``v_invest <= cap/unitsize`` (coef = 1).  This
+# is a pure rescaling: primal optimum identical, but the row dual is now in
+# obj/MW (the natural ∂obj/∂(cap-in-MW)) instead of obj/(v_invest-unit).
+#
+# This test pins both halves of that claim with a binding period cap at
+# ``unitsize != 1``:
+#   (1) the primal capacity / flow / objective are unchanged between a
+#       ``unitsize = U`` setup and the mathematically-equivalent
+#       ``unitsize = 1`` setup (only ``v_invest`` itself differs by 1/U);
+#   (2) the extracted period-cap dual is identical across the two setups and
+#       equals the obj/MW value (NOT ``U x`` it).
+
+
+def _binding_period_cap_data(d, *, unitsize: float, cap_mw: float):
+    """toy_invest_3d mutated so the d1 ``maxInvest_entity_period`` cap binds.
+
+    Demand of 10 MWh at d1/t01 (1 step, duration 1) with no existing capacity
+    forces investment up to the period cap ``cap_mw`` (in MW); the remaining
+    unmet demand is served by the node up-penalty (1e6/MWh).  Fuel costs
+    1/MWh, the annualised invest cost is 5/MW.  At the binding cap the LP
+    cannot install more than ``cap_mw`` MW in d1, so the cap's shadow price
+    (per +1 MW of cap) is ``penalty - fuel - annu = 1e6 - 1 - 5`` obj/MW —
+    independent of ``unitsize``.  d2/d3 caps stay loose (100 MW).
+    """
+    periods = ["d1", "d2", "d3"]
+    p_unitsize = Param(("p",),
+        pl.DataFrame({"p": ["u"], "value": [unitsize]}))
+    # Per-period invest cap in MW: tight at d1, loose at d2/d3.
+    ed_invest_max_period = Param(("e", "d"),
+        pl.DataFrame({"e": ["u"]*3, "d": periods,
+                      "value": [cap_mw, 100.0, 100.0]}))
+    # Demand 10 MWh at d1/t01 (others zero).
+    nb_dt = compute_nodeBalance_dt(d)
+    p_inflow_new = Param(("n", "d", "t"),
+        nb_dt.with_columns(value=pl.when(pl.col("d") == "d1")
+                                  .then(-10.0).otherwise(0.0))
+            .select("n", "d", "t", "value"))
+    # Annualised invest cost 5 per MW (obj term is v_invest * unitsize * annu).
+    ed_entity_annual_discounted = Param(("e", "d"),
+        pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [5.0]*3}))
+    return dataclasses.replace(d,
+        p_unitsize=p_unitsize,
+        ed_invest_max_period=ed_invest_max_period,
+        p_inflow=p_inflow_new,
+        ed_entity_annual_discounted=ed_entity_annual_discounted,
+    )
+
+
+def test_max_invest_entity_period_dual_is_obj_per_mw(toy_invest_3d):
+    """Covers B6-3 RHS convention: ``maxInvest_entity_period`` dual in obj/MW.
+
+    Two mathematically-equivalent setups (cap = 4 MW at d1):
+      * U = 2.0 : binding cap ⇒ v_invest[d1] = 4/2 = 2 ; capacity 4 MW.
+      * U = 1.0 : binding cap ⇒ v_invest[d1] = 4/1 = 4 ; capacity 4 MW.
+    Assert capacity / flow / objective identical, v_invest differs by 1/U,
+    and the period-cap row dual is identical (obj/MW), == 1e6 - 1 - 5, i.e.
+    NOT scaled by unitsize.
+    """
+    cap_mw = 4.0
+    expected_dual = -(1e6 - 1.0 - 5.0)  # binding <= dual is negative in min
+
+    pb_u, sol_u = _solve(_binding_period_cap_data(
+        toy_invest_3d, unitsize=2.0, cap_mw=cap_mw))
+    pb_1, sol_1 = _solve(_binding_period_cap_data(
+        toy_invest_3d, unitsize=1.0, cap_mw=cap_mw))
+    assert sol_u.optimal and sol_1.optimal
+    assert "maxInvest_entity_period_p" in set(pb_u.cstr_names())
+
+    # (1a) v_invest at d1 differs by exactly 1/unitsize (cap binds in both).
+    def _v_at(sol, d_label):
+        v = sol.value("v_invest_p")
+        return float(v.filter(pl.col("d") == d_label)["value"][0])
+    assert _v_at(sol_u, "d1") == pytest.approx(cap_mw / 2.0, rel=1e-7)  # 2.0
+    assert _v_at(sol_1, "d1") == pytest.approx(cap_mw / 1.0, rel=1e-7)  # 4.0
+
+    # (1b) Physical served flow at d1 (v_flow is in unitsize-scaled units, so
+    # MW = v_flow * unitsize) is identical across the two setups, and the
+    # total objective is identical → pure rescaling, primal unchanged.
+    flow_u = float(sol_u.value("v_flow")
+                   .filter(pl.col("d") == "d1")["value"].sum()) * 2.0
+    flow_1 = float(sol_1.value("v_flow")
+                   .filter(pl.col("d") == "d1")["value"].sum()) * 1.0
+    assert flow_u == pytest.approx(cap_mw, rel=1e-7)
+    assert flow_1 == pytest.approx(cap_mw, rel=1e-7)
+
+    # (2) The period-cap dual is in obj/MW: identical across unitsize, and
+    # equal to the obj/MW value (NOT unitsize x it).  Extract the d1 row.
+    def _cap_dual(sol):
+        df = sol.constraint_dual("maxInvest_entity_period_p")
+        # key tags are "u,d1" / "u,d2" / "u,d3" (over=(p, d)); pick d1.
+        row = df.filter(pl.col("key").str.ends_with("d1"))
+        assert row.height == 1
+        return float(row["dual"][0])
+
+    dual_u = _cap_dual(sol_u)
+    dual_1 = _cap_dual(sol_1)
+    # obj/MW: equal across both unitsize values.
+    assert dual_u == pytest.approx(dual_1, rel=1e-7)
+    # obj/MW magnitude (NOT 2 x for the U=2 case — that would be the old
+    # obj/(v_invest-unit) convention).
+    assert dual_u == pytest.approx(expected_dual, rel=1e-6)
+    # Guard against silent regression to the pre-divided convention: under
+    # the OLD form the U=2 dual would have been 2 x the obj/MW value.
+    assert dual_u != pytest.approx(expected_dual * 2.0, rel=1e-6)
