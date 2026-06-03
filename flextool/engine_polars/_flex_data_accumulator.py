@@ -60,6 +60,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "nodeStateBlock.csv",
     "timeline.csv",
     "commodity__tier_ann.csv",
+    "solve_period.csv",
     # _emit_mid_sets — thin writers.
     #
     # Phase 4 audit (2026-05-21) corrected the spelling of seven
@@ -79,8 +80,21 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "node__inflow_method.csv",
     "node__storage_binding_method.csv",
     "commodity_node_co2.csv",
+    "process__group_inside_group_nonSync.csv",
+    "process_source_coeff_zero.csv",
+    "process_sink_coeff_zero.csv",
+    # — invest_total_sets
+    "e_invest_total.csv",
+    "e_divest_total.csv",
+    "g_invest_total.csv",
+    "g_divest_total.csv",
+    "g_invest_cumulative.csv",
+    "ci_ladder_cumulative.csv",
     # _emit_calc_params — thin writers
     "process_VRE.csv",
+    "process_online_linear.csv",
+    "process_online_integer.csv",
+    "process__method_indirect.csv",
     # _emit_arc_unions — thin writers + Phase E-b lifted streamed writers
     "node__TimeParam_in_use.csv",
     "process_source_delayed.csv",
