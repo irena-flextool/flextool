@@ -81,7 +81,7 @@ After `pip install -e .` or `pip install .`, these commands are available direct
 This is the recommended entry point. It orchestrates two phases:
 
 1. **Input preparation** (optional) &mdash; convert tabular data (Excel/ODS/CSV) into a Spine database. Runs only when `--tabular-file-path` or `--csv-directory-path` is given; otherwise the existing input database is used as-is.
-2. **Model execution + output write** &mdash; run the FlexTool optimization model and write results in the requested formats. Parquet is always produced; `--write-methods` selects which additional formats (plot, csv, excel) to generate alongside.
+2. **Model execution + output write** &mdash; run the FlexTool optimization model and write results in the requested formats. Parquet is always produced; `--write-methods` selects which additional formats (plot, csv, excel, spinedb) to generate alongside.
 
 The two phases are fused because the in-memory `FlexData` + HiGHS solution are gone once the solver exits &mdash; there is no separate standalone "write outputs" step. (Use `python run_flextool.py` followed by `python write_outputs.py --read-parquet-dir ...` if you need to re-render artefacts from a previous run's parquets without re-solving.)
 
@@ -105,7 +105,7 @@ python execute_flextool_workflow.py INPUT_DB_URL OUTPUT_DB_URL SCENARIO_NAME [op
 |---|---|
 | `--tabular-file-path PATH` | Path to Excel/ODS input file (mutually exclusive with `--csv-directory-path`). Triggers Phase 1. |
 | `--csv-directory-path PATH` | Path to directory containing CSV input files. Triggers Phase 1. |
-| `--write-methods METHOD [...]` | Output formats to generate (default: `plot parquet csv`). Choices: `plot`, `parquet`, `excel`, `csv`. Parquet is the canonical output and is always produced when this flag is omitted. |
+| `--write-methods METHOD [...]` | Output formats to generate (default: `plot parquet csv`). Choices: `plot`, `parquet`, `excel`, `csv`, `spinedb`. Parquet is the canonical output and is always produced when this flag is omitted. `spinedb` dumps the processed results into a SpineDB using the FlexTool results schema (one Spine alternative per run, named after the scenario, so multiple runs coexist in one file). |
 | `--output-subdir DIR` | Subdirectory for output files (default: scenario name) |
 | `--output-config PATH` | Path to output configuration YAML (default: bundled `flextool/schemas/default_plots.yaml`) |
 | `--debug` | Forward `--debug` to the model run (enables verbose memory checkpoints and per-solve CSV diagnostics) |
@@ -161,7 +161,8 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 | `--scenario-name NAME` | Scenario name to execute (if omitted, uses the active DB filter) |
 | `--settings-db-url URL` | Settings DB consulted for post-processing defaults |
 | `--output-spreadsheet PATH` | Save results to a spreadsheet file |
-| `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv` (default: `plot parquet`) |
+| `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv`, `spinedb` (default: `plot parquet`) |
+| `--results-db-url URL` | Target SpineDB for the `spinedb` write-method (default: `<output-location>/results.sqlite`) |
 | `--output-config PATH` | Path to output configuration YAML (default: `templates/default_plots.yaml`) |
 | `--active-configs NAME [...]` | Which plot configuration sets to use (default: `default`) |
 | `--plot-rows START END` | First and last row to plot in time series (default: `0 167`) |
@@ -234,7 +235,8 @@ All arguments are optional. When run from the terminal, you typically provide `-
 | `--read-parquet-dir DIR` | Read from existing parquet files instead of raw CSVs (faster) |
 | `--config-path PATH` | Output configuration YAML (default: `templates/default_plots.yaml`) |
 | `--active-configs NAME [...]` | Which plot configuration sets to use (default: `default`) |
-| `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `db`, `csv` (default: `plot parquet excel`) |
+| `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv`, `spinedb` (default: `plot parquet excel`) |
+| `--results-db-url URL` | Target SpineDB for the `spinedb` write-method (default: `<output-location>/results.sqlite`). Note: `spinedb` needs the native solve path, so it is skipped (with a warning) when re-rendering via `--read-parquet-dir`. |
 | `--plot-rows START END` | First and last row to plot in time series (default: `0 167`) |
 | `--subdir DIR` | Subdirectory for outputs (default: scenario name) |
 | `--output-location DIR` | Root directory for input/output locations (default: flextool root); overridden by `--output-locations-db-url` |
