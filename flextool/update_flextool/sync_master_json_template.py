@@ -30,28 +30,6 @@ from flextool._resources import package_data_path
 
 SCHEMAS_DIR = package_data_path("schemas")
 SPINEDB_SCHEMA = SCHEMAS_DIR / "spinedb_schema.json"
-RESULTS_SCHEMA = SCHEMAS_DIR / "spinedb_results_schema.json"
-
-# Legacy FlexTool repo holding the authoritative results template SpineDB.
-# The engine repo has no checked-in copy of this template, so the regenerator
-# reads it from the legacy path. Override via the ``template_path`` argument.
-DEFAULT_RESULTS_TEMPLATE = Path(
-    "/home/jkiviluo/sources/flextool/templates/results_template.sqlite"
-)
-
-# Duplicate reserve entity classes carried by the legacy results template.
-# They have identical dimensions to the canonical ``unit__reserve__upDown__node``
-# class, carry no parameter_definitions, and nothing references them. They are
-# trimmed from the exported results schema; the canonical
-# ``unit__reserve__upDown__node`` and ``connection__reserve__upDown__node``
-# classes are kept.
-_RESULTS_TRIM_CLASSES = frozenset(
-    {
-        "unit__reserve__upDown__node.1",
-        "unit__reserve__upDown__node.2",
-        "unit__reserve__upDown__node.3",
-    }
-)
 
 
 def _create_db_from_template(template_path: Path, db_path: Path) -> None:
@@ -127,72 +105,6 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
     return True
 
 
-def regenerate_results_schema_json(
-    *,
-    template_path: Path = DEFAULT_RESULTS_TEMPLATE,
-    output_path: Path = RESULTS_SCHEMA,
-    verify_only: bool = False,
-) -> bool:
-    """Regenerate (or verify) ``schemas/spinedb_results_schema.json``.
-
-    Exports the legacy results-template SpineDB via ``export_data`` into the
-    same top-level shape as the input schema (``entity_classes``,
-    ``parameter_definitions``, ``alternatives``), trims the duplicate reserve
-    classes (``unit__reserve__upDown__node.1/.2/.3``), and writes the result as
-    JSON. Mirrors :func:`_export_db_to_json` for serialization consistency.
-
-    Returns True if ``output_path`` is up to date, False if it needed updating.
-    """
-    template_path = Path(template_path)
-    if not template_path.exists():
-        print(
-            f"ERROR: Results template not found: {template_path}", file=sys.stderr
-        )
-        sys.exit(2)
-
-    url = f"sqlite:///{template_path}"
-    with DatabaseMapping(url) as db:
-        data = export_data(db)
-
-    # Trim duplicate reserve classes; nothing references them and they carry
-    # no parameter_definitions, so the param count is unaffected.
-    entity_classes = [
-        ec for ec in data.get("entity_classes", []) if ec[0] not in _RESULTS_TRIM_CLASSES
-    ]
-    data["entity_classes"] = entity_classes
-
-    # export_data returns tuples; convert to lists for JSON (mirrors
-    # _export_db_to_json).
-    new_data = {k: [list(item) for item in v] for k, v in data.items()}
-    new_json = json.dumps(new_data, indent=2, ensure_ascii=False) + "\n"
-
-    if output_path.exists():
-        with open(output_path) as f:
-            old_json = f.read()
-        if new_json == old_json:
-            print("Results schema is up to date.")
-            return True
-        if verify_only:
-            old_data = json.loads(old_json)
-            for key in sorted(set(list(old_data.keys()) + list(new_data.keys()))):
-                old_count = len(old_data.get(key, []))
-                this_count = len(new_data.get(key, []))
-                if old_count != this_count:
-                    print(f"  {key}: {old_count} -> {this_count}")
-            print(
-                "Results schema is OUT OF DATE. Run without --verify to regenerate."
-            )
-            return False
-    elif verify_only:
-        print(f"Results schema is MISSING: {output_path}")
-        return False
-
-    with open(output_path, "w") as f:
-        f.write(new_json)
-    print(f"Regenerated {output_path}")
-    return True
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Regenerate schemas/spinedb_schema.json after migration changes."
@@ -202,17 +114,9 @@ def main() -> None:
         action="store_true",
         help="Check if template is up to date without overwriting (for CI).",
     )
-    parser.add_argument(
-        "--results",
-        action="store_true",
-        help="Regenerate schemas/spinedb_results_schema.json instead of the input schema.",
-    )
     args = parser.parse_args()
 
-    if args.results:
-        up_to_date = regenerate_results_schema_json(verify_only=args.verify)
-    else:
-        up_to_date = sync_master_template(verify_only=args.verify)
+    up_to_date = sync_master_template(verify_only=args.verify)
     if not up_to_date:
         sys.exit(1)
 
