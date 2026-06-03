@@ -991,7 +991,7 @@ plots:
         ylabel: Currency
         skip_data_with_only_zeroes: true
         color_category: costs
-        scenario_rule: g
+        scenario_rule: e
     # `costs_discounted_p_` is a per-category-vs-scenario table (no period
     # or entity dim).  Single mode: one stacked bar with categories shown
     # as stacks.  Comparison: one stacked bar per scenario, side by side.
@@ -1988,7 +1988,7 @@ plots:
         variant: p
         map_dimensions_for_plots: [d_p, b_s]
         max_items_per_plot: 40
-        scenario_rule: g
+        scenario_rule: e
   'Extras annuity of entities':
     group: 9
     order: 4
