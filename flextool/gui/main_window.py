@@ -370,7 +370,7 @@ class MainWindow(tk.Tk):
         # padding as the box so its left edge lines up with the box.
         outputs_lbl = ttk.Label(outer, text="File outputs", font=self._bold_font)
         outputs_lbl.grid(
-            row=row, column=5, sticky="sw", padx=(20, 0), pady=(10, 2)
+            row=row, column=5, sticky="sw", padx=(20, 0), pady=(4, 0)
         )
         attach_tooltip(outputs_lbl, (
             "Per-checked-executed-scenario output artefacts on disk.\n"
@@ -379,8 +379,8 @@ class MainWindow(tk.Tk):
             "    every scenario run.\n"
             "  • Status: ✓ = exists, ✗ = last run failed,\n"
             "    blank = not produced yet. Click to (re-)generate.\n"
-            "  • Show: open the folder (or file for Comparison\n"
-            "    Excel) in the system file manager.\n"
+            "  • Show: open the folder (or the file, for Comparison\n"
+            "    SpineDB / Excel) in the system file manager.\n"
             "\n"
             "Full results are always stored as parquet files; these\n"
             "exports are derived artefacts. The result viewer does\n"
@@ -478,30 +478,31 @@ class MainWindow(tk.Tk):
         self.auto_scen_csvs_var = tk.BooleanVar(value=True)
         self.auto_comp_plots_var = tk.BooleanVar(value=True)
         self.auto_comp_excel_var = tk.BooleanVar(value=False)
+        self.auto_comp_spinedb_var = tk.BooleanVar(value=False)
 
         # ttk.LabelFrame gives a themed border that matches the rest of
         # the UI in both light and dark sv_ttk themes \u2014 no manual bg
         # juggling. The legacy green-tint affordance is dropped (it
         # didn't survive the move to ttk and the table makes the
         # row-by-row state visible anyway).
-        self.output_frame = ttk.LabelFrame(outer, padding=8)
+        self.output_frame = ttk.LabelFrame(outer, padding=(8, 4))
         self.output_frame.grid(
             row=2, column=5, rowspan=7,
-            sticky="ne", padx=(20, 0), pady=2,
+            sticky="ne", padx=(20, 0), pady=0,
         )
 
         # Column header row uses ttk.Label so it inherits the theme.
         ttk.Label(self.output_frame, text="Output", anchor="w").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 4),
+            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 2),
         )
         ttk.Label(self.output_frame, text="Auto-gen").grid(
-            row=0, column=1, padx=(0, 8), pady=(0, 4),
+            row=0, column=1, padx=(0, 8), pady=(0, 2),
         )
         ttk.Label(self.output_frame, text="Status").grid(
-            row=0, column=2, padx=(0, 8), pady=(0, 4),
+            row=0, column=2, padx=(0, 8), pady=(0, 2),
         )
         ttk.Label(self.output_frame, text="Action").grid(
-            row=0, column=3, padx=(0, 0), pady=(0, 4),
+            row=0, column=3, padx=(0, 0), pady=(0, 2),
         )
 
         # (display_name, key, auto_var, show_label) for each row.
@@ -511,8 +512,9 @@ class MainWindow(tk.Tk):
             ("Scenario pngs",    "scen_plots", self.auto_scen_plots_var,  "Show"),
             ("Scenario Excels",  "scen_excel", self.auto_scen_excels_var, "Show"),
             ("Scenario csvs",    "scen_csvs",  self.auto_scen_csvs_var,   "Show"),
-            ("Comparison pngs",  "comp_plots", self.auto_comp_plots_var,  "Show"),
-            ("Comparison Excel", "comp_excel", self.auto_comp_excel_var,  "Open"),
+            ("Comparison pngs",   "comp_plots",   self.auto_comp_plots_var,   "Show"),
+            ("Comparison SpineDB", "comp_spinedb", self.auto_comp_spinedb_var, "Open"),
+            ("Comparison Excel",  "comp_excel",   self.auto_comp_excel_var,   "Open"),
         ]
 
         self.output_status_labels: dict[str, ttk.Button] = {}
@@ -534,6 +536,7 @@ class MainWindow(tk.Tk):
             "scen_excel": "_on_gen_scen_excel",
             "scen_csvs":  "_on_gen_scen_csvs",
             "comp_plots": "_on_gen_comp_plots",
+            "comp_spinedb": "_on_gen_comp_spinedb",
             "comp_excel": "_on_gen_comp_excel",
         }
         _show_commands: dict[str, str] = {
@@ -541,6 +544,7 @@ class MainWindow(tk.Tk):
             "scen_excel": "_on_show_scen_excel",
             "scen_csvs":  "_on_show_scen_csvs",
             "comp_plots": "_on_show_comp_plots",
+            "comp_spinedb": "_on_show_comp_spinedb",
             "comp_excel": "_on_show_comp_excel",
         }
 
@@ -567,6 +571,16 @@ class MainWindow(tk.Tk):
                 "Regenerated whenever the set of checked scenarios\n"
                 "changes."
             ),
+            "comp_spinedb": (
+                "Single SpineDB (results.sqlite) in the project root,\n"
+                "holding the processed results of all executed scenarios\n"
+                "as separate alternatives.\n"
+                "\n"
+                "Produced only during the solve — tick Auto-gen and\n"
+                "(re-)run the scenarios. It cannot be regenerated from\n"
+                "the stored parquet files, so the Status button only\n"
+                "reports whether the file exists."
+            ),
             "comp_excel": (
                 "Single Excel workbook comparing the checked executed\n"
                 "scenarios side by side, written to\n"
@@ -579,11 +593,11 @@ class MainWindow(tk.Tk):
             name_lbl = ttk.Label(
                 self.output_frame, text=display_name, anchor="w",
             )
-            name_lbl.grid(row=row_i, column=0, sticky="w", padx=(0, 8), pady=2)
+            name_lbl.grid(row=row_i, column=0, sticky="w", padx=(0, 8), pady=1)
             attach_tooltip(name_lbl, _row_tooltips[key])
 
             cb = ttk.Checkbutton(self.output_frame, variable=auto_var)
-            cb.grid(row=row_i, column=1, padx=(0, 8), pady=2)
+            cb.grid(row=row_i, column=1, padx=(0, 8), pady=1)
 
             # Status / generate button: text shows the icon, click
             # triggers (re-)generation.
@@ -591,7 +605,7 @@ class MainWindow(tk.Tk):
                 self.output_frame, text="  ", width=3,
                 command=getattr(self, _gen_commands[key]),
             )
-            status_btn.grid(row=row_i, column=2, padx=(0, 8), pady=2)
+            status_btn.grid(row=row_i, column=2, padx=(0, 8), pady=1)
             self.output_status_labels[key] = status_btn
             self._output_spinners[key] = status_btn  # alias
 
@@ -599,7 +613,7 @@ class MainWindow(tk.Tk):
                 self.output_frame, text=show_label, width=5,
                 command=getattr(self, _show_commands[key]),
             )
-            action_btn.grid(row=row_i, column=3, sticky="w", padx=(0, 0), pady=2)
+            action_btn.grid(row=row_i, column=3, sticky="w", padx=(0, 0), pady=1)
             self.output_action_btns[key] = action_btn
 
         # Trace auto-generate vars to save settings on toggle.
@@ -607,6 +621,7 @@ class MainWindow(tk.Tk):
         self.auto_scen_excels_var.trace_add("write", self._on_auto_gen_toggled)
         self.auto_scen_csvs_var.trace_add("write", self._on_auto_gen_toggled)
         self.auto_comp_plots_var.trace_add("write", self._on_auto_gen_toggled)
+        self.auto_comp_spinedb_var.trace_add("write", self._on_auto_gen_toggled)
         self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
         # --- Side menu column (col 2): two vertical groups -------------
@@ -1554,6 +1569,7 @@ class MainWindow(tk.Tk):
                 self.project_settings.auto_generate_scen_excels = self.auto_scen_excels_var.get()
                 self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()
                 self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
+                self.project_settings.auto_generate_comp_spinedb = self.auto_comp_spinedb_var.get()
                 self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
                 self.project_settings.debug_level = self.debug_var.get()
                 self.project_settings.save_memory = self.save_memory_var.get()
@@ -4673,6 +4689,10 @@ class MainWindow(tk.Tk):
             "scen_excel": all_have_excel,
             "scen_csvs":  all_have_csvs,
             "comp_plots": comp_plots_match,
+            # The SpineDB is a project-wide accumulating database (one
+            # alternative per executed scenario) with no per-set regen
+            # event to match against, so its status is simple existence.
+            "comp_spinedb": comp["has_comp_spinedb"],
             "comp_excel": comp_excel_match,
         }
 
@@ -4714,6 +4734,7 @@ class MainWindow(tk.Tk):
             self.auto_scen_excels_var.set(s.auto_generate_scen_excels)
             self.auto_scen_csvs_var.set(s.auto_generate_scen_csvs)
             self.auto_comp_plots_var.set(s.auto_generate_comp_plots)
+            self.auto_comp_spinedb_var.set(s.auto_generate_comp_spinedb)
             self.auto_comp_excel_var.set(s.auto_generate_comp_excel)
             self.debug_var.set(s.debug_level)
             self.save_memory_var.set(s.save_memory)
@@ -4734,6 +4755,7 @@ class MainWindow(tk.Tk):
         self.project_settings.auto_generate_scen_excels = self.auto_scen_excels_var.get()
         self.project_settings.auto_generate_scen_csvs = self.auto_scen_csvs_var.get()
         self.project_settings.auto_generate_comp_plots = self.auto_comp_plots_var.get()
+        self.project_settings.auto_generate_comp_spinedb = self.auto_comp_spinedb_var.get()
         self.project_settings.auto_generate_comp_excel = self.auto_comp_excel_var.get()
         self.project_settings.debug_level = self.debug_var.get()
         self.project_settings.save_memory = self.save_memory_var.get()
@@ -5120,6 +5142,24 @@ class MainWindow(tk.Tk):
             self._save_current_settings()
             self.output_action_mgr.run_comparison_excel(ids)
 
+    @safe_callback
+    def _on_gen_comp_spinedb(self) -> None:
+        """Explain that the SpineDB cannot be regenerated on demand.
+
+        Unlike the other outputs, the SpineDB results database is built by
+        the writer from the live solve namespaces (``s`` / ``par``); it is
+        skipped on the parquet-replay path the other regen actions use.
+        So there is no manual generate — the user enables Auto-gen and
+        (re-)runs the scenarios.
+        """
+        messagebox.showinfo(
+            "Comparison SpineDB",
+            "The SpineDB results database is written during the solve and "
+            "cannot be regenerated from the stored parquet files.\n\n"
+            "Tick its Auto-gen box and (re-)run the scenarios to produce "
+            "results.sqlite.",
+        )
+
     # ── Spinner animation for output actions ─────────────────────
 
     def _start_spinner(self, key: str) -> None:
@@ -5254,6 +5294,25 @@ class MainWindow(tk.Tk):
                 open_file_in_default_app(xlsx)
             except OSError as exc:
                 logger.warning("Could not open comparison Excel: %s", exc)
+
+    @safe_callback
+    def _on_show_comp_spinedb(self) -> None:
+        """Open the project-wide results.sqlite SpineDB in the default app."""
+        if not self.current_project:
+            return
+        project_path = get_projects_dir() / self.current_project
+        results_db = project_path / "results.sqlite"
+        if not results_db.is_file():
+            messagebox.showinfo(
+                "Comparison SpineDB",
+                "results.sqlite does not exist yet. Tick its Auto-gen box "
+                "and (re-)run the scenarios to produce it.",
+            )
+            return
+        try:
+            open_file_in_default_app(results_db)
+        except OSError as exc:
+            logger.warning("Could not open results SpineDB: %s", exc)
 
     # ── View scenario plots (from executed_tree view column) ──────
 

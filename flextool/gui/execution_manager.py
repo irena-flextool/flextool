@@ -656,6 +656,17 @@ class ExecutionManager:
             self._wind_down = False
             self._stopped = False
 
+        # Pre-create the shared results.sqlite once, in-process, before any
+        # scenario subprocess runs. Each run writes its alternative at the
+        # end via the spinedb write-method; spinedb_api gives writers a
+        # 1800s busy_timeout so concurrent *appends* to an existing file
+        # serialize safely. The unsafe part is the create-from-JSON path,
+        # whose guard is a non-atomic os.path.exists() — on a project's
+        # first batch every parallel subprocess would otherwise find the
+        # file missing and race to build the schema. Doing it here once
+        # closes that race without touching the engine writer.
+        self._precreate_results_db_if_needed()
+
         self._scheduler_thread = threading.Thread(
             target=self._scheduler_loop, daemon=True
         )
@@ -664,6 +675,34 @@ class ExecutionManager:
         if self._watchdog is None:
             self._watchdog = MemoryWatchdog(self)
         self._watchdog.start()
+
+    def _precreate_results_db_if_needed(self) -> None:
+        """Initialize the shared results.sqlite schema once before the batch.
+
+        No-op unless the SpineDB output is enabled and at least one scenario
+        job is pending. Idempotent (``ensure_results_db`` short-circuits on
+        an existing file). Non-fatal: on failure the scenario subprocesses
+        fall back to creating it themselves (the pre-existing behaviour).
+        """
+        if not getattr(self.settings, "auto_generate_comp_spinedb", False):
+            return
+        with self._lock:
+            has_pending = any(
+                j.job_type == JobType.SCENARIO and j.status == JobStatus.PENDING
+                for j in self._jobs
+            )
+        if not has_pending:
+            return
+        db_url = "sqlite:///" + str(self.project_path / "results.sqlite")
+        try:
+            from flextool.process_outputs.write_spinedb import ensure_results_db
+            ensure_results_db(db_url)
+        except Exception:
+            logger.warning(
+                "Could not pre-create results SpineDB at %s; scenario runs "
+                "will attempt to create it (possible cold-start race).",
+                db_url, exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Scheduler
@@ -875,6 +914,14 @@ class ExecutionManager:
             write_methods.append("excel")
         if settings.auto_generate_scen_csvs:
             write_methods.append("csv")
+        # SpineDB results database (project-wide results.sqlite). Must run
+        # on the native solve path — the writer needs the live s/par
+        # namespaces — so it is requested here at solve time rather than
+        # via the parquet-replay regen actions. The default target is
+        # <output-location>/results.sqlite, i.e. the project root, shared
+        # across scenarios (each appended as its own alternative).
+        if settings.auto_generate_comp_spinedb:
+            write_methods.append("spinedb")
 
         cmd = [
             sys.executable,

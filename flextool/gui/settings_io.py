@@ -53,6 +53,9 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     settings.auto_generate_comp_excel = data.get(
         "auto_generate_comp_excel", settings.auto_generate_comp_excel
     )
+    settings.auto_generate_comp_spinedb = data.get(
+        "auto_generate_comp_spinedb", settings.auto_generate_comp_spinedb
+    )
     # Legacy compat: pre-tiered ``debug: bool`` settings.yaml entries
     # map True→"full" (preserves their old behaviour: tracemalloc +
     # csv-dump) and False→"off".  New entries use ``debug_level``

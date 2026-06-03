@@ -186,7 +186,8 @@ class ExecutedScenarioManager:
     ) -> dict[str, bool]:
         """Check if comparison outputs exist for this set of scenarios.
 
-        Returns: {has_comp_plots: bool, has_comp_excel: bool}
+        Returns: {has_comp_plots: bool, has_comp_excel: bool,
+                  has_comp_spinedb: bool}
         """
         comp_dir = self.project_path / "output_plot_comparisons"
 
@@ -211,9 +212,15 @@ class ExecutedScenarioManager:
                     has_comp_excel = True
                     break
 
+        # Single project-wide SpineDB results database written during the
+        # solve (see write_spinedb). Existence-only check — it accumulates
+        # all executed scenarios as separate alternatives.
+        has_comp_spinedb = (self.project_path / "results.sqlite").is_file()
+
         return {
             "has_comp_plots": has_comp_plots,
             "has_comp_excel": has_comp_excel,
+            "has_comp_spinedb": has_comp_spinedb,
         }
 
     def delete_results(self, scenario_ids: list[tuple[int, str]]) -> None:

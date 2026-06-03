@@ -56,6 +56,11 @@ class ProjectSettings:
     auto_generate_scen_csvs: bool = True
     auto_generate_comp_plots: bool = True
     auto_generate_comp_excel: bool = False
+    # SpineDB results database. Produced only during the solve (the writer
+    # needs the live s/par namespaces), so it has no parquet-based regen
+    # path — unlike the other outputs above. One results.sqlite per project,
+    # each scenario appended as its own alternative.
+    auto_generate_comp_spinedb: bool = False
 
     # Diagnostic verbosity for scenario execution.  Controlled by the
     # "Debug" radio group in the main window.  Values mirror the CLI
