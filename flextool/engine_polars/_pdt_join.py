@@ -5,8 +5,7 @@ RP-blended-weights ``nodeState_rp_dt`` / ``nodeState_rp_block_first_dt``
 helpers added by Phase 4 of the RP-blended-weights restoration).
 
 Pre-E.3, :class:`FlexData` carried these as eager DataFrames built
-up-front in :mod:`flextool.engine_polars._fast_load` (fast path) and in
-:mod:`flextool.engine_polars.input` (slow path).  On y2050-scale
+up-front in :mod:`flextool.engine_polars.input`.  On y2050-scale
 fixtures the largest of them — ``pss_dt`` = ``process_source_sink × dt``
 — is ~1.75 GB and lives for the whole LP build alongside ``v_flow.frame``
 (which already carries the same ``(p, source, sink, d, t)`` key set after

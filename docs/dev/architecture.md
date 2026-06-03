@@ -235,11 +235,9 @@ Exported from `flextool.engine_polars` (`__init__.py`):
 | `FlexData` | Input dataclass — polars frames + `polar_high.Param`s. Sets unprefixed, parameters `p_*`. Full inventory in `_param_shapes.py`. |
 | `FlexDataProvider` | In-memory transport surface. Keys are declared in `_provider_keys.py` (no `.csv` suffix). All cross-phase data moves through it. |
 | `load_flextool(source)` | Build `FlexData` from a workdir (CSV layout) or from a Provider-backed source. |
-| `load_flextool_source_only(...)` | Single-solve fast path that skips most preprocessing; raises `FastLoadError` if the scenario needs the full pipeline. |
 | `build_flextool(m, d, ...)` | Feature-conditional LP/MIP construction on a `Problem` / `WarmProblem`. |
 | `run_chain(...)` / `run_chain_from_db(...)` | Run a sequence of `ChainStep`s, threading `SolveHandoff` between them. |
 | `run_orchestration(state, work_folder, ...)` | Native cascade coordinator: reads `RunnerState`, drives the rolling / nested / stochastic cascade, returns one `OrchestrationStep` per solve. |
-| `run_single_solve_from_db(...)` | Surgical fast path for a single solve. |
 | `SolveHandoff` | Cross-solve carrier (invest / divest / storage / roll-state / CO2 ladder / commodity ladder / cumulative sim-hours / history sets). |
 | `SpineDbReader` / `InMemoryReader` / `CsvSource` / `FlexInputSource` | Input adapters — production Spine DB, in-memory test fixture, or workdir CSVs. |
 
@@ -322,12 +320,11 @@ __init__.py                       Public re-exports (table above)
 model.py                          build_flextool — LP build, feature blocks
 input.py                          FlexData dataclass + loader entry point
 chain.py                          run_chain + ChainStep dataclass
-_orchestration.py                 run_orchestration / run_chain_from_db /
-                                  run_single_solve_from_db, native cascade
+_orchestration.py                 run_orchestration / run_chain_from_db,
+                                  native cascade
 _solve_state.py                   RunnerState, PathConfig, SolveConfig,
                                   TimelineConfig dataclasses
 _solve_handoff.py                 SolveHandoff carrier + capture wiring
-_fast_load.py                     load_flextool_source_only + FastLoadError
 _lagrangian.py                    solve_lagrangian + Coupling / Result
 _warm.py                          WarmProblem update routine
 _provider_keys.py                 Canonical key names for FlexDataProvider
@@ -559,7 +556,6 @@ from flextool.engine_polars import (
     load_flextool,
     run_chain_from_db,
     run_orchestration,
-    run_single_solve_from_db,
 )
 from flextool.engine_polars._db_loader import FlexToolRunner
 from flextool.spinedb_backend import SpineDBBackend

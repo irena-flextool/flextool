@@ -45,7 +45,7 @@ if str(TESTS_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars import run_single_solve_from_db  # noqa: E402
+from flextool.engine_polars import run_chain_from_db  # noqa: E402
 from flextool.engine_polars._solve_config import (  # noqa: E402
     SolverConfig,
 )
@@ -78,6 +78,22 @@ def _make_migrated_db(tmp_path: Path, name: str = "v52.sqlite") -> str:
     url = json_to_db(STOCHASTICS_JSON, db_path)
     migrate_database(url)
     return url
+
+
+def _drive_single_solve(db_url: str, tmp_path: Path, *, warm: bool = True):
+    """Drive the single ``2day_dispatch`` solve via the native cascade and
+    return its sole :class:`OrchestrationStep`.
+
+    ``keep_solutions=True`` so the step retains ``solution`` (and ``obj``)
+    for the objective-parity assertions.  The scenario resolves to a single
+    sub-solve, so the returned dict carries exactly one step.
+    """
+    steps = run_chain_from_db(
+        db_url, SCENARIO, work_folder=tmp_path / "work", warm=warm,
+        keep_solutions=True,
+    )
+    assert steps, "no solve steps produced"
+    return list(steps.values())[-1]
 
 
 def _set_solver_param(
@@ -176,10 +192,7 @@ def stochastics_default_obj(
     """
     tmp_path = tmp_path_factory.mktemp("default_obj")
     db_url = _make_migrated_db(tmp_path)
-    work = tmp_path / "work"
-    step = run_single_solve_from_db(
-        db_url, SCENARIO, work_folder=work, emit_output=False,
-    )
+    step = _drive_single_solve(db_url, tmp_path)
     assert step.solution is not None and step.solution.optimal, (
         f"baseline stochastics solve failed: "
         f"status={getattr(step.solution, 'status', None)}"
@@ -203,9 +216,7 @@ def test_default_unchanged(
     matches the cached value within 1e-9 relative.
     """
     db_url = _make_migrated_db(tmp_path)
-    step = run_single_solve_from_db(
-        db_url, SCENARIO, work_folder=tmp_path / "work", emit_output=False,
-    )
+    step = _drive_single_solve(db_url, tmp_path)
     assert step.solution is not None and step.solution.optimal
     rel = abs(step.obj - stochastics_default_obj) / abs(stochastics_default_obj)
     assert rel < 1e-9, (
@@ -234,9 +245,7 @@ def test_explicit_highs_matches_default(
     db_url = _make_migrated_db(tmp_path)
     _set_solver_param(db_url, SOLVE_NAME, "solver", "highs")
 
-    step = run_single_solve_from_db(
-        db_url, SCENARIO, work_folder=tmp_path / "work", emit_output=False,
-    )
+    step = _drive_single_solve(db_url, tmp_path)
     assert step.solution is not None and step.solution.optimal
     # Same call invocation → bit-identical objective.  Allow a tight
     # epsilon (1e-12 rel) only as guard against trivial FP non-determinism.
@@ -590,13 +599,11 @@ def test_warm_false_highs_soft_promotes_to_subprocess(
     cmd_solve_mps path (in-process cold HiGHS retired) and log a
     one-shot warning naming the FLEXTOOL_SAVE_MEMORY override.
 
-    Verifies behaviour at the orchestrator surface: we run a real
-    single-solve end-to-end (no warm context — single-solve does not
-    take a ``warm`` kwarg, so the soft-promote in
-    :func:`run_single_solve_from_db` is the active path).  Spy on the
-    subprocess call so we don't actually shell out, but assert (a) the
-    subprocess path was chosen and (b) the warning was emitted exactly
-    once.
+    Verifies behaviour at the orchestrator surface: we drive a real
+    single-solve cascade with ``warm=False``, so the soft-promote to
+    the subprocess path is the active route.  Spy on the subprocess
+    call so we don't actually shell out, but assert (a) the subprocess
+    path was chosen and (b) the warning was emitted exactly once.
     """
     from flextool.engine_polars import (
         _orchestration as _orch,
@@ -620,8 +627,8 @@ def test_warm_false_highs_soft_promotes_to_subprocess(
         raise RuntimeError("spy short-circuit")
 
     caplog.set_level(logging.WARNING, logger="flextool")
-    # Also capture the root logger output: run_single_solve_from_db
-    # passes a fresh ``logger`` per call, not always "flextool.*".
+    # Also capture the root logger output: the cascade passes a fresh
+    # ``logger`` per call, not always "flextool.*".
     caplog.set_level(logging.WARNING)
 
     with patch.object(_subp, "solve_via_subprocess", side_effect=_spy_subprocess):
@@ -630,10 +637,9 @@ def test_warm_false_highs_soft_promotes_to_subprocess(
         # → FlexToolUserError).  Either way we just need the dispatch
         # to have run.
         with pytest.raises(RuntimeError, match="spy short-circuit"):
-            from flextool.engine_polars import run_single_solve_from_db
-            run_single_solve_from_db(
+            run_chain_from_db(
                 db_url, SCENARIO,
-                work_folder=tmp_path / "work", emit_output=False,
+                work_folder=tmp_path / "work", warm=False,
             )
 
     # (a) Subprocess was the chosen path and the solver was HiGHS.

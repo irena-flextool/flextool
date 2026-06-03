@@ -79,10 +79,6 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
     final (or only) sub-solve, used by the caller to thread
     ``flex_data`` + ``solution`` into ``write_outputs`` for the
     in-memory parameter / set namespace path (Δ.31).
-
-    Δ.25: when ``--fast-single-solve`` is passed, dispatch to the
-    surgical single-solve path that bypasses
-    ``write_input``/``run_chain_from_db`` entirely.  Experimental.
     """
     if scenario_name:
         timing_recorder.set_scenario(scenario_name)
@@ -94,34 +90,6 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
     # the cascade runs purely in-memory — no CSVs hit
     # ``solve_data/`` from the writer-port modules.
     csv_dump_on = bool(getattr(args, 'csv_dump', False))
-
-    # Δ.25 fast single-solve dispatch.
-    if getattr(args, 'fast_single_solve', False):
-        from flextool.engine_polars import run_single_solve_from_db
-        if not scenario_name:
-            logging.error(
-                "--fast-single-solve requires --scenario-name "
-                "(the fast path doesn't auto-pick scenarios)."
-            )
-            return 1, None
-        t_solve_start = time.perf_counter()
-        step = run_single_solve_from_db(
-            args.input_db_url,
-            scenario_name,
-            work_folder=work_folder,
-        )
-        all_solves_seconds = time.perf_counter() - t_solve_start
-        print("--- Fast single-solve time %.4s seconds ---" % all_solves_seconds)
-        timing_recorder.record('all_solves', seconds=all_solves_seconds,
-                               t_start=t_solve_start)
-        if not step.optimal:
-            logging.error(
-                "Fast single-solve: non-optimal (status=%r).",
-                getattr(step.solution, "status", None)
-                if step.solution else None,
-            )
-            return 1, step
-        return 0, step
 
     from flextool.engine_polars import run_chain_from_db
 
@@ -404,22 +372,6 @@ def main():
                              'requested via --write-methods). With the '
                              'flag set, every intermediate directory '
                              'survives the run for inspection.')
-    parser.add_argument('--fast-single-solve', action='store_true',
-                        default=False,
-                        help='(EXPERIMENTAL) — bypass the '
-                             'standard ``flextool.input_derivation`` '
-                             'pipeline entirely.  Reads inputs '
-                             'directly from Spine via SpineDbReader, '
-                             'builds the LP via the override chain, '
-                             'and emits ``output_raw/`` parquets via '
-                             'a tiny support-CSV bootstrap.  '
-                             'Single-solve only; no rolling, no '
-                             'nested cascade, no warm-LP, no handoff '
-                             'plumbing.  Raises loudly on any helper '
-                             'coverage gap (no fallback to the slow '
-                             'path).  Use for cold-start latency '
-                             'benchmarking on simple fixtures; the '
-                             'default path remains ``run_chain_from_db``.')
 
     args = parser.parse_args()
     # --user-bound-scale / --presolve are surfaced through env vars

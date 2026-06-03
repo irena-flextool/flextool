@@ -562,8 +562,8 @@ def test_block_layout_from_source_matches_load_from_solve_data_lh2(
     multiset-equal to :meth:`BlockLayout.load_from_solve_data` on the
     LH2 three-region fixture (canonical multi-block test case).
 
-    Phase 1 of the multi-block fast-path plan — verifies the
-    constructor in isolation before it is wired into ``_fast_load.py``.
+    Verifies the source-only constructor in isolation against the
+    solve-data loader.
     """
     from flextool.engine_polars import SpineDbReader
     from flextool.engine_polars._solve_config import SolveConfig

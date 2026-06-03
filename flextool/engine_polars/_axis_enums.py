@@ -10,8 +10,8 @@ along with the workdir-CSV vocabulary seed helpers.  The remaining
 public surface — :func:`cast_frame_axes` / :func:`cast_value_axes` /
 :func:`cast_flexdata_axes` / :func:`schema_dtype` / :func:`cast_dim` /
 :func:`empty_like` / :func:`align_join_dtypes` — operates on an
-``enums`` dict supplied by the caller (today this is `{}` from
-:mod:`._fast_load`; the casters short-circuit to no-ops).
+``enums`` dict supplied by the caller (when it is `{}` the casters
+short-circuit to no-ops).
 
 Public API
 ----------

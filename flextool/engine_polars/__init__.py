@@ -97,10 +97,6 @@ from flextool.engine_polars._solve_handoff import (  # noqa: E402  # see determi
 )
 from flextool.engine_polars._orchestration import (  # noqa: E402  # see determinism note above
     OrchestrationStep, run_chain_from_db, run_orchestration,
-    run_single_solve_from_db,
-)
-from flextool.engine_polars._fast_load import (  # noqa: E402  # see determinism note above
-    FastLoadError, load_flextool_source_only,
 )
 
 __all__ = [
@@ -111,7 +107,4 @@ __all__ = [
     # Γ.8.D — native orchestrator + handoff carrier.
     "SolveHandoff",
     "OrchestrationStep", "run_chain_from_db", "run_orchestration",
-    # Δ.25 — surgical fast single-solve path.
-    "run_single_solve_from_db",
-    "FastLoadError", "load_flextool_source_only",
 ]

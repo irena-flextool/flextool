@@ -52,10 +52,6 @@ Side-paths off this trunk:
   single `FlexData` into per-region copies via `_region_filter`,
   builds one sub-problem per region, and couples cross-region
   half-flow pairs with subgradient-updated multipliers.
-- **Fast single-solve**: `_fast_load.load_flextool_source_only`
-  bypasses the override chain and the CSV writers for a single
-  solve fixture with no rolling / nested / stochastic / Lagrangian
-  features.
 
 ## FlexData — the central data carrier
 
@@ -88,7 +84,7 @@ The loaders are stacked on two protocols defined in `_input_source.py`:
 | Source | Implementation | When used |
 |---|---|---|
 | `CsvSource` | `_input_source.py` | Loads from an on-disk `input/` + `solve_data/` workdir. Used by tests and by `load_flextool(path_or_csv_source)` against pre-built fixture workdirs. |
-| `SpineDbReader` | `_spinedb_reader.py` | The DB-direct reader — returns one polars frame per `(entity_class, parameter_name)` pair, no CSV roundtrip. Consumed by the override chain in `_apply_db_overrides`, by `_fast_load.load_flextool_source_only`, and by the live cascade entry point `run_chain_from_db`. |
+| `SpineDbReader` | `_spinedb_reader.py` | The DB-direct reader — returns one polars frame per `(entity_class, parameter_name)` pair, no CSV roundtrip. Consumed by the override chain in `_apply_db_overrides` and by the live cascade entry point `run_chain_from_db`. |
 | `InMemoryReader` | `_inmemory_reader.py` | Same `InputSource` protocol as `SpineDbReader`, but driven by an in-memory dict-of-frames fixture. The vehicle for fast unit tests under `tests/engine_polars/`. |
 
 `FlexInputSource` (CSV-shaped) and `InputSource` (per-parameter frame)
@@ -518,24 +514,6 @@ multiplier update lives in `polar_high.lagrangian`. See
 [decomposition.md](decomposition.md) for the user-facing story and the
 parameters that gate this path.
 
-### Fast single-solve — `_fast_load.load_flextool_source_only`
-
-A surgical bypass for single-solve fixtures with no rolling, no
-nested, no stochastic, no Lagrangian, and no decomposition. It builds
-an empty `FlexData` stub, runs the DB-direct override chain to
-populate ~80% of the fields directly from the source, patches in the
-remaining topology fields (`process_source_sink`, `pss_dt`,
-`flow_to_n` / `flow_from_n`, `nodeBalance_dt`, the commodity-flow
-joins, …), and returns. No CSV writers, no preprocessing tempdir, no
-handoff plumbing.
-
-The fast path is **non-production**: any helper that demands a
-workdir CSV raises `FastLoadError` with the field name and the
-missing helper, and the operator either teaches the helper or falls
-back to the slow path (`run_chain_from_db`). It exists to amortise
-the heavy preprocessing on simple workloads (the motivating fixture
-was `test_24h_shipping`).
-
 ## Solve-to-solve handoff
 
 When a solve is part of a cascade (rolling-window, nested, or stochastic
@@ -815,18 +793,15 @@ small. Repeating the table from
 |---|---|
 | `FlexData` | The single input dataclass. Everything else either produces it, consumes it, or transforms it in place. Modifying its field list is the cardinal extension act. |
 | `load_flextool(source, ...)` | CSV-shaped loader. Source may be a `Path`, a `str`, or a `CsvSource`. Accepts an optional `InputSource` override for migrated parameters. In the live cascade it is driven by `_drive_cascade` against a pre-built workdir whose Provider serves every read in-memory. |
-| `load_flextool_source_only(reader, ...)` | Fast path. Raises `FastLoadError` on any feature it can't synthesise. |
 | `build_flextool(m, d, *, include_existing_fixed_cost=False, scale_the_objective=1.0)` | The model build. `m` is a fresh `Problem` / `WarmProblem`; `d` is the populated `FlexData`. Returns `None`; mutates `m` in place. |
 | `run_chain(steps, ...)` | Thin compat shim around `run_chain_from_db`. Kept for callers that still hand-construct `ChainStep` lists. |
 | `run_chain_from_db(db_url, work_folder, ...)` | The canonical multi-solve driver. Walks the solve list, calls `_drive_cascade` per solve, threads `SolveHandoff` between iterations. |
 | `run_orchestration(state, work_folder, ...)` | One layer below `run_chain_from_db`. Takes a pre-built `RunnerState` (with `SolveConfig` and `TimelineConfig` already resolved) and drives the cascade. The intended entry point from the GUI / Spine Toolbox layer. |
-| `run_single_solve_from_db(...)` | Surgical fast path. Pairs with `load_flextool_source_only`. |
 | `SolveHandoff` | The carrier dataclass. Optional fields covering invest / divest / fix-storage / cumulative ladders / roll-end state (incl. the upward variant). `is_empty()` returns True when nothing fired. Populated by `build_handoff_from_solution` (in `input.py`); the older disk-read `capture_post_solve` constructor was retired when the cascade fell through to Provider/CSV reads in all production paths. |
 | `OrchestrationStep` | Per-solve result. Carries `solve_name`, `solution`, `handoff`, `warm_used`. |
 | `ChainStep` | Per-sub-solve result of the compat shim. Same shape as `OrchestrationStep`. |
 | `FlexInputSource` / `CsvSource` | The CSV-shaped source protocol family. |
 | `InputSource` / `SpineDbReader` / `InMemoryReader` | The per-parameter-frame source protocol family. |
-| `FastLoadError` | Raised by the fast path when it can't synthesise a required field. |
 
 ## Where to start when…
 
@@ -834,12 +809,11 @@ small. Repeating the table from
 |---|---|---|
 | Add a constraint that uses only existing parameters | `model.py` `build_flextool` body | The closest existing feature block. Wrap your additions in `if has_<feature>:` and skip a new requirement tuple. |
 | Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct_params.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. |
-| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `input.py` (slow path) and the topology patch in `_fast_load.py` (fast path, if applicable). |
+| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `input.py`. |
 | Add a new feature block | `model.py` requirement tuples | Declare your `MY_FEATURE = (...)` tuple. Inspect a switch field via `has_my_feature = d.<switch> is not None and d.<switch>.height > 0`. Wrap the variable / constraint / objective additions in `if has_my_feature:`. Add a `_check(d, MY_FEATURE, "my_feature")` call alongside the existing ones. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |
 | Add a new decomposition mode | `_lagrangian.py` for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
-| Speed up a single-solve scenario | `_fast_load.load_flextool_source_only` | If `FastLoadError` fires, either teach the missing helper to read directly from `InputSource`, or fall back to `run_chain_from_db`. |
 | Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `input.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `capture_post_solve`. |
 | Trace a warm-LP divergence | `_warm._STRUCTURAL_FIELDS`, `_warm._WARM_PARAMS` | A divergence usually means a structural field changed (add it to `_STRUCTURAL_FIELDS`) or a Param outside the warm set was mutated (add it to `_WARM_PARAMS` and write the `_apply_warm_updates` clause). |
 | Add a new variable / dual to the parquet output | `flextool/process_outputs/read_highs_solution.VARIABLE_SPECS` | Append one `VariableSpec`. No engine-side change required. |

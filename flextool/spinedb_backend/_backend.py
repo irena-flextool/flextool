@@ -32,10 +32,8 @@ Hard rules
 Note on :class:`flextool.engine_polars._spinedb_reader.SpineDbReader`
 --------------------------------------------------------------------
 
-The pre-existing ``SpineDbReader`` (used by the experimental
-single-solve fast-path at
-:func:`flextool.engine_polars._orchestration.run_single_solve_from_db`)
-is a sibling abstraction over the same EAV schema, but with a
+The pre-existing ``SpineDbReader`` (used by the native cascade LP
+build path) is a sibling abstraction over the same EAV schema, but with a
 different consumer contract — it returns per-(entity_class,
 parameter_name) frames in the canonical-axis schema used by the
 ``_axis_enums``-driven LP build path, not the spec-driven tabular

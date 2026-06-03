@@ -567,11 +567,6 @@ class BlockLayout:
             :meth:`load_from_solve_data` produces from the slow-path's
             ``solve_data/`` block CSVs (on the same scenario).
 
-        Notes
-        -----
-        Phase 1 of the multi-block fast-path plan only builds the
-        constructor — it is **not** yet wired into ``_fast_load.py``.
-        See the audit doc / Phase-2 task for the wiring step.
         """
         # ── 1. Resolve the active solve name ───────────────────────────
         from flextool.engine_polars._projection_params import (

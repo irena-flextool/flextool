@@ -189,7 +189,6 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 | `--presolve {on,off,choose}` | HiGHS `presolve` override. Default keeps the determinism-pinned `on`; `off` disables presolve (slower but useful for memory or numerical diagnostics) |
 | `--highs-threads N` | Number of HiGHS solver threads (default `1`). Values >1 enable HiGHS parallel mode and trade determinism for wall-clock speedup |
 | `--save-memory` | Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source, write the LP to a temp MPS file, and solve it in a separate HiGHS subprocess (via `cmd_solve_mps`) so the solver's working set lives outside the FlexTool address space. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See [architecture.md](dev/architecture.md) |
-| `--fast-single-solve` | Experimental cold-start fast path: bypass `flextool.input_derivation` and read inputs directly from Spine via SpineDbReader. Single-solve only; no rolling, no cascade, no warm-LP, no handoff plumbing. Requires `--scenario-name` |
 
 **Decomposition (Lagrangian):**
 

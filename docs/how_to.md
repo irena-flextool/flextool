@@ -37,7 +37,6 @@ General:
 - [How to create aggregate outputs](#how-to-create-aggregate-outputs)
 - [How to enable/disable outputs](#how-to-enabledisable-outputs)
 - [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
-- [How to enable a fast single-solve](#how-to-enable-a-fast-single-solve)
 - [How to use Lagrangian decomposition (spatial)](#how-to-use-lagrangian-decomposition-spatial)
 - [How to use timeset weights (non-RP weighted timesteps)](#how-to-use-timeset-weights-non-rp-weighted-timesteps)
 - [How to read the LP scaling diagnostic report](#how-to-read-the-lp-scaling-diagnostic-report)
@@ -1221,28 +1220,6 @@ Model changes (potentially large changes to the results --> need to understand h
 [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model),
 [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
 - Aggregate data. Technological: Combine power plants that are using the same technology. Spatial: Combine nodes. Temporal: Use longer timesteps.
-
-## How to enable a fast single-solve
-
-For small, simple workloads FlexTool offers an experimental fast path that bypasses the full preprocessing / `write_input` phase and reads the inputs straight from the Spine DB. It is selected with the `--fast-single-solve` flag on the FlexTool runner. Use it only when **all** of the following hold:
-
-- exactly one `solve` (no chained solves, no rolling window, no nested solves)
-- `solve_mode` is *single_solve*
-- no stochastic branches
-- no Lagrangian decomposition
-- the scenario name is supplied via `--scenario-name` (the fast path does not auto-pick a scenario)
-
-The flag is dispatched in `flextool/cli/cmd_run_flextool.py` and the source-only loader lives in `flextool/engine_polars/_fast_load.py`. The loader builds the `FlexData` stub directly from `SpineDbReader` via the same override chain the slow path uses, and feeds it straight into the in-memory LP build. There is no support-CSV materialisation in the work folder.
-
-```bash
-python -m flextool.cli.cmd_run_flextool \
-    sqlite:///input_data.sqlite \
-    --scenario-name my_scenario \
-    --fast-single-solve
-```
-
-!!! note "Single-threaded and non-production"
-    The fast path runs single-threaded and is marked experimental. Any input that the override chain cannot fully populate raises a `FastLoadError` with the missing field — the loader does not silently fall back. If you hit one, drop the flag and use the regular path; the slow path remains the canonical driver for everything except trivial fixtures.
 
 ## How to use Lagrangian decomposition (spatial)
 

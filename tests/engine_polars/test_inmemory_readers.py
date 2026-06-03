@@ -4,7 +4,7 @@ Validates that the polars-driven replacements of
 :mod:`flextool.process_outputs.read_parameters` and
 :mod:`flextool.process_outputs.read_sets` produce a SimpleNamespace
 shape that downstream :mod:`flextool.process_outputs.write_outputs`
-can consume end-to-end on the fast single-solve path.
+can consume end-to-end on the native single-solve path.
 
 Scope is the **shape** of the resulting namespace — values are spot-
 checked for the post-solve derived attributes
@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from flextool.engine_polars import (
-    run_single_solve_from_db,
+    run_chain_from_db,
 )
 from flextool.process_outputs.read_parameters import read_parameters
 from flextool.process_outputs.read_sets import read_sets
@@ -29,6 +29,19 @@ from flextool.process_outputs.read_sets import read_sets
 
 
 pytestmark = pytest.mark.solver
+
+
+def _solve_step(db_url: str, scenario_name: str, work_folder: Path):
+    """Drive a single-solve scenario via the native cascade and return
+    its sole :class:`OrchestrationStep` (carrying ``flex_data`` +
+    ``solution``).  ``keep_solutions=True`` so the step retains both even
+    if the cascade ever grows more than one sub-solve for the fixture.
+    """
+    steps = run_chain_from_db(
+        db_url, scenario_name, work_folder=work_folder, keep_solutions=True,
+    )
+    assert steps, f"no solve steps produced for {scenario_name!r}"
+    return list(steps.values())[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -165,11 +178,7 @@ def base_solution(scenario_workdir):
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "work"
         work.mkdir()
-        step = run_single_solve_from_db(
-            f"sqlite:///{db}",
-            scenario_name="base",
-            work_folder=work,
-        )
+        step = _solve_step(f"sqlite:///{db}", "base", work)
         yield step
 
 
@@ -249,7 +258,7 @@ def test_read_sets_period_shape(base_solution):
     assert isinstance(sets.period, pd.MultiIndex)
     assert sets.period.names == ["solve", "period"]
     assert len(sets.period) == 1
-    assert sets.period[0] == ("base", "p2020")
+    assert sets.period[0] == (base_solution.solve_name, "p2020")
 
 
 def test_read_sets_node_balance(base_solution):
@@ -288,11 +297,7 @@ def coal_wind_solution(scenario_workdir):
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "work"
         work.mkdir()
-        step = run_single_solve_from_db(
-            f"sqlite:///{db}",
-            scenario_name="coal_wind_inertia",
-            work_folder=work,
-        )
+        step = _solve_step(f"sqlite:///{db}", "coal_wind_inertia", work)
         yield step
 
 
@@ -325,7 +330,7 @@ def test_entity_all_capacity_non_empty(coal_wind_solution):
 
 
 def test_write_outputs_fast_path_emits_all_dirs(tmp_path: Path, scenario_workdir)-> None:
-    """Running ``write_outputs`` after the fast single-solve path
+    """Running ``write_outputs`` after a native single-solve
     populates output_csv/, output_parquet/, output_excel/ (skipped
     intentionally on csv-only run) — all from the in-memory readers,
     no CSV reads from solve_data/.
@@ -341,11 +346,7 @@ def test_write_outputs_fast_path_emits_all_dirs(tmp_path: Path, scenario_workdir
 
     work = tmp_path / "fast"
     work.mkdir()
-    step = run_single_solve_from_db(
-        f"sqlite:///{db}",
-        scenario_name="base",
-        work_folder=work,
-    )
+    step = _solve_step(f"sqlite:///{db}", "base", work)
     assert step.solution is not None and step.solution.optimal
     assert step.flex_data is not None
 
@@ -388,11 +389,7 @@ def test_unit_capacity_period_table_includes_invested(tmp_path: Path, scenario_w
 
     work = tmp_path / "fast"
     work.mkdir()
-    step = run_single_solve_from_db(
-        f"sqlite:///{db}",
-        scenario_name="network_coal_wind_battery_invest_cumulative",
-        work_folder=work,
-    )
+    step = _solve_step(f"sqlite:///{db}", "network_coal_wind_battery_invest_cumulative", work)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -443,11 +440,7 @@ def test_unit_capacity_period_table_non_empty(tmp_path: Path, scenario_workdir)-
 
     work = tmp_path / "fast"
     work.mkdir()
-    step = run_single_solve_from_db(
-        f"sqlite:///{db}",
-        scenario_name="coal_wind_inertia",
-        work_folder=work,
-    )
+    step = _solve_step(f"sqlite:///{db}", "coal_wind_inertia", work)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
