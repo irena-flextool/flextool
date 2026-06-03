@@ -26,8 +26,10 @@ def main():
         parser.add_argument('--read-parquet-dir', type=str, default=False,
                             help='Directory to read existing parquet files from (default: False, reads from raw CSV files)')
         parser.add_argument('--write-methods', type=str, nargs='+', default=None,
-                            choices=['plot', 'parquet', 'excel', 'db', 'csv'],
+                            choices=['plot', 'parquet', 'excel', 'csv', 'spinedb'],
                             help='Output methods to use (default: plot parquet excel)')
+        parser.add_argument('--results-db-url', type=str, default=None,
+                            help='Target SpineDB URL for the spinedb write-method (default: <output-dir>/results.sqlite)')
         parser.add_argument('--plot-rows', type=int, nargs=2, default=None,
                             help='First and last row to plot in time series (default: 0 167)')
         parser.add_argument('--plot-file-format', type=str, default=None,
@@ -112,6 +114,7 @@ def main():
                     settings_db_url=args.settings_db_url,
                     plot_file_format=args.plot_file_format,
                     only_first_file=args.only_first_file_per_plot,
+                    results_db_url=args.results_db_url,
                 )
         finally:
             if db_map is not None:

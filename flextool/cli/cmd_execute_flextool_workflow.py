@@ -56,7 +56,7 @@ Examples:
     # outputs inline using the live in-memory flex_data + solution.
     parser.add_argument('--write-methods', nargs='+',
                         default=['plot', 'parquet', 'csv'],
-                        choices=['plot', 'parquet', 'excel', 'csv'],
+                        choices=['plot', 'parquet', 'excel', 'csv', 'spinedb'],
                         help='Output formats to generate (default: plot parquet csv). '
                              'Parquet is the canonical output and is always produced when this flag is omitted.')
     parser.add_argument('--output-subdir', help='Subdirectory for output files (default: scenario_name)')

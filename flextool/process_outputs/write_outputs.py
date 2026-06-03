@@ -43,6 +43,7 @@ from flextool.process_outputs.read_sets import (
     read_sets_multi,
 )
 from flextool.process_outputs.read_variables import read_variables
+from flextool.process_outputs.write_spinedb import write_spinedb
 
 
 def _parse_rename_entry(entry) -> tuple[str, bool]:
@@ -537,7 +538,7 @@ ALL_OUTPUTS = [
 
 def _resolve_settings(write_methods, output_config_path, active_configs, plot_rows,
                       output_location, plot_file_format, settings_db_url,
-                      fallback_output_location):
+                      fallback_output_location, results_db_url=None):
     """Resolve output settings: explicit args > settings DB > hardcoded defaults."""
     db_reachable = False
     if settings_db_url:
@@ -557,10 +558,16 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
                 logging.debug(f"Settings DB parameters: {settings_params}")
 
                 if write_methods is None:
-                    method_keys = [f'output-{m}' for m in ['plot', 'parquet', 'csv', 'excel']]
+                    method_keys = [f'output-{m}' for m in ['plot', 'parquet', 'csv', 'excel', 'spinedb']]
                     if any(k in settings_params for k in method_keys):
-                        write_methods = [m for m in ['plot', 'parquet', 'csv', 'excel']
+                        write_methods = [m for m in ['plot', 'parquet', 'csv', 'excel', 'spinedb']
                                          if settings_params.get(f'output-{m}', False)]
+
+                # CLI-supplied results_db_url wins; otherwise honor the
+                # optional settings value (mirrors the write_methods
+                # CLI-vs-settings precedence above).
+                if results_db_url is None and 'output-results-db-url' in settings_params:
+                    results_db_url = str(settings_params['output-results-db-url'])
 
                 if output_config_path is None and 'output-config-path' in settings_params:
                     output_config_path = str(settings_params['output-config-path'])
@@ -624,10 +631,10 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     if plot_file_format is None:
         plot_file_format = 'png'
 
-    return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format
+    return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format, results_db_url
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -673,10 +680,17 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             flushes these to disk on the default cascade path, so
             without a Provider here the ``group_flows__dt.csv`` /
             ``flowGroup__*.csv`` outputs would silently disappear.
+        results_db_url: optional target SpineDB URL for the ``spinedb``
+            write-method.  When omitted, defaults to a ``results.sqlite``
+            file next to the other outputs (``output_location``).  Ignored
+            unless ``'spinedb'`` is in ``write_methods``.  Has no effect
+            under ``read_parquet_dir`` (the native solve path is required
+            because the writer needs the live ``s`` / ``par`` namespaces).
     """
-    write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format = _resolve_settings(
+    write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format, results_db_url = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
         output_location, plot_file_format, settings_db_url, fallback_output_location,
+        results_db_url,
     )
 
     logging.debug(
@@ -1019,6 +1033,24 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 df.to_excel(writer, sheet_name=sheet_name)
 
         start = log_time('Wrote to Excel', start, timing_recorder)
+
+    # Write to SpineDB results database
+    if 'spinedb' in write_methods:
+        if read_parquet_dir:
+            # ``s`` / ``par`` are UNDEFINED on the read_parquet_dir path
+            # (assigned only in the native ``else`` branch above), so the
+            # writer — which needs them for solve reconstruction and
+            # discount factors — cannot run here.
+            logging.warning(
+                "spinedb write-method needs the native solve path "
+                "(s/par unavailable under read_parquet_dir); skipping."
+            )
+        else:
+            db_url = results_db_url or (
+                'sqlite:///' + os.path.join(output_location or '.', 'results.sqlite')
+            )
+            write_spinedb(results, s, db_url, scenario_name, solve_name or scenario_name, par=par)
+            start = log_time('Wrote to SpineDB', start, timing_recorder)
 
     # Phase F — write manifest.json describing the output bundle.
     # Idempotent (safe to call multiple times); rooted at the work

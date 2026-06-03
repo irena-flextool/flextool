@@ -209,8 +209,10 @@ def main():
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
-                        choices=['plot', 'parquet', 'excel', 'csv'],
+                        choices=['plot', 'parquet', 'excel', 'csv', 'spinedb'],
                         help='Output methods to use (default: plot parquet)')
+    parser.add_argument('--results-db-url', type=str, default=None,
+                        help='Target SpineDB URL for the spinedb write-method (default: <output-dir>/results.sqlite)')
     parser.add_argument('--output-config', metavar='PATH',
                         default=None,
                         help='Path to output configuration file (default: templates/default_plots.yaml)')
@@ -750,6 +752,7 @@ def main():
                 flex_data_provider=getattr(
                     last_step, "flex_data_provider", None
                 ),
+                results_db_url=args.results_db_url,
             )
         except FileNotFoundError as exc:
             # The in-memory parameter / set path doesn't read
