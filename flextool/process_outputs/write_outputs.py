@@ -62,7 +62,9 @@ def _provider_lookup_df(provider, parent: str, stem: str):
 
     Provider key convention matches the emit_* writers' ``_emit(...)``
     callsites — ``"<parent>/<basename-without-csv>"`` (see
-    :mod:`flextool.engine_polars._emit_provider_io`).
+    :mod:`flextool.engine_polars._emit_provider_io`).  The cascade keeps
+    these frames in memory only (no on-disk fallback), so a ``None``
+    *provider* yields ``None`` for every key.
     """
     if provider is None:
         return None
@@ -91,15 +93,35 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     its ``from_unitGroup`` / ``from_unit`` / ``from_connectionGroup`` /
     ``to_connectionGroup`` / per-connection ``internal_losses`` columns.
 
-    Provider-aware: when ``provider`` is supplied (the per-sub-solve
-    ``FlexDataProvider`` from the orchestration step), reads come from
-    the Provider keyed under ``"input/<basename>"`` / ``"solve_data/
-    <basename>"``.  Falls back to the legacy on-disk CSVs for callers
-    that still write them (``--csv-dump``).
+    Provider-only: reads come from the per-sub-solve
+    ``FlexDataProvider`` keyed under ``"input/<basename>"`` /
+    ``"solve_data/<basename>"`` — the writer→emitter refactor no longer
+    flushes these to disk on the default cascade path, so there is no
+    on-disk fallback (matching the B6 ``_emit_arc_unions`` precedent).
+
+    ``provider`` contract: the production CLI (and every test harness
+    that re-solves) wires the live Provider here.  A ``None`` *provider*
+    means the wiring was lost and the group-flow output families
+    (``from_unitGroup`` / ``from_connectionGroup`` / …) would silently
+    disappear — so we emit a loud warning naming the expectation and
+    leave the sets empty rather than crash.  (A hard raise was declined
+    because the experimental non-production ``run_single_solve_from_db``
+    fast path legitimately carries no Provider and exercises this with no
+    group output.)  When the Provider IS present but a model genuinely
+    has no groups, the keyed frames are empty → the sets stay empty
+    without any warning, which is the correct tolerant behaviour.
     """
-    raw_dir = output_dir or 'output_raw'
-    work_dir = os.path.dirname(raw_dir) or '.'
-    input_dir = os.path.join(work_dir, 'input')
+    if provider is None:
+        logging.warning(
+            "_backfill_group_indicator_sets: no flex_data_provider was "
+            "wired through write_outputs; the nodeGroupDispatch / "
+            "*Indicators sets cannot be populated and the group-flow "
+            "output families (from_unitGroup / from_connectionGroup / "
+            "from_unit / to_connectionGroup) will be MISSING from "
+            "group_flows__dt.csv.  Production callers must forward "
+            "last_step.flex_data_provider."
+        )
+        return
     for attr, fname in (
         ('nodeGroupDispatch', 'nodeGroupDispatch.csv'),
         ('nodeGroupIndicators', 'nodeGroupIndicators.csv'),
@@ -107,32 +129,21 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     ):
         stem = fname[:-4]
         df_pl = _provider_lookup_df(provider, "input", stem)
-        if df_pl is not None:
-            if df_pl.is_empty() or df_pl.width == 0:
-                continue
-            col0 = df_pl.columns[0]
-            vals = df_pl.select(col0).to_series().drop_nulls().to_list()
-            if not vals:
-                continue
-            setattr(s, attr, pd.Index(vals, name='group'))
+        if df_pl is None:
             continue
-        path = os.path.join(input_dir, fname)
-        if not os.path.exists(path):
+        if df_pl.is_empty() or df_pl.width == 0:
             continue
-        try:
-            df = pd.read_csv(path)
-        except pd.errors.EmptyDataError:
+        col0 = df_pl.columns[0]
+        vals = df_pl.select(col0).to_series().drop_nulls().to_list()
+        if not vals:
             continue
-        if df.empty or df.shape[1] == 0:
-            continue
-        setattr(s, attr, pd.Index(df.iloc[:, 0].dropna(), name='group'))
+        setattr(s, attr, pd.Index(vals, name='group'))
 
     # --- 12 nodeGroupDispatch__* arc-union sets (from solve_data/) -----------
     # Each entry: (attr-on-s, filename, csv→multi-index column map).
     # The column map is ``[(csv_col, level_name), ...]`` — same CSV column may
     # appear under multiple level names (e.g. ``unit`` populates both
     # ``process`` and ``unit`` in the unit-aggregator sets where process==unit).
-    solve_data_dir = os.path.join(work_dir, 'solve_data')
     dispatch_specs = (
         # 4-col / 2-col Not-in-aggregate sets — CSV columns map 1:1 to levels.
         ('nodeGroupDispatch__process_fully_inside',
@@ -193,22 +204,10 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     )
     for attr, fname, col_map in dispatch_specs:
         stem = fname[:-4]
-        df = None
         df_pl = _provider_lookup_df(provider, "solve_data", stem)
-        if df_pl is not None:
-            if df_pl.is_empty():
-                continue
-            df = df_pl.to_pandas()
-        else:
-            path = os.path.join(solve_data_dir, fname)
-            if not os.path.exists(path):
-                continue
-            try:
-                df = pd.read_csv(path)
-            except pd.errors.EmptyDataError:
-                continue
-            if df.empty:
-                continue
+        if df_pl is None or df_pl.is_empty():
+            continue
+        df = df_pl.to_pandas()
         # Skip if frame is missing any required source column.
         csv_cols = [c for c, _ in col_map]
         if not all(c in df.columns for c in csv_cols):
@@ -259,7 +258,7 @@ def _read_outputs(
         )
     p = read_parameters(flex_data, solution, solve_name=solve_name or "solve")
     s = read_sets(flex_data, solution, solve_name=solve_name or "solve")
-    _backfill_group_indicator_sets(s, output_dir)
+    _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
     v = read_variables(output_dir)
     return p, s, v
 

@@ -747,6 +747,9 @@ def main():
                 flex_data=wo_flex_data,
                 solution=wo_solution,
                 solve_name=wo_solve_name,
+                flex_data_provider=getattr(
+                    last_step, "flex_data_provider", None
+                ),
             )
         except FileNotFoundError as exc:
             # The in-memory parameter / set path doesn't read

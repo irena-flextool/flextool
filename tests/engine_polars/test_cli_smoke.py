@@ -134,6 +134,114 @@ def test_cli_csv_dump_keeps_output_raw(
 
 
 # ---------------------------------------------------------------------------
+# Group-flow output wiring — the production CLI must populate the group-flow
+# column families in ``group_flows__dt.csv``.  Regression lock for the
+# provider-wiring bug (cmd_run_flextool called write_outputs without
+# flex_data_provider → single-solve backfill got no provider → group sets
+# stayed empty → from_unitGroup / from_connectionGroup columns vanished).
+# ---------------------------------------------------------------------------
+
+
+TESTS_JSON_FIXTURE = FLEXTOOL_ROOT / "tests" / "fixtures" / "tests.json"
+GROUP_SCENARIO = "aggregate_outputs_network_coal_wind_chp"
+
+
+@pytest.fixture
+def group_scenario_db(tmp_path):
+    """Materialise ``tests.json`` (which carries the
+    ``aggregate_outputs_network_coal_wind_chp`` group scenario) into a
+    fresh SQLite and return ``(db_url, scenario_name)``.
+
+    Per repo rule we build the DB from JSON/schema — never read a
+    checked-in ``.sqlite``.
+    """
+    if not TESTS_JSON_FIXTURE.exists():
+        pytest.skip(f"tests.json fixture not present: {TESTS_JSON_FIXTURE}")
+    tests_dir = FLEXTOOL_ROOT / "tests"
+    if str(tests_dir) not in sys.path:
+        sys.path.insert(0, str(tests_dir))
+    from db_utils import json_to_db  # noqa: E402
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = tmp_path / "group_scenario.sqlite"
+    db_url = json_to_db(TESTS_JSON_FIXTURE, db_path)
+    migrate_database(db_url)
+    return db_url, GROUP_SCENARIO
+
+
+def _group_flows_family_levels(csv_path: Path) -> set[str]:
+    """Return the set of column-family names from ``group_flows__dt.csv``.
+
+    The CSV has a 3-row MultiIndex header (group / family / detail).  The
+    family names live on the *second* header row (``level_1``); read it
+    raw so we don't depend on pandas' MultiIndex parsing of duplicate
+    group names.
+    """
+    with open(csv_path, "r", encoding="utf-8") as fh:
+        fh.readline()  # group level (row 0)
+        family_row = fh.readline().rstrip("\n")  # family level (row 1)
+    # Drop the three leading index columns (solve, period, time) which the
+    # family row backfills with ``Unnamed: *_level_1`` placeholders.
+    cells = family_row.split(",")[3:]
+    return {c for c in cells if c and not c.startswith("Unnamed:")}
+
+
+def test_cli_group_flows_columns_present(group_scenario_db, tmp_path) -> None:
+    """``cmd_run_flextool`` on the group scenario must emit
+    ``group_flows__dt.csv`` *with* the group-flow column families.
+
+    The production CLI path (``write_outputs`` driven from
+    ``cmd_run_flextool``) must forward the live ``flex_data_provider`` so
+    the single-solve ``_backfill_group_indicator_sets`` can populate the
+    ``nodeGroupDispatch*`` / ``*Indicators`` sets.  Without that, the
+    ``from_unitGroup`` / ``from_connectionGroup`` / ``from_unit`` /
+    ``to_connectionGroup`` families silently disappear from
+    ``group_flows__dt.csv`` (only slack / inflow / internal_losses
+    survive).  This asserts they are present — the regression lock.
+    """
+    db_url, scenario = group_scenario_db
+    work_folder = tmp_path / "work"
+    work_folder.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "flextool.cli.cmd_run_flextool",
+            db_url,
+            "--scenario-name", scenario,
+            "--work-folder", str(work_folder),
+            "--write-methods", "csv",
+            "--output-location", str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(FLEXTOOL_ROOT),
+        timeout=600,
+    )
+
+    assert result.returncode == 0, (
+        f"CLI failed (rc={result.returncode}):\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+    csv_path = tmp_path / "output_csv" / scenario / "group_flows__dt.csv"
+    assert csv_path.exists(), (
+        f"group_flows__dt.csv missing under {csv_path.parent}:\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+    families = _group_flows_family_levels(csv_path)
+    missing = {"from_unitGroup", "from_connectionGroup"} - families
+    assert not missing, (
+        f"group_flows__dt.csv is missing the group-flow column "
+        f"families {sorted(missing)} (the provider-wiring bug).  "
+        f"families present: {sorted(families)}\n"
+        f"CLI stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # --decomposition lagrangian — CLI dispatch onto the native coordinator
 # ---------------------------------------------------------------------------
 
