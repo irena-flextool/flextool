@@ -1552,6 +1552,7 @@ def write_v_dual_invest_by_class(
     realized_periods_csv: Path | str | None = None,
     work_folder: Path | str | None = None,
     flex_data: "FlexData | None" = None,
+    scale_the_objective: float | None = None,
 ) -> list[Path]:
     """Write v_invest reduced costs split by entity class.
 
@@ -1560,14 +1561,28 @@ def write_v_dual_invest_by_class(
     — each containing the ``v_invest.dual`` values for entities in the
     corresponding class (``process_unit``, ``process_connection``,
     ``node``).  Matches the three separate CSVs phase 3 writes.
+
+    HiGHS returns the column reduced cost in *scaled-objective* units
+    (the objective is multiplied by ``scale_the_objective`` at build
+    time, default 1e-6).  Multiply by ``1 / scale_the_objective`` so the
+    written reduced cost is in true NPV currency per v_invest unit —
+    consistent with every row-dual writer (cf.
+    :func:`write_v_dual_node_balance`).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     wf = Path(work_folder) if work_folder is not None else output_dir.parent
 
+    # ``_resolve_inv_scale_the_objective`` returns ``1 / scale_the_objective``
+    # (guarding None / non-positive → default 1e-6), exactly as the
+    # node-balance writer uses it.
+    inv_scale = _resolve_inv_scale_the_objective(
+        wf, scale_the_objective=scale_the_objective,
+    )
     duals = extract_variable(
         h, "v_invest", ("entity",),
         solve_name=solve_name, has_time=False, source="col_dual",
+        value_scale=inv_scale,
         realized_periods_csv=realized_periods_csv,
         flex_data=flex_data,
     )
@@ -1908,6 +1923,7 @@ def write_all_variables(
             h, solve_name=solve_name, output_dir=output_dir,
             realized_periods_csv=realized_periods_csv,
             flex_data=flex_data,
+            scale_the_objective=scale_the_objective,
         )),
         ("v_dual_node_balance", lambda: write_v_dual_node_balance(
             h, solve_name=solve_name, output_dir=output_dir,

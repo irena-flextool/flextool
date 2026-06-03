@@ -358,7 +358,13 @@ def test_write_v_obj_scalar(tmp_path: Path) -> None:
 
 
 def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
-    """Produces 3 parquets; each keeps only entities matching its class."""
+    """Produces 3 parquets; each keeps only entities matching its class.
+
+    Also pins the col-dual scaling: HiGHS returns the reduced cost in
+    scaled-objective units, so the writer multiplies by
+    ``1 / scale_the_objective``.  With ``scale_the_objective=1e-6`` the
+    written values equal the raw col duals × 1e6.
+    """
     # input/ layout that the loader reads
     (tmp_path / "input").mkdir()
     (tmp_path / "output_raw").mkdir()
@@ -377,23 +383,50 @@ def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
         col_duals=[1.1, 2.2, 3.3, 4.4],
     )
 
+    scale = 1e-6
     paths = write_v_dual_invest_by_class(
         h, solve_name="s1",
         output_dir=tmp_path / "output_raw",
         work_folder=tmp_path,
+        scale_the_objective=scale,
     )
     assert len(paths) == 3
     unit_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_unit__s1.parquet")
     conn_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_connection__s1.parquet")
     node_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_node__s1.parquet")
 
+    inv_scale = 1.0 / scale  # 1e6
     assert sorted(unit_df.columns) == ["u1", "u2"]
     assert list(conn_df.columns) == ["c1"]
     assert list(node_df.columns) == ["n1"]
-    assert unit_df.loc[("s1", "p2020"), "u1"] == 1.1
-    assert unit_df.loc[("s1", "p2020"), "u2"] == 2.2
-    assert conn_df.loc[("s1", "p2020"), "c1"] == 3.3
-    assert node_df.loc[("s1", "p2020"), "n1"] == 4.4
+    assert unit_df.loc[("s1", "p2020"), "u1"] == pytest.approx(1.1 * inv_scale)
+    assert unit_df.loc[("s1", "p2020"), "u2"] == pytest.approx(2.2 * inv_scale)
+    assert conn_df.loc[("s1", "p2020"), "c1"] == pytest.approx(3.3 * inv_scale)
+    assert node_df.loc[("s1", "p2020"), "n1"] == pytest.approx(4.4 * inv_scale)
+
+
+def test_write_v_dual_invest_by_class_honours_custom_scale(tmp_path: Path) -> None:
+    """A non-default scale_the_objective scales the reduced cost by 1/scale."""
+    (tmp_path / "input").mkdir()
+    (tmp_path / "output_raw").mkdir()
+    (tmp_path / "input" / "process_unit.csv").write_text("process_unit\nu1\n")
+    (tmp_path / "input" / "process_connection.csv").write_text("process_connection\n")
+    (tmp_path / "input" / "node.csv").write_text("node\n")
+
+    h = _fake_highs(
+        variable_names=["v_invest[u1,p2020]"],
+        col_values=[0.0],
+        col_duals=[5.0],
+    )
+    scale = 2e-3
+    write_v_dual_invest_by_class(
+        h, solve_name="s1",
+        output_dir=tmp_path / "output_raw",
+        work_folder=tmp_path,
+        scale_the_objective=scale,
+    )
+    unit_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_unit__s1.parquet")
+    assert unit_df.loc[("s1", "p2020"), "u1"] == pytest.approx(5.0 / scale)
 
 
 def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) -> None:
