@@ -1088,7 +1088,7 @@ plots:
         max_subplots_per_file: 8
         base_length: 4
         skip_data_with_only_zeroes: false
-        xlabel: Currency / MWh
+        xlabel: Currency / MWh  (+ = more investment here would lower total cost)
         scenario_rule: g
         comparison_overrides:
           max_subplots_per_file: 2
@@ -1104,7 +1104,7 @@ plots:
         max_subplots_per_file: 8
         base_length: 4
         skip_data_with_only_zeroes: false
-        xlabel: Currency / MW
+        xlabel: Currency / MW  (+ = more investment here would lower total cost)
         scenario_rule: g
         comparison_overrides:
           max_subplots_per_file: 2
@@ -1120,7 +1120,7 @@ plots:
         max_subplots_per_file: 8
         base_length: 4
         skip_data_with_only_zeroes: false
-        xlabel: Currency / MW
+        xlabel: Currency / MW  (+ = more investment here would lower total cost)
 
   # Emissions
         scenario_rule: g
