@@ -120,7 +120,7 @@ def test_console_summary_format() -> None:
         threshold_decades=9.0,
     )
     # Pre-range section.
-    assert "autoscale:" in line
+    assert "Autoscale by polar-high:" in line
     assert "ranges pre" in line
     assert "Matrix=7.0d" in line
     assert "Cost=11.0d" in line

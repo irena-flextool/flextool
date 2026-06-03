@@ -595,6 +595,8 @@ def _autoscale_emit_console_summary(
     layer3_plan: "_AutoscaleLayer3Plan | None",
     solve_name: str,
     already_emitted: set[str],
+    memrec: "_MemoryRecorder | None" = None,
+    logger: logging.Logger | None = None,
 ) -> None:
     """Emit the one-line user-visible autoscale summary.
 
@@ -605,6 +607,13 @@ def _autoscale_emit_console_summary(
     per base-solve, not once per roll — Layer 1/2/3 decisions are
     identical across rolls of the same base solve when the autoscaler
     is enabled.
+
+    When ``memrec`` is supplied, a ``polar-high scaling`` phase-progress
+    row is emitted immediately after the summary so the log carries a
+    timestamp/memory checkpoint at the moment scaling finishes and HiGHS
+    is about to run (the long, output-silent solve sits right after it).
+    The checkpoint is gated by the same dedup as the summary, so it fires
+    once per base solve — exactly when the summary text is printed.
     """
     cfg = _autoscale_resolve_config(None)
     if not _autoscale_mode_enables_layer1(cfg.mode):
@@ -621,6 +630,13 @@ def _autoscale_emit_console_summary(
         threshold_decades=cfg.threshold_decades,
     )
     print(line, flush=True)
+    if memrec is not None:
+        try:
+            memrec.checkpoint(
+                "polar_high_scaling", logger, user_label="polar-high scaling",
+            )
+        except Exception:
+            pass
     already_emitted.add(solve_name)
 
 
@@ -698,6 +714,7 @@ _MEM_WHITELIST_LABELS: frozenset[str] = frozenset({
     "Inputs prepared",
     "FlexData built",
     "Matrix built by polar-high",
+    "polar-high scaling",
     "Solver",
     "Outputs written",
     "Solve cleanup",
@@ -2274,10 +2291,6 @@ def _drive_cascade(
                             "lp_build_end", self.state.logger,
                             user_label="Matrix built by polar-high",
                         )
-                        # Blank line so the next phase (HiGHS' banner +
-                        # scaling block) visually separates from the
-                        # LP-build summary.
-                        print("", flush=True)
                     inner_pb = self._warm_problem.problem
                     from flextool.engine_polars._solver_dispatch import (
                         _resolve_effective_highs_options,
@@ -2407,6 +2420,8 @@ def _drive_cascade(
                         layer3_plan=_autoscale_layer3_plan,
                         solve_name=base_solve_name,
                         already_emitted=self._autoscale_summary_emitted,
+                        memrec=_memrec_local if _emit_phase else None,
+                        logger=self.state.logger,
                     )
                     _phase_prof("autoscale_done")
                 # ``WarmProblem.solve`` always keeps the HiGHS instance
@@ -2415,6 +2430,10 @@ def _drive_cascade(
                 # (``write_all_variables`` / ``write_all_handoffs``)
                 # sees the live solver as it does for cold rebuilds
                 # under ``keep_solver=True``.  No extra kwarg required.
+                # Blank line so HiGHS' "Running HiGHS …" banner (and the
+                # grey solver-output block in the GUI) separates from the
+                # scaling/LP-build rows above it.
+                print("", flush=True)
                 _t_solve_start = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
@@ -2476,10 +2495,6 @@ def _drive_cascade(
                         "lp_build_end", self.state.logger,
                         user_label="Matrix built by polar-high",
                     )
-                    # Blank line so HiGHS' "Running HiGHS …" banner and
-                    # its scaling-warning block visually separate from
-                    # the LP-build phase summary above.
-                    print("", flush=True)
                 from flextool.engine_polars._solver_dispatch import (
                     _resolve_effective_highs_options,
                 )
@@ -2673,6 +2688,8 @@ def _drive_cascade(
                     layer3_plan=_autoscale_layer3_plan,
                     solve_name=base_solve_name,
                     already_emitted=self._autoscale_summary_emitted,
+                    memrec=_memrec_local if _emit_phase else None,
+                    logger=self.state.logger,
                 )
                 _phase_prof("autoscale_done")
                 if _autoscale_profile:
@@ -2702,6 +2719,10 @@ def _drive_cascade(
                 # consumes, so the per-solve ``autoscale_<solve>.yaml``
                 # still lands under ``solve_data/``.
                 _ranges_for_l1 = _autoscale_ranges_post or _autoscale_ranges_pre
+                # Blank line so HiGHS' "Running HiGHS …" banner (and the
+                # grey solver-output block in the GUI) separates from the
+                # scaling/LP-build rows above it.
+                print("", flush=True)
                 _phase_prof("solve_start")
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,

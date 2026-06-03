@@ -238,7 +238,7 @@ def format_console_summary(
     """
     if not ranges_pre.trigger:
         return (
-            "autoscale: LP within HiGHS comfort zone "
+            "Autoscale by polar-high: LP within HiGHS comfort zone "
             f"(spreads <= {threshold_decades:g} decades) — no scaling applied"
         )
 
@@ -248,7 +248,7 @@ def format_console_summary(
     pre_rhs = _fmt_decades(_decades(ranges_pre.rhs))
 
     parts: list[str] = [
-        f"autoscale: ranges pre Matrix={pre_matrix} Cost={pre_cost} "
+        f"Autoscale by polar-high: ranges pre Matrix={pre_matrix} Cost={pre_cost} "
         f"Bound={pre_bound} RHS={pre_rhs}"
     ]
 

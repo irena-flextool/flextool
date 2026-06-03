@@ -84,6 +84,11 @@ class ExecutionWindow(tk.Toplevel):
         # event loop with after() callbacks and starves mouse/keyboard input
         # (the log becomes unselectable / uncopyable while output streams).
         self._refresh_scheduled: bool = False
+        # Log colouring: whether the lines currently streaming belong to a
+        # HiGHS solver-output block (greyed until the next phase-progress
+        # row). Reset whenever the viewed job changes (log re-rendered from
+        # scratch), so the state machine stays in sync with the text widget.
+        self._highs_block_active: bool = False
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
         from flextool.gui.ui_metrics import get_metrics
@@ -337,6 +342,7 @@ class ExecutionWindow(tk.Toplevel):
         # Keep the widget editable (state='normal') so text selection and
         # Ctrl+C work reliably on all platforms, but block keyboard input.
         self._output_text.bind("<Key>", self._on_key_press)
+        self._configure_log_tags()
 
         # Right-click context menu (Copy / Select all) on the log.
         self._output_menu = tk.Menu(self._output_text, tearoff=0)
@@ -632,8 +638,10 @@ class ExecutionWindow(tk.Toplevel):
         self._viewed_job_id = first_id
 
         # Switching to a different job: clear the text widget and reset its
-        # displayed count so all lines are re-inserted from scratch.
+        # displayed count so all lines are re-inserted from scratch.  The
+        # colour state machine restarts with the re-render.
         self._output_text.delete("1.0", "end")
+        self._highs_block_active = False
         if first_id is not None:
             self._displayed_counts[first_id] = 0
         self._update_output_display()
@@ -683,6 +691,88 @@ class ExecutionWindow(tk.Toplevel):
             return None  # navigation / selection — does not modify the text
         return "break"  # suppress everything else (typing, paste, delete, …)
 
+    @staticmethod
+    def _blend(base16: tuple[int, int, int], target_hex: str, frac: float) -> str:
+        """Blend a 16-bit ``(r, g, b)`` base colour ``frac`` of the way toward
+        ``target_hex`` (``#rrggbb``) and return an ``#rrggbb`` string.
+
+        ``base16`` comes from ``winfo_rgb`` (each channel 0–65535), so the
+        result tracks the widget's *actual* theme background/foreground:
+        blending a near-black dark-mode base toward grey lightens it, while
+        blending a near-white light-mode base toward grey darkens it — the
+        same call gives the right "touch" of tint in either theme.
+        """
+        tr = int(target_hex[1:3], 16) * 257
+        tg = int(target_hex[3:5], 16) * 257
+        tb = int(target_hex[5:7], 16) * 257
+        r = int(base16[0] + (tr - base16[0]) * frac)
+        g = int(base16[1] + (tg - base16[1]) * frac)
+        b = int(base16[2] + (tb - base16[2]) * frac)
+        return f"#{r // 256:02x}{g // 256:02x}{b // 256:02x}"
+
+    def _configure_log_tags(self) -> None:
+        """Configure the colour tags for the log, derived from the widget's
+        live theme colours so they read in both dark and light modes.
+
+        Backgrounds are subtle tints of the real base background (kept light
+        so the text stays readable); foregrounds are pulled partway toward a
+        saturated hue so they stand out on either base.
+        """
+        txt = self._output_text
+        try:
+            base_bg = txt.winfo_rgb(txt.cget("background"))
+            base_fg = txt.winfo_rgb(txt.cget("foreground"))
+        except tk.TclError:
+            return  # colours unavailable (widget not realised) — stay plain
+        # Backgrounds — a faint wash of the base toward the accent hue.
+        txt.tag_configure("cmd", background=self._blend(base_bg, "#ffd000", 0.16))
+        txt.tag_configure("highs", background=self._blend(base_bg, "#808080", 0.14))
+        txt.tag_configure(
+            "solvestart",
+            background=self._blend(base_bg, "#33cc33", 0.18),
+            foreground=self._blend(base_fg, "#4aa3ff", 0.55),
+        )
+        # Foregrounds — readable accent colours on either theme.
+        txt.tag_configure("mem", foreground=self._blend(base_fg, "#4aa3ff", 0.55))
+        txt.tag_configure("warn", foreground=self._blend(base_fg, "#ff3b30", 0.70))
+
+    def _classify_log_line(self, element: str) -> list[str]:
+        """Return the colour tags for one log *element* (one ``stdout_lines``
+        entry — usually a single visual line, but the command echo is one
+        multi-line element).
+
+        A small state machine tracks the HiGHS solver-output block so its
+        whole console dump greys out until the next phase-progress row.
+        """
+        low = element.lower()
+        stripped = element.strip()
+        # Command echo — a multi-line bash block (yellow wash).
+        if "\\\n" in element or element.startswith("systemd-run"):
+            self._highs_block_active = False
+            return ["cmd"]
+        # Phase-progress timer/memory rows (header + data) — these also end
+        # any preceding HiGHS block.
+        if "  |  " in element and (
+            "GB" in element or "MB" in element
+            or "memory" in element or "swap" in element
+        ):
+            self._highs_block_active = False
+            return ["mem"]
+        # New-solve marker (green wash + blue text — same family as the rows).
+        if element.startswith("Solve start:"):
+            self._highs_block_active = False
+            return ["solvestart"]
+        # HiGHS console dump opens here and greys until the next phase row.
+        if element.startswith("Running HiGHS"):
+            self._highs_block_active = True
+        tags: list[str] = []
+        if self._highs_block_active and stripped:
+            # Blank lines inside/after the dump stay un-greyed.
+            tags.append("highs")
+        if "warning" in low or "error" in low:
+            tags.append("warn")
+        return tags
+
     def _update_output_display(self) -> None:
         """Append new stdout lines for the currently viewed job.
 
@@ -704,10 +794,11 @@ class ExecutionWindow(tk.Toplevel):
         # inserting new text.
         at_bottom = self._output_text.yview()[1] >= 0.99
 
-        # Append only the new lines
+        # Append only the new lines, tagging each for theme-aware colouring.
         new_lines = lines[already_shown:]
         for line in new_lines:
-            self._output_text.insert("end", line + "\n")
+            tags = self._classify_log_line(line)
+            self._output_text.insert("end", line + "\n", tuple(tags))
         self._displayed_counts[job_id] = new_count
 
         # Auto-scroll only when the user is already at (or near) the bottom
