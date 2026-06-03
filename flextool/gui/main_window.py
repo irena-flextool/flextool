@@ -1057,14 +1057,15 @@ class MainWindow(tk.Tk):
 
             attach_tooltip(self.update_btn, "A newer FlexTool version is available.")
 
-    # ── Native-library (polars) compatibility self-check ──────────
+    # ── Native solver-stack compatibility self-check ──────────────
     def _check_polars_async(self, force: bool = False) -> None:
-        """Probe — off the UI thread — whether polars runs on this machine.
+        """Probe — off the UI thread — whether the native solver stack
+        (polars, highspy/HiGHS) runs on this machine.
 
         Runs once per environment: skipped when the cached fingerprint still
         matches (and not *force*d), or when ``FLEXTOOL_NO_ENV_CHECK`` is set.
-        The probe itself runs polars in a child process, so a native crash
-        is observed via its exit code rather than taking down the GUI.
+        The probe runs the imports in a child process, so a native crash is
+        observed via its exit code rather than taking down the GUI.
         """
         if os.environ.get("FLEXTOOL_NO_ENV_CHECK"):
             return
@@ -1076,46 +1077,54 @@ class MainWindow(tk.Tk):
 
         def _worker() -> None:
             try:
-                probe = env_check.probe_polars()
+                probe = env_check.probe_solver_stack()
             except Exception:
-                logger.debug("polars probe failed to run", exc_info=True)
+                logger.debug("solver-stack probe failed to run", exc_info=True)
                 return
-            self.post_to_main(self._apply_polars_probe, probe)
+            self.post_to_main(self._apply_solver_probe, probe)
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_polars_probe(self, probe) -> None:
-        """Handle a polars probe result on the main thread."""
+    def _apply_solver_probe(self, probe) -> None:
+        """Handle a solver-stack probe result on the main thread."""
         from flextool import env_check
 
         if probe.ok:
             # Healthy: remember this environment so we don't probe again
-            # until the interpreter or the polars build changes.
+            # until the interpreter or a solver build changes.
             self.global_settings.polars_check_fingerprint = env_check.env_fingerprint()
             save_global_settings(get_projects_dir(), self.global_settings)
             return
 
         if not probe.is_native_fault:
-            # An ordinary error (e.g. polars not importable) that a build
+            # An ordinary error (e.g. a package not importable) that a build
             # swap would not fix — log it and stay out of the user's way.
-            logger.warning("polars self-check: %s", probe.summary())
+            logger.warning("solver self-check: %s", probe.summary())
             return
 
-        self._offer_polars_swap(probe)
+        if not env_check.has_remediation(probe.failed_component):
+            # A native crash with no package-level remedy (e.g. polar_high).
+            messagebox.showerror("FlexTool cannot run on this computer yet", env_check.UNFIXABLE_HELP)
+            return
 
-    def _offer_polars_swap(self, probe) -> None:
-        """Ask the user to let FlexTool re-install the compatible polars build."""
+        self._offer_solver_fix(probe)
+
+    def _offer_solver_fix(self, probe) -> None:
+        """Ask the user to let FlexTool re-install the compatible build."""
         from flextool import env_check
 
+        comp = probe.failed_component
+        what = {
+            "polars": "the 'polars' data library",
+            "highspy": "the HiGHS solver (highspy)",
+        }.get(comp, "a solver library")
         proceed = messagebox.askyesno(
             "FlexTool cannot run on this computer yet",
-            "The installed 'polars' library crashed when FlexTool tested it "
-            "on this computer's processor — scenarios will not run until this "
-            "is fixed.\n\n"
+            f"{what} crashed when FlexTool tested it on this computer — "
+            "scenarios will not run until this is fixed.\n\n"
             "FlexTool can automatically re-install the compatible version "
-            "(polars-lts-cpu) for you. Progress is shown in the execution "
-            "window.\n\n"
-            "Re-install the compatible 'polars' now?",
+            "for you. Progress is shown in the execution window.\n\n"
+            "Re-install the compatible version now?",
             icon="warning",
         )
         if not proceed:
@@ -1123,25 +1132,25 @@ class MainWindow(tk.Tk):
 
         from flextool.gui.execution_manager import JobType
 
-        steps = env_check.swap_to_lts_cpu_steps(sys.executable)
+        steps = env_check.remediation_steps(comp, sys.executable)
         self._run_cli_job(
             steps,
             job_type=JobType.ENV_REPAIR,
-            description="Fix polars compatibility",
-            action_key="polars_lts_swap",
-            intro=env_check.SWAP_HEADING,
-            on_finish=self._on_polars_swap_finished,
+            description=f"Fix {comp} compatibility",
+            action_key="solver_compat_fix",
+            intro=env_check.remediation_banner(comp),
+            on_finish=self._on_solver_fix_finished,
         )
 
-    def _on_polars_swap_finished(self, success: bool, _output: str) -> None:
-        """After the swap job: re-probe and cache the verdict (main thread)."""
+    def _on_solver_fix_finished(self, success: bool, _output: str) -> None:
+        """After the fix job: re-probe and cache the verdict (main thread)."""
         from flextool import env_check
 
-        reprobe = env_check.probe_polars()
+        reprobe = env_check.probe_solver_stack()
         if self.execution_mgr is not None:
-            # Surface the re-check result in the same log the swap wrote to.
+            # Surface the re-check result in the same log the fix wrote to.
             for job in self.execution_mgr.get_jobs():
-                if job.action_key == "polars_lts_swap":
+                if job.action_key == "solver_compat_fix":
                     self.execution_mgr.append_stdout(job.job_id, "\n" + reprobe.summary())
                     break
 
@@ -1150,17 +1159,11 @@ class MainWindow(tk.Tk):
             save_global_settings(get_projects_dir(), self.global_settings)
             messagebox.showinfo(
                 "Compatibility fixed",
-                "FlexTool re-installed the compatible 'polars' build and "
-                "verified it runs on this computer. You can run scenarios now.",
+                "FlexTool re-installed the compatible solver libraries and "
+                "verified they run on this computer. You can run scenarios now.",
             )
         else:
-            messagebox.showerror(
-                "Still not working",
-                "polars still does not run after the re-install. This is no "
-                "longer a polars-build problem — your Python environment is "
-                "likely missing the Visual C++ runtime or mixing conda and pip "
-                "native libraries. Rebuild it from a clean python.org install.",
-            )
+            messagebox.showerror("Still not working", env_check.UNFIXABLE_HELP)
 
     def _show_project_dialog_if_needed(self) -> None:
         """Open the ProjectDialog if no project is currently loaded."""

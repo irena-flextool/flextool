@@ -72,16 +72,18 @@ def _reinstall_if_needed():
         )
 
 
-def _ensure_compatible_polars():
-    """Verify the installed ``polars`` build runs on this machine and, if
-    not, swap to ``polars-lts-cpu`` automatically.
+def _ensure_compatible_solver_stack():
+    """Verify the native solver stack (polars, highspy/HiGHS) runs on this
+    machine and, if a component crashes natively, re-install the compatible
+    build automatically.
 
-    The default ``polars`` wheel targets a CPU instruction set (AVX2 and
-    friends) that older processors and some VMs lack; on those it crashes
-    *natively* on the first vectorised operation — a Windows access
-    violation (exit ``3221225477``) or a POSIX ``SIGILL``/``SIGSEGV`` —
-    long after import succeeds.  We probe in a child process so the crash
-    is observable, then re-install the compatible build.
+    Two known cases (see ``flextool.env_check``): the default ``polars``
+    wheel on a CPU lacking the SIMD baseline it was built for (cure:
+    ``polars-lts-cpu``), and ``highspy==1.14.0`` import-crashing on older
+    Windows (cure: ``highspy==1.13.1``).  Both surface as a native crash —
+    a Windows access violation (exit ``3221225477``) or a POSIX
+    ``SIGILL``/``SIGSEGV``.  We probe in a child process so the crash is
+    observable and pinpoint which component died, then apply its remedy.
 
     Run unattended here (the user already opted into installs by choosing
     "Update FlexTool"), but loudly: the banner names what is happening and
@@ -91,34 +93,35 @@ def _ensure_compatible_polars():
     import sys
     from flextool import env_check
 
-    print("\nChecking that 'polars' runs on this computer...")
-    probe = env_check.probe_polars()
+    print("\nChecking that the solver libraries run on this computer...")
+    probe = env_check.probe_solver_stack()
     print(env_check.diagnostics_report(probe))
     if not probe.is_native_fault:
-        # OK, or an ordinary error (e.g. polars missing) that a build swap
-        # would not fix — leave it for the normal install machinery.
+        # OK, or an ordinary error (e.g. a package missing) that a build
+        # swap would not fix — leave it for the normal install machinery.
         return
 
-    print("\n" + env_check.SWAP_HEADING)
-    for step in env_check.swap_to_lts_cpu_steps(sys.executable):
+    steps = env_check.remediation_steps(probe.failed_component, sys.executable)
+    if steps is None:
+        # A native crash with no package-level remedy (e.g. polar_high).
+        print("\n" + env_check.UNFIXABLE_HELP)
+        return
+
+    print("\n" + env_check.remediation_banner(probe.failed_component))
+    for step in steps:
         print("\n$ " + " ".join(step))
         completed = subprocess.run(step)
         if completed.returncode != 0:
             print(
                 f"Warning: '{' '.join(step)}' exited {completed.returncode}. "
-                f"polars-lts-cpu may not be installed; run it manually."
+                f"Run it manually to finish the fix."
             )
             return
 
-    reprobe = env_check.probe_polars()
+    reprobe = env_check.probe_solver_stack()
     print("\n" + reprobe.summary())
     if not reprobe.ok:
-        print(
-            "polars still does not run after the swap.  This is no longer a "
-            "polars-build problem — your Python environment is likely missing "
-            "the Visual C++ runtime or mixing conda and pip native libraries. "
-            "Rebuild the environment from a clean python.org install."
-        )
+        print("\n" + env_check.UNFIXABLE_HELP)
 
 
 def update_flextool(skip_git):
@@ -139,9 +142,10 @@ def update_flextool(skip_git):
     # Skip if the package is installed in editable mode (changes are live already).
     _reinstall_if_needed()
 
-    # After (re)install, make sure the polars build actually runs on this
-    # CPU; swap to polars-lts-cpu automatically if it crashes natively.
-    _ensure_compatible_polars()
+    # After (re)install, make sure the native solver stack actually runs on
+    # this machine; auto-fix the known incompatible-build cases (polars CPU
+    # baseline, highspy 1.14.0 on older Windows) if a component crashes.
+    _ensure_compatible_solver_stack()
 
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")

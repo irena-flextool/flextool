@@ -1,24 +1,27 @@
 """Native-environment self-check and auto-remediation.
 
-FlexTool's solve path loads compiled extensions — chiefly ``polars`` and
-``highspy`` (HiGHS) — that can crash *natively* (not as a catchable Python
-exception) when the installed wheel is wrong for the machine.  The single
-most common case is the default ``polars`` wheel on a CPU without the SIMD
-instruction set it was built for: the process dies with a Windows access
-violation (``0xC0000005`` → exit ``3221225477``) or illegal instruction
-(``0xC000001D``), or a POSIX ``SIGILL``/``SIGSEGV``.  The cure is to swap
-to the ``polars-lts-cpu`` build, which targets an older instruction
-baseline.
+FlexTool's solve path loads compiled extensions — ``polars``, ``highspy``
+(HiGHS, via ``polar_high``) — that can crash *natively* (not as a catchable
+Python exception) when the installed wheel is wrong for the machine.  Two
+real cases we have hit:
 
-A native fault terminates the process, so it cannot be caught with
-``try/except`` in-process.  The only robust way to observe it is to run the
-risky operation in a **child process** and inspect its exit code — which is
-exactly what :func:`probe_polars` does.  :func:`swap_to_lts_cpu_steps`
-returns the pip commands that fix the common case; callers run them (the
-self-update flow does this unattended, the GUI asks for one click first).
+* The default ``polars`` wheel on a CPU without the SIMD instruction set it
+  was built for: crashes on the first vectorised op.  Cure: the
+  ``polars-lts-cpu`` build.
+* ``highspy`` ``1.14.0`` crashes on *import* on older Windows (Server 2019 /
+  Windows 10 1809-era), see ERGO-Code/HiGHS#2964 — a missing dependency in
+  that wheel; works on Windows 11 / Linux.  Cure: pin ``highspy==1.13.1``.
 
-This module deliberately imports **stdlib only** so it stays importable in
-a broken environment.  It never imports ``polars`` in-process.
+Either way the symptom is a Windows access violation (``0xC0000005`` → exit
+``3221225477``) or a POSIX ``SIGILL``/``SIGSEGV``.  A native fault
+terminates the process, so it cannot be caught with ``try/except``; the only
+robust way to observe it is to run the risky imports in a **child process**
+and inspect its exit code — which is what :func:`probe_solver_stack` does.
+It also pinpoints *which* extension died (via flushed progress markers), so
+the right remedy can be applied.
+
+This module imports **stdlib only** so it stays importable in a broken
+environment, and it never imports ``polars``/``highspy`` in-process.
 """
 
 from __future__ import annotations
@@ -30,43 +33,61 @@ import platform
 import subprocess
 import sys
 
-# Loud banner shown right before an automatic re-install, so an unattended
-# pip run never looks like silent tampering.
-SWAP_HEADING = (
-    "================================================================\n"
-    "  Your computer needs a different 'polars' build to run FlexTool.\n"
-    "  Re-installing the compatible version (polars-lts-cpu) now...\n"
-    "  (press Ctrl-C to stop)\n"
-    "================================================================"
-)
+# highspy 1.14.0 import-crashes on older Windows (HiGHS#2964); 1.13.1 is the
+# last good release.  Used as the downgrade target.
+HIGHSPY_GOOD_VERSION = "1.13.1"
 
-# Probe program: import polars and run a real, SIMD-exercising operation.
-# A bare ``import polars`` can succeed on an incompatible CPU and only fault
-# later on the first vectorised op, so we force one here (sort + group-by +
-# sum) before declaring the build usable.
+# Probe program: import each native extension in turn and print a *flushed*
+# marker after each one survives.  On a native crash the already-flushed
+# markers remain in the captured pipe, so the last marker tells us how far
+# we got — and therefore which component is the one that died.  polars is
+# exercised with a real SIMD op (a bare import can pass on an incompatible
+# CPU and only fault later); highspy and polar_high are constructed.
 _PROBE_CODE = (
+    "import sys\n"
+    "def mark(m):\n"
+    "    sys.stdout.write('PROBE:' + m + '\\n'); sys.stdout.flush()\n"
+    "mark('begin')\n"
     "import polars as pl\n"
-    "df = pl.DataFrame({'a': list(range(1000)), 'b': list(range(1000))})\n"
-    "out = (df.sort('a', descending=True)\n"
+    "out = (pl.DataFrame({'a': list(range(1000)), 'b': list(range(1000))})\n"
+    "         .sort('a', descending=True)\n"
     "         .group_by('a').agg(pl.col('b').sum())\n"
     "         .select(pl.col('b').sum())).to_series()[0]\n"
     "assert out == 499500, out\n"
-    "print('POLARS_PROBE_OK', pl.__version__)\n"
+    "mark('polars')\n"
+    "import highspy\n"
+    "highspy.Highs()\n"
+    "mark('highspy')\n"
+    "import polar_high\n"
+    "polar_high.Problem()\n"
+    "mark('polar_high')\n"
+    "mark('all_ok')\n"
 )
 
+# Ordered probe checkpoints; the component that runs *after* a checkpoint is
+# the suspect when the probe dies having last printed that checkpoint.
+_CHECKPOINTS = ["begin", "polars", "highspy", "polar_high", "all_ok"]
+_COMPONENT_AFTER = {
+    "begin": "polars",
+    "polars": "highspy",
+    "highspy": "polar_high",
+    "polar_high": None,
+}
+
 # Probe outcome statuses.
-OK = "ok"                  # polars imported and computed correctly
-NATIVE_FAULT = "native_fault"   # process killed by a native fault — swap-worthy
-ERROR = "error"            # ordinary Python error (e.g. polars not installed)
-TIMEOUT = "timeout"        # probe did not finish in time
+OK = "ok"                       # whole stack imported and computed correctly
+NATIVE_FAULT = "native_fault"   # a process was killed by a native fault
+ERROR = "error"                 # ordinary Python error (e.g. not installed)
+TIMEOUT = "timeout"             # probe did not finish in time
 
 
 @dataclasses.dataclass
-class ProbeResult:
-    """Outcome of running :func:`probe_polars` in a child process."""
+class StackProbe:
+    """Outcome of running :func:`probe_solver_stack` in a child process."""
 
     status: str
     returncode: int | None
+    failed_component: str | None = None  # "polars" / "highspy" / "polar_high"
     stdout: str = ""
     stderr: str = ""
 
@@ -81,15 +102,17 @@ class ProbeResult:
     def summary(self) -> str:
         """One-line, copy-pasteable description of the outcome."""
         if self.status == OK:
-            return "polars: OK"
+            return "solver stack: OK"
         if self.status == NATIVE_FAULT:
+            comp = self.failed_component or "a solver library"
             return (
-                f"polars: NATIVE CRASH ({describe_fault(self.returncode)}) "
-                f"— this build is incompatible with your CPU"
+                f"solver stack: NATIVE CRASH in {comp} "
+                f"({describe_fault(self.returncode)}) — this build is "
+                f"incompatible with this computer"
             )
         if self.status == TIMEOUT:
-            return "polars: probe timed out"
-        return f"polars: error (exit {self.returncode})"
+            return "solver stack: probe timed out"
+        return f"solver stack: error (exit {self.returncode})"
 
 
 def is_native_fault(returncode: int | None, plat: str | None = None) -> bool:
@@ -147,10 +170,20 @@ def describe_fault(returncode: int | None, plat: str | None = None) -> str:
     return f"exit code {returncode}"
 
 
-def probe_polars(python: str | None = None, timeout: float = 90.0) -> ProbeResult:
-    """Run polars in a child process and classify the result.
+def _classify_failed_component(stdout: str) -> str | None:
+    """Given the probe's (possibly truncated) stdout, return the component
+    that was about to run when it died — the suspect for the crash."""
+    seen = [c for c in _CHECKPOINTS if f"PROBE:{c}" in stdout]
+    if not seen:
+        return None
+    return _COMPONENT_AFTER.get(seen[-1])
 
-    Isolating the operation in a subprocess is what makes a native crash
+
+def probe_solver_stack(python: str | None = None, timeout: float = 120.0) -> StackProbe:
+    """Import the native solver stack in a child process and classify the
+    result, pinpointing which extension faulted.
+
+    Isolating the imports in a subprocess is what makes a native crash
     *observable* instead of fatal to us: we read the child's exit code.
     *python* defaults to the current interpreter (:data:`sys.executable`),
     which is also the interpreter the GUI uses to launch solves.
@@ -164,18 +197,26 @@ def probe_polars(python: str | None = None, timeout: float = 90.0) -> ProbeResul
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return ProbeResult(TIMEOUT, None)
+        return StackProbe(TIMEOUT, None)
     except OSError as exc:
-        return ProbeResult(ERROR, None, stderr=str(exc))
+        return StackProbe(ERROR, None, stderr=str(exc))
 
     rc = completed.returncode
-    if rc == 0 and "POLARS_PROBE_OK" in completed.stdout:
-        return ProbeResult(OK, rc, completed.stdout.strip(), completed.stderr.strip())
+    out, err = completed.stdout.strip(), completed.stderr.strip()
+    if rc == 0 and "PROBE:all_ok" in completed.stdout:
+        return StackProbe(OK, rc, None, out, err)
     if is_native_fault(rc):
-        return ProbeResult(
-            NATIVE_FAULT, rc, completed.stdout.strip(), completed.stderr.strip()
+        return StackProbe(
+            NATIVE_FAULT, rc, _classify_failed_component(completed.stdout), out, err
         )
-    return ProbeResult(ERROR, rc, completed.stdout.strip(), completed.stderr.strip())
+    return StackProbe(ERROR, rc, _classify_failed_component(completed.stdout), out, err)
+
+
+def _dist_version(name: str) -> str | None:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def installed_polars() -> tuple[str | None, str | None]:
@@ -184,42 +225,100 @@ def installed_polars() -> tuple[str | None, str | None]:
     the ``polars-lts-cpu`` distribution provides the ``polars`` import name.
     """
     for dist in ("polars", "polars-lts-cpu"):
-        try:
-            return dist, importlib.metadata.version(dist)
-        except importlib.metadata.PackageNotFoundError:
-            continue
+        ver = _dist_version(dist)
+        if ver is not None:
+            return dist, ver
     return None, None
 
 
 def env_fingerprint() -> str:
     """Short, stable hash of the things that decide whether the probe needs
     to re-run: the interpreter, its version, the machine/OS, and the
-    installed polars build+version.  Swapping polars changes the
-    fingerprint, so a fixed environment re-checks itself exactly once.
+    installed solver builds (polars + highspy).  Swapping or downgrading
+    either build changes the fingerprint, so a fixed environment re-checks
+    itself exactly once after any remediation.
     """
-    dist, ver = installed_polars()
+    pol_dist, pol_ver = installed_polars()
     parts = [
         sys.executable,
         sys.version.split()[0],
         platform.machine(),
         platform.system(),
-        f"{dist}=={ver}",
+        f"{pol_dist}=={pol_ver}",
+        f"highspy=={_dist_version('highspy')}",
     ]
     return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:16]
 
 
 def swap_to_lts_cpu_steps(python: str | None = None) -> list[list[str]]:
-    """pip command steps that replace the standard polars with
-    ``polars-lts-cpu``.  Both distributions own the ``polars`` import name,
-    so the standard build must be uninstalled first — installing lts-cpu
-    alone does not displace it.  Uninstalling a not-installed name is a
-    no-op (pip warns, exits 0).
+    """pip steps that replace the standard polars with ``polars-lts-cpu``.
+    Both distributions own the ``polars`` import name, so the standard build
+    must be uninstalled first — installing lts-cpu alone does not displace
+    it.  Uninstalling a not-installed name is a no-op (pip warns, exits 0).
     """
     py = python or sys.executable
     return [
         [py, "-m", "pip", "uninstall", "-y", "polars", "polars-lts-cpu"],
         [py, "-m", "pip", "install", "polars-lts-cpu"],
     ]
+
+
+def downgrade_highspy_steps(python: str | None = None) -> list[list[str]]:
+    """pip step that pins highspy to the last release without the older-
+    Windows import crash (HiGHS#2964)."""
+    py = python or sys.executable
+    return [[py, "-m", "pip", "install", f"highspy=={HIGHSPY_GOOD_VERSION}"]]
+
+
+def _banner(message: str) -> str:
+    return (
+        "================================================================\n"
+        f"  {message}\n"
+        "  Re-installing the compatible version now...\n"
+        "  (press Ctrl-C to stop)\n"
+        "================================================================"
+    )
+
+
+# Per-component remediation.  ``steps`` is a callable(python) -> list of argv.
+_REMEDIATIONS = {
+    "polars": {
+        "steps": swap_to_lts_cpu_steps,
+        "banner": _banner(
+            "Your computer needs a different 'polars' build to run FlexTool."
+        ),
+    },
+    "highspy": {
+        "steps": downgrade_highspy_steps,
+        "banner": _banner(
+            f"Your computer needs HiGHS solver 'highspy=={HIGHSPY_GOOD_VERSION}' "
+            "to run FlexTool."
+        ),
+    },
+}
+
+
+def has_remediation(component: str | None) -> bool:
+    return component in _REMEDIATIONS
+
+
+def remediation_steps(component: str | None, python: str | None = None) -> list[list[str]] | None:
+    spec = _REMEDIATIONS.get(component or "")
+    return spec["steps"](python) if spec else None
+
+
+def remediation_banner(component: str | None) -> str | None:
+    spec = _REMEDIATIONS.get(component or "")
+    return spec["banner"] if spec else None
+
+
+# Message for the cases a package swap cannot fix (e.g. a polar_high crash,
+# or a swap that did not help): genuinely environment-level.
+UNFIXABLE_HELP = (
+    "This is no longer a solver-build problem — your Python environment is "
+    "likely missing the Visual C++ runtime or mixing conda and pip native "
+    "libraries. Rebuild it from a clean python.org install."
+)
 
 
 def _cpu_hint() -> str:
@@ -238,14 +337,14 @@ def _cpu_hint() -> str:
     return f"{proc}{avx2}"
 
 
-def diagnostics_report(probe: ProbeResult | None = None) -> str:
+def diagnostics_report(probe: StackProbe | None = None) -> str:
     """Multi-line, copy-pasteable environment report.  Used by the
     ``__main__`` entry point, the self-update flow, and the GUI startup
     check so a screenshot or paste is enough to triage remotely.
     """
-    dist, ver = installed_polars()
+    pol_dist, pol_ver = installed_polars()
     if probe is None:
-        probe = probe_polars()
+        probe = probe_solver_stack()
     lines = [
         "FlexTool environment check",
         f"  python      : {sys.executable}",
@@ -253,7 +352,8 @@ def diagnostics_report(probe: ProbeResult | None = None) -> str:
         f"  platform    : {platform.platform()}",
         f"  machine     : {platform.machine()}",
         f"  cpu         : {_cpu_hint()}",
-        f"  polars build: {dist} {ver}",
+        f"  polars build: {pol_dist} {pol_ver}",
+        f"  highspy     : {_dist_version('highspy')}",
         f"  {probe.summary()}",
     ]
     if probe.stderr and not probe.ok:
@@ -264,16 +364,16 @@ def diagnostics_report(probe: ProbeResult | None = None) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """``python -m flextool.env_check`` — print diagnostics, exit non-zero
-    if polars cannot run here."""
-    probe = probe_polars()
+    if the solver stack cannot run here."""
+    probe = probe_solver_stack()
     print(diagnostics_report(probe))
+    if probe.is_native_fault and has_remediation(probe.failed_component):
+        print("\nFix:")
+        for step in remediation_steps(probe.failed_component):
+            print("  " + " ".join(step))
+        return 1
     if probe.is_native_fault:
-        print()
-        print(
-            "Fix: replace polars with the compatible build:\n"
-            "  " + "  ".join(swap_to_lts_cpu_steps()[0]) + "\n"
-            "  " + "  ".join(swap_to_lts_cpu_steps()[1])
-        )
+        print("\n" + UNFIXABLE_HELP)
         return 1
     return 0 if probe.ok else 2
 

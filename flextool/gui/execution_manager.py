@@ -895,10 +895,11 @@ class ExecutionManager:
                         )
                         job.stdout_lines.append(
                             "[execution_manager] This is a native library crash, "
-                            "not a model error. It almost always means the installed "
-                            "'polars' build does not run on this computer's CPU. "
-                            "FlexTool can re-install the compatible build — see the "
-                            "prompt at the next start, or run 'Update FlexTool'."
+                            "not a model error. It almost always means an installed "
+                            "solver library (polars or HiGHS/highspy) does not run "
+                            "on this computer. FlexTool can re-install a compatible "
+                            "build — see the prompt at the next start, or run "
+                            "'Update FlexTool'."
                         )
                     else:
                         job.stdout_lines.append(
