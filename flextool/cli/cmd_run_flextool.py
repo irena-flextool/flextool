@@ -22,6 +22,19 @@ import traceback
 from pathlib import Path
 from datetime import datetime
 import time
+
+# Leave breadcrumbs if a compiled extension (polars / HiGHS / numpy) crashes
+# natively. faulthandler can't stop a segfault, but it dumps the Python
+# traceback of every thread to stderr at fault time — so a crash during, say,
+# the first polars op prints the offending frame instead of nothing. The GUI
+# captures this child's stderr into the job log. See flextool.env_check for
+# the out-of-process probe + auto-remediation that prevents the crash.
+import faulthandler
+try:
+    faulthandler.enable()
+except (AttributeError, ValueError, OSError):
+    # stderr may be unavailable (e.g. detached / redirected to a closed fd).
+    pass
 from flextool._mem_sampler import start_mem_sampler
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.cli._timing import TimingRecorder

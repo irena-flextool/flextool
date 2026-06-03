@@ -261,6 +261,7 @@ class JobType(Enum):
     MIGRATION = auto()      # database schema / data version migration
     UPDATE = auto()         # FlexTool self-update (git pull / pip upgrade)
     DB_EDITOR = auto()      # Spine DB Editor launch (recorded only on failure)
+    ENV_REPAIR = auto()     # native-library compatibility fix (polars-lts-cpu swap)
 
 
 @dataclass
@@ -295,6 +296,7 @@ class ExecutionJob:
     peak_rss_mb: float = 0.0         # high-water mark, fed by MemoryWatchdog
     killed_for_memory: bool = False  # set by watchdog just before SIGTERM
     kill_reason: str = ""  # populated by watchdog: "exceeded estimate" / "global memory pressure" / "global swap pressure"
+    native_fault: bool = False  # set on finalize when the process died from a native crash (segfault / illegal instruction)
     # Opaque per-platform handle returned by `_wrap_for_memory_cap` post_spawn
     # (e.g. Windows Job Object). Must outlive the Popen, else the cap is
     # released when the last handle closes. None on platforms that don't need it.
@@ -883,9 +885,25 @@ class ExecutionManager:
                         job.stdout_lines.append(
                             f"[execution_manager] Killed: {job.kill_reason or 'memory pressure'}"
                         )
-                    job.stdout_lines.append(
-                        f"[execution_manager] Process exited with code {return_code}"
-                    )
+                    from flextool import env_check
+                    if env_check.is_native_fault(return_code):
+                        job.native_fault = True
+                        job.stdout_lines.append(
+                            f"[execution_manager] Process crashed: "
+                            f"{env_check.describe_fault(return_code)} "
+                            f"(exit code {return_code})"
+                        )
+                        job.stdout_lines.append(
+                            "[execution_manager] This is a native library crash, "
+                            "not a model error. It almost always means the installed "
+                            "'polars' build does not run on this computer's CPU. "
+                            "FlexTool can re-install the compatible build — see the "
+                            "prompt at the next start, or run 'Update FlexTool'."
+                        )
+                    else:
+                        job.stdout_lines.append(
+                            f"[execution_manager] Process exited with code {return_code}"
+                        )
                 self._prune_old_jobs(job)
             if peak_to_record is not None:
                 self._record_scenario_peak(*peak_to_record)

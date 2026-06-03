@@ -235,6 +235,11 @@ class GlobalSettings:
     code_font_size_pt: int = 0    # TkFixedFont (logs, code views); 0 = auto = body+2
     # Check PyPI / the git remote for a newer version once at startup.
     check_updates_on_startup: bool = True
+    # env_fingerprint() of the environment for which the polars native
+    # self-check last passed.  Empty / mismatched => the check re-runs once
+    # at startup (so a fresh install or a swapped polars build is verified
+    # exactly once).  See flextool.env_check.
+    polars_check_fingerprint: str = ""
 
 
 @dataclass
