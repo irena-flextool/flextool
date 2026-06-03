@@ -67,6 +67,20 @@
         ],
         [
             "settings",
+            "output-results-db-url",
+            null,
+            null,
+            null
+        ],
+        [
+            "settings",
+            "output-spinedb",
+            false,
+            null,
+            null
+        ],
+        [
+            "settings",
             "plot_duration",
             null,
             null,
@@ -120,6 +134,18 @@
         [
             "settings",
             "output-plot",
+            "bool",
+            0
+        ],
+        [
+            "settings",
+            "output-results-db-url",
+            "str",
+            0
+        ],
+        [
+            "settings",
+            "output-spinedb",
             "bool",
             0
         ],
@@ -183,6 +209,13 @@
             "default",
             "output-plot",
             true,
+            "default"
+        ],
+        [
+            "settings",
+            "default",
+            "output-spinedb",
+            false,
             "default"
         ],
         [
