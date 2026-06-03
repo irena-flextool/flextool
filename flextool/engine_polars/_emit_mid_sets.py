@@ -9,7 +9,7 @@ Families:
 * ``node_type_sets.py``             —  77 LOC — 4 partitions of node by p_node_type
 * ``union_sets.py``                 —  69 LOC — 2 ordered-union 2-tuples
 * ``dc_angle_bounds.py``            —  52 LOC — per-DC-node angle bounds
-* ``reserve_method_partitions.py``  —  73 LOC — reserve.csv + 3 method partitions
+* ``reserve_method_partitions.py``  —  73 LOC — 3 method partitions
 * ``nonsync_sets.py``               — 153 LOC — process__sink_nonSync + group_inside_group_nonSync
 * ``method_with_fallback_sets.py``  — 194 LOC — 5 per-entity fallback method tables
 * ``invest_total_sets.py``          — 113 LOC — 5 invest/divest-total filters + ci_ladder_cumulative
@@ -205,16 +205,6 @@ _RESERVE_N_1_METHODS: frozenset[str] = frozenset((
 _RESERVE_QUAD_COLS = ["reserve", "upDown", "group", "method"]
 
 
-def derive_reserve_universe(input_dir: Path,
-                             *, provider: "object | None" = None,
-                             ) -> pl.DataFrame:
-    """Single-column ``reserve`` projected from the quad CSV."""
-    quad = _read_csv(input_dir / "reserve__upDown__group__method.csv",
-                     _RESERVE_QUAD_COLS, provider=provider)
-    quad = _drop_blank_rows(quad, _RESERVE_QUAD_COLS)
-    return quad.select("reserve").unique(maintain_order=True)
-
-
 def derive_reserve_method_partition(
     input_dir: Path, allowed: frozenset[str],
     *, provider: "object | None" = None,
@@ -233,8 +223,6 @@ def emit_reserve_partitions(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
     """Emit ``reserve_partitions`` to the Provider."""
     del solve_data_dir
-    _emit(provider, "solve_data/reserve.csv",
-          derive_reserve_universe(input_dir, provider=provider))
     for fname, allowed in (
         ("reserve__upDown__group__method_timeseries.csv", _RESERVE_TIMESERIES_METHODS),
         ("reserve__upDown__group__method_dynamic.csv",    _RESERVE_DYNAMIC_METHODS),
