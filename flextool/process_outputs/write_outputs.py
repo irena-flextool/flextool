@@ -99,29 +99,32 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     flushes these to disk on the default cascade path, so there is no
     on-disk fallback (matching the B6 ``_emit_arc_unions`` precedent).
 
-    ``provider`` contract: the production CLI (and every test harness
-    that re-solves) wires the live Provider here.  A ``None`` *provider*
-    means the wiring was lost and the group-flow output families
-    (``from_unitGroup`` / ``from_connectionGroup`` / …) would silently
-    disappear — so we emit a loud warning naming the expectation and
-    leave the sets empty rather than crash.  (A hard raise was declined
-    because the experimental non-production ``run_single_solve_from_db``
-    fast path legitimately carries no Provider and exercises this with no
-    group output.)  When the Provider IS present but a model genuinely
-    has no groups, the keyed frames are empty → the sets stay empty
-    without any warning, which is the correct tolerant behaviour.
+    ``provider`` contract (STRICT): on an in-memory output path a
+    Provider MUST exist.  This function is only reached on the in-memory
+    read path (the disk/parquet re-plot path short-circuits earlier), so
+    a ``None`` *provider* is a wiring bug — it would silently drop the
+    group-flow output families (``from_unitGroup`` /
+    ``from_connectionGroup`` / ``from_unit`` / ``to_connectionGroup``)
+    from ``group_flows__dt.csv``.  We therefore RAISE rather than warn-
+    and-continue.
+
+    Emptiness is legitimate, but it must be *stated* by a Provider that
+    yields nothing for the group keys, NOT by a missing Provider.  An
+    in-memory caller with no groups must pass an explicit empty
+    ``FlexDataProvider`` — the keyed frames are then absent → the sets
+    stay empty without any error, which is the correct tolerant
+    behaviour for a genuinely group-less model.
     """
     if provider is None:
-        logging.warning(
+        raise ValueError(
             "_backfill_group_indicator_sets: no flex_data_provider was "
-            "wired through write_outputs; the nodeGroupDispatch / "
-            "*Indicators sets cannot be populated and the group-flow "
-            "output families (from_unitGroup / from_connectionGroup / "
-            "from_unit / to_connectionGroup) will be MISSING from "
-            "group_flows__dt.csv.  Production callers must forward "
-            "last_step.flex_data_provider."
+            "wired through write_outputs on an in-memory output path.  On "
+            "an in-memory path a Provider is REQUIRED: empty group sets "
+            "must be stated by an (empty) FlexDataProvider, not by a "
+            "missing one.  Production callers must forward "
+            "last_step.flex_data_provider; an in-memory run with no groups "
+            "must pass an explicit empty FlexDataProvider()."
         )
-        return
     for attr, fname in (
         ('nodeGroupDispatch', 'nodeGroupDispatch.csv'),
         ('nodeGroupIndicators', 'nodeGroupIndicators.csv'),

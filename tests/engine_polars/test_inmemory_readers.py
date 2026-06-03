@@ -360,6 +360,7 @@ def test_write_outputs_fast_path_emits_all_dirs(tmp_path: Path, scenario_workdir
             flex_data=step.flex_data,
             solution=step.solution,
             solve_name=step.solve_name,
+            flex_data_provider=step.flex_data_provider,
         )
 
     csv_dir = work / "output_csv" / "base"
@@ -404,6 +405,7 @@ def test_unit_capacity_period_table_includes_invested(tmp_path: Path, scenario_w
             flex_data=step.flex_data,
             solution=step.solution,
             solve_name=step.solve_name,
+            flex_data_provider=step.flex_data_provider,
         )
 
     csv = work / "output_csv" / "ncwbic" / "unit_capacity__d.csv"
@@ -458,6 +460,7 @@ def test_unit_capacity_period_table_non_empty(tmp_path: Path, scenario_workdir)-
             flex_data=step.flex_data,
             solution=step.solution,
             solve_name=step.solve_name,
+            flex_data_provider=step.flex_data_provider,
         )
 
     csv = work / "output_csv" / "coal_wind_inertia" / "unit_capacity__d.csv"

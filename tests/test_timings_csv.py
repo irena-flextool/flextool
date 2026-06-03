@@ -24,6 +24,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from flextool.engine_polars import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402  # imports after sys.path manipulation above
 
 
@@ -76,6 +77,10 @@ def _run_one(scenario: str, test_db_url: str, test_solver_config_dir: Path,
             flex_data=last_step.flex_data,
             solution=last_step.solution,
             solve_name=last_step.solve_name,
+            # In-memory path requires a Provider; this test asserts on
+            # timings.csv, not group flows, so an empty Provider keeps
+            # behaviour identical while satisfying the contract.
+            flex_data_provider=FlexDataProvider(),
         )
     except Exception:
         pass

@@ -51,6 +51,7 @@ import polars as pl
 from polar_high import Param, Problem
 
 from flextool.engine_polars import build_flextool, run_chain_from_db
+from flextool.engine_polars._flex_data_provider import FlexDataProvider
 from flextool.engine_polars.input import FlexData
 from flextool.process_outputs.write_outputs import write_outputs
 
@@ -134,6 +135,10 @@ def cascade_baseline(
             (s.solve_name, s.flex_data, s.effective_solution)
             for s in steps.values()
         ],
+        # In-memory path requires a Provider; this baseline harness reads
+        # per-category costs, not group flows, so an empty Provider keeps
+        # behaviour identical while satisfying the contract.
+        flex_data_provider=FlexDataProvider(),
     )
 
     # Manual baseline obj for the apples-to-apples comparison below.

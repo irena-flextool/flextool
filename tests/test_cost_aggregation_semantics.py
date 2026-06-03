@@ -70,6 +70,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from flextool.engine_polars import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402  # imports after sys.path manipulation above
 
 
@@ -134,6 +135,10 @@ def _run_scenario(
             (s.solve_name, s.flex_data, s.effective_solution)
             for s in steps.values()
         ],
+        # In-memory path requires a Provider; this harness asserts on cost
+        # aggregation, not group flows, so an empty Provider keeps its
+        # output (empty group sets) identical while satisfying the contract.
+        flex_data_provider=FlexDataProvider(),
     )
     return workdir / "output_csv" / scenario
 

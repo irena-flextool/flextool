@@ -3880,6 +3880,14 @@ def run_single_solve_from_db(
     if sol is not None and unscaled_obj is not None:
         sol.obj = unscaled_obj
 
+    # Attach an explicit empty FlexDataProvider so the in-memory output
+    # path's STRICT provider contract is satisfied
+    # (``_backfill_group_indicator_sets`` now RAISES on ``provider=None``).
+    # This fast path carries no group output, so an empty provider yields
+    # empty group sets — behaviour-preserving — while *stating* that
+    # emptiness rather than leaving the provider missing.
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+
     return OrchestrationStep(
         solve_name=scenario_name,
         solution=sol,
@@ -3888,6 +3896,7 @@ def run_single_solve_from_db(
         optimal=bool(getattr(sol, "optimal", False)) if sol is not None else None,
         warm_used=False,
         flex_data=flex_data,
+        flex_data_provider=FlexDataProvider(),
     )
 
 

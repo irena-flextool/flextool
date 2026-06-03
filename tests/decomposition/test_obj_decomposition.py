@@ -35,6 +35,7 @@ from test_scenarios import (  # noqa: E402
 )
 
 from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
 
 from tests.decomposition._helpers import (  # noqa: E402
@@ -95,6 +96,10 @@ def test_obj_decomposition(
             (s.solve_name, s.flex_data, s.effective_solution)
             for s in steps.values()
         ],
+        # In-memory path requires a Provider; this test decomposes the
+        # objective, not group flows, so an empty Provider keeps behaviour
+        # identical while satisfying the contract.
+        flex_data_provider=FlexDataProvider(),
     )
 
     out_dir = workdir / "output_csv" / scenario

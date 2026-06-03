@@ -68,6 +68,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
 
 
@@ -127,6 +128,9 @@ def test_process_online_dt_has_uc_unit_columns(
                     (s.solve_name, s.flex_data, s.effective_solution)
                     for s in steps.values()
                 ],
+                # In-memory path requires a Provider; this harness has no
+                # group output, so an empty Provider keeps behaviour identical.
+                flex_data_provider=FlexDataProvider(),
             )
 
             # Belt-and-braces — verify the actual output file carries

@@ -241,6 +241,30 @@ def test_cli_group_flows_columns_present(group_scenario_db, tmp_path) -> None:
     )
 
 
+def test_backfill_group_indicator_sets_requires_provider(tmp_path) -> None:
+    """STRICT contract lock: on the in-memory output path a Provider is
+    REQUIRED.  ``_backfill_group_indicator_sets`` must RAISE on
+    ``provider=None`` (a wiring bug), while an explicit *empty* Provider
+    (a group-less in-memory run) must be tolerated → no raise, empty sets.
+    """
+    from types import SimpleNamespace
+
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.process_outputs.write_outputs import (
+        _backfill_group_indicator_sets,
+    )
+
+    # Missing Provider → wiring bug → raise.
+    s = SimpleNamespace()
+    with pytest.raises(ValueError, match="Provider is REQUIRED"):
+        _backfill_group_indicator_sets(s, str(tmp_path), provider=None)
+
+    # Empty Provider (no group keys) → tolerated, sets stay untouched.
+    s2 = SimpleNamespace()
+    _backfill_group_indicator_sets(s2, str(tmp_path), provider=FlexDataProvider())
+    assert not hasattr(s2, "nodeGroupDispatch")
+
+
 # ---------------------------------------------------------------------------
 # --decomposition lagrangian — CLI dispatch onto the native coordinator
 # ---------------------------------------------------------------------------
