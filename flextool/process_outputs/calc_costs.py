@@ -162,6 +162,9 @@ def compute_costs(par, s, v, r) -> None:
     # rolling / nested solves where prior-solve v_invest has aged into
     # current-solve existing capacity.
     r.cost_entity_fixed_pre_existing = (par.entity_all_existing * par.entity_fixed_cost).mul(par.inflation_factor_operations_yearly, axis=0)
+    # entity_lifetime_fixed_cost* are densified over _entity_universe and
+    # solve-keyed (concat-unioned), so they cover every v.invest/v.divest
+    # column — direct indexing is safe.
     r.cost_entity_fixed_invested = (v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]))
     r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
 

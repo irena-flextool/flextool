@@ -1454,12 +1454,33 @@ def _build_entity_unitsize_series(
 ) -> pd.Series:
     """Per-entity unitsize Series indexed by entity name.
 
-    Combines ``p_unitsize`` (process side) and ``p_state_unitsize``
-    (node side).  Defaults to ``1000.0`` for any entity in the
-    nodeBalance / process_source_sink universe that doesn't appear
-    in either Param — matching the slow path's preprocessing default
-    at ``preprocessing/entity_period_calc_params.py:191``.
+    Preferred source — the solve-invariant
+    ``flex_data.p_all_entity_unitsize`` carrier (a Param ``(e,)`` over ALL
+    entities: unit ∪ node ∪ connection) built input-side with the cascade
+    ``virtual_unitsize OR existing OR 1000.0``.  This covers every entity
+    in the model, including invest candidates absent from the LAST solve's
+    pss/invest sets — which the pss-filtered ``p_unitsize`` /
+    ``p_state_unitsize`` reconstruction below misses, causing a ``KeyError``
+    in ``calc_costs`` when ``v.invest`` (the cross-solve column union) is
+    indexed against it.
+
+    Fallback (CSV/fixture paths lacking the carrier) — combines the
+    per-solve ``p_unitsize`` (process side) and ``p_state_unitsize`` (node
+    side), defaulting to ``1000.0`` for any entity in the nodeBalance /
+    process_source_sink / invest universe that doesn't appear in either
+    Param, matching the slow path's preprocessing default at
+    ``preprocessing/entity_period_calc_params.py:191``.
     """
+    _carrier = getattr(flex_data, "p_all_entity_unitsize", None)
+    if _carrier is not None and getattr(_carrier, "frame", None) is not None \
+            and _carrier.frame.height > 0:
+        df = _carrier.frame.to_pandas()
+        s = df.set_index("e")["value"].astype(float)
+        s = s[~s.index.duplicated(keep="first")]
+        s.index.name = "entity"
+        s.name = "entity"
+        return s
+
     parts: list[pd.Series] = []
     if (flex_data.p_unitsize is not None
             and flex_data.p_unitsize.frame.height > 0):
@@ -1717,5 +1738,14 @@ def read_parameters_multi(
         else:
             # Static / per-entity / not-solve-keyed: invariant across
             # sub-solves; pick the last step's value.
+            #
+            # ``entity_unitsize`` is one such attribute.  It is now sourced
+            # from the input-side invariant ``input/p_all_entity_unitsize``
+            # (the ``flex_data.p_all_entity_unitsize`` carrier), which covers
+            # ALL entities and is identical for every step — so the last-step
+            # pick is sound and, unlike the old pss-filtered reconstruction,
+            # it includes invest candidates absent from the final sub-solve.
+            # No union/concat is needed (and would be wrong: there is no
+            # ``solve`` level to disambiguate rows).
             setattr(out, attr, getattr(last_ns, attr))
     return out

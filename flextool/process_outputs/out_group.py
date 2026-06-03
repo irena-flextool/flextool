@@ -82,6 +82,8 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
         # 5. Upward slack (MWh/step)
         if balance_nodes and not v.q_state_up.empty:
+            # node_capacity_for_scaling is complete over nodeBalance (⊇ q_state
+            # nodes), so direct column indexing is safe.
             upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).sum(axis=1).clip(lower=0)
             upward_slack = upward_slack.mul(step_dur)
         else:

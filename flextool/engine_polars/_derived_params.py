@@ -36,6 +36,7 @@ solve, mirroring the established hand-off used by the CSV path.
 """
 from __future__ import annotations
 
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -118,6 +119,16 @@ def _provider_read(provider, path: "Path | str") -> "pl.DataFrame":
 # ContextVar) when this is ``None``, so substrate sites pick up
 # activation set by ``load_flextool`` automatically.
 _enums: "dict | None" = None
+
+# Memoization caches for the solve-INVARIANT unitsize cascades.  Both
+# ``_entity_unitsize_lf`` and ``_node_unitsize_lf`` compute a pure
+# coalesce (``virtual_unitsize OR existing OR 1000``) purely from
+# ``source``; the whole-model ``SpineDbReader`` is reused across all
+# rolls, so caching the collected cascade keyed on the source object
+# collapses N per-roll recomputes to one.  WeakKeyDictionary so the
+# entry is dropped when the source is garbage-collected.
+_ENTITY_UNITSIZE_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_NODE_UNITSIZE_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 if TYPE_CHECKING:
     from flextool.engine_polars._block_layout import BlockLayout
@@ -2743,13 +2754,29 @@ def apply_derived_b(
     # ─── §F.1b p_all_entity_unitsize  (scaling family — all entities) ────
     # Unfiltered entity unitsize covering processes + connections + nodes.
     # Used by the scaling analyzer (scaling.py:analyze_solve) to compute the
-    # full entity-unitsize spread including node entries.
+    # full entity-unitsize spread including node entries, and by the output
+    # reader (``read_parameters._build_entity_unitsize_series``) as the
+    # complete entity→unitsize carrier.
     # Note: _entity_unitsize_lf returns all entities (unit ∪ node ∪ connection)
     # with the cascade: virtual_unitsize OR existing OR 1000.0.
-    _all_us_lf = _entity_unitsize_lf(source)
-    _all_us_df = _all_us_lf.rename({"us": "value"}).collect()
+    #
+    # This value is solve-invariant (computed against the whole-model,
+    # unfiltered-scenario source).  In the DB cascade path it is computed
+    # ONCE before the per-solve loop and seeded into the Provider under
+    # ``input/p_all_entity_unitsize`` (see ``_orchestration._drive_cascade``),
+    # so here we read it from the Provider rather than recompute it per roll.
+    # The recompute is kept as the fallback for the CSV/fixture path and any
+    # path that lacks the seeded Provider.
+    from polar_high import Param as _Param
+    _all_us_df = None
+    if provider is not None:
+        _seeded = provider.get("input/p_all_entity_unitsize")
+        if _seeded is not None and _seeded.height > 0:
+            _all_us_df = _seeded
+    if _all_us_df is None:
+        _all_us_lf = _entity_unitsize_lf(source)
+        _all_us_df = _all_us_lf.rename({"us": "value"}).collect()
     if _all_us_df.height > 0:
-        from polar_high import Param as _Param
         flex_data.p_all_entity_unitsize = _Param(("e",), _all_us_df)
 
     # ─── §F.4 p_process_source_conversion_flow_coeff /
@@ -3725,7 +3752,17 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     as the cascade input (matches flextool's flat ``p_unit/p_node`` Map
     -agnostic read; the cascade only checks "non-zero", and the per-
     period MAX is non-zero iff any period is).
+
+    Solve-invariant: the cascade depends only on ``source`` (entities +
+    per-entity params), so the collected frame is memoized per source
+    object (see ``_ENTITY_UNITSIZE_CACHE``).
     """
+    try:
+        cached = _ENTITY_UNITSIZE_CACHE.get(source)
+    except TypeError:
+        cached = None
+    if cached is not None:
+        return cached.lazy()
     base_parts: list[pl.LazyFrame] = []
     us_parts: list[pl.LazyFrame] = []
     ex_parts: list[pl.LazyFrame] = []
@@ -3768,13 +3805,18 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
         base = base.join(ex_lf, on="e", how="left")
     else:
         base = base.with_columns(ex=pl.lit(None, dtype=pl.Float64))
-    return base.with_columns(
+    result = base.with_columns(
         us=pl.when(pl.col("vu").fill_null(0.0) != 0.0)
               .then(pl.col("vu"))
               .when(pl.col("ex").fill_null(0.0) != 0.0)
               .then(pl.col("ex"))
               .otherwise(pl.lit(1000.0))
-    ).select("e", "us")
+    ).select("e", "us").collect()
+    try:
+        _ENTITY_UNITSIZE_CACHE[source] = result
+    except TypeError:
+        pass
+    return result.lazy()
 
 
 def _entity_class_membership(source: "InputSource") -> dict[str, set[str]]:
@@ -7015,7 +7057,17 @@ def _node_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     equivalent to a row with the schema default value.
 
     Returns a lazy frame with ``[n, us]`` for every node entity.
+
+    Solve-invariant: the cascade depends only on ``source`` (node
+    entities + per-node params), so the collected frame is memoized per
+    source object (see ``_NODE_UNITSIZE_CACHE``).
     """
+    try:
+        cached = _NODE_UNITSIZE_CACHE.get(source)
+    except TypeError:
+        cached = None
+    if cached is not None:
+        return cached.lazy()
     us = _try_param_explicit(source, "node", "virtual_unitsize")
     ex = _try_param_explicit(source, "node", "existing")
     nodes = _try_entities(source, "node")
@@ -7060,14 +7112,18 @@ def _node_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     # Apply formula: virtual_unitsize (explicit non-zero)
     #                OR existing (explicit non-zero)
     #                OR 1000.
-    base = base.with_columns(
+    result = base.with_columns(
         us=pl.when(pl.col("vu").fill_null(0.0) != 0.0)
              .then(pl.col("vu"))
              .when(pl.col("ex").fill_null(0.0) != 0.0)
              .then(pl.col("ex"))
              .otherwise(pl.lit(1000.0))
-    ).select("n", "us")
-    return base
+    ).select("n", "us").collect()
+    try:
+        _NODE_UNITSIZE_CACHE[source] = result
+    except TypeError:
+        pass
+    return result.lazy()
 
 
 def p_state_upper_from_source(source: "InputSource",

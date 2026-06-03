@@ -1741,6 +1741,37 @@ def _drive_cascade(
                 user_label="Inputs prepared",
             )
 
+        # ``input/p_all_entity_unitsize`` — solve-invariant entity-unitsize
+        # cascade (virtual_unitsize OR existing OR 1000.0) over ALL entities
+        # (unit ∪ node ∪ connection).  Computed ONCE here against the
+        # whole-model (unfiltered-scenario) ``cascade_db_reader`` and seeded
+        # into the cascade-input Provider, which every per-sub-solve Provider
+        # copies frame-by-frame (see ``_native_run_model`` seed loop).  This
+        # (a) avoids the per-roll recompute in ``apply_derived_b`` and
+        # (b) gives the output reader a complete carrier covering every
+        # entity — including invest candidates absent from the LAST solve's
+        # pss/invest sets — so ``read_parameters`` no longer KeyErrors on
+        # such entities.  ``_cip`` is the same Provider object forwarded onto
+        # ``runner.state.cascade_input_provider`` above and read back by the
+        # cascade as ``cascade_input_provider``.
+        if cascade_db_reader is not None and _cip is not None:
+            try:
+                from flextool.engine_polars._derived_params import (
+                    _entity_unitsize_lf,
+                )
+                _all_us_df = (
+                    _entity_unitsize_lf(cascade_db_reader)
+                    .rename({"us": "value"})
+                    .collect()
+                )
+                if _all_us_df.height > 0:
+                    _cip.put("input/p_all_entity_unitsize", _all_us_df)
+            except Exception:  # noqa: BLE001
+                # Non-fatal: the per-solve ``apply_derived_b`` fallback
+                # recomputes ``p_all_entity_unitsize`` from ``source`` and
+                # the output reader falls back to its reconstruction path.
+                pass
+
     class _PolarHighCascadeSolver(SolverRunner):
         def __init__(self, runner_state):
             super().__init__(runner_state)

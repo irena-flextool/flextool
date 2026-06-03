@@ -36,6 +36,8 @@ def node_summary(par, s, v, r, debug):
 
     # Upward slack
     upward_slack_data = v.q_state_up.loc[:, v.q_state_up.columns.get_level_values('node').isin(balanced_nodes.intersection(nodes))].clip(lower=0)
+    # node_capacity_for_scaling is complete over nodeBalance (⊇ q_state nodes),
+    # so direct column indexing is safe.
     upward_slack_data = upward_slack_data.mul(par.node_capacity_for_scaling[upward_slack_data.columns], axis=1)
     upward_slack_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(upward_slack_data.columns.get_level_values('node'))
