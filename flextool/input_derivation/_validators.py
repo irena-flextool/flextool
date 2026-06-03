@@ -245,9 +245,14 @@ def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
     balance.  If it nonetheless has an ``invest_method`` it still becomes a
     (degenerate, always-zero) investment variable in the LP, surfacing as a
     ``v_invest`` column the output post-processor has to tolerate (see
-    ``read_parameters._entity_universe``).  Almost always this is a data-
-    entry error — the connection was given parameters but never wired to
-    its nodes.
+    ``read_parameters._entity_universe``).  ``db`` here is already
+    scenario-filtered, so this fires either because the connection was
+    never wired to its nodes, or because one of its endpoint nodes is not
+    active in the current scenario (so the ``connection__node__node`` row
+    is filtered out while the connection itself survives).  We cannot tell
+    the two apart from the filtered set — the connection→node mapping
+    lived only in the now-absent ``connection__node__node`` row — so the
+    warning names both possibilities and tells the user to check the data.
 
     Only a warning is emitted: the solve proceeds, treating the connection
     as a no-op.
@@ -264,8 +269,7 @@ def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
         name = byname[0]
         if name not in connected:
             logger.warning(
-                "Connection '%s' has no connection__node__node members — it "
-                "cannot transfer between nodes and will be ignored (any "
-                "invest/transfer parameters have no effect).",
-                name,
+                "Connection '%s' excluded from this scenario: missing one/both endpoint "
+                "nodes or its connection__node__node — '%s' not included. Check your data!",
+                name, name,
             )
