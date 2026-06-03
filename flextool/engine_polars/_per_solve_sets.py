@@ -16,14 +16,12 @@ emits to ``solve_data/*.csv``.  Specifically:
   year fraction, restricted to dt_complete.
 
 The authoritative caller is :func:`derive_per_solve_aggregates`
-which returns a typed :class:`PerSolveAggregates` dataclass.  Two
-downstream consumers benefit:
+which returns a typed :class:`PerSolveAggregates` dataclass.  A
+downstream consumer benefits:
 
-1. :mod:`flextool.engine_polars._inflow_scaling` — used to drop the
-   workdir-CSV reads in ``_timeline_aggregates`` and ``_dt_complete_lf``.
-2. :mod:`flextool.engine_polars._derived_params` —
-   ``_dt_period_active_steps_from_workdir`` can fall through to native
-   derivation when the workdir CSVs are absent.
+* :mod:`flextool.engine_polars._derived_params` —
+  ``_dt_period_active_steps_from_workdir`` can fall through to native
+  derivation when the workdir CSVs are absent.
 
 When a fixture has a ``solve.period_timeset`` filter for the active
 solve in the source DB, the helpers no longer need ``solve_data/``
@@ -266,7 +264,7 @@ def derive_per_solve_aggregates(
     The derivation is lazy until each field's eager ``.collect()`` —
     five collects total per call.  Caller is expected to materialise
     once per per-solve iteration and reuse across the override chain
-    (``_inflow_scaling`` + ``_dt_period_active_steps``).
+    (``_dt_period_active_steps``).
     """
     pt_lf = _period_timeset_lf(source, active_solve)
     if pt_lf is None:

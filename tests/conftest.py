@@ -236,21 +236,6 @@ def h2_trade_parity_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="session")
-def multi_ts_branch1_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
-    """``multi_ts_branch1`` fixture DB.
-
-    Built from ``tests/fixtures/multi_ts_branch1.json``.  Defensive
-    migration as in :func:`stochastic_db_url`.
-    """
-    from flextool.update_flextool.db_migration import migrate_database
-
-    db_path = tmp_path_factory.mktemp("db_mtb1") / "multi_ts_branch1.sqlite"
-    url = json_to_db(FIXTURES_DIR / "multi_ts_branch1.json", db_path)
-    migrate_database(url)
-    return url
-
-
-@pytest.fixture(scope="session")
 def stochastics_pbt_inflow_db_url(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> str:
@@ -313,7 +298,6 @@ _DB_FIXTURE_NAMES: dict[str, str] = {
     "stochastic": "stochastic_db_url",
     "lh2": "lh2_db_url",
     "h2_trade_parity": "h2_trade_parity_db_url",
-    "multi_ts_branch1": "multi_ts_branch1_db_url",
     "stochastics_pbt_inflow": "stochastics_pbt_inflow_db_url",
     "branch2_parent_period": "branch2_parent_period_db_url",
     "case14": "case14_db_url",
@@ -351,7 +335,6 @@ def scenario_workdir(
     stochastic_db_url,
     lh2_db_url,
     h2_trade_parity_db_url,
-    multi_ts_branch1_db_url,
     stochastics_pbt_inflow_db_url,
     branch2_parent_period_db_url,
     case14_db_url,
@@ -386,7 +369,7 @@ def scenario_workdir(
     Valid values are the keys of :data:`_DB_FIXTURE_NAMES` — currently
     ``"main"`` (tests.json), ``"stochastic"`` (stochastics.json),
     ``"lh2"`` (lh2_three_region.json), ``"h2_trade_parity"``,
-    ``"multi_ts_branch1"``, ``"stochastics_pbt_inflow"``,
+    ``"stochastics_pbt_inflow"``,
     ``"branch2_parent_period"``, ``"case14"``.
 
     Tests use it like:
@@ -402,7 +385,6 @@ def scenario_workdir(
         "stochastic": stochastic_db_url,
         "lh2": lh2_db_url,
         "h2_trade_parity": h2_trade_parity_db_url,
-        "multi_ts_branch1": multi_ts_branch1_db_url,
         "stochastics_pbt_inflow": stochastics_pbt_inflow_db_url,
         "branch2_parent_period": branch2_parent_period_db_url,
         "case14": case14_db_url,
