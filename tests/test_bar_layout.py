@@ -52,8 +52,8 @@ def _make_multiindex_df(
 def test_single_subplot_no_layout() -> None:
     """Simple DataFrame, no expand_axis / stack / grouped_bar levels.
 
-    Expects bar_label_width > 0, group_label_width == 0,
-    total_label_width == bar_label_width, and legend_width == 0.
+    Expects bar_label_width > 0, total_label_width == bar_label_width,
+    and legend_width == 0.
     """
     df = pd.DataFrame(
         np.random.default_rng(0).random((3, 2)),
@@ -78,7 +78,6 @@ def test_single_subplot_no_layout() -> None:
 
     assert isinstance(layout, BarLayoutParams)
     assert layout.bar_label_width > 0
-    assert layout.group_label_width == 0
     assert layout.total_label_width == layout.bar_label_width
     assert layout.legend_width == 0
 
@@ -133,9 +132,10 @@ def test_bar_label_width_scales_with_longest_label() -> None:
     assert layout_long.bar_label_width > layout_short.bar_label_width
 
 
-def test_group_label_width_with_expand_axis() -> None:
-    """When expand_axis_levels is set, group_label_width should be positive
-    and total_label_width should equal bar_label_width + group_label_width.
+def test_total_label_width_with_expand_axis() -> None:
+    """With expand_axis_levels set, the group is folded into the bar tick
+    label, so total_label_width equals bar_label_width (no separate group
+    column) and the bar label still reserves positive width.
     """
     index = pd.MultiIndex.from_tuples(
         [("scA", "n1"), ("scA", "n2"), ("scB", "n1"), ("scB", "n2")],
@@ -163,8 +163,8 @@ def test_group_label_width_with_expand_axis() -> None:
         base_bar_length=4.0,
     )
 
-    assert layout.group_label_width > 0
-    assert layout.total_label_width == layout.bar_label_width + layout.group_label_width
+    assert layout.bar_label_width > 0
+    assert layout.total_label_width == layout.bar_label_width
 
 
 def test_legend_width_with_stacked_bars() -> None:
@@ -281,11 +281,10 @@ def test_layout_params_consistent_across_batches() -> None:
 
     # Verify that key measurements are positive
     assert layout_all.bar_label_width > 0
-    assert layout_all.group_label_width > 0
     assert layout_all.total_label_width > 0
 
-    # Verify internal consistency
-    assert layout_all.total_label_width == layout_all.bar_label_width + layout_all.group_label_width
+    # Verify internal consistency (group folded into the bar tick label)
+    assert layout_all.total_label_width == layout_all.bar_label_width
 
     # Compute layout separately for each batch and verify they match
     # (since all subplots share the same DataFrame structure, the label
@@ -294,8 +293,6 @@ def test_layout_params_consistent_across_batches() -> None:
     layout_b2 = _compute_bar_layout(effective_plots=batch_2, **common_kwargs)
 
     assert layout_b1.bar_label_width == layout_b2.bar_label_width
-    assert layout_b1.group_label_width == layout_b2.group_label_width
     assert layout_b1.total_label_width == layout_b2.total_label_width
     assert layout_b1.bar_label_width == layout_all.bar_label_width
-    assert layout_b1.group_label_width == layout_all.group_label_width
     assert layout_b1.total_label_width == layout_all.total_label_width

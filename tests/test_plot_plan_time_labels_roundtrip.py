@@ -181,7 +181,6 @@ class TestBarChartNoTimeFields:
             layout_type="bar",
             layout_params={
                 "bar_label_width": 1.0,
-                "group_label_width": 0.0,
                 "total_label_width": 1.0,
                 "legend_width": 2.0,
                 "legend_height": 1.0,

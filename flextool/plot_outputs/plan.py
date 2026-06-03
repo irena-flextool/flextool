@@ -1135,7 +1135,6 @@ def _compute_bar_plan(
     # Serialize layout
     layout_params = {
         'bar_label_width': layout.bar_label_width,
-        'group_label_width': layout.group_label_width,
         'total_label_width': layout.total_label_width,
         'legend_width': layout.legend_width,
         'legend_height': layout.legend_height,

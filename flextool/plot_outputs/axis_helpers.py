@@ -67,15 +67,15 @@ YLABEL_HALF_THICKNESS_IN = 0.07
 YLABEL_TICK_WIDTH_SAFETY = 1.2
 
 
-def _ylabel_axes_x(tick_width_in: float, group_label_width_in: float,
+def _ylabel_axes_x(tick_width_in: float,
                    axes_width_in: float, left_margin_in: float | None = None) -> float:
     """Axes-fraction x for the rotated horizontal-bar ylabel via set_label_coords.
 
     Returns a negative axes-width fraction placing the ylabel a controlled gap
-    to the LEFT of the tick-label region (and, when expand-axis group labels
-    occupy space, to the left of those too). matplotlib's auto-positioning of
-    the ylabel is environment-dependent (version / font / canvas), so we pin
-    the position explicitly instead of relying on labelpad.
+    to the LEFT of the tick-label region (the expand-axis group is folded into
+    that tick label). matplotlib's auto-positioning of the ylabel is
+    environment-dependent (version / font / canvas), so we pin the position
+    explicitly instead of relying on labelpad.
 
     ``left_margin_in`` is the inches reserved between the figure's left edge
     and the axes' left spine (tick labels + ylabel reservation). When given,
@@ -89,7 +89,6 @@ def _ylabel_axes_x(tick_width_in: float, group_label_width_in: float,
     """
     offset_in = (
         tick_width_in * YLABEL_TICK_WIDTH_SAFETY
-        + group_label_width_in
         + YLABEL_TICK_GAP_IN
         + YLABEL_HALF_THICKNESS_IN
     )

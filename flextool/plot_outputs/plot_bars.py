@@ -195,7 +195,8 @@ def _compute_bar_layout(
     bar_label_width = _bar_label_width_inches(
         effective_plots, expand_axis_levels, expand_axis_level_names
     )
-    group_label_width = 0.0  # group is now folded into the tick label
+    # The expand-axis group is folded into the bar tick label, so there is no
+    # separate group-label column; the total reserved width is the bar label.
     total_label_width = bar_label_width
 
     # ── legend width and height (max across ALL subplots) ──
@@ -305,7 +306,6 @@ def _compute_bar_layout(
 
     return BarLayoutParams(
         bar_label_width=bar_label_width,
-        group_label_width=group_label_width,
         total_label_width=total_label_width,
         legend_width=legend_width,
         legend_height=legend_height,
@@ -1012,7 +1012,6 @@ def _build_bar_figure(
         # environment-dependent auto-positioning. For VERTICAL bars the ylabel
         # is the value axis; keep the existing labelpad behaviour unchanged.
         if bar_orientation == 'horizontal':
-            group_w = layout.group_label_width if expand_axis_levels else 0.0
             # Inches reserved between figure-left and the axes' left spine
             # (tick labels + ylabel reservation), minus LEFT_PAD which we keep
             # as figure-edge breathing room. Used to clamp the ylabel so its
@@ -1020,14 +1019,14 @@ def _build_bar_figure(
             # labels.
             left_margin_in = layout.total_label_width + left_edge_pad - LEFT_PAD
             ylabel_axes_x = _ylabel_axes_x(
-                layout.bar_label_width, group_w, layout.base_bar_length,
+                layout.bar_label_width, layout.base_bar_length,
                 left_margin_in=left_margin_in,
             )
             _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows,
                                  ylabel_axes_x=ylabel_axes_x)
         else:
             if expand_axis_levels:
-                expand_pad = (layout.group_label_width + 0.15) * 72
+                expand_pad = 0.15 * 72
             else:
                 expand_pad = 18
             _apply_subplot_label(ax, xlabel, ylabel, idx, row, col, n_rows,
