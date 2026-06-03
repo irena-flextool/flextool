@@ -14,6 +14,12 @@ _V_DROP = [
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxCumulative',
     'dual_maxInvestGroup_period', 'dual_maxInvestGroup_total', 'dual_maxInvestGroup_cumulative',
+    # Investment-floor (min-side) duals — all keep a ('solve', 'period')
+    # index (the min invest-total constraint, unlike max-total, retains its
+    # period axis), so every family drops the solve level here rather than
+    # collapsing to solve-only.
+    'dual_minInvest_period', 'dual_minInvest_total', 'dual_minCumulative',
+    'dual_minInvestGroup_period', 'dual_minInvestGroup_total', 'dual_minInvestGroup_cumulative',
     'dual_co2_max_period',
 ]
 

@@ -356,6 +356,13 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     v.dual_maxInvestGroup_period = _read("v_dual_maxInvestGroup_period", ("group",), has_time=False)
     v.dual_maxInvestGroup_total = _read("v_dual_maxInvestGroup_total", ("group",), has_time=False)
     v.dual_maxInvestGroup_cumulative = _read("v_dual_maxInvestGroup_cumulative", ("group",), has_time=False)
+    # Investment-floor (min-side) duals — mirror the max-side readers above.
+    v.dual_minInvest_period = _read("v_dual_minInvest_period", ("entity",), has_time=False)
+    v.dual_minInvest_total = _read("v_dual_minInvest_total", ("entity",), has_time=False)
+    v.dual_minCumulative = _read("v_dual_minCumulative", ("entity",), has_time=False)
+    v.dual_minInvestGroup_period = _read("v_dual_minInvestGroup_period", ("group",), has_time=False)
+    v.dual_minInvestGroup_total = _read("v_dual_minInvestGroup_total", ("group",), has_time=False)
+    v.dual_minInvestGroup_cumulative = _read("v_dual_minInvestGroup_cumulative", ("group",), has_time=False)
     v.dual_co2_max_period = _read("v_dual_co2_max_period", ("group",), has_time=False)
     v.dual_co2_max_total = _read("v_dual_co2_max_total", ("group",), has_period=False, has_time=False)
 
@@ -422,6 +429,13 @@ def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
     v.dual_maxInvestGroup_period = pd.read_csv(output_path / 'v_dual_maxInvestGroup_period.csv', index_col=[0, 1]).astype(float)
     v.dual_maxInvestGroup_total = pd.read_csv(output_path / 'v_dual_maxInvestGroup_total.csv', index_col=[0, 1]).astype(float)
     v.dual_maxInvestGroup_cumulative = pd.read_csv(output_path / 'v_dual_maxInvestGroup_cumulative.csv', index_col=[0, 1]).astype(float)
+    # Investment-floor (min-side) duals (per MW, unscaled)
+    v.dual_minInvest_period = pd.read_csv(output_path / 'v_dual_minInvest_period.csv', index_col=[0, 1]).astype(float)
+    v.dual_minInvest_total = pd.read_csv(output_path / 'v_dual_minInvest_total.csv', index_col=[0, 1]).astype(float)
+    v.dual_minCumulative = pd.read_csv(output_path / 'v_dual_minCumulative.csv', index_col=[0, 1]).astype(float)
+    v.dual_minInvestGroup_period = pd.read_csv(output_path / 'v_dual_minInvestGroup_period.csv', index_col=[0, 1]).astype(float)
+    v.dual_minInvestGroup_total = pd.read_csv(output_path / 'v_dual_minInvestGroup_total.csv', index_col=[0, 1]).astype(float)
+    v.dual_minInvestGroup_cumulative = pd.read_csv(output_path / 'v_dual_minInvestGroup_cumulative.csv', index_col=[0, 1]).astype(float)
     # CO2 emission-cap duals (raw dual is per /1000-scaled RHS; downstream * 1000 for tCO2)
     v.dual_co2_max_period = pd.read_csv(output_path / 'v_dual_co2_max_period.csv', index_col=[0, 1]).astype(float)
     v.dual_co2_max_total = pd.read_csv(output_path / 'v_dual_co2_max_total.csv', index_col=[0]).astype(float)
@@ -458,6 +472,12 @@ def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
     v.dual_maxInvestGroup_period.index.names = ['solve', 'period']
     v.dual_maxInvestGroup_total.index.names = ['solve', 'period']
     v.dual_maxInvestGroup_cumulative.index.names = ['solve', 'period']
+    v.dual_minInvest_period.index.names = ['solve', 'period']
+    v.dual_minInvest_total.index.names = ['solve', 'period']
+    v.dual_minCumulative.index.names = ['solve', 'period']
+    v.dual_minInvestGroup_period.index.names = ['solve', 'period']
+    v.dual_minInvestGroup_total.index.names = ['solve', 'period']
+    v.dual_minInvestGroup_cumulative.index.names = ['solve', 'period']
     v.dual_co2_max_period.index.names = ['solve', 'period']
     v.dual_co2_max_total.index.name = 'solve'
 
@@ -487,6 +507,12 @@ def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
     v.dual_maxInvestGroup_period.columns.name = 'group'
     v.dual_maxInvestGroup_total.columns.name = 'group'
     v.dual_maxInvestGroup_cumulative.columns.name = 'group'
+    v.dual_minInvest_period.columns.name = 'entity'
+    v.dual_minInvest_total.columns.name = 'entity'
+    v.dual_minCumulative.columns.name = 'entity'
+    v.dual_minInvestGroup_period.columns.name = 'group'
+    v.dual_minInvestGroup_total.columns.name = 'group'
+    v.dual_minInvestGroup_cumulative.columns.name = 'group'
     v.dual_co2_max_period.columns.name = 'group'
     v.dual_co2_max_total.columns.name = 'group'
 
