@@ -89,10 +89,11 @@ def investment_duals(par, s, v, r, debug):
     dual_invest_node = v.dual_invest_node.div(par.entity_unitsize[v.dual_invest_node.columns])
     results.append((dual_invest_node, 'dual_invest_node_d_e'))
 
-    # 4. Synthesized effective investment dual per entity type (per MW)
-    # Combines entity-level constraint duals (period, total, cumulative)
-    # and group-level constraint duals (expanded to member entities).
-    combined = _synthesize_invest_dual(v)
+    # 4. Synthesized effective investment dual per entity type.
+    # Complete signed marginal value (objective per MW) of one more MW of
+    # investment capacity, folding every binding regime (a/b/c).  Positive
+    # means more investment in this entity would lower the objective.
+    combined = _synthesize_invest_dual(v, par)
     if not combined.empty:
         units = [c for c in combined.columns if c in s.process_unit]
         connections = [c for c in combined.columns if c in s.process_connection]
@@ -107,66 +108,141 @@ def investment_duals(par, s, v, r, debug):
     return results
 
 
-def _synthesize_invest_dual(v) -> "pd.DataFrame":
-    """Combine all investment constraint duals into one per-entity, per-period table.
+def _synthesize_invest_dual(v, par) -> "pd.DataFrame":
+    """Complete SIGNED effective investment dual, per (entity, period).
 
-    The v_invest variable bound includes existing capacity, so it never binds when
-    an explicit investment constraint is active.  The actual dual information lives
-    in the constraint duals, which we sum here:
-      - maxInvest_entity_period  (per-entity, per-period cap)
-      - maxInvest_entity_total   (per-entity, total cap across periods)
-      - maxCumulative_capacity   (per-entity, cumulative cap)
-      - maxInvestGroup_*         (group caps, expanded to member entities)
-    All duals are in units of objective per MW.  Non-binding constraints have dual 0.
+    Returns the full marginal value of one more MW of investment capacity in
+    an entity, in objective units per MW.  Sign convention (user-confirmed):
+    POSITIVE means more investment in this entity would IMPROVE (lower) the
+    objective.
+
+    The value folds every binding investment regime (≤1 nonzero per
+    entity-period at a non-degenerate optimum).  Each source is first put in
+    objective-per-MW units, then NEGATED, then summed:
+
+    - (b) upper-cap binds — the ``<=`` row duals
+      (``maxInvest_period``/``maxInvest_total``/``maxCumulative`` and the
+      group ``maxInvestGroup_*`` caps).  Their raw HiGHS dual is NEGATIVE;
+      negate → POSITIVE (the cap holds the entity back, so more would help).
+    - (c) lower-floor binds — the ``>=`` row duals
+      (``minInvest_period``/``minInvest_total``/``minCumulative`` and the
+      group ``minInvestGroup_*`` floors).  Their raw dual is POSITIVE;
+      negate → NEGATIVE (the floor over-forces capacity, so more would hurt).
+    - (a) not built — the v_invest COLUMN reduced cost
+      (``dual_invest_unit``/``connection``/``node``), correctly scaled by
+      ``1/scale_the_objective`` (Increment 2).  It is in objective per
+      v_invest-unit, so divide by ``entity_unitsize`` (mirroring the
+      standalone path in ``investment_duals``) to reach objective per MW;
+      the reduced cost is ≥0, so negate → NEGATIVE (unprofitable to build).
+    - (d) interior, binds nothing → 0.
+
+    ASYMMETRY (read off ``drop_levels.py``): ``dual_maxInvest_total`` is in
+    ``_V_SOLVE_ONLY`` — it is collapsed to a single-row ``RangeIndex(1)``
+    (period-less) and so must be broadcast across the period axis of its
+    siblings before combining.  ``dual_minInvest_total`` is in ``_V_DROP`` —
+    after dropping the solve level it retains a ``period`` index and is
+    ALREADY per-(entity, period), so it is added directly without broadcast.
+
+    All duals are obj/MW; non-binding constraints contribute 0.
     """
     import pandas as pd
 
-    # Collect all entity-level constraint duals, aligned to the same columns and index
+    # Collect all entity-level constraint duals, aligned to the same columns
+    # and index.  Every contribution is appended already NEGATED so the final
+    # sum carries the signed obj/MW convention documented above.
     entity_duals: list[pd.DataFrame] = []
-    # ``dual_maxInvest_total`` has a solve-only (period-less) reader shape,
-    # collapsed to a single-row RangeIndex by ``drop_levels.py``; broadcast
-    # it across the period axis of its siblings before combining so
-    # ``combined.add(...)`` doesn't produce a mixed-index union.
-    period_ref: pd.DataFrame | None = (
-        v.dual_maxInvest_period
-        if not v.dual_maxInvest_period.empty
-        else (v.dual_maxCumulative if not v.dual_maxCumulative.empty else None)
+
+    # A reference (entity, period) frame to broadcast the period-less
+    # ``dual_maxInvest_total`` across.  Prefer a per-period sibling that
+    # actually carries the period axis.  The per-period constraint-dual
+    # families are each independently emission-gated, so when a per-entity
+    # ``maxInvest_total`` cap is the ONLY binding family they are all empty.
+    # Fall back to the regime-(a) column reduced-cost frames
+    # (``dual_invest_unit``/``connection``/``node``): per _parquet_bundle.py
+    # these are ALWAYS present with a realized-``period`` index for any
+    # investable entity (no emission gate).  Only ``period_ref.index`` is
+    # used for the broadcast, so the differing column axis name on these
+    # fallbacks is irrelevant.
+    period_ref: pd.DataFrame | None = next(
+        (
+            df
+            for df in (
+                v.dual_maxInvest_period,
+                v.dual_minInvest_period,
+                v.dual_maxCumulative,
+                v.dual_minCumulative,
+                v.dual_minInvest_total,
+                v.dual_invest_unit,
+                v.dual_invest_connection,
+                v.dual_invest_node,
+            )
+            if not df.empty
+        ),
+        None,
     )
+
+    # (b) Max-side ``<=`` duals: raw < 0 → negate → POSITIVE.
+    #     ``dual_maxInvest_total`` is solve-only → broadcast over periods.
     for df in (v.dual_maxInvest_period, v.dual_maxInvest_total, v.dual_maxCumulative):
         if df.empty:
             continue
-        if df is v.dual_maxInvest_total and period_ref is not None:
+        if df is v.dual_maxInvest_total:
+            if period_ref is None:
+                continue
             df = pd.DataFrame(
                 {c: df.iloc[0][c] for c in df.columns},
                 index=period_ref.index,
             )
             df.columns.name = 'entity'
-        entity_duals.append(df)
+        entity_duals.append(df.mul(-1.0))
 
-    # Expand group constraint duals to per-entity using the group-entity mapping
+    # (c) Min-side ``>=`` duals: raw > 0 → negate → NEGATIVE.
+    #     ``dual_minInvest_total`` is ALREADY per-(entity, period) — add it
+    #     directly, NO broadcast (the max-total asymmetry above).
+    for df in (v.dual_minInvest_period, v.dual_minInvest_total, v.dual_minCumulative):
+        if df.empty:
+            continue
+        entity_duals.append(df.mul(-1.0))
+
+    # (b)/(c) group caps/floors: expand group → member entities, then negate.
     if not v.group_entity_invest.empty:
         group_map = v.group_entity_invest  # columns: group, entity
-        for group_df in (v.dual_maxInvestGroup_period, v.dual_maxInvestGroup_total,
-                         v.dual_maxInvestGroup_cumulative):
+        for group_df in (
+            v.dual_maxInvestGroup_period, v.dual_maxInvestGroup_total,
+            v.dual_maxInvestGroup_cumulative,
+            v.dual_minInvestGroup_period, v.dual_minInvestGroup_total,
+            v.dual_minInvestGroup_cumulative,
+        ):
             if group_df.empty:
                 continue
             for group_name in group_df.columns:
                 members = group_map.loc[group_map['group'] == group_name, 'entity'].tolist()
                 if not members:
                     continue
-                # Create per-entity columns with the group's dual value
+                # Create per-entity columns with the group's dual value.
                 group_series = group_df[group_name]
                 expanded = pd.DataFrame(
                     {entity: group_series for entity in members},
                     index=group_series.index,
                 )
                 expanded.columns.name = 'entity'
-                entity_duals.append(expanded)
+                entity_duals.append(expanded.mul(-1.0))
+
+    # (a) Not-built regime — v_invest COLUMN reduced cost.  Divide by
+    #     entity_unitsize (obj/v_invest-unit → obj/MW), then negate.  These
+    #     frames have a period index and a 'unit'/'connection'/'node' column
+    #     axis; rename to the common 'entity' axis before combining.
+    for col_dual in (v.dual_invest_unit, v.dual_invest_connection, v.dual_invest_node):
+        if col_dual.empty:
+            continue
+        per_mw = col_dual.div(par.entity_unitsize[col_dual.columns])
+        per_mw = per_mw.rename_axis('entity', axis=1)
+        entity_duals.append(per_mw.mul(-1.0))
 
     if not entity_duals:
         return pd.DataFrame()
 
-    # Align all DataFrames to a common (index, columns) and sum
+    # Align all DataFrames to a common (index, columns) and sum.
     combined = entity_duals[0]
     for df in entity_duals[1:]:
         combined = combined.add(df, fill_value=0.0)
