@@ -735,6 +735,11 @@ class ExecutionWindow(tk.Toplevel):
         # Foregrounds — readable accent colours on either theme.
         txt.tag_configure("mem", foreground=self._blend(base_fg, "#4aa3ff", 0.55))
         txt.tag_configure("warn", foreground=self._blend(base_fg, "#ff3b30", 0.70))
+        # Keep the selection highlight on top of every custom tag — these are
+        # created after the built-in ``sel`` tag and would otherwise out-rank
+        # it, painting their background over the selection so a drag-select
+        # shows no visible highlight.
+        txt.tag_raise("sel")
 
     def _classify_log_line(self, element: str) -> list[str]:
         """Return the colour tags for one log *element* (one ``stdout_lines``
