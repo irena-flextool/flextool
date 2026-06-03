@@ -57,6 +57,52 @@ class ActiveTimeEntry(NamedTuple):
 
 
 @dataclass
+class OutputTimelineBundle:
+    """Cross-solve output index for the multi-solve realized-slice union.
+
+    Built once in :func:`flextool.engine_polars._native_run_model.
+    native_run_model` after the solve tree is fully expanded (rolling /
+    nested / stochastic), and mirrored onto the last
+    :class:`~flextool.engine_polars._orchestration.OrchestrationStep` so
+    output processing can rewire the ``solve`` column and build a union
+    index over the realized window of *every* sub-solve (not just the
+    last one).
+
+    The realized dispatch ``[period, timestep]`` and realized invest
+    ``[period]`` are disjoint across solves by the rolling invariant
+    (each realized exactly once); the construction enforces this with a
+    raising guard, so all four fields carry no ``solve`` dimension and
+    the maps are unambiguous.
+
+    Attributes
+    ----------
+    output_timeline : dict[str, list[str]]
+        ``{period: [timestep, ...]}`` — the union across solves of the
+        REALIZED dispatch timeline (filtered to each solve's realized
+        periods, mirroring ``derive_realized_dispatch``).  Order is
+        preserved (solve order, then per-solve period/timestep order);
+        the disjointness guard guarantees no ``(period, timestep)`` is
+        contributed twice, so no de-duplication is needed.
+    output_invest_timeline : list[str]
+        Union over solves of the realized-invest periods (with the
+        ``realized_periods`` fallback used by the per-solve writers),
+        solve-free and order-preserving.
+    dt_to_solve : dict[tuple[str, str], str]
+        ``{(period, timestep): roll_solve_name}`` for realized dispatch
+        — the canonical ``[d,t] -> solve`` label map (roll key, matching
+        the proven output-label oracle).
+    period_to_solve_invest : dict[str, str]
+        ``{period: roll_solve_name}`` for realized invest — the
+        canonical ``period -> solve`` label map for invest output.
+    """
+
+    output_timeline: dict[str, list[str]] = field(default_factory=dict)
+    output_invest_timeline: list[str] = field(default_factory=list)
+    dt_to_solve: dict[tuple[str, str], str] = field(default_factory=dict)
+    period_to_solve_invest: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class SolveResult:
     """Result container for the recursive solve structure builder.
 
@@ -170,6 +216,13 @@ class RunnerState:
     # "level" (matching LP matrix shape) share a :class:`FlexDataProvider`.
     # Typed as ``dict | None``; ``None`` means "not yet initialised".
     _level_providers: dict | None = None
+    # Multi-solve output-timeline bundle (Stage 1 of the multi-solve
+    # output-union fix).  Built by ``native_run_model`` from the
+    # authoritative ``realized_time_lists`` after the stochastic pass and
+    # read back by ``run_orchestration`` to mirror onto the last
+    # OrchestrationStep.  ``None`` until the cascade has expanded its
+    # solve tree.
+    output_timeline_bundle: "OutputTimelineBundle | None" = None
 
 
 # ---------------------------------------------------------------------------

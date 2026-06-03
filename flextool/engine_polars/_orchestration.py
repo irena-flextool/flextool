@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING
 from flextool.engine_polars._solve_handoff import SolveHandoff
 from flextool.engine_polars._solve_state import (
     FlexToolConfigError,
+    OutputTimelineBundle,
     PathConfig,
     RunnerState,
 )
@@ -1408,6 +1409,17 @@ class OrchestrationStep:
     callers normally want the live Solution when it's still populated
     and the snapshot only as a fallback.
     """
+
+    output_timeline_bundle: "OutputTimelineBundle | None" = None
+    """Multi-solve realized-slice output index (Stage 1 of the
+    multi-solve output-union fix).  Mirrored onto the LAST step only by
+    :func:`run_orchestration` after the cascade completes — output
+    processing reads it from the last step to rewire the ``solve`` column
+    and union the realized window of every sub-solve.  Lightweight
+    (period/timestep label maps, no heavy frames), so it survives the
+    ``keep_solutions=False`` slim pass that nulls
+    ``solution`` / ``flex_data`` / ``flex_data_provider``.  ``None`` on
+    every non-last step and when no cascade ran."""
 
     @property
     def effective_solution(self) -> "Solution | SnapshotSolution | None":
@@ -3276,6 +3288,16 @@ def _drive_cascade(
     # Mirror the in-memory handoff dict back onto our state in case
     # callers want to inspect it.
     state.handoffs = runner.state.handoffs
+
+    # Mirror the multi-solve output-timeline bundle (built by
+    # ``native_run_model`` from the authoritative ``realized_time_lists``
+    # after the stochastic pass) onto the LAST OrchestrationStep — the
+    # exposure point output processing reads.  Lightweight label maps, so
+    # it survives the slim pass below (which only nulls heavy fields).
+    _output_bundle = getattr(runner.state, "output_timeline_bundle", None)
+    if _output_bundle is not None and results:
+        _last_key = next(reversed(results))
+        results[_last_key].output_timeline_bundle = _output_bundle
 
     # Phase C.5 — slim every step except the LAST, releasing the heaviest
     # per-step state (Solution + FlexData + FlexDataProvider) once
