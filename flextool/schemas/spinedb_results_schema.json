@@ -1,0 +1,533 @@
+{
+  "entity_classes": [
+    [
+      "connection",
+      [],
+      null,
+      280741963428706,
+      true
+    ],
+    [
+      "group",
+      [],
+      null,
+      280655732797761,
+      true
+    ],
+    [
+      "model",
+      [],
+      null,
+      280378317271475,
+      true
+    ],
+    [
+      "node",
+      [],
+      null,
+      280655732797997,
+      true
+    ],
+    [
+      "reserve",
+      [],
+      null,
+      281473533932379,
+      true
+    ],
+    [
+      "unit",
+      [],
+      null,
+      281107035648629,
+      true
+    ],
+    [
+      "upDown",
+      [],
+      null,
+      280378317271864,
+      true
+    ],
+    [
+      "unit__node",
+      [
+        "unit",
+        "node"
+      ],
+      null,
+      null,
+      true
+    ],
+    [
+      "connection__node__node",
+      [
+        "connection",
+        "node",
+        "node"
+      ],
+      null,
+      null,
+      true
+    ],
+    [
+      "group__reserve__upDown",
+      [
+        "reserve",
+        "upDown",
+        "group"
+      ],
+      null,
+      null,
+      true
+    ],
+    [
+      "connection__reserve__upDown__node",
+      [
+        "connection",
+        "reserve",
+        "upDown",
+        "node"
+      ],
+      null,
+      null,
+      true
+    ],
+    [
+      "unit__reserve__upDown__node",
+      [
+        "unit",
+        "reserve",
+        "upDown",
+        "node"
+      ],
+      null,
+      null,
+      true
+    ]
+  ],
+  "parameter_definitions": [
+    [
+      "connection",
+      "capacity",
+      null,
+      null,
+      "[MW] 'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      null
+    ],
+    [
+      "connection",
+      "invest_marginal",
+      null,
+      null,
+      "[CUR/MW] Marginal cost to invest in one more MW of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW; positive value means the cost is higher than the benefit by the stated amount per MW).",
+      null
+    ],
+    [
+      "connection__node__node",
+      "cf",
+      null,
+      null,
+      "[per unit] average capacity factor of the flow, i.e. the utilization rate of the connection where flows in both directions are considered as utilization. Average of the absolute flow [MWh/h] divided by the capacity of the connection.",
+      null
+    ],
+    [
+      "connection__node__node",
+      "flow_annualized",
+      null,
+      null,
+      "[MWh] annualized cumulative flow through the connection (left to right is positive).",
+      null
+    ],
+    [
+      "connection__node__node",
+      "flow_t",
+      null,
+      null,
+      "[MW] flow through the connection (left to right is positive).",
+      null
+    ],
+    [
+      "connection__node__node",
+      "flow_to_first_node_annualized",
+      null,
+      null,
+      "[MWh] annualized cumulative flow through the connection only to the left (first) node.",
+      null
+    ],
+    [
+      "connection__node__node",
+      "flow_to_first_node_t",
+      null,
+      null,
+      "[MW] flow through the connection to the left (first) node.",
+      null
+    ],
+    [
+      "connection__node__node",
+      "flow_to_second_node_annualized",
+      null,
+      null,
+      "[MWh] annualized cumulative flow through the connection only to the right (second) node.",
+      null
+    ],
+    [
+      "connection__node__node",
+      "flow_to_second_node_t",
+      null,
+      null,
+      "[MW] flow through the connection to the right (second) node.",
+      null
+    ],
+    [
+      "connection__reserve__upDown__node",
+      "reservation_average",
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      "connection__reserve__upDown__node",
+      "reservation_t",
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      "group",
+      "CO2_annualized",
+      null,
+      null,
+      "[Mt] how many million tons of CO2 annualized the units and connections in this group have generated (by using commodity with CO2 content) or removed.",
+      null
+    ],
+    [
+      "group",
+      "VRE_share_t",
+      null,
+      null,
+      "Share of VRE generation in the group of nodes (sum of 'upper_limit' flows into nodes divided by the sum of inflexible inflow (parameter 'inflow') into those nodes).",
+      null
+    ],
+    [
+      "group",
+      "flow_annualized",
+      null,
+      null,
+      "[MWh] produces grouped and annualized flow results of the `node` members of the `group`",
+      null
+    ],
+    [
+      "group",
+      "flow_t",
+      null,
+      null,
+      "[MW] produces grouped flow results to the `node` members of the `group`",
+      null
+    ],
+    [
+      "group",
+      "indicator",
+      null,
+      null,
+      "A set of results for all node members of the group. 'sum of annualized inflows' - [MWh] sum of inflow to the node which has been annualized (scaled to correspond to a year of timesteps). 'VRE share' - [0-1] how much the flows from VRE sources (inputs using ‘upper limit’ profile) are of the inflow.\n'curtailed VRE share' - [0-1] how much the unused flows from VRE sources would have been of the inflow. 'upward slack share' - [0-1] upward slack in relation to the inflow. 'downward slack share' - [0-1] downward slack in relation to the inflow.",
+      null
+    ],
+    [
+      "group",
+      "inertia_largest_flow_t",
+      null,
+      null,
+      "[MWh/h] Largest individual flow coming into a group of nodes that are part of the same inertia group.",
+      null
+    ],
+    [
+      "group",
+      "inertia_t",
+      null,
+      null,
+      "[MWs] the amount of inertia (MWs) in the group of nodes in each timestep.",
+      null
+    ],
+    [
+      "group",
+      "inertia_unit_node_t",
+      null,
+      null,
+      "[MWs] the amount of inertia in the flows between the units and the nodes in the group.",
+      null
+    ],
+    [
+      "group",
+      "slack_capacity_margin",
+      null,
+      null,
+      "[MW or MWh] use of slack variable and the associated penalty cost to meet the capacity margin requirement in the period.",
+      null
+    ],
+    [
+      "group",
+      "slack_inertia_t",
+      null,
+      null,
+      "[MWs] use of slack variable and the associated penalty cost to fulfill the inertia requirement in each timestep.",
+      null
+    ],
+    [
+      "group",
+      "slack_nonsync_t",
+      null,
+      null,
+      "[MWh] use of slack variable and the associated penalty cost to fulfill the non-synchronous share maximum share constraint in each timestep.",
+      null
+    ],
+    [
+      "group",
+      "sum_flow_annualized",
+      null,
+      null,
+      "[MWh] Annualized sum of flows in the group (members from group__connection__node and group__unit__node). Annualization scales the sum to correspond with full year time series.",
+      null
+    ],
+    [
+      "group",
+      "sum_flow_t",
+      null,
+      null,
+      "[MWh] Sum of flows in the group (members from group__connection__node and group__unit__node).",
+      null
+    ],
+    [
+      "group__reserve__upDown",
+      "slack_reserve_t",
+      null,
+      null,
+      "[MW] use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep.",
+      null
+    ],
+    [
+      "model",
+      "cost_annualized",
+      null,
+      null,
+      "M[CUR] Annualized (scaled to one year) and undiscounted cost for each period. The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
+      null
+    ],
+    [
+      "model",
+      "cost_discounted_solve",
+      null,
+      null,
+      "M[CUR] Costs for the solve considering discounting and years presented (scaled to all years presented). The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
+      null
+    ],
+    [
+      "model",
+      "cost_discounted_total",
+      null,
+      null,
+      "M[CUR] Total costs for all the solves considering discounting and years presented (scaled to all years presented). The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
+      null
+    ],
+    [
+      "model",
+      "cost_t",
+      null,
+      null,
+      "M[CUR] Costs for each timestep divided into following categories: 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
+      null
+    ],
+    [
+      "model",
+      "investments discount factor",
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      "model",
+      "operations discount factor",
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      "node",
+      "balance",
+      null,
+      null,
+      "[MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (from_units, from_connection, to_units, to_connections, state change over the period, self discharge during the period, upward slack for involuntary demand reduction and downward slack for involuntary demand increase).",
+      null
+    ],
+    [
+      "node",
+      "balance_t",
+      null,
+      null,
+      "[MW] timestep inputs (positive) and outputs (negative) to the node from all the possible sources (from_units, from_connection, to_units, to_connections, state change over the period, self discharge during the period, upward slack for involuntary demand reduction and downward slack for involuntary demand increase)",
+      null
+    ],
+    [
+      "node",
+      "capacity",
+      null,
+      null,
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      null
+    ],
+    [
+      "node",
+      "invest_marginal",
+      null,
+      null,
+      "[CUR/MW or MWh] marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh).",
+      null
+    ],
+    [
+      "node",
+      "price_t",
+      null,
+      null,
+      "[CUR/MWh] each node that maintains an energy balance provides a price time series based on the marginal value of the balance constraint.",
+      null
+    ],
+    [
+      "node",
+      "ramp_t",
+      null,
+      null,
+      "Includes seven parameters that form the ramp room envelope (how much there is additional room to ramp in a give node). 'ramp' - [MW] the actual ramp in the node from previous timestep to this timestep.\n'units_up' - [MW] additional room for upward ramps from non-VRE units connected to the node. 'VRE_up' - [MW] adds upward ramp room from VRE units on top of the ramp room from non-VRE units. 'connections_up' - [MW] adds upward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection). 'units_down' - [MW] additional room for downward ramps from non-VRE units connected to the node. 'VRE_down' - [MW] adds downward ramp room from VRE units on top of the ramp room from non-VRE units. 'connections_down' - [MW] adds downward ramp room from connections on top of the previous ramp rooms (does not consider whether the connected node has ramp room, but is simply the available capacity in the connection).",
+      null
+    ],
+    [
+      "node",
+      "state_t",
+      null,
+      null,
+      "[MWh] storage state of the node in each timestep.",
+      null
+    ],
+    [
+      "unit",
+      "CO2_annualized",
+      null,
+      null,
+      "[MtCO2] how many million tons of CO2 the unit has generated (by using commodity with CO2 content) or removed.",
+      null
+    ],
+    [
+      "unit",
+      "capacity",
+      null,
+      null,
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      null
+    ],
+    [
+      "unit",
+      "invest_marginal",
+      null,
+      null,
+      "[CUR/MW or MWh] marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh).",
+      null
+    ],
+    [
+      "unit",
+      "online_average",
+      null,
+      null,
+      "[count] average online status of the unit (average number of units online during the period).",
+      null
+    ],
+    [
+      "unit",
+      "online_t",
+      null,
+      null,
+      "[count] online status of the unit (number of units online in each timestep).",
+      null
+    ],
+    [
+      "unit",
+      "startup_cumulative",
+      null,
+      null,
+      "[count] cumulative number of unit startups during the period.",
+      null
+    ],
+    [
+      "unit__node",
+      "cf",
+      null,
+      null,
+      " [per unit] average capacity factor of the flow, i.e. the utilization rate of the flow from/to the unit. Average of flow [MWh/h] divided by capacity [MW] of the input or output to the unit.",
+      null
+    ],
+    [
+      "unit__node",
+      "curtailment_share",
+      null,
+      null,
+      "Share of curtailed production from potential production for periods",
+      null
+    ],
+    [
+      "unit__node",
+      "curtailment_t",
+      null,
+      null,
+      "[MW] curtailed flow to the node",
+      null
+    ],
+    [
+      "unit__node",
+      "flow_annualized",
+      null,
+      null,
+      "[MWh] cumulative flow from the node (if node is input) or to the node (if node is output).",
+      null
+    ],
+    [
+      "unit__node",
+      "flow_t",
+      null,
+      null,
+      "[MW] flow from the node (if node is input) or to the node (if node is output).",
+      null
+    ],
+    [
+      "unit__node",
+      "ramp_t",
+      null,
+      null,
+      "[MW] shows ramping of particular input or output flow between a unit and a node for each time step.",
+      null
+    ],
+    [
+      "unit__reserve__upDown__node",
+      "reservation_average",
+      null,
+      null,
+      "[MW] how much upward or downward reserve particular unit was providing to a particular node in average during the period.",
+      null
+    ],
+    [
+      "unit__reserve__upDown__node",
+      "reservation_t",
+      null,
+      null,
+      "[MW] how much upward or downward reserve particular unit was providing to a particular node in given timestep.",
+      null
+    ]
+  ],
+  "alternatives": [
+    [
+      "Base",
+      "Base alternative"
+    ]
+  ]
+}
