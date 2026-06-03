@@ -153,6 +153,69 @@ def test_max_total_broadcasts_via_regime_a_period_ref():
     assert out.loc['p2', 'wind'] == 9.0
 
 
+def test_max_total_broadcasts_via_ed_invest_when_all_dual_frames_empty():
+    """Regression: ``dual_maxInvest_total`` is the SOLE binding family AND
+    every one of the eight ``period_ref`` candidates is empty.
+
+    A binding total cap FIXES ``v_invest`` at its bound, so presolve drops
+    those columns — meaning not only are the per-period constraint-dual
+    families empty (each emission-gated), but the regime-(a) column
+    reduced-cost frames (``dual_invest_unit``/``connection``/``node``) are
+    ALSO empty (their col_dual is absent).  With no dual-frame period_ref,
+    the synthesis must fall back to ``s.ed_invest`` — the realized invest
+    (entity, period) set, solution-/presolve-independent — and broadcast the
+    period-less max-total to a POSITIVE value across the entity's own invest
+    periods, NOT silently drop it to an empty frame (the bug)."""
+    periods = ['p1', 'p2']
+    v = _base_v(periods)
+    # Solve-only single-row max-total (negative raw): the only binding family.
+    v.dual_maxInvest_total = pd.DataFrame({'wind': [-9.0]}, index=pd.RangeIndex(1))
+    v.dual_maxInvest_total.columns.name = 'entity'
+    # ALL eight period_ref candidates left empty by _base_v (including the
+    # three col-dual frames — presolve dropped the fixed columns).
+    par = _par({'wind': 100.0})
+    # s.ed_invest: realized invest (entity, period) set (post-drop_levels shape:
+    # an (entity, period) MultiIndex, already joined to d_realize_invest).
+    ed_invest = pd.MultiIndex.from_tuples(
+        [('wind', 'p1'), ('wind', 'p2')], names=['entity', 'period']
+    )
+    s = SimpleNamespace(ed_invest=ed_invest)
+
+    out = _synthesize_invest_dual(v, par, s)
+    # Without the ed_invest fallback, period_ref is None and the max-total is
+    # dropped -> out is empty.  With the fix it broadcasts negate(-9) = +9
+    # across BOTH of wind's invest periods.
+    assert not out.empty
+    assert out.loc['p1', 'wind'] == 9.0
+    assert out.loc['p2', 'wind'] == 9.0
+
+
+def test_max_total_ed_invest_fallback_restricts_to_entity_invest_periods():
+    """The ``s.ed_invest`` fallback must broadcast each capped entity over
+    ONLY that entity's own invest periods — broadcasting across the union of
+    all periods would fabricate spurious (entity, period) rows."""
+    periods = ['p1', 'p2']
+    v = _base_v(periods)
+    v.dual_maxInvest_total = pd.DataFrame(
+        {'wind': [-9.0], 'solar': [-4.0]}, index=pd.RangeIndex(1)
+    )
+    v.dual_maxInvest_total.columns.name = 'entity'
+    par = _par({'wind': 100.0, 'solar': 200.0})
+    # wind investable in p1+p2; solar investable in p1 only.
+    ed_invest = pd.MultiIndex.from_tuples(
+        [('wind', 'p1'), ('wind', 'p2'), ('solar', 'p1')],
+        names=['entity', 'period'],
+    )
+    s = SimpleNamespace(ed_invest=ed_invest)
+
+    out = _synthesize_invest_dual(v, par, s)
+    assert out.loc['p1', 'wind'] == 9.0
+    assert out.loc['p2', 'wind'] == 9.0
+    # solar is NOT investable in p2 -> its broadcast must not reach p2.
+    assert out.loc['p1', 'solar'] == 4.0
+    assert pd.isna(out.loc['p2', 'solar']) or out.loc['p2', 'solar'] == 0.0
+
+
 def test_floor_binding_is_negative():
     """(c) A lower-floor ``>=`` row dual arrives POSITIVE; negating yields a
     NEGATIVE effective value (the floor over-forces capacity).  Also proves

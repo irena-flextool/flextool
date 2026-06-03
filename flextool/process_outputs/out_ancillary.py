@@ -81,7 +81,7 @@ def investment_duals(par, s, v, r, debug):
     # Complete signed marginal value (objective per MW) of one more MW of
     # investment capacity, folding every binding regime (a/b/c).  Positive
     # means more investment in this entity would lower the objective.
-    combined = _synthesize_invest_dual(v, par)
+    combined = _synthesize_invest_dual(v, par, s)
     if not combined.empty:
         units = [c for c in combined.columns if c in s.process_unit]
         connections = [c for c in combined.columns if c in s.process_connection]
@@ -96,7 +96,7 @@ def investment_duals(par, s, v, r, debug):
     return results
 
 
-def _synthesize_invest_dual(v, par) -> "pd.DataFrame":
+def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
     """Complete SIGNED effective investment dual, per (entity, period).
 
     Returns the full marginal value of one more MW of investment capacity in
@@ -131,6 +131,14 @@ def _synthesize_invest_dual(v, par) -> "pd.DataFrame":
     after dropping the solve level it retains a ``period`` index and is
     ALREADY per-(entity, period), so it is added directly without broadcast.
 
+    The broadcast period axis is taken from a per-period sibling dual when
+    one is non-empty; otherwise (a binding total cap is the SOLE family, so
+    every per-period dual AND every regime-(a) col_dual is empty because
+    presolve dropped the fixed columns) it falls back to ``s.ed_invest`` —
+    the realized invest (entity, period) set, solution- and
+    presolve-independent — broadcasting each capped entity's value over
+    only that entity's own invest periods.
+
     All duals are obj/MW; non-binding constraints contribute 0.
     """
     import pandas as pd
@@ -145,12 +153,13 @@ def _synthesize_invest_dual(v, par) -> "pd.DataFrame":
     # actually carries the period axis.  The per-period constraint-dual
     # families are each independently emission-gated, so when a per-entity
     # ``maxInvest_total`` cap is the ONLY binding family they are all empty.
-    # Fall back to the regime-(a) column reduced-cost frames
-    # (``dual_invest_unit``/``connection``/``node``): per _parquet_bundle.py
-    # these are ALWAYS present with a realized-``period`` index for any
-    # investable entity (no emission gate).  Only ``period_ref.index`` is
-    # used for the broadcast, so the differing column axis name on these
-    # fallbacks is irrelevant.
+    # The regime-(a) column reduced-cost frames
+    # (``dual_invest_unit``/``connection``/``node``) usually carry a
+    # realized-``period`` index, but a binding total cap FIXES ``v_invest``
+    # at its bound, so presolve drops those columns and their col_dual is
+    # absent too — leaving all eight candidates empty.  Only
+    # ``period_ref.index`` is used for the broadcast, so the differing
+    # column axis name on these fallbacks is irrelevant.
     period_ref: pd.DataFrame | None = next(
         (
             df
@@ -169,19 +178,52 @@ def _synthesize_invest_dual(v, par) -> "pd.DataFrame":
         None,
     )
 
+    # Solution-/presolve-INDEPENDENT fallback for the realized invest-period
+    # axis: the ``s.ed_invest`` set (entity, period), already restricted to
+    # realized invest periods by ``drop_levels`` (joined to
+    # ``d_realize_invest``).  When every dual-frame candidate above is empty
+    # (sole-binding total cap), broadcast each capped entity's max-total
+    # value across ONLY that entity's own invest periods — NOT the union of
+    # all model periods, which would fabricate spurious (entity, period)
+    # rows for entities not investable in those periods.
+    ed_invest_idx = None
+    if s is not None and getattr(s, 'ed_invest', None) is not None:
+        ei = s.ed_invest
+        if getattr(ei, 'names', None) is not None and 'entity' in ei.names \
+                and 'period' in ei.names:
+            ed_invest_idx = ei
+
     # (b) Max-side ``<=`` duals: raw < 0 → negate → POSITIVE.
     #     ``dual_maxInvest_total`` is solve-only → broadcast over periods.
     for df in (v.dual_maxInvest_period, v.dual_maxInvest_total, v.dual_maxCumulative):
         if df.empty:
             continue
         if df is v.dual_maxInvest_total:
-            if period_ref is None:
+            if period_ref is not None:
+                df = pd.DataFrame(
+                    {c: df.iloc[0][c] for c in df.columns},
+                    index=period_ref.index,
+                )
+                df.columns.name = 'entity'
+            elif ed_invest_idx is not None:
+                # Build per-(entity, period) from the invest set: each capped
+                # entity's value goes only on its own realized invest periods.
+                cols = {}
+                row = df.iloc[0]
+                for c in df.columns:
+                    periods = ed_invest_idx[
+                        ed_invest_idx.get_level_values('entity') == c
+                    ].get_level_values('period').unique()
+                    if len(periods) == 0:
+                        continue
+                    cols[c] = pd.Series(row[c], index=periods)
+                if not cols:
+                    continue
+                df = pd.DataFrame(cols)
+                df.index.name = 'period'
+                df.columns.name = 'entity'
+            else:
                 continue
-            df = pd.DataFrame(
-                {c: df.iloc[0][c] for c in df.columns},
-                index=period_ref.index,
-            )
-            df.columns.name = 'entity'
         entity_duals.append(df.mul(-1.0))
 
     # (c) Min-side ``>=`` duals: raw > 0 → negate → NEGATIVE.
