@@ -354,9 +354,6 @@ del _key, _producer, _note
 
 # Investment-dual outputs
 for _key, _producer, _note in (
-    ("dual_invest_unit_d_e",             "out_ancillary.investment_duals", "Per-period investment dual for units."),
-    ("dual_invest_connection_d_e",       "out_ancillary.investment_duals", "Per-period investment dual for connections."),
-    ("dual_invest_node_d_e",             "out_ancillary.investment_duals", "Per-period investment dual for nodes."),
     ("dual_invest_effective_unit_d_e",        "out_ancillary.investment_duals", "Effective investment dual for units."),
     ("dual_invest_effective_connection_d_e",  "out_ancillary.investment_duals", "Effective investment dual for connections."),
     ("dual_invest_effective_node_d_e",        "out_ancillary.investment_duals", "Effective investment dual for nodes."),

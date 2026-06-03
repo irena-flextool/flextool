@@ -77,19 +77,7 @@ def investment_duals(par, s, v, r, debug):
     """Additional node results: prices, state, and slacks"""
     results = []
 
-    # 1. v.dual_invest_unit
-    dual_invest_unit = v.dual_invest_unit.div(par.entity_unitsize[v.dual_invest_unit.columns])
-    results.append((dual_invest_unit, 'dual_invest_unit_d_e'))
-
-    # 2. v.dual_invest_connection
-    dual_invest_connection = v.dual_invest_connection.div(par.entity_unitsize[v.dual_invest_connection.columns])
-    results.append((dual_invest_connection, 'dual_invest_connection_d_e'))
-
-    # 3. v.dual_invest_node
-    dual_invest_node = v.dual_invest_node.div(par.entity_unitsize[v.dual_invest_node.columns])
-    results.append((dual_invest_node, 'dual_invest_node_d_e'))
-
-    # 4. Synthesized effective investment dual per entity type.
+    # Synthesized effective investment dual per entity type.
     # Complete signed marginal value (objective per MW) of one more MW of
     # investment capacity, folding every binding regime (a/b/c).  Positive
     # means more investment in this entity would lower the objective.
