@@ -804,8 +804,27 @@ class ExecutionWindow(tk.Toplevel):
             # drop it from the displayed log. The raw stdout is untouched.
             if line.startswith("total_cost.val ="):
                 continue
+            was_active = self._highs_block_active
             tags = self._classify_log_line(line)
+            now_active = self._highs_block_active
+            if "highs" in tags and not line.strip():
+                # In-block blank: grey it provisionally, but mark it pending —
+                # a blank that turns out to be *trailing* (the separator before
+                # the timer table) must revert to regular once the block ends.
+                self._output_text.insert("end", line + "\n", ("highs", "pending_blank"))
+                continue
             self._output_text.insert("end", line + "\n", tuple(tags))
+            if "highs" in tags:
+                # Real dump content after the blanks → they were internal;
+                # keep them grey, just clear the pending marker.
+                self._output_text.tag_remove("pending_blank", "1.0", "end")
+            elif was_active and not now_active:
+                # This row closed the HiGHS block → any pending blanks were
+                # trailing; strip the grey back off them.
+                ranges = self._output_text.tag_ranges("pending_blank")
+                for k in range(0, len(ranges), 2):
+                    self._output_text.tag_remove("highs", ranges[k], ranges[k + 1])
+                self._output_text.tag_remove("pending_blank", "1.0", "end")
         self._displayed_counts[job_id] = new_count
 
         # Auto-scroll only when the user is already at (or near) the bottom
