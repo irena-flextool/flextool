@@ -1058,7 +1058,7 @@ class MainWindow(tk.Tk):
             attach_tooltip(self.update_btn, "A newer FlexTool version is available.")
 
     # ── Native solver-stack compatibility self-check ──────────────
-    def _check_polars_async(self, force: bool = False) -> None:
+    def _check_polars_async(self, force: bool = False, from_crash: bool = False) -> None:
         """Probe — off the UI thread — whether the native solver stack
         (polars, highspy/HiGHS) runs on this machine.
 
@@ -1066,6 +1066,10 @@ class MainWindow(tk.Tk):
         matches (and not *force*d), or when ``FLEXTOOL_NO_ENV_CHECK`` is set.
         The probe runs the imports in a child process, so a native crash is
         observed via its exit code rather than taking down the GUI.
+
+        *from_crash* means this was triggered by a scenario that just died
+        natively; if the solver stack then probes clean, the crash was
+        elsewhere (DB layer, mixed/conda env, network drive) and we say so.
         """
         if os.environ.get("FLEXTOOL_NO_ENV_CHECK"):
             return
@@ -1081,11 +1085,11 @@ class MainWindow(tk.Tk):
             except Exception:
                 logger.debug("solver-stack probe failed to run", exc_info=True)
                 return
-            self.post_to_main(self._apply_solver_probe, probe)
+            self.post_to_main(self._apply_solver_probe, probe, from_crash)
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_solver_probe(self, probe) -> None:
+    def _apply_solver_probe(self, probe, from_crash: bool = False) -> None:
         """Handle a solver-stack probe result on the main thread."""
         from flextool import env_check
 
@@ -1094,6 +1098,16 @@ class MainWindow(tk.Tk):
             # until the interpreter or a solver build changes.
             self.global_settings.polars_check_fingerprint = env_check.env_fingerprint()
             save_global_settings(get_projects_dir(), self.global_settings)
+            if from_crash:
+                # A scenario crashed natively yet the solver libraries import
+                # and run fine — so the crash was not a solver wheel. Point at
+                # the real culprit class instead of leaving the user guessing.
+                messagebox.showwarning(
+                    "Scenario crashed — check your Python environment",
+                    "The scenario stopped with a native crash, but FlexTool's "
+                    "solver libraries (polars and HiGHS) import and run fine on "
+                    "this computer.\n\n" + env_check.UNFIXABLE_HELP,
+                )
             return
 
         if not probe.is_native_fault:
@@ -4692,13 +4706,14 @@ class MainWindow(tk.Tk):
             )
         elif job.status in (JobStatus.FAILED, JobStatus.KILLED):
             self._refresh_executed_scenarios()
-            # A scenario that died from a native crash is almost always the
-            # incompatible-polars-build case. Re-probe and offer the fix —
-            # force, because the cached fingerprint may say "passed" if the
-            # environment changed under us.
+            # A scenario that died from a native crash may be an incompatible
+            # solver wheel — re-probe and offer the fix. force, because the
+            # cached fingerprint may say "passed" if the environment changed.
+            # from_crash so that if the solver stack probes clean, we tell the
+            # user the crash was elsewhere (env / network drive), not silently.
             if getattr(job, "native_fault", False):
                 self.global_settings.polars_check_fingerprint = ""
-                self._check_polars_async(force=True)
+                self._check_polars_async(force=True, from_crash=True)
 
         # Update execution menu button highlight (Change 3)
         self._update_execution_menu_style()

@@ -895,11 +895,13 @@ class ExecutionManager:
                         )
                         job.stdout_lines.append(
                             "[execution_manager] This is a native library crash, "
-                            "not a model error. It almost always means an installed "
-                            "solver library (polars or HiGHS/highspy) does not run "
-                            "on this computer. FlexTool can re-install a compatible "
-                            "build — see the prompt at the next start, or run "
-                            "'Update FlexTool'."
+                            "not a model error. It may be an incompatible solver "
+                            "wheel (polars or HiGHS) that FlexTool can re-install — "
+                            "see the prompt at the next start, or run 'Update "
+                            "FlexTool'. If the solver check passes, the cause is "
+                            "usually the Python environment itself: a venv built on "
+                            "Anaconda/conda, or running from a network/mapped drive. "
+                            "Rebuild from a clean python.org Python on a local disk."
                         )
                     else:
                         job.stdout_lines.append(

@@ -312,12 +312,18 @@ def remediation_banner(component: str | None) -> str | None:
     return spec["banner"] if spec else None
 
 
-# Message for the cases a package swap cannot fix (e.g. a polar_high crash,
-# or a swap that did not help): genuinely environment-level.
+# Message for the cases a package swap cannot fix (a polar_high crash, a
+# swap that did not help, or a native crash outside the solver stack):
+# genuinely environment-level.  The common Windows culprits are a venv
+# built on Anaconda/conda (mixed native libraries), a missing Visual C++
+# runtime, or running from a network/mapped drive under concurrency.
 UNFIXABLE_HELP = (
-    "This is no longer a solver-build problem — your Python environment is "
-    "likely missing the Visual C++ runtime or mixing conda and pip native "
-    "libraries. Rebuild it from a clean python.org install."
+    "This is an environment-level problem a package install cannot fix. A "
+    "native crash like this usually means the Python environment itself is "
+    "unstable — most often a venv built on Anaconda/conda (mixing native "
+    "libraries), a missing Visual C++ runtime, or running from a network/"
+    "mapped drive. Rebuild the venv from a clean python.org Python on a "
+    "local disk (e.g. C:), not a network drive, and keep the project local too."
 )
 
 
