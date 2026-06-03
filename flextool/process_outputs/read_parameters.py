@@ -928,6 +928,78 @@ def _build_p_process_per_arc(
 # ---------------------------------------------------------------------------
 
 
+def _build_entity_universe(flex_data: "FlexData") -> list[str]:
+    """Build the densify entity universe for the (entity, period) wide
+    frames (``entity_fixed_cost`` / ``entity_lifetime_fixed_cost*``).
+
+    ``calc_costs.py:cost_entity_fixed_invested`` indexes those frames by
+    ``v.invest.columns`` / ``v.divest.columns`` — the cross-solve column
+    union — so every column they reach must be present.  The returned
+    list is the order-preserving, de-duplicated union of:
+
+    * ``nodeBalance`` nodes,
+    * ``process_source_sink`` processes + their source / sink nodes,
+    * every invest / divest variable entity (``ed_invest_set`` /
+      ``ed_divest_set``), and
+    * the solve-invariant ``p_all_entity_unitsize`` carrier (unit ∪ node
+      ∪ connection over the WHOLE-model cascade — the same superset that
+      backs ``entity_unitsize`` after 896263be).
+
+    The carrier is the crucial last source: the per-solve sets above only
+    see the entities active in THIS sub-solve, but ``v.invest`` /
+    ``v.divest`` carry the cross-solve union.  An entity that is
+    invest-eligible in some other roll (e.g. ``CaboVerde_wind``) is
+    otherwise absent from every step's universe and so missing from the
+    concatenated ``entity_lifetime_fixed_cost`` columns, raising
+    ``KeyError`` when ``calc_costs`` indexes by ``v.invest.columns``
+    (calc_costs.py:168).  Densifying over the carrier's full entity list
+    zero-fills those cells, matching the legacy CSV path's full-universe
+    coverage.
+    """
+    universe: list[str] = []
+    if (flex_data.nodeBalance is not None
+            and flex_data.nodeBalance.height > 0):
+        universe.extend(flex_data.nodeBalance["n"].to_list())
+    if (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        universe.extend(
+            flex_data.process_source_sink.select("p").unique()
+                .to_pandas()["p"].tolist()
+        )
+    # Also include any commodity nodes that show up in process_source_sink
+    # (sources / sinks) — these can be invest entities too.
+    if (flex_data.process_source_sink is not None
+            and flex_data.process_source_sink.height > 0):
+        for col in ("source", "sink"):
+            extra = flex_data.process_source_sink.select(col).unique().to_pandas()[col].tolist()
+            universe.extend(extra)
+    # Every invest / divest variable entity.  ``ed_invest_set`` /
+    # ``ed_divest_set`` carry the (e, d) variable index that becomes the
+    # ``v_invest`` / ``v_divest`` column set (read_sets.py:267-280 builds
+    # ``s.entityInvest`` / ``s.entityDivest`` from the same frames).  An
+    # entity can be invest-eligible (``invest_method`` set) without
+    # appearing in ``process_source_sink`` — e.g. a connection that has
+    # invest parameters but no ``connection__node__node`` endpoints, so it
+    # carries no source/sink rows.  It still produces a (degenerate,
+    # always-zero) ``v_invest`` column.
+    for invest_set in (flex_data.ed_invest_set, flex_data.ed_divest_set):
+        if invest_set is not None and invest_set.height > 0:
+            universe.extend(
+                invest_set.select("e").unique().to_pandas()["e"].tolist()
+            )
+    # Solve-invariant whole-model carrier (covers cross-solve invest
+    # candidates absent from this sub-solve's sets — see docstring).
+    carrier = getattr(flex_data, "p_all_entity_unitsize", None)
+    if (carrier is not None
+            and getattr(carrier, "frame", None) is not None
+            and carrier.frame.height > 0):
+        universe.extend(
+            carrier.frame.select("e").unique().to_pandas()["e"].tolist()
+        )
+    # Deduplicate while keeping insertion order.
+    return list(dict.fromkeys(universe))
+
+
 def read_parameters(
     flex_data: "FlexData",
     solution: "Solution",
@@ -966,44 +1038,7 @@ def read_parameters(
     # ``calc_costs.py:cost_entity_fixed_invested`` find every invest
     # entity in ``par.entity_lifetime_fixed_cost.columns`` (the legacy
     # CSV path emitted zero-filled rows for every entity).
-    _entity_universe: list[str] = []
-    if (flex_data.nodeBalance is not None
-            and flex_data.nodeBalance.height > 0):
-        _entity_universe.extend(flex_data.nodeBalance["n"].to_list())
-    if (flex_data.process_source_sink is not None
-            and flex_data.process_source_sink.height > 0):
-        _entity_universe.extend(
-            flex_data.process_source_sink.select("p").unique()
-                .to_pandas()["p"].tolist()
-        )
-    # Also include any commodity nodes that show up in process_source_sink
-    # (sources / sinks) — these can be invest entities too.
-    if (flex_data.process_source_sink is not None
-            and flex_data.process_source_sink.height > 0):
-        for col in ("source", "sink"):
-            extra = flex_data.process_source_sink.select(col).unique().to_pandas()[col].tolist()
-            _entity_universe.extend(extra)
-    # Also include every invest / divest variable entity.  ``ed_invest_set``
-    # / ``ed_divest_set`` carry the (e, d) variable index that becomes the
-    # ``v_invest`` / ``v_divest`` column set (read_sets.py:267-280 builds
-    # ``s.entityInvest`` / ``s.entityDivest`` from the same frames).  An
-    # entity can be invest-eligible (``invest_method`` set) without
-    # appearing in ``process_source_sink`` — e.g. a connection that has
-    # invest parameters but no ``connection__node__node`` endpoints, so it
-    # carries no source/sink rows.  It still produces a (degenerate, always
-    # -zero) ``v_invest`` column, and ``calc_costs.compute_costs`` indexes
-    # ``entity_unitsize`` / the invest-coefficient frames by
-    # ``v.invest.columns`` (lines 157-166).  Densifying over the invest /
-    # divest universe keeps those lookups from raising ``KeyError``; the
-    # input-side ``validate_connection_node_memberships`` warns about the
-    # malformed connection itself.
-    for _invest_set in (flex_data.ed_invest_set, flex_data.ed_divest_set):
-        if _invest_set is not None and _invest_set.height > 0:
-            _entity_universe.extend(
-                _invest_set.select("e").unique().to_pandas()["e"].tolist()
-            )
-    # Deduplicate while keeping insertion order.
-    _entity_universe = list(dict.fromkeys(_entity_universe))
+    _entity_universe = _build_entity_universe(flex_data)
 
     # ─── Write-once static params (entity-level scalars / per-arc tables) ──
     p.node = _build_p_node(flex_data)
