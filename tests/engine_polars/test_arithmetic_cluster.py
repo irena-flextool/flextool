@@ -490,6 +490,92 @@ def test_p_state_unitsize_inmemory_empty_nodestate_returns_none():
     assert p is None
 
 
+def test_p_unitsize_inmemory_process_absent_from_cascade_defaults(caplog):
+    """Regression — a process present in *pss* but absent from the
+    entity-unitsize cascade (the structural set / entity-vocabulary
+    divergence that crashed ``model.py`` with ``Expr * NoneType``) must
+    NOT empty the projection.  It is covered by the canonical 1000.0
+    default so ``p_unitsize`` is complete and never None for a non-empty
+    pss, and a warning is emitted.
+
+    Here ``u_orphan`` appears in pss (so the model would build a v_flow
+    for it) but is NOT in the ``unit`` entity set, so the cascade omits
+    it.  The old inner-join dropped it; with only orphans it returned
+    None → build crash.
+    """
+    src = InMemoryReader(
+        entities={
+            "unit": pl.DataFrame({"name": ["u_real"]}),
+            "node": pl.DataFrame({"name": ["n_x"]}),
+            "connection": pl.DataFrame(schema={"name": pl.Utf8}),
+        },
+        parameters={
+            ("unit", "virtual_unitsize"): pl.DataFrame({
+                "name": ["u_real"], "value": [75.0],
+            }),
+        },
+    )
+    # pss carries an orphan process not backed by a unit entity.
+    pss = pl.DataFrame({
+        "p": ["u_real", "u_orphan"],
+        "source": ["n_x", "n_x"],
+        "sink": ["u_real", "u_orphan"],
+    })
+    import logging
+    with caplog.at_level(logging.WARNING):
+        p = ar.p_unitsize_from_source(src, pss)
+    assert p is not None
+    rows = dict(p.frame.sort("p").iter_rows())
+    assert rows == {"u_real": 75.0, "u_orphan": 1000.0}
+    assert any("u_orphan" in r.message and "p_unitsize" in r.message
+               for r in caplog.records), "expected a divergence warning"
+
+
+def test_p_unitsize_inmemory_all_processes_orphan_not_none(caplog):
+    """Even when EVERY pss process is absent from the cascade, the helper
+    returns a complete Param (all defaulted) — never None — so the build
+    cannot crash on ``v_flow * None``.
+    """
+    src = InMemoryReader(
+        entities={
+            "unit": pl.DataFrame(schema={"name": pl.Utf8}),
+            "node": pl.DataFrame({"name": ["n_x"]}),
+            "connection": pl.DataFrame(schema={"name": pl.Utf8}),
+        },
+        parameters={},
+    )
+    pss = pl.DataFrame({
+        "p": ["u_a", "u_b"], "source": ["n_x", "n_x"], "sink": ["u_a", "u_b"],
+    })
+    p = ar.p_unitsize_from_source(src, pss)
+    assert p is not None
+    assert dict(p.frame.sort("p").iter_rows()) == {
+        "u_a": 1000.0, "u_b": 1000.0}
+
+
+def test_p_state_unitsize_inmemory_node_absent_from_cascade_defaults():
+    """Per-node mirror: a nodeState node absent from the node cascade is
+    covered by the canonical default rather than dropped/None.
+    """
+    src = InMemoryReader(
+        entities={
+            "node": pl.DataFrame({"name": ["n_real"]}),
+            "unit": pl.DataFrame(schema={"name": pl.Utf8}),
+            "connection": pl.DataFrame(schema={"name": pl.Utf8}),
+        },
+        parameters={
+            ("node", "virtual_unitsize"): pl.DataFrame({
+                "name": ["n_real"], "value": [42.0],
+            }),
+        },
+    )
+    nodeState = pl.DataFrame({"n": ["n_real", "n_orphan"]})
+    p = ar.p_state_unitsize_from_source(src, nodeState)
+    assert p is not None
+    assert dict(p.frame.sort("n").iter_rows()) == {
+        "n_real": 42.0, "n_orphan": 1000.0}
+
+
 def test_p_penalty_up_inmemory_scalar_broadcast():
     """Per-node scalar penalty broadcasts over (n, d, t) restricted to
     nodeBalance nodes.

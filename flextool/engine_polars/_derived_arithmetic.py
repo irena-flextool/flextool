@@ -30,9 +30,22 @@ Architecture invariants (per the Δ.10 hand-off):
    collected once at the rim.
 2. **None-default skip.**  When the parameter has no rows on the
    source side and no scalar default, the helper returns ``None``;
-   the caller leaves the field untouched.
+   the caller leaves the field untouched.  *Exception:* the two
+   unitsize helpers (``p_unitsize`` / ``p_state_unitsize``) return
+   ``None`` ONLY for an empty structural set — for a non-empty set
+   they are complete-by-construction (see invariant 4), because the
+   model multiplies every flow/state variable by them.
 3. **No defensive gating.**  Helpers fail loudly if the cascade
    primitives drift; the parity sweep is the oracle.
+4. **Unitsize completeness.**  ``p_unitsize`` / ``p_state_unitsize``
+   are structural LP coefficients, so they must COVER every member of
+   their input set.  :func:`_unitsize_complete` left-joins the set
+   against the cascade and coalesces uncovered members to the cascade's
+   own canonical default (:data:`UNITSIZE_DEFAULT`), warning on each so
+   a real set/vocabulary divergence stays visible.  This is the
+   build-side analogue of the output-side completeness carrier
+   (``p_all_entity_unitsize``); fixing it here, at the producer, rather
+   than guarding ``None`` at each consumer, is the upstream fix.
 
 The cluster F existing helpers (``p_slope``, ``p_section``,
 ``p_flow_upper_existing``, ``p_state_upper``, ``p_process_existing_count``)
@@ -42,6 +55,7 @@ not a re-port.
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -56,6 +70,7 @@ from flextool.engine_polars._axis_enums import (
 )
 
 from ._derived_params import (
+    UNITSIZE_DEFAULT,
     _entity_unitsize_lf,
     _node_unitsize_lf,
     _try_param,
@@ -63,6 +78,60 @@ from ._derived_params import (
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
+
+logger = logging.getLogger(__name__)
+
+
+def _unitsize_complete(keys_lf: "pl.LazyFrame",
+                       us_lf: "pl.LazyFrame",
+                       axis: str,
+                       *,
+                       what: str) -> pl.DataFrame:
+    """Project the unitsize cascade onto a structural ``axis`` set so the
+    result COVERS every member of that set — never a subset, never empty
+    for a non-empty input.
+
+    ``p_unitsize`` / ``p_state_unitsize`` are *structural* LP coefficients:
+    ``build_flextool`` multiplies every ``v_flow`` (resp. ``v_state`` /
+    ``v_invest``) by them.  A member of ``keys_lf`` (the pss processes /
+    nodeState nodes the model creates variables for) that is missing from
+    the cascade must therefore NOT be dropped — an incomplete projection
+    silently drops constraint terms, and an *empty* one yields ``None``
+    and crashes the build at ``model.py`` with
+    ``TypeError: ... 'Expr' and 'NoneType'``.
+
+    We left-join the set against the cascade and coalesce any uncovered
+    member to :data:`UNITSIZE_DEFAULT` — the same fallback the cascade
+    itself applies to an entity with no explicit unitsize — so the
+    invariant "every variable's unitsize is defined" holds by
+    construction.  The join key is compared as ``Utf8`` so value-equal
+    members match regardless of any Enum-dtype edge between the structural
+    set's axis and the entity-union cascade axis.  A coalesced member is a
+    genuine set/vocabulary divergence upstream, so we ``warning`` the
+    offending tokens rather than absorb them silently.
+
+    For a healthy model (every member covered) this is byte-identical to
+    the prior inner-join projection: the left-join matches all rows and no
+    coalesce fires.
+    """
+    keys = (keys_lf.select(pl.col(axis)).unique()
+            .with_columns(pl.col(axis).cast(pl.Utf8).alias("_k")))
+    rhs = us_lf.select(pl.col(axis).cast(pl.Utf8).alias("_k"), pl.col("us"))
+    joined = keys.join(rhs, on="_k", how="left").collect()
+    missing = joined.filter(pl.col("us").is_null())
+    if missing.height:
+        names = missing.get_column(axis).cast(pl.Utf8).to_list()
+        shown = ", ".join(names[:20]) + (" …" if missing.height > 20 else "")
+        logger.warning(
+            "%s: %d %r member(s) absent from the entity-unitsize cascade; "
+            "applying the canonical %.0f default. This signals a structural "
+            "set / entity-vocabulary divergence upstream: %s",
+            what, missing.height, axis, UNITSIZE_DEFAULT, shown,
+        )
+    return (joined
+            .select(pl.col(axis),
+                    pl.col("us").fill_null(UNITSIZE_DEFAULT).alias("value"))
+            .sort(axis))
 
 
 # ---------------------------------------------------------------------------
@@ -88,8 +157,12 @@ def p_unitsize_from_source(source: "InputSource",
                   OR 1000.0
 
     Already lazified in :func:`._derived_params._entity_unitsize_lf`
-    (cluster B/C primitive); we filter the result to processes in
-    *pss*.  Returns ``None`` when *pss* is empty.
+    (cluster B/C primitive); we project the cascade onto the processes in
+    *pss*.  Returns ``None`` only when *pss* is empty — for a non-empty
+    *pss* the result is COMPLETE (every process covered, uncovered ones
+    defaulted to :data:`UNITSIZE_DEFAULT`), because the model treats
+    ``p_unitsize`` as a structural coefficient on every ``v_flow``.  See
+    :func:`_unitsize_complete`.
     """
     if pss is None or pss.height == 0:
         return None
@@ -97,13 +170,8 @@ def p_unitsize_from_source(source: "InputSource",
     _enums = get_global_axis_enums()
     if _enums is not None:
         pss = cast_frame_axes(pss, _enums)
-    procs = pss.lazy().select(pl.col("p")).unique()
     us_lf = _entity_unitsize_lf(source).pipe(rename_to_axis, {"e": "p"})
-    df = (procs
-            .join(us_lf, on="p", how="inner")
-            .select("p", pl.col("us").alias("value"))
-            .sort("p")
-            .collect())
+    df = _unitsize_complete(pss.lazy(), us_lf, "p", what="p_unitsize")
     if df.height == 0:
         return None
     return Param(("p",), df)
@@ -125,7 +193,11 @@ def p_state_unitsize_from_source(source: "InputSource",
         state_us_long = unitsize_long.filter(n ∈ nodeState["n"])
 
     Uses the canonical :func:`._derived_params._node_unitsize_lf`
-    cascade.  Returns ``None`` when *nodeState_df* is empty.
+    cascade.  Returns ``None`` only when *nodeState_df* is empty — for a
+    non-empty *nodeState_df* the result is COMPLETE (every node covered,
+    uncovered ones defaulted to :data:`UNITSIZE_DEFAULT`), because the
+    model treats ``p_state_unitsize`` as a structural coefficient on every
+    ``v_state`` / ``v_invest`` term.  See :func:`_unitsize_complete`.
     """
     if nodeState_df is None or nodeState_df.height == 0:
         return None
@@ -133,13 +205,9 @@ def p_state_unitsize_from_source(source: "InputSource",
     _enums = get_global_axis_enums()
     if _enums is not None:
         nodeState_df = cast_frame_axes(nodeState_df, _enums)
-    state = nodeState_df.lazy().select(pl.col("n")).unique()
     us_lf = _node_unitsize_lf(source)
-    df = (state
-            .join(us_lf, on="n", how="inner")
-            .select("n", pl.col("us").alias("value"))
-            .sort("n")
-            .collect())
+    df = _unitsize_complete(nodeState_df.lazy(), us_lf, "n",
+                            what="p_state_unitsize")
     if df.height == 0:
         return None
     return Param(("n",), df)

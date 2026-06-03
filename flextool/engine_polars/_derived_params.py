@@ -120,6 +120,17 @@ def _provider_read(provider, path: "Path | str") -> "pl.DataFrame":
 # activation set by ``load_flextool`` automatically.
 _enums: "dict | None" = None
 
+# Canonical unitsize fallback for the ``virtual_unitsize OR existing OR
+# <fallback>`` cascade.  NOTE: this is a FlexTool *modeling* default, not a
+# schema ``default_value`` — the SpineDB schema declares ``virtual_unitsize``
+# with default ``null`` (see ``flextool/schemas/spinedb_schema.json``); the
+# 1000.0 fallback lives only in flextool's preprocessing
+# (``entity_period_calc_params.py``).  Defined here so the cascade tails
+# (:func:`_entity_unitsize_lf` / :func:`_node_unitsize_lf`) and the
+# structural-completeness projection (``_derived_arithmetic._unitsize_complete``)
+# share ONE source of truth and cannot drift.
+UNITSIZE_DEFAULT = 1000.0
+
 # Memoization caches for the solve-INVARIANT unitsize cascades.  Both
 # ``_entity_unitsize_lf`` and ``_node_unitsize_lf`` compute a pure
 # coalesce (``virtual_unitsize OR existing OR 1000``) purely from
@@ -1068,7 +1079,7 @@ def p_process_existing_count_from_source(
             df = (per_proc.lazy()
                      .pipe(rename_to_axis, {"e": "p"})
                      .join(us_lf.pipe(rename_to_axis, {"e": "p"}), on="p", how="left")
-                     .with_columns(us=pl.col("us").fill_null(1000.0))
+                     .with_columns(us=pl.col("us").fill_null(UNITSIZE_DEFAULT))
                      .with_columns(value=pl.col("value") / pl.col("us"))
                      .select("p", "d", "value")
                      .sort("p", "d")
@@ -1102,7 +1113,7 @@ def p_process_existing_count_from_source(
                   .then(pl.col("us_raw"))
                   .when(pl.col("existing") != 0.0)
                   .then(pl.col("existing"))
-                  .otherwise(pl.lit(1000.0))
+                  .otherwise(pl.lit(UNITSIZE_DEFAULT))
         )
         parts.append(ex_lf)
     if not parts:
@@ -1999,7 +2010,7 @@ def _flow_upper_existing_from_chained_csv(source: "InputSource",
     base = (per_proc.lazy()
               .pipe(rename_to_axis, {"e": "p"})
               .join(us_lf.pipe(rename_to_axis, {"e": "p"}), on="p", how="left")
-              .with_columns(us=pl.col("us").fill_null(1000.0))
+              .with_columns(us=pl.col("us").fill_null(UNITSIZE_DEFAULT))
               .with_columns(value=pl.col("value") / pl.col("us"))
               .select("p", "d", "value"))
     if pss is None or pss.height == 0:
@@ -2101,7 +2112,7 @@ def p_flow_upper_existing_from_source(source: "InputSource",
               .then(pl.col("us"))
               .when(pl.col("cap").is_not_null() & (pl.col("cap") != 0.0))
               .then(pl.col("cap"))
-              .otherwise(pl.lit(1000.0))
+              .otherwise(pl.lit(UNITSIZE_DEFAULT))
     )
 
     base = (cap.with_columns(value=pl.col("cap") / pl.col("us"))
@@ -3810,7 +3821,7 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
               .then(pl.col("vu"))
               .when(pl.col("ex").fill_null(0.0) != 0.0)
               .then(pl.col("ex"))
-              .otherwise(pl.lit(1000.0))
+              .otherwise(pl.lit(UNITSIZE_DEFAULT))
     ).select("e", "us").collect()
     try:
         _ENTITY_UNITSIZE_CACHE[source] = result
@@ -4013,7 +4024,7 @@ def p_entity_max_units_from_source(source: "InputSource",
     # Compute max_capacity per (e, d in period_in_use) and divide by unitsize.
     rows: list[tuple[str, str, float]] = []
     for e in entities:
-        us = us_map.get(e, 1000.0)
+        us = us_map.get(e, UNITSIZE_DEFAULT)
         in_total = e in e_invest_total
         has_no_limit = e in has_no_limit_e
         for d in piu:
@@ -7117,7 +7128,7 @@ def _node_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
              .then(pl.col("vu"))
              .when(pl.col("ex").fill_null(0.0) != 0.0)
              .then(pl.col("ex"))
-             .otherwise(pl.lit(1000.0))
+             .otherwise(pl.lit(UNITSIZE_DEFAULT))
     ).select("n", "us").collect()
     try:
         _NODE_UNITSIZE_CACHE[source] = result
@@ -7143,7 +7154,7 @@ def p_state_upper_from_source(source: "InputSource",
     us_lf = _node_unitsize_lf(source)
     df = (cap.lazy()
               .join(us_lf, on="n", how="left")
-              .with_columns(us=pl.col("us").fill_null(1000.0))
+              .with_columns(us=pl.col("us").fill_null(UNITSIZE_DEFAULT))
               .with_columns(value=pl.col("value").cast(pl.Float64)
                                                    / pl.col("us"))
               .select("n", "d", "value")

@@ -4535,6 +4535,56 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                  provider=provider)
             _loadflex_prof("after_apply_db_overrides")
 
+            # Load-boundary invariant for derived Params that ``model.py``
+            # dereferences UNCONDITIONALLY (no ``is not None`` guard) once
+            # their owning structural set is present.  ``_apply_db_overrides``
+            # produces these in ``apply_derived_b`` / ``apply_derived_e``, but
+            # the synthetic-solve early-return skips passes 3-10 entirely (the
+            # same gap class as RESERVE-1 / SECTION-1 documented in that
+            # function).  On a synthetic / rolling sub-solve they are then left
+            # ``None`` while the ctor-built index sets (``flow_constraint_idx``,
+            # ``process_source_sink``, ``nodeState``) are populated — and the
+            # build dies with ``TypeError: ... 'Expr' and 'NoneType'``.
+            #
+            # ``p_flow_constraint_coef`` is the one that actually bites: it has
+            # NO ctor seed (the ctor builds only the ``flow_constraint_idx``
+            # index — see ``_load_user_constraints``), so the user-defined
+            # flow-constraint block (``model.py`` §user_defined_flow_constraints)
+            # does ``Where(v_flow * p_unitsize, flow_constraint_idx) *
+            # p_flow_constraint_coef`` with a ``None`` coefficient.  ``p_unitsize``
+            # / ``p_state_unitsize`` DO have ctor seeds so they are rarely
+            # ``None`` here, but we guard them too for symmetry (and because the
+            # producers are now complete-by-construction).
+            #
+            # Enforce the invariant for EVERY override path by rebuilding from
+            # the live ``db_reader`` source whenever a Param is missing but its
+            # set exists.  No-op on the non-synthetic path (the passes already
+            # set them), so it is parity-clean — not a guard that masks a
+            # divergence by silently dropping the term.
+            from flextool.engine_polars._derived_arithmetic import (
+                p_state_unitsize_from_source,
+                p_unitsize_from_source,
+            )
+            from flextool.engine_polars._derived_params import (
+                p_flow_constraint_coef_from_source,
+            )
+            _pss_inv = getattr(flex_data, "process_source_sink", None)
+            _pss_ok = _pss_inv is not None and _pss_inv.height > 0
+            if flex_data.p_unitsize is None and _pss_ok:
+                flex_data.p_unitsize = p_unitsize_from_source(
+                    db_reader, _pss_inv)
+            if flex_data.p_state_unitsize is None:
+                _ns_inv = getattr(flex_data, "nodeState", None)
+                if _ns_inv is not None and _ns_inv.height > 0:
+                    flex_data.p_state_unitsize = p_state_unitsize_from_source(
+                        db_reader, _ns_inv)
+            _fci = getattr(flex_data, "flow_constraint_idx", None)
+            if (flex_data.p_flow_constraint_coef is None
+                    and _fci is not None and _fci.height > 0
+                    and _pss_ok):
+                flex_data.p_flow_constraint_coef = (
+                    p_flow_constraint_coef_from_source(db_reader, _pss_inv))
+
         # Δ.11 — overlay in-memory handoff carriers onto the FlexData
         # built so far.  Replaces the previous post-load ``apply_handoff``
         # call: the handoff is now an input to the build, not a separate
