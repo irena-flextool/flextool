@@ -87,9 +87,11 @@ STATUS_OK = "\u2713"      # ✓
 STATUS_ERR = "\u2717"     # ✗
 STATUS_EMPTY = "\u25cb"   # (no scenarios; Geometric Shapes circle — was U+2300 diameter sign)
 STATUS_EDITING = "\u25b6" # open in editor (Geometric Shapes; was U+23F3)
+STATUS_RETIRED = "\u2298" # ghost row: input file gone, only results remain
 
-# Input-sources tree iid prefix for external references
-_EXT_IID_PREFIX = "ext:"
+# Input-sources tree iid prefixes
+_EXT_IID_PREFIX = "ext:"      # external reference
+_GHOST_IID_PREFIX = "ghost:"  # retired source (file gone, results survive)
 
 
 def _source_name_from_iid(iid: str) -> str:
@@ -97,6 +99,11 @@ def _source_name_from_iid(iid: str) -> str:
     if iid.startswith(_EXT_IID_PREFIX):
         return iid[len(_EXT_IID_PREFIX):]
     return iid
+
+
+def _is_ghost_iid(iid: str) -> bool:
+    """True for a retired "ghost" input-source row (no live file)."""
+    return iid.startswith(_GHOST_IID_PREFIX)
 
 # Animated spinner frames for output action progress indication
 _SPINNER_FRAMES = ["\u25d0", "\u25d3", "\u25d1", "\u25d2"]  # rotating circle (Geometric Shapes; render on Windows Tk, unlike the old U+29D6/7 hourglasses)
@@ -422,6 +429,7 @@ class MainWindow(tk.Tk):
             checked_glyph=CHECK_ON,
             unchecked_glyph=CHECK_OFF,
             on_toggle=self._on_input_sources_toggled,
+            can_check=lambda iid: not _is_ghost_iid(iid),
         )
         self.input_sources_tree.bind("<Double-1>", self._on_input_source_dblclick)
         self.input_sources_tree.bind("<B1-Motion>", self._on_tree_drag_select)
@@ -1812,7 +1820,7 @@ class MainWindow(tk.Tk):
     def _on_input_source_dblclick(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Double-click on an input source row opens it for editing."""
         item = self.input_sources_tree.identify_row(event.y)
-        if item:
+        if item and not _is_ghost_iid(item):
             # Select the item so _on_edit_source sees it as selected
             self.input_sources_tree.selection_set(item)
             self._on_edit_source()
@@ -1856,6 +1864,11 @@ class MainWindow(tk.Tk):
             # Select the right-clicked row if not already selected
             if item not in tree.selection():
                 tree.selection_set(item)
+
+        if item and _is_ghost_iid(item):
+            self._show_ghost_source_menu(item, event.x_root, event.y_root)
+            return
+
         menu = self._styled_popup_menu(self)
         menu.add_command(label="Edit", command=self._on_edit_source)
         menu.add_command(label="Convert", command=self._on_convert_source)
@@ -1864,6 +1877,100 @@ class MainWindow(tk.Tk):
         menu.add_separator()
         menu.add_command(label="Refresh", command=self._on_refresh_sources)
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _show_ghost_source_menu(self, item: str, x_root: int, y_root: int) -> None:
+        """Context menu for a retired ghost row (deleted file, results remain).
+
+        Offers re-linking the orphaned result folders to a live source
+        (a cascade of current sources) or deleting the stale results
+        outright. Either action lets the next refresh drop the ghost.
+        """
+        try:
+            number = int(item[len(_GHOST_IID_PREFIX):])
+        except ValueError:
+            return
+
+        menu = self._styled_popup_menu(self)
+        live = [
+            s for s in (self.input_source_mgr._sources if self.input_source_mgr else [])
+        ]
+        if live:
+            relink = self._styled_popup_menu(menu)
+            for src in live:
+                relink.add_command(
+                    label=f"{src.name}  (source {src.number})",
+                    command=lambda n=src.number: self._relink_ghost_results(number, n),
+                )
+            menu.add_cascade(label="Re-link these results to…", menu=relink)
+        else:
+            menu.add_command(
+                label="Re-link these results to… (no live source)",
+                state="disabled",
+            )
+        menu.add_separator()
+        menu.add_command(
+            label="Delete these stale results",
+            command=lambda: self._delete_ghost_results(number),
+        )
+        menu.add_separator()
+        menu.add_command(label="Refresh", command=self._on_refresh_sources)
+        menu.tk_popup(x_root, y_root)
+
+    def _delete_ghost_results(self, number: int) -> None:
+        """Delete the orphaned result folders behind a retired ghost row."""
+        if not self.input_source_mgr:
+            return
+        folders = self.input_source_mgr.result_folders_for_number(number)
+        if not folders:
+            self._refresh_input_sources()
+            return
+        names = [f.name for f, _ in folders]
+        answer = messagebox.askyesno(
+            "Delete stale results",
+            f"Permanently delete {len(folders)} executed-scenario result "
+            f"folder(s) left over from retired source {number} "
+            "(not retrievable)?\n\n  "
+            + "\n  ".join(names[:20])
+            + ("\n  …" if len(names) > 20 else ""),
+            icon="warning",
+            parent=self,
+        )
+        if not answer:
+            return
+        self.input_source_mgr.delete_results(number)
+        self._refresh_input_sources()
+        self._refresh_executed_scenarios()
+
+    def _relink_ghost_results(self, old_number: int, new_number: int) -> None:
+        """Re-attribute a retired source's result folders to a live source."""
+        if not self.input_source_mgr:
+            return
+        folders = self.input_source_mgr.result_folders_for_number(old_number)
+        if not folders:
+            self._refresh_input_sources()
+            return
+        answer = messagebox.askyesno(
+            "Re-link results",
+            f"Re-link {len(folders)} result folder(s) from retired source "
+            f"{old_number} to source {new_number}?\n\n"
+            "The folders are renamed to record the new source number.",
+            parent=self,
+        )
+        if not answer:
+            return
+        _moved, conflicts = self.input_source_mgr.relink_results(
+            old_number, new_number
+        )
+        self._refresh_input_sources()
+        self._refresh_executed_scenarios()
+        if conflicts:
+            messagebox.showwarning(
+                "Some results not re-linked",
+                "These result folders already existed under source "
+                f"{new_number} (or could not be moved) and were left in "
+                "place:\n\n  " + "\n  ".join(conflicts),
+                parent=self,
+            )
 
     def _on_input_source_motion(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Show a tooltip when hovering over an error/empty row."""
@@ -1881,7 +1988,25 @@ class MainWindow(tk.Tk):
         source_name = _source_name_from_iid(item)
         is_external = item.startswith(_EXT_IID_PREFIX)
         tip_lines: list[str] = []
-        if status_char == STATUS_EMPTY:
+        if _is_ghost_iid(item):
+            ghost = next(
+                (s for s in (self.input_source_mgr._last_ghosts
+                             if self.input_source_mgr else [])
+                 if f"{_GHOST_IID_PREFIX}{s.number}" == item),
+                None,
+            )
+            count = ghost.result_count if ghost else 0
+            named = ghost.name if ghost and not ghost.name.startswith("(source ") else None
+            origin = f"input file '{named}'" if named else "a deleted input file"
+            tip_lines.append(
+                f"Retired source {values[2]}: {origin} is gone, but "
+                f"{count} executed scenario result(s) still use it.\n"
+                "Kept so the results stay attributable; it disappears "
+                "automatically once those results are removed.\n"
+                "Right-click to re-link the results to a live source or "
+                "delete them."
+            )
+        elif status_char == STATUS_EMPTY:
             tip_lines.append("No scenarios found in this file.")
         elif status_char == STATUS_ERR:
             tip_lines.append("Could not read scenarios (invalid or missing file).")
@@ -2023,6 +2148,8 @@ class MainWindow(tk.Tk):
         # 1. Check the new input sources in the input_sources_tree
         new_source_numbers: set[int] = set()
         for item in self.input_sources_tree.get_children():
+            if _is_ghost_iid(item):
+                continue  # never tick a retired ghost row
             values = self.input_sources_tree.item(item, "values")
             if values and _source_name_from_iid(item) not in old_sources:
                 self.input_sources_tree.set(item, "check", CHECK_ON)
@@ -2250,6 +2377,9 @@ class MainWindow(tk.Tk):
         # Configure tags for problem rows
         self.input_sources_tree.tag_configure("error", background="#6b2020")
         self.input_sources_tree.tag_configure("empty", background="#5c4a00")
+        # Retired "ghost" rows: input file gone, only results remain. Dimmed
+        # foreground signals they are informational and not runnable.
+        self.input_sources_tree.tag_configure("retired", foreground="#7a7a7a")
         # Brief flash used when an open is refused because the file is
         # already open elsewhere — overlays the row's normal tags.
         self.input_sources_tree.tag_configure("flash_open", background="#aa3333")
@@ -2258,6 +2388,17 @@ class MainWindow(tk.Tk):
         saved_checked = set(self.project_settings.checked_input_sources)
         has_saved_state = len(saved_checked) > 0
         for source in sources:
+            if source.retired:
+                # Ghost row: no checkbox, dimmed, distinct status glyph.
+                self.input_sources_tree.insert(
+                    "",
+                    "end",
+                    iid=f"{_GHOST_IID_PREFIX}{source.number}",
+                    values=("", source.name, source.number, STATUS_RETIRED),
+                    tags=("retired",),
+                )
+                continue
+
             if source.status == "ok":
                 status_char = STATUS_OK
             elif source.status == "editing":
@@ -2535,6 +2676,8 @@ class MainWindow(tk.Tk):
         """Return (name, status_char) for each highlighted (selected) input source row."""
         selected: list[tuple[str, str]] = []
         for item in self.input_sources_tree.selection():
+            if _is_ghost_iid(item):
+                continue  # ghost rows are informational, not actionable
             values = self.input_sources_tree.item(item, "values")
             if values:
                 selected.append((_source_name_from_iid(item), values[3]))

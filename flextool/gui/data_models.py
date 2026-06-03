@@ -126,8 +126,14 @@ class ProjectSettings:
     single_plot_settings: PlotSettings = field(default_factory=PlotSettings)
     comparison_plot_settings: PlotSettings = field(default_factory=PlotSettings)
 
-    # Input source numbers: source name -> number
+    # Input source numbers: source name -> number (live sources only).
     input_source_numbers: dict[str, int] = field(default_factory=dict)
+
+    # Persistent per-number source identity: str(number) -> SourceRecord.
+    # Survives file deletion so orphaned results stay attributable and a
+    # re-added file reclaims its old number. Garbage-collected once a
+    # number has neither a live file nor any results. See SourceRecord.
+    source_registry: dict[str, SourceRecord] = field(default_factory=dict)
 
     # External input references: source name -> POSIX path relative to project root.
     # Files are read in place (not copied into input_sources/).
@@ -227,16 +233,51 @@ class GlobalSettings:
 
 
 @dataclass
+class SourceRecord:
+    """Persistent identity of an input source, keyed by its source number.
+
+    Stored in ``ProjectSettings.source_registry`` as ``str(number) ->
+    SourceRecord``. Unlike ``input_source_numbers`` (a live name→number
+    index), this record **survives deletion of the underlying file** so
+    that:
+
+    * executed-scenario folders left on disk (``output_parquet/<name>_N``)
+      can still be attributed to a named file (drives the greyed-out
+      "ghost" rows in the input-source list), and
+    * re-adding the same file reclaims its original number instead of
+      drifting to a new one (the renumbering bug).
+
+    A record is garbage-collected from settings.yaml on the next
+    ``refresh()`` once **neither** a live file **nor** any executed-
+    scenario results reference its number — so empty ghosts never
+    accumulate. The "retired" state is derived per refresh from
+    ``(has live file?, has results?)``; it is not persisted here.
+    """
+    name: str = ""
+    # Project-root-relative POSIX path (e.g. "input_sources/examples.sqlite"
+    # for an internal file, "../data/input.xlsx" for an external one).
+    # Empty when the path is unknown (legacy orphan with no recorded owner).
+    path: str = ""
+
+
+@dataclass
 class InputSourceInfo:
     """Information about an input source file."""
     name: str
     file_type: str  # "xlsx" or "sqlite"
     number: int
-    status: str  # "ok", "error", "empty", or "editing"
+    status: str  # "ok", "error", "empty", "editing", or "retired"
     scenarios: list[str] = field(default_factory=list)
     # Set when the source lives outside the project; stored as POSIX path
     # relative to the project root (e.g. "../data/input.xlsx").
     external_rel_path: str | None = None
+    # True for a "ghost" row: the input file is gone but executed-scenario
+    # results still reference this number. Such rows are informational
+    # (greyed out, not runnable) and disappear once the results are removed.
+    retired: bool = False
+    # Number of executed-scenario result folders that resolve to this
+    # source number (used for the ghost-row tooltip / GC decision).
+    result_count: int = 0
 
 
 @dataclass

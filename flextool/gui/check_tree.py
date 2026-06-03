@@ -34,12 +34,16 @@ class CheckTreeController:
         checked_glyph: str = "■",
         unchecked_glyph: str = "□",
         on_toggle: Callable[[list[str]], None] | None = None,
+        can_check: Callable[[str], bool] | None = None,
     ) -> None:
         self._tree = tree
         self._check_column = check_column
         self._checked = checked_glyph
         self._unchecked = unchecked_glyph
         self._on_toggle = on_toggle
+        # Optional predicate: rows for which it returns False can never be
+        # checked/unchecked (e.g. informational "ghost" rows).
+        self._can_check = can_check
 
         tree.bind("<Button-1>", self._on_click, add="+")
         tree.bind("<space>", self._on_space, add="+")
@@ -65,6 +69,9 @@ class CheckTreeController:
 
     def toggle_selected(self) -> None:
         sel = list(self._tree.selection())
+        if not sel:
+            return
+        sel = [iid for iid in sel if self._can_check is None or self._can_check(iid)]
         if not sel:
             return
         all_checked = all(self.is_checked(iid) for iid in sel)
@@ -106,6 +113,8 @@ class CheckTreeController:
         iid = self._tree.identify_row(event.y)
         if not iid:
             return None
+        if self._can_check is not None and not self._can_check(iid):
+            return "break"  # row is not checkable (e.g. ghost row)
         new_value = not self.is_checked(iid)
         self.set_checked(iid, new_value, notify=True)
         return "break"  # don't let default click also alter selection

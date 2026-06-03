@@ -11,6 +11,7 @@ from flextool.gui.data_models import (
     PlotSettings,
     ProjectSettings,
     ScenarioRun,
+    SourceRecord,
     ViewerSettings,
 )
 
@@ -87,6 +88,24 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     settings.input_source_numbers = data.get(
         "input_source_numbers", settings.input_source_numbers
     )
+
+    # Per-number source identity. Keys are stringified numbers; values are
+    # {name, path} dicts. Tolerate a hand-edited / malformed map by
+    # validating each entry and dropping the rest.
+    registry_data = data.get("source_registry", {})
+    if isinstance(registry_data, dict):
+        registry: dict[str, SourceRecord] = {}
+        for num_key, rec in registry_data.items():
+            key = str(num_key)
+            if not key.isdigit():
+                continue
+            if isinstance(rec, dict):
+                registry[key] = SourceRecord(
+                    name=str(rec.get("name", "")),
+                    path=str(rec.get("path", "")),
+                )
+        settings.source_registry = registry
+
     settings.external_refs = data.get("external_refs", settings.external_refs)
     settings.bare_output_owners = data.get(
         "bare_output_owners", settings.bare_output_owners

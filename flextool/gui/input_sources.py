@@ -45,6 +45,10 @@ class InputSourceManager:
         self.settings = settings
         self.input_dir = project_path / "input_sources"
         self._sources: list[InputSourceInfo] = []
+        # Retired "ghost" rows from the last refresh (file gone, results
+        # survive). Kept separate from ``_sources`` (live only) so scenario
+        # enumeration ignores them while the UI can still render them.
+        self._last_ghosts: list[InputSourceInfo] = []
         # Track mtimes for files opened via Edit button (Linux xlsx fallback)
         self._last_known_mtimes: dict[str, float] = {}
         # Track which sources were explicitly opened for editing
@@ -259,43 +263,114 @@ class InputSourceManager:
             logger.warning("Failed to read spine db: %s", filepath, exc_info=True)
             return None
 
-    def _reserved_from_disk(self) -> set[int]:
-        """Source numbers used by executed-scenario folders on disk.
+    def _disk_source_counts(self) -> dict[int, int]:
+        """Map ``source_number -> number of executed-scenario folders`` on disk.
 
-        Combined with current input-source numbers, this defines the set
-        of "in-use" numbers. A number outside this combined set is free
-        to reassign to a new source — including numbers freed by deleting
-        both the input source AND its executed scenarios.
+        Scans ``output_parquet/`` and attributes each result folder to its
+        source number (via the ``_N`` suffix, honouring legacy bare-owner
+        records). A number present here is "in use" by results even if its
+        input file is gone — which is what keeps a ghost row alive and what
+        a new source must avoid colliding with.
         """
         from flextool.gui.scenario_key import resolve_source_number, LEGACY_SOURCE_NUMBER
 
         parquet_dir = self.project_path / "output_parquet"
+        counts: dict[int, int] = {}
         if not parquet_dir.is_dir():
-            return set()
+            return counts
         owners = self.settings.bare_output_owners
-        used: set[int] = set()
         for entry in parquet_dir.iterdir():
             if not entry.is_dir() or entry.name.startswith("_"):
                 continue
             n, _ = resolve_source_number(entry.name, owners)
             if n != LEGACY_SOURCE_NUMBER:
-                used.add(n)
-        return used
+                counts[n] = counts.get(n, 0) + 1
+        return counts
+
+    def _rel_path_for(self, source: InputSourceInfo) -> str:
+        """Project-root-relative POSIX path recorded for a source's identity.
+
+        Internal files live under ``input_sources/``; external references
+        already store a project-root-relative path. Used as the primary
+        key for reclaiming a source's original number after its settings
+        entry was lost (see :meth:`refresh`).
+        """
+        if source.external_rel_path:
+            return source.external_rel_path
+        return f"input_sources/{source.name}"
 
     def refresh(self) -> list[InputSourceInfo]:
-        """Re-scan directory, re-read all scenarios, and assign persistent numbers.
+        """Re-scan directory, re-read scenarios, and assign persistent numbers.
 
-        Numbers are persisted in ``settings.yaml``. A new source is given
-        the **lowest positive integer that is not currently in use** —
-        used by either a current input source or any executed-scenario
-        folder still on disk. A number is freed only when both go away.
-        Returns the updated list of :class:`InputSourceInfo`.
+        Numbering is reconciled against two persistent records and the
+        result folders on disk:
+
+        * ``input_source_numbers`` (live name→number) gives a stable number
+          to a source that already has one.
+        * ``source_registry`` (number→identity) lets a source whose
+          settings entry was lost **reclaim its original number** by
+          matching on path (then name) — this is what stops a re-added or
+          settings-reset source from drifting onto a fresh number and
+          orphaning its own results.
+        * otherwise the source gets the lowest positive integer not used by
+          any live source or any executed-scenario result folder.
+
+        Numbers whose input file is gone but whose result folders survive
+        are emitted as **retired "ghost" rows**. The registry is garbage-
+        collected so an entry is dropped once its number has neither a live
+        file nor any results. Both records are persisted to settings.yaml.
+        Returns live sources followed by ghost rows.
         """
-        sources = self.scan_input_sources()
+        from flextool.gui.data_models import SourceRecord
 
-        # Assign persistent numbers
-        numbers = dict(self.settings.input_source_numbers)
-        reserved = set(numbers.values()) | self._reserved_from_disk()
+        sources = self.scan_input_sources()
+        registry = dict(self.settings.source_registry)
+        disk_counts = self._disk_source_counts()
+        prior_numbers = dict(self.settings.input_source_numbers)
+
+        rel_paths = {id(s): self._rel_path_for(s) for s in sources}
+        assigned: dict[int, InputSourceInfo] = {}  # number -> source
+
+        # Pass A — keep the number a live source already holds (stability).
+        pending: list[InputSourceInfo] = []
+        for source in sources:
+            num = prior_numbers.get(source.name)
+            if num is not None and num not in assigned:
+                source.number = num
+                assigned[num] = source
+            else:
+                pending.append(source)
+
+        # Pass B — reclaim an original number from the registry by matching
+        # on path first, then name. Skips numbers already taken this pass.
+        def _reclaim(source: InputSourceInfo) -> int | None:
+            path = rel_paths[id(source)]
+            by_path = sorted(
+                int(k) for k, rec in registry.items()
+                if rec.path and rec.path == path and int(k) not in assigned
+            )
+            if by_path:
+                return by_path[0]
+            by_name = sorted(
+                int(k) for k, rec in registry.items()
+                if rec.name == source.name and int(k) not in assigned
+            )
+            if by_name:
+                return by_name[0]
+            return None
+
+        still_pending: list[InputSourceInfo] = []
+        for source in pending:
+            num = _reclaim(source)
+            if num is not None:
+                source.number = num
+                assigned[num] = source
+            else:
+                still_pending.append(source)
+
+        # Pass C — allocate the lowest free number, avoiding live sources
+        # and any result folders on disk (orphaned results of other files).
+        reserved = set(assigned) | set(disk_counts)
 
         def _next_free() -> int:
             n = 1
@@ -303,15 +378,12 @@ class InputSourceManager:
                 n += 1
             return n
 
-        for source in sources:
-            if source.name in numbers:
-                source.number = numbers[source.name]
-            else:
-                source.number = _next_free()
-                reserved.add(source.number)
-                numbers[source.name] = source.number
+        for source in still_pending:
+            source.number = _next_free()
+            assigned[source.number] = source
+            reserved.add(source.number)
 
-        # Read scenarios for each source and determine status
+        # Read scenarios for each live source and determine status.
         for source in sources:
             filepath = self.resolve_path(source)
             if not filepath.exists():
@@ -332,12 +404,123 @@ class InputSourceManager:
                 source.status = "ok"
                 source.scenarios = scenarios
 
-        # Persist updated numbers
+        # Rebuild the live name→number index from scratch so deleted files
+        # drop out automatically, and refresh each live source's registry
+        # record with its current name + path.
+        numbers = {s.name: s.number for s in sources}
+        for source in sources:
+            registry[str(source.number)] = SourceRecord(
+                name=source.name, path=rel_paths[id(source)]
+            )
+
+        # Emit ghost rows for numbers whose results survive but whose input
+        # file is gone, and ensure each such number has a (possibly empty)
+        # registry record so it is documented in settings.yaml.
+        ghosts: list[InputSourceInfo] = []
+        for number in sorted(disk_counts):
+            if number in assigned:
+                continue  # a live source owns this number
+            rec = registry.get(str(number))
+            if rec is None:
+                rec = SourceRecord()  # legacy orphan: file identity unknown
+                registry[str(number)] = rec
+            ext = Path(rec.name).suffix.lstrip(".").lower() if rec.name else ""
+            ghosts.append(
+                InputSourceInfo(
+                    name=rec.name or f"(source {number})",
+                    file_type=ext,
+                    number=number,
+                    status="retired",
+                    external_rel_path=None,
+                    retired=True,
+                    result_count=disk_counts[number],
+                )
+            )
+
+        # Garbage-collect registry entries no longer backed by a live file
+        # or any result folders — so empty ghosts never accumulate.
+        keep = set(assigned) | set(disk_counts)
+        registry = {k: v for k, v in registry.items() if int(k) in keep}
+
+        # Persist reconciled records.
         self.settings.input_source_numbers = numbers
+        self.settings.source_registry = registry
         save_project_settings(self.project_path, self.settings)
 
         self._sources = sources
-        return sources
+        self._last_ghosts = ghosts
+        return sources + ghosts
+
+    def result_folders_for_number(self, number: int) -> list[tuple[Path, str]]:
+        """List ``(folder, scenario_name)`` result dirs owned by *number*.
+
+        Honours legacy bare-owner records, so a bare folder owned by
+        *number* is included alongside suffixed folders.
+        """
+        from flextool.gui.scenario_key import resolve_source_number
+
+        parquet = self.project_path / "output_parquet"
+        out: list[tuple[Path, str]] = []
+        if not parquet.is_dir():
+            return out
+        owners = self.settings.bare_output_owners
+        for entry in sorted(parquet.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("_"):
+                continue
+            n, scen = resolve_source_number(entry.name, owners)
+            if n == number:
+                out.append((entry, scen))
+        return out
+
+    def _release_bare_owners_for_number(self, number: int) -> None:
+        """Drop any legacy bare-owner records pointing at *number*."""
+        owners = self.settings.bare_output_owners
+        for scen in [k for k, v in owners.items() if v == number]:
+            del owners[scen]
+
+    def delete_results(self, number: int) -> int:
+        """Delete every result folder attributed to *number*.
+
+        Releases any legacy bare-owner records for the number and persists
+        settings. Returns the count of folders removed. The caller should
+        refresh afterwards; the now-unbacked registry entry is GC'd then.
+        """
+        folders = self.result_folders_for_number(number)
+        for folder, _scen in folders:
+            shutil.rmtree(folder, ignore_errors=True)
+        self._release_bare_owners_for_number(number)
+        save_project_settings(self.project_path, self.settings)
+        return len(folders)
+
+    def relink_results(
+        self, old_number: int, new_number: int
+    ) -> tuple[int, list[str]]:
+        """Re-attribute *old_number*'s result folders to *new_number*.
+
+        Renames each folder to the self-describing ``<scenario>_<new>``
+        form. Returns ``(moved_count, conflicts)`` where *conflicts* lists
+        scenarios skipped because a folder already existed under the target
+        number (or could not be moved). Releases legacy bare-owner records
+        for the old number and persists settings.
+        """
+        from flextool.gui.scenario_key import format_subdir
+
+        parquet = self.project_path / "output_parquet"
+        moved = 0
+        conflicts: list[str] = []
+        for folder, scen in self.result_folders_for_number(old_number):
+            target = parquet / format_subdir(new_number, scen)
+            if target.exists():
+                conflicts.append(scen)
+                continue
+            try:
+                folder.rename(target)
+                moved += 1
+            except OSError as exc:
+                conflicts.append(f"{scen} ({exc})")
+        self._release_bare_owners_for_number(old_number)
+        save_project_settings(self.project_path, self.settings)
+        return moved, conflicts
 
     def get_all_scenarios(
         self, selected_sources: list[str] | None = None
