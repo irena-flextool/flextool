@@ -423,14 +423,6 @@ def native_run_model(state, solver) -> int:
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()
 
-        # Blank line before every roll/solve (i > 0).  Each iter now
-        # emits its own four phase checkpoints (see the per-iter flag
-        # below), so a blank line per boundary cleanly separates one
-        # roll's marker block from the next rather than fragmenting a
-        # shared block.
-        if i > 0:
-            print("", flush=True)
-
         # Between-solves memory snapshot — fires before every roll/solve
         # (i > 0).  The previous iter now always emits the four phase
         # checkpoints (ending in ``Outputs written``), so this shows

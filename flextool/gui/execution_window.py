@@ -745,7 +745,6 @@ class ExecutionWindow(tk.Toplevel):
         whole console dump greys out until the next phase-progress row.
         """
         low = element.lower()
-        stripped = element.strip()
         # Command echo — a multi-line bash block (yellow wash).
         if "\\\n" in element or element.startswith("systemd-run"):
             self._highs_block_active = False
@@ -766,8 +765,10 @@ class ExecutionWindow(tk.Toplevel):
         if element.startswith("Running HiGHS"):
             self._highs_block_active = True
         tags: list[str] = []
-        if self._highs_block_active and stripped:
-            # Blank lines inside/after the dump stay un-greyed.
+        if self._highs_block_active:
+            # Whole block greys, blank lines included, so the solver dump
+            # reads as one contiguous panel (the block ends at the next
+            # phase/timer row, after which blanks are regular again).
             tags.append("highs")
         if "warning" in low or "error" in low:
             tags.append("warn")
@@ -797,6 +798,12 @@ class ExecutionWindow(tk.Toplevel):
         # Append only the new lines, tagging each for theme-aware colouring.
         new_lines = lines[already_shown:]
         for line in new_lines:
+            # The engine prints a ``total_cost.val = …`` line for CLI/test
+            # consumers that parse stdout; it's redundant in the GUI (the
+            # solver already reports the objective) and lands mid-table, so
+            # drop it from the displayed log. The raw stdout is untouched.
+            if line.startswith("total_cost.val ="):
+                continue
             tags = self._classify_log_line(line)
             self._output_text.insert("end", line + "\n", tuple(tags))
         self._displayed_counts[job_id] = new_count
