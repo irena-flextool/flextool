@@ -4822,6 +4822,34 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 db_reader, dt, classified)
         _loadflex_prof("apply_db_overrides:pass_synthetic_section")
         _timed("c.synth section", _wire_section_for_synthetic_solve)
+
+        # INFLOW-1 — synthetic solves skip ``apply_derived_c``; re-wire the
+        # inflow signed-split so the non_sync / capacity_margin demand budget
+        # isn't silently lost.  ``apply_derived_c`` (``_derived_params`` §3.12)
+        # builds ``p_positive_inflow`` / ``p_negative_inflow`` /
+        # ``pdtNodeInflow_per_step`` from the in-memory ``flex_data.p_inflow``
+        # (and ``flex_data.p_step_duration``), both of which are already loaded
+        # at ``FlexData`` construction (``_load_node`` / step_dur) BEFORE this
+        # early-return and are correctly sized for the synthetic sub-solve
+        # (each solve emits its own ``pdtNodeInflow.csv``).  All three helpers
+        # are solve-agnostic (no ``active_solve`` filter) and the inputs match
+        # ``apply_derived_c``'s exactly, so this is byte-identical to the
+        # non-synthetic path.  Without it ``_add_non_sync`` (RHS ``exo_demand``
+        # / LHS ``p_positive_inflow`` terms gate on these being non-None) and
+        # ``_add_cap_margin`` (``pdtNodeInflow_per_step``) silently drop the
+        # demand budget — VRE pins to 0 and coal backfills.  See
+        # ``specs/model_bugs.md::INFLOW-1``.
+        def _wire_inflow_split_for_synthetic_solve():
+            p_inflow_csv = getattr(flex_data, "p_inflow", None)
+            sd_csv = getattr(flex_data, "p_step_duration", None)
+            flex_data.p_positive_inflow = (
+                _drv.p_positive_inflow_from_inflow(p_inflow_csv))
+            flex_data.p_negative_inflow = (
+                _drv.p_negative_inflow_from_inflow(p_inflow_csv))
+            flex_data.pdtNodeInflow_per_step = (
+                _drv.pdtNodeInflow_per_step_from_inflow(p_inflow_csv, sd_csv))
+        _loadflex_prof("apply_db_overrides:pass_synthetic_inflow")
+        _timed("c.synth inflow", _wire_inflow_split_for_synthetic_solve)
         return
 
     _loadflex_prof("apply_db_overrides:pass_derived_a")
