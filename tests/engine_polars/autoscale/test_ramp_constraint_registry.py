@@ -53,11 +53,11 @@ def test_ramp_constraint_names_resolve_to_dimensionless() -> None:
 def test_prefix_dispatch_longest_match_wins() -> None:
     """A longer registry key takes precedence over a shorter prefix, so
     a specific registration is never shadowed by a generic one."""
-    # maxToSink_online is a more specific registration than maxToSink;
+    # maxFlow_online is a more specific registration than maxFlow;
     # the suffix-strip path resolves the _linear variant to it (not to
-    # the shorter maxToSink prefix).
-    assert lookup_cstr("maxToSink_online_linear") is lookup_cstr(
-        "maxToSink_online"
+    # the shorter maxFlow prefix).
+    assert lookup_cstr("maxFlow_online_linear") is lookup_cstr(
+        "maxFlow_online"
     )
 
 

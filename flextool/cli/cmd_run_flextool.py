@@ -90,6 +90,7 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
     # the cascade runs purely in-memory — no CSVs hit
     # ``solve_data/`` from the writer-port modules.
     csv_dump_on = bool(getattr(args, 'csv_dump', False))
+    keep_solutions_on = bool(getattr(args, 'keep_solutions', False))
 
     from flextool.engine_polars import run_chain_from_db
 
@@ -101,6 +102,7 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
         args.input_db_url,
         scenario_name,
         work_folder=work_folder,
+        keep_solutions=keep_solutions_on,
         csv_dump=csv_dump_on,
     )
 
@@ -187,6 +189,14 @@ def main():
              'cascade iterations (the Problem is released after MPS '
              'write). Off by default; use when models OOM on the default '
              'in-process path.',
+    )
+    parser.add_argument(
+        '--keep-solutions', action='store_true',
+        help='Retain the HiGHS ``solution`` (and ``flex_data`` / '
+             'Provider) on every cascade sub-solve instead of slimming '
+             'all but the last step. Required for multi-solve runs whose '
+             'outputs must union every sub-solve rather than collapse to '
+             'the final one. Increases peak memory; off by default.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,

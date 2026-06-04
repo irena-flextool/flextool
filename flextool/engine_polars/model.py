@@ -5,7 +5,7 @@ relevant data being present in ``FlexData``.
 What's wired so far:
 
   * vq_state_up / vq_state_down (always)
-  * v_flow + maxToSink + nodeBalance.sink_flow      (if processes)
+  * v_flow + maxFlow + nodeBalance.sink_flow      (if processes)
   * commodity buy (eff + noEff)                     (if commodity_node)
   * conversion_indirect                              (if multi-flow process)
   * CO2-price objective term                         (if co2_price feature)
@@ -639,16 +639,75 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
     # ─── Reserve vars (v_reserve, vq_reserve) ─────────────────────────────
     # Declared up-front so the constraint emission stage (and downstream
-    # patches that splice ``v_reserve`` into maxToSink/ramp/profile LHS
+    # patches that splice ``v_reserve`` into maxFlow/ramp/profile LHS
     # terms) can reference them.  Returns {} when the reserve subsystem
     # is inactive.
     _build_prof("before:reserve_dcpf_ladder_vars")
     reserve_vars = _reserve.add_variables(m, d) if _reserve.has_feature(d) else {}
 
+    # ─── Reverse-flow auxiliary for method_2way_1var_off arcs ─────────────
+    # ``method_2way_1var_off`` is the .mod's single-signed-flow 2-way
+    # transfer method: ``v_flow ∈ [-cap, +cap]``.  The engine emits
+    # ``v_flow ≥ 0`` on the FORWARD arc only, so sink→source flow is
+    # carried by a non-negative auxiliary ``v_flow_back`` with the
+    # algebraic signed flow ``v_flow - v_flow_back``.  This Var is declared
+    # ONCE over the UNION of all such arcs (DC-power-flow + non-DC) so the
+    # DC ``dc_flow_eq`` and the nodeBalance/cap wiring share a single Var
+    # (avoids a duplicate ``add_var('v_flow_back', …)`` collision).
+    #
+    # The arc set is the union of two sources, so the back auxiliary is
+    # emitted whichever path populated the data:
+    #   * ``d.process_source_sink_2way_1var`` — the projection field
+    #     (apply_projection_params); populated in the full DB cascade.
+    #   * ``_dc_power_flow.dc_arcs_frame(d)`` — the DC arcs derived from
+    #     ``connection_dc_power_flow`` ∩ ``process_source_sink``; this keeps
+    #     the pre-refactor behavior where DC arcs ALWAYS get the cap, even
+    #     in lightweight build paths (e.g. emission/load_flextool fixtures)
+    #     that don't run the projection pass.
+    twoway1var_arcs = None
+    v_flow_back = None
+    if has_proc:
+        _arc_parts = []
+        if (d.process_source_sink_2way_1var is not None
+                and d.process_source_sink_2way_1var.height > 0):
+            _arc_parts.append(d.process_source_sink_2way_1var.select(
+                "p", "source", "sink"))
+        if _dc_power_flow.has_feature(d):
+            _dc_arcs = _dc_power_flow.dc_arcs_frame(d)
+            if _dc_arcs is not None and _dc_arcs.height > 0:
+                _arc_parts.append(_dc_arcs.select("p", "source", "sink"))
+        if _arc_parts:
+            if len(_arc_parts) == 1:
+                twoway1var_arcs = _arc_parts[0]
+            else:
+                # Align dtypes before union (the projection field carries
+                # axis-Enum columns; dc_arcs_frame mirrors process_source_sink
+                # — but be defensive about a stray dtype mismatch).
+                ref_schema = _arc_parts[0].schema
+                aligned = [_arc_parts[0]]
+                for part in _arc_parts[1:]:
+                    for col in ("p", "source", "sink"):
+                        if part.schema[col] != ref_schema[col]:
+                            part = part.with_columns(
+                                pl.col(col).cast(ref_schema[col], strict=False))
+                    aligned.append(part)
+                twoway1var_arcs = pl.concat(aligned).unique()
+        if twoway1var_arcs is not None and twoway1var_arcs.height > 0:
+            back_idx = twoway1var_arcs.join(d.dt, how="cross").select(
+                "p", "source", "sink", "d", "t")
+            if back_idx.height > 0:
+                v_flow_back = m.add_var(
+                    "v_flow_back", ("p", "source", "sink", "d", "t"),
+                    back_idx, lower=0.0,
+                )
+
     # ─── DC power flow vars (v_angle) ─────────────────────────────────────
     # Declared up-front; the linear flow-angle constraint
-    # ``dc_flow_eq`` is emitted after v_flow exists (further down).
-    dc_pf_vars = _dc_power_flow.add_variables(m, d) if _dc_power_flow.has_feature(d) else {}
+    # ``dc_flow_eq`` is emitted after v_flow exists (further down).  The DC
+    # module consumes the shared ``v_flow_back`` (above) for its
+    # ``dc_flow_eq`` LHS instead of creating its own.
+    dc_pf_vars = (_dc_power_flow.add_variables(m, d, v_flow_back=v_flow_back)
+                  if _dc_power_flow.has_feature(d) else {})
 
     # ─── Commodity ladder vars (v_trade) ──────────────────────────────────
     # Declared up-front so the balance + tier-cap constraints (further
@@ -658,7 +717,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
     # ─── Reserve LHS coupling aggregates ──────────────────────────────────
     # The .mod adds ``+ Σ_r v_reserve[p, r, ud, n, d, t]`` (per
-    # process__source__sinkIsNode) to the LHS of maxToSink, ramp_sink_up,
+    # process__source__sinkIsNode) to the LHS of maxFlow, ramp_sink_up,
     # ramp_source_down, and the profile_flow_* family.  Here v_flow
     # is in unit-count terms (the unitsize cancels with RHS existing/
     # unitsize), and v_reserve is in the same units (per _reserve.py).
@@ -820,12 +879,15 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 * d.p_step_duration,
                 over=("p","source","sink"))
 
-        # DC power flow back-flow contribution to nodeBalance.  When the
-        # LP wants flow to run sink→source on a DC PF arc, ``v_flow_back``
-        # carries it (since v_flow ≥ 0).  See _dc_power_flow.py.
-        if dc_pf_vars:
+        # Reverse-flow contribution to nodeBalance for method_2way_1var_off
+        # arcs.  When the LP wants flow to run sink→source, ``v_flow_back``
+        # carries it (since v_flow ≥ 0): it ADDS to the source node and
+        # SUBTRACTS from the sink node (the mirror of v_flow).  Spans the
+        # full DC + non-DC arc set.  See _dc_power_flow.py.
+        if v_flow_back is not None and twoway1var_arcs is not None:
             nb_terms.update(_dc_power_flow.nodeBalance_back_flow_terms(
-                d, dc_pf_vars, d.p_unitsize, d.p_step_duration))
+                twoway1var_arcs, v_flow_back,
+                d.p_unitsize, d.p_step_duration))
 
     # Each node lands in exactly one storage_bind_* frame (v54 contract — see disjointness assertion above).
     if has_storage and d.storage_bind_within_timeblock is not None:
@@ -2069,8 +2131,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             if False:
                 pass
 
-    _build_prof("before:maxToSink")
-    # ─── maxToSink (capacity bound on every flow) ─────────────────────────
+    _build_prof("before:maxFlow")
+    # ─── maxFlow (capacity bound on every flow) ─────────────────────────
     if has_proc:
         flow_lhs: dict = {"flow":  v_flow}
         # Reserve LHS coupling (manifest patch #1): v_reserve up-to-sink
@@ -2087,7 +2149,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # would be too loose) to p_flow_upper_existing (existing-only).
         # When no invest is active, keep p_flow_upper — that preserves the
         # source-side slope-based bound for indirect (CHP) processes.
-        # Choosing the maxToSink RHS:
+        # Choosing the maxFlow RHS:
         #   * indirect (CHP / multi-flow) processes need ``p_flow_upper``
         #     because it bakes in the per-(p, source, sink) max_cap_coef
         #     factor that the .mod uses to broaden the source-side fuel
@@ -2139,6 +2201,36 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             flow_upper_rhs = (d.p_flow_upper_existing
                                if d.p_flow_upper_existing is not None
                                else d.p_flow_upper)
+        # Apply the per-arc DIRECT capacity_max_coeff factor.  The .mod's
+        # maxToSink / maxFromSource multiply the *existing*-capacity RHS by
+        # ``p_process_sink_max_capacity_coefficient`` /
+        # ``p_process_source_max_capacity_coefficient`` (default 1.0) — a
+        # factor that ``p_flow_upper_existing`` (= existing/unitsize) drops
+        # entirely.  ``p_arc_max_cap_coef`` carries that factor for direct
+        # arcs ONLY (indirect arcs already fold it into ``p_flow_upper`` via
+        # ``p_flow_upper_from_source`` — including them here would double-
+        # apply, hence the producer excludes process_indirect).  Densify the
+        # sparse coef over flow_upper_rhs's own (p, source, sink) keys and
+        # ``fill_null(1.0)`` so unauthored arcs are unaffected — mirroring
+        # the availability densify below (a naive ``Param * Param`` inner
+        # join would DROP the missing-coef rows → RHS=0 → forced v_flow=0).
+        if d.p_arc_max_cap_coef is not None:
+            fr = flow_upper_rhs.frame
+            out_cols = fr.columns  # preserve the (… , value) schema exactly
+            coef_lf = (d.p_arc_max_cap_coef.frame.lazy()
+                .with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}")
+                               for k in ("p", "source", "sink")])
+                .select("_p", "_source", "_sink",
+                        pl.col("value").alias("__coef")))
+            merged_frame = (fr.lazy()
+                .with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}")
+                               for k in ("p", "source", "sink")])
+                .join(coef_lf, on=["_p", "_source", "_sink"], how="left")
+                .with_columns(
+                    value=pl.col("value") * pl.col("__coef").fill_null(1.0))
+                .select(out_cols)
+                .collect())
+            flow_upper_rhs = Param(flow_upper_rhs.dims, merged_frame)
         # Apply availability factor — the .mod's RHS multiplies by
         # ``pdtProcess[p, 'availability', d, t]`` (default 1.0).  For
         # network_coal_wind_battery_co2_fullYear_availability the
@@ -2236,7 +2328,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 over=("d_invest",))
             flow_lhs["invest_neg"] = -invest_in_dispatch
         m.add_cstr(
-            "maxToSink",
+            "maxFlow",
             over      = pss_dt,
             sense     = "<=",
             lhs_terms = flow_lhs,
@@ -2255,8 +2347,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # ``v_flow ≤ p_flow_max[p,source,sink,d,t]`` (declared at .mod
         # line 1629), which preprocessing emits as the same +1 value.
         # polar_high doesn't carry per-row Var bounds, so the ``≤`` half is
-        # already covered by the standard maxToSink above.  We only need
-        # to ADD the ``≥`` half (a new ``maxToSink_negCap`` constraint
+        # already covered by the standard maxFlow above.  We only need
+        # to ADD the ``≥`` half (a new ``maxFlow_negCap`` constraint
         # over the neg-cap (p, d) rows of pss_dt) sharing the same LHS
         # structure (same invest/divest/reserve-up tightening — those
         # algebraic terms keep their signs through division by unitsize
@@ -2266,10 +2358,27 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             neg_pss_dt = pss_dt.join(pd_neg_cap, on=("p", "d"), how="inner")
             if neg_pss_dt.height > 0:
                 m.add_cstr(
-                    "maxToSink_negCap",
+                    "maxFlow_negCap",
                     over      = neg_pss_dt,
                     sense     = ">=",
                     lhs_terms = flow_lhs,
+                    rhs_terms = {"upper": flow_upper_rhs},
+                )
+        # maxFlow_back — capacity cap on the reverse-flow auxiliary so that
+        # |signed flow| = |v_flow − v_flow_back| ≤ capacity (the .mod's
+        # ``v_flow ∈ [−cap, +cap]`` range for method_2way_1var_off arcs).
+        # Reuses the same existing-capacity RHS the forward maxFlow uses
+        # (``flow_upper_rhs``), restricted to the 2way_1var arcs via the
+        # ``over`` index.  Spans the full DC + non-DC arc set.
+        if v_flow_back is not None and twoway1var_arcs is not None:
+            back_over = pss_dt.join(
+                twoway1var_arcs, on=("p", "source", "sink"), how="inner")
+            if back_over.height > 0:
+                m.add_cstr(
+                    "maxFlow_back",
+                    over      = back_over,
+                    sense     = "<=",
+                    lhs_terms = {"flow_back": v_flow_back},
                     rhs_terms = {"upper": flow_upper_rhs},
                 )
 
@@ -2368,7 +2477,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             )
 
     _build_prof("before:invest_divest_bounds")
-    # ─── Invest / divest variable bounds + maxToSink tightening ──────────
+    # ─── Invest / divest variable bounds + maxFlow tightening ──────────
     if has_invest_p or has_divest_p:
         # p-side max_units (rename "e" → "p" to align with process vars).
         # Phase 4.8g: the ContextVar is reset by the time ``build_flextool``
@@ -2942,7 +3051,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # ─── Storage state bounds + start binding ─────────────────────────────
     if has_storage:
         # maxState:  v_state[n, d, t]  <=  state_upper[n, d]
-        # With invest/divest active on storage nodes, mirror the maxToSink
+        # With invest/divest active on storage nodes, mirror the maxFlow
         # tightening: v_state + (divest - invest) ≤ state_upper, where the
         # invest/divest summations pick out (n, d_inv, d) tuples in
         # edd_invest / edd_divest_active that include both n and d.
@@ -3018,8 +3127,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 # over = (n, f, d, t) — cross-product of idx with timeline.
                 over = idx.join(d.dt, how="cross")
                 rhs_param = d.p_profile_value * p_node_existing_count
-                if d.p_node_availability is not None:
-                    rhs_param = rhs_param * d.p_node_availability
+                # Densify availability over the profile nodes so a storage node
+                # with no DB-authored ``availability`` keeps its default-1.0
+                # factor instead of being inner-join-dropped to RHS=0 (→ forced
+                # v_state=0).  Node-state twin of the process-side fix; see
+                # :func:`_availability_factor`.
+                node_avail_factor = (
+                    _availability_factor(d, idx, axis="n",
+                                         avail=d.p_node_availability)
+                    if d.p_node_availability is not None else None)
+                if node_avail_factor is not None:
+                    rhs_param = rhs_param * node_avail_factor
                 lhs: dict = {"state": v_state}
                 # Invest/divest tightening — only over (n, f) pairs in idx.
                 nf_filter = idx.select("n", "f").unique()
@@ -3046,8 +3164,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                         )
                         # Multiply by profile · (availability) and restrict to (n, f) pairs.
                         inv_full = inv_term * d.p_profile_value
-                        if d.p_node_availability is not None:
-                            inv_full = inv_full * d.p_node_availability
+                        if node_avail_factor is not None:
+                            inv_full = inv_full * node_avail_factor
                         lhs["invest_neg"] = -Where(inv_full, nf_filter)
                 if has_divest_n and d.edd_divest_active is not None:
                     # Phase 4.8h: cross-Enum is_in (p vs n vocab); up-cast n→p.
@@ -3071,8 +3189,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                             over=("d_divest",),
                         )
                         div_full = div_term * d.p_profile_value
-                        if d.p_node_availability is not None:
-                            div_full = div_full * d.p_node_availability
+                        if node_avail_factor is not None:
+                            div_full = div_full * node_avail_factor
                         lhs["divest"] = Where(div_full, nf_filter)
                 m.add_cstr(name, over=over, sense=sense,
                            lhs_terms=lhs,
@@ -3889,7 +4007,7 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                        v_online, v_startup, v_shutdown,
                        v_invest_p=None, v_divest_p=None) -> None:
     """Emit maxOnline / maxStartup / maxShutdown / online__startup /
-    online__shutdown / maxToSink_online / minToSink_minload for one
+    online__shutdown / maxFlow_online / minFlow_minload for one
     UC class (``kind`` in {"linear", "integer"}).  Constraint names
     are suffixed with ``_<kind>`` so linear+integer scenarios produce
     distinct rows in the LP."""
@@ -3967,7 +4085,7 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                           "online_now":  v_online},
                rhs_terms={"online_prev": v_online_lag})
 
-    # maxToSink_online: v_flow <= v_online * availability (assumes
+    # maxFlow_online: v_flow <= v_online * availability (assumes
     # max_cap_coef=1).  The .mod's RHS for online processes is
     # ``v_online × max_cap × availability × unitsize`` (mod:3015-3026);
     # without the availability factor we under-tighten the v_flow
@@ -3981,15 +4099,19 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
     if pss_online.height > 0:
         over_pss_online = pss_online.join(d.dt, how="cross")
         if d.p_process_availability is not None:
-            online_rhs = v_online * d.p_process_availability
+            # Densify over the online processes so a unit with no DB-authored
+            # ``availability`` keeps its default-1.0 factor instead of being
+            # inner-join-dropped (→ maxFlow_online RHS=0 → forced v_flow=0).
+            # See :func:`_availability_factor`.
+            online_rhs = v_online * _availability_factor(d, pss_online)
         else:
             online_rhs = v_online
-        m.add_cstr(f"maxToSink_online{sfx}",
+        m.add_cstr(f"maxFlow_online{sfx}",
                    over=over_pss_online, sense="<=",
                    lhs_terms={"flow":   v_flow},
                    rhs_terms={"online": online_rhs})
 
-    # minToSink_minload: Σ_sinks v_flow >= v_online * min_load
+    # minFlow_minload: Σ_sinks v_flow >= v_online * min_load
     if d.process_minload is not None and d.process_minload.height > 0:
         pss_minload = (d.process_source_sink
                        .join(online_set, on="p", how="inner")
@@ -3999,7 +4121,17 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
             sum_flow = Sum(Where(v_flow, pss_minload), over=("sink",))
             min_load_floor = (Where(v_online, d.process_minload)
                               * d.p_min_load)
-            m.add_cstr(f"minToSink_minload{sfx}",
+            # Per-output-arc min_capacity_coefficient scales the floor
+            # (mod L3075: v_online·min_load·min_cap_coef[p,sink]).  Densify
+            # over the constraint's (p,sink) pairs, filling the 1.0 default,
+            # so a unit with no authored coefficient keeps its full floor
+            # instead of being inner-join-dropped to 0 (the availability-bug
+            # hazard).  Default 1.0 ⇒ no-op when unauthored (parity-clean).
+            if d.p_process_sink_min_capacity_coef is not None:
+                min_load_floor = min_load_floor * _coef_factor(
+                    pss_minload, d.p_process_sink_min_capacity_coef,
+                    ["p", "sink"])
+            m.add_cstr(f"minFlow_minload{sfx}",
                        over=over_minload, sense=">=",
                        lhs_terms={"flow_sum": sum_flow},
                        rhs_terms={"floor":    min_load_floor})
@@ -4073,6 +4205,84 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                            rhs_terms={"existing":     d.p_process_existing_count})
 
 
+def _coef_factor(pairs: "pl.DataFrame", coef: "Param", keys: list,
+                 *, default: float = 1.0) -> "Param":
+    """Densify a sparse per-``keys`` coefficient ``coef`` over the key-tuples
+    present in ``pairs``, filling absent tuples with ``default``.
+
+    Folding a sparse coefficient into a constraint via ``Param * Param`` (an
+    inner join) would DROP any tuple missing from ``coef`` — collapsing the
+    term to 0 instead of multiplying by the schema default.  This is the same
+    hazard as :func:`_availability_factor`; here it covers static per-arc
+    coefficients (e.g. ``capacity_min_coeff`` keyed ``(p, sink)``).  The join
+    keys are compared as ``Utf8`` to bridge Enum-vocabulary edges between the
+    consumer set and the coefficient Param.
+    """
+    base = pairs.select(keys).unique()
+    base_lf = base.lazy().with_columns(
+        [pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys])
+    coef_lf = (coef.frame.lazy()
+               .with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys])
+               .drop(keys))
+    join_keys = [f"_{k}" for k in keys]
+    merged = (base_lf
+              .join(coef_lf, on=join_keys, how="left")
+              .with_columns(pl.col("value").fill_null(default))
+              .select(*keys, "value")
+              .collect())
+    return Param(tuple(keys), merged)
+
+
+def _availability_factor(d, members: "pl.DataFrame", *,
+                         axis: str = "p",
+                         avail: "Param | None" = None) -> "Param":
+    """``availability`` as a Param keyed ``(axis, d, t)`` that COVERS every
+    entity in ``members`` — the DB-authored value where one exists, else the
+    schema default ``1.0``.  ``axis`` is ``"p"`` for the process factor
+    (``p_process_availability``, the default) or ``"n"`` for the node-state
+    factor (pass ``avail=d.p_node_availability``).
+
+    The availability Params are SPARSE: their ``*_from_source`` producers emit
+    only DB-authored rows, expecting absent entities to fall back to the
+    ``availability`` schema default (1.0).  But the LP folds the factor into
+    constraint RHSs via ``Param * Param`` / ``Var * Param``, which are INNER
+    joins (polar_high contract) — so an entity absent from the sparse Param has
+    its RHS row DROPPED rather than multiplied by 1.0, silently collapsing the
+    bound to 0 and forcing the variable (``v_flow`` / ``v_state``) to 0.  That
+    zeroes any profile (VRE unit, profile storage node) or online unit whose
+    ``availability`` is left at the default — but only once SOME other entity
+    authors one, making the Param non-empty-but-sparse.
+
+    Densifying the factor against the consumer's own entity set — left-join +
+    ``fill_null(1.0)`` — makes the subsequent inner-join multiply behave as the
+    multiplicative overlay the .mod intends.  This is the profile/online-side
+    analogue of the maxFlow flow-upper densify in :func:`add_unit_constraints`
+    (search ``naive ... p_process_availability would DROP``).  Callers guard on
+    ``avail is not None`` (an all-1.0 factor is a no-op).
+    """
+    avail = avail if avail is not None else d.p_process_availability
+    base = members.select(axis).unique().join(d.dt, how="cross")  # (axis, d, t)
+    # Phase E.1: availability may be authored scalar / 1d_map[period] /
+    # 1d_map[time] / 2d_map, so promote to (axis, d, t) before the left-join.
+    avail_lf = promote_param_to_dt(avail, d.dt)
+    # The entity axis can carry a different Enum vocabulary on the consumer set
+    # vs the availability Param (e.g. node_profile ``n`` vs p_node_availability
+    # ``n``).  polar_high's ``*`` reconciles that internally, but this manual
+    # left-join does not — compare on a Utf8 key so value-equal members match
+    # regardless of the Enum edge (mirrors ``_unitsize_complete``).  The
+    # original-dtype axis is carried through from ``base`` for the downstream
+    # multiply.
+    base_lf = base.lazy().with_columns(pl.col(axis).cast(pl.Utf8).alias("_k"))
+    avail_lf = (avail_lf.with_columns(pl.col(axis).cast(pl.Utf8).alias("_k"))
+                        .drop(axis))
+    merged = (base_lf
+              .join(avail_lf, on=["_k", "d", "t"], how="left")
+              .with_columns(pl.col("value").fill_null(1.0))
+              .select(axis, "d", "t", "value")
+              .collect())
+    return Param((axis, "d", "t"), merged)
+
+
 def _add_profile_cstr(m, d, v_flow, name: str, idx: "pl.DataFrame",
                        sense: str, v_inv_for_profile=None,
                        v_div_for_profile=None,
@@ -4102,8 +4312,14 @@ def _add_profile_cstr(m, d, v_flow, name: str, idx: "pl.DataFrame",
     # LHS: v_flow over (p,source,sink,d,t) joined to over via (p,source,sink,d,t)
     # → introduces f as a new column from over (via the constraint axes).
     rhs_param = d.p_profile_value * d.p_process_existing_count
-    if d.p_process_availability is not None:
-        rhs_param = rhs_param * d.p_process_availability
+    # Densify availability over the profile processes so a VRE unit with no
+    # DB-authored ``availability`` keeps its default-1.0 factor instead of
+    # being inner-join-dropped to RHS=0 (→ forced v_flow=0).  See
+    # :func:`_availability_factor`.
+    avail_factor = (_availability_factor(d, idx)
+                    if d.p_process_availability is not None else None)
+    if avail_factor is not None:
+        rhs_param = rhs_param * avail_factor
     lhs: dict = {"flow": v_flow}
     pf_filter = None
     if v_inv_for_profile is not None or v_div_for_profile is not None:
@@ -4115,13 +4331,13 @@ def _add_profile_cstr(m, d, v_flow, name: str, idx: "pl.DataFrame",
             pf_filter = pf_filter.pipe(rename_to_axis, {"profile": "f"})
     if v_inv_for_profile is not None:
         inv_term = v_inv_for_profile * d.p_profile_value
-        if d.p_process_availability is not None:
-            inv_term = inv_term * d.p_process_availability
+        if avail_factor is not None:
+            inv_term = inv_term * avail_factor
         lhs["invest_neg"] = -Where(inv_term, pf_filter)
     if v_div_for_profile is not None:
         div_term = v_div_for_profile * d.p_profile_value
-        if d.p_process_availability is not None:
-            div_term = div_term * d.p_process_availability
+        if avail_factor is not None:
+            div_term = div_term * avail_factor
         lhs["divest"] = Where(div_term, pf_filter)
     if reserve_term is not None:
         if reserve_sign >= 0:

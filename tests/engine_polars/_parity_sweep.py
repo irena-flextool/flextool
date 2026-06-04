@@ -53,6 +53,7 @@ PARITY_SWEEP_CASES: list[tuple[str, str, str]] = [
     ("work_network_coal_wind",             "network_coal_wind",             "main"),
     ("work_network_all_tech",              "network_all_tech",              "main"),
     ("work_unidirectional_connection",     "unidirectional_connection",     "main"),
+    ("work_lossless_2way",                  "lossless_2way",                 "main"),
     ("work_water_pump",                    "water_pump",                    "main"),
     ("work_water_pump_delayed",            "water_pump_delayed",            "main"),
     ("work_wind",                          "wind",                          "main"),

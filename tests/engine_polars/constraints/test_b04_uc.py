@@ -169,7 +169,7 @@ def test_linear_and_integer_uc_constraint_suffix_isolation():
     cstr = set(pb.cstr_names())
     # Hand-calc: every UC constraint family is suffix-namespaced.
     for base in ("maxOnline", "maxStartup", "maxShutdown",
-                 "online__startup", "online__shutdown", "maxToSink_online"):
+                 "online__startup", "online__shutdown", "maxFlow_online"):
         assert f"{base}_linear" in cstr, f"missing {base}_linear"
         assert f"{base}_integer" in cstr, f"missing {base}_integer"
     # And the row counts: each suffixed family covers exactly its own
@@ -241,3 +241,52 @@ def test_uptime_downtime_invest_interaction(toy_uc_3t):
     v_online = sol.value("v_online_linear").sort("t")
     for v in v_online["value"].to_list():
         assert v == pytest.approx(0.5, rel=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# B4.13 — capacity_min_coeff scales the minFlow_minload floor.
+
+def test_min_capacity_coef_scales_minload_floor(toy_uc_3t):
+    """Covers the wiring of ``capacity_min_coeff`` into ``minFlow_minload``.
+
+    The .mod scales the min-load floor per output arc:
+    ``v_online · min_load · p_process_sink_min_capacity_coefficient[p, sink]``
+    (flextool.mod L3075).  ``toy_uc_3t`` has unit ``u`` (unitsize 100,
+    min_load 0.4) feeding node ``n``.
+
+    We set demand to 10 MW/step with EXPENSIVE upward slack (meeting demand
+    matters) and CHEAP downward slack (dumping the floor's excess is feasible),
+    so the cost-min LP runs ``u`` at its min-load floor and dumps the rest.
+    Baseline floor = ``v_online · min_load = 1 · 0.4`` ⇒ v_flow = 0.4 (40 MW).
+    With ``capacity_min_coeff = 0.5`` on the output arc it halves ⇒ v_flow = 0.2.
+    """
+    # Integer commitment so v_online ∈ {0, 1} and the min-load floor actually
+    # binds — under linear (fractional) commitment the unit would just
+    # de-commit (v_online = demand/floor) so the floor never forces excess.
+    d = dataclasses.replace(toy_uc_3t,
+        process_online_linear=None, pdt_online_linear=None,
+        process_online_integer=pl.DataFrame({"p": ["u"]}),
+        pdt_online_integer=toy_uc_3t.p_online_dt)
+    nd = pl.DataFrame({"n": ["n"]}).join(d.dt, how="cross")
+    p_inflow = Param(("n", "d", "t"),
+        nd.with_columns(value=pl.lit(-10.0)).select("n", "d", "t", "value"))
+    p_pen_dn = Param(("n", "d", "t"),
+        nd.with_columns(value=pl.lit(0.01)).select("n", "d", "t", "value"))
+
+    # Baseline: no capacity_min_coeff ⇒ floor uses the full min_load.
+    base = dataclasses.replace(d, p_inflow=p_inflow, p_penalty_down=p_pen_dn)
+    pb0, sol0 = _solve(base)
+    assert sol0.optimal
+    assert any(n.startswith("minFlow_minload") for n in pb0.cstr_names())
+    vf0 = sol0.value("v_flow").sort(["d", "t"])["value"].to_list()
+    assert all(v == pytest.approx(0.4, rel=1e-6) for v in vf0), vf0
+
+    # capacity_min_coeff = 0.5 on (u, n) ⇒ the floor halves to 0.2.
+    coef = Param(("p", "sink"),
+        pl.DataFrame({"p": ["u"], "sink": ["n"], "value": [0.5]}))
+    capped = dataclasses.replace(d, p_inflow=p_inflow, p_penalty_down=p_pen_dn,
+                                 p_process_sink_min_capacity_coef=coef)
+    pb1, sol1 = _solve(capped)
+    assert sol1.optimal
+    vf1 = sol1.value("v_flow").sort(["d", "t"])["value"].to_list()
+    assert all(v == pytest.approx(0.2, rel=1e-6) for v in vf1), vf1

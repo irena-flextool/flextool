@@ -460,7 +460,8 @@ class FlexData:
     p_unitsize: Param | None = None              # (p,)
     p_all_entity_unitsize: Param | None = None  # (e,) — all entities (processes + connections + nodes); used by scaling
     p_flow_upper: Param | None = None            # (p, source, sink, d, t) — preprocessed structural max (existing + max_invest_cum)
-    p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxToSink
+    p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxFlow
+    p_arc_max_cap_coef: Param | None = None      # (p, source, sink) — per-arc capacity_max_coeff for DIRECT arcs (maxToSink/maxFromSource); folded onto p_flow_upper_existing in maxFlow
     p_slope: Param | None = None                 # (p, d, t)
     p_commodity_price: Param | None = None       # (c, d, t)
     pd_neg_cap: pl.DataFrame | None = None       # set: (p, d) where existing<0 AND unitsize<0
@@ -574,6 +575,13 @@ class FlexData:
     # objective term in the current scope) but kept for parity with
     # flextool's preprocessing set family.
     process_source_sink_ramp_cost: pl.DataFrame | None = None
+    # method_2way_1var_off arcs (the .mod's signed-flow 2-way method,
+    # ``v_flow ∈ [-cap, +cap]``).  The engine emits ``v_flow ≥ 0`` on the
+    # forward arc only, so these arcs carry sink→source flow via a
+    # non-negative auxiliary ``v_flow_back``.  Union of DC-power-flow and
+    # non-DC arcs; ``model.py`` declares the shared ``v_flow_back`` over it
+    # and ``_dc_power_flow`` consumes the same Var on its DC subset.
+    process_source_sink_2way_1var: pl.DataFrame | None = None  # (p, source, sink)
     p_ramp_speed_up_sink:   Param | None = None    # (p, sink)
     p_ramp_speed_down_sink: Param | None = None
     p_ramp_speed_up_source:   Param | None = None  # (p, source)
@@ -589,6 +597,7 @@ class FlexData:
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
     p_min_load: Param | None = None                          # (p,)
+    p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: minFlow_minload floor multiplier
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
     pdt_uptime_set: pl.DataFrame | None = None               # (p, d, t) — minimum_uptime constraint domain
@@ -4189,12 +4198,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 .with_columns(base=pl.col("cap")/pl.col("us"))
                 .select("p","d","base"))
             # pd_neg_cap = (p, d) where both existing and unitsize are negative.
-            # In the .mod, maxToSink is ``v_flow * unitsize ≤ existing × ...``.
+            # In the .mod, maxFlow is ``v_flow * unitsize ≤ existing × ...``.
             # When both are negative (e.g. anti_energy_plant: us=-50, existing=-50)
             # dividing by unitsize FLIPS the inequality direction, yielding
             # ``v_flow ≥ existing/unitsize`` (a forced *minimum* output).
             # We therefore route these (p, d) rows out of the standard ``≤``
-            # maxToSink and into a sign-flipped ``≥`` companion constraint.
+            # maxFlow and into a sign-flipped ``≥`` companion constraint.
             neg_pd = cap_us_pd.filter(
                 (pl.col("cap") < 0.0) & (pl.col("us") < 0.0)
             ).select("p", "d")

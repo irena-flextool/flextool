@@ -688,6 +688,46 @@ def process_source_sink_ramp_cost(source: "InputSource") -> pl.DataFrame:
               .collect())
 
 
+_METHOD_2WAY_1VAR_OFF_LOCAL = frozenset(("method_2way_1var_off",))
+
+
+def process_source_sink_2way_1var(source: "InputSource") -> pl.DataFrame:
+    """``{(p, source, sink) ∈ pss : method == method_2way_1var_off}``.
+
+    The single-signed-flow 2-way method (the .mod's ``v_flow ∈ [-cap,
+    +cap]``).  The engine emits ``v_flow ≥ 0`` on the FORWARD arc only, so
+    these arcs need a non-negative reverse auxiliary ``v_flow_back`` to
+    carry sink→source flow.  This set is the union of DC-power-flow and
+    non-DC ``method_2way_1var_off`` arcs (the classifier doesn't gate on
+    the DC feature); ``model.py`` declares the shared ``v_flow_back`` over
+    it and ``_dc_power_flow`` consumes the same Var on the DC subset.
+
+    Schema: ``[p, source, sink]`` in the canonical forward orientation
+    (matching ``process_source_sink``).
+    """
+    from flextool.engine_polars._derived_params import _classify_process_method
+
+    classified = _classify_process_method(source)
+    if classified is None or classified.height == 0:
+        return pl.DataFrame(schema={
+            "p": schema_dtype(get_global_axis_enums(), "p"),
+            "source": schema_dtype(get_global_axis_enums(), "source"),
+            "sink": schema_dtype(get_global_axis_enums(), "sink"),
+        })
+    twovar_p = (classified.lazy()
+        .filter(pl.col("method").is_in(list(_METHOD_2WAY_1VAR_OFF_LOCAL)))
+        .select("p")
+        .unique())
+    canonical = process_source_sink_canonical(source).lazy().select(
+        "p", "source", "sink").unique()
+    return (canonical
+              .join(twovar_p, on="p", how="inner")
+              .select("p", "source", "sink")
+              .unique()
+              .sort("p", "source", "sink")
+              .collect())
+
+
 def flow_from_commodity_eff(source: "InputSource",
                              pss_eff: pl.DataFrame | None = None) -> pl.DataFrame:
     """``pss_eff ⋈ commodity__node`` on ``source = node`` →
@@ -1935,6 +1975,11 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
         process_source_sink_ramp_limit_sink_down,
     "process_source_sink_ramp_cost":
         process_source_sink_ramp_cost,
+    # method_2way_1var_off arcs — need a non-negative reverse auxiliary
+    # ``v_flow_back`` to carry sink→source flow (the engine emits
+    # ``v_flow ≥ 0`` forward-only).  Union of DC + non-DC arcs.
+    "process_source_sink_2way_1var":
+        process_source_sink_2way_1var,
 }
 
 

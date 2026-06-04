@@ -1007,6 +1007,10 @@ class ExecutionManager:
         if settings.save_memory:
             cmd.append("--save-memory")
 
+        # Retain every sub-solve's solution so multi-solve scenario
+        # outputs union all rolls rather than collapsing to the last one.
+        cmd.append("--keep-solutions")
+
         # ── Solver options (Solver options dialog in the side menu) ──
         # Append each flag only when the user has changed it from the
         # GUI-side default, keeping the engine command line clean on

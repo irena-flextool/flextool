@@ -2735,6 +2735,16 @@ def apply_derived_b(
             source, pss_frame, active_solve, workdir,
             ctx=ctx, provider=provider)
 
+    # ─── §3.3.3b p_arc_max_cap_coef (direct-arc capacity_max_coeff) ─────
+    # ``p_flow_upper_existing`` is existing/unitsize only and drops the
+    # per-arc ``capacity_max_coeff`` that the .mod's maxToSink /
+    # maxFromSource apply to direct units.  Carry the factor here so the
+    # model.py maxFlow consumer can fold it onto the direct-arc RHS
+    # (indirect arcs already carry it via ``p_flow_upper``).
+    if pss_frame is not None and pss_frame.height > 0:
+        flex_data.p_arc_max_cap_coef = p_arc_max_cap_coef_from_source(
+            source, pss_frame, classified)
+
     # ─── §3.5.1 p_flow_constraint_coef ─────────────────────────────────
     # Δ.12b: unconditional when pss is non-empty.
     if pss_frame is not None and pss_frame.height > 0:
@@ -4359,6 +4369,88 @@ def _process_source_sink_coeff_zero_lf(source: "InputSource",
                     .join(sink_zero, on=["p", "sink"], how="inner")
                     .select("p", "source", "sink"))
     return pl.concat([src_match, sink_match]).unique()
+
+
+def p_arc_max_cap_coef_from_source(source: "InputSource",
+                                      pss: pl.DataFrame,
+                                      classified: pl.DataFrame | None = None,
+                                      ) -> "Param | None":
+    """Per-(p, source, sink) ``capacity_max_coeff`` factor for **direct**
+    arcs — the multiplier the ``maxFlow`` RHS drops when it uses
+    ``p_flow_upper_existing`` (which is ``existing/unitsize`` only).
+
+    Mirrors flextool.mod ``maxToSink`` / ``maxFromSource``:
+
+    * ``maxToSink`` (``process__source__sinkIsNode``, the normal output
+      arc) multiplies the existing-capacity RHS by
+      ``p_process_sink_max_capacity_coefficient[p, sink]`` whenever
+      ``(p, sink) ∈ process_sink``.  We carry that as ``sink_coef`` =
+      ``unit__outputNode.capacity_max_coeff``.
+    * ``maxFromSource`` (``process__sourceIsNode__sink_1way_noSink…``, a
+      1-way unit whose node is the *source* and that has no output node)
+      multiplies by ``p_process_source_max_capacity_coefficient[p,
+      source]``.  The engine emits such an arc as a synthetic
+      ``(p, source, p)`` row whose ``sink`` is the process itself, so
+      ``(p, sink) ∉ process_sink``; we carry that as ``src_coef`` =
+      ``unit__inputNode.capacity_max_coeff``.
+
+    Indirect (CHP / multi-flow) processes are **excluded** — they bound
+    ``v_flow`` via ``p_flow_upper`` (built by
+    :func:`p_flow_upper_from_source`), which already folds both
+    coefficients.  Including them here would double-apply.
+
+    Returns a Param keyed ``(p, source, sink)`` carrying only the direct
+    arcs whose effective coefficient differs from the schema default
+    (1.0); absent arcs default to 1.0 at the consumer's densify.  Returns
+    ``None`` when there is nothing to carry (no authored coefficient, or
+    every authored row resolves to 1.0) so the consumer skips the fold.
+    """
+    if pss is None or pss.height == 0:
+        return None
+    # Phase 4.8f: defend axis-aware join keys on incoming frame param.
+    _live = get_global_axis_enums()
+    if _live is not None:
+        pss = cast_frame_axes(pss, _live)
+
+    # Direct arcs only: drop rows whose process is indirect.
+    indirect_p = process_indirect_set(source, classified)
+    direct_pss = (pss.lazy()
+                    .select("p", "source", "sink")
+                    .join(indirect_p.lazy().with_columns(_ind=pl.lit(True)),
+                          on="p", how="left")
+                    .filter(pl.col("_ind").is_null())
+                    .select("p", "source", "sink"))
+
+    sink_pairs = _process_sink_pairs_lf(source)
+    src_coef_lf = _arc_max_capacity_coef_lf(source, "source")
+    sink_coef_lf = _arc_max_capacity_coef_lf(source, "sink")
+
+    out = (direct_pss
+        # Tag (p, sink) ∈ process_sink — selects maxToSink vs maxFromSource.
+        .join(sink_pairs.with_columns(_has_sink=pl.lit(True)),
+              on=["p", "sink"], how="left")
+        .with_columns(_has_sink=pl.col("_has_sink").fill_null(False))
+        # Source-side capacity_max_coeff (default 1.0).
+        .join(src_coef_lf.rename({"coef": "src_coef"}),
+              on=["p", "source"], how="left")
+        .with_columns(src_coef=pl.col("src_coef").fill_null(1.0))
+        # Sink-side capacity_max_coeff (default 1.0).
+        .join(sink_coef_lf.rename({"coef": "sink_coef"}),
+              on=["p", "sink"], how="left")
+        .with_columns(sink_coef=pl.col("sink_coef").fill_null(1.0))
+        .with_columns(
+            value=pl.when(pl.col("_has_sink"))
+                     .then(pl.col("sink_coef"))     # maxToSink
+                     .otherwise(pl.col("src_coef")))  # maxFromSource
+        # Only carry rows that actually deviate from the 1.0 default; the
+        # consumer fills absent (p, source, sink) with 1.0.
+        .filter(pl.col("value") != 1.0)
+        .select("p", "source", "sink", "value")
+        .sort("p", "source", "sink")
+        .collect())
+    if out.height == 0:
+        return None
+    return Param(("p", "source", "sink"), out)
 
 
 def p_flow_upper_from_source(source: "InputSource",

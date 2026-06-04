@@ -59,7 +59,7 @@ def test_coal_huge_capacity_closed_form(coal_data):
     demand.  Obj reduces to a closed-form sum of commodity costs.
 
     Both ``p_flow_upper`` and ``p_flow_upper_existing`` need scaling
-    since the maxToSink RHS now prefers ``p_flow_upper_existing`` for
+    since the maxFlow RHS now prefers ``p_flow_upper_existing`` for
     direct processes (so that ``max_invest_cum`` baked in by
     preprocessing doesn't relax the bound when ``ed_invest`` is empty).
     """

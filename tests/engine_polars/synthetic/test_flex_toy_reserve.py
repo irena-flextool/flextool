@@ -30,7 +30,7 @@ def test_flex_toy_reserve_obj():
 @pytest.mark.smoke
 def test_flex_toy_reserve_vq_binds():
     """vq_reserve must take the value 0.6 — the slack must be priced
-    because reservation can't be fully met given the maxToSink coupling."""
+    because reservation can't be fully met given the maxFlow coupling."""
     d = data()
     pb = Problem()
     build_flextool(pb, d)

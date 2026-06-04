@@ -213,8 +213,8 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxShutdown_linear", "maxShutdown_integer",
     "online__startup_linear", "online__startup_integer",
     "online__shutdown_linear", "online__shutdown_integer",
-    "maxToSink_online_linear", "maxToSink_online_integer",
-    "minToSink_minload_linear", "minToSink_minload_integer",
+    "maxFlow_online_linear", "maxFlow_online_integer",
+    "minFlow_minload_linear", "minFlow_minload_integer",
     "minimum_uptime_linear", "minimum_uptime_integer",
     "minimum_downtime_linear", "minimum_downtime_integer",
 ]

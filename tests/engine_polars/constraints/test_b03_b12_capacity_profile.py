@@ -1,4 +1,4 @@
-"""Surface B.3 / B.12 — flow-capacity (maxToSink) and profile bounds.
+"""Surface B.3 / B.12 — flow-capacity (maxFlow) and profile bounds.
 
 Focused constraint tests on the shared minimal fixtures:
 
@@ -9,7 +9,7 @@ Focused constraint tests on the shared minimal fixtures:
   v_flow at t01 to 0.5 and routes the 9.5 MWh shortfall to ``vq_state_up``.
 
 * ``test_max_to_sink_neg_cap_forced_minimum`` — covers **B3.5**.
-  Adds a single-row ``pd_neg_cap`` overlay so the ``maxToSink_negCap``
+  Adds a single-row ``pd_neg_cap`` overlay so the ``maxFlow_negCap``
   (≥) companion constraint is emitted.  With existing/unitsize giving
   +1 on the bound and zero inflow, the forced-minimum semantics pin
   v_flow == 1 even with no demand.
@@ -49,10 +49,10 @@ def _solve(data) -> tuple[Problem, Any]:
 
 
 # ---------------------------------------------------------------------------
-# B3.2 — maxToSink availability multiplier.
+# B3.2 — maxFlow availability multiplier.
 
 def test_max_to_sink_availability_multiplier(toy_1n1p_1d2t):
-    """Covers B3.2 — `maxToSink` availability multiplier.
+    """Covers B3.2 — `maxFlow` availability multiplier.
 
     Hand-calc: capacity=1 (p_flow_upper=1), availability=[0.5, 1.0] over
     [t01, t02], demand=10/step. RHS = 1 × availability →
@@ -79,14 +79,14 @@ def test_max_to_sink_availability_multiplier(toy_1n1p_1d2t):
 
 
 # ---------------------------------------------------------------------------
-# B3.5 — maxToSink_negCap (negative-unitsize forced minimum).
+# B3.5 — maxFlow_negCap (negative-unitsize forced minimum).
 
 def test_max_to_sink_neg_cap_forced_minimum(toy_1n1p_1d2t):
-    """Covers B3.5 — `maxToSink_negCap` anti-energy forced minimum.
+    """Covers B3.5 — `maxFlow_negCap` anti-energy forced minimum.
 
     With unitsize=-1, existing=-1, the .mod's ``v_flow * unitsize ≤
     existing`` flips on division by unitsize to ``v_flow ≥ |existing|/|us|``
-    = +1.  polar_high emits this as the ``maxToSink_negCap`` (≥) companion
+    = +1.  polar_high emits this as the ``maxFlow_negCap`` (≥) companion
     on the rows in ``pd_neg_cap`` (sharing the same +1 RHS as the ≤).
     With zero demand and small slack penalty, no force pushes v_flow
     above 1, so v_flow = 1 is the forced minimum.
@@ -110,8 +110,8 @@ def test_max_to_sink_neg_cap_forced_minimum(toy_1n1p_1d2t):
                                pd_neg_cap=pd_neg)
     pb, sol = _solve(data)
     assert sol.optimal
-    assert "maxToSink_negCap" in set(pb.cstr_names())
-    # Hand-calc: maxToSink (≤1) ∧ maxToSink_negCap (≥1) ⇒ v_flow == 1.
+    assert "maxFlow_negCap" in set(pb.cstr_names())
+    # Hand-calc: maxFlow (≤1) ∧ maxFlow_negCap (≥1) ⇒ v_flow == 1.
     v_flow = sol.value("v_flow")
     assert v_flow["value"][0] == pytest.approx(1.0, rel=1e-7)
     assert v_flow["value"][1] == pytest.approx(1.0, rel=1e-7)
@@ -262,3 +262,292 @@ def test_profile_upper_invest_lhs_tightening(toy_invest_3d):
     v_flow = sol.value("v_flow").filter(
         (pl.col("d") == "d1") & (pl.col("t") == "t01"))
     assert v_flow["value"][0] == pytest.approx(2.0, rel=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# B12.5 — profile_flow_upper with SPARSE availability (regression).
+
+def test_profile_upper_sparse_availability_default(toy_1n1p_1d2t):
+    """Regression: a profile (VRE) process with NO authored ``availability``
+    must keep its default-1.0 factor, not be inner-join-dropped to RHS=0.
+
+    ``p_process_availability`` is SPARSE — ``p_process_availability_from_source``
+    emits only DB-authored rows, expecting absent processes to fall back to the
+    schema default 1.0.  But ``_add_profile_cstr`` folds the factor into the
+    RHS via ``Param * Param`` (an inner join), so before the densify fix a
+    process absent from the sparse Param had its bound collapsed to 0 → forced
+    ``v_flow = 0``.  This is what zeroed every wind/solar unit whose
+    ``availability`` was left at the default in a model where OTHER units (e.g.
+    hydro) authored one (making the Param non-empty but sparse).  No existing
+    fixture combines authored + default availability in one solve, so the bug
+    slipped the parity sweep — this test pins the mixed case.
+
+    Two profile-upper processes share node ``n``: ``p_auth`` authors
+    availability 0.5; ``p_def`` authors none (→ default 1.0).  Both carry
+    profile_upper 0.8 against capacity 1; demand (10/step) far exceeds supply
+    so the cost-min LP drives each to its ceiling.
+
+    Hand-calc:
+        v_flow[p_auth] ≤ 0.8 · 1 · 0.5 = 0.4
+        v_flow[p_def]  ≤ 0.8 · 1 · 1.0 = 0.8   (the regression: NOT 0)
+    """
+    d = toy_1n1p_1d2t
+    pss = pl.DataFrame({"p": ["p_auth", "p_def"],
+                        "source": ["src", "src"],
+                        "sink":   ["n", "n"]})
+    pss_eff = pss.clone()
+    pss_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+    pss_dt = pss.join(d.dt, how="cross")
+    flow_to_n = pss.with_columns(n=pl.col("sink"))
+    flow_from_commodity_eff = pl.DataFrame(
+        {"p": ["p_auth", "p_def"], "source": ["src", "src"],
+         "sink": ["n", "n"], "c": ["FUEL", "FUEL"]})
+    flow_from_commodity_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "c": pl.Utf8})
+    p_unitsize = Param(("p",),
+        pl.DataFrame({"p": ["p_auth", "p_def"], "value": [1.0, 1.0]}))
+    p_flow_upper = Param(("p", "source", "sink", "d", "t"),
+        pss_dt.with_columns(value=pl.lit(1.0))
+              .select("p", "source", "sink", "d", "t", "value"))
+    p_slope = Param(("p", "d", "t"),
+        pss_dt.select("p", "d", "t").with_columns(value=pl.lit(1.0)))
+    # existing_count = capacity/unitsize = 1 for both.
+    p_exist_cnt = Param(("p", "d"),
+        pl.DataFrame({"p": ["p_auth", "p_def"], "d": ["d1", "d1"],
+                      "value": [1.0, 1.0]}))
+    process_profile_upper = pl.DataFrame(
+        {"p": ["p_auth", "p_def"], "source": ["src", "src"],
+         "sink": ["n", "n"], "f": ["fA", "fD"]})
+    p_profile_value = Param(("f", "d", "t"),
+        pl.DataFrame({"f": ["fA", "fA", "fD", "fD"],
+                      "d": ["d1"] * 4, "t": ["t01", "t02", "t01", "t02"],
+                      "value": [0.8, 0.8, 0.8, 0.8]}))
+    # SPARSE: only p_auth authors availability; p_def is absent → default 1.0.
+    avail = Param(("p", "d", "t"),
+        pl.DataFrame({"p": ["p_auth", "p_auth"], "d": ["d1", "d1"],
+                      "t": ["t01", "t02"], "value": [0.5, 0.5]}))
+    data = dataclasses.replace(d,
+        process_source_sink=pss, process_source_sink_eff=pss_eff,
+        process_source_sink_noEff=pss_noEff, pss_dt=pss_dt,
+        flow_to_n=flow_to_n,
+        flow_from_commodity_eff=flow_from_commodity_eff,
+        flow_from_commodity_noEff=flow_from_commodity_noEff,
+        p_unitsize=p_unitsize, p_flow_upper=p_flow_upper, p_slope=p_slope,
+        process_profile_upper=process_profile_upper,
+        p_profile_value=p_profile_value,
+        p_process_existing_count=p_exist_cnt,
+        p_process_availability=avail,
+    )
+    pb, sol = _solve(data)
+    assert sol.optimal
+    assert "profile_flow_upper_limit" in set(pb.cstr_names())
+    v_flow = sol.value("v_flow").sort(["p", "t"])
+    auth = v_flow.filter(pl.col("p") == "p_auth").sort("t")["value"].to_list()
+    deff = v_flow.filter(pl.col("p") == "p_def").sort("t")["value"].to_list()
+    # p_auth tightened by its authored 0.5; p_def keeps the default 1.0.
+    assert auth[0] == pytest.approx(0.4, rel=1e-7)
+    assert auth[1] == pytest.approx(0.4, rel=1e-7)
+    # Regression: before the densify fix p_def was inner-join-dropped → 0.0.
+    assert deff[0] == pytest.approx(0.8, rel=1e-7)
+    assert deff[1] == pytest.approx(0.8, rel=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# B3.6 — maxFlow direct-arc capacity_max_coeff (maxToSink sink-coef).
+
+def test_max_to_sink_direct_capacity_max_coeff(toy_1n1p_1d2t):
+    """Covers B3.6 — `maxFlow` per-arc ``capacity_max_coeff`` on a DIRECT
+    1-in/1-out unit (the maxToSink sink-coef branch).
+
+    A direct unit (constant efficiency, single source→sink) bounds its
+    output via ``p_flow_upper_existing`` (= existing/unitsize), which the
+    .mod's ``maxToSink`` then multiplies by
+    ``p_process_sink_max_capacity_coefficient[p, sink]``.  The engine drops
+    that coefficient unless it is folded onto the direct-arc RHS — this
+    test injects ``p_arc_max_cap_coef = 0.5`` on the output arc.
+
+    Hand-calc: existing-capacity bound = 2.0 (``p_flow_upper_existing``),
+    coef = 0.5, availability = 1.0 ⇒ RHS = 2.0 × 0.5 = 1.0.  Demand = 10/
+    step pushes for full output, so v_flow binds at 1.0 each step and the
+    9.0 shortfall routes to ``vq_state_up``.
+
+    Pre-fix (coef dropped) the bound stays at 2.0 → v_flow = 2.0 → the
+    asserts below fail.
+    """
+    d = toy_1n1p_1d2t
+    pss_dt = compute_pss_dt(d)
+    # Existing-only direct bound = 2.0 (chosen as flow_upper_rhs because it
+    # is non-None and the process is not indirect).
+    p_flow_upper_existing = Param(("p", "source", "sink", "d"),
+        pss_dt.select("p", "source", "sink", "d").unique()
+              .with_columns(value=pl.lit(2.0)))
+    # Per-arc capacity_max_coeff = 0.5 on the output arc (sink ``n``).
+    p_arc_coef = Param(("p", "source", "sink"),
+        pl.DataFrame({"p": ["p"], "source": ["source_n"], "sink": ["n"],
+                      "value": [0.5]}))
+    data = dataclasses.replace(d,
+        p_flow_upper_existing=p_flow_upper_existing,
+        p_arc_max_cap_coef=p_arc_coef)
+    pb, sol = _solve(data)
+    assert sol.optimal
+    v_flow = sol.value("v_flow").sort("t")
+    vq_up = sol.value("vq_state_up").sort("t")
+    # RHS = 2.0 × 0.5 = 1.0 each step.
+    assert v_flow["value"][0] == pytest.approx(1.0, rel=1e-7)
+    assert v_flow["value"][1] == pytest.approx(1.0, rel=1e-7)
+    # demand 10 − 1.0 supplied = 9.0 unmet via slack.
+    assert vq_up["value"][0] == pytest.approx(9.0, rel=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# B3.7 — maxFlow direct-arc capacity_max_coeff (maxFromSource source-coef).
+
+def test_max_from_source_direct_capacity_max_coeff(toy_1n1p_1d2t):
+    """Covers B3.7 — `maxFlow` per-arc ``capacity_max_coeff`` on a no-output
+    node-as-source DIRECT arc (the maxFromSource source-coef branch).
+
+    A 1-way unit whose *source* is a node and that has no output node is
+    emitted by the engine as a synthetic ``(p, source, p)`` arc whose
+    ``sink`` is the process itself (``sink ∉ process_sink``).  The .mod's
+    ``maxFromSource`` multiplies the existing-capacity RHS by
+    ``p_process_source_max_capacity_coefficient[p, source]``.  This is the
+    branch the engine previously omitted entirely.  At the model level the
+    fold is the same per-arc multiply — the producer selects the source
+    coef for these arcs; here we inject it directly.
+
+    Hand-calc: existing-capacity bound = 2.0, source-coef = 0.5 ⇒ RHS =
+    1.0.  The arc still feeds demand node ``n`` (via ``flow_to_n``) which
+    pulls for full output, so v_flow binds at 1.0 each step.  The arc's
+    ``sink`` label is the process itself (``sink ∉ process_sink``) — the
+    real producer would pick the source coef here; at the model level the
+    fold is the same per-arc multiply and the injected coef governs.
+    """
+    d = toy_1n1p_1d2t
+    # No-output node-as-source arc: source = commodity node ``fuel_n``,
+    # synthetic sink = the process ``p`` itself (so ``sink ∉ process_sink``).
+    # ``flow_to_n`` still routes the produced energy to demand node ``n``.
+    pss = pl.DataFrame({"p": ["p"], "source": ["fuel_n"], "sink": ["p"]})
+    pss_eff = pss.clone()
+    pss_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+    pss_dt = pss.join(d.dt, how="cross")
+    # Route the arc into demand node ``n`` (inflow −10 from the toy).
+    flow_to_n = pss.with_columns(n=pl.lit("n"))
+    # Fuel commodity hookup so the source side prices in.
+    flow_from_commodity_eff = pl.DataFrame(
+        {"p": ["p"], "source": ["fuel_n"], "sink": ["p"], "c": ["FUEL"]})
+    flow_from_commodity_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "c": pl.Utf8})
+    # Existing-only direct bound = 2.0 on the synthetic arc.
+    p_flow_upper_existing = Param(("p", "source", "sink", "d"),
+        pss_dt.select("p", "source", "sink", "d").unique()
+              .with_columns(value=pl.lit(2.0)))
+    # Source-side capacity_max_coeff = 0.5 on arc (p, fuel_n, p).
+    p_arc_coef = Param(("p", "source", "sink"),
+        pl.DataFrame({"p": ["p"], "source": ["fuel_n"], "sink": ["p"],
+                      "value": [0.5]}))
+    # p_flow_upper must cover the rewired arc (model requires it non-None);
+    # set it loose (100) so the tight existing-only bound × coef governs.
+    p_flow_upper = Param(("p", "source", "sink", "d", "t"),
+        pss_dt.with_columns(value=pl.lit(100.0))
+              .select("p", "source", "sink", "d", "t", "value"))
+    p_slope = Param(("p", "d", "t"),
+        d.dt.with_columns(p=pl.lit("p"), value=pl.lit(1.0))
+            .select("p", "d", "t", "value"))
+    data = dataclasses.replace(d,
+        process_source_sink=pss, process_source_sink_eff=pss_eff,
+        process_source_sink_noEff=pss_noEff, pss_dt=pss_dt,
+        flow_to_n=flow_to_n,
+        flow_from_commodity_eff=flow_from_commodity_eff,
+        flow_from_commodity_noEff=flow_from_commodity_noEff,
+        p_slope=p_slope,
+        p_flow_upper=p_flow_upper,
+        p_flow_upper_existing=p_flow_upper_existing,
+        p_arc_max_cap_coef=p_arc_coef)
+    pb, sol = _solve(data)
+    assert sol.optimal
+    v_flow = sol.value("v_flow").sort("t")
+    # RHS = 2.0 × 0.5 = 1.0 each step — capped by the (source) coef.
+    assert v_flow["value"][0] == pytest.approx(1.0, rel=1e-7)
+    assert v_flow["value"][1] == pytest.approx(1.0, rel=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# Producer-level: p_arc_max_cap_coef_from_source sink-vs-source selection.
+
+def test_p_arc_max_cap_coef_producer_selection():
+    """Unit-test the producer's maxToSink vs maxFromSource coef selection
+    and its exclusion of indirect processes.
+
+    Three direct arcs + one indirect arc:
+
+    * ``u_sink`` — normal output arc (sink ``n`` ∈ process_sink) → picks the
+      OUTPUT-node coef (0.5).
+    * ``u_src``  — no-output node-as-source arc (sink ``u_src`` ∉
+      process_sink) → picks the INPUT-node coef (0.25).
+    * ``u_one``  — output arc whose coef is the default 1.0 → dropped from
+      the carried Param.
+    * ``chp``    — indirect process → excluded entirely (carried via
+      ``p_flow_upper`` instead).
+    """
+    import polars as _pl
+
+    from flextool.engine_polars._derived_params import (
+        p_arc_max_cap_coef_from_source,
+    )
+
+    class _Src:
+        """Minimal InputSource: serves entities + the two coef params."""
+
+        def __init__(self):
+            self._entities = {
+                # u_sink: output arc to node n.
+                "unit__outputNode": _pl.DataFrame(
+                    {"unit": ["u_sink", "u_one", "chp"],
+                     "node": ["n", "n2", "h"]}),
+                # u_src: input arc from node n (and chp fuel input).
+                "unit__inputNode": _pl.DataFrame(
+                    {"unit": ["u_src", "chp"],
+                     "node": ["n", "fuel"]}),
+            }
+            self._params = {
+                ("unit__outputNode", "capacity_max_coeff"): _pl.DataFrame(
+                    {"unit": ["u_sink", "u_one"],
+                     "node": ["n", "n2"],
+                     "value": [0.5, 1.0]}),
+                ("unit__inputNode", "capacity_max_coeff"): _pl.DataFrame(
+                    {"unit": ["u_src"], "node": ["n"], "value": [0.25]}),
+            }
+
+        def entities(self, ec):
+            if ec in self._entities:
+                return self._entities[ec]
+            raise KeyError(ec)
+
+        def parameter(self, ec, pn):
+            if (ec, pn) in self._params:
+                return self._params[(ec, pn)]
+            raise KeyError((ec, pn))
+
+    # pss: 3 direct arcs + 1 indirect (chp output).
+    pss = _pl.DataFrame({
+        "p":      ["u_sink", "u_src", "u_one", "chp"],
+        "source": ["s_in",   "n",     "s2",    "chp"],
+        "sink":   ["n",      "u_src", "n2",    "h"],
+    })
+    # Mark chp indirect via the explicit classified frame.
+    classified = _pl.DataFrame({
+        "p": ["chp"], "klass": ["unit"], "method": ["method_1way_nvar_off"],
+    })
+    res = p_arc_max_cap_coef_from_source(_Src(), pss, classified)
+    assert res is not None
+    got = {(r["p"], r["source"], r["sink"]): r["value"]
+           for r in res.frame.iter_rows(named=True)}
+    # u_sink: sink ∈ process_sink → OUTPUT coef 0.5.
+    assert got[("u_sink", "s_in", "n")] == pytest.approx(0.5)
+    # u_src: sink u_src ∉ process_sink → INPUT (source) coef 0.25.
+    assert got[("u_src", "n", "u_src")] == pytest.approx(0.25)
+    # u_one (coef 1.0) dropped; chp (indirect) excluded.
+    assert ("u_one", "s2", "n2") not in got
+    assert all(p != "chp" for (p, _s, _k) in got)

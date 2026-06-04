@@ -408,6 +408,18 @@ def read_sets(
             and flex_data.process_source_sink.height > 0):
         pdf = flex_data.process_source_sink.select("p").unique().to_pandas()
         pdf["method"] = "method_1way_1var_LP"
+        # Tag method_2way_1var_off processes correctly (the .mod's
+        # single-signed-flow 2-way method).  ``calc_connections`` keys on
+        # this label to KEEP the sign of the flow (positive = node_1→node_2,
+        # negative = the reverse) instead of clipping it at 0 like a 2-var
+        # connection.  Without this, a forced reverse flow would be clipped
+        # away.  ``process_source_sink_2way_1var`` is the engine-side set of
+        # those arcs (DC + non-DC).
+        twoway1var = getattr(flex_data, "process_source_sink_2way_1var", None)
+        if twoway1var is not None and twoway1var.height > 0:
+            tw_procs = set(twoway1var.select("p").unique().to_pandas()["p"])
+            pdf.loc[pdf["p"].isin(tw_procs), "method"] = \
+                "method_2way_1var_off"
         s.process_method = pd.MultiIndex.from_frame(
             pdf, names=["process", "method"],
         )

@@ -305,6 +305,11 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # Agent 1.8: ``expand_by`` broadcasts coarse-block values to every
     # covered fine timestep.  Degenerate (every entity on 'default'): no-op.
     VariableSpec("v_flow",             ("process", "source", "sink"), expand_by="process_block"),
+    # Reverse-flow auxiliary for method_2way_1var_off arcs.  The signed
+    # net flow on such an arc is ``v_flow - v_flow_back``; the output layer
+    # folds it into ``r.flow_dt`` (calc_capacity_flows) so the reported
+    # connection flow carries the correct sign (negative = sink→source).
+    VariableSpec("v_flow_back",        ("process", "source", "sink"), expand_by="process_block"),
     VariableSpec("v_ramp",             ("process", "source", "sink"), expand_by="process_block"),
     # Reserve participants are pinned to the default block in V1 (Agent
     # 1.7), so v_reserve effectively needs no expansion — but the

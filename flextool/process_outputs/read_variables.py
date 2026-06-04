@@ -323,6 +323,10 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
 
     v.obj = _read("v_obj", ("objective",), has_period=False, has_time=False)
     v.flow = _read("v_flow", ("process", "source", "sink"))
+    # Reverse-flow auxiliary for method_2way_1var_off arcs (empty frame
+    # when no such arc is present).  Folded into the signed net flow by
+    # calc_capacity_flows.
+    v.flow_back = _read("v_flow_back", ("process", "source", "sink"))
     v.ramp = _read("v_ramp", ("process", "source", "sink"))
     v.reserve = _read("v_reserve", ("process", "reserve", "updown", "node"))
     v.state = _read("v_state", ("node",))
@@ -386,6 +390,14 @@ def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
     # Variables with (solve, period, time) index
     v.obj = pd.read_csv(output_path / 'v_obj.csv', header=[0], index_col=[0]).astype(float)
     v.flow = pd.read_csv(output_path / 'v_flow.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
+    # Reverse-flow auxiliary for method_2way_1var_off arcs.  The legacy CSV
+    # writer only emits this file when the variable exists; mirror v_flow's
+    # shape with an empty frame otherwise.
+    _flow_back_csv = output_path / 'v_flow_back.csv'
+    if _flow_back_csv.exists():
+        v.flow_back = pd.read_csv(_flow_back_csv, header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
+    else:
+        v.flow_back = pd.DataFrame(index=v.flow.index, columns=v.flow.columns[:0])
     v.ramp = pd.read_csv(output_path / 'v_ramp.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
     v.reserve = pd.read_csv(output_path / 'v_reserve.csv', header=[0, 1, 2, 3], index_col=[0, 1, 2]).astype(float)
     v.state = pd.read_csv(output_path / 'v_state.csv', index_col=[0, 1, 2]).astype(float)

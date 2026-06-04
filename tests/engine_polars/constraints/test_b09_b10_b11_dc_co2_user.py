@@ -3,7 +3,7 @@
 
 * ``test_b09_v_angle_bounds_and_back_flow_capacity`` — covers **B9-3**:
   builds an in-test 2-bus DC island with a single unidirectional arc and
-  reverse-direction demand, verifies ``maxToSink_back`` binds at
+  reverse-direction demand, verifies ``maxFlow_back`` binds at
   ``existing/unitsize`` and that ``v_angle`` honours its loose ±π bounds.
 
 * ``test_b10_co2_max_period_g_d_cardinality`` — covers **B10-4**:
@@ -148,11 +148,17 @@ def _build_dc_2bus(
         connection_dc_power_flow=conn_dc,
         node_reference_angle=ref,
         p_connection_susceptance=p_susc,
+        # The reverse-flow auxiliary ``v_flow_back`` is now declared by
+        # model.py over the union of method_2way_1var_off arcs (DC + non-DC),
+        # driven by this set.  The DC arc is method_2way_1var_off, so it
+        # must appear here for the shared Var (and the maxFlow_back cap) to
+        # be emitted.
+        process_source_sink_2way_1var=pss,
     )
 
 
 # ---------------------------------------------------------------------------
-# B9-3 — v_angle loose ±π bounds + back-flow capacity binding (maxToSink_back).
+# B9-3 — v_angle loose ±π bounds + back-flow capacity binding (maxFlow_back).
 
 def test_b09_v_angle_bounds_and_back_flow_capacity():
     """Covers B9-3 — reverse-direction demand forces ``v_flow_back`` to bind
@@ -165,7 +171,7 @@ def test_b09_v_angle_bounds_and_back_flow_capacity():
 
     Hand-calc:
       Reverse-flow needed = 5 MW; capacity = existing/unitsize = 2.
-      So v_flow_back = 2 (binds maxToSink_back), v_flow = 0.
+      So v_flow_back = 2 (binds maxFlow_back), v_flow = 0.
       Slack absorbs the 3 MW gap at each side (vq_up at n1, vq_down at n2).
       Angle: dc_flow_eq → (0 - 2)*1 = 1*(θ_n1 - θ_n2)
              with θ_n1 = 0 (ref) ⇒ θ_n2 = +2.0  (within ±π).
@@ -177,11 +183,14 @@ def test_b09_v_angle_bounds_and_back_flow_capacity():
     names = set(pb.cstr_names())
     assert "dc_flow_eq" in names
     assert "dc_reference_angle_eq" in names
-    assert "maxToSink_back" in names
+    # The back-flow capacity cap is now emitted by model.py as
+    # ``maxFlow_back`` over the full method_2way_1var_off arc set (the
+    # DC-only ``maxToSink_back`` was folded into it).
+    assert "maxFlow_back" in names
     # Hand-calc: v_flow_back binds at 2.0; v_flow stays at 0.
     vfb = sol.value("v_flow_back")["value"][0]
     assert vfb == pytest.approx(2.0, rel=1e-7), (
-        f"v_flow_back={vfb} != 2.0 — maxToSink_back not binding")
+        f"v_flow_back={vfb} != 2.0 — maxFlow_back not binding")
     # Hand-calc: θ_n1=0 (ref pin), θ_n2 = -(0 - 2)*1/1 = 2.0 (within ±π).
     ang = sol.value("v_angle").sort("n")
     ang_n1 = ang.filter(pl.col("n") == "n1")["value"][0]

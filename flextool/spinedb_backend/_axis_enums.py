@@ -504,7 +504,7 @@ def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
     These tokens flow through the cascade as values in the period (``d``)
     column of frames like ``period__branch.csv``,
     ``period_in_use_set.csv``, and downstream constraint / parameter
-    frames (``nodeBalance_eq``, ``maxToSink``, ``maxState``,
+    frames (``nodeBalance_eq``, ``maxFlow``, ``maxState``,
     ``process_constraint_equal``).
 
     Without these tokens in the period-axis Enum vocabulary, the

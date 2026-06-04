@@ -1,7 +1,7 @@
 """Synthetic minimal-feature toy: reserve subsystem in isolation.
 
 Tests that the reserve subsystem reduces dispatchable capacity (via the
-``maxToSink`` LHS coupling) AND that ``vq_reserve`` is correctly priced
+``maxFlow`` LHS coupling) AND that ``vq_reserve`` is correctly priced
 when reservation cannot be fully met.
 
 Topology
@@ -13,14 +13,14 @@ Topology
 * 1 reserve (r, ud, g) = (``r1``, ``up``, ``g``) with method ``timeseries``.
 * ``pdtReserve_upDown_group_reservation[r1, up, g, p2020, t] = 50`` MW.
 * ``p_process_reserve_upDown_node_max_share[u, r1, up, elec] = 1.0``
-  (vacuous; the binding constraint is the maxToSink coupling).
+  (vacuous; the binding constraint is the maxFlow coupling).
 * Demand at ``elec`` = 80 MW each of 2 timesteps (=> v_flow = 0.8 in
-  unitsize units; ``maxToSink``'s coupling leaves only v_reserve_up
+  unitsize units; ``maxFlow``'s coupling leaves only v_reserve_up
   ≤ 0.2 = 20 MW).
 
 Closed-form
 -----------
-maxToSink (per (u, gas, elec, p2020, t)):
+maxFlow (per (u, gas, elec, p2020, t)):
     v_flow  +  Σ_r v_reserve_up[u, r, up, elec, p2020, t]  ≤  1.0
 
 Demand → v_flow = 0.8 → Σ v_reserve_up ≤ 0.2 (= 20 MW).
@@ -30,7 +30,7 @@ reserveBalance_timeseries_eq (per (r1, up, g, p2020, t)):
         ≥  reservation
     =>  v_reserve_up · 100 · 1.0  +  vq_reserve · 50  ≥  50
 
-Optimal: v_reserve_up = 0.2 (binding maxToSink), vq_reserve = 0.6
+Optimal: v_reserve_up = 0.2 (binding maxFlow), vq_reserve = 0.6
 (obj-minimising — the only way to satisfy reserveBalance):
     20 + 0.6 · 50 = 50.
 
@@ -44,7 +44,7 @@ Total = 61_600.0.
 Why this toy matters
 --------------------
 This is the smallest scenario in which the reserve subsystem and the
-``maxToSink`` LHS coupling interact non-trivially.  Any breakage in
+``maxFlow`` LHS coupling interact non-trivially.  Any breakage in
 either the coupling sign / coefficient or in the reserveBalance LHS
 (reliability factor, vq scaling by reservation) shows up directly in
 the obj.
