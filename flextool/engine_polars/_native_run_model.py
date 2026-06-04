@@ -49,7 +49,6 @@ from flextool.engine_polars import (
 from flextool.engine_polars._solve_state import (
     FlexToolConfigError,
     FlexToolSolveError,
-    OutputTimelineBundle,
 )
 # Step 2.5 — solve_writers calls now resolve to the native polars
 # implementations.  The legacy disk-writing module remains in the tree
@@ -167,119 +166,6 @@ def _downgrade_rp_methods_for_non_rp_solve(
         )
 
 
-def _build_output_timeline_bundle(
-    state,
-    realized_time_lists: dict,
-    complete_solve: dict,
-) -> OutputTimelineBundle:
-    """Build the cross-solve :class:`OutputTimelineBundle`.
-
-    Inverts the per-solve realized dispatch ``[period, timestep]`` and the
-    per-solve realized invest ``[period]`` into solve-free union timelines
-    plus their ``-> solve`` label maps, enforcing the disjointness
-    invariant in a single pass.
-
-    Realized dispatch is the per-solve ``realized_time_lists[solve]``
-    INTERSECTED with the solve's realized periods, mirroring
-    :func:`flextool.engine_polars._emit_solve_writers.
-    derive_realized_dispatch` (a period contributes only when some
-    realized-period entry's ``[1]`` equals it).
-
-    Realized invest is ``state.solve.realized_invest_periods`` keyed by the
-    COMPLETE solve, with the same fallback the per-solve writer uses: when
-    a complete solve has no realized-invest periods but does have both
-    invest periods and realized periods, its realized periods stand in.
-
-    The output ``solve`` label is the ROLL key (``solve``), matching the
-    proven output-label oracle — NOT ``complete_solve[solve]``.
-
-    Raises:
-        FlexToolConfigError: when two solves realize the same dispatch
-            ``(period, timestep)`` or the same invest ``period`` — a user
-            misconfiguration (input data sets two solves to realize the
-            same period).
-    """
-    bundle = OutputTimelineBundle()
-
-    # ---- Realized dispatch [d,t] union + [d,t] -> solve map. ----------
-    for solve, realized_time_list in realized_time_lists.items():
-        realized_periods = state.solve.realized_periods.get(
-            complete_solve[solve], []
-        )
-        for period, entries in realized_time_list.items():
-            # Mirror derive_realized_dispatch: skip a period unless it is
-            # one of the solve's realized periods.
-            if not any(t[1] == period for t in realized_periods):
-                continue
-            for entry in entries:
-                timestep = entry.timestep
-                key = (period, timestep)
-                prior = bundle.dt_to_solve.get(key)
-                if prior is not None and prior != solve:
-                    message = (
-                        f"Realized dispatch overlap: (period '{period}', "
-                        f"timestep '{timestep}') is realized by two solves "
-                        f"('{prior}' and '{solve}').  Each (period, "
-                        f"timestep) must be realized by exactly one solve; "
-                        f"check the input data for two solves configured to "
-                        f"realize the same period."
-                    )
-                    state.logger.error(message)
-                    raise FlexToolConfigError(message)
-                if prior is None:
-                    bundle.dt_to_solve[key] = solve
-                    bundle.output_timeline.setdefault(period, []).append(
-                        timestep
-                    )
-
-    # ---- Realized invest [period] union + period -> solve map. --------
-    #
-    # Realized invest periods are keyed by the COMPLETE solve, while the
-    # output label is the per-roll ``solve``.  Several rolls may share one
-    # complete solve, so we register each complete solve's realized-invest
-    # set exactly ONCE (under the first roll seen for that complete solve)
-    # — otherwise sibling rolls of the same complete solve would falsely
-    # trip the overlap guard.  The guard then fires only on a genuine
-    # cross-complete-solve overlap (two distinct solves realizing the same
-    # invest period — a user misconfiguration).
-    realized_invest_periods = state.solve.realized_invest_periods
-    invest_periods = state.solve.invest_periods
-    realized_periods_all = state.solve.realized_periods
-    seen_complete: set[str] = set()
-    for solve in realized_time_lists:
-        complete = complete_solve[solve]
-        if complete in seen_complete:
-            continue
-        seen_complete.add(complete)
-        invest_source = realized_invest_periods.get(complete, [])
-        # Fallback (mirror the per-solve writer): empty realized-invest but
-        # both invest and realized periods present -> use realized periods.
-        if (
-            not invest_source
-            and invest_periods.get(complete)
-            and realized_periods_all.get(complete)
-        ):
-            invest_source = realized_periods_all.get(complete, [])
-        for period_tuple in invest_source:
-            period = period_tuple[1]
-            prior = bundle.period_to_solve_invest.get(period)
-            if prior is not None and prior != solve:
-                message = (
-                    f"Realized invest overlap: period '{period}' is "
-                    f"realized by two solves ('{prior}' and '{solve}').  "
-                    f"Each invest period must be realized by exactly one "
-                    f"solve; check the input data for two solves configured "
-                    f"to realize the same invest period."
-                )
-                state.logger.error(message)
-                raise FlexToolConfigError(message)
-            if prior is None:
-                bundle.period_to_solve_invest[period] = solve
-                bundle.output_invest_timeline.append(period)
-
-    return bundle
-
-
 def native_run_model(state, solver) -> int:
     """Drive the per-solve cascade natively.
 
@@ -354,12 +240,10 @@ def native_run_model(state, solver) -> int:
         fix_storage_time_lists.update(result.fix_storage_time_lists)
         realized_time_lists.update(copy.deepcopy(result.realized_time_lists))
 
-    # NOTE: the legacy silent earliest-wins trim of overlapping realized
-    # timesteps used to live here.  It MASKED user-misconfigured realized
-    # overlap (two solves realizing the same (period, timestep)).  Removed
-    # in favour of the raising disjointness guard built into the
-    # output-timeline bundle below (after the stochastic pass), which
-    # fails fast and names the offending period + both solves.
+    # NOTE: the realized-dispatch overlap resolution (last-wins) runs
+    # AFTER the stochastic pass below (step 3.5), where
+    # ``realized_time_lists`` is authoritative — the stochastic pass
+    # re-derives it.
 
     # ------------------------------------------------------------------
     # 2. Per-real-solve period history accumulation (O(N) instead of O(N²)).
@@ -432,21 +316,40 @@ def native_run_model(state, solver) -> int:
     )
 
     # ------------------------------------------------------------------
-    # 3.5 Output-timeline bundle (multi-solve realized-slice union).
+    # 3.5 Resolve realized-dispatch overlap across solves (LAST-WINS).
     #
     # ``realized_time_lists`` is authoritative only HERE — the stochastic
-    # pass above re-derives it.  Build the cross-solve output index
-    # (dispatch + invest) used by output processing to (a) rewire the
-    # ``solve`` column and (b) union the realized window of every
-    # sub-solve.  The same single pass enforces the disjointness
-    # invariant (each realized (period, timestep) / invest period owned
-    # by exactly one solve); a violation is a USER misconfiguration (two
-    # solves realizing the same period) and is raised, not silenced.
+    # pass above re-derives it.  When two solves realize the same
+    # (period, timestep), the LATER solve in cascade order wins: it keeps
+    # the cell and the earlier solve's claim is dropped.  This is the
+    # maintainer-directed resolution ("the lower level / later solve
+    # wins") and makes each solve's persisted realized slice disjoint, so
+    # the downstream multi-solve output union stays a clean concat.
+    #
+    # Implementation: iterate solves in REVERSE cascade order so a later
+    # solve is seen first and claims its (period, timestep) pairs.  When
+    # an earlier solve reaches a timestep already claimed by a later
+    # solve, truncate it (and the rest of that period's realized window —
+    # realized windows are contiguous per period, so once one cell is
+    # taken the remainder overlaps too).  Drops the resolved cells from
+    # ``realized_time_lists`` itself, which then flows into
+    # ``solve_data/realized_dispatch.csv`` and thus each roll's
+    # ``flex_data.realized_dispatch`` that drives per-roll persistence.
     # ------------------------------------------------------------------
-    output_timeline_bundle = _build_output_timeline_bundle(
-        state, realized_time_lists, complete_solve,
-    )
-    state.output_timeline_bundle = output_timeline_bundle
+    already_realized_timesteps: dict[str, set[str]] = {}
+    for solve, realized_time_list in reversed(realized_time_lists.items()):
+        for period, timesteps in list(realized_time_list.items()):
+            if period not in already_realized_timesteps:
+                already_realized_timesteps[period] = set()
+            for i, entry in enumerate(timesteps):
+                # Hitting a cell already owned by a later solve means the
+                # rest of this period's window overlaps too — truncate.
+                if entry.timestep in already_realized_timesteps[period]:
+                    del realized_time_lists[solve][period][i:]
+                    break
+                already_realized_timesteps[period].add(entry.timestep)
+            if not realized_time_lists[solve][period]:
+                del realized_time_lists[solve][period]
 
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:
