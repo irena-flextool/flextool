@@ -48,6 +48,21 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
 
         flow_val = v.flow[[(p, orig_source, orig_sink)]] * unitsize[p]
 
+        # method_2way_1var_off arcs carry a single signed flow
+        # ``v_flow - v_flow_back``: the forward variable ``v_flow >= 0``
+        # plus a non-negative reverse auxiliary ``v_flow_back``.  Subtract
+        # the back auxiliary so the reported flow is the true signed net
+        # (negative = sink->source), matching the engine's nodeBalance.
+        flow_back = getattr(v, "flow_back", None)
+        if (flow_back is not None and not flow_back.empty
+                and (p, orig_source, orig_sink) in flow_back.columns):
+            # ``flow_back`` shares ``v.flow``'s (solve, period, time) row
+            # index, so its column lines up element-wise with ``flow_val``
+            # (which is ``v.flow[[col]] * unitsize``).  Subtract by raw
+            # values to stay agnostic to row-index level differences.
+            back_vals = (flow_back[(p, orig_source, orig_sink)] * unitsize[p]).values
+            flow_val = flow_val.sub(back_vals, axis=0)
+
         if (method in s.method_1var_per_way and
                 p not in s.process_profile and
                 orig_source == always_source and orig_sink != always_sink):

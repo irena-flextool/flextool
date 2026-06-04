@@ -575,6 +575,13 @@ class FlexData:
     # objective term in the current scope) but kept for parity with
     # flextool's preprocessing set family.
     process_source_sink_ramp_cost: pl.DataFrame | None = None
+    # method_2way_1var_off arcs (the .mod's signed-flow 2-way method,
+    # ``v_flow ∈ [-cap, +cap]``).  The engine emits ``v_flow ≥ 0`` on the
+    # forward arc only, so these arcs carry sink→source flow via a
+    # non-negative auxiliary ``v_flow_back``.  Union of DC-power-flow and
+    # non-DC arcs; ``model.py`` declares the shared ``v_flow_back`` over it
+    # and ``_dc_power_flow`` consumes the same Var on its DC subset.
+    process_source_sink_2way_1var: pl.DataFrame | None = None  # (p, source, sink)
     p_ramp_speed_up_sink:   Param | None = None    # (p, sink)
     p_ramp_speed_down_sink: Param | None = None
     p_ramp_speed_up_source:   Param | None = None  # (p, source)

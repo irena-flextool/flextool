@@ -645,10 +645,69 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     _build_prof("before:reserve_dcpf_ladder_vars")
     reserve_vars = _reserve.add_variables(m, d) if _reserve.has_feature(d) else {}
 
+    # ─── Reverse-flow auxiliary for method_2way_1var_off arcs ─────────────
+    # ``method_2way_1var_off`` is the .mod's single-signed-flow 2-way
+    # transfer method: ``v_flow ∈ [-cap, +cap]``.  The engine emits
+    # ``v_flow ≥ 0`` on the FORWARD arc only, so sink→source flow is
+    # carried by a non-negative auxiliary ``v_flow_back`` with the
+    # algebraic signed flow ``v_flow - v_flow_back``.  This Var is declared
+    # ONCE over the UNION of all such arcs (DC-power-flow + non-DC) so the
+    # DC ``dc_flow_eq`` and the nodeBalance/cap wiring share a single Var
+    # (avoids a duplicate ``add_var('v_flow_back', …)`` collision).
+    #
+    # The arc set is the union of two sources, so the back auxiliary is
+    # emitted whichever path populated the data:
+    #   * ``d.process_source_sink_2way_1var`` — the projection field
+    #     (apply_projection_params); populated in the full DB cascade.
+    #   * ``_dc_power_flow.dc_arcs_frame(d)`` — the DC arcs derived from
+    #     ``connection_dc_power_flow`` ∩ ``process_source_sink``; this keeps
+    #     the pre-refactor behavior where DC arcs ALWAYS get the cap, even
+    #     in lightweight build paths (e.g. emission/load_flextool fixtures)
+    #     that don't run the projection pass.
+    twoway1var_arcs = None
+    v_flow_back = None
+    if has_proc:
+        _arc_parts = []
+        if (d.process_source_sink_2way_1var is not None
+                and d.process_source_sink_2way_1var.height > 0):
+            _arc_parts.append(d.process_source_sink_2way_1var.select(
+                "p", "source", "sink"))
+        if _dc_power_flow.has_feature(d):
+            _dc_arcs = _dc_power_flow.dc_arcs_frame(d)
+            if _dc_arcs is not None and _dc_arcs.height > 0:
+                _arc_parts.append(_dc_arcs.select("p", "source", "sink"))
+        if _arc_parts:
+            if len(_arc_parts) == 1:
+                twoway1var_arcs = _arc_parts[0]
+            else:
+                # Align dtypes before union (the projection field carries
+                # axis-Enum columns; dc_arcs_frame mirrors process_source_sink
+                # — but be defensive about a stray dtype mismatch).
+                ref_schema = _arc_parts[0].schema
+                aligned = [_arc_parts[0]]
+                for part in _arc_parts[1:]:
+                    for col in ("p", "source", "sink"):
+                        if part.schema[col] != ref_schema[col]:
+                            part = part.with_columns(
+                                pl.col(col).cast(ref_schema[col], strict=False))
+                    aligned.append(part)
+                twoway1var_arcs = pl.concat(aligned).unique()
+        if twoway1var_arcs is not None and twoway1var_arcs.height > 0:
+            back_idx = twoway1var_arcs.join(d.dt, how="cross").select(
+                "p", "source", "sink", "d", "t")
+            if back_idx.height > 0:
+                v_flow_back = m.add_var(
+                    "v_flow_back", ("p", "source", "sink", "d", "t"),
+                    back_idx, lower=0.0,
+                )
+
     # ─── DC power flow vars (v_angle) ─────────────────────────────────────
     # Declared up-front; the linear flow-angle constraint
-    # ``dc_flow_eq`` is emitted after v_flow exists (further down).
-    dc_pf_vars = _dc_power_flow.add_variables(m, d) if _dc_power_flow.has_feature(d) else {}
+    # ``dc_flow_eq`` is emitted after v_flow exists (further down).  The DC
+    # module consumes the shared ``v_flow_back`` (above) for its
+    # ``dc_flow_eq`` LHS instead of creating its own.
+    dc_pf_vars = (_dc_power_flow.add_variables(m, d, v_flow_back=v_flow_back)
+                  if _dc_power_flow.has_feature(d) else {})
 
     # ─── Commodity ladder vars (v_trade) ──────────────────────────────────
     # Declared up-front so the balance + tier-cap constraints (further
@@ -820,12 +879,15 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 * d.p_step_duration,
                 over=("p","source","sink"))
 
-        # DC power flow back-flow contribution to nodeBalance.  When the
-        # LP wants flow to run sink→source on a DC PF arc, ``v_flow_back``
-        # carries it (since v_flow ≥ 0).  See _dc_power_flow.py.
-        if dc_pf_vars:
+        # Reverse-flow contribution to nodeBalance for method_2way_1var_off
+        # arcs.  When the LP wants flow to run sink→source, ``v_flow_back``
+        # carries it (since v_flow ≥ 0): it ADDS to the source node and
+        # SUBTRACTS from the sink node (the mirror of v_flow).  Spans the
+        # full DC + non-DC arc set.  See _dc_power_flow.py.
+        if v_flow_back is not None and twoway1var_arcs is not None:
             nb_terms.update(_dc_power_flow.nodeBalance_back_flow_terms(
-                d, dc_pf_vars, d.p_unitsize, d.p_step_duration))
+                twoway1var_arcs, v_flow_back,
+                d.p_unitsize, d.p_step_duration))
 
     # Each node lands in exactly one storage_bind_* frame (v54 contract — see disjointness assertion above).
     if has_storage and d.storage_bind_within_timeblock is not None:
@@ -2300,6 +2362,23 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     over      = neg_pss_dt,
                     sense     = ">=",
                     lhs_terms = flow_lhs,
+                    rhs_terms = {"upper": flow_upper_rhs},
+                )
+        # maxFlow_back — capacity cap on the reverse-flow auxiliary so that
+        # |signed flow| = |v_flow − v_flow_back| ≤ capacity (the .mod's
+        # ``v_flow ∈ [−cap, +cap]`` range for method_2way_1var_off arcs).
+        # Reuses the same existing-capacity RHS the forward maxFlow uses
+        # (``flow_upper_rhs``), restricted to the 2way_1var arcs via the
+        # ``over`` index.  Spans the full DC + non-DC arc set.
+        if v_flow_back is not None and twoway1var_arcs is not None:
+            back_over = pss_dt.join(
+                twoway1var_arcs, on=("p", "source", "sink"), how="inner")
+            if back_over.height > 0:
+                m.add_cstr(
+                    "maxFlow_back",
+                    over      = back_over,
+                    sense     = "<=",
+                    lhs_terms = {"flow_back": v_flow_back},
                     rhs_terms = {"upper": flow_upper_rhs},
                 )
 

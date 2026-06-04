@@ -1188,6 +1188,40 @@
         "west"
       ],
       null
+    ],
+    [
+      "node",
+      "lw",
+      null
+    ],
+    [
+      "node",
+      "le",
+      null
+    ],
+    [
+      "connection",
+      "ll",
+      null
+    ],
+    [
+      "connection__node__node",
+      [
+        "ll",
+        "lw",
+        "le"
+      ],
+      null
+    ],
+    [
+      "timeset",
+      "lossless2step",
+      null
+    ],
+    [
+      "solve",
+      "lossless_2way_solve",
+      null
     ]
   ],
   "entity_alternatives": [
@@ -1448,6 +1482,58 @@
       ],
       "coal_chp_extraction",
       true
+    ],
+    [
+      "node",
+      [
+        "lw"
+      ],
+      "lossless_2way",
+      true
+    ],
+    [
+      "node",
+      [
+        "le"
+      ],
+      "lossless_2way",
+      true
+    ],
+    [
+      "timeset",
+      [
+        "lossless2step"
+      ],
+      "lossless_2way",
+      true
+    ],
+    [
+      "connection",
+      [
+        "ll"
+      ],
+      "lossless_2way",
+      true
+    ],
+    [
+      "reserve__upDown__group",
+      [
+        "n_1",
+        "up",
+        "electricity"
+      ],
+      "lossless_2way",
+      false
+    ],
+    [
+      "reserve__upDown__group",
+      [
+        "primary",
+        "up",
+        "electricity"
+      ],
+      "lossless_2way",
+      false
     ]
   ],
   "parameter_value_lists": [
@@ -10682,6 +10768,146 @@
         "float"
       ],
       "fusion"
+    ],
+    [
+      "connection",
+      "ll",
+      "transfer_method",
+      [
+        "Im5vX2xvc3Nlc19ub192YXJpYWJsZV9jb3N0Ig==",
+        "str"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "connection",
+      "ll",
+      "existing",
+      [
+        "MjAw",
+        "float"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "connection",
+      "ll",
+      "efficiency",
+      [
+        "MS4w",
+        "float"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "node",
+      "lw",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "node",
+      "le",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "node",
+      "lw",
+      "inflow",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCAxMDBdLCBbInQwMDAyIiwgLTEwMF1dfQ==",
+        "map"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "node",
+      "le",
+      "inflow",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCAtMTAwXSwgWyJ0MDAwMiIsIDEwMF1dfQ==",
+        "map"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "timeset",
+      "lossless2step",
+      "timeline",
+      [
+        "InkyMDIwIg==",
+        "str"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "timeset",
+      "lossless2step",
+      "timeset_duration",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCAyLjBdXX0=",
+        "map"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "solve",
+      "lossless_2way_solve",
+      "period_timeset",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMjAiLCAibG9zc2xlc3Myc3RlcCJdXSwgImluZGV4X25hbWUiOiAicGVyaW9kIn0=",
+        "map"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "solve",
+      "lossless_2way_solve",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "solve",
+      "lossless_2way_solve",
+      "solve_mode",
+      [
+        "InNpbmdsZV9zb2x2ZSI=",
+        "str"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJsb3NzbGVzc18yd2F5X3NvbHZlIl0sICJpbmRleF9uYW1lIjogInNlcXVlbmNlX2luZGV4In0=",
+        "array"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "timeline",
+      "y2020",
+      "timestep_duration",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCAxLjBdLCBbInQwMDAyIiwgMS4wXV19",
+        "map"
+      ],
+      "lossless_2way"
     ]
   ],
   "alternatives": [
@@ -10952,6 +11178,10 @@
     [
       "wind_no_investment_10yr",
       ""
+    ],
+    [
+      "lossless_2way",
+      "Lossless 2-way connection forced-reverse test"
     ]
   ],
   "scenarios": [
@@ -11292,6 +11522,11 @@
     ],
     [
       "years_represented_half",
+      false,
+      ""
+    ],
+    [
+      "lossless_2way",
       false,
       ""
     ]
@@ -13930,6 +14165,16 @@
     [
       "years_represented_half",
       "half_year",
+      null
+    ],
+    [
+      "lossless_2way",
+      "Base",
+      "lossless_2way"
+    ],
+    [
+      "lossless_2way",
+      "lossless_2way",
       null
     ]
   ]

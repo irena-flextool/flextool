@@ -223,7 +223,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxFlow": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:2075
     "maxFlow_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/_dc_power_flow.py:414
+    # Reverse-flow capacity cap on v_flow_back for method_2way_1var_off
+    # arcs (DC + non-DC).  flextool/engine_polars/model.py (maxFlow_back).
+    "maxFlow_back": CstrFamily(QuantityType.DIMENSIONLESS),
+    # Legacy name for the DC-only back-flow cap; the cap is now emitted as
+    # ``maxFlow_back`` over the full arc set.  Retained for back-compat.
     "maxToSink_back": CstrFamily(QuantityType.DIMENSIONLESS),
     # Ramp constraints, prefix-matched: ramp_<side>_<dir>_constraint.
     # flextool/engine_polars/model.py:2164

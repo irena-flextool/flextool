@@ -57,5 +57,8 @@ def test_dc_flow_eq_emits_one_row_per_dc_arc_dt(scenario_workdir) -> None:
     assert v_angle.frame.height == data.node_dc_power_flow.height * n_dt
 
     # The symmetric back-flow capacity bound rounds out the picture for
-    # method_2way_1var_off DC PF connections.
-    assert_cstr_row_count(pb, "maxToSink_back", n_dc_arcs * n_dt)
+    # method_2way_1var_off DC PF connections.  The cap is now emitted by
+    # model.py as ``maxFlow_back`` over the full method_2way_1var_off arc
+    # set (a superset of the DC arcs); for the pure-DC case14 fixture the
+    # set equals the DC arcs, so the row count is unchanged.
+    assert_cstr_row_count(pb, "maxFlow_back", n_dc_arcs * n_dt)

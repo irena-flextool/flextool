@@ -640,6 +640,23 @@
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 10.0
 
+# Regression guard: ``transfer_method = no_losses_no_variable_cost``
+# resolves to ``method_2way_1var_off`` (the .mod's single-signed-flow
+# 2-way method, ``v_flow ∈ [-cap, +cap]``).  A lossless 2-way connection
+# ``ll`` (lw↔le) is forced to carry +100 MW (lw→le) at t0001 and −100 MW
+# (le→lw, the REVERSE direction) at t0002 by flipping the node inflows
+# between steps.  The negative t0002 flow is the proof the reverse-flow
+# auxiliary ``v_flow_back`` works; without it the engine would leave
+# t0002 = 0 and pay ~2,000,000 in loss-of-load + spill slack.
+#   all node balances exact, zero slack → objective = 0.
+- scenario: lossless_2way
+  csvs:
+    - connection__dt.csv
+    - costs__dt.csv
+  expected_objective: 0.0
+  expected_objective_tolerance: 1.0e-6
+  time_budget_seconds: 10.0
+
 # --- Stochastic ---
 # Smoke coverage for the include_stochastics / stochastic_branches
 # pipeline. Built from the user-facing
