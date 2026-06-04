@@ -3,7 +3,7 @@ coal_plant,dispatch_fullYear_roll_roll_17,p2020,500.0,0.0,,500.0
 coal_plant,dispatch_fullYear_roll_roll_35,p2025,500.0,0.0,,500.0
 coal_plant,dispatch_fullYear_roll_roll_53,p2030,500.0,0.0,,500.0
 coal_plant,dispatch_fullYear_roll_roll_71,p2035,500.0,0.0,,500.0
-wind_plant,dispatch_fullYear_roll_roll_17,p2020,1383.2617,0.0,,1383.2617
-wind_plant,dispatch_fullYear_roll_roll_35,p2025,1582.6562,0.0,,1582.6562
-wind_plant,dispatch_fullYear_roll_roll_53,p2030,1782.0507,0.0,,1782.0507
-wind_plant,dispatch_fullYear_roll_roll_71,p2035,1981.4452,0.0,,1981.4452
+wind_plant,dispatch_fullYear_roll_roll_17,p2020,1383.2617,383.2617,,1383.2617
+wind_plant,dispatch_fullYear_roll_roll_35,p2025,1582.6562,199.3945,,1582.6562
+wind_plant,dispatch_fullYear_roll_roll_53,p2030,1782.0507,199.3945,,1782.0507
+wind_plant,dispatch_fullYear_roll_roll_71,p2035,1981.4452,199.3945,,1981.4452
