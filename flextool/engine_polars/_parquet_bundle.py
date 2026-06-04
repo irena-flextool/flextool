@@ -586,6 +586,29 @@ def _is_known(name: str, registered: set[str]) -> bool:
     return False
 
 
+def _is_per_roll_slice_intermediate(name: str) -> bool:
+    """True for the multi-solve output-union per-roll scratch parquets.
+
+    The output-union fix (``persist_realized_slice``) writes one
+    ``<attr>__<solve>.parquet`` per cascade sub-solve for every per-roll-
+    VARYING parameter and set, then ``union_realized_slice`` concatenates
+    them at output time.  ``output_raw/`` is the cascade's intermediate
+    stash: ``cmd_run_flextool`` ``shutil.rmtree``s it after consumption
+    (unless ``--csv-dump``), so these slices are never a persisted
+    artifact and there is nothing for a manifest reader to consume.
+
+    Unlike the LP variable shards (a fixed, enumerable set documented in
+    REGISTRY), the param/set attrs are schema-driven and dynamic — pinning
+    each as a ParquetSpec would be a registry-completeness maintenance trap
+    that drifts on every schema change.  We therefore recognise them by
+    their ``<attr>__<solve>.parquet`` convention and suppress the advisory
+    "no REGISTRY entry" warning for them (it fired thousands of times per
+    rolling run).  This deliberately does NOT register them: they carry no
+    downstream contract.
+    """
+    return name.endswith(".parquet") and "__" in name
+
+
 def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
     """Log warnings for:
        1. files in ``output_raw/`` with no matching REGISTRY entry,
@@ -605,11 +628,17 @@ def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
             full = raw_dir / entry
             if not full.is_file():
                 continue
-            if not _is_known(entry, registered):
-                _logger.warning(
-                    "manifest: file in output_raw/ with no REGISTRY entry: %s",
-                    entry,
-                )
+            if _is_known(entry, registered):
+                continue
+            # Per-roll realized-slice scratch (params/sets persisted by the
+            # multi-solve output union) is intermediate-only and intentionally
+            # unregistered — don't warn.  See ``_is_per_roll_slice_intermediate``.
+            if _is_per_roll_slice_intermediate(entry):
+                continue
+            _logger.warning(
+                "manifest: file in output_raw/ with no REGISTRY entry: %s",
+                entry,
+            )
 
     note_conditional = ("only when", "only with", "only for", "only emitted",
                         "conditional")
