@@ -87,9 +87,21 @@ def cost_summaries(par, s, v, r, debug):
     investment_index = s.d_realize_invest.union(s.d_realized_period).union(period_in_use)
     investment_costs = pd.DataFrame(index=investment_index, dtype=float)
     investment_costs.columns.name = 'category'
-    investment_costs['unit investment & retirement'] = (r.costInvestUnit_d + r.costDivestUnit_d) / to_millions
-    investment_costs['connection investment & retirement'] = (r.costInvestConnection_d + r.costDivestConnection_d) / to_millions
-    investment_costs['storage investment & retirement'] = (r.costInvestState_d + r.costDivestState_d) / to_millions
+    # Invest + divest are independent per-period series: a scenario may
+    # realize investment but no divestment anywhere in the cascade (and
+    # vice-versa).  When ``v_divest`` is empty across every sub-solve the
+    # divest-cost series is row-less, so a bare ``invest + divest`` would
+    # align on the index union and yield NaN at EVERY period the divest
+    # series lacks — which ``fillna(0.0)`` below then silently zeroes,
+    # discarding the valid investment cost (the ``unit investment &
+    # retirement`` cost-path collapse for nested-invest scenarios with no
+    # divestment).  ``add(fill_value=0)`` is the correct additive-identity
+    # union: a period present in only one operand keeps that operand's
+    # value instead of becoming NaN.  Byte-identical when both series carry
+    # the same full period index (the divest-active scenarios).
+    investment_costs['unit investment & retirement'] = r.costInvestUnit_d.add(r.costDivestUnit_d, fill_value=0) / to_millions
+    investment_costs['connection investment & retirement'] = r.costInvestConnection_d.add(r.costDivestConnection_d, fill_value=0) / to_millions
+    investment_costs['storage investment & retirement'] = r.costInvestState_d.add(r.costDivestState_d, fill_value=0) / to_millions
     investment_costs['fixed cost pre-existing'] = r.costFixedPreExisting_d / to_millions
     investment_costs['fixed cost invested'] = r.costFixedInvested_d / to_millions
     investment_costs['fixed cost reduction of divestments'] = r.costFixedDivested_d / to_millions
