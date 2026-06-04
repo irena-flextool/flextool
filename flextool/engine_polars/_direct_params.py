@@ -1248,6 +1248,20 @@ def p_ramp_speed_down_source_from_source(source: "InputSource") -> Param | None:
     return _p_side_scalar(source, "unit__inputNode", "ramp_speed_down", "source")
 
 
+def p_process_sink_min_capacity_coef_from_source(source: "InputSource") -> Param | None:
+    """``unit__outputNode.capacity_min_coeff`` → ``Param(("p", "sink"))``.
+
+    Default 1.0 (schema).  Per-output-arc multiplier on the
+    ``minToSink_minload`` floor (``v_online · min_load``), mirroring the
+    .mod's ``p_process_sink_min_capacity_coefficient`` (flextool.mod
+    L3075).  Explicit rows only, INCLUDING an authored ``0.0`` ("no floor
+    on this arc") — ``filter_zero=False`` keeps it; the consumer densifies
+    absent arcs to the 1.0 default.
+    """
+    return _p_side_scalar(source, "unit__outputNode", "capacity_min_coeff",
+                          "sink", filter_zero=False)
+
+
 # inertia_constant (§1.14) — relationship scalar, CSV filters zero
 def p_process_sink_inertia_constant_from_source(source: "InputSource") -> Param | None:
     return _p_side_scalar(source, "unit__outputNode", "inertia_constant", "sink")
@@ -1900,6 +1914,11 @@ def apply_direct_params_a(source: "InputSource",
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
     flex_data.p_min_load = p_min_load_from_source(source)
+    # Per-output-arc min_capacity_coefficient — scales the minToSink_minload
+    # floor.  Assigned in pass 1a so it is present on the synthetic / rolling
+    # sub-solve path too (passes 3-10 are skipped there).
+    flex_data.p_process_sink_min_capacity_coef = (
+        p_process_sink_min_capacity_coef_from_source(source))
 
     # ─── Δ.4 second wave — connection scalars (DC power flow feature) ───
     # Δ.16 — preserve the CSV-loaded value when the source has no rows.

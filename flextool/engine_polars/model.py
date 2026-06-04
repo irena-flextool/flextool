@@ -4012,6 +4012,16 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
             sum_flow = Sum(Where(v_flow, pss_minload), over=("sink",))
             min_load_floor = (Where(v_online, d.process_minload)
                               * d.p_min_load)
+            # Per-output-arc min_capacity_coefficient scales the floor
+            # (mod L3075: v_online·min_load·min_cap_coef[p,sink]).  Densify
+            # over the constraint's (p,sink) pairs, filling the 1.0 default,
+            # so a unit with no authored coefficient keeps its full floor
+            # instead of being inner-join-dropped to 0 (the availability-bug
+            # hazard).  Default 1.0 ⇒ no-op when unauthored (parity-clean).
+            if d.p_process_sink_min_capacity_coef is not None:
+                min_load_floor = min_load_floor * _coef_factor(
+                    pss_minload, d.p_process_sink_min_capacity_coef,
+                    ["p", "sink"])
             m.add_cstr(f"minToSink_minload{sfx}",
                        over=over_minload, sense=">=",
                        lhs_terms={"flow_sum": sum_flow},
@@ -4084,6 +4094,34 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                            over=dn_idx, sense="<=",
                            lhs_terms=lhs_dn,
                            rhs_terms={"existing":     d.p_process_existing_count})
+
+
+def _coef_factor(pairs: "pl.DataFrame", coef: "Param", keys: list,
+                 *, default: float = 1.0) -> "Param":
+    """Densify a sparse per-``keys`` coefficient ``coef`` over the key-tuples
+    present in ``pairs``, filling absent tuples with ``default``.
+
+    Folding a sparse coefficient into a constraint via ``Param * Param`` (an
+    inner join) would DROP any tuple missing from ``coef`` — collapsing the
+    term to 0 instead of multiplying by the schema default.  This is the same
+    hazard as :func:`_availability_factor`; here it covers static per-arc
+    coefficients (e.g. ``capacity_min_coeff`` keyed ``(p, sink)``).  The join
+    keys are compared as ``Utf8`` to bridge Enum-vocabulary edges between the
+    consumer set and the coefficient Param.
+    """
+    base = pairs.select(keys).unique()
+    base_lf = base.lazy().with_columns(
+        [pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys])
+    coef_lf = (coef.frame.lazy()
+               .with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys])
+               .drop(keys))
+    join_keys = [f"_{k}" for k in keys]
+    merged = (base_lf
+              .join(coef_lf, on=join_keys, how="left")
+              .with_columns(pl.col("value").fill_null(default))
+              .select(*keys, "value")
+              .collect())
+    return Param(tuple(keys), merged)
 
 
 def _availability_factor(d, members: "pl.DataFrame", *,

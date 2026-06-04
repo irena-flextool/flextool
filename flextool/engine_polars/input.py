@@ -589,6 +589,7 @@ class FlexData:
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
     p_min_load: Param | None = None                          # (p,)
+    p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: minToSink_minload floor multiplier
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
     pdt_uptime_set: pl.DataFrame | None = None               # (p, d, t) — minimum_uptime constraint domain
