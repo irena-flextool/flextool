@@ -204,6 +204,17 @@ class VariableSpec(NamedTuple):
     # In the degenerate case every entity maps to ``"default"`` so the
     # overlap lookup is identity and the broadcast is a no-op.
     expand_by: str | None = None
+    # Canonical-row period axis for period-only (``has_period and not
+    # has_time``) variables.  ``"dispatch"`` (default) sources the row
+    # order from the roll's realized-DISPATCH periods
+    # (``flex_data.realized_dispatch`` / ``p_years_from_start_d.csv``);
+    # ``"invest"`` sources it from the roll's realized-INVEST periods
+    # (``realized_invest_periods_of_current_solve.csv`` / provider).  Only
+    # ``v_invest`` / ``v_divest`` use ``"invest"`` — they are decided on
+    # the investment axis, so a dispatch-only roll must contribute no
+    # rows (see the registry note on those specs).  Ignored for
+    # ``has_time`` and ``has_period=False`` variables.
+    period_source: str = "dispatch"
 
 
 # Registry — add a new line here to add a new variable to the pipeline.
@@ -342,8 +353,20 @@ VARIABLE_SPECS: list[VariableSpec] = [
     ),
 
     # -- Period-only (no time) decision / slack variables -------------------
-    VariableSpec("v_invest",           ("entity",), has_time=False),
-    VariableSpec("v_divest",           ("entity",), has_time=False),
+    # ``v_invest`` / ``v_divest`` are realized on the INVEST axis, not the
+    # dispatch axis.  In nested / rolling-dispatch cascades the dispatch
+    # rolls realize a period for dispatch but NO investment, yet the
+    # densified column union (8e2de938 / a9058c66) still materialises a
+    # zero-valued ``(roll, dispatch_period)`` row for every invest-eligible
+    # entity.  After ``drop_levels`` strips the ``solve`` level and dedups
+    # ``keep='last'``, that trailing dispatch-roll zero overwrites the
+    # invest step's real value for the shared period, zeroing the
+    # ``invested`` breakdown in ``unit_capacity__d`` (and friends).  Pin
+    # the canonical row axis to the roll's realized-INVEST periods so a
+    # dispatch-only roll emits no spurious invest rows and the invest
+    # step's value is the sole contributor at union time.
+    VariableSpec("v_invest", ("entity",), has_time=False, period_source="invest"),
+    VariableSpec("v_divest", ("entity",), has_time=False, period_source="invest"),
     # No t axis; the row scaler is still keyed by (g, d).
     VariableSpec(
         "vq_capacity_margin", ("group",), has_time=False,
@@ -577,6 +600,39 @@ def _load_realized_periods_list(
     return list(realized["period"].astype(str).to_list())
 
 
+def _load_realized_invest_periods_list(
+    realized_periods_csv: Path | str | None,
+    *,
+    provider: "object | None" = None,
+) -> list[str] | None:
+    """Return the roll's realized-INVEST ``[period, …]`` in source order.
+
+    Canonical row source for the investment-axis variables
+    (``v_invest`` / ``v_divest``).  Prefers the in-memory provider frame
+    (``solve_data/realized_invest_periods_of_current_solve``); falls back
+    to the CSV.  Returns the (possibly EMPTY) ordered period list when the
+    source is present — an empty list means this roll realizes no
+    investment, so the variable extractor must emit no rows for it.
+    Returns ``None`` only when no source is available at all, signalling
+    the caller to fall back to the dispatch-axis canonical order (e.g.
+    single-solve fixtures that never emit the invest-period set).
+    """
+    seeded = (
+        _provider_lookup(provider, realized_periods_csv)
+        if realized_periods_csv is not None
+        else None
+    )
+    if seeded is not None:
+        return list(seeded["period"].cast(str).to_list())
+    if realized_periods_csv is None:
+        return None
+    path = Path(realized_periods_csv)
+    if not path.exists():
+        return None
+    realized = pd.read_csv(path)
+    return list(realized["period"].astype(str).to_list())
+
+
 def _name_regex(var_name: str) -> re.Pattern[str]:
     """Return a compiled regex matching ``<var_name>[...]``."""
     return re.compile(rf"^{re.escape(var_name)}\[(.+)\]$")
@@ -757,6 +813,7 @@ def extract_variable(
     col_value: "object | None" = None,
     col_dual: "object | None" = None,
     row_dual: "object | None" = None,
+    period_source: str = "dispatch",
 ) -> pd.DataFrame:
     """Extract one quantity from a solved HiGHS instance as a wide DataFrame.
 
@@ -847,9 +904,35 @@ def extract_variable(
                 realized_dispatch_csv, provider=provider,
             )
     elif has_period:
-        canonical_d = _load_canonical_d_order(work_folder, solve_name, flex_data=flex_data)
+        canonical_d = _load_canonical_d_order(
+            work_folder, solve_name, flex_data=flex_data,
+        )
         if canonical_d is None and realized_periods_csv is not None:
             canonical_d = _load_realized_periods_list(realized_periods_csv)
+        if period_source == "invest":
+            # Investment-axis variables (``v_invest`` / ``v_divest``): a
+            # roll that realizes DISPATCH but NO investment (the dispatch
+            # children of a nested invest cascade) must emit NO rows.
+            # Otherwise the densified column union (8e2de938 / a9058c66)
+            # materialises a zero-valued ``(roll, dispatch_period)`` row
+            # for every invest-eligible entity, and the ``drop_levels``
+            # keep='last' dedup lets that trailing dispatch-roll zero
+            # overwrite the invest step's real value for the shared period
+            # (zeroing the ``invested`` breakdown in ``unit_capacity__d``).
+            #
+            # The discriminator is the roll's realized-INVEST set: when it
+            # is empty this is a dispatch-only roll → emit nothing; when it
+            # is non-empty (the invest-committing step, or a rolling-invest
+            # solve) keep the FULL realized-dispatch period axis so periods
+            # whose investment is legitimately 0 (e.g. y2020 p2025, no NEW
+            # decision) still produce their zero row.  When no realized-
+            # invest source is available at all (single-solve fixtures that
+            # never emit the set), fall back to the dispatch axis unchanged.
+            realized_invest = _load_realized_invest_periods_list(
+                realized_periods_csv, provider=provider,
+            )
+            if realized_invest is not None and not realized_invest:
+                canonical_d = []
         canonical_rows = [(d,) for d in canonical_d] if canonical_d is not None else None
     else:
         canonical_rows = [()]  # one row: just (solve,)
@@ -1044,6 +1127,7 @@ def write_variable_parquet(
                 col_value=col_value,
                 col_dual=col_dual,
                 row_dual=row_dual,
+                period_source=spec.period_source,
             )
             df = src_df if df is None else df.add(src_df, fill_value=0.0)
         assert df is not None  # guaranteed: derived_from is non-empty
@@ -1065,6 +1149,7 @@ def write_variable_parquet(
             col_value=col_value,
             col_dual=col_dual,
             row_dual=row_dual,
+            period_source=spec.period_source,
         )
     # Agent 1.8 — block-aware output expansion.  Broadcast coarse-block
     # values to every covered fine timestep so parquet output stays
