@@ -5505,30 +5505,6 @@ def build_handoff_from_solution(
             for r in prior_handoff.divest_cumulative.iter_rows(named=True):
                 prior_divested[str(r["entity"])] = float(r["value"])
 
-    # ---- TEMP diagnostic: dump per-solve flows / states ----
-    import os as _os_dbg_dump
-    if _os_dbg_dump.environ.get("FLEXTOOL_DUMP_FLOWS") == "1":
-        _dump_dir = Path(_os_dbg_dump.environ.get(
-            "FLEXTOOL_DUMP_DIR", "/tmp/ft_flow_dump"))
-        _dump_dir.mkdir(parents=True, exist_ok=True)
-        for _vn in ("v_flow", "v_state", "v_invest_p", "v_invest_n",
-                    "v_divest_p", "v_divest_n",
-                    "v_online_linear", "v_startup_linear"):
-            if _vn in sol._vars:
-                try:
-                    sol.value(_vn).write_csv(
-                        _dump_dir / f"{_vn}__{solve_name}.csv")
-                except Exception as _e:  # diagnostic only
-                    (_dump_dir / f"{_vn}__{solve_name}.ERR").write_text(str(_e))
-        for _cn in ("profile_flow_upper_limit", "maxFlow",
-                    "nodeBalance_eq", "non_sync_constraint",
-                    "inertia_constraint", "capacityMargin"):
-            try:
-                sol.constraint_dual(_cn).write_csv(
-                    _dump_dir / f"DUAL_{_cn}__{solve_name}.csv")
-            except Exception as _e:  # diagnostic only
-                (_dump_dir / f"DUAL_{_cn}__{solve_name}.ERR").write_text(str(_e))
-
     # ---- v_invest / v_divest from polar_high ----
     invest_by_ed: dict[tuple[str, str], float] = {}
     divest_by_e: dict[str, float] = {}
