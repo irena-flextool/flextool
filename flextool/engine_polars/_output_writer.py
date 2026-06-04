@@ -283,6 +283,45 @@ def write_outputs_for_solve(
             "write_all_handoffs failed for solve '%s': %s", solve_name, exc,
         )
 
+    # Multi-solve output union (stage 2a) — persist this roll's realized
+    # slice of every per-roll-VARYING parameter to ``output_raw/`` as
+    # parquet, mirroring the variable convention
+    # (``{attr}__{solve}.parquet``).  Runs HERE, while the Solution is
+    # live, because ``entity_all_capacity`` needs ``solution.value(
+    # "v_invest")`` (nulled on prior steps by memory slimming).  The
+    # stage-3 reader unions these per-roll parquets into the full
+    # output, fixing the last-roll-only collapse.  ``flex_data`` carries
+    # the realized (period, time) dispatch slice; the realized-invest
+    # periods come from the per-solve CSV / provider frame (same source
+    # the variable writer's ``realized_periods_csv`` uses).
+    if flex_data is not None:
+        from flextool.process_outputs.persist_realized_slice import (
+            write_all_params_realized_slice,
+        )
+        from flextool.process_outputs.read_highs_solution import (
+            _load_realized_periods,
+        )
+        try:
+            invest_periods = _load_realized_periods(
+                realized_periods_csv
+                if _provider_has_frame(
+                    "solve_data/realized_invest_periods_of_current_solve",
+                ) else None,
+                provider=provider,
+            )
+            write_all_params_realized_slice(
+                flex_data,
+                sol,
+                solve_name=roll_name,
+                output_dir=output_dir,
+                realized_invest_periods=invest_periods,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "write_all_params_realized_slice failed for solve '%s': %s",
+                solve_name, exc,
+            )
+
     # Phase G — ``writer_state.periods_already_emitted`` is updated
     # in-place by ``handoff_writers._bump_period_capacity`` when the
     # writer_state is threaded through (above).  The previous paranoia
