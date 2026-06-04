@@ -693,6 +693,17 @@ def main():
             # write_outputs can build par/s in memory.  ``solve_name``
             # is the complete sub-solve identifier (e.g. ``y2025_5week``
             # for a roll, or just the scenario name for a single solve).
+            #
+            # Multi-solve (rolling) note: the last step alone would
+            # collapse par/s to the final roll's (d,t).  write_outputs
+            # detects the per-roll realized slices persisted under
+            # ``output_raw/`` (``has_persisted_slices``) and unions them
+            # into the full-timeline par/s; ``last_step`` then only
+            # supplies the static (solve-invariant) attrs + the per-attr
+            # shape template.  We deliberately do NOT pass ``solve_steps``
+            # here — the union activates on persisted-parquet presence and
+            # carries solve labels via parquet filenames + the
+            # ``output_raw/_solve_order.txt`` creation-order manifest.
             wo_flex_data = last_step.flex_data if last_step else None
             wo_solution = last_step.solution if last_step else None
             wo_solve_name = (
