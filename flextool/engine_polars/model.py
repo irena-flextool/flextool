@@ -2139,6 +2139,36 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             flow_upper_rhs = (d.p_flow_upper_existing
                                if d.p_flow_upper_existing is not None
                                else d.p_flow_upper)
+        # Apply the per-arc DIRECT capacity_max_coeff factor.  The .mod's
+        # maxToSink / maxFromSource multiply the *existing*-capacity RHS by
+        # ``p_process_sink_max_capacity_coefficient`` /
+        # ``p_process_source_max_capacity_coefficient`` (default 1.0) — a
+        # factor that ``p_flow_upper_existing`` (= existing/unitsize) drops
+        # entirely.  ``p_arc_max_cap_coef`` carries that factor for direct
+        # arcs ONLY (indirect arcs already fold it into ``p_flow_upper`` via
+        # ``p_flow_upper_from_source`` — including them here would double-
+        # apply, hence the producer excludes process_indirect).  Densify the
+        # sparse coef over flow_upper_rhs's own (p, source, sink) keys and
+        # ``fill_null(1.0)`` so unauthored arcs are unaffected — mirroring
+        # the availability densify below (a naive ``Param * Param`` inner
+        # join would DROP the missing-coef rows → RHS=0 → forced v_flow=0).
+        if d.p_arc_max_cap_coef is not None:
+            fr = flow_upper_rhs.frame
+            out_cols = fr.columns  # preserve the (… , value) schema exactly
+            coef_lf = (d.p_arc_max_cap_coef.frame.lazy()
+                .with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}")
+                               for k in ("p", "source", "sink")])
+                .select("_p", "_source", "_sink",
+                        pl.col("value").alias("__coef")))
+            merged_frame = (fr.lazy()
+                .with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}")
+                               for k in ("p", "source", "sink")])
+                .join(coef_lf, on=["_p", "_source", "_sink"], how="left")
+                .with_columns(
+                    value=pl.col("value") * pl.col("__coef").fill_null(1.0))
+                .select(out_cols)
+                .collect())
+            flow_upper_rhs = Param(flow_upper_rhs.dims, merged_frame)
         # Apply availability factor — the .mod's RHS multiplies by
         # ``pdtProcess[p, 'availability', d, t]`` (default 1.0).  For
         # network_coal_wind_battery_co2_fullYear_availability the

@@ -461,6 +461,7 @@ class FlexData:
     p_all_entity_unitsize: Param | None = None  # (e,) — all entities (processes + connections + nodes); used by scaling
     p_flow_upper: Param | None = None            # (p, source, sink, d, t) — preprocessed structural max (existing + max_invest_cum)
     p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxFlow
+    p_arc_max_cap_coef: Param | None = None      # (p, source, sink) — per-arc capacity_max_coeff for DIRECT arcs (maxToSink/maxFromSource); folded onto p_flow_upper_existing in maxFlow
     p_slope: Param | None = None                 # (p, d, t)
     p_commodity_price: Param | None = None       # (c, d, t)
     pd_neg_cap: pl.DataFrame | None = None       # set: (p, d) where existing<0 AND unitsize<0
