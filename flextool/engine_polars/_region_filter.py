@@ -939,7 +939,7 @@ def _inject_half_flows(
             merged_fue, name=rd.p_flow_upper_existing.name)
 
     # ── p_process_availability and p_process_existing_count ──
-    # The maxToSink RHS is multiplied by p_process_availability when
+    # The maxFlow RHS is multiplied by p_process_availability when
     # populated, and Param×Param is an inner-join so missing half-flow
     # entries collapse to zero RHS.  We must add availability=1.0 and
     # existing_count=1.0 entries so the half-flow's bound stays at the

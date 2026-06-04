@@ -1,4 +1,4 @@
-"""Surface B.3 / B.12 — flow-capacity (maxToSink) and profile bounds.
+"""Surface B.3 / B.12 — flow-capacity (maxFlow) and profile bounds.
 
 Focused constraint tests on the shared minimal fixtures:
 
@@ -9,7 +9,7 @@ Focused constraint tests on the shared minimal fixtures:
   v_flow at t01 to 0.5 and routes the 9.5 MWh shortfall to ``vq_state_up``.
 
 * ``test_max_to_sink_neg_cap_forced_minimum`` — covers **B3.5**.
-  Adds a single-row ``pd_neg_cap`` overlay so the ``maxToSink_negCap``
+  Adds a single-row ``pd_neg_cap`` overlay so the ``maxFlow_negCap``
   (≥) companion constraint is emitted.  With existing/unitsize giving
   +1 on the bound and zero inflow, the forced-minimum semantics pin
   v_flow == 1 even with no demand.
@@ -49,10 +49,10 @@ def _solve(data) -> tuple[Problem, Any]:
 
 
 # ---------------------------------------------------------------------------
-# B3.2 — maxToSink availability multiplier.
+# B3.2 — maxFlow availability multiplier.
 
 def test_max_to_sink_availability_multiplier(toy_1n1p_1d2t):
-    """Covers B3.2 — `maxToSink` availability multiplier.
+    """Covers B3.2 — `maxFlow` availability multiplier.
 
     Hand-calc: capacity=1 (p_flow_upper=1), availability=[0.5, 1.0] over
     [t01, t02], demand=10/step. RHS = 1 × availability →
@@ -79,14 +79,14 @@ def test_max_to_sink_availability_multiplier(toy_1n1p_1d2t):
 
 
 # ---------------------------------------------------------------------------
-# B3.5 — maxToSink_negCap (negative-unitsize forced minimum).
+# B3.5 — maxFlow_negCap (negative-unitsize forced minimum).
 
 def test_max_to_sink_neg_cap_forced_minimum(toy_1n1p_1d2t):
-    """Covers B3.5 — `maxToSink_negCap` anti-energy forced minimum.
+    """Covers B3.5 — `maxFlow_negCap` anti-energy forced minimum.
 
     With unitsize=-1, existing=-1, the .mod's ``v_flow * unitsize ≤
     existing`` flips on division by unitsize to ``v_flow ≥ |existing|/|us|``
-    = +1.  polar_high emits this as the ``maxToSink_negCap`` (≥) companion
+    = +1.  polar_high emits this as the ``maxFlow_negCap`` (≥) companion
     on the rows in ``pd_neg_cap`` (sharing the same +1 RHS as the ≤).
     With zero demand and small slack penalty, no force pushes v_flow
     above 1, so v_flow = 1 is the forced minimum.
@@ -110,8 +110,8 @@ def test_max_to_sink_neg_cap_forced_minimum(toy_1n1p_1d2t):
                                pd_neg_cap=pd_neg)
     pb, sol = _solve(data)
     assert sol.optimal
-    assert "maxToSink_negCap" in set(pb.cstr_names())
-    # Hand-calc: maxToSink (≤1) ∧ maxToSink_negCap (≥1) ⇒ v_flow == 1.
+    assert "maxFlow_negCap" in set(pb.cstr_names())
+    # Hand-calc: maxFlow (≤1) ∧ maxFlow_negCap (≥1) ⇒ v_flow == 1.
     v_flow = sol.value("v_flow")
     assert v_flow["value"][0] == pytest.approx(1.0, rel=1e-7)
     assert v_flow["value"][1] == pytest.approx(1.0, rel=1e-7)

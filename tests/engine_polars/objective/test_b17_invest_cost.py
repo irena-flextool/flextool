@@ -11,7 +11,7 @@ Closed-form perturbation tests for two currently-untested obj terms:
 
 Both share a fixture: extend ``toy_invest_3d`` with a divest-eligible
 process holding ``existing=5`` units (so divestment is feasible).  Zero
-inflow / zero demand pins ``v_flow=0`` so the maxToSink constraint
+inflow / zero demand pins ``v_flow=0`` so the maxFlow constraint
 ``v_flow + Σ v_divest ≤ existing/unitsize`` permits ``v_divest`` up to
 the upper bound ``p_entity_max_units=5``.  With a *positive* divest
 credit the LP maximises ``v_divest`` — yielding a closed-form Δobj per

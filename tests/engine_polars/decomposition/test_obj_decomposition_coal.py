@@ -1,6 +1,6 @@
 """Tier-8 closed-form decomposition test #21 — ``coal`` fixture.
 
-Active features in ``work_coal/``: slack + commodity-buy-eff + maxToSink
+Active features in ``work_coal/``: slack + commodity-buy-eff + maxFlow
 (no co2, no online, no invest).  The decomposed obj must equal
 ``sol.obj`` to ~1e-9 rel.
 

@@ -318,7 +318,7 @@ def add_constraints(m, d, vars: dict, *,
 
     ``p_flow_upper_existing``: ``existing/unitsize`` Param indexed by
     (p, source, sink, d).  Used to bound ``v_flow_back`` symmetrically
-    with ``v_flow``'s maxToSink (so the line's |flow| ≤ capacity).
+    with ``v_flow``'s maxFlow (so the line's |flow| ≤ capacity).
     """
     if not has_feature(d):
         return

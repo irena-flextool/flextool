@@ -326,7 +326,7 @@ def toy_storage_blocks() -> FlexData:
 # ---------------------------------------------------------------------------
 # Fixture 4 — toy_uc_3t : single online_linear unit over 3 timesteps with
 # minload, min_uptime=2, min_downtime=2, startup_cost.  Activates
-# online_lin_ub (maxOnline_linear), minimum_uptime/downtime, minToSink_minload,
+# online_lin_ub (maxOnline_linear), minimum_uptime/downtime, minFlow_minload,
 # and the startup-cost objective term.
 
 @pytest.fixture(scope="function")
@@ -454,7 +454,7 @@ def toy_invest_3d() -> FlexData:
     p_flow_upper = Param(("p", "source", "sink", "d", "t"),
         pss_dt.with_columns(value=pl.lit(0.0))   # no existing capacity
               .select("p", "source", "sink", "d", "t", "value"))
-    # Existing-only cap (for maxToSink RHS): explicit zero so flow ≤ 0
+    # Existing-only cap (for maxFlow RHS): explicit zero so flow ≤ 0
     # without invest, ≤ invest with invest.  polar_high uses
     # p_flow_upper_existing when invest is active; provide it explicitly.
     p_flow_upper_existing = Param(("p", "source", "sink", "d"),

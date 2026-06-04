@@ -2,7 +2,7 @@
 
 Exercises the **indirect process** path (CHP unit with one input flow
 and two output flows on the noEff side).  Active features:
-slack + commodity-buy-noEff + maxToSink (no online, no invest, no co2).
+slack + commodity-buy-noEff + maxFlow (no online, no invest, no co2).
 
 If a future polar_high patch adds a per-output-flow obj term and forgets
 to gate it on the indirect topology, this test will catch the

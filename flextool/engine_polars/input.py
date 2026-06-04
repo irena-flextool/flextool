@@ -460,7 +460,7 @@ class FlexData:
     p_unitsize: Param | None = None              # (p,)
     p_all_entity_unitsize: Param | None = None  # (e,) — all entities (processes + connections + nodes); used by scaling
     p_flow_upper: Param | None = None            # (p, source, sink, d, t) — preprocessed structural max (existing + max_invest_cum)
-    p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxToSink
+    p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxFlow
     p_slope: Param | None = None                 # (p, d, t)
     p_commodity_price: Param | None = None       # (c, d, t)
     pd_neg_cap: pl.DataFrame | None = None       # set: (p, d) where existing<0 AND unitsize<0
@@ -589,7 +589,7 @@ class FlexData:
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
     p_min_load: Param | None = None                          # (p,)
-    p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: minToSink_minload floor multiplier
+    p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: minFlow_minload floor multiplier
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
     pdt_uptime_set: pl.DataFrame | None = None               # (p, d, t) — minimum_uptime constraint domain
@@ -4190,12 +4190,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 .with_columns(base=pl.col("cap")/pl.col("us"))
                 .select("p","d","base"))
             # pd_neg_cap = (p, d) where both existing and unitsize are negative.
-            # In the .mod, maxToSink is ``v_flow * unitsize ≤ existing × ...``.
+            # In the .mod, maxFlow is ``v_flow * unitsize ≤ existing × ...``.
             # When both are negative (e.g. anti_energy_plant: us=-50, existing=-50)
             # dividing by unitsize FLIPS the inequality direction, yielding
             # ``v_flow ≥ existing/unitsize`` (a forced *minimum* output).
             # We therefore route these (p, d) rows out of the standard ``≤``
-            # maxToSink and into a sign-flipped ``≥`` companion constraint.
+            # maxFlow and into a sign-flipped ``≥`` companion constraint.
             neg_pd = cap_us_pd.filter(
                 (pl.col("cap") < 0.0) & (pl.col("us") < 0.0)
             ).select("p", "d")
@@ -5503,6 +5503,30 @@ def build_handoff_from_solution(
         if prior_handoff.divest_cumulative is not None:
             for r in prior_handoff.divest_cumulative.iter_rows(named=True):
                 prior_divested[str(r["entity"])] = float(r["value"])
+
+    # ---- TEMP diagnostic: dump per-solve flows / states ----
+    import os as _os_dbg_dump
+    if _os_dbg_dump.environ.get("FLEXTOOL_DUMP_FLOWS") == "1":
+        _dump_dir = Path(_os_dbg_dump.environ.get(
+            "FLEXTOOL_DUMP_DIR", "/tmp/ft_flow_dump"))
+        _dump_dir.mkdir(parents=True, exist_ok=True)
+        for _vn in ("v_flow", "v_state", "v_invest_p", "v_invest_n",
+                    "v_divest_p", "v_divest_n",
+                    "v_online_linear", "v_startup_linear"):
+            if _vn in sol._vars:
+                try:
+                    sol.value(_vn).write_csv(
+                        _dump_dir / f"{_vn}__{solve_name}.csv")
+                except Exception as _e:  # diagnostic only
+                    (_dump_dir / f"{_vn}__{solve_name}.ERR").write_text(str(_e))
+        for _cn in ("profile_flow_upper_limit", "maxFlow",
+                    "nodeBalance_eq", "non_sync_constraint",
+                    "inertia_constraint", "capacityMargin"):
+            try:
+                sol.constraint_dual(_cn).write_csv(
+                    _dump_dir / f"DUAL_{_cn}__{solve_name}.csv")
+            except Exception as _e:  # diagnostic only
+                (_dump_dir / f"DUAL_{_cn}__{solve_name}.ERR").write_text(str(_e))
 
     # ---- v_invest / v_divest from polar_high ----
     invest_by_ed: dict[tuple[str, str], float] = {}

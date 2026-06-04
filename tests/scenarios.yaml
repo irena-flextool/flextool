@@ -108,7 +108,7 @@
 # capacity_max_coeff {elec: 0.8, heat: 1.0}. The backpressure fix
 # constraint is deactivated so the model has extraction freedom. The
 # golden captures dispatch shares in the operating envelope; a
-# regression that re-introduces conversion_flow_coeff into maxToSink
+# regression that re-introduces conversion_flow_coeff into maxFlow
 # (the original bug) would cap heat at 0.2×capacity and change the
 # output.
 - scenario: coal_chp_extraction

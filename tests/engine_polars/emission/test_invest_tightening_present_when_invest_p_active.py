@@ -1,4 +1,4 @@
-"""Tier-7 #29: ``maxToSink`` carries an ``invest`` LHS branch when
+"""Tier-7 #29: ``maxFlow`` carries an ``invest`` LHS branch when
 ``v_invest_p`` is active.
 
 Fixture: ``work_wind_battery_invest`` (process-side investments active
@@ -10,7 +10,7 @@ We use ``work_wind_battery_invest`` instead — invest is active in the
 single-solve build — and document the swap in ``audit/phase3_notes.md``.
 
 What we verify:
-  * ``maxToSink`` is emitted once per ``(p, source, sink, d, t)``;
+  * ``maxFlow`` is emitted once per ``(p, source, sink, d, t)``;
   * the LHS expression carries **two terms** (``v_flow`` and
     ``invest_neg``) instead of just one — exposing the invest-tightening
     branch the .mod attaches when invest_p is active;
@@ -41,17 +41,17 @@ def test_invest_tightening_present_when_invest_p_active(scenario_workdir)-> None
 
     # Row count matches pss_dt — same LHS shape as the no-invest case;
     # the *additional* LHS term is what exposes invest tightening.
-    assert_cstr_row_count(pb, "maxToSink", compute_pss_dt(data).height)
-    assert_cstr_present(pb, "maxToSink")
+    assert_cstr_row_count(pb, "maxFlow", compute_pss_dt(data).height)
+    assert_cstr_present(pb, "maxFlow")
 
     # Inspect the LHS proto: we should see *more than one* additive
     # variable term — the second is the invest tightening (``invest_neg``).
-    recs = pb.cstrs_named("maxToSink")
+    recs = pb.cstrs_named("maxFlow")
     assert len(recs) == 1
     proto = recs[0].proto
     n_terms = len(proto.expr.terms)
     assert n_terms >= 2, (
-        f"maxToSink LHS should carry v_flow + invest tightening "
+        f"maxFlow LHS should carry v_flow + invest tightening "
         f"(>=2 terms); got {n_terms}.  This regression would silently "
         f"loosen the capacity bound when v_invest_p > 0."
     )

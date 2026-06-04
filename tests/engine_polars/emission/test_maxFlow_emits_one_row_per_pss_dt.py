@@ -1,4 +1,4 @@
-"""Tier-7 #28: ``maxToSink`` is emitted on the full ``pss_dt`` cross.
+"""Tier-7 #28: ``maxFlow`` is emitted on the full ``pss_dt`` cross.
 
 Fixture: ``work_coal``.  The capacity bound on every flow:
 ``v_flow[p, source, sink, d, t]  ≤  cap[p, d]`` should produce exactly
@@ -23,7 +23,7 @@ from tests.engine_polars.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_maxToSink_emits_one_row_per_pss_dt(scenario_workdir)-> None:
+def test_maxFlow_emits_one_row_per_pss_dt(scenario_workdir)-> None:
     pb, data = build(scenario_workdir("coal"))
 
     pss_dt = compute_pss_dt(data)
@@ -31,11 +31,11 @@ def test_maxToSink_emits_one_row_per_pss_dt(scenario_workdir)-> None:
         "fixture invariant: pss_dt must be non-empty"
     )
 
-    assert_cstr_row_count(pb, "maxToSink", pss_dt.height)
-    assert_cstr_present(pb, "maxToSink")
+    assert_cstr_row_count(pb, "maxFlow", pss_dt.height)
+    assert_cstr_present(pb, "maxFlow")
 
     # The constraint should be a single record (no _linear/_integer split).
-    recs = pb.cstrs_named("maxToSink")
-    assert len(recs) == 1 and recs[0].name == "maxToSink"
+    recs = pb.cstrs_named("maxFlow")
+    assert len(recs) == 1 and recs[0].name == "maxFlow"
     # `over` should carry the full (p, source, sink, d, t) axis.
     assert set(recs[0].over.columns) >= {"p", "source", "sink", "d", "t"}

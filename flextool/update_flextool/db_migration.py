@@ -346,10 +346,10 @@ def migrate_database(
                 #     in node-balance and conversion_indirect equations
                 #     (renamed from 'coefficient', same semantics).
                 #   - max_capacity_coefficient: scales the per-edge upper cap
-                #     (maxToSink / maxToSource / maxFromSource / ramp-up).
+                #     (maxFlow / maxToSource / maxFromSource / ramp-up).
                 #     Default 1.0.
                 #   - min_capacity_coefficient: scales the per-edge lower cap
-                #     (minToSink_minload / minFromSource_minload / min-load
+                #     (minFlow_minload / minFromSource_minload / min-load
                 #     terms / ramp-down). Default 1.0.
                 # Use case that forced the split: extraction CHP with a
                 # heat output whose flow_coefficient < 1 (small balance

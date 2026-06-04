@@ -5,7 +5,7 @@ relevant data being present in ``FlexData``.
 What's wired so far:
 
   * vq_state_up / vq_state_down (always)
-  * v_flow + maxToSink + nodeBalance.sink_flow      (if processes)
+  * v_flow + maxFlow + nodeBalance.sink_flow      (if processes)
   * commodity buy (eff + noEff)                     (if commodity_node)
   * conversion_indirect                              (if multi-flow process)
   * CO2-price objective term                         (if co2_price feature)
@@ -639,7 +639,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
     # ─── Reserve vars (v_reserve, vq_reserve) ─────────────────────────────
     # Declared up-front so the constraint emission stage (and downstream
-    # patches that splice ``v_reserve`` into maxToSink/ramp/profile LHS
+    # patches that splice ``v_reserve`` into maxFlow/ramp/profile LHS
     # terms) can reference them.  Returns {} when the reserve subsystem
     # is inactive.
     _build_prof("before:reserve_dcpf_ladder_vars")
@@ -658,7 +658,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
 
     # ─── Reserve LHS coupling aggregates ──────────────────────────────────
     # The .mod adds ``+ Σ_r v_reserve[p, r, ud, n, d, t]`` (per
-    # process__source__sinkIsNode) to the LHS of maxToSink, ramp_sink_up,
+    # process__source__sinkIsNode) to the LHS of maxFlow, ramp_sink_up,
     # ramp_source_down, and the profile_flow_* family.  Here v_flow
     # is in unit-count terms (the unitsize cancels with RHS existing/
     # unitsize), and v_reserve is in the same units (per _reserve.py).
@@ -2069,8 +2069,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             if False:
                 pass
 
-    _build_prof("before:maxToSink")
-    # ─── maxToSink (capacity bound on every flow) ─────────────────────────
+    _build_prof("before:maxFlow")
+    # ─── maxFlow (capacity bound on every flow) ─────────────────────────
     if has_proc:
         flow_lhs: dict = {"flow":  v_flow}
         # Reserve LHS coupling (manifest patch #1): v_reserve up-to-sink
@@ -2087,7 +2087,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # would be too loose) to p_flow_upper_existing (existing-only).
         # When no invest is active, keep p_flow_upper — that preserves the
         # source-side slope-based bound for indirect (CHP) processes.
-        # Choosing the maxToSink RHS:
+        # Choosing the maxFlow RHS:
         #   * indirect (CHP / multi-flow) processes need ``p_flow_upper``
         #     because it bakes in the per-(p, source, sink) max_cap_coef
         #     factor that the .mod uses to broaden the source-side fuel
@@ -2236,7 +2236,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 over=("d_invest",))
             flow_lhs["invest_neg"] = -invest_in_dispatch
         m.add_cstr(
-            "maxToSink",
+            "maxFlow",
             over      = pss_dt,
             sense     = "<=",
             lhs_terms = flow_lhs,
@@ -2255,8 +2255,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # ``v_flow ≤ p_flow_max[p,source,sink,d,t]`` (declared at .mod
         # line 1629), which preprocessing emits as the same +1 value.
         # polar_high doesn't carry per-row Var bounds, so the ``≤`` half is
-        # already covered by the standard maxToSink above.  We only need
-        # to ADD the ``≥`` half (a new ``maxToSink_negCap`` constraint
+        # already covered by the standard maxFlow above.  We only need
+        # to ADD the ``≥`` half (a new ``maxFlow_negCap`` constraint
         # over the neg-cap (p, d) rows of pss_dt) sharing the same LHS
         # structure (same invest/divest/reserve-up tightening — those
         # algebraic terms keep their signs through division by unitsize
@@ -2266,7 +2266,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             neg_pss_dt = pss_dt.join(pd_neg_cap, on=("p", "d"), how="inner")
             if neg_pss_dt.height > 0:
                 m.add_cstr(
-                    "maxToSink_negCap",
+                    "maxFlow_negCap",
                     over      = neg_pss_dt,
                     sense     = ">=",
                     lhs_terms = flow_lhs,
@@ -2368,7 +2368,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             )
 
     _build_prof("before:invest_divest_bounds")
-    # ─── Invest / divest variable bounds + maxToSink tightening ──────────
+    # ─── Invest / divest variable bounds + maxFlow tightening ──────────
     if has_invest_p or has_divest_p:
         # p-side max_units (rename "e" → "p" to align with process vars).
         # Phase 4.8g: the ContextVar is reset by the time ``build_flextool``
@@ -2942,7 +2942,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # ─── Storage state bounds + start binding ─────────────────────────────
     if has_storage:
         # maxState:  v_state[n, d, t]  <=  state_upper[n, d]
-        # With invest/divest active on storage nodes, mirror the maxToSink
+        # With invest/divest active on storage nodes, mirror the maxFlow
         # tightening: v_state + (divest - invest) ≤ state_upper, where the
         # invest/divest summations pick out (n, d_inv, d) tuples in
         # edd_invest / edd_divest_active that include both n and d.
@@ -3898,7 +3898,7 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                        v_online, v_startup, v_shutdown,
                        v_invest_p=None, v_divest_p=None) -> None:
     """Emit maxOnline / maxStartup / maxShutdown / online__startup /
-    online__shutdown / maxToSink_online / minToSink_minload for one
+    online__shutdown / maxFlow_online / minFlow_minload for one
     UC class (``kind`` in {"linear", "integer"}).  Constraint names
     are suffixed with ``_<kind>`` so linear+integer scenarios produce
     distinct rows in the LP."""
@@ -3976,7 +3976,7 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                           "online_now":  v_online},
                rhs_terms={"online_prev": v_online_lag})
 
-    # maxToSink_online: v_flow <= v_online * availability (assumes
+    # maxFlow_online: v_flow <= v_online * availability (assumes
     # max_cap_coef=1).  The .mod's RHS for online processes is
     # ``v_online × max_cap × availability × unitsize`` (mod:3015-3026);
     # without the availability factor we under-tighten the v_flow
@@ -3992,17 +3992,17 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
         if d.p_process_availability is not None:
             # Densify over the online processes so a unit with no DB-authored
             # ``availability`` keeps its default-1.0 factor instead of being
-            # inner-join-dropped (→ maxToSink_online RHS=0 → forced v_flow=0).
+            # inner-join-dropped (→ maxFlow_online RHS=0 → forced v_flow=0).
             # See :func:`_availability_factor`.
             online_rhs = v_online * _availability_factor(d, pss_online)
         else:
             online_rhs = v_online
-        m.add_cstr(f"maxToSink_online{sfx}",
+        m.add_cstr(f"maxFlow_online{sfx}",
                    over=over_pss_online, sense="<=",
                    lhs_terms={"flow":   v_flow},
                    rhs_terms={"online": online_rhs})
 
-    # minToSink_minload: Σ_sinks v_flow >= v_online * min_load
+    # minFlow_minload: Σ_sinks v_flow >= v_online * min_load
     if d.process_minload is not None and d.process_minload.height > 0:
         pss_minload = (d.process_source_sink
                        .join(online_set, on="p", how="inner")
@@ -4022,7 +4022,7 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                 min_load_floor = min_load_floor * _coef_factor(
                     pss_minload, d.p_process_sink_min_capacity_coef,
                     ["p", "sink"])
-            m.add_cstr(f"minToSink_minload{sfx}",
+            m.add_cstr(f"minFlow_minload{sfx}",
                        over=over_minload, sense=">=",
                        lhs_terms={"flow_sum": sum_flow},
                        rhs_terms={"floor":    min_load_floor})
@@ -4147,7 +4147,7 @@ def _availability_factor(d, members: "pl.DataFrame", *,
     Densifying the factor against the consumer's own entity set — left-join +
     ``fill_null(1.0)`` — makes the subsequent inner-join multiply behave as the
     multiplicative overlay the .mod intends.  This is the profile/online-side
-    analogue of the maxToSink flow-upper densify in :func:`add_unit_constraints`
+    analogue of the maxFlow flow-upper densify in :func:`add_unit_constraints`
     (search ``naive ... p_process_availability would DROP``).  Callers guard on
     ``avail is not None`` (an all-1.0 factor is a no-op).
     """

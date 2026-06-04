@@ -27,7 +27,7 @@ Module API (mirrors what ``_group_slack`` is expected to look like):
 
 Pending downstream patches (FOR A4 / merge agent — listed in
 ``audit/integration_manifest.md``): the .mod also adds
-``+ Σ v_reserve * unitsize`` LHS terms to the existing ``maxToSink``,
+``+ Σ v_reserve * unitsize`` LHS terms to the existing ``maxFlow``,
 ``ramp_*``, and ``profile_flow_*`` constraints.  Wiring those couplings
 requires *editing those constraints in flextool/model.py*, which this
 module deliberately does not do.  See the manifest for the explicit list

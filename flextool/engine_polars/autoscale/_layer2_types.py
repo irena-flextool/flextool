@@ -220,9 +220,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # The cap is a fraction × existing_count; the row's effective type
     # lives in the coefficient, not the RHS.
     # flextool/engine_polars/model.py:2045
-    "maxToSink": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxFlow": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:2075
-    "maxToSink_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxFlow_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/_dc_power_flow.py:414
     "maxToSink_back": CstrFamily(QuantityType.DIMENSIONLESS),
     # Ramp constraints, prefix-matched: ramp_<side>_<dir>_constraint.
@@ -376,10 +376,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "online__startup": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3748 (online__shutdown_<sfx>)
     "online__shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3770 (maxToSink_online_<sfx>)
-    "maxToSink_online": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3785 (minToSink_minload_<sfx>)
-    "minToSink_minload": CstrFamily(QuantityType.DIMENSIONLESS),
+    # flextool/engine_polars/model.py:3770 (maxFlow_online_<sfx>)
+    "maxFlow_online": CstrFamily(QuantityType.DIMENSIONLESS),
+    # flextool/engine_polars/model.py:3785 (minFlow_minload_<sfx>)
+    "minFlow_minload": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3814 (minimum_uptime_<sfx>)
     "minimum_uptime": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3853 (minimum_downtime_<sfx>)

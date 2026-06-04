@@ -169,7 +169,7 @@ def test_linear_and_integer_uc_constraint_suffix_isolation():
     cstr = set(pb.cstr_names())
     # Hand-calc: every UC constraint family is suffix-namespaced.
     for base in ("maxOnline", "maxStartup", "maxShutdown",
-                 "online__startup", "online__shutdown", "maxToSink_online"):
+                 "online__startup", "online__shutdown", "maxFlow_online"):
         assert f"{base}_linear" in cstr, f"missing {base}_linear"
         assert f"{base}_integer" in cstr, f"missing {base}_integer"
     # And the row counts: each suffixed family covers exactly its own
@@ -244,10 +244,10 @@ def test_uptime_downtime_invest_interaction(toy_uc_3t):
 
 
 # ---------------------------------------------------------------------------
-# B4.13 — capacity_min_coeff scales the minToSink_minload floor.
+# B4.13 — capacity_min_coeff scales the minFlow_minload floor.
 
 def test_min_capacity_coef_scales_minload_floor(toy_uc_3t):
-    """Covers the wiring of ``capacity_min_coeff`` into ``minToSink_minload``.
+    """Covers the wiring of ``capacity_min_coeff`` into ``minFlow_minload``.
 
     The .mod scales the min-load floor per output arc:
     ``v_online · min_load · p_process_sink_min_capacity_coefficient[p, sink]``
@@ -277,7 +277,7 @@ def test_min_capacity_coef_scales_minload_floor(toy_uc_3t):
     base = dataclasses.replace(d, p_inflow=p_inflow, p_penalty_down=p_pen_dn)
     pb0, sol0 = _solve(base)
     assert sol0.optimal
-    assert any(n.startswith("minToSink_minload") for n in pb0.cstr_names())
+    assert any(n.startswith("minFlow_minload") for n in pb0.cstr_names())
     vf0 = sol0.value("v_flow").sort(["d", "t"])["value"].to_list()
     assert all(v == pytest.approx(0.4, rel=1e-6) for v in vf0), vf0
 
