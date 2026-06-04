@@ -3981,7 +3981,11 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
     if pss_online.height > 0:
         over_pss_online = pss_online.join(d.dt, how="cross")
         if d.p_process_availability is not None:
-            online_rhs = v_online * d.p_process_availability
+            # Densify over the online processes so a unit with no DB-authored
+            # ``availability`` keeps its default-1.0 factor instead of being
+            # inner-join-dropped (→ maxToSink_online RHS=0 → forced v_flow=0).
+            # See :func:`_availability_factor`.
+            online_rhs = v_online * _availability_factor(d, pss_online)
         else:
             online_rhs = v_online
         m.add_cstr(f"maxToSink_online{sfx}",
@@ -4073,6 +4077,40 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                            rhs_terms={"existing":     d.p_process_existing_count})
 
 
+def _availability_factor(d, processes: "pl.DataFrame") -> "Param":
+    """``p_process_availability`` as a Param keyed ``(p, d, t)`` that COVERS
+    every process in ``processes`` — the DB-authored value where one exists,
+    else the schema default ``1.0``.
+
+    ``p_process_availability`` is SPARSE: ``p_process_availability_from_source``
+    emits only DB-authored rows, expecting absent processes to fall back to the
+    ``availability`` schema default (1.0).  But the LP folds the factor into
+    constraint RHSs via ``Param * Param`` / ``Var * Param``, which are INNER
+    joins (polar_high contract) — so a process absent from the sparse Param has
+    its RHS row DROPPED rather than multiplied by 1.0, silently collapsing the
+    bound to 0 and forcing ``v_flow = 0``.  That zeroes any profile (VRE) or
+    online unit whose ``availability`` is left at the default (e.g. a solar/
+    wind plant or a coal unit with no authored availability).
+
+    Densifying the factor against the consumer's own process set — left-join +
+    ``fill_null(1.0)`` — makes the subsequent inner-join multiply behave as the
+    multiplicative overlay the .mod intends.  This is the profile/online-side
+    analogue of the maxToSink flow-upper densify in :func:`add_unit_constraints`
+    (search ``naive ... p_process_availability would DROP``).  Callers guard on
+    ``d.p_process_availability is not None`` (an all-1.0 factor is a no-op).
+    """
+    base = processes.select("p").unique().join(d.dt, how="cross")  # (p, d, t)
+    # Phase E.1: availability may be authored scalar / 1d_map[period] /
+    # 1d_map[time] / 2d_map, so promote to (p, d, t) before the left-join.
+    avail_lf = promote_param_to_dt(d.p_process_availability, d.dt)
+    merged = (base.lazy()
+              .join(avail_lf, on=["p", "d", "t"], how="left")
+              .with_columns(pl.col("value").fill_null(1.0))
+              .select("p", "d", "t", "value")
+              .collect())
+    return Param(("p", "d", "t"), merged)
+
+
 def _add_profile_cstr(m, d, v_flow, name: str, idx: "pl.DataFrame",
                        sense: str, v_inv_for_profile=None,
                        v_div_for_profile=None,
@@ -4102,8 +4140,14 @@ def _add_profile_cstr(m, d, v_flow, name: str, idx: "pl.DataFrame",
     # LHS: v_flow over (p,source,sink,d,t) joined to over via (p,source,sink,d,t)
     # → introduces f as a new column from over (via the constraint axes).
     rhs_param = d.p_profile_value * d.p_process_existing_count
-    if d.p_process_availability is not None:
-        rhs_param = rhs_param * d.p_process_availability
+    # Densify availability over the profile processes so a VRE unit with no
+    # DB-authored ``availability`` keeps its default-1.0 factor instead of
+    # being inner-join-dropped to RHS=0 (→ forced v_flow=0).  See
+    # :func:`_availability_factor`.
+    avail_factor = (_availability_factor(d, idx)
+                    if d.p_process_availability is not None else None)
+    if avail_factor is not None:
+        rhs_param = rhs_param * avail_factor
     lhs: dict = {"flow": v_flow}
     pf_filter = None
     if v_inv_for_profile is not None or v_div_for_profile is not None:
@@ -4115,13 +4159,13 @@ def _add_profile_cstr(m, d, v_flow, name: str, idx: "pl.DataFrame",
             pf_filter = pf_filter.pipe(rename_to_axis, {"profile": "f"})
     if v_inv_for_profile is not None:
         inv_term = v_inv_for_profile * d.p_profile_value
-        if d.p_process_availability is not None:
-            inv_term = inv_term * d.p_process_availability
+        if avail_factor is not None:
+            inv_term = inv_term * avail_factor
         lhs["invest_neg"] = -Where(inv_term, pf_filter)
     if v_div_for_profile is not None:
         div_term = v_div_for_profile * d.p_profile_value
-        if d.p_process_availability is not None:
-            div_term = div_term * d.p_process_availability
+        if avail_factor is not None:
+            div_term = div_term * avail_factor
         lhs["divest"] = Where(div_term, pf_filter)
     if reserve_term is not None:
         if reserve_sign >= 0:

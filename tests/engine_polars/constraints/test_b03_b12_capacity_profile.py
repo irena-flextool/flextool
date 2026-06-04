@@ -262,3 +262,92 @@ def test_profile_upper_invest_lhs_tightening(toy_invest_3d):
     v_flow = sol.value("v_flow").filter(
         (pl.col("d") == "d1") & (pl.col("t") == "t01"))
     assert v_flow["value"][0] == pytest.approx(2.0, rel=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# B12.5 — profile_flow_upper with SPARSE availability (regression).
+
+def test_profile_upper_sparse_availability_default(toy_1n1p_1d2t):
+    """Regression: a profile (VRE) process with NO authored ``availability``
+    must keep its default-1.0 factor, not be inner-join-dropped to RHS=0.
+
+    ``p_process_availability`` is SPARSE — ``p_process_availability_from_source``
+    emits only DB-authored rows, expecting absent processes to fall back to the
+    schema default 1.0.  But ``_add_profile_cstr`` folds the factor into the
+    RHS via ``Param * Param`` (an inner join), so before the densify fix a
+    process absent from the sparse Param had its bound collapsed to 0 → forced
+    ``v_flow = 0``.  This is what zeroed every wind/solar unit whose
+    ``availability`` was left at the default in a model where OTHER units (e.g.
+    hydro) authored one (making the Param non-empty but sparse).  No existing
+    fixture combines authored + default availability in one solve, so the bug
+    slipped the parity sweep — this test pins the mixed case.
+
+    Two profile-upper processes share node ``n``: ``p_auth`` authors
+    availability 0.5; ``p_def`` authors none (→ default 1.0).  Both carry
+    profile_upper 0.8 against capacity 1; demand (10/step) far exceeds supply
+    so the cost-min LP drives each to its ceiling.
+
+    Hand-calc:
+        v_flow[p_auth] ≤ 0.8 · 1 · 0.5 = 0.4
+        v_flow[p_def]  ≤ 0.8 · 1 · 1.0 = 0.8   (the regression: NOT 0)
+    """
+    d = toy_1n1p_1d2t
+    pss = pl.DataFrame({"p": ["p_auth", "p_def"],
+                        "source": ["src", "src"],
+                        "sink":   ["n", "n"]})
+    pss_eff = pss.clone()
+    pss_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+    pss_dt = pss.join(d.dt, how="cross")
+    flow_to_n = pss.with_columns(n=pl.col("sink"))
+    flow_from_commodity_eff = pl.DataFrame(
+        {"p": ["p_auth", "p_def"], "source": ["src", "src"],
+         "sink": ["n", "n"], "c": ["FUEL", "FUEL"]})
+    flow_from_commodity_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "c": pl.Utf8})
+    p_unitsize = Param(("p",),
+        pl.DataFrame({"p": ["p_auth", "p_def"], "value": [1.0, 1.0]}))
+    p_flow_upper = Param(("p", "source", "sink", "d", "t"),
+        pss_dt.with_columns(value=pl.lit(1.0))
+              .select("p", "source", "sink", "d", "t", "value"))
+    p_slope = Param(("p", "d", "t"),
+        pss_dt.select("p", "d", "t").with_columns(value=pl.lit(1.0)))
+    # existing_count = capacity/unitsize = 1 for both.
+    p_exist_cnt = Param(("p", "d"),
+        pl.DataFrame({"p": ["p_auth", "p_def"], "d": ["d1", "d1"],
+                      "value": [1.0, 1.0]}))
+    process_profile_upper = pl.DataFrame(
+        {"p": ["p_auth", "p_def"], "source": ["src", "src"],
+         "sink": ["n", "n"], "f": ["fA", "fD"]})
+    p_profile_value = Param(("f", "d", "t"),
+        pl.DataFrame({"f": ["fA", "fA", "fD", "fD"],
+                      "d": ["d1"] * 4, "t": ["t01", "t02", "t01", "t02"],
+                      "value": [0.8, 0.8, 0.8, 0.8]}))
+    # SPARSE: only p_auth authors availability; p_def is absent → default 1.0.
+    avail = Param(("p", "d", "t"),
+        pl.DataFrame({"p": ["p_auth", "p_auth"], "d": ["d1", "d1"],
+                      "t": ["t01", "t02"], "value": [0.5, 0.5]}))
+    data = dataclasses.replace(d,
+        process_source_sink=pss, process_source_sink_eff=pss_eff,
+        process_source_sink_noEff=pss_noEff, pss_dt=pss_dt,
+        flow_to_n=flow_to_n,
+        flow_from_commodity_eff=flow_from_commodity_eff,
+        flow_from_commodity_noEff=flow_from_commodity_noEff,
+        p_unitsize=p_unitsize, p_flow_upper=p_flow_upper, p_slope=p_slope,
+        process_profile_upper=process_profile_upper,
+        p_profile_value=p_profile_value,
+        p_process_existing_count=p_exist_cnt,
+        p_process_availability=avail,
+    )
+    pb, sol = _solve(data)
+    assert sol.optimal
+    assert "profile_flow_upper_limit" in set(pb.cstr_names())
+    v_flow = sol.value("v_flow").sort(["p", "t"])
+    auth = v_flow.filter(pl.col("p") == "p_auth").sort("t")["value"].to_list()
+    deff = v_flow.filter(pl.col("p") == "p_def").sort("t")["value"].to_list()
+    # p_auth tightened by its authored 0.5; p_def keeps the default 1.0.
+    assert auth[0] == pytest.approx(0.4, rel=1e-7)
+    assert auth[1] == pytest.approx(0.4, rel=1e-7)
+    # Regression: before the densify fix p_def was inner-join-dropped → 0.0.
+    assert deff[0] == pytest.approx(0.8, rel=1e-7)
+    assert deff[1] == pytest.approx(0.8, rel=1e-7)
