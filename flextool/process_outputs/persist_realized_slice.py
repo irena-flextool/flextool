@@ -51,7 +51,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
+import polars as pl
 
 from flextool.lean_parquet import write_lean_parquet
 
@@ -95,8 +97,11 @@ _ANNUAL_SRC_FIELD: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+_SET_MARKER_COL = "__set_marker__"
+
+
 def write_realized_slice_parquet(
-    frame: "pd.DataFrame | pd.Series",
+    frame: "pd.DataFrame | pd.Series | pd.Index | pl.DataFrame",
     *,
     attr: str,
     solve_name: str,
@@ -111,13 +116,34 @@ def write_realized_slice_parquet(
     filename (the on-disk frame keeps whatever ``solve`` index level it
     already carries — stage 3 drops it at union time).
 
-    A pandas ``Series`` is converted to a one-column DataFrame (its
-    ``name`` becomes the column label) so the lean-parquet round-trip is
-    well defined; the stage-3 reader restores the Series shape.
+    Accepted inputs:
+
+    * ``pd.DataFrame`` — written as-is (params, stage 2a).
+    * ``pd.Series`` — converted to a one-column DataFrame (its ``name``
+      becomes the column label) so the lean-parquet round-trip is well
+      defined; the stage-3 reader restores the Series shape.
+    * ``pd.Index`` / ``pd.MultiIndex`` — set membership (stage 2b).  The
+      index carries all the information (no value columns), so we
+      materialise it as the row index of a single-column marker frame;
+      :func:`write_lean_parquet` records the level names and the stage-3
+      reader rebuilds the (Multi)Index by dropping the marker column.
+    * ``pl.DataFrame`` — converted to pandas first (defensive: no
+      varying set is a polars frame today, but the structural ``solve``
+      tests admit DataFrame/polars sets and schema drift could add one).
+
+    Pandas ``DataFrame`` / ``Series`` behaviour is byte-identical to
+    stage 2a — only the new ``Index`` / polars branches are additive.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    if isinstance(frame, pd.Series):
+    if isinstance(frame, pl.DataFrame):
+        frame = frame.to_pandas()
+    if isinstance(frame, pd.Index):
+        # A set's identity lives entirely in its (Multi)Index.  Make it
+        # the row index of a one-column marker frame; the stage-3 reader
+        # drops ``_SET_MARKER_COL`` and keeps the reconstructed index.
+        df = pd.DataFrame({_SET_MARKER_COL: range(len(frame))}, index=frame)
+    elif isinstance(frame, pd.Series):
         df = frame.to_frame()
     else:
         df = frame
@@ -233,6 +259,7 @@ def _apply_realized_filter(
     *,
     realized_dt: set[tuple[str, str]],
     realized_invest_periods: set[str],
+    realized_dispatch_periods: "set[str] | None" = None,
 ) -> "pd.DataFrame | pd.Series":
     """Return the roll's realized slice of ``obj`` for attribute ``attr``.
 
@@ -266,7 +293,23 @@ def _apply_realized_filter(
     # General realized intersection for every other solve-keyed attr.
     if _index_has_time(obj):
         return _filter_by_dt(obj, realized_dt)
-    return _filter_by_period(obj, realized_invest_periods)
+    # (period)-keyed general params (node/group_capacity_for_scaling,
+    # entity_fixed_cost, entity_pre_existing, process_startup_cost, …):
+    # keep rows whose ``period`` is in the roll's realized DISPATCH ∪
+    # INVEST set.  A dispatch-only roll has NO realized-invest period, so
+    # filtering on invest-only would drop its single realized-dispatch
+    # row (e.g. node_capacity_for_scaling@(roll, p2020)) and the stage-3
+    # union would then have no row for that (solve, period) — zeroing
+    # ``Loss of load`` in node__dt (``out_node`` multiplies
+    # ``v.q_state_up`` by ``node_capacity_for_scaling`` at the realized
+    # timestep).  ``read_parameters_multi`` concats these raw and lets
+    # ``drop_levels`` dedup by period (no realized intersect), so keeping
+    # every realized-dispatch period here reproduces that union exactly.
+    if realized_dispatch_periods is None:
+        realized_dispatch_periods = _realized_dispatch_periods(flex_data)
+    return _filter_by_period(
+        obj, realized_dispatch_periods | realized_invest_periods
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -314,8 +357,9 @@ def write_all_params_realized_slice(
     par = read_parameters(flex_data, solution, solve_name=solve_name)
 
     realized_dt = _realized_dt_set(flex_data)
+    realized_dispatch_periods = _realized_dispatch_periods(flex_data)
     if realized_invest_periods is None:
-        realized_invest_periods = _realized_dispatch_periods(flex_data)
+        realized_invest_periods = set(realized_dispatch_periods)
 
     written: list[Path] = []
     for attr, obj in vars(par).items():
@@ -327,7 +371,8 @@ def write_all_params_realized_slice(
         sliced = _apply_realized_filter(
             attr, obj, flex_data,
             realized_dt=realized_dt,
-            realized_invest_periods=realized_invest_periods,
+            realized_invest_periods=set(realized_invest_periods),
+            realized_dispatch_periods=realized_dispatch_periods,
         )
         path = write_realized_slice_parquet(
             sliced, attr=attr, solve_name=solve_name, output_dir=output_dir,
@@ -341,7 +386,216 @@ def write_all_params_realized_slice(
     return written
 
 
+# ---------------------------------------------------------------------------
+# Per-roll SET realized-slice persistence (stage 2b)
+# ---------------------------------------------------------------------------
+#
+# Sets are persisted with the SAME per-roll realized-slice → parquet →
+# union pattern as variables/params, so the stage-3 reader can union
+# ``v`` / ``par`` / ``s`` uniformly.  Only the per-roll-VARYING sets
+# (those carrying a ``solve`` index level) are persisted here; the
+# solve-invariant topology sets (``node``, ``process``, ``upDown``, …)
+# carry no ``solve`` level and are taken once at stage 3.
+#
+# The realized filter REPLICATES ``drop_levels.drop_levels`` (the locus
+# where sets are realized-intersected + deduped + solve-dropped today),
+# applied per-roll so the disjoint union of slices equals what
+# ``drop_levels`` produces over all rolls:
+#
+# * ``(period, time)``-keyed sets (index carries a ``time`` level) →
+#   keep rows whose CURRENT-step ``(period, time)`` is in this roll's
+#   realized dispatch (``flex_data.realized_dispatch``).  For ``dtt`` /
+#   ``dtttdt`` the adjacency columns (``t_previous``,
+#   ``t_previous_within_timeset``, ``d_previous``,
+#   ``t_previous_within_solve``) are kept VERBATIM — the ``t_previous``
+#   chain is intentionally broken at each roll's realized start; cross-
+#   roll storage continuity is carried by the separate
+#   ``p_roll_continue_state`` handoff, NOT by the adjacency set
+#   (``calc_storage_vre`` special-cases period-first rows).  This is the
+#   resolved current-step rule (matches ``drop_levels`` :156-161, which
+#   intersects the ``(period, time)`` projection against
+#   ``dt_realize_dispatch`` and never touches the ``t_previous*`` /
+#   ``d_previous`` levels).
+# * ``ed_invest`` / ``ed_divest`` / ``edd_invest`` ((entity, period[,
+#   period_invest])) → keep rows whose ``period`` is in this roll's
+#   realized-INVEST periods (mirrors ``drop_levels`` :162-166, the inner
+#   join against ``d_realize_invest``).
+# * Every other ``(period)``-keyed set → keep rows whose ``period`` is
+#   in this roll's realized DISPATCH ∪ INVEST periods.  Sets that
+#   ``read_sets`` already builds realized (``d_realized_period``,
+#   ``d_realize_invest``, ``d_realize_dispatch_or_invest``,
+#   ``dt_realize_dispatch``) are unchanged by this intersection (it is
+#   identity for them); ``period`` / ``period_in_use`` — which
+#   ``read_sets`` builds from the FULL per-roll ``dt`` incl. foresight —
+#   are trimmed to the realized window so the union is disjoint.
+
+# Invest-keyed sets — realized filter is on realized-INVEST periods
+# (mirrors the ``d_realize_invest`` inner join in ``drop_levels``).
+_INVEST_SETS: frozenset[str] = frozenset(
+    {"ed_invest", "ed_divest", "edd_invest"}
+)
+
+# dtt / dtttdt — the storage-adjacency sets whose current ``(period,
+# time)`` is the only thing filtered; adjacency columns stay verbatim.
+_ADJACENCY_SETS: frozenset[str] = frozenset({"dtt", "dtttdt"})
+
+
+def _multiindex_has_level(idx: pd.MultiIndex, name: str) -> bool:
+    return isinstance(idx, pd.MultiIndex) and name in (idx.names or ())
+
+
+def _filter_index_by_dt(
+    idx: pd.MultiIndex,
+    realized_dt: set[tuple[str, str]],
+) -> pd.MultiIndex:
+    """Keep entries whose current ``(period, time)`` is realized.
+
+    Filters ONLY on the ``period`` / ``time`` levels — any further
+    adjacency levels (``t_previous`` …) are kept verbatim.
+    """
+    periods = idx.get_level_values("period").astype(str)
+    times = idx.get_level_values("time").astype(str)
+    mask = np.fromiter(
+        (pt in realized_dt for pt in zip(periods, times)),
+        dtype=bool,
+        count=len(idx),
+    )
+    return idx[mask]
+
+
+def _filter_index_by_period(
+    idx: pd.MultiIndex,
+    realized_periods: set[str],
+) -> pd.MultiIndex:
+    """Keep entries whose ``period`` level is realized."""
+    periods = idx.get_level_values("period").astype(str)
+    mask = periods.isin(realized_periods)
+    return idx[mask]
+
+
+def _apply_set_realized_filter(
+    attr: str,
+    idx: pd.MultiIndex,
+    *,
+    realized_dt: set[tuple[str, str]],
+    realized_invest_periods: set[str],
+    realized_dispatch_periods: set[str],
+) -> pd.MultiIndex:
+    """Return the roll's realized slice of varying set ``idx``.
+
+    Replicates ``drop_levels``' per-set realized intersection (see the
+    module-level note above).  The ``solve`` level is left intact —
+    stage 3 drops it at union time, exactly as it does for params.
+    """
+    # (period, time)-keyed sets (incl. dtt / dtttdt) — filter on the
+    # current (period, time); adjacency columns ride along verbatim.
+    if _multiindex_has_level(idx, "time"):
+        return _filter_index_by_dt(idx, realized_dt)
+
+    # Invest-keyed sets — filter on realized-invest periods.
+    if attr in _INVEST_SETS:
+        return _filter_index_by_period(idx, realized_invest_periods)
+
+    # Every other (period)-keyed set — filter on realized dispatch ∪
+    # invest periods.
+    if _multiindex_has_level(idx, "period"):
+        return _filter_index_by_period(
+            idx, realized_dispatch_periods | realized_invest_periods,
+        )
+
+    # No period/time level to filter on — leave verbatim (shouldn't
+    # happen for a solve-keyed set, but be conservative).
+    return idx
+
+
+def write_all_sets_realized_slice(
+    flex_data: "FlexData",
+    solution: "Solution",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    realized_invest_periods: "set[str] | None" = None,
+) -> list[Path]:
+    """Persist this roll's realized slice of every per-roll-VARYING set.
+
+    Calls :func:`...read_sets.read_sets` once per roll, selects the
+    varying sets via the structural ``solve``-level tests
+    (``_multi_index_has_solve`` for pandas ``MultiIndex`` sets,
+    ``_series_or_df_has_solve`` for DataFrame / polars sets with a
+    ``solve`` column), applies the per-set realized filter (replicating
+    ``drop_levels``; ``dtt`` / ``dtttdt`` by the resolved current-step
+    rule), and writes each realized slice to
+    ``output_raw/<setname>__<solve>.parquet`` via the shared helper.
+
+    Solve-invariant topology sets carry no ``solve`` level and are
+    skipped here — stage 3 takes them once.
+
+    Parameters
+    ----------
+    realized_invest_periods : set[str] | None
+        The roll's realized-invest periods (``ed_*`` invest sets).  When
+        ``None``, falls back to the realized-dispatch periods — the same
+        fallback the per-roll param writer uses.
+
+    Returns the list of parquet paths written.
+    """
+    from flextool.process_outputs.read_sets import (
+        _multi_index_has_solve,
+        _series_or_df_has_solve,
+        read_sets,
+    )
+
+    output_dir = Path(output_dir)
+
+    s = read_sets(flex_data, solution, solve_name=solve_name)
+
+    realized_dt = _realized_dt_set(flex_data)
+    realized_dispatch_periods = _realized_dispatch_periods(flex_data)
+    if realized_invest_periods is None:
+        realized_invest_periods = set(realized_dispatch_periods)
+
+    written: list[Path] = []
+    for attr, obj in vars(s).items():
+        if isinstance(obj, pd.MultiIndex):
+            if not _multi_index_has_solve(obj):
+                # Invariant topology — taken once at union time (stage 3).
+                continue
+            sliced = _apply_set_realized_filter(
+                attr, obj,
+                realized_dt=realized_dt,
+                realized_invest_periods=set(realized_invest_periods),
+                realized_dispatch_periods=realized_dispatch_periods,
+            )
+        elif _series_or_df_has_solve(obj):
+            # Defensive: no varying set is a DataFrame/Series with a
+            # ``solve`` MultiIndex level today, but the structural test
+            # admits one (schema drift).  Reuse the param-side
+            # (period, time)/(period) filter so such a set is realized-
+            # sliced rather than persisted whole.  ``dtt`` / ``dtttdt``
+            # are MultiIndex (handled above), so this branch never
+            # touches the adjacency-column verbatim contract.
+            sliced = _apply_realized_filter(
+                attr, obj, flex_data,
+                realized_dt=realized_dt,
+                realized_invest_periods=set(realized_invest_periods),
+            )
+        else:
+            # No ``solve`` level — invariant; taken once at stage 3.
+            continue
+        path = write_realized_slice_parquet(
+            sliced, attr=attr, solve_name=solve_name, output_dir=output_dir,
+        )
+        written.append(path)
+
+    _logger.debug(
+        "Persisted %d realized set slices for solve '%s' to %s",
+        len(written), solve_name, output_dir,
+    )
+    return written
+
+
 __all__ = [
     "write_all_params_realized_slice",
+    "write_all_sets_realized_slice",
     "write_realized_slice_parquet",
 ]

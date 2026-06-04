@@ -43,6 +43,11 @@ from flextool.process_outputs.read_sets import (
     read_sets_multi,
 )
 from flextool.process_outputs.read_variables import read_variables
+from flextool.process_outputs.union_realized_slice import (
+    has_persisted_slices,
+    union_params,
+    union_sets,
+)
 from flextool.process_outputs.write_spinedb import write_spinedb
 
 
@@ -245,6 +250,35 @@ def _read_outputs(
     aggregation.  Falls back to the single-``flex_data`` path when
     not supplied (single-solve scenarios).
     """
+    # Multi-solve output union (stage 3) — when the per-roll realized
+    # param/set slices have been persisted to ``output_dir`` (the
+    # ``keep_solutions=False`` memory-flat normal flow,
+    # ``persist_realized_slice``), assemble ``par`` / ``s`` by unioning
+    # those parquets instead of holding every roll's flex_data/solution
+    # in memory.  This is byte-equivalent to the in-memory
+    # ``read_parameters_multi`` / ``read_sets_multi`` oracle (the persisted
+    # slices are already realized-filtered + post-hack), but works on the
+    # default flow where prior steps' flex_data/solution are nulled — so
+    # it replaces the broken single-flex_data last-roll fallback.  The
+    # last step's ``flex_data`` / ``solution`` supply the static
+    # (solve-invariant) attrs + the per-attr shape template.
+    if (
+        solve_steps is None
+        and flex_data is not None
+        and solution is not None
+        and has_persisted_slices(output_dir)
+    ):
+        last_par = read_parameters(
+            flex_data, solution, solve_name=solve_name or "solve"
+        )
+        last_s = read_sets(
+            flex_data, solution, solve_name=solve_name or "solve"
+        )
+        p = union_params(last_par, output_dir)
+        s = union_sets(last_s, output_dir)
+        _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
+        v = read_variables(output_dir)
+        return p, s, v
     if solve_steps is not None:
         if solution is None:
             raise ValueError(

@@ -228,6 +228,23 @@ def write_outputs_for_solve(
     # solver_runner._run_highs_or_cplex's resolution.
     roll_name = _actual_solve_name(work_folder, solve_name, provider=provider)
 
+    # Multi-solve output union — record this sub-solve in the creation-
+    # order manifest (``output_raw/_solve_order.txt``).  The per-roll
+    # variable / param / set parquet readers concat in this order so the
+    # ``drop_levels`` ``keep='last'`` dedup picks the same realizing roll
+    # the in-memory oracle does.  Authoritative on the default
+    # ``keep_solutions=False`` flow, where ``solve__p_entity_pre_existing
+    # .csv`` is absent (so ``load_solve_order`` would otherwise fall back
+    # to filesystem glob order and mis-pick the realizing solve label).
+    try:
+        from flextool.process_outputs.solve_order import append_solve_order
+
+        append_solve_order(output_dir, roll_name)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning(
+            "append_solve_order failed for solve '%s': %s", solve_name, exc,
+        )
+
     sd = work_folder / "solve_data"
     realized_dispatch_csv = sd / "realized_dispatch.csv"
     realized_periods_csv = sd / "realized_invest_periods_of_current_solve.csv"
@@ -297,6 +314,7 @@ def write_outputs_for_solve(
     if flex_data is not None:
         from flextool.process_outputs.persist_realized_slice import (
             write_all_params_realized_slice,
+            write_all_sets_realized_slice,
         )
         from flextool.process_outputs.read_highs_solution import (
             _load_realized_periods,
@@ -309,6 +327,13 @@ def write_outputs_for_solve(
                 ) else None,
                 provider=provider,
             )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "loading realized invest periods failed for solve '%s': %s",
+                solve_name, exc,
+            )
+            invest_periods = None
+        try:
             write_all_params_realized_slice(
                 flex_data,
                 sol,
@@ -319,6 +344,28 @@ def write_outputs_for_solve(
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "write_all_params_realized_slice failed for solve '%s': %s",
+                solve_name, exc,
+            )
+
+        # Multi-solve output union (stage 2b) — persist this roll's
+        # realized slice of every per-roll-VARYING set (incl. the
+        # storage-adjacency sets ``dtt`` / ``dtttdt``) to ``output_raw/``
+        # as parquet, mirroring the variable / param convention.  Runs
+        # HERE, while the Solution is live, alongside the param writer so
+        # the per-roll realized window (``flex_data.realized_dispatch``)
+        # is available.  The stage-3 reader unions these per-roll set
+        # parquets, replacing the dead ``read_sets_multi`` source.
+        try:
+            write_all_sets_realized_slice(
+                flex_data,
+                sol,
+                solve_name=roll_name,
+                output_dir=output_dir,
+                realized_invest_periods=invest_periods,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "write_all_sets_realized_slice failed for solve '%s': %s",
                 solve_name, exc,
             )
 
