@@ -3018,8 +3018,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 # over = (n, f, d, t) — cross-product of idx with timeline.
                 over = idx.join(d.dt, how="cross")
                 rhs_param = d.p_profile_value * p_node_existing_count
-                if d.p_node_availability is not None:
-                    rhs_param = rhs_param * d.p_node_availability
+                # Densify availability over the profile nodes so a storage node
+                # with no DB-authored ``availability`` keeps its default-1.0
+                # factor instead of being inner-join-dropped to RHS=0 (→ forced
+                # v_state=0).  Node-state twin of the process-side fix; see
+                # :func:`_availability_factor`.
+                node_avail_factor = (
+                    _availability_factor(d, idx, axis="n",
+                                         avail=d.p_node_availability)
+                    if d.p_node_availability is not None else None)
+                if node_avail_factor is not None:
+                    rhs_param = rhs_param * node_avail_factor
                 lhs: dict = {"state": v_state}
                 # Invest/divest tightening — only over (n, f) pairs in idx.
                 nf_filter = idx.select("n", "f").unique()
@@ -3046,8 +3055,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                         )
                         # Multiply by profile · (availability) and restrict to (n, f) pairs.
                         inv_full = inv_term * d.p_profile_value
-                        if d.p_node_availability is not None:
-                            inv_full = inv_full * d.p_node_availability
+                        if node_avail_factor is not None:
+                            inv_full = inv_full * node_avail_factor
                         lhs["invest_neg"] = -Where(inv_full, nf_filter)
                 if has_divest_n and d.edd_divest_active is not None:
                     # Phase 4.8h: cross-Enum is_in (p vs n vocab); up-cast n→p.
@@ -3071,8 +3080,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                             over=("d_divest",),
                         )
                         div_full = div_term * d.p_profile_value
-                        if d.p_node_availability is not None:
-                            div_full = div_full * d.p_node_availability
+                        if node_avail_factor is not None:
+                            div_full = div_full * node_avail_factor
                         lhs["divest"] = Where(div_full, nf_filter)
                 m.add_cstr(name, over=over, sense=sense,
                            lhs_terms=lhs,
@@ -4077,38 +4086,54 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                            rhs_terms={"existing":     d.p_process_existing_count})
 
 
-def _availability_factor(d, processes: "pl.DataFrame") -> "Param":
-    """``p_process_availability`` as a Param keyed ``(p, d, t)`` that COVERS
-    every process in ``processes`` — the DB-authored value where one exists,
-    else the schema default ``1.0``.
+def _availability_factor(d, members: "pl.DataFrame", *,
+                         axis: str = "p",
+                         avail: "Param | None" = None) -> "Param":
+    """``availability`` as a Param keyed ``(axis, d, t)`` that COVERS every
+    entity in ``members`` — the DB-authored value where one exists, else the
+    schema default ``1.0``.  ``axis`` is ``"p"`` for the process factor
+    (``p_process_availability``, the default) or ``"n"`` for the node-state
+    factor (pass ``avail=d.p_node_availability``).
 
-    ``p_process_availability`` is SPARSE: ``p_process_availability_from_source``
-    emits only DB-authored rows, expecting absent processes to fall back to the
+    The availability Params are SPARSE: their ``*_from_source`` producers emit
+    only DB-authored rows, expecting absent entities to fall back to the
     ``availability`` schema default (1.0).  But the LP folds the factor into
     constraint RHSs via ``Param * Param`` / ``Var * Param``, which are INNER
-    joins (polar_high contract) — so a process absent from the sparse Param has
+    joins (polar_high contract) — so an entity absent from the sparse Param has
     its RHS row DROPPED rather than multiplied by 1.0, silently collapsing the
-    bound to 0 and forcing ``v_flow = 0``.  That zeroes any profile (VRE) or
-    online unit whose ``availability`` is left at the default (e.g. a solar/
-    wind plant or a coal unit with no authored availability).
+    bound to 0 and forcing the variable (``v_flow`` / ``v_state``) to 0.  That
+    zeroes any profile (VRE unit, profile storage node) or online unit whose
+    ``availability`` is left at the default — but only once SOME other entity
+    authors one, making the Param non-empty-but-sparse.
 
-    Densifying the factor against the consumer's own process set — left-join +
+    Densifying the factor against the consumer's own entity set — left-join +
     ``fill_null(1.0)`` — makes the subsequent inner-join multiply behave as the
     multiplicative overlay the .mod intends.  This is the profile/online-side
     analogue of the maxToSink flow-upper densify in :func:`add_unit_constraints`
     (search ``naive ... p_process_availability would DROP``).  Callers guard on
-    ``d.p_process_availability is not None`` (an all-1.0 factor is a no-op).
+    ``avail is not None`` (an all-1.0 factor is a no-op).
     """
-    base = processes.select("p").unique().join(d.dt, how="cross")  # (p, d, t)
+    avail = avail if avail is not None else d.p_process_availability
+    base = members.select(axis).unique().join(d.dt, how="cross")  # (axis, d, t)
     # Phase E.1: availability may be authored scalar / 1d_map[period] /
-    # 1d_map[time] / 2d_map, so promote to (p, d, t) before the left-join.
-    avail_lf = promote_param_to_dt(d.p_process_availability, d.dt)
-    merged = (base.lazy()
-              .join(avail_lf, on=["p", "d", "t"], how="left")
+    # 1d_map[time] / 2d_map, so promote to (axis, d, t) before the left-join.
+    avail_lf = promote_param_to_dt(avail, d.dt)
+    # The entity axis can carry a different Enum vocabulary on the consumer set
+    # vs the availability Param (e.g. node_profile ``n`` vs p_node_availability
+    # ``n``).  polar_high's ``*`` reconciles that internally, but this manual
+    # left-join does not — compare on a Utf8 key so value-equal members match
+    # regardless of the Enum edge (mirrors ``_unitsize_complete``).  The
+    # original-dtype axis is carried through from ``base`` for the downstream
+    # multiply.
+    base_lf = base.lazy().with_columns(pl.col(axis).cast(pl.Utf8).alias("_k"))
+    avail_lf = (avail_lf.with_columns(pl.col(axis).cast(pl.Utf8).alias("_k"))
+                        .drop(axis))
+    merged = (base_lf
+              .join(avail_lf, on=["_k", "d", "t"], how="left")
               .with_columns(pl.col("value").fill_null(1.0))
-              .select("p", "d", "t", "value")
+              .select(axis, "d", "t", "value")
               .collect())
-    return Param(("p", "d", "t"), merged)
+    return Param((axis, "d", "t"), merged)
 
 
 def _add_profile_cstr(m, d, v_flow, name: str, idx: "pl.DataFrame",

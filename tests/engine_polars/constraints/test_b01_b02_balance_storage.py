@@ -174,3 +174,79 @@ def test_profile_state_upper_invest_tightening(toy_storage_2t):
     assert s_t02 == pytest.approx(2.0, rel=1e-7)
     v_inv = sol.value("v_invest_n").filter(pl.col("n") == "s")
     assert v_inv["value"][0] == pytest.approx(5.0, rel=1e-7)
+
+
+def test_profile_state_sparse_availability_default(toy_storage_2t):
+    """Regression: a profile storage node with NO authored ``availability``
+    must keep its default-1.0 factor, not be inner-join-dropped to RHS=0.
+
+    Node-state twin of ``test_profile_upper_sparse_availability_default``
+    (B12.5).  ``p_node_availability`` is SPARSE, and ``_add_node_profile_cstr``
+    folds it into the ``profile_state_*`` RHS via ``Param * Param`` (an inner
+    join), so before the densify fix a node absent from the sparse Param had
+    its existing-capacity bound collapsed to 0 → forced ``v_state = 0``.  No
+    existing fixture combined an authored-availability node with a default-
+    availability profile node, so the parity sweep never tripped it.
+
+    Storage node ``s`` has existing capacity 10, unitsize 1 (so v_state is in
+    MWh and existing_count = 10), and a ``profile_upper = 0.4`` ⇒ the RHS bound
+    is ``0.4 · 10 · availability``.  A cyclic +2 / −2 inflow forces
+    v_state[t02] = 2.  We additionally author ``availability`` on the UNRELATED
+    demand node ``n`` (0.5) so ``p_node_availability`` is non-empty but absent
+    for ``s`` — the exact trigger.
+
+    Hand-calc: with the fix ``s`` keeps availability 1.0 ⇒ bound = 4 ≥ 2 and
+    v_state[t02] = 2.  Before the fix ``s``'s RHS dropped to 0 ⇒ v_state ≤ 0,
+    and the cyclic demand is forced onto loss-of-load slack ⇒ v_state[t02] = 0.
+    """
+    f = "profA"
+    nb_dt_s = pl.DataFrame({
+        "n": ["n", "n", "s", "s"],
+        "d": ["d1"] * 4,
+        "t": ["t01", "t02", "t01", "t02"],
+    })
+    # Zero node "n" demand; cyclic [-2, +2] on s forces v_state[t02] = 2.
+    p_inflow_new = Param(("n", "d", "t"),
+        nb_dt_s.with_columns(
+            value=pl.when(pl.col("n") == "n").then(0.0)
+                  .when(pl.col("t") == "t01").then(-2.0)
+                  .otherwise(2.0)
+        ).select("n", "d", "t", "value"))
+    storage_bind = pl.DataFrame({"n": ["s"]})
+    # unitsize 1 ⇒ v_state in MWh; existing 10 ⇒ existing_count = 10.
+    p_state_unitsize_one = Param(("n",),
+        pl.DataFrame({"n": ["s"], "value": [1.0]}))
+    p_state_existing_ten = Param(("n", "d"),
+        pl.DataFrame({"n": ["s"], "d": ["d1"], "value": [10.0]}))
+    # Loose maxState so the profile_upper (0.4·10·avail) is the binding bound.
+    p_state_upper_loose = Param(("n", "d"),
+        pl.DataFrame({"n": ["s"], "d": ["d1"], "value": [100.0]}))
+    node_profile_upper = pl.DataFrame({"n": ["s"], "f": [f]})
+    p_profile_value = Param(("f", "d", "t"),
+        pl.DataFrame({"f": [f, f], "d": ["d1", "d1"],
+                      "t": ["t01", "t02"], "value": [0.4, 0.4]}))
+    # SPARSE: only the unrelated demand node ``n`` authors availability;
+    # the profile node ``s`` is absent → must fall back to default 1.0.
+    p_node_availability = Param(("n",),
+        pl.DataFrame({"n": ["n"], "value": [0.5]}))
+
+    data = dataclasses.replace(
+        toy_storage_2t,
+        p_inflow=p_inflow_new,
+        storage_bind_within_timeblock=storage_bind,
+        p_state_existing_capacity=p_state_existing_ten,
+        p_state_upper=p_state_upper_loose,
+        p_state_unitsize=p_state_unitsize_one,
+        node_profile_upper=node_profile_upper,
+        p_profile_value=p_profile_value,
+        p_node_availability=p_node_availability,
+    )
+    pb, sol = _solve(data)
+    assert sol.optimal
+    assert "profile_state_upper_limit" in set(pb.cstr_names())
+    v_state = sol.value("v_state").filter(pl.col("n") == "s")
+    s_t02 = v_state.filter(pl.col("t") == "t02")["value"][0]
+    # Regression: ``s`` keeps default availability 1.0 ⇒ bound 4 ⇒ state = 2.
+    # Before the densify fix ``s`` was dropped from the RHS → bound 0 →
+    # v_state forced to 0 (demand shunted to slack).
+    assert s_t02 == pytest.approx(2.0, rel=1e-7)
