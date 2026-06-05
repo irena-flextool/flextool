@@ -15,7 +15,10 @@ from flextool.scenario_comparison.config_builder import (
 )
 from flextool.scenario_comparison.data_models import DispatchMappings
 from flextool.scenario_comparison.db_reader import get_scenario_results
-from flextool.scenario_comparison.dispatch_mappings import combine_dispatch_mappings
+from flextool.scenario_comparison.dispatch_mappings import (
+    combine_dispatch_mappings,
+    data_scenario_tags,
+)
 from flextool.scenario_comparison.dispatch_plots import create_dispatch_plots
 from flextool.scenario_comparison.plan_union import (
     derive_comparison_config,
@@ -113,6 +116,13 @@ def run(
         mappings = DispatchMappings()
         combined_mapping_dfs = {}
 
+    # Folder names (``scenarios``) drive paths, _metadata.json and the
+    # viewer-set match, but dispatch slicing keys off the scenario tag
+    # embedded in the data — which differs when a folder carries the GUI
+    # run-index suffix (folder S2_Dry_1 → tag S2_Dry).  Resolve the tags
+    # from the data and use them for every dispatch slice.
+    dispatch_scenarios = data_scenario_tags(mappings) or scenarios
+
     # Derive group_node_df for summary plots (needs 'scenario' as column)
     group_node_combined = combined_mapping_dfs.get('group_node')
     if group_node_combined is not None and not group_node_combined.empty:
@@ -122,7 +132,7 @@ def run(
     dispatch_config = None
     if dispatch_plots:
         dispatch_config = create_or_update_dispatch_config(
-            plot_dir, results, scenarios, mappings
+            plot_dir, results, dispatch_scenarios, mappings
         )
 
     # Flatten new-format entries to flat result_key mapping for downstream use.
@@ -188,7 +198,7 @@ def run(
             else:
                 meta_timeline = (0, 168)
             dispatch_meta = compute_dispatch_metadata(
-                results, mappings, scenarios, meta_timeline,
+                results, mappings, dispatch_scenarios, meta_timeline,
             )
             import json as _json
             meta_path = os.path.join(comparison_parquet_dir, "_dispatch_metadata.json")

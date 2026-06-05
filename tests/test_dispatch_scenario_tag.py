@@ -10,7 +10,10 @@ data" in the viewer).  ``resolve_data_scenario_tag`` reconciles the two.
 import pandas as pd
 
 from flextool.scenario_comparison.data_models import DispatchMappings
-from flextool.scenario_comparison.dispatch_mappings import resolve_data_scenario_tag
+from flextool.scenario_comparison.dispatch_mappings import (
+    data_scenario_tags,
+    resolve_data_scenario_tag,
+)
 
 
 def _mappings_with_tag(tag: str) -> DispatchMappings:
@@ -48,3 +51,28 @@ def test_falls_back_when_multiple_tags_ambiguous():
     ).set_index("scenario")
     mappings = DispatchMappings(dispatch_groups=df)
     assert resolve_data_scenario_tag(mappings, fallback="folder") == "folder"
+
+
+def _multi_mappings(tags: list[str]) -> DispatchMappings:
+    df = pd.DataFrame(
+        {"scenario": tags, "group": ["elec"] * len(tags)}
+    ).set_index("scenario")
+    return DispatchMappings(dispatch_groups=df)
+
+
+def test_data_scenario_tags_preserves_folder_order_and_dedups():
+    # Comparison: folders [base_1, S2_Dry_1, S2_Normal_1] hold tags
+    # [base, S2_Dry, S2_Normal]; order (= folder concat order) is preserved.
+    mappings = _multi_mappings(["base", "S2_Dry", "S2_Normal"])
+    assert data_scenario_tags(mappings) == ["base", "S2_Dry", "S2_Normal"]
+
+
+def test_data_scenario_tags_dedups_repeated_rows():
+    # dispatch_groups may carry several rows per scenario (one per group);
+    # tags collapse to first-seen order.
+    mappings = _multi_mappings(["S2_Dry", "S2_Dry", "S3_Dry"])
+    assert data_scenario_tags(mappings) == ["S2_Dry", "S3_Dry"]
+
+
+def test_data_scenario_tags_empty_when_no_data():
+    assert data_scenario_tags(DispatchMappings()) == []

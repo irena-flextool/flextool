@@ -128,28 +128,40 @@ def combine_dispatch_mappings(
     return DispatchMappings(**combined)
 
 
-def resolve_data_scenario_tag(mappings: DispatchMappings, fallback: str) -> str:
-    """Return the scenario tag embedded in the dispatch data.
+def data_scenario_tags(mappings: DispatchMappings) -> list[str]:
+    """Return the scenario tags embedded in the dispatch data, in order.
 
     Output folders may be named differently from the model scenario that
     produced them — the GUI appends a run-index suffix, so folder
     ``S2_Dry_1`` holds data tagged ``S2_Dry``.  Dispatch slicing keys off
     the *in-data* tag (``get_for_scenario`` / ``_get_time_index``), so
-    callers must resolve it from the data rather than the folder name.
+    callers must resolve tags from the data rather than the folder names.
 
-    Returns *fallback* when the tag is absent or not unambiguously
-    single-valued (e.g. combined multi-scenario mappings).
+    Tags are returned first-seen-ordered (which mirrors the folder order
+    that ``combine_dispatch_mappings`` concatenated), de-duplicated.
+    Returns ``[]`` when the data carries no scenario index/column.
     """
     df = mappings.dispatch_groups
-    if df is not None and not df.empty:
-        if df.index.name == 'scenario':
-            tags = list(dict.fromkeys(df.index.tolist()))
-        elif 'scenario' in df.columns:
-            tags = list(dict.fromkeys(df['scenario'].tolist()))
-        else:
-            tags = []
-        if len(tags) == 1:
-            return tags[0]
+    if df is None or df.empty:
+        return []
+    if df.index.name == 'scenario':
+        return list(dict.fromkeys(df.index.tolist()))
+    if 'scenario' in df.columns:
+        return list(dict.fromkeys(df['scenario'].tolist()))
+    return []
+
+
+def resolve_data_scenario_tag(mappings: DispatchMappings, fallback: str) -> str:
+    """Return the single scenario tag embedded in the dispatch data.
+
+    Convenience wrapper over :func:`data_scenario_tags` for the
+    single-scenario case.  Returns *fallback* when the tag is absent or
+    not unambiguously single-valued (e.g. combined multi-scenario
+    mappings — use :func:`data_scenario_tags` there instead).
+    """
+    tags = data_scenario_tags(mappings)
+    if len(tags) == 1:
+        return tags[0]
     return fallback
 
 
