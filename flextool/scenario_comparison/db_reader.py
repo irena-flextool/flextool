@@ -140,6 +140,22 @@ def combine_parquet_files(
                 # Deduplicate index (can occur with overlapping solve windows)
                 if df.index.duplicated().any():
                     df = df[~df.index.duplicated(keep='last')]
+                # Re-tag the scenario column level to the folder identity
+                # (the loop key) so two folders holding the same model
+                # scenario stay distinct and all downstream slicing keys off
+                # the folder name.  No-op (and byte-identical) when the
+                # baked-in tag already equals the folder, e.g. the DB/CLI
+                # path.  See specs/dispatch_scenario_identity_retag.md.
+                if (
+                    isinstance(df.columns, pd.MultiIndex)
+                    and 'scenario' in df.columns.names
+                ):
+                    src = list(df.columns.get_level_values('scenario').unique())
+                    if src != [scenario_name]:
+                        df = df.rename(
+                            columns={s: scenario_name for s in src},
+                            level='scenario',
+                        )
                 dfs_to_append.append(df)
 
             except Exception as e:

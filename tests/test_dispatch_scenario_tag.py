@@ -2,15 +2,21 @@
 
 Output folders may carry a GUI run-index suffix (``S2_Dry_1``) while the
 dispatch data inside is tagged with the model scenario name (``S2_Dry``).
-Dispatch slicing keys off the in-data tag; feeding the folder name silently
-drops every nodeGroup (empty ``_dispatch_metadata.json`` + "No dispatch
-data" in the viewer).  ``resolve_data_scenario_tag`` reconciles the two.
+The load boundary (``combine_parquet_files`` /
+``combine_dispatch_mappings``) re-tags each scenario to its folder identity
+so two folders holding the *same* model scenario stay distinct and all
+downstream slicing keys off the folder name.  ``data_scenario_tags`` /
+``resolve_data_scenario_tag`` read those identities back.  See
+specs/dispatch_scenario_identity_retag.md.
 """
 
 import pandas as pd
 
+from flextool.lean_parquet import write_lean_parquet
 from flextool.scenario_comparison.data_models import DispatchMappings
+from flextool.scenario_comparison.db_reader import combine_parquet_files
 from flextool.scenario_comparison.dispatch_mappings import (
+    combine_dispatch_mappings,
     data_scenario_tags,
     resolve_data_scenario_tag,
 )
@@ -76,3 +82,73 @@ def test_data_scenario_tags_dedups_repeated_rows():
 
 def test_data_scenario_tags_empty_when_no_data():
     assert data_scenario_tags(DispatchMappings()) == []
+
+
+# --- Load-boundary re-tag: two folders, same model scenario, stay distinct ---
+
+def _ts_frame(tag: str) -> pd.DataFrame:
+    """A time-series frame tagged *tag* on the column scenario level."""
+    cols = pd.MultiIndex.from_tuples(
+        [(tag, "unitA", "nodeA")], names=["scenario", "unit", "node"],
+    )
+    idx = pd.MultiIndex.from_tuples(
+        [("p1", 0), ("p1", 1)], names=["period", "time"],
+    )
+    return pd.DataFrame([[1.0], [2.0]], index=idx, columns=cols)
+
+
+def test_combine_parquet_files_retags_columns_to_folder(tmp_path):
+    # Two folders A_1 and A_2 both hold data tagged with the model name 'A'.
+    files = []
+    for folder in ("A_1", "A_2"):
+        d = tmp_path / folder
+        d.mkdir()
+        path = d / "unit_outputNode_dt_ee.parquet"
+        write_lean_parquet(_ts_frame("A"), path)
+        files.append((folder, path))
+
+    combined = combine_parquet_files(
+        {"unit_outputNode_dt_ee.parquet": files}, num_scenarios=2,
+    )
+    df = combined["unit_outputNode_dt_ee"]
+    # The two folders survive as DISTINCT scenario identities (not merged
+    # under the shared model tag 'A'), keyed by folder name.
+    assert set(df.columns.get_level_values("scenario")) == {"A_1", "A_2"}
+    assert "A" not in df.columns.get_level_values("scenario")
+
+
+def test_combine_parquet_files_noop_when_tag_equals_folder(tmp_path):
+    # DB/CLI path: folder name already equals the in-data tag → re-tag is a
+    # no-op and the scenario level is preserved verbatim.
+    files = []
+    for folder in ("A", "B"):
+        d = tmp_path / folder
+        d.mkdir()
+        path = d / "unit_outputNode_dt_ee.parquet"
+        write_lean_parquet(_ts_frame(folder), path)
+        files.append((folder, path))
+    combined = combine_parquet_files(
+        {"unit_outputNode_dt_ee.parquet": files}, num_scenarios=2,
+    )
+    assert set(
+        combined["unit_outputNode_dt_ee"].columns.get_level_values("scenario")
+    ) == {"A", "B"}
+
+
+def test_combine_dispatch_mappings_retags_rows_to_folder(tmp_path):
+    # Two folders both tagged model scenario 'A'; nodeGroupDispatch carries
+    # scenario as a row column.
+    for folder in ("A_1", "A_2"):
+        d = tmp_path / folder
+        d.mkdir()
+        df = pd.DataFrame({"scenario": ["A"], "group": ["elec"]})
+        write_lean_parquet(df, d / "nodeGroupDispatch.parquet", index=False)
+
+    scenario_folders = {"A_1": str(tmp_path), "A_2": str(tmp_path)}
+    mappings = combine_dispatch_mappings(scenario_folders, "")
+
+    # Both folders present as distinct identities; each slices independently.
+    assert data_scenario_tags(mappings) == ["A_1", "A_2"]
+    assert mappings.get_for_scenario("dispatch_groups", "A_1") is not None
+    assert mappings.get_for_scenario("dispatch_groups", "A_2") is not None
+    assert mappings.get_for_scenario("dispatch_groups", "A") is None

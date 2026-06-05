@@ -3534,22 +3534,23 @@ class ResultViewer(tk.Toplevel):
         # Load dispatch mappings
         raw_mappings = load_dispatch_mappings(parquet_dir)
 
-        # Build DispatchMappings with scenario in index
-        # For single scenario, add scenario column and set as index
+        # Build DispatchMappings with scenario in index.  Always tag by the
+        # folder identity, overwriting any model-scenario tag baked in at
+        # write time, so the folder name is the single dispatch identity
+        # (matches combine_parquet_files, which re-tags the results the same
+        # way).  See specs/dispatch_scenario_identity_retag.md.
         mapping_fields: dict[str, pd.DataFrame | None] = {}
         for key, df in raw_mappings.items():
             if df is not None and not df.empty:
                 df_copy = df.copy()
-                if 'scenario' not in df_copy.columns:
-                    df_copy['scenario'] = scenario
+                df_copy['scenario'] = scenario
                 df_copy = df_copy.set_index('scenario')
                 mapping_fields[key] = df_copy
             else:
                 mapping_fields[key] = df
         self._dispatch_mappings = DispatchMappings(**mapping_fields)
-        # The folder name may carry a GUI run-index suffix (S2_Dry_1) while
-        # the data is tagged with the model scenario (S2_Dry).  Dispatch
-        # slicing keys off the in-data tag, so resolve and cache it.
+        # Data and mappings are now both tagged by the folder identity, so
+        # the cached slice key is just the folder name.
         self._dispatch_data_tag = resolve_data_scenario_tag(
             self._dispatch_mappings, scenario,
         )

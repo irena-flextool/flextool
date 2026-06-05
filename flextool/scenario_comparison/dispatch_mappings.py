@@ -113,6 +113,13 @@ def combine_dispatch_mappings(
         for key, df in mappings.items():
             if df is None or df.empty:
                 continue
+            # Re-tag the scenario column to the folder identity (the loop
+            # key) so two folders holding the same model scenario stay
+            # distinct.  No-op when the baked-in tag already equals the
+            # folder.  Mirrors combine_parquet_files; see
+            # specs/dispatch_scenario_identity_retag.md.
+            if 'scenario' in df.columns:
+                df = df.assign(scenario=scen_name)
             if key not in collected:
                 collected[key] = []
             collected[key].append(df)
@@ -129,15 +136,16 @@ def combine_dispatch_mappings(
 
 
 def data_scenario_tags(mappings: DispatchMappings) -> list[str]:
-    """Return the scenario tags embedded in the dispatch data, in order.
+    """Return the scenario identities present in the combined dispatch data.
 
-    Output folders may be named differently from the model scenario that
-    produced them — the GUI appends a run-index suffix, so folder
-    ``S2_Dry_1`` holds data tagged ``S2_Dry``.  Dispatch slicing keys off
-    the *in-data* tag (``get_for_scenario`` / ``_get_time_index``), so
-    callers must resolve tags from the data rather than the folder names.
+    ``combine_dispatch_mappings`` re-tags each scenario to its folder
+    identity at load time (see
+    specs/dispatch_scenario_identity_retag.md), so the values returned here
+    are the folder names — already the canonical dispatch slice key.  This
+    reads them back from the data (e.g. so a caller can enumerate exactly
+    the folders that carry dispatch groups, skipping ones that don't).
 
-    Tags are returned first-seen-ordered (which mirrors the folder order
+    Identities are returned first-seen-ordered (mirroring the folder order
     that ``combine_dispatch_mappings`` concatenated), de-duplicated.
     Returns ``[]`` when the data carries no scenario index/column.
     """
@@ -152,12 +160,13 @@ def data_scenario_tags(mappings: DispatchMappings) -> list[str]:
 
 
 def resolve_data_scenario_tag(mappings: DispatchMappings, fallback: str) -> str:
-    """Return the single scenario tag embedded in the dispatch data.
+    """Return the single scenario identity present in the dispatch data.
 
     Convenience wrapper over :func:`data_scenario_tags` for the
-    single-scenario case.  Returns *fallback* when the tag is absent or
-    not unambiguously single-valued (e.g. combined multi-scenario
-    mappings — use :func:`data_scenario_tags` there instead).
+    single-scenario case (post re-tag this is the folder identity).
+    Returns *fallback* when the identity is absent or not unambiguously
+    single-valued (e.g. combined multi-scenario mappings — use
+    :func:`data_scenario_tags` there instead).
     """
     tags = data_scenario_tags(mappings)
     if len(tags) == 1:
