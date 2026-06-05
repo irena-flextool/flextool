@@ -128,6 +128,31 @@ def combine_dispatch_mappings(
     return DispatchMappings(**combined)
 
 
+def resolve_data_scenario_tag(mappings: DispatchMappings, fallback: str) -> str:
+    """Return the scenario tag embedded in the dispatch data.
+
+    Output folders may be named differently from the model scenario that
+    produced them — the GUI appends a run-index suffix, so folder
+    ``S2_Dry_1`` holds data tagged ``S2_Dry``.  Dispatch slicing keys off
+    the *in-data* tag (``get_for_scenario`` / ``_get_time_index``), so
+    callers must resolve it from the data rather than the folder name.
+
+    Returns *fallback* when the tag is absent or not unambiguously
+    single-valued (e.g. combined multi-scenario mappings).
+    """
+    df = mappings.dispatch_groups
+    if df is not None and not df.empty:
+        if df.index.name == 'scenario':
+            tags = list(dict.fromkeys(df.index.tolist()))
+        elif 'scenario' in df.columns:
+            tags = list(dict.fromkeys(df['scenario'].tolist()))
+        else:
+            tags = []
+        if len(tags) == 1:
+            return tags[0]
+    return fallback
+
+
 def get_group_node_multiindex(
     group_node_df: pd.DataFrame | None,
     scenario: str | None = None,

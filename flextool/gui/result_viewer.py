@@ -31,7 +31,10 @@ from flextool.scenario_comparison.db_reader import (
     build_scenario_folders_from_dir, collect_parquet_files, combine_parquet_files,
 )
 from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
-from flextool.scenario_comparison.dispatch_mappings import load_dispatch_mappings
+from flextool.scenario_comparison.dispatch_mappings import (
+    load_dispatch_mappings,
+    resolve_data_scenario_tag,
+)
 from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
 
 if TYPE_CHECKING:
@@ -186,7 +189,8 @@ class ResultViewer(tk.Toplevel):
         # Dispatch mode state
         self._dispatch_mappings: DispatchMappings | None = None
         self._dispatch_results: TimeSeriesResults | None = None
-        self._dispatch_scenario: str = ""  # scenario for which dispatch data is loaded
+        self._dispatch_scenario: str = ""  # folder name dispatch data is loaded for
+        self._dispatch_data_tag: str = ""  # in-data scenario tag (may differ from folder)
         self._dispatch_ylims: dict[str, tuple[float, float]] = {}  # accumulated per-nodeGroup
         self._dispatch_columns: dict[str, list[str]] = {}  # accumulated column order
 
@@ -3543,6 +3547,12 @@ class ResultViewer(tk.Toplevel):
             else:
                 mapping_fields[key] = df
         self._dispatch_mappings = DispatchMappings(**mapping_fields)
+        # The folder name may carry a GUI run-index suffix (S2_Dry_1) while
+        # the data is tagged with the model scenario (S2_Dry).  Dispatch
+        # slicing keys off the in-data tag, so resolve and cache it.
+        self._dispatch_data_tag = resolve_data_scenario_tag(
+            self._dispatch_mappings, scenario,
+        )
 
         # Load TimeSeriesResults
         scenario_folders = build_scenario_folders_from_dir(
@@ -3648,9 +3658,10 @@ class ResultViewer(tk.Toplevel):
         results = self._dispatch_results
         mappings = self._dispatch_mappings
 
-        # Prepare dispatch data
+        # Prepare dispatch data — slice by the in-data scenario tag, which
+        # may differ from the folder name (GUI run-index suffix).
         df_dispatch, inflow = prepare_dispatch_data(
-            results, mappings, scenario, node_group,
+            results, mappings, self._dispatch_data_tag, node_group,
         )
 
         if df_dispatch is None or df_dispatch.empty:

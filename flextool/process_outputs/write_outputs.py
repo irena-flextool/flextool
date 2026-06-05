@@ -897,6 +897,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             )
             from flextool.scenario_comparison.dispatch_mappings import (
                 combine_dispatch_mappings,
+                resolve_data_scenario_tag,
             )
             from flextool.scenario_comparison.data_models import TimeSeriesResults
             from flextool.scenario_comparison.dispatch_plots import (
@@ -904,17 +905,25 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             )
 
             # parquet_dir == <output_location>/output_parquet/<scenario>/
+            # The folder name (subdir) drives folder discovery, but the
+            # dispatch data is tagged with the model scenario name, which
+            # may differ (GUI run-index suffix: folder S2_Dry_1 → tag
+            # S2_Dry).  Keep the two roles separate.
             scenario_pq_dir = os.path.dirname(parquet_dir) if subdir else parquet_dir
-            scenario_name_for_meta = subdir or scenario_name
+            scenario_folder_name = subdir or scenario_name
 
             sc_folders = build_scenario_folders_from_dir(
-                scenario_pq_dir, [scenario_name_for_meta],
+                scenario_pq_dir, [scenario_folder_name],
             )
             if sc_folders:
                 files_by_name = collect_parquet_files(sc_folders, output_subdir="")
                 combined = combine_parquet_files(files_by_name, num_scenarios=1)
                 ts_results = TimeSeriesResults.from_dict(combined)
                 dispatch_mappings = combine_dispatch_mappings(sc_folders, "")
+                # Slice by the in-data scenario tag, not the folder name.
+                data_scenario_tag = resolve_data_scenario_tag(
+                    dispatch_mappings, scenario_name,
+                )
 
                 if plot_rows and len(plot_rows) >= 2:
                     meta_timeline = (int(plot_rows[0]), int(plot_rows[1]) + 1)
@@ -923,7 +932,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
                 disp_meta = compute_dispatch_metadata_for_scenario(
                     ts_results, dispatch_mappings,
-                    scenario_name_for_meta, meta_timeline,
+                    data_scenario_tag, meta_timeline,
                 )
             else:
                 disp_meta = {"nodeGroups": {}}
