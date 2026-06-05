@@ -3164,6 +3164,17 @@ class MainWindow(tk.Tk):
         ):
             # Current version — import directly against the current schema
             template = package_data_path("schemas/spinedb_schema.json")
+        elif info.format == ExcelFormat.OLD_V2:
+            # The old FlexTool 2.x importer targets a FROZEN schema version
+            # (v56): it writes v56-era parameters that do not exist in the v25
+            # base, so initialising from v25 would silently drop them (and
+            # mis-derive every node as 'commodity').  Init from the frozen
+            # import template; cmd_read_old_flextool migrates the result to the
+            # current schema after writing.
+            from flextool.process_inputs.write_old_flextool_to_db import (
+                OLD_FLEXTOOL_IMPORT_SCHEMA,
+            )
+            template = package_data_path(OLD_FLEXTOOL_IMPORT_SCHEMA)
         else:
             # Older Excel (SPECIFICATION or older SELF_DESCRIBING):
             # init from v25 base, migrate to the Excel's version, import, then

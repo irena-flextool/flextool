@@ -1,9 +1,17 @@
-"""CLI entry point for importing an old-format FlexTool .xlsm file to a Spine DB."""
+"""CLI entry point for importing an old-format FlexTool .xlsm file to a Spine DB.
+
+This runs the full pipeline: initialise the target from the frozen v56 import
+template (if not already a FlexTool DB), write the workbook's data, then
+``migrate_database`` the result up to the current schema version.  See
+``import_old_flextool_xlsm`` for why the importer is pinned to a fixed version
+and relies on migration rather than tracking the live schema.
+"""
 
 import argparse
 
-from flextool.process_inputs.read_old_flextool import read_old_flextool
-from flextool.process_inputs.write_old_flextool_to_db import write_old_flextool_to_db
+from flextool.process_inputs.write_old_flextool_to_db import (
+    import_old_flextool_xlsm,
+)
 
 
 def main() -> None:
@@ -30,12 +38,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    print(f"Reading old FlexTool Excel: {args.xlsm_path}")
-    data = read_old_flextool(args.xlsm_path)
-
-    print(f"Writing to database: {args.target_db_url}")
-    write_old_flextool_to_db(
-        data,
+    print(f"Importing old FlexTool Excel: {args.xlsm_path}")
+    print(f"Target database: {args.target_db_url}")
+    import_old_flextool_xlsm(
+        args.xlsm_path,
         args.target_db_url,
         alternative_name=args.alternative_name,
         purge=not args.no_purge,

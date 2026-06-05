@@ -731,9 +731,15 @@ class AddDialog(tk.Toplevel):
                 )
                 return
 
-        json_template = (
-            package_data_path("schemas/spinedb_schema.json")
+        # The old-FlexTool importer targets a FROZEN schema version (v56) and
+        # relies on migration to reach the live schema — so initialise from the
+        # frozen import template, not the live schema.  The conversion
+        # subprocess (or the sync fallback below) migrates to current after
+        # writing.
+        from flextool.process_inputs.write_old_flextool_to_db import (
+            OLD_FLEXTOOL_IMPORT_SCHEMA,
         )
+        json_template = package_data_path(OLD_FLEXTOOL_IMPORT_SCHEMA)
         if not json_template.exists():
             messagebox.showerror(
                 "Template missing",
@@ -836,11 +842,17 @@ class AddDialog(tk.Toplevel):
             self.config(cursor="watch")
             self.update()
             try:
-                from flextool.process_inputs.read_old_flextool import read_old_flextool
-                from flextool.process_inputs.write_old_flextool_to_db import write_old_flextool_to_db
+                from flextool.process_inputs.write_old_flextool_to_db import (
+                    import_old_flextool_xlsm,
+                )
 
-                data = read_old_flextool(str(filepath))
-                write_old_flextool_to_db(data, db_url, alternative_name=_OLD_FLEX_ALTERNATIVE)
+                # Full pipeline: the DB was initialised from the frozen
+                # template above, so this writes the data and migrates the
+                # result up to the current schema version.
+                import_old_flextool_xlsm(
+                    str(filepath), db_url,
+                    alternative_name=_OLD_FLEX_ALTERNATIVE,
+                )
             except Exception as exc:
                 logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
                 messagebox.showerror("Conversion failed", str(exc), parent=self)

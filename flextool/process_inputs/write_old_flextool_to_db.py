@@ -335,10 +335,15 @@ def _write_commodities(
         _add_entity(db, "commodity", fuel.name, alt_name, counters,
                      entities_added, entity_alts_added)
 
-        # Create fuel market node (no balance — it's a commodity source)
+        # Create fuel market node. It is a commodity source, so node_type
+        # MUST be set to "commodity" — an unset node_type defaults to
+        # "balance" in the engine (_emit_mid_sets.py "default 'balance'"),
+        # which would give the market no supply and starve the fuel.
         market_name = _fuel_market_name(fuel.name)
         _add_entity(db, "node", market_name, alt_name, counters,
                      entities_added, entity_alts_added)
+        _add_param(db, "node", (market_name,), "node_type", "commodity",
+                   alt_name, counters)
 
         # Create commodity__node relationship
         _add_relationship(db, "commodity__node", (fuel.name, market_name),
@@ -644,15 +649,15 @@ def _write_storage_units(
                           inv_cost_kw, alt_name, counters)
         _add_param_if_set(db, "unit", (discharger_name,), "lifetime",
                           lifetime, alt_name, counters)
-        _add_param_if_set(db, "unit", (discharger_name,), "interest_rate",
+        _add_param_if_set(db, "unit", (discharger_name,), "discount_rate",
                           interest, alt_name, counters)
         _add_param_if_set(db, "unit", (charger_name,), "lifetime",
                           lifetime, alt_name, counters)
-        _add_param_if_set(db, "unit", (charger_name,), "interest_rate",
+        _add_param_if_set(db, "unit", (charger_name,), "discount_rate",
                           interest, alt_name, counters)
         _add_param_if_set(db, "node", (storage_node,), "lifetime",
                           lifetime, alt_name, counters)
-        _add_param_if_set(db, "node", (storage_node,), "interest_rate",
+        _add_param_if_set(db, "node", (storage_node,), "discount_rate",
                           interest, alt_name, counters)
 
         invested_mw = unit.invested_capacity_mw
@@ -874,7 +879,7 @@ def _write_units(
                           alt_name, counters)
 
         interest_rate = _get_unit_type_param(data, unit, "interest")
-        _add_param_if_set(db, "unit", (unit_name,), "interest_rate", interest_rate,
+        _add_param_if_set(db, "unit", (unit_name,), "discount_rate", interest_rate,
                           alt_name, counters)
 
         # -- investment --
@@ -1172,7 +1177,7 @@ def _write_connections(
                           conn.invest_cost_per_kw, alt_name, counters)
         _add_param_if_set(db, "connection", (conn_name,), "lifetime",
                           conn.lifetime, alt_name, counters)
-        _add_param_if_set(db, "connection", (conn_name,), "interest_rate",
+        _add_param_if_set(db, "connection", (conn_name,), "discount_rate",
                           conn.interest, alt_name, counters)
 
         has_forced_invest = (
@@ -2298,7 +2303,7 @@ def _apply_unit_type_override(
             _add_param(db, "unit", (target,), "lifetime", value, alt_name, counters)
         elif "interest" == param_lower:
             target = discharger if is_storage else unit_name
-            _add_param(db, "unit", (target,), "interest_rate", value, alt_name, counters)
+            _add_param(db, "unit", (target,), "discount_rate", value, alt_name, counters)
         elif "startup cost" in param_lower:
             target = discharger if is_storage else unit_name
             _add_param(db, "unit", (target,), "startup_cost", value, alt_name, counters)
@@ -2698,7 +2703,7 @@ def _apply_node_node_override(
     elif "lifetime" == param_lower:
         _add_param(db, "connection", (conn_name,), "lifetime", value, alt_name, counters)
     elif "interest" == param_lower:
-        _add_param(db, "connection", (conn_name,), "interest_rate", value, alt_name, counters)
+        _add_param(db, "connection", (conn_name,), "discount_rate", value, alt_name, counters)
     else:
         logger.warning("Unknown nodeNode sensitivity param: '%s' for connection '%s'",
                        ov.param_name, conn_name)
@@ -2965,3 +2970,102 @@ def write_sensitivities_to_db(
             raise RuntimeError(
                 f"Failed to commit sensitivity data: {exc}"
             ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Full import pipeline: frozen-template init → write → migrate
+# ---------------------------------------------------------------------------
+#
+# The FlexTool-2 importer hand-writes a *fixed* schema version — the one that
+# was current when it was written (v56; see ``OLD_FLEXTOOL_IMPORT_SCHEMA``,
+# whose ``model.version`` default is 56).  It is deliberately NOT kept in step
+# with the live schema: the DB is initialised from the frozen template, the
+# importer writes its v56 data, and ``migrate_database`` then carries the
+# result forward to whatever the current ``FLEXTOOL_DB_VERSION`` is.
+#
+# This is what removes the maintenance burden — a future schema rename is
+# handled by its migration step (``db_migration.py``), not by editing this
+# importer.  Initialising from the *live* schema instead (the old behaviour)
+# would silently drop every value whose name a later rename had changed,
+# because ``_add_param`` skips unknown parameters.  The frozen template +
+# always-migrate keeps the importer correct without touching it again.
+
+#: Frozen schema the importer targets.  Snapshot of ``spinedb_schema.json``
+#: taken at DB version 56; do NOT update it to track the live schema — that is
+#: precisely what migration exists to do.
+OLD_FLEXTOOL_IMPORT_SCHEMA = "schemas/old_flextool_import_template.json"
+OLD_FLEXTOOL_IMPORT_SCHEMA_VERSION = 56
+
+
+def _sqlite_path_from_url(db_url: str) -> str | None:
+    """Return the filesystem path of a ``sqlite:///`` URL, else ``None``.
+
+    ``sqlite:///rel.sqlite`` → ``rel.sqlite`` (relative); the absolute form
+    ``sqlite:////abs/path.sqlite`` → ``/abs/path.sqlite`` (the 4th slash is
+    the leading slash of the path).
+    """
+    prefix = "sqlite:///"
+    if db_url.startswith(prefix):
+        return db_url[len(prefix):]
+    return None
+
+
+def _db_is_initialized(db_url: str) -> bool:
+    """True if the DB already carries the FlexTool schema (``model.version``)."""
+    try:
+        with DatabaseMapping(db_url) as db:
+            return db.get_parameter_definition_item(
+                entity_class_name="model", name="version"
+            ) is not None
+    except Exception:
+        return False
+
+
+def import_old_flextool_xlsm(
+    xlsm_path: str,
+    target_db_url: str,
+    *,
+    alternative_name: str = "base",
+    purge: bool = True,
+) -> None:
+    """Import an old-format FlexTool ``.xlsm`` into ``target_db_url``.
+
+    The complete, single-source pipeline used by both the CLI and the GUI:
+
+    1. Initialise the target from the **frozen** v56 import template
+       (``OLD_FLEXTOOL_IMPORT_SCHEMA``) unless it is already a FlexTool DB.
+    2. Parse the workbook and write its data (this importer targets v56).
+    3. ``migrate_database`` the result forward to the current
+       ``FLEXTOOL_DB_VERSION`` — a no-op while the schema is at 56, and the
+       thing that absorbs every future schema change automatically.
+
+    Callers that pre-create the DB (the GUI) get step 1 skipped; standalone
+    callers (the CLI) get a fresh DB initialised here.
+    """
+    # Lazy imports: avoid an import-time cycle with ``update_flextool`` (which
+    # imports back into ``process_inputs`` during migration) and keep the
+    # heavyweight Excel reader off this module's import path.
+    from flextool._resources import package_data_path
+    from flextool.process_inputs.read_old_flextool import read_old_flextool
+    from flextool.update_flextool.db_migration import migrate_database
+    from flextool.update_flextool.initialize_database import initialize_database
+
+    if not _db_is_initialized(target_db_url):
+        sqlite_path = _sqlite_path_from_url(target_db_url)
+        if sqlite_path is None:
+            raise ValueError(
+                "Cannot auto-initialise a non-sqlite target; create the "
+                f"database first: {target_db_url}"
+            )
+        template = package_data_path(OLD_FLEXTOOL_IMPORT_SCHEMA)
+        logger.info("Initialising %s from frozen import template (v%d)",
+                    target_db_url, OLD_FLEXTOOL_IMPORT_SCHEMA_VERSION)
+        initialize_database(str(template), sqlite_path)
+
+    data = read_old_flextool(xlsm_path)
+    write_old_flextool_to_db(
+        data, target_db_url, alternative_name=alternative_name, purge=purge,
+    )
+
+    logger.info("Migrating %s to the current schema version", target_db_url)
+    migrate_database(target_db_url)
