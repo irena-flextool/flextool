@@ -30,7 +30,7 @@ class PlotSettingsEditor(tk.Toplevel):
 
     def __init__(self, parent: tk.Misc, settings_path: Path) -> None:
         super().__init__(parent)
-        self.title(f"Plot settings — {settings_path.name}")
+        self.title("Plot settings")
         self._settings_path = Path(settings_path)
         self.saved = False
 
