@@ -191,8 +191,8 @@ class MemoryWatchdog:
 
             # Peaks above are always tracked (they feed the learned budget),
             # but with the memory guard switched off we never kill: the user
-            # has accepted the OOM risk and Min free RAM / Allow swap are
-            # non-binding for this session.
+            # has accepted the OOM risk for this session. Admission still
+            # honours the reserve, so this only disables killing.
             if not self._manager._memory_guard_enabled:
                 continue
 
@@ -352,10 +352,11 @@ class ExecutionManager:
         self._stopped = False
         self._memory_limited: bool = False  # set by scheduler when admission blocked by RAM
         self._thread_limited: bool = False  # set by scheduler when running == max_workers and pending exist
-        # Master memory-guard switch (session-only, never persisted). When
-        # False the admission check is bypassed for every job AND the
-        # watchdog stops killing, so Min free RAM / Allow swap become
-        # non-binding. Defaults on; the user must re-disable each session.
+        # Memory-guard switch (session-only, never persisted). When False the
+        # watchdog stops KILLING jobs; it does not change how many jobs start
+        # (the reserve still limits admission — ``force_start`` is the
+        # deliberate per-job override). So only Allow swap (a watchdog-only
+        # threshold) becomes non-binding. Defaults on; re-disable each session.
         self._memory_guard_enabled: bool = True
         self.project_path = project_path
         self.settings = settings
@@ -384,11 +385,12 @@ class ExecutionManager:
 
     @property
     def memory_guard_enabled(self) -> bool:
-        """Whether the memory guard (admission check + watchdog) is active.
+        """Whether the watchdog may kill jobs under memory pressure.
 
-        Session-only; not persisted to settings.yaml. When False, the
-        scheduler admits jobs regardless of the memory reserve and the
-        watchdog stops killing — the OS remains the only backstop.
+        Session-only; not persisted to settings.yaml. When False the
+        watchdog still tracks peak RSS but never kills — the OS is the only
+        backstop. Admission (how many jobs start) is unaffected: the reserve
+        still limits it, and ``force_start`` is the per-job override.
         """
         return self._memory_guard_enabled
 
@@ -749,13 +751,14 @@ class ExecutionManager:
         Admission rules, in order:
           1. Thread slots (``max_workers``) always bind — a full pool sets
              ``_thread_limited`` and nothing starts, even forced jobs.
-          2. Memory guard OFF ⇒ admit the first pending job (the reserve
-             check is skipped entirely; the watchdog is also dormant).
-          3. A job flagged ``force_start`` bypasses the memory-reserve
-             check and is admitted ahead of the queue. The watchdog still
-             applies to it, so a genuine OOM can still kill it.
-          4. Otherwise the memory-reserve check (``_can_admit_memory``)
+          2. A job flagged ``force_start`` bypasses the memory-reserve
+             check and is admitted ahead of the queue.
+          3. Otherwise the memory-reserve check (``_can_admit_memory``)
              binds; failing it sets ``_memory_limited``.
+
+        The memory-guard switch does NOT enter here: it only governs the
+        watchdog's killing. How many runs start is always limited by the
+        reserve, and ``force_start`` is the deliberate per-job override.
         """
         self._thread_limited = False
         self._memory_limited = False
@@ -779,9 +782,7 @@ class ExecutionManager:
             self._thread_limited = True
             return None
 
-        if not self._memory_guard_enabled:
-            chosen = candidate
-        elif forced is not None:
+        if forced is not None:
             chosen = forced
         else:
             estimate_gb = self._compute_memory_budget_for_job(candidate)

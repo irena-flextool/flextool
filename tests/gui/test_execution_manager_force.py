@@ -92,13 +92,25 @@ class TestForceStartAdmission:
 
 
 class TestMemoryGuardSwitch:
-    def test_guard_off_admits_despite_full_memory(self, mgr: ExecutionManager) -> None:
+    def test_guard_off_does_not_bypass_admission(self, mgr: ExecutionManager) -> None:
+        # The guard governs killing only; an unforced job on a full system
+        # is still held back regardless of the switch.
         mgr.memory_guard_enabled = False
         with mgr._lock:
             chosen = mgr._pick_next_pending()
-        assert chosen is not None and chosen.job_id == 1  # first candidate
+        assert chosen is None
+        assert mgr._memory_limited is True
+        assert mgr._running_count == 0
+
+    def test_guard_off_force_still_admits(self, mgr: ExecutionManager) -> None:
+        # Force start remains the deliberate way past the memory limit,
+        # independent of the guard switch.
+        mgr.memory_guard_enabled = False
+        mgr.set_force_start(2, True)
+        with mgr._lock:
+            chosen = mgr._pick_next_pending()
+        assert chosen is not None and chosen.job_id == 2
         assert mgr._memory_limited is False
-        assert mgr._running_count == 1
 
     def test_guard_default_on(self, tmp_path: Path) -> None:
         assert _make_manager(tmp_path).memory_guard_enabled is True
@@ -107,11 +119,3 @@ class TestMemoryGuardSwitch:
         assert mgr.get_execution_status()["memory_guard"] is True
         mgr.memory_guard_enabled = False
         assert mgr.get_execution_status()["memory_guard"] is False
-
-    def test_guard_off_still_respects_thread_limit(self, mgr: ExecutionManager) -> None:
-        mgr.memory_guard_enabled = False
-        mgr._running_count = mgr._max_workers
-        with mgr._lock:
-            chosen = mgr._pick_next_pending()
-        assert chosen is None
-        assert mgr._thread_limited is True

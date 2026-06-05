@@ -241,26 +241,30 @@ class ExecutionWindow(tk.Toplevel):
         self._memory_guard_chk.pack(side="left", padx=(15, 5))
 
         _guard_tip = (
-            "Master switch for FlexTool's memory protection (this session\n"
-            "only — never saved; it is back ON next time you open the\n"
-            "project).\n"
+            "Lets the watchdog KILL a running scenario when the system\n"
+            "genuinely runs out of memory (this session only — never saved;\n"
+            "back ON next time you open the project).\n"
             "\n"
-            "ON (default): the scheduler holds a scenario back when starting\n"
-            "it would breach the reserve, and the watchdog kills the most\n"
-            "over-budget run if the system genuinely runs out of memory.\n"
+            "ON (default): if free RAM drops below Min free RAM and swap\n"
+            "grows past Allow swap, the most over-budget run is killed to\n"
+            "keep the machine alive.\n"
             "\n"
-            "OFF: every queued scenario starts as soon as a thread slot is\n"
-            "free, and nothing is ever killed for memory. Min free RAM and\n"
-            "Allow swap below become non-binding (greyed out). Use only when\n"
-            "you know the estimates are too conservative — with the guard\n"
-            "off the OS may still keep the machine alive by swapping, but\n"
-            "expect a considerable slow-down, and a true runaway can OOM-\n"
-            "crash FlexTool or other applications."
+            "OFF: nothing is ever killed for memory. This does NOT change\n"
+            "how many runs start — the memory limit on starting still\n"
+            "applies (Min free RAM stays in effect). To start a specific\n"
+            "queued scenario past that limit, use \"Force start selected\"\n"
+            "instead, as a deliberate per-job decision. Allow swap below\n"
+            "becomes non-binding (greyed out) since it only ever gated\n"
+            "killing.\n"
+            "\n"
+            "With the guard off the OS may still keep the machine alive by\n"
+            "swapping, but expect a considerable slow-down, and a true\n"
+            "runaway can OOM-crash FlexTool or other applications."
         )
         attach_tooltip(self._memory_guard_chk, _guard_tip)
 
         # Min free RAM
-        min_free_label = self._min_free_label = ttk.Label(top_frame, text="  Min free RAM (GB):")
+        min_free_label = ttk.Label(top_frame, text="  Min free RAM (GB):")
         min_free_label.pack(side="left", padx=(15, 5))
 
         initial_reserve = limits.system_reserve_gb
@@ -1181,25 +1185,22 @@ class ExecutionWindow(tk.Toplevel):
         self._refresh_job_list()
 
     def _update_guard_dependent_states(self) -> None:
-        """Grey out Min free RAM / Allow swap when the memory guard is off.
+        """Grey out Allow swap when the memory guard is off.
 
-        Those thresholds are only consulted by the admission check and the
-        watchdog, both of which are dormant while the guard is disabled, so
-        the controls would be misleading if left active.
+        Allow swap is consulted only by the watchdog, which is dormant while
+        the guard is off, so the control would be misleading if left active.
+        Min free RAM stays enabled: it still governs how many runs start
+        (the admission check honours the reserve regardless of the guard).
         """
         on = bool(self._memory_guard_var.get())
-        spin_state = "normal" if on else "disabled"
-        for widget in (self._min_free_spin, self._swap_allow_spin):
-            try:
-                widget.configure(state=spin_state)
-            except tk.TclError:
-                pass
-        label_state = ["!disabled"] if on else ["disabled"]
-        for widget in (self._min_free_label, self._swap_label):
-            try:
-                widget.state(label_state)
-            except tk.TclError:
-                pass
+        try:
+            self._swap_allow_spin.configure(state="normal" if on else "disabled")
+        except tk.TclError:
+            pass
+        try:
+            self._swap_label.state(["!disabled"] if on else ["disabled"])
+        except tk.TclError:
+            pass
 
     def _on_kill_all(self) -> None:
         """Kill all running processes and cancel pending jobs.
