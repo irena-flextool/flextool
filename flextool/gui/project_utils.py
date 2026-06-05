@@ -29,6 +29,21 @@ def get_projects_dir() -> Path:
     return Path.cwd() / "projects"
 
 
+def seed_plot_settings(project_path: Path) -> Path:
+    """Ensure ``<project_path>/plot_settings.yaml`` exists.
+
+    Seeds the per-project plot color template from the bundled default so
+    the project owns an editable copy.  Never clobbers an existing file
+    (preserves user edits).  Returns the path to the project file.
+    """
+    plot_settings_path = Path(project_path) / "plot_settings.yaml"
+    if not plot_settings_path.exists():
+        from flextool._resources import package_data_path
+        bundled = package_data_path("schemas/default_colors.yaml")
+        shutil.copy2(bundled, plot_settings_path)
+    return plot_settings_path
+
+
 def create_project(name: str) -> Path:
     """Create a new project directory with all required subdirectories.
 
@@ -42,13 +57,8 @@ def create_project(name: str) -> Path:
         (project_path / subdir).mkdir(exist_ok=True)
 
     # Seed the per-project plot color template from the bundled default so
-    # the project owns an editable copy.  Skip if one already exists (never
-    # clobber user edits).
-    plot_settings_path = project_path / "plot_settings.yaml"
-    if not plot_settings_path.exists():
-        from flextool._resources import package_data_path
-        bundled = package_data_path("schemas/default_colors.yaml")
-        shutil.copy2(bundled, plot_settings_path)
+    # the project owns an editable copy.
+    seed_plot_settings(project_path)
 
     return project_path
 
