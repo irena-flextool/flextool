@@ -69,6 +69,9 @@ _PAR_DROP = [
     # moved here for symmetry with entity_all_existing per the
     # 2026-05-14 investigation into the unit_capacity__d.csv lag.
     'entity_pre_existing',
+    # NOTE: complete_period_share_of_year is intentionally NOT in this
+    # bucket — it needs an order-INDEPENDENT max-per-period reduction,
+    # done explicitly in drop_levels() below.  See the comment there.
 ]
 
 # Parameters: droplevel('solve') + deduplicate with keep='first'.
@@ -86,8 +89,38 @@ _PAR_DEDUP = [
     'group_penalty_inertia', 'group_penalty_non_synchronous',
     'group_inertia_limit',
     'node_capacity_for_scaling', 'group_capacity_for_scaling',
-    'complete_period_share_of_year',
 ]
+
+
+def _reduce_share_per_period(csoy: pd.Series) -> pd.Series:
+    """Collapse ``complete_period_share_of_year`` to one value per period.
+
+    ``complete_period_share_of_year`` is the per-period annualisation
+    denominator for DISPATCH outputs (energy/cost = Σ power·dur ÷ share).
+    It is NOT invariant across sub-solves: an invest sub-solve whose
+    period samples a representative window (e.g. 3×24 h) carries
+    ``share = 72/8760 ≈ 0.0082``, while the dispatch sub-solve that
+    realises the same period over the full year carries ``share = 1``.
+
+    BOTH sub-solves persist a row for the realised period, so a plain
+    ``keep='first'/'last'`` dedup is **order-dependent** — and the multi-
+    solve union order is NOT guaranteed: when the ``_solve_order.txt``
+    creation manifest is absent, ``union_realized_slice`` falls back to
+    filesystem glob order, which can place the invest row last and pick
+    the 0.0082 window share, inflating every period total by
+    ``8760/(sampled hours)`` (≈121.7× for a 3-day window).  This was the
+    cause of an intermittent multi-solve period/aggregate over-count that
+    appeared on some scenarios/runs but not others.
+
+    The dispatch sub-solve covers the full period, so its share is always
+    ≥ any sampling sub-solve's for the same period.  Reducing by **max per
+    period** therefore deterministically selects the realising-dispatch
+    share regardless of union order, and is byte-identical to the correct
+    (manifest-present) ``keep='last'`` runs.  ``sort=False`` preserves the
+    first-appearance period order those runs produced.
+    """
+    csoy = csoy.droplevel('solve')
+    return csoy.groupby(level=0, sort=False).max()
 
 
 def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
@@ -133,6 +166,13 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
         obj = getattr(par, attr)
         obj = obj.droplevel('solve')
         setattr(par, attr, obj[~obj.index.duplicated(keep='first')])
+
+    # complete_period_share_of_year — order-independent max-per-period
+    # reduction (deterministic across multi-solve union order).  See
+    # _reduce_share_per_period for the full rationale.
+    par.complete_period_share_of_year = _reduce_share_per_period(
+        par.complete_period_share_of_year
+    )
 
     # Sets have varied special handling so are done individually
     s.solve_period = s.d_realized_period
