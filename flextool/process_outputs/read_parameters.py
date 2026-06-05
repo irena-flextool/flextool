@@ -183,16 +183,14 @@ def _pdX_per_entity(
         )
 
     if densify_entities:
-        # Keep existing columns + add missing entities (zero-filled).
-        missing = [e for e in densify_entities if e not in out.columns]
-        for e in missing:
-            out[e] = 0.0
-        out = out.reindex(columns=list(out.columns), fill_value=0.0)
-        # Reorder per densify_entities for stable column ordering.
+        # Add missing entities (zero-filled) and apply the stable column
+        # ordering in a single reindex.  Inserting columns one at a time
+        # (``out[e] = 0.0`` in a loop) fragments the frame and triggers a
+        # PerformanceWarning once per insert — a single reindex avoids it.
         ordered = list(densify_entities) + [
             c for c in out.columns if c not in densify_entities
         ]
-        out = out[ordered]
+        out = out.reindex(columns=ordered, fill_value=0.0)
         out.columns.name = col_name or entity_dim
     return out
 
