@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 # Subdirectories created inside every new project
@@ -39,6 +40,15 @@ def create_project(name: str) -> Path:
 
     for subdir in PROJECT_SUBDIRS:
         (project_path / subdir).mkdir(exist_ok=True)
+
+    # Seed the per-project plot color template from the bundled default so
+    # the project owns an editable copy.  Skip if one already exists (never
+    # clobber user edits).
+    plot_settings_path = project_path / "plot_settings.yaml"
+    if not plot_settings_path.exists():
+        from flextool._resources import package_data_path
+        bundled = package_data_path("schemas/default_colors.yaml")
+        shutil.copy2(bundled, plot_settings_path)
 
     return project_path
 

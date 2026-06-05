@@ -16,6 +16,7 @@ prepare_plot_data() — public, returns Figures without saving
   - Returns list of (filename_stem, Figure) pairs
 """
 import os
+from pathlib import Path
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
@@ -605,6 +606,7 @@ def prepare_plot_data(
     break_times: set[str] | None = None,
     only_file_index: int | None = None,
     period_weights=None,
+    color_path: Path | None = None,
 ) -> tuple[list[tuple[str, plt.Figure]], int]:
     """Process one result DataFrame through dimension rules and build Figures.
 
@@ -623,7 +625,7 @@ def prepare_plot_data(
 
     # Load color template once so build_*_figures can apply template colors
     # consistently (matching what plan.py's _compute_*_plan path does).
-    color_tmpl = load_color_template()
+    color_tmpl = load_color_template(color_path)
     color_category = cfg.color_category if cfg is not None else None
     color_entity_class = cfg.color_entity_class if cfg is not None else None
 
@@ -854,7 +856,8 @@ def prepare_plot_data(
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         active_settings=['default'], plot_rows=(0, 167), delete_existing_plots=True,
         plot_file_format='png', only_first_file=False,
-        break_times: set[str] | None = None):
+        break_times: set[str] | None = None,
+        color_path: Path | None = None):
     """
     Plot dataframes from a dictionary according to key suffixes.
 
@@ -941,6 +944,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 plot_rows=plot_rows,
                 break_times=break_times,
                 period_weights=period_weights,
+                color_path=color_path,
             )
 
             if only_first_file and len(figures) > 1:
@@ -971,6 +975,7 @@ def compute_all_plot_plans(
     plot_rows: tuple = (0, 167),
     break_times=None,
     strip_scenario_level: bool = True,
+    color_path: Path | None = None,
 ) -> None:
     """Compute and save PlotPlans for all results.
 
@@ -1049,6 +1054,7 @@ def compute_all_plot_plans(
                 period_weights=period_weights,
                 manifest_accumulator=manifest_accumulator,
                 manifest_scenario_name=manifest_scenario_name,
+                color_path=color_path,
             )
             available.extend([k, s] for k, s in pairs)
         except Exception as exc:

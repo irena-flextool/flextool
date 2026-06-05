@@ -354,6 +354,7 @@ def combine_scenario_parquets(
     try:
         import yaml
         from flextool.plot_outputs.orchestrator import compute_all_plot_plans
+        from flextool.plot_outputs.color_template import resolve_plot_settings_path
         from flextool.plot_outputs.config import flatten_new_format
         from flextool.scenario_comparison.orchestrator import (
             _derive_comparison_settings,
@@ -372,6 +373,7 @@ def combine_scenario_parquets(
                 combined_dfs, plot_settings, output_dir,
                 plot_rows=(0, 167), break_times=bt,
                 strip_scenario_level=False,
+                color_path=resolve_plot_settings_path(project_path),
             )
     except Exception as exc:
         import logging

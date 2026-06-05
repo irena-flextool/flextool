@@ -4,6 +4,7 @@ import re
 import time
 import warnings
 from datetime import datetime, timezone
+from pathlib import Path
 
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend; must precede any pyplot import
@@ -13,6 +14,7 @@ from spinedb_api import DatabaseMapping, from_database, Array
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
+from flextool.plot_outputs.color_template import resolve_plot_settings_path
 from flextool.process_outputs.out_ancillary import (
     connection, connection_wards, connection_cf,
     reserves, investment_duals, inertia_results,
@@ -879,6 +881,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 plan_results, single_plot_settings, parquet_dir,
                 active_settings=active_configs, plot_rows=plot_rows,
                 break_times=plan_break_times,
+                color_path=resolve_plot_settings_path(Path(output_location)),
             )
             start = log_time("Computed plot plans", start, timing_recorder)
         except Exception as exc:
@@ -958,7 +961,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Load timeline breaks for visual gaps in time-series plots
         from flextool.plot_outputs.format_helpers import load_timeline_breaks
         break_times = load_timeline_breaks(parquet_dir)
-        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_times)
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_times, color_path=resolve_plot_settings_path(Path(output_location)))
 
         start = log_time('Plotted figures', start, timing_recorder)
 

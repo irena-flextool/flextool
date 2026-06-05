@@ -26,6 +26,7 @@ from flextool.gui.plot_config_reader import (
 from flextool.gui.settings_io import save_project_settings
 from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, flatten_new_format
 from flextool.plot_outputs.orchestrator import prepare_plot_data
+from flextool.plot_outputs.color_template import resolve_plot_settings_path
 from flextool.scenario_comparison.data_models import DispatchMappings, TimeSeriesResults
 from flextool.scenario_comparison.db_reader import (
     build_scenario_folders_from_dir, collect_parquet_files, combine_parquet_files,
@@ -2709,7 +2710,10 @@ class ResultViewer(tk.Toplevel):
                 plan_dir = self._project_path / "output_parquet" / scenario / "plot_plans"
                 plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
                 if plan is None:
-                    plan = compute_live_plan(df, config, plot_name, break_times)
+                    plan = compute_live_plan(
+                        df, config, plot_name, break_times,
+                        color_path=resolve_plot_settings_path(self._project_path),
+                    )
                 self._live_plan = plan
                 self._live_plan_key = plan_key
 
@@ -2823,6 +2827,7 @@ class ResultViewer(tk.Toplevel):
             figures, total_count = prepare_plot_data(
                 df, config, plot_name, plot_rows, break_times,
                 only_file_index=file_index,
+                color_path=resolve_plot_settings_path(self._project_path),
             )
         except Exception as exc:
             self.after(0, self._on_figure_error, generation, str(exc), variant.result_key)
@@ -3063,7 +3068,10 @@ class ResultViewer(tk.Toplevel):
         if self._live_plan_key == plan_key and self._live_plan is not None:
             plan = self._live_plan
         else:
-            plan = compute_live_plan(df, cmp_cfg, plot_name, break_times)
+            plan = compute_live_plan(
+                df, cmp_cfg, plot_name, break_times,
+                color_path=resolve_plot_settings_path(self._project_path),
+            )
             self._live_plan = plan
             self._live_plan_key = plan_key
 

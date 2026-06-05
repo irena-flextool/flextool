@@ -37,6 +37,22 @@ def _default_path() -> Path:
     return package_data_path("schemas/default_colors.yaml")
 
 
+def resolve_plot_settings_path(project_path: Path | None) -> Path:
+    """Resolve the plot color template path for *project_path*.
+
+    Returns ``<project_path>/plot_settings.yaml`` when that file exists,
+    otherwise the bundled default (``schemas/default_colors.yaml``).  This
+    keeps behavior byte-identical to before for any project that has no
+    ``plot_settings.yaml`` while letting a per-project file override the
+    template for both PNG export and the result viewer.
+    """
+    if project_path is not None:
+        candidate = Path(project_path) / "plot_settings.yaml"
+        if candidate.is_file():
+            return candidate
+    return _default_path()
+
+
 def load_color_template(path: Path | None = None) -> dict:
     """Load the color template YAML from *path* (or the default location).
 
@@ -253,6 +269,7 @@ def _clear_cache() -> None:
 
 __all__ = [
     "load_color_template",
+    "resolve_plot_settings_path",
     "resolve_label_color",
     "_clear_cache",
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pandas as pd
 import yaml
@@ -26,6 +27,7 @@ from flextool.scenario_comparison.plan_union import (
 )
 from flextool.plot_outputs.config import _is_single_config, flatten_new_format
 from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
+from flextool.plot_outputs.color_template import resolve_plot_settings_path
 
 
 def _derive_comparison_settings(plots_flat: dict) -> dict:
@@ -103,6 +105,12 @@ def run(
     combined_dfs = results.to_dict()
 
     os.makedirs(plot_dir, exist_ok=True)
+
+    # The plot color template comes from the project's ``plot_settings.yaml``
+    # when present, else the bundled default.  ``plot_dir`` is always a
+    # per-project subdir (``<project>/output_plot_comparisons``), so its
+    # parent is the project root.
+    color_path = resolve_plot_settings_path(Path(plot_dir).parent)
 
     scenarios = list(scenario_folders.keys())
 
@@ -218,6 +226,7 @@ def run(
                 active_settings=active_configs, plot_rows=plot_rows,
                 break_times=break_times,
                 strip_scenario_level=False,
+                color_path=color_path,
             )
             print("Computed plot plans for viewer")
         except Exception as exc:
@@ -231,6 +240,7 @@ def run(
         delete_existing_plots=True, plot_file_format=plot_file_format,
         only_first_file=only_first_file,
         break_times=break_times,
+        color_path=color_path,
     )
     print(f'\nPlotted comparison of {len(scenario_folders)} scenarios to folder: {plot_dir}')
 

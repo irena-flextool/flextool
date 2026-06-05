@@ -657,6 +657,7 @@ def _compute_time_plan(
     fm_line_levels: list[int],
     axis_bounds,
     plot_rows: tuple[int, int],
+    color_path: Path | None = None,
 ) -> PlotPlan | None:
     """Compute a PlotPlan for a time-series (lines or stack) chart.
 
@@ -750,7 +751,7 @@ def _compute_time_plan(
         all_labels.sort()
         shared_color_map = build_shared_color_map(
             all_labels,
-            color_template=load_color_template(),
+            color_template=load_color_template(color_path),
             category=cfg.color_category,
             entity_class=cfg.color_entity_class,
         )
@@ -859,6 +860,7 @@ def _compute_bar_plan(
     fm_subplot_levels: list[int],
     fm_grouped_bar_levels: list[int],
     axis_bounds,
+    color_path: Path | None = None,
 ) -> PlotPlan | None:
     """Compute a PlotPlan for a bar chart.
 
@@ -1019,7 +1021,7 @@ def _compute_bar_plan(
         all_labels.sort()
         shared_color_map = build_shared_color_map(
             all_labels,
-            color_template=load_color_template(),
+            color_template=load_color_template(color_path),
             category=cfg.color_category,
             entity_class=cfg.color_entity_class,
         )
@@ -1189,6 +1191,7 @@ def compute_plot_plans_for_result(
     period_weights=None,
     manifest_accumulator=None,
     manifest_scenario_name: str | None = None,
+    color_path: Path | None = None,
 ) -> list[tuple[str, str]]:
     """Compute and save PlotPlans for all configs of a result_key.
 
@@ -1347,12 +1350,14 @@ def compute_plot_plans_for_result(
                     fm_stack_levels, fm_expand_axis_levels,
                     fm_subplot_levels, fm_grouped_bar_levels,
                     axis_bounds,
+                    color_path=color_path,
                 )
             elif chart_type == 'time':
                 plan = _compute_time_plan(
                     df_fm, effective_plot_name, cfg,
                     fm_stack_levels, fm_subplot_levels, fm_line_levels,
                     axis_bounds, plot_rows,
+                    color_path=color_path,
                 )
             else:
                 continue
@@ -1389,6 +1394,7 @@ def compute_live_plan(
     plot_name: str,
     break_times: set[str] | None = None,
     period_weights=None,
+    color_path: Path | None = None,
 ) -> PlotPlan | None:
     """Compute a PlotPlan in memory without disk I/O.
 
@@ -1468,11 +1474,13 @@ def compute_live_plan(
             fm_stack_levels, fm_expand_axis_levels,
             fm_subplot_levels, fm_grouped_bar_levels,
             axis_bounds,
+            color_path=color_path,
         )
     elif chart_type == 'time':
         return _compute_time_plan(
             df_fm, effective_plot_name, cfg,
             fm_stack_levels, fm_subplot_levels, fm_line_levels,
             axis_bounds, full_range,
+            color_path=color_path,
         )
     return None
