@@ -1242,7 +1242,10 @@ def compute_plot_plans_for_result(
         if not cfg.map_dimensions_for_plots or len(cfg.map_dimensions_for_plots) < 2:
             continue
 
-        plot_name = cfg.plot_name or result_key
+        # Title: explicit plot_name > settings-group entry name > result key.
+        # Mirrors the live-render path in orchestrator.py so disk plans don't
+        # fall back to the raw parquet file name (result_key) as the title.
+        plot_name = cfg.plot_name or raw_setting.get('_entry_name') or result_key
 
         # Check availability using the FULL data range — a variant is
         # "available" if there's any non-zero data anywhere in the time
