@@ -579,7 +579,7 @@ class ResultViewer(tk.Toplevel):
         self._duration_spin.grid(row=1, column=1, sticky="w")
 
         self._change_colors_btn = ttk.Button(
-            time_frame, text="Change colors", command=self._on_change_colors,
+            time_frame, text="Plot settings", command=self._on_change_colors,
         )
         self._change_colors_btn.grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(4, 0),

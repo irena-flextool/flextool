@@ -29,7 +29,7 @@ class PlotColorsEditor(tk.Toplevel):
 
     def __init__(self, parent: tk.Misc, settings_path: Path) -> None:
         super().__init__(parent)
-        self.title(f"Change colors — {settings_path.name}")
+        self.title(f"Plot settings — {settings_path.name}")
         self._settings_path = Path(settings_path)
         self.saved = False
 
@@ -44,7 +44,7 @@ class PlotColorsEditor(tk.Toplevel):
         # Use the named-font string so live size changes reach tk.Text.
         mono_font = "TkFixedFont"
 
-        self.geometry(f"{cw * 90}x{lh * 40}")
+        self.geometry(f"{cw * 108}x{lh * 40}")
         self.resizable(True, True)
         self.minsize(cw * 60, lh * 20)
 
