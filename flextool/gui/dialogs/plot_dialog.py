@@ -540,7 +540,7 @@ def _resolve_config_path(config_file: str) -> Path:
     p = Path(config_file)
     if p.is_absolute():
         return p
-    if p.name in {"default_plots.yaml", "default_colors.yaml"}:
+    if p.name in {"default_plots.yaml", "default_plot_settings.yaml"}:
         from flextool._resources import package_data_path
         return package_data_path(f"schemas/{p.name}")
     return Path.cwd() / p

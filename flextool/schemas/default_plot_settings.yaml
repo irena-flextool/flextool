@@ -1,27 +1,47 @@
-# Global color template for FlexTool plots.
+# Plot settings for this project.
 #
-# Keys are labels as they appear in plot legends.  Each section is applied
-# only to plots whose entry in templates/default_plots.yaml declares a
-# matching hint:
+# This file is this project's own starting point for how its results are
+# plotted: which colors entities and result categories get, the stacking
+# order, and the sign (positive vs negative side) coloring.  You can edit
+# it freely — it is yours to keep.  Deleting it falls back to a built-in
+# starting point.
 #
-#   color_category: <name>       → looked up in the `category` section
-#                                   (exact match on the label string — these
-#                                   are usually parameter / result names).
-#   color_entity_class: <name>   → looked up in the `entity_class` section
-#                                   (case-insensitive match on the label,
-#                                   since entity names can be mixed-case in
-#                                   data but canonical in the template).
+# How it is read:
 #
-# Values may be either a ``#RRGGBB`` hex string or an ``[r, g, b]`` list.
-# RGB components are accepted as floats in ``0..1`` or ints in ``0..255``.
+#   categories:   result / parameter names produced by the pipeline.
+#                 Looked up by EXACT label match (casing is controlled by
+#                 the pipeline, so it is stable).
 #
-# Labels that don't have an entry here fall back to the tab10/tab20
-# matplotlib palette, which is the original behaviour.
+#   entities:     entity names that come from your data (units,
+#                 connections, nodes, and groups).  Looked up
+#                 CASE-INSENSITIVELY, so "Solar", "solar" and "SOLAR" all
+#                 resolve to the same entry.
 #
-# Sections start empty; real values are filled in subsequent refactor
-# chunks (F = node_flows, G = flowGroup entities).
+#   scenarios:    colors for comparison scenarios.
+#
+# Entry VALUES may be either a ``#RRGGBB`` hex string or an ``[r, g, b]``
+# list.  RGB components are accepted as floats in ``0..1`` or ints in
+# ``0..255``.  An entity entry may instead be a mapping with an optional
+# negative-side color, e.g.::
+#
+#     chp: { color: "#E64A19", neg_color: "#9c3010" }
+#
+# in which case ``neg_color`` colors the entity's negative-side part of a
+# mixed (both-signs) stacked column and ``color`` is used for the positive
+# side.  A bare color uses the same color for both sides.
+#
+# Entry ORDER defines the stacking order: items listed here are placed in
+# file order (positives top→bottom; negatives reversed), and any item not
+# listed falls back to the default ordering and the tab10/tab20 matplotlib
+# palette — so this file is purely additive and there is no penalty for an
+# item that is not listed here.
 
-category:
+scenarios:
+  # Colors for comparison scenarios, keyed by scenario name, e.g.
+  #   S04_battery: "#1f77b4"
+  # (Left empty here — fill in per project.)
+
+categories:
   # Cost components produced by flextool/process_outputs/out_costs.py.
   # Semantic grouping:
   #   - Investment / capex   → saturated blues
@@ -117,25 +137,35 @@ category:
     slack_upward:                '#d62728'   # strong red — upward slack (unmet demand)
     slack_downward:              '#ff7f7f'   # light red — downward slack (spill)
 
-entity_class:
-  # Recommended colors for user-named flowGroup entities.  A flowGroup is a
-  # ``group`` entity whose membership is ``group__unit__node`` or
-  # ``group__connection__node`` (i.e. it aggregates flows, not nodes) and
-  # that carries ``output_flowGroup_indicators = yes``.  The labels below
-  # are a *convention*: if different projects happen to name a flow group
-  # "solar" or "Wind", they get the same color across dashboards.
+entities:
+  # Colors for entities, keyed by entity name (case-insensitive).  The
+  # subsections below correspond to entity classes.  Entry order within a
+  # subsection defines stacking order; an optional ``neg_color`` colors an
+  # entity's negative-side part of a mixed (both-signs) stacked column.
   #
-  # Lookup is case-insensitive (see color_template.resolve_label_color), so
-  # "Solar", "solar", and "SOLAR" all resolve to the same entry.  Labels
-  # that aren't listed fall back to the tab10/tab20 palette, so this list
-  # is purely additive — there's no penalty for a project using a name
-  # that isn't here.
-  #
-  # Palette rationale: semantic colors users already associate with the
-  # technology / fuel (yellow for solar, sky blue for wind, black for
-  # coal, …), paired across related pairs (coal/lignite both dark, two
-  # blues for hydro vs pumped hydro) so stacked plots read naturally.
+  # The ``group`` subsection ships with recommended colors for commonly
+  # used flowGroup names.  The ``unit`` / ``connection`` / ``node``
+  # subsections start empty — per-project entity colors are filled in by
+  # you (or auto-populated from the entities present in your results);
+  # leaving them empty means no change from the palette fallback.
   group:
+    # Recommended colors for user-named flowGroup entities.  A flowGroup is a
+    # ``group`` entity whose membership is ``group__unit__node`` or
+    # ``group__connection__node`` (i.e. it aggregates flows, not nodes) and
+    # that carries ``output_flowGroup_indicators = yes``.  The labels below
+    # are a *convention*: if different projects happen to name a flow group
+    # "solar" or "Wind", they get the same color across dashboards.
+    #
+    # Lookup is case-insensitive (see color_template.resolve_label_color), so
+    # "Solar", "solar", and "SOLAR" all resolve to the same entry.  Labels
+    # that aren't listed fall back to the tab10/tab20 palette, so this list
+    # is purely additive — there's no penalty for a project using a name
+    # that isn't here.
+    #
+    # Palette rationale: semantic colors users already associate with the
+    # technology / fuel (yellow for solar, sky blue for wind, black for
+    # coal, …), paired across related pairs (coal/lignite both dark, two
+    # blues for hydro vs pumped hydro) so stacked plots read naturally.
     # Renewables — bright, warm-to-cool gradient
     solar:          '#F4B400'   # gold / sun
     wind:           '#4FC3F7'   # sky blue
@@ -158,3 +188,19 @@ entity_class:
     import:         '#90CAF9'   # light blue (external supply)
     export:         '#EF9A9A'   # light red (outbound)
     demand_response: '#FFB300'  # amber (flexible load)
+  unit:
+    # Per-project unit colors, keyed by unit name (case-insensitive).
+    # Entry order defines stacking order; an optional ``neg_color`` colors
+    # the unit's negative-side part of a mixed column, e.g.
+    #   chp: { color: "#E64A19", neg_color: "#9c3010" }
+    # (Left empty here — fill in per project.)
+  connection:
+    # Per-project connection colors, keyed by connection name
+    # (case-insensitive).  Entry order defines stacking order; an optional
+    # ``neg_color`` colors the negative side.
+    # (Left empty here — fill in per project.)
+  node:
+    # Per-project node colors, keyed by node name (case-insensitive).
+    # Entry order defines stacking order; an optional ``neg_color`` colors
+    # the negative side.
+    # (Left empty here — fill in per project.)

@@ -2088,13 +2088,13 @@ class ResultViewer(tk.Toplevel):
         currently displayed plot is re-rendered with the new colors — the
         already-loaded parquet/dataframe is reused (no reload).
         """
-        from flextool.gui.dialogs.plot_colors_editor import PlotColorsEditor
+        from flextool.gui.dialogs.plot_settings_editor import PlotSettingsEditor
         from flextool.gui.project_utils import seed_plot_settings
 
         # Edit the project copy; seed from the bundled default if missing.
         project_file = seed_plot_settings(self._project_path)
 
-        editor = PlotColorsEditor(self, project_file)
+        editor = PlotSettingsEditor(self, project_file)
         if not editor.saved:
             return
 

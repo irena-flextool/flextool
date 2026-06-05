@@ -1,21 +1,30 @@
-"""Loader and resolver for the global plot color template.
+"""Loader and resolver for the per-project plot settings (colors).
 
-The color template maps legend labels to explicit RGB colors.  It has
-two sections:
+The settings file maps legend labels to explicit RGB colors.  It has
+these label sections:
 
-* ``category`` — keyed by a category name declared by a plot entry via
+* ``categories`` — keyed by a category name declared by a plot entry via
   ``color_category``.  Label lookup is *exact* (these are parameter or
   result names whose casing is controlled by the pipeline).
-* ``entity_class`` — keyed by an entity-class name declared via
-  ``color_entity_class``.  Label lookup is *case-insensitive* (entity
-  names come from the data and can be mixed-case).
+* ``entities`` — keyed by an entity-class name (``group`` / ``unit`` /
+  ``connection`` / ``node``) declared via ``color_entity_class``.  Label
+  lookup is *case-insensitive* (entity names come from the data and can be
+  mixed-case).  An entity entry may be a bare color or a mapping
+  ``{color: ..., neg_color: ...}`` whose ``neg_color`` colors the
+  entity's negative-side part of a mixed (both-signs) stacked column.
+
+For backward compatibility the resolver also reads the legacy top-level
+keys ``category`` / ``entity_class`` written by older projects' seeded
+``plot_settings.yaml`` (migration window).
 
 Any label not found falls back to the tab10/tab20 palette used by
 :func:`build_shared_color_map`.
 
-The YAML file lives at ``templates/default_colors.yaml`` by default and
-is cached at the module level keyed by ``(path, mtime)`` so repeated
-plot builds within the same process don't re-read it.
+The bundled starting-point file lives at
+``schemas/default_plot_settings.yaml`` and is copied into each project as
+``plot_settings.yaml``.  The loaded result is cached at the module level
+keyed by ``(path, mtime)`` so repeated plot builds within the same process
+don't re-read it.
 """
 
 from __future__ import annotations
@@ -34,14 +43,15 @@ _TEMPLATE_CACHE: dict[tuple[str, int], dict] = {}
 
 def _default_path() -> Path:
     from flextool._resources import package_data_path
-    return package_data_path("schemas/default_colors.yaml")
+    return package_data_path("schemas/default_plot_settings.yaml")
 
 
 def resolve_plot_settings_path(project_path: Path | None) -> Path:
     """Resolve the plot color template path for *project_path*.
 
     Returns ``<project_path>/plot_settings.yaml`` when that file exists,
-    otherwise the bundled default (``schemas/default_colors.yaml``).  This
+    otherwise the bundled starting point
+    (``schemas/default_plot_settings.yaml``).  This
     keeps behavior byte-identical to before for any project that has no
     ``plot_settings.yaml`` while letting a per-project file override the
     template for both PNG export and the result viewer.
@@ -188,23 +198,48 @@ def _split_composite_label(label: str) -> tuple[str, str] | None:
     return None
 
 
+def _resolve_entity_value(raw):
+    """Normalize an entity entry into ``(color_value, neg_color_value)``.
+
+    An entity entry may be either a bare color scalar (``"#RRGGBB"`` or
+    ``[r, g, b]``) or a mapping ``{color: ..., neg_color: ...}``.  Returns
+    the positive-side value and the optional negative-side value (the
+    latter ``None`` when the entry is a scalar or has no ``neg_color``).
+    """
+    if isinstance(raw, dict):
+        return raw.get("color"), raw.get("neg_color")
+    return raw, None
+
+
 def resolve_label_color(
     label: str,
     template: dict,
     category: str | None = None,
     entity_class: str | None = None,
+    negative: bool = False,
 ) -> tuple[float, float, float] | None:
-    """Resolve *label* to a color via the color *template*.
+    """Resolve *label* to a color via the plot-settings *template*.
 
     Lookup precedence:
-    * If *entity_class* is given, check ``template['entity_class'][entity_class]``
-      with a case-insensitive key match.
-    * Else if *category* is given, check ``template['category'][category]``
-      with an exact key match.  For composite-label categories (see
-      ``_COMPOSITE_CATEGORIES``) the label is first split on ``" | "`` or
-      parsed as a 2-tuple repr and looked up as ``<type>_<item>`` then
-      ``<type>`` before falling back to the exact-key lookup.
+    * If *entity_class* is given, check the ``entities`` section
+      (legacy ``entity_class``) under ``[entity_class]`` with a
+      case-insensitive key match.  An entity entry may be a bare color or
+      a mapping ``{color: ..., neg_color: ...}``.  When *negative* is True
+      and the entry has a ``neg_color``, that color is returned; otherwise
+      the positive ``color`` is used.
+    * Else if *category* is given, check the ``categories`` section
+      (legacy ``category``) under ``[category]`` with an exact key match.
+      For composite-label categories (see ``_COMPOSITE_CATEGORIES``) the
+      label is first split on ``" | "`` or parsed as a 2-tuple repr and
+      looked up as ``<type>_<item>`` then ``<type>`` before falling back
+      to the exact-key lookup.  Categories are always scalar; *negative*
+      has no effect.
     * Otherwise return ``None`` and let the caller fall back to the palette.
+
+    Both the new top-level keys (``categories`` / ``entities``) and the
+    legacy keys (``category`` / ``entity_class``) are accepted so that
+    projects whose seeded ``plot_settings.yaml`` still uses the old schema
+    keep working (migration window).
 
     Returns a normalized ``(r, g, b)`` float tuple in ``0..1`` or
     ``None`` if the template has no entry (or the entry is malformed).
@@ -215,7 +250,9 @@ def resolve_label_color(
 
     raw = None
     if entity_class:
-        section = template.get("entity_class")
+        section = template.get("entities")
+        if not isinstance(section, dict):
+            section = template.get("entity_class")
         if isinstance(section, dict):
             class_map = section.get(entity_class)
             if isinstance(class_map, dict):
@@ -224,10 +261,13 @@ def resolve_label_color(
                 label_lc = str(label).lower()
                 for key, val in class_map.items():
                     if str(key).lower() == label_lc:
-                        raw = val
+                        color_val, neg_val = _resolve_entity_value(val)
+                        raw = neg_val if (negative and neg_val is not None) else color_val
                         break
     elif category:
-        section = template.get("category")
+        section = template.get("categories")
+        if not isinstance(section, dict):
+            section = template.get("category")
         if isinstance(section, dict):
             cat_map = section.get(category)
             if isinstance(cat_map, dict):

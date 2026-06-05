@@ -1,9 +1,10 @@
-"""Modal YAML editor for a project's ``plot_settings.yaml`` colors file.
+"""Modal YAML editor for a project's ``plot_settings.yaml`` file.
 
-Lets the user edit the per-project plot color template directly as YAML.
-Validates syntax on save and refuses to persist invalid YAML.  This is a
-plain text editor (a richer color picker is a later stage); it is *not*
-the dispatch plot config editor.
+Lets the user edit this project's plot settings (colors, stacking order,
+and sign coloring) directly as YAML.  Validates syntax on save and
+refuses to persist invalid YAML.  This is a plain text editor (a richer
+color picker is a later stage); it is *not* the dispatch plot config
+editor.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-class PlotColorsEditor(tk.Toplevel):
+class PlotSettingsEditor(tk.Toplevel):
     """Modal text editor for a project's ``plot_settings.yaml``.
 
     Shows an instruction area above the editable text, validates YAML on
@@ -56,13 +57,17 @@ class PlotColorsEditor(tk.Toplevel):
         info_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
 
         info_text = (
-            "Edit the colors used when plotting this project's results.\n"
-            "Entries under 'category' map a result/parameter name to a "
-            "color; entries under 'entity_class' map an entity name to a "
-            "color (case-insensitive).\n"
-            "Colors are '#RRGGBB' hex strings or [r, g, b] lists.\n"
-            "These colors apply to this project only — deleting "
-            "plot_settings.yaml falls back to the bundled defaults."
+            "Edit this project's plot settings: the colors used when "
+            "plotting its results, the stacking order (entry order, top "
+            "to bottom), and an optional 'neg_color' for an entity's "
+            "negative-side part.\n"
+            "Entries under 'categories' map a result/parameter name to a "
+            "color (exact match); entries under 'entities' map an entity "
+            "name to a color (case-insensitive).\n"
+            "Colors are '#RRGGBB' hex strings or [r, g, b] lists; an "
+            "entity may instead be {color: ..., neg_color: ...}.\n"
+            "These settings apply to this project only — deleting "
+            "plot_settings.yaml falls back to a built-in starting point."
         )
         ttk.Label(info_frame, text=info_text, wraplength=cw * 80).pack(
             fill="x",

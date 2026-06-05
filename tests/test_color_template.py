@@ -178,6 +178,122 @@ class TestResolveLabelColor:
         assert c == pytest.approx((1.0, 1.0, 1.0))
 
 
+class TestResolveLabelColorNewSchema:
+    """The new top-level keys ``categories`` / ``entities``, dict entity
+    entries with ``neg_color``, and the ``negative`` flag."""
+
+    def test_new_categories_key_exact(self):
+        tpl = {"categories": {"costs": {"Solar cost": "#102030"}}}
+        c = ct.resolve_label_color("Solar cost", tpl, category="costs")
+        assert c == pytest.approx((0x10 / 255, 0x20 / 255, 0x30 / 255))
+
+    def test_new_entities_key_case_insensitive(self):
+        tpl = {"entities": {"group": {"Solar": "#abcdef"}}}
+        for label in ("Solar", "solar", "SOLAR"):
+            c = ct.resolve_label_color(label, tpl, entity_class="group")
+            assert c == pytest.approx(
+                (0xAB / 255, 0xCD / 255, 0xEF / 255)
+            ), f"failed for {label!r}"
+
+    def test_new_key_preferred_over_legacy(self):
+        """When both the new and legacy keys are present, the new key wins."""
+        tpl = {
+            "categories": {"costs": {"a": "#ffffff"}},
+            "category": {"costs": {"a": "#000000"}},
+        }
+        c = ct.resolve_label_color("a", tpl, category="costs")
+        assert c == pytest.approx((1.0, 1.0, 1.0))
+        tpl_e = {
+            "entities": {"group": {"x": "#ffffff"}},
+            "entity_class": {"group": {"x": "#000000"}},
+        }
+        c_e = ct.resolve_label_color("x", tpl_e, entity_class="group")
+        assert c_e == pytest.approx((1.0, 1.0, 1.0))
+
+    def test_entity_dict_entry_color_only(self):
+        tpl = {"entities": {"unit": {"battery": {"color": "#43A047"}}}}
+        c = ct.resolve_label_color("battery", tpl, entity_class="unit")
+        assert c == pytest.approx((0x43 / 255, 0xA0 / 255, 0x47 / 255))
+        # negative=True with no neg_color → still the positive color.
+        c_neg = ct.resolve_label_color(
+            "battery", tpl, entity_class="unit", negative=True,
+        )
+        assert c_neg == pytest.approx((0x43 / 255, 0xA0 / 255, 0x47 / 255))
+
+    def test_entity_dict_entry_neg_color(self):
+        tpl = {
+            "entities": {
+                "unit": {"chp": {"color": "#E64A19", "neg_color": "#9c3010"}}
+            }
+        }
+        pos = ct.resolve_label_color("chp", tpl, entity_class="unit")
+        neg = ct.resolve_label_color(
+            "chp", tpl, entity_class="unit", negative=True,
+        )
+        assert pos == pytest.approx((0xE6 / 255, 0x4A / 255, 0x19 / 255))
+        assert neg == pytest.approx((0x9C / 255, 0x30 / 255, 0x10 / 255))
+
+    def test_entity_scalar_negative_is_same_color(self):
+        """A bare scalar uses the same color on both sides."""
+        tpl = {"entities": {"unit": {"coal": "#212121"}}}
+        pos = ct.resolve_label_color("coal", tpl, entity_class="unit")
+        neg = ct.resolve_label_color(
+            "coal", tpl, entity_class="unit", negative=True,
+        )
+        assert pos == pytest.approx((0x21 / 255, 0x21 / 255, 0x21 / 255))
+        assert neg == pytest.approx(pos)
+
+    def test_categories_negative_flag_ignored(self):
+        """Categories are scalar; ``negative`` makes no difference."""
+        tpl = {"categories": {"costs": {"co2": "#4d4d4d"}}}
+        pos = ct.resolve_label_color("co2", tpl, category="costs")
+        neg = ct.resolve_label_color(
+            "co2", tpl, category="costs", negative=True,
+        )
+        assert pos == pytest.approx(neg)
+
+
+class TestShippedTemplateNewSchema:
+    """The bundled ``default_plot_settings.yaml`` now uses the new schema
+    (``categories`` / ``entities``) and resolves the same colors as before."""
+
+    def setup_method(self) -> None:
+        ct._clear_cache()
+
+    def test_bundled_uses_new_top_level_keys(self):
+        tpl = ct.load_color_template()
+        assert "categories" in tpl
+        assert "entities" in tpl
+        assert "scenarios" in tpl
+        # Legacy keys are gone from the bundled file.
+        assert "category" not in tpl
+        assert "entity_class" not in tpl
+        # entities subsections present; unit/connection/node start empty.
+        entities = tpl["entities"]
+        assert "group" in entities and isinstance(entities["group"], dict)
+        for sub in ("unit", "connection", "node"):
+            assert sub in entities
+            assert entities[sub] in (None, {}), (
+                f"{sub} subsection should ship empty"
+            )
+
+    def test_bundled_costs_label_color_unchanged(self):
+        tpl = ct.load_color_template()
+        c = ct.resolve_label_color(
+            "commodity_cost", tpl, category="costs",
+        )
+        assert c == pytest.approx(
+            (0xA0 / 255, 0x52 / 255, 0x2D / 255)
+        ), "commodity_cost color drifted after schema rename"
+
+    def test_bundled_group_entity_color_unchanged(self):
+        tpl = ct.load_color_template()
+        c = ct.resolve_label_color("solar", tpl, entity_class="group")
+        assert c == pytest.approx(
+            (0xF4 / 255, 0xB4 / 255, 0x00 / 255)
+        ), "solar group color drifted after schema rename"
+
+
 # ---------------------------------------------------------------------------
 # build_shared_color_map
 # ---------------------------------------------------------------------------
@@ -295,7 +411,7 @@ class TestBuildSharedColorMap:
 
 class TestCostCategoryIntegration:
     """End-to-end: a bar plan computed with ``color_category='costs'`` pulls
-    colors from ``templates/default_colors.yaml`` for known cost labels and
+    colors from ``schemas/default_plot_settings.yaml`` for known cost labels and
     falls back to the palette for unknown labels.
 
     This locks in the wiring between :class:`PlotConfig`,
@@ -421,7 +537,7 @@ class TestCostCategoryIntegration:
 
 class TestNodeFlowsCategoryIntegration:
     """End-to-end: a bar plan computed with ``color_category='node_flows'``
-    pulls colors from ``templates/default_colors.yaml`` for the eight
+    pulls colors from ``schemas/default_plot_settings.yaml`` for the eight
     node-balance categories emitted by
     :func:`flextool.process_outputs.out_node.node_summary` and falls back
     to the palette for labels not in the template.
@@ -539,7 +655,7 @@ class TestNodeFlowsCategoryIntegration:
 
 class TestFlowGroupEntityClassIntegration:
     """End-to-end: a bar plan computed with ``color_entity_class='group'``
-    pulls colors from ``templates/default_colors.yaml`` for well-known
+    pulls colors from ``schemas/default_plot_settings.yaml`` for well-known
     flowGroup technology / fuel names (solar, wind, coal, …) and falls
     back to the palette for project-specific names not in the template.
 
@@ -559,7 +675,7 @@ class TestFlowGroupEntityClassIntegration:
     def test_shipped_template_has_recommended_flowgroup_labels(self):
         """Sanity check on the YAML: the conventional flowGroup names that
         the template ships with must all resolve.  Canary if someone
-        trims / renames entries in ``default_colors.yaml``."""
+        trims / renames entries in ``default_plot_settings.yaml``."""
         tpl = ct.load_color_template()
         # A representative sample across the semantic groups (renewables,
         # conventional, storage, other).

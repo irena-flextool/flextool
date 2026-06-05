@@ -585,7 +585,7 @@ class TestColorTemplateForwardedToBuildFigures:
         # color_template is the loaded dict — may be {} if template file
         # isn't present, but it MUST have been passed through (not None
         # where the caller did not pass it).  With the default repo layout
-        # templates/default_colors.yaml *may* exist; either way the value
+        # schemas/default_plot_settings.yaml *may* exist; either way the value
         # should be a dict (not None) because orchestrator forwards the
         # load_color_template() result.
         assert isinstance(last["color_template"], dict)

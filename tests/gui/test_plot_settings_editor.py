@@ -5,7 +5,7 @@ Covers:
   when absent, never overwrites an existing one, edits only the project
   copy (never the bundled package file), and on save clears the
   color-template cache and re-renders.
-* ``PlotColorsEditor`` validates YAML and refuses to save broken syntax.
+* ``PlotSettingsEditor`` validates YAML and refuses to save broken syntax.
 
 All Tk widgets are constructed under a withdrawn root; run headless via
 ``xvfb-run -a``.
@@ -40,17 +40,17 @@ def tk_root():
 
 def _bundled_default() -> Path:
     from flextool._resources import package_data_path
-    return package_data_path("schemas/default_colors.yaml")
+    return package_data_path("schemas/default_plot_settings.yaml")
 
 
 # ---------------------------------------------------------------------------
-#  PlotColorsEditor — YAML validation
+#  PlotSettingsEditor — YAML validation
 # ---------------------------------------------------------------------------
 
 
-class TestPlotColorsEditorValidation:
+class TestPlotSettingsEditorValidation:
     def test_valid_yaml_saves_and_sets_saved(self, tk_root, tmp_path):
-        from flextool.gui.dialogs.plot_colors_editor import PlotColorsEditor
+        from flextool.gui.dialogs.plot_settings_editor import PlotSettingsEditor
 
         f = tmp_path / "plot_settings.yaml"
         f.write_text("category:\n  costs:\n    a: '#111111'\n", encoding="utf-8")
@@ -63,10 +63,10 @@ class TestPlotColorsEditorValidation:
             ed._text.insert("1.0", "category:\n  costs:\n    a: '#abcdef'\n")
             ed._on_save()
 
-        # PlotColorsEditor blocks on wait_window in __init__, so we must
+        # PlotSettingsEditor blocks on wait_window in __init__, so we must
         # mutate+save from an after() callback. Stash the instance via a
         # subclass that records itself before entering the modal loop.
-        class _Probe(PlotColorsEditor):
+        class _Probe(PlotSettingsEditor):
             def __init__(self, parent, path):
                 captured["editor"] = self
                 parent.after(0, drive)
@@ -77,8 +77,8 @@ class TestPlotColorsEditorValidation:
         assert "#abcdef" in f.read_text(encoding="utf-8")
 
     def test_invalid_yaml_refused(self, tk_root, tmp_path, monkeypatch):
-        from flextool.gui.dialogs import plot_colors_editor
-        from flextool.gui.dialogs.plot_colors_editor import PlotColorsEditor
+        from flextool.gui.dialogs import plot_settings_editor
+        from flextool.gui.dialogs.plot_settings_editor import PlotSettingsEditor
 
         f = tmp_path / "plot_settings.yaml"
         original = "category:\n  costs:\n    a: '#111111'\n"
@@ -87,7 +87,7 @@ class TestPlotColorsEditorValidation:
         # Swallow the error dialog (no live display interaction).
         errors = []
         monkeypatch.setattr(
-            plot_colors_editor.messagebox, "showerror",
+            plot_settings_editor.messagebox, "showerror",
             lambda *a, **k: errors.append((a, k)),
         )
 
@@ -102,7 +102,7 @@ class TestPlotColorsEditorValidation:
             # Save must be refused → still open; close it ourselves.
             ed._on_cancel()
 
-        class _Probe(PlotColorsEditor):
+        class _Probe(PlotSettingsEditor):
             def __init__(self, parent, path):
                 captured["editor"] = self
                 parent.after(0, drive)
@@ -158,7 +158,7 @@ class TestOnChangeColorsSeeding:
                 self.saved = False
 
         monkeypatch.setattr(
-            "flextool.gui.dialogs.plot_colors_editor.PlotColorsEditor",
+            "flextool.gui.dialogs.plot_settings_editor.PlotSettingsEditor",
             _FakeEditor,
         )
 
@@ -188,7 +188,7 @@ class TestOnChangeColorsSeeding:
                 self.saved = False
 
         monkeypatch.setattr(
-            "flextool.gui.dialogs.plot_colors_editor.PlotColorsEditor",
+            "flextool.gui.dialogs.plot_settings_editor.PlotSettingsEditor",
             _FakeEditor,
         )
 
@@ -209,7 +209,7 @@ class TestOnChangeColorsSeeding:
                 self.saved = True
 
         monkeypatch.setattr(
-            "flextool.gui.dialogs.plot_colors_editor.PlotColorsEditor",
+            "flextool.gui.dialogs.plot_settings_editor.PlotSettingsEditor",
             _FakeEditor,
         )
 

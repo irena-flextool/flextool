@@ -39,7 +39,7 @@ def seed_plot_settings(project_path: Path) -> Path:
     plot_settings_path = Path(project_path) / "plot_settings.yaml"
     if not plot_settings_path.exists():
         from flextool._resources import package_data_path
-        bundled = package_data_path("schemas/default_colors.yaml")
+        bundled = package_data_path("schemas/default_plot_settings.yaml")
         shutil.copy2(bundled, plot_settings_path)
     return plot_settings_path
 
