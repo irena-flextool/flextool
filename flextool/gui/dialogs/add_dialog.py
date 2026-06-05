@@ -764,13 +764,22 @@ class AddDialog(tk.Toplevel):
                 dest.unlink(missing_ok=True)
             return
 
-        # Build conversion command
+        # Build the commands. The importer targets a frozen v56 schema and the
+        # migration to the current version runs afterwards as its OWN execution
+        # job (``--no-migrate`` keeps it out of the conversion subprocess), so
+        # the user sees a distinct, visible migration step.
         db_url = f"sqlite:///{dest}"
         cmd = [
             sys.executable, "-m",
             "flextool.cli.cmd_read_old_flextool",
             str(filepath),
             db_url,
+            "--no-migrate",
+        ]
+        migrate_cmd = [
+            sys.executable, "-m",
+            "flextool.cli.cmd_migrate_database",
+            str(dest),
         ]
 
         if self._execution_mgr is not None:
@@ -788,30 +797,82 @@ class AddDialog(tk.Toplevel):
             self._execution_mgr.append_stdout(job.job_id, " ".join(cmd))
             self._execution_mgr.append_stdout(job.job_id, "")
 
-            mgr = self._execution_mgr  # capture for thread
+            main_window = self.master
+            mgr = self._execution_mgr  # capture for threads
+
+            # Make the output visible even if the execution window was closed.
+            main_window._open_or_raise_execution_window()
+            if main_window.execution_window is not None:
+                main_window.execution_window.select_job(job.job_id)
+
+            def _stream(stream_cmd: list[str], stream_job) -> int:
+                """Run a subprocess, piping its output into ``stream_job``.
+
+                Returns the process exit code.
+                """
+                import os as _os
+                env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
+                proc = subprocess.Popen(
+                    stream_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, cwd=str(self._flextool_root), env=env,
+                )
+                with mgr._lock:
+                    stream_job.process = proc
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    mgr.append_stdout(stream_job.job_id, line.rstrip("\n"))
+                proc.wait()
+                return proc.returncode
+
+            def _start_migration_job() -> None:
+                """Create and run migration as its own job (Tk main thread)."""
+                mig_job = mgr.add_auxiliary_job(
+                    JobType.MIGRATION,
+                    f"Migrate database: {dest_name}",
+                    f"old_convert_migrate:{filepath.name}",
+                )
+                mgr.append_stdout(
+                    mig_job.job_id,
+                    f"Migrating '{dest_name}' to the current schema version",
+                )
+                mgr.append_stdout(mig_job.job_id, " ".join(migrate_cmd))
+                mgr.append_stdout(mig_job.job_id, "")
+                main_window._open_or_raise_execution_window()
+                if main_window.execution_window is not None:
+                    main_window.execution_window.select_job(mig_job.job_id)
+
+                def _mig_worker() -> None:
+                    rc = 1
+                    try:
+                        rc = _stream(migrate_cmd, mig_job)
+                        if rc != 0:
+                            mgr.append_stdout(
+                                mig_job.job_id,
+                                f"\nMigration failed (exit code {rc}).",
+                            )
+                            if dest.exists():
+                                dest.unlink(missing_ok=True)
+                    except Exception as exc:
+                        logger.error("Database migration failed: %s", exc, exc_info=True)
+                        mgr.append_stdout(mig_job.job_id, f"\nError: {exc}")
+                        if dest.exists():
+                            dest.unlink(missing_ok=True)
+                    mgr.finish_job(mig_job.job_id, rc == 0)
+                    if rc == 0:
+                        try:
+                            main_window.after(0, main_window._refresh_input_sources)
+                        except Exception:
+                            pass
+
+                threading.Thread(target=_mig_worker, daemon=True).start()
 
             def _worker() -> None:
-                import os as _os
-                success = False
+                rc = 1
                 try:
-                    env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
-                    proc = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, bufsize=1,
-                        cwd=str(self._flextool_root), env=env,
-                    )
-                    with mgr._lock:
-                        job.process = proc
-
-                    for line in proc.stdout:  # type: ignore[union-attr]
-                        mgr.append_stdout(job.job_id, line.rstrip("\n"))
-
-                    proc.wait()
-                    success = proc.returncode == 0
-                    if not success:
+                    rc = _stream(cmd, job)
+                    if rc != 0:
                         mgr.append_stdout(
                             job.job_id,
-                            f"\nConversion failed (exit code {proc.returncode}).",
+                            f"\nConversion failed (exit code {rc}).",
                         )
                         if dest.exists():
                             dest.unlink(missing_ok=True)
@@ -821,14 +882,15 @@ class AddDialog(tk.Toplevel):
                     if dest.exists():
                         dest.unlink(missing_ok=True)
 
-                mgr.finish_job(job.job_id, success)
-                if success:
+                mgr.finish_job(job.job_id, rc == 0)
+                if rc == 0:
+                    # Chain migration as its own job, created on the Tk main
+                    # thread (job/window creation must not run off-thread).
                     try:
-                        main_window.after(0, main_window._refresh_input_sources)
+                        main_window.after(0, _start_migration_job)
                     except Exception:
                         pass
 
-            main_window = self.master
             threading.Thread(target=_worker, daemon=True).start()
 
             self.result = True

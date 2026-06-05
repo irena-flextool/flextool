@@ -36,6 +36,15 @@ def main() -> None:
         action="store_true",
         help="Do not purge existing data before importing",
     )
+    parser.add_argument(
+        "--no-migrate",
+        action="store_true",
+        help=(
+            "Do not migrate the database to the current schema version after "
+            "writing. The GUI uses this so it can run migration as a separate "
+            "execution job; standalone use should leave migration on."
+        ),
+    )
     args = parser.parse_args()
 
     print(f"Importing old FlexTool Excel: {args.xlsm_path}")
@@ -45,6 +54,7 @@ def main() -> None:
         args.target_db_url,
         alternative_name=args.alternative_name,
         purge=not args.no_purge,
+        migrate=not args.no_migrate,
     )
     print("Import complete!")
 

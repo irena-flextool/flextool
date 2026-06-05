@@ -3027,6 +3027,7 @@ def import_old_flextool_xlsm(
     *,
     alternative_name: str = "base",
     purge: bool = True,
+    migrate: bool = True,
 ) -> None:
     """Import an old-format FlexTool ``.xlsm`` into ``target_db_url``.
 
@@ -3041,6 +3042,10 @@ def import_old_flextool_xlsm(
 
     Callers that pre-create the DB (the GUI) get step 1 skipped; standalone
     callers (the CLI) get a fresh DB initialised here.
+
+    Set ``migrate=False`` to skip step 3 — the GUI uses this so it can run the
+    migration as its own, separately-visible execution job (via
+    ``cmd_migrate_database``) rather than burying it in the conversion job.
     """
     # Lazy imports: avoid an import-time cycle with ``update_flextool`` (which
     # imports back into ``process_inputs`` during migration) and keep the
@@ -3067,5 +3072,6 @@ def import_old_flextool_xlsm(
         data, target_db_url, alternative_name=alternative_name, purge=purge,
     )
 
-    logger.info("Migrating %s to the current schema version", target_db_url)
-    migrate_database(target_db_url)
+    if migrate:
+        logger.info("Migrating %s to the current schema version", target_db_url)
+        migrate_database(target_db_url)
