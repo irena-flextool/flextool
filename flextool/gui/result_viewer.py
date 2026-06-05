@@ -2099,15 +2099,41 @@ class ResultViewer(tk.Toplevel):
             return
 
         # Colors changed → the cached template and any colored figures are
-        # stale.  Clear the template cache so the edited file is re-read,
-        # invalidate the cached live plan (forces compute_live_plan, which
-        # reads color_path, to rebuild shared_color_map) and any prefetched
-        # figures, then re-render the current plot from the already-loaded
-        # dataframe.
-        from flextool.plot_outputs.color_template import _clear_cache
+        # stale.  Clear the template cache so the edited file is re-read.
+        from flextool.plot_outputs.color_template import (
+            _clear_cache,
+            resolve_plot_settings_path,
+        )
+        from flextool.plot_outputs.plan import rebuild_plan_color_map
         _clear_cache()
-        self._clear_figure_cache()
-        self._trigger_replot()
+
+        # True in-place recolor/reorder: when a plan is already cached,
+        # rebuild ONLY its shared_color_map (new colors + new file order)
+        # from the edited template via the plan's stored color hints —
+        # no parquet reload, no dimension-rule / layout / processed_df
+        # recompute.  Prefetched figures hold the OLD colors so they must
+        # be dropped (but the live plan is preserved).  When nothing is
+        # rendered yet (no live plan), fall back to the full cache clear so
+        # the next render computes from the freshly read template.
+        if self._live_plan is not None:
+            try:
+                rebuild_plan_color_map(
+                    self._live_plan,
+                    color_path=resolve_plot_settings_path(self._project_path),
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "In-place color rebuild failed; recomputing plan",
+                    exc_info=True,
+                )
+                self._clear_figure_cache()
+                self._trigger_replot()
+                return
+            self._clear_prefetched_figures()
+            self._trigger_replot()
+        else:
+            self._clear_figure_cache()
+            self._trigger_replot()
 
     def _on_time_range_changed(self, *_args) -> None:
         """Handle Start or Duration change.

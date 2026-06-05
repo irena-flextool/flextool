@@ -476,6 +476,69 @@ class TestPlotPlan:
         plan = load_plot_plan(tmp_path, "nonexistent", "default")
         assert plan is None
 
+    def test_color_hints_survive_save_load_roundtrip(self, tmp_path):
+        """Stage 3.4: color_category / color_entity_class round-trip on disk."""
+        from flextool.plot_outputs.plan import (
+            PlotPlan, save_plot_plan, load_plot_plan,
+        )
+
+        plan = PlotPlan(
+            chart_type='stack',
+            plot_name='p',
+            total_file_count=1,
+            processed_df=pd.DataFrame(
+                {'coal': [1.0, 2.0]},
+                index=pd.Index([0, 1], name='time'),
+            ),
+            effective_plot_specs=[(None, ['coal'])],
+            file_batches=[[0]],
+            shared_color_map={'coal': (1.0, 0.0, 0.0)},
+            color_category='node_flows',
+            color_entity_class='unit',
+        )
+        plan_dir = tmp_path / "plans"
+        save_plot_plan(plan, plan_dir, "rk", "default")
+
+        loaded = load_plot_plan(plan_dir, "rk", "default")
+        assert loaded is not None
+        assert loaded.color_category == 'node_flows'
+        assert loaded.color_entity_class == 'unit'
+
+    def test_old_plan_without_color_hints_loads_with_none(self, tmp_path):
+        """Backward compat: a plan JSON predating the color hints loads with
+        ``color_category`` / ``color_entity_class`` defaulting to None (no
+        crash)."""
+        import json
+        from flextool.plot_outputs.plan import (
+            PlotPlan, save_plot_plan, load_plot_plan,
+        )
+
+        plan = PlotPlan(
+            chart_type='lines',
+            plot_name='p',
+            total_file_count=1,
+            processed_df=pd.DataFrame(
+                {'a': [1.0, 2.0]},
+                index=pd.Index([0, 1], name='time'),
+            ),
+            effective_plot_specs=[(None, ['a'])],
+            file_batches=[[0]],
+        )
+        plan_dir = tmp_path / "plans"
+        save_plot_plan(plan, plan_dir, "rk", "default")
+
+        # Strip the new keys to emulate an older on-disk plan file.
+        json_path = plan_dir / "rk__default_plan.json"
+        meta = json.loads(json_path.read_text(encoding="utf-8"))
+        meta.pop("color_category", None)
+        meta.pop("color_entity_class", None)
+        json_path.write_text(json.dumps(meta), encoding="utf-8")
+
+        loaded = load_plot_plan(plan_dir, "rk", "default")
+        assert loaded is not None
+        assert loaded.color_category is None
+        assert loaded.color_entity_class is None
+
     def test_max_items_per_subplot_column(self, tmp_path):
         """Bar plan respects max_items_per_subplot_column."""
         from flextool.plot_outputs.plan import (
@@ -997,3 +1060,93 @@ class TestXLimPinnedToDuration:
         assert abs(hi - 99.5) < 1e-6, f"xlim hi={hi} not pinned to duration"
         import matplotlib.pyplot as plt
         plt.close(fig)
+
+
+class TestRebuildPlanColorMapParity:
+    """Stage 3.4: in-place ``rebuild_plan_color_map`` must match a full
+    ``compute_live_plan`` recompute for a color/order-only template edit.
+
+    The viewer's "Colors, order..." save path rebuilds only a cached
+    plan's ``shared_color_map`` (new colors + new file order) from the
+    edited template using the plan's stored ``color_category`` /
+    ``color_entity_class`` hints — without recomputing dimension rules,
+    layout, or the processed DataFrame.  This proves that shortcut yields
+    the SAME color map (keys order + values) as the slow path.
+    """
+
+    def _write_template(self, path, mapping):
+        import yaml
+        path.write_text(
+            yaml.safe_dump({"entities": {"node": mapping}}, sort_keys=False),
+            encoding="utf-8",
+        )
+
+    def test_inplace_matches_full_recompute_stack(self, tmp_path):
+        from flextool.plot_outputs import color_template as ct
+        from flextool.plot_outputs.plan import (
+            compute_live_plan, rebuild_plan_color_map,
+        )
+
+        df = _make_time_df(n_rows=24, n_cols=4)  # node_0..node_3
+        cfg = PlotConfig(
+            plot_name="recolor-parity",
+            map_dimensions_for_plots=["t_e", "t_s"],  # stack on node level
+            legend="shared",
+            color_entity_class="node",
+        )
+
+        # Initial template: a couple of nodes pinned, in some order.
+        tmpl = tmp_path / "plot_settings.yaml"
+        self._write_template(tmpl, {
+            "node_0": "#ff0000",
+            "node_2": "#0000ff",
+        })
+        ct._clear_cache()
+        plan = compute_live_plan(df, cfg, "recolor-parity", color_path=tmpl)
+        assert plan is not None
+        assert plan.shared_color_map
+        assert plan.color_entity_class == "node"
+
+        # Edit the template: CHANGE a color AND CHANGE the order (node_2
+        # listed first now, node_1 newly pinned, node_0 recolored).
+        self._write_template(tmpl, {
+            "node_2": "#00ff00",   # was blue → green, and now first
+            "node_1": "#abcdef",   # newly listed
+            "node_0": "#101010",   # recolored
+        })
+        ct._clear_cache()
+
+        # In-place rebuild on the already-cached plan.
+        new_map = rebuild_plan_color_map(plan, color_path=tmpl)
+        assert new_map is plan.shared_color_map
+
+        # Full recompute from scratch with the edited template.
+        ct._clear_cache()
+        fresh = compute_live_plan(df, cfg, "recolor-parity", color_path=tmpl)
+        assert fresh is not None
+
+        # Key ORDER and VALUES must be identical.
+        assert list(plan.shared_color_map.keys()) == list(
+            fresh.shared_color_map.keys()
+        )
+        assert plan.shared_color_map == fresh.shared_color_map
+        # Sanity: the edit actually took effect (node_2 → green, first key).
+        assert list(plan.shared_color_map.keys())[0] == "node_2"
+        assert plan.shared_color_map["node_2"] == (0.0, 1.0, 0.0)
+
+    def test_rebuild_returns_none_without_color_map(self, tmp_path):
+        """A plan with no ``shared_color_map`` (non-shared legend) is left
+        untouched and the helper returns None for a graceful fallback."""
+        from flextool.plot_outputs.plan import PlotPlan, rebuild_plan_color_map
+
+        plan = PlotPlan(
+            chart_type='lines',
+            plot_name='p',
+            total_file_count=1,
+            processed_df=pd.DataFrame({'a': [1.0]}),
+            effective_plot_specs=[(None, ['a'])],
+            file_batches=[[0]],
+            shared_color_map=None,
+        )
+        assert rebuild_plan_color_map(plan, color_path=None) is None
+        assert plan.shared_color_map is None

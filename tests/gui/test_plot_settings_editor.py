@@ -120,18 +120,23 @@ class TestPlotSettingsEditorValidation:
 # ---------------------------------------------------------------------------
 
 
-def _make_stub_viewer(project_path: Path):
+def _make_stub_viewer(project_path: Path, live_plan=None):
     """A minimal stand-in carrying just what ``_on_change_colors`` touches.
 
     Avoids constructing the full (heavy) ResultViewer while exercising the
-    real unbound method.
+    real unbound method.  When *live_plan* is provided the in-place
+    recolor branch is exercised; otherwise the full-clear fallback runs.
     """
     from flextool.gui.result_viewer import ResultViewer
 
     stub = types.SimpleNamespace()
     stub._project_path = project_path
+    stub._live_plan = live_plan
     stub.calls = []
     stub._clear_figure_cache = lambda: stub.calls.append("clear_figure_cache")
+    stub._clear_prefetched_figures = lambda: stub.calls.append(
+        "clear_prefetched_figures"
+    )
     stub._trigger_replot = lambda: stub.calls.append("trigger_replot")
     # Bind the real (unbound) method to the stub.
     stub._on_change_colors = types.MethodType(
@@ -198,7 +203,9 @@ class TestOnChangeColorsSeeding:
         # User content preserved (not clobbered by the bundled default).
         assert existing.read_text(encoding="utf-8") == custom
 
-    def test_save_clears_cache_and_rerenders(self, tk_root, tmp_path, monkeypatch):
+    def test_save_clears_cache_and_rerenders_when_no_live_plan(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
         from flextool.plot_outputs import color_template
 
         project = tmp_path / "proj"
@@ -219,9 +226,65 @@ class TestOnChangeColorsSeeding:
             lambda: cleared.append(True),
         )
 
-        stub = _make_stub_viewer(project)
+        # No live plan cached → full clear + recompute fallback.
+        stub = _make_stub_viewer(project, live_plan=None)
         stub._on_change_colors()
 
         # On save: template cache cleared, figures invalidated, replot fired.
         assert cleared == [True]
         assert stub.calls == ["clear_figure_cache", "trigger_replot"]
+
+    def test_save_rebuilds_color_map_in_place(self, tk_root, tmp_path, monkeypatch):
+        """Saving the editor with a cached live plan recolors IN PLACE.
+
+        The plan object identity is preserved (no recompute) while its
+        ``shared_color_map`` is rebuilt from the edited template; only the
+        prefetched figures (which hold old colors) are dropped — NOT the
+        live plan.
+        """
+        from flextool.plot_outputs import color_template
+        from flextool.plot_outputs.plan import PlotPlan
+        import pandas as pd
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        # A project plot_settings.yaml that colors a unit entity red.
+        (project / "plot_settings.yaml").write_text(
+            "entities:\n  unit:\n    coal: '#ff0000'\n", encoding="utf-8",
+        )
+
+        class _FakeEditor:
+            def __init__(self, parent, path):
+                # Simulate the user editing the file to green before saving.
+                Path(path).write_text(
+                    "entities:\n  unit:\n    coal: '#00ff00'\n",
+                    encoding="utf-8",
+                )
+                self.saved = True
+
+        monkeypatch.setattr(
+            "flextool.gui.dialogs.plot_settings_editor.PlotSettingsEditor",
+            _FakeEditor,
+        )
+        # Don't let any earlier-cached template shadow the edit.
+        color_template._clear_cache()
+
+        plan = PlotPlan(
+            chart_type='stack',
+            plot_name='p',
+            total_file_count=1,
+            processed_df=pd.DataFrame({'coal': [1.0]}),
+            effective_plot_specs=[(None, ['coal'])],
+            file_batches=[[0]],
+            shared_color_map={'coal': (1.0, 0.0, 0.0)},  # old red
+            color_entity_class='unit',
+        )
+
+        stub = _make_stub_viewer(project, live_plan=plan)
+        stub._on_change_colors()
+
+        # Plan identity preserved (no recompute) and recolored to green.
+        assert stub._live_plan is plan
+        assert plan.shared_color_map == {'coal': (0.0, 1.0, 0.0)}
+        # In-place path: prefetched figures dropped, NOT the whole cache.
+        assert stub.calls == ["clear_prefetched_figures", "trigger_replot"]

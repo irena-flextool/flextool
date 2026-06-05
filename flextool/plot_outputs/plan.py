@@ -129,6 +129,15 @@ class PlotPlan:
     shared_color_map: dict[str, tuple] | None = None
     axis_bounds: list | None = None
 
+    # Color-template hints carried so the viewer can rebuild ONLY the
+    # shared_color_map (colors + file order) in place when the user edits
+    # the project's plot_settings.yaml — without recomputing dimension
+    # rules, layout, or the processed DataFrame. Mirror cfg.color_category /
+    # cfg.color_entity_class. Both None for plots that don't color by
+    # template (or non-shared legends).
+    color_category: str | None = None
+    color_entity_class: str | None = None
+
     # Layout (stored as plain dict for JSON serialization)
     layout_type: str = ''  # 'line' or 'bar'
     layout_params: dict = field(default_factory=dict)
@@ -201,6 +210,8 @@ def save_plot_plan(
             {k: list(v) for k, v in plan.shared_color_map.items()}
             if plan.shared_color_map else None
         ),
+        'color_category': plan.color_category,
+        'color_entity_class': plan.color_entity_class,
         'axis_bounds': _json_safe(plan.axis_bounds),
         'layout_type': plan.layout_type,
         'layout_params': _json_safe(plan.layout_params),
@@ -313,6 +324,8 @@ def load_plot_plan(
             effective_plot_specs=effective_plot_specs,
             file_batches=meta['file_batches'],
             shared_color_map=color_map,
+            color_category=meta.get('color_category'),
+            color_entity_class=meta.get('color_entity_class'),
             axis_bounds=meta.get('axis_bounds'),
             layout_type=meta.get('layout_type', ''),
             layout_params=meta.get('layout_params', {}),
@@ -843,6 +856,8 @@ def _compute_time_plan(
         effective_plot_specs=effective_plot_specs,
         file_batches=file_batches,
         shared_color_map=shared_color_map,
+        color_category=cfg.color_category,
+        color_entity_class=cfg.color_entity_class,
         axis_bounds=axis_bounds,
         layout_type='line',
         layout_params=layout_params,
@@ -1172,6 +1187,8 @@ def _compute_bar_plan(
         effective_plot_specs=effective_plot_specs,
         file_batches=file_batches,
         shared_color_map=shared_color_map,
+        color_category=cfg.color_category,
+        color_entity_class=cfg.color_entity_class,
         axis_bounds=axis_bounds,
         layout_type='bar',
         layout_params=layout_params,
@@ -1504,3 +1521,56 @@ def compute_live_plan(
             color_path=color_path,
         )
     return None
+
+
+def rebuild_plan_color_map(
+    plan: PlotPlan,
+    color_path: Path | None = None,
+) -> dict[str, tuple] | None:
+    """Recompute *plan*'s ``shared_color_map`` from the current template.
+
+    This is the in-place recolor/reorder path used by the result viewer
+    when the user edits the project's ``plot_settings.yaml``.  It rebuilds
+    ONLY the color map (new colors AND new file order) from the freshly
+    loaded template, reusing the plan's stored ``color_category`` /
+    ``color_entity_class`` hints and its existing color-map label keys —
+    without touching dimension rules, layout, or the processed DataFrame.
+
+    The label set is taken from the plan's current ``shared_color_map``
+    keys: ``build_shared_color_map`` returns exactly one entry per input
+    label, so those keys are precisely the label set the compute path
+    produced.  Running them back through ``order_labels_by_template`` +
+    ``build_shared_color_map`` with the same ``category`` / ``entity_class``
+    arguments yields a result identical to a full ``compute_live_plan``
+    recompute for a color/order-only template change.
+
+    Returns the new ordered ``shared_color_map`` (and assigns it to
+    ``plan.shared_color_map``).  Returns ``None`` and leaves the plan
+    unchanged when the plan has no ``shared_color_map`` to rebuild (e.g. a
+    non-shared legend) — the caller falls back gracefully.
+    """
+    from flextool.plot_outputs.color_template import (
+        load_color_template,
+        order_labels_by_template,
+    )
+    from flextool.plot_outputs.legend_helpers import build_shared_color_map
+
+    if not plan.shared_color_map:
+        return None
+
+    labels = list(plan.shared_color_map.keys())
+    template = load_color_template(color_path)
+    ordered = order_labels_by_template(
+        labels,
+        template,
+        category=plan.color_category,
+        entity_class=plan.color_entity_class,
+    )
+    new_map = build_shared_color_map(
+        ordered,
+        color_template=template,
+        category=plan.color_category,
+        entity_class=plan.color_entity_class,
+    )
+    plan.shared_color_map = new_map
+    return new_map
