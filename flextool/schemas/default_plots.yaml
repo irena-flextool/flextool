@@ -598,41 +598,42 @@ plots:
         variant: h
         legend: all
         map_dimensions_for_plots: [dt_ee, tt_su]
-        max_items_per_plot: 30
+        max_items_per_plot: 12
         max_subplots_per_file: 6
         base_length: 5
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
-        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
+          legend: shared
+          ylabel: MWh
       chunks:
         plot_name: 'Flows: unit to node weekly avg'
         variant: w
         legend: all
-        map_dimensions_for_plots: [dt_ee, ui_su]
+        map_dimensions_for_plots: [dt_ee, ti_su]
         time_average_duration: 168
         max_items_per_plot: 30
         max_subplots_per_file: 6
         base_length: 5
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_see, ti_luu]
           plot_name: 'Flows unit to node weekly avg'
           legend: shared
-          max_items_per_plot: 10
-          subplots_per_row: 2
           ylabel: MWh
-      unit_time_plots:
+      time_plots:
         variant: l
-        map_dimensions_for_plots: [dt_ee, tt_uu]
-        legend: shared
+        map_dimensions_for_plots: [dt_ee, tt_lu]
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
-        ylabel: MWh
-        scenario_rule: l
+        ylabel: MWh/h
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
+          legend: shared
   'Flows: node to unit':
     group: 2
     order: 1
@@ -647,7 +648,6 @@ plots:
         scenario_rule: g
         skip_data_with_only_zeroes: true
         comparison_overrides:
-          legend: shared
           max_subplots_per_file: 8
       sum_periods:
         plot_name: 'Flows: node to unit total'
@@ -659,11 +659,9 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_see, y_gbu]
           max_subplots_per_file: 8
-          legend: shared
           skip_data_with_only_zeroes: true
     unit_inputNode_dt_ee:
       default:
@@ -675,35 +673,38 @@ plots:
         base_length: 5
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
-        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
+          legend: shared
+          max_items_per_plot: 10
+          subplots_per_row: 2
+          ylabel: MWh
       chunks:
         plot_name: 'Flows node to unit weekly avg'
         variant: w
         legend: all
-        map_dimensions_for_plots: [dt_ee, ui_su]
+        map_dimensions_for_plots: [dt_ee, ti_su]
         max_items_per_plot: 30
         time_average_duration: 168
         max_subplots_per_file: 6
         base_length: 5
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_see, ti_luu]
+          plot_name: 'Flows node to unit weekly avg'
           legend: shared
-          max_items_per_plot: 10
-          subplots_per_row: 2
-          ylabel: MWh
-      unit_time_plots:
+      time_plots:
         variant: l
-        map_dimensions_for_plots: [dt_ee, tt_uu]
-        legend: shared
+        map_dimensions_for_plots: [dt_ee, tt_lu]
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
-        ylabel: MWh
-        scenario_rule: l
+        ylabel: MWh/h
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
+          legend: shared
   'Flows connection':
     group: 2
     order: 2
@@ -740,18 +741,20 @@ plots:
     connection_dt_eee:
       default:
         variant: h
-        map_dimensions_for_plots: [dt_e, tt_l]
+        map_dimensions_for_plots: [dt_e, tt_s]
         max_items_per_plot: 10
         max_subplots_per_file: 6
         base_length: 5
         legend: all
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
-        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_se, tt_lu]
+          legend: shared
       chunks:
         plot_name: 'Flows connection weekly avg'
         variant: w
-        map_dimensions_for_plots: [dt_e, ti_l]
+        map_dimensions_for_plots: [dt_e, ti_s]
         time_average_duration: 168
         max_items_per_plot: 10
         max_subplots_per_file: 6
@@ -759,12 +762,21 @@ plots:
         legend: all
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_se, ti_lu]
           legend: shared
-          subplots_per_row: 2
-          ylabel: MWh
+      time_plots:
+        variant: l
+        map_dimensions_for_plots: [dt_ee, tt_l]
+        max_items_per_plot: 10
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        skip_data_with_only_zeroes: true
+        ylabel: MWh/h
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_lu]
+          legend: shared
+
   'Connection leftward':
     group: 2
     order: 3
@@ -791,18 +803,20 @@ plots:
     connection_leftward_dt_eee:
       debug:
         variant: h
-        map_dimensions_for_plots: [dt_ee, tt_lu]
+        map_dimensions_for_plots: [dt_ee, tt_su]
         max_items_per_plot: 10
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
         base_length: 5
         legend: all
         ylabel: MWh/h
-        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
+          legend: shared
       chunks:
         plot_name: 'Connection leftward weekly avg'
         variant: w
-        map_dimensions_for_plots: [dt_ee, ti_lu]
+        map_dimensions_for_plots: [dt_ee, ti_su]
         time_average_duration: 168
         max_items_per_plot: 10
         max_subplots_per_file: 6
@@ -810,7 +824,21 @@ plots:
         base_length: 5
         legend: all
         ylabel: MWh/h
-        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, ti_luu]
+          legend: shared
+      time_plots:
+        variant: l
+        map_dimensions_for_plots: [dt_ee, tt_lu]
+        max_items_per_plot: 10
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        skip_data_with_only_zeroes: true
+        ylabel: MWh/h
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
+          legend: shared
+
   'Connection rightward':
     group: 2
     order: 4
@@ -844,7 +872,9 @@ plots:
         skip_data_with_only_zeroes: true
         legend: all
         ylabel: MWh/h
-        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
+          legend: shared
       chunks:
         plot_name: 'Connection rightward weekly avg'
         variant: w
@@ -856,7 +886,20 @@ plots:
         skip_data_with_only_zeroes: true
         legend: all
         ylabel: MWh/h
-        scenario_rule: l
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, ti_luu]
+          legend: shared
+      time_plots:
+        variant: l
+        map_dimensions_for_plots: [dt_ee, tt_lu]
+        max_items_per_plot: 10
+        subplots_per_row: 2
+        max_subplots_per_file: 6
+        skip_data_with_only_zeroes: true
+        ylabel: MWh/h
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_see, tt_luu]
+          legend: shared
 
   # Costs
   'Costs':
