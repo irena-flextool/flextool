@@ -679,10 +679,18 @@ def _build_stack_figure(
         # Reset index to use time only (drop period)
         df_to_plot.index = time_index
 
-        # Sort columns alphabetically when using shared colors so visual matches legend
+        # Order columns by the shared color map's key order (file order from
+        # plot_settings.yaml; unlisted labels were appended alphabetically by
+        # the plan).  Any column missing from the map (defensive) keeps its
+        # current relative position after the mapped ones.
         if shared_color_map:
-            sorted_cols = sorted(df_to_plot.columns, key=str)
-            df_to_plot = df_to_plot[sorted_cols]
+            key_pos = {k: i for i, k in enumerate(shared_color_map.keys())}
+            cur = list(df_to_plot.columns)
+            ordered_cols = sorted(
+                cur,
+                key=lambda c: (key_pos.get(str(c), len(key_pos)), cur.index(c)),
+            )
+            df_to_plot = df_to_plot[ordered_cols]
 
         # Split columns with both positive and negative values (preserving order)
         new_cols: dict[str, pd.Series] = {}
@@ -694,6 +702,14 @@ def _build_stack_figure(
                 new_cols[f'{col_name}_neg'] = df_to_plot[col_name].clip(upper=0)
             else:
                 new_cols[col_name] = df_to_plot[col_name]
+        # matplotlib's stacked area places column 0 at the bottom (nearest
+        # zero) and stacks upward; negatives stack downward from zero with the
+        # earliest-fed column nearest zero.  Feeding the columns in REVERSED
+        # file order therefore puts the first file-listed label at the TOP of
+        # the positive stack (file order top->bottom) and, automatically, at
+        # the BOTTOM of the negative stack (reversed) — the agreed sign model.
+        if shared_color_map:
+            new_cols = dict(reversed(list(new_cols.items())))
         df_to_plot = pd.DataFrame(new_cols, index=df_to_plot.index)
 
         # Create stacked area plot
@@ -770,15 +786,18 @@ def _build_stack_figure(
             ax.set_xlim(-0.5, expected_x_length - 0.5)
 
     # ── Shared legend (one per file, anchored to top-right subplot) ──
-    # Reversed so top-of-stack = top-of-legend
+    # shared_color_map keys are in plot_settings file order; the positive
+    # stack is rendered file-order top->bottom (see the reversed feed above),
+    # so the legend lists keys in plain file order to match top-of-legend =
+    # top-of-stack.
     if legend_position == 'shared' and shared_color_map:
         from matplotlib.patches import Patch
         legend_ax_idx = min(n_cols - 1, n_subs - 1)
         ax_legend = axes[legend_ax_idx]
         keys = list(shared_color_map.keys())
         colors_list = list(shared_color_map.values())
-        handles = [Patch(facecolor=c) for c in reversed(colors_list)]
-        labels_all = list(reversed(keys))
+        handles = [Patch(facecolor=c) for c in colors_list]
+        labels_all = list(keys)
         legend_x = 1 + LEGEND_GAP / layout.base_width
         ax_legend.legend(handles, labels_all, bbox_to_anchor=(legend_x, 1),
                          loc='upper left', fontsize='small', borderaxespad=0)

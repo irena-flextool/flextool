@@ -669,7 +669,10 @@ def _compute_time_plan(
         _get_column_items,
     )
     from flextool.plot_outputs.legend_helpers import build_shared_color_map
-    from flextool.plot_outputs.color_template import load_color_template
+    from flextool.plot_outputs.color_template import (
+        load_color_template,
+        order_labels_by_template,
+    )
     from flextool.plot_outputs.subplot_helpers import _extract_subplot_data
 
     # Determine chart sub-type
@@ -748,10 +751,17 @@ def _compute_time_plan(
                 label = str(item)
                 if label not in all_labels:
                     all_labels.append(label)
-        all_labels.sort()
+        template = load_color_template(color_path)
+        # Listed labels first in file order; unlisted appended alphabetically.
+        all_labels = order_labels_by_template(
+            all_labels,
+            template,
+            category=cfg.color_category,
+            entity_class=cfg.color_entity_class,
+        )
         shared_color_map = build_shared_color_map(
             all_labels,
-            color_template=load_color_template(color_path),
+            color_template=template,
             category=cfg.color_category,
             entity_class=cfg.color_entity_class,
         )
@@ -872,7 +882,10 @@ def _compute_bar_plan(
         _get_unique_levels, _extract_subplot_data, _sort_subs,
     )
     from flextool.plot_outputs.legend_helpers import build_shared_color_map, _format_legend_labels
-    from flextool.plot_outputs.color_template import load_color_template
+    from flextool.plot_outputs.color_template import (
+        load_color_template,
+        order_labels_by_template,
+    )
 
     sub_levels = fm_subplot_levels or []
     stack_levels = fm_stack_levels or []
@@ -1018,10 +1031,17 @@ def _compute_bar_plan(
                 label = _format_legend_labels([item])[0]
                 if label not in all_labels:
                     all_labels.append(label)
-        all_labels.sort()
+        template = load_color_template(color_path)
+        # Listed labels first in file order; unlisted appended alphabetically.
+        all_labels = order_labels_by_template(
+            all_labels,
+            template,
+            category=cfg.color_category,
+            entity_class=cfg.color_entity_class,
+        )
         shared_color_map = build_shared_color_map(
             all_labels,
-            color_template=load_color_template(color_path),
+            color_template=template,
             category=cfg.color_category,
             entity_class=cfg.color_entity_class,
         )

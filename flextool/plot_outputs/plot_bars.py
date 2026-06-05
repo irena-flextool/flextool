@@ -8,6 +8,7 @@ from flextool.plot_outputs.legend_helpers import (
     _format_legend_labels, _should_show_legend,
     build_shared_color_map,
 )
+from flextool.plot_outputs.color_template import order_labels_by_template
 from flextool.plot_outputs.axis_helpers import (
     _subplot_axis_bounds, _apply_subplot_label, _estimate_value_nbins,
     _ylabel_axes_x,
@@ -1291,7 +1292,13 @@ def build_bar_figures(
                 label = _format_legend_labels([item])[0]
                 if label not in all_labels:
                     all_labels.append(label)
-        all_labels.sort()
+        # Listed labels first in file order; unlisted appended alphabetically.
+        all_labels = order_labels_by_template(
+            all_labels,
+            color_template or {},
+            category=category,
+            entity_class=entity_class,
+        )
         shared_color_map = build_shared_color_map(
             all_labels,
             color_template=color_template,

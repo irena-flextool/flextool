@@ -302,6 +302,135 @@ def resolve_label_color(
     return color
 
 
+def template_label_order(
+    template: dict,
+    category: str | None = None,
+    entity_class: str | None = None,
+) -> list[str]:
+    """Return the label keys of a template section in **file order**.
+
+    This is the single source of file-defined stacking/legend order.  Given
+    a loaded *template* and an optional *category* or *entity_class*, it
+    returns the keys of ``categories[category]`` (exact) or
+    ``entities[entity_class]`` (case-insensitive, but the file's canonical
+    key spelling is returned) in YAML insertion order — which is dict
+    insertion order, preserved by the loader.
+
+    Both the new top-level keys (``categories`` / ``entities``) and the
+    legacy keys (``category`` / ``entity_class``) are honored (migration
+    window), matching :func:`resolve_label_color`.
+
+    Returns an empty list when the template has no matching section.  When
+    both *category* and *entity_class* are given, *entity_class* wins
+    (matching the lookup precedence in :func:`resolve_label_color`).
+    """
+    if not isinstance(template, dict):
+        return []
+
+    if entity_class:
+        section = template.get("entities")
+        if not isinstance(section, dict):
+            section = template.get("entity_class")
+        if isinstance(section, dict):
+            class_map = section.get(entity_class)
+            if isinstance(class_map, dict):
+                return [str(k) for k in class_map.keys()]
+        return []
+
+    if category:
+        section = template.get("categories")
+        if not isinstance(section, dict):
+            section = template.get("category")
+        if isinstance(section, dict):
+            cat_map = section.get(category)
+            if isinstance(cat_map, dict):
+                return [str(k) for k in cat_map.keys()]
+    return []
+
+
+def order_labels_by_template(
+    labels: list[str],
+    template: dict,
+    category: str | None = None,
+    entity_class: str | None = None,
+) -> list[str]:
+    """Order *labels* by template file order, appending unlisted tail sorted.
+
+    Labels present in the template section (per
+    :func:`template_label_order`) come first in **file order**; labels not
+    in the section are appended **sorted alphabetically** (the historical
+    fallback for the tail).
+
+    Matching mirrors :func:`resolve_label_color`:
+
+    * ``entity_class`` lookups are **case-insensitive**.
+    * ``category`` lookups are **exact**, except composite categories (see
+      ``_COMPOSITE_CATEGORIES``) whose labels are matched on
+      ``<type>_<item>`` then ``<type>`` after splitting.
+
+    The returned list is a permutation of *labels* (no labels are dropped
+    or duplicated even if a file key has no matching label).
+    """
+    file_order = template_label_order(template, category=category, entity_class=entity_class)
+    if not file_order:
+        return sorted(labels, key=str)
+
+    remaining = list(labels)
+    ordered: list[str] = []
+
+    if entity_class:
+        # Case-insensitive: bucket remaining labels by lowercase.
+        by_lc: dict[str, list[str]] = {}
+        for lbl in remaining:
+            by_lc.setdefault(str(lbl).lower(), []).append(lbl)
+        consumed: set[int] = set()
+        for key in file_order:
+            bucket = by_lc.get(str(key).lower())
+            if not bucket:
+                continue
+            for lbl in bucket:
+                lid = id(lbl)
+                if lid in consumed:
+                    continue
+                consumed.add(lid)
+                ordered.append(lbl)
+        tail = [lbl for lbl in remaining if id(lbl) not in consumed]
+        return ordered + sorted(tail, key=str)
+
+    # Category path (exact + composite split).
+    composite = bool(category) and category in _COMPOSITE_CATEGORIES
+
+    def _match_key(label) -> str | None:
+        """Return the file_order key this label matches, or None."""
+        if composite:
+            parts = _split_composite_label(label)
+            if parts is not None:
+                type_key, item_key = parts
+                joined = f"{type_key}_{item_key}"
+                if joined in file_order_set:
+                    return joined
+                if type_key in file_order_set:
+                    return type_key
+        if label in file_order_set:
+            return label
+        return None
+
+    file_order_set = set(file_order)
+    # Group labels by the file key they match (in file order).
+    matched: dict[str, list[str]] = {}
+    consumed_idx: set[int] = set()
+    for i, lbl in enumerate(remaining):
+        key = _match_key(lbl)
+        if key is not None:
+            matched.setdefault(key, []).append(lbl)
+            consumed_idx.add(i)
+    for key in file_order:
+        for lbl in matched.get(key, []):
+            ordered.append(lbl)
+    tail = [lbl for i, lbl in enumerate(remaining) if i not in consumed_idx]
+    return ordered + sorted(tail, key=str)
+
+
 def _clear_cache() -> None:
     """Clear the module-level cache (test hook)."""
     _TEMPLATE_CACHE.clear()
@@ -311,5 +440,7 @@ __all__ = [
     "load_color_template",
     "resolve_plot_settings_path",
     "resolve_label_color",
+    "template_label_order",
+    "order_labels_by_template",
     "_clear_cache",
 ]

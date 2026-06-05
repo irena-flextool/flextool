@@ -1089,3 +1089,98 @@ class TestNodeGroupFlowsPlanIntegration:
         assert plan.shared_color_map[mystery_key] == tab10[0], (
             "Unknown-type composite label did not fall back to tab10[0]"
         )
+
+
+# ---------------------------------------------------------------------------
+# template_label_order / order_labels_by_template  (file-order stacking)
+# ---------------------------------------------------------------------------
+
+
+class TestTemplateLabelOrder:
+    def test_category_keys_in_file_order(self):
+        tpl = {"categories": {"costs": {"b": 1, "a": 2, "c": 3}}}
+        assert ct.template_label_order(tpl, category="costs") == ["b", "a", "c"]
+
+    def test_entity_keys_in_file_order(self):
+        tpl = {"entities": {"unit": {"Zeb": "#111", "abe": "#222"}}}
+        assert ct.template_label_order(tpl, entity_class="unit") == ["Zeb", "abe"]
+
+    def test_legacy_keys_honored(self):
+        tpl = {"category": {"costs": {"x": 1, "y": 2}}}
+        assert ct.template_label_order(tpl, category="costs") == ["x", "y"]
+        tpl2 = {"entity_class": {"unit": {"x": 1, "y": 2}}}
+        assert ct.template_label_order(tpl2, entity_class="unit") == ["x", "y"]
+
+    def test_entity_class_wins_over_category(self):
+        tpl = {
+            "categories": {"costs": {"c1": 1}},
+            "entities": {"unit": {"u1": 1, "u2": 2}},
+        }
+        assert ct.template_label_order(
+            tpl, category="costs", entity_class="unit"
+        ) == ["u1", "u2"]
+
+    def test_missing_section_returns_empty(self):
+        assert ct.template_label_order({}, category="costs") == []
+        assert ct.template_label_order({"categories": {}}, category="costs") == []
+        assert ct.template_label_order({"x": 1}) == []
+
+
+class TestOrderLabelsByTemplate:
+    def test_listed_first_then_alpha_tail(self):
+        tpl = {"categories": {"costs": {"b": 1, "a": 2, "c": 3}}}
+        labels = ["z", "a", "y", "c", "b"]  # z,y not listed
+        out = ct.order_labels_by_template(labels, tpl, category="costs")
+        # listed in file order b,a,c then unlisted alpha y,z
+        assert out == ["b", "a", "c", "y", "z"]
+
+    def test_no_section_falls_back_to_alpha(self):
+        labels = ["c", "a", "b"]
+        assert ct.order_labels_by_template(labels, {}, category="costs") == [
+            "a", "b", "c",
+        ]
+
+    def test_entity_case_insensitive_returns_data_label(self):
+        # File lists canonical 'Solar','Wind'; data labels differ in case.
+        tpl = {"entities": {"group": {"Solar": "#1", "Wind": "#2"}}}
+        labels = ["wind", "SOLAR", "extra"]
+        out = ct.order_labels_by_template(labels, tpl, entity_class="group")
+        # Ordered by file order (Solar then Wind), preserving the DATA label
+        # spelling; 'extra' unlisted appended.
+        assert out == ["SOLAR", "wind", "extra"]
+
+    def test_only_listed_present_subset(self):
+        tpl = {"categories": {"costs": {"a": 1, "b": 2, "c": 3}}}
+        labels = ["c", "a"]  # b absent from data
+        assert ct.order_labels_by_template(labels, tpl, category="costs") == [
+            "a", "c",
+        ]
+
+    def test_composite_category_ordering(self):
+        # nodegroup_flows composite labels match on <type>_<item> then <type>.
+        tpl = {
+            "categories": {
+                "nodegroup_flows": {"inflow": "#1", "from_units_gas": "#2"}
+            }
+        }
+        labels = ["from_units | gas", "inflow", "z_other"]
+        out = ct.order_labels_by_template(
+            labels, tpl, category="nodegroup_flows"
+        )
+        # 'inflow' (type-only) listed first, then 'from_units|gas'
+        # (type_item) match, then unlisted tail.
+        assert out == ["inflow", "from_units | gas", "z_other"]
+
+    def test_all_unlisted_is_pure_alpha(self):
+        tpl = {"categories": {"costs": {"x": 1}}}
+        labels = ["c", "a", "b"]
+        assert ct.order_labels_by_template(labels, tpl, category="costs") == [
+            "a", "b", "c",
+        ]
+
+    def test_no_label_dropped_or_duplicated(self):
+        tpl = {"categories": {"costs": {"a": 1, "b": 2}}}
+        labels = ["b", "x", "a", "y"]
+        out = ct.order_labels_by_template(labels, tpl, category="costs")
+        assert sorted(out) == sorted(labels)
+        assert len(out) == len(labels)

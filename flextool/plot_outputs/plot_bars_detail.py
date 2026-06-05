@@ -328,11 +328,28 @@ def _plot_stacked_bars(
         stack_df = df_sub.columns.to_frame()[stack_level_names].drop_duplicates()
         stacks = [tuple(row) for row in stack_df.values]
 
-    # Sort stacks alphabetically when using shared colors so visual order matches legend
+    # Order stacks by the shared color map's key order (file order from
+    # plot_settings.yaml; unlisted labels were appended alphabetically by the
+    # plan/builder) so visual stacking matches the legend.  Stacks absent from
+    # the map (defensive) keep their current relative position at the end.
     if shared_color_map:
         def _stack_key(s):
             return ' | '.join(str(v) for v in s) if isinstance(s, (tuple, list)) else str(s)
-        stacks.sort(key=_stack_key)
+        key_pos = {k: i for i, k in enumerate(shared_color_map.keys())}
+        orig = list(stacks)
+        stacks.sort(
+            key=lambda s: (key_pos.get(_stack_key(s), len(key_pos)), orig.index(s)),
+        )
+        # Geometry note: positives are drawn forward (layer 0 nearest zero).
+        # For HORIZONTAL bars that puts file-first at the left (= top in the
+        # left->right reading order), matching the stack-area plots, so the
+        # forward file order is correct.  For VERTICAL bars layer 0 sits at the
+        # BOTTOM, so to keep file-first at the TOP of the positive stack
+        # (consistent with stack-area + horizontal bars) we feed the stacks in
+        # reversed file order.  The legend builder below derives its order from
+        # the layer indices for the matching orientation, so it stays in sync.
+        if bar_orientation != 'horizontal':
+            stacks.reverse()
 
     # Colors for stacking
     if shared_color_map:
