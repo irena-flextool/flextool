@@ -218,14 +218,12 @@ def _plot_grouped_bars(
 
     horizontal = bar_orientation == 'horizontal'
 
-    # Sub-pixel filtering. Fix xlim/ylim to the final value-axis range so
-    # the threshold matches what will be on screen, then ask ax.bbox for
-    # the pixel size of one data unit. If the caller supplied explicit
-    # bounds (axis_bounds), use them — they override autoscale anyway.
-    # Bars strictly under threshold cannot light up a pixel and are
-    # excluded from the draw call. Sub-pixel bars do not contribute to
-    # the layout (grouped bars are independent — there is no cumulative-
-    # sum coupling like stacks).
+    # Fix xlim/ylim to the final value-axis range so the layout matches what
+    # will be on screen. If the caller supplied explicit bounds (axis_bounds),
+    # use them — they override autoscale anyway. We deliberately draw every
+    # bar that has data (including sub-pixel-thin ones) so their value labels
+    # are emitted; a sub-pixel-width Rectangle renders identically to skipping
+    # it, so this does not change the visible bars.
     if value_axis_lim is not None:
         lo, hi = float(value_axis_lim[0]), float(value_axis_lim[1])
     elif values_mat.size:
@@ -234,10 +232,8 @@ def _plot_grouped_bars(
         lo, hi = 0.0, 1.0
     if horizontal:
         ax.set_xlim(lo, hi)
-        threshold = _min_visible_data_width(ax, 'x')
     else:
         ax.set_ylim(lo, hi)
-        threshold = _min_visible_data_width(ax, 'y')
 
     # Track which categories we've emitted a legend entry for (mirrors original
     # behaviour: each category gets one entry, attached to its first-drawn
@@ -257,11 +253,15 @@ def _plot_grouped_bars(
             offset = -total_w / 2 + bar_w / 2 + grouped_idx * step  # left to right
         sub_y = y_pos_vec + offset
 
-        # Drop sub-pixel bars in addition to the existing zero-mask. Each
-        # category contributes its own colour, so a single category's
-        # legend handle is still emitted via the invisible fallback below
-        # when every bar in that category is sub-pixel.
-        mask = has_value[:, grouped_idx] & (np.abs(values_mat[:, grouped_idx]) >= threshold)
+        # Draw every bar that has data (has_value already means value != 0).
+        # Sub-pixel bars are kept in the container so their value label is
+        # still emitted — the label is the whole point of showing that data
+        # exists at a category even when the bar is too thin to light up a
+        # pixel. A sub-pixel-width Rectangle renders identically to skipping
+        # it, so this changes nothing visually except adding the labels.
+        # (Previously the draw mask also required ``abs(value) >= threshold``,
+        # which dropped sub-pixel bars and their labels together.)
+        mask = has_value[:, grouped_idx]
         if not mask.any():
             continue
         ys = sub_y[mask]
@@ -579,11 +579,14 @@ def _plot_simple_bars(
 
     values_arr = np.asarray(values, dtype=float)
 
-    # Sub-pixel filtering. Set xlim/ylim to the final value-axis range
-    # (caller-supplied when known, e.g. from axis_bounds) so the threshold
-    # matches what will be on screen, then ask ax.bbox how wide one data
-    # unit is in pixels. Bars below 1 px cannot light up a pixel so we
-    # omit them from the draw.
+    # Set xlim/ylim to the final value-axis range (caller-supplied when
+    # known, e.g. from axis_bounds) so the layout matches what will be on
+    # screen. We draw every bar that has data (value != 0), including
+    # sub-pixel-thin ones, so their value labels are still emitted — the
+    # label is the whole point of showing that data exists at a category
+    # even when the bar is too thin to light up a pixel. A sub-pixel-width
+    # Rectangle renders identically to skipping it, so the visible bars are
+    # unchanged; only the previously dropped labels are added back.
     horizontal = bar_orientation == 'horizontal'
     if value_axis_lim is not None:
         lo, hi = float(value_axis_lim[0]), float(value_axis_lim[1])
@@ -591,18 +594,16 @@ def _plot_simple_bars(
         lo, hi = _autoscale_value_range(values_arr)
     if horizontal:
         ax.set_xlim(lo, hi)
-        threshold = _min_visible_data_width(ax, 'x')
     else:
         ax.set_ylim(lo, hi)
-        threshold = _min_visible_data_width(ax, 'y')
 
-    visible_mask = np.abs(values_arr) >= threshold
-    if visible_mask.all():
+    data_mask = values_arr != 0
+    if data_mask.all():
         draw_y = y_pos_vec
         draw_v = values_arr
     else:
-        draw_y = y_pos_vec[visible_mask]
-        draw_v = values_arr[visible_mask]
+        draw_y = y_pos_vec[data_mask]
+        draw_v = values_arr[data_mask]
 
     # Single vectorised draw call replacing the per-bar loop.
     bar_h = SOLO_BAR_THICKNESS
