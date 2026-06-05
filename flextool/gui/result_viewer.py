@@ -3093,21 +3093,24 @@ class ResultViewer(tk.Toplevel):
         """Render comparison plot from the merged single-mode config.
 
         Comparison rendering is driven by the ``scenario_rule`` field on
-        the single-mode config (see :mod:`flextool.scenario_comparison.plan_union`).
-        Configs that don't carry ``scenario_rule`` have no comparison view
-        and surface a clear "no scenario_rule" message instead of trying
-        to render something undefined.
+        the single-mode config (see :mod:`flextool.scenario_comparison.plan_union`)
+        or, alternatively, by ``map_dimensions_for_plots`` supplied in
+        ``comparison_overrides`` (which makes ``scenario_rule`` irrelevant).
+        Configs that carry neither have no comparison view and surface a
+        clear message instead of trying to render something undefined.
         """
+        from flextool.scenario_comparison.plan_union import has_comparison_view
         single_cfg = self._load_single_plot_config(
             variant.result_key, variant.sub_config,
         )
         if single_cfg is None:
             self._plot_canvas.show_message(f"No config for {variant.result_key}")
             return
-        if getattr(single_cfg, "scenario_rule", None) is None:
+        if not has_comparison_view(single_cfg):
             self._plot_canvas.show_message(
                 f"No comparison rendering for {variant.result_key}\n"
-                f"(no `scenario_rule` defined in default_plots.yaml)."
+                f"(no `scenario_rule` or `comparison_overrides."
+                f"map_dimensions_for_plots` in default_plots.yaml)."
             )
             return
         self._display_comparison_from_single(entry, variant, single_cfg)

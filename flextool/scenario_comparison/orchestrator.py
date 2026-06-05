@@ -17,7 +17,10 @@ from flextool.scenario_comparison.data_models import DispatchMappings
 from flextool.scenario_comparison.db_reader import get_scenario_results
 from flextool.scenario_comparison.dispatch_mappings import combine_dispatch_mappings
 from flextool.scenario_comparison.dispatch_plots import create_dispatch_plots
-from flextool.scenario_comparison.plan_union import derive_comparison_config
+from flextool.scenario_comparison.plan_union import (
+    derive_comparison_config,
+    has_comparison_view,
+)
 from flextool.plot_outputs.config import _is_single_config, flatten_new_format
 from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
 
@@ -25,9 +28,11 @@ from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
 def _derive_comparison_settings(plots_flat: dict) -> dict:
     """Map each leaf config dict through ``derive_comparison_config``.
 
-    Drops entries whose configs lack ``scenario_rule`` (those plots don't
-    have a comparison rendering).  Produces the same flat-dict shape that
-    ``plot_dict_of_dataframes`` and ``compute_all_plot_plans`` expect.
+    Drops entries with no comparison view — those lacking ``scenario_rule``
+    *and* an explicit ``comparison_overrides.map_dimensions_for_plots`` (see
+    :func:`~flextool.scenario_comparison.plan_union.has_comparison_view`).
+    Produces the same flat-dict shape that ``plot_dict_of_dataframes`` and
+    ``compute_all_plot_plans`` expect.
     """
     out: dict = {}
     for rk, cfg_dict in plots_flat.items():
@@ -35,7 +40,7 @@ def _derive_comparison_settings(plots_flat: dict) -> dict:
             continue
         if _is_single_config(cfg_dict):
             # Direct config (no sub_configs)
-            if "scenario_rule" not in cfg_dict:
+            if not has_comparison_view(cfg_dict):
                 continue
             try:
                 out[rk] = derive_comparison_config(cfg_dict)
@@ -47,7 +52,7 @@ def _derive_comparison_settings(plots_flat: dict) -> dict:
         for sub, leaf in cfg_dict.items():
             if not isinstance(leaf, dict):
                 continue
-            if "scenario_rule" not in leaf:
+            if not has_comparison_view(leaf):
                 continue
             try:
                 new_sub[sub] = derive_comparison_config(leaf)

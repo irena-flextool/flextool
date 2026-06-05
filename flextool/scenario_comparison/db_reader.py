@@ -332,8 +332,9 @@ def combine_scenario_parquets(
 
     # 7. Compute plot plans and availability for the comparison data.
     # Read the merged single-mode YAML and derive comparison configs from
-    # each entry's ``scenario_rule``; entries without one have no
-    # comparison rendering and are dropped.
+    # each entry's ``scenario_rule`` (or an explicit
+    # ``comparison_overrides.map_dimensions_for_plots``); entries with
+    # neither have no comparison rendering and are dropped.
     try:
         import yaml
         from flextool.plot_outputs.orchestrator import compute_all_plot_plans

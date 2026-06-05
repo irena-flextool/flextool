@@ -47,6 +47,34 @@ def _read_parquet(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
+def _cfg_get(cfg: Any, name: str) -> Any:
+    """Read *name* from a config that may be a PlotConfig dataclass or dict."""
+    if hasattr(cfg, name):
+        return getattr(cfg, name)
+    if isinstance(cfg, dict):
+        return cfg.get(name)
+    return None
+
+
+def has_comparison_view(cfg: Any) -> bool:
+    """Return ``True`` if *cfg* is renderable in comparison mode.
+
+    A config has a comparison view when it sets ``scenario_rule`` (the
+    ``scenario`` dim is auto-folded into the rules) **or** when its
+    ``comparison_overrides`` supply ``map_dimensions_for_plots`` (the
+    comparison layout is given explicitly, so ``scenario_rule`` is
+    irrelevant).  Mirrors the gate in :func:`derive_comparison_config`.
+    """
+    if _cfg_get(cfg, "scenario_rule") is not None:
+        return True
+    overrides = _cfg_get(cfg, "comparison_overrides")
+    if isinstance(overrides, dict):
+        md = overrides.get("map_dimensions_for_plots")
+        if isinstance(md, (list, tuple)) and len(md) >= 2:
+            return True
+    return False
+
+
 def derive_comparison_config(single_cfg: Any) -> Any:
     """Build a comparison-mode PlotConfig from a single-mode one.
 
@@ -67,58 +95,79 @@ def derive_comparison_config(single_cfg: Any) -> Any:
     configs whose comparison view wants a different visual treatment than
     "single + scenario_rule prepended").
 
-    Raises ``ValueError`` when ``scenario_rule`` is not set or
-    ``map_dimensions_for_plots`` is malformed.
+    ``scenario_rule`` is normally required to mark a config as
+    comparison-renderable.  It may be omitted, however, when
+    ``comparison_overrides`` supplies ``map_dimensions_for_plots`` — that
+    fully specifies the comparison layout (including the scenario dim), so
+    no auto-derivation is needed and ``scenario_rule`` is irrelevant.
+
+    Raises ``ValueError`` when neither ``scenario_rule`` nor an override
+    ``map_dimensions_for_plots`` is set, or when ``map_dimensions_for_plots``
+    is malformed.
     """
-    scenario_rule = getattr(single_cfg, "scenario_rule", None)
-    if scenario_rule is None and isinstance(single_cfg, dict):
-        scenario_rule = single_cfg.get("scenario_rule")
-    if scenario_rule is None:
-        raise ValueError(
-            "derive_comparison_config: the single config has no "
-            "scenario_rule — define one (e.g. 'g' for grouped bars, "
-            "'l' for lines, 'u' for subplots) to enable comparison view."
-        )
-
-    if hasattr(single_cfg, "map_dimensions_for_plots"):
-        md = single_cfg.map_dimensions_for_plots
-    else:
-        md = single_cfg.get("map_dimensions_for_plots")
-    if not isinstance(md, (list, tuple)) or len(md) < 2:
-        raise ValueError(
-            f"derive_comparison_config: map_dimensions_for_plots must be a "
-            f"2-element [index_types, rules] list, got {md!r}"
-        )
-    idx, rules = md[0], md[1]
-    if not isinstance(idx, str) or "_" not in idx:
-        raise ValueError(
-            f"derive_comparison_config: index_types must contain '_' "
-            f"separating row and column parts, got {idx!r}"
-        )
-    if not isinstance(rules, str) or "_" not in rules:
-        raise ValueError(
-            f"derive_comparison_config: rules must contain '_' separating "
-            f"row and column parts, got {rules!r}"
-        )
-    row_idx, col_idx = idx.split("_", 1)
-    row_rules, col_rules = rules.split("_", 1)
-
-    # If the single rules already name 'scenario' in the col part (e.g.
-    # ``[d_s, s_b]`` for a costs-by-scenario chart that's the same shape
-    # in both modes), don't auto-prepend another ``s`` — the existing rule
-    # for scenario stands.  ``scenario_rule`` is required to mark the
-    # config as comparison-renderable, but its value is unused on this
-    # branch (and may be overridden via ``comparison_overrides``).
-    if "s" in col_idx:
-        new_idx, new_rules = idx, rules
-    else:
-        new_idx = f"{row_idx}_s{col_idx}"
-        new_rules = f"{row_rules}_{scenario_rule}{col_rules}"
-
+    # Read overrides first: a comparison config may give
+    # ``map_dimensions_for_plots`` directly here, which fully defines the
+    # comparison layout and makes ``scenario_rule`` unnecessary.
     overrides = getattr(single_cfg, "comparison_overrides", None)
     if overrides is None and isinstance(single_cfg, dict):
         overrides = single_cfg.get("comparison_overrides")
     overrides = dict(overrides or {})
+    override_md = overrides.get("map_dimensions_for_plots")
+    has_override_md = isinstance(override_md, (list, tuple)) and len(override_md) >= 2
+
+    scenario_rule = getattr(single_cfg, "scenario_rule", None)
+    if scenario_rule is None and isinstance(single_cfg, dict):
+        scenario_rule = single_cfg.get("scenario_rule")
+    if scenario_rule is None and not has_override_md:
+        raise ValueError(
+            "derive_comparison_config: the single config has no "
+            "scenario_rule — define one (e.g. 'g' for grouped bars, "
+            "'l' for lines, 'u' for subplots), or supply "
+            "map_dimensions_for_plots in comparison_overrides, to enable "
+            "comparison view."
+        )
+
+    if scenario_rule is None:
+        # ``comparison_overrides`` fully specifies the comparison layout via
+        # ``map_dimensions_for_plots``; skip auto-derivation and apply the
+        # override as-is below.
+        new_md = None
+    else:
+        if hasattr(single_cfg, "map_dimensions_for_plots"):
+            md = single_cfg.map_dimensions_for_plots
+        else:
+            md = single_cfg.get("map_dimensions_for_plots")
+        if not isinstance(md, (list, tuple)) or len(md) < 2:
+            raise ValueError(
+                f"derive_comparison_config: map_dimensions_for_plots must be a "
+                f"2-element [index_types, rules] list, got {md!r}"
+            )
+        idx, rules = md[0], md[1]
+        if not isinstance(idx, str) or "_" not in idx:
+            raise ValueError(
+                f"derive_comparison_config: index_types must contain '_' "
+                f"separating row and column parts, got {idx!r}"
+            )
+        if not isinstance(rules, str) or "_" not in rules:
+            raise ValueError(
+                f"derive_comparison_config: rules must contain '_' separating "
+                f"row and column parts, got {rules!r}"
+            )
+        row_idx, col_idx = idx.split("_", 1)
+        row_rules, col_rules = rules.split("_", 1)
+
+        # If the single rules already name 'scenario' in the col part (e.g.
+        # ``[d_s, s_b]`` for a costs-by-scenario chart that's the same shape
+        # in both modes), don't auto-prepend another ``s`` — the existing rule
+        # for scenario stands.  ``scenario_rule`` is required to mark the
+        # config as comparison-renderable, but its value is unused on this
+        # branch (and may be overridden via ``comparison_overrides``).
+        if "s" in col_idx:
+            new_idx, new_rules = idx, rules
+        else:
+            new_idx = f"{row_idx}_s{col_idx}"
+            new_rules = f"{row_rules}_{scenario_rule}{col_rules}"
+        new_md = [new_idx, new_rules]
 
     if hasattr(single_cfg, "__dataclass_fields__"):
         valid_fields = set(single_cfg.__dataclass_fields__.keys())
@@ -127,14 +176,16 @@ def derive_comparison_config(single_cfg: Any) -> Any:
         # whose comparison rules differ beyond just adding scenario can carry
         # ``map_dimensions_for_plots`` in ``comparison_overrides`` and have it
         # take precedence over the derived value.
-        derived = dataclasses.replace(
-            single_cfg, map_dimensions_for_plots=[new_idx, new_rules],
+        derived = (
+            single_cfg if new_md is None
+            else dataclasses.replace(single_cfg, map_dimensions_for_plots=new_md)
         )
         return dataclasses.replace(derived, **replace_kwargs)
 
     if isinstance(single_cfg, dict):
         new_cfg = dict(single_cfg)
-        new_cfg["map_dimensions_for_plots"] = [new_idx, new_rules]
+        if new_md is not None:
+            new_cfg["map_dimensions_for_plots"] = new_md
         new_cfg.update(overrides)  # overrides win, including map_dimensions_for_plots
         return new_cfg
 

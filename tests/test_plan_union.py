@@ -16,6 +16,7 @@ from flextool.lean_parquet import write_lean_parquet
 from flextool.plot_outputs.config import PlotConfig
 from flextool.scenario_comparison.plan_union import (
     derive_comparison_config,
+    has_comparison_view,
     union_raw_data,
 )
 
@@ -99,6 +100,57 @@ def test_derive_raises_when_scenario_rule_missing():
     )
     with pytest.raises(ValueError, match="scenario_rule"):
         derive_comparison_config(cfg)
+
+
+def test_derive_without_scenario_rule_uses_override_map_dimensions():
+    """No scenario_rule, but comparison_overrides give the full layout.
+
+    scenario_rule is irrelevant here: the override fully specifies
+    map_dimensions_for_plots (including the scenario dim), so no
+    auto-derivation is needed and the config still renders.
+    """
+    cfg = PlotConfig(
+        plot_name="bar",
+        map_dimensions_for_plots=["d_e", "t_l"],
+        comparison_overrides={"map_dimensions_for_plots": ["d_se", "t_gl"]},
+    )
+    out = derive_comparison_config(cfg)
+    assert out.map_dimensions_for_plots == ["d_se", "t_gl"]
+
+
+def test_derive_without_scenario_rule_override_md_on_dict():
+    cfg = {
+        "plot_name": "bar",
+        "map_dimensions_for_plots": ["d_e", "t_l"],
+        "comparison_overrides": {"map_dimensions_for_plots": ["d_se", "t_gl"]},
+    }
+    out = derive_comparison_config(cfg)
+    assert out["map_dimensions_for_plots"] == ["d_se", "t_gl"]
+
+
+def test_has_comparison_view():
+    # scenario_rule set → renderable
+    assert has_comparison_view(
+        PlotConfig(plot_name="x", map_dimensions_for_plots=["d_e", "t_l"],
+                   scenario_rule="g")
+    )
+    # override map_dimensions_for_plots set, no scenario_rule → renderable
+    assert has_comparison_view(
+        PlotConfig(plot_name="x", map_dimensions_for_plots=["d_e", "t_l"],
+                   comparison_overrides={"map_dimensions_for_plots": ["d_se", "t_gl"]})
+    )
+    # neither → not renderable
+    assert not has_comparison_view(
+        PlotConfig(plot_name="x", map_dimensions_for_plots=["d_e", "t_l"])
+    )
+    # comparison_overrides without map_dimensions_for_plots → not renderable
+    assert not has_comparison_view(
+        PlotConfig(plot_name="x", map_dimensions_for_plots=["d_e", "t_l"],
+                   comparison_overrides={"legend": "shared"})
+    )
+    # dict form works too
+    assert has_comparison_view({"scenario_rule": "g"})
+    assert not has_comparison_view({"legend": "shared"})
 
 
 def test_derive_raises_on_malformed_index_types():
