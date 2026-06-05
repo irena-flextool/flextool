@@ -189,6 +189,13 @@ class MemoryWatchdog:
             if not measured:
                 continue
 
+            # Peaks above are always tracked (they feed the learned budget),
+            # but with the memory guard switched off we never kill: the user
+            # has accepted the OOM risk and Min free RAM / Allow swap are
+            # non-binding for this session.
+            if not self._manager._memory_guard_enabled:
+                continue
+
             limits = self._manager.execution_limits
             reserve_bytes = int(limits.system_reserve_gb * (1024 ** 3))
             swap_allow_bytes = int(limits.swap_allowance_gb * (1024 ** 3))
@@ -296,6 +303,7 @@ class ExecutionJob:
     peak_rss_mb: float = 0.0         # high-water mark, fed by MemoryWatchdog
     killed_for_memory: bool = False  # set by watchdog just before SIGTERM
     kill_reason: str = ""  # populated by watchdog: "exceeded estimate" / "global memory pressure" / "global swap pressure"
+    force_start: bool = False  # user override: admit despite the memory-reserve check (watchdog still applies)
     native_fault: bool = False  # set on finalize when the process died from a native crash (segfault / illegal instruction)
     # Opaque per-platform handle returned by `_wrap_for_memory_cap` post_spawn
     # (e.g. Windows Job Object). Must outlive the Popen, else the cap is
@@ -344,6 +352,11 @@ class ExecutionManager:
         self._stopped = False
         self._memory_limited: bool = False  # set by scheduler when admission blocked by RAM
         self._thread_limited: bool = False  # set by scheduler when running == max_workers and pending exist
+        # Master memory-guard switch (session-only, never persisted). When
+        # False the admission check is bypassed for every job AND the
+        # watchdog stops killing, so Min free RAM / Allow swap become
+        # non-binding. Defaults on; the user must re-disable each session.
+        self._memory_guard_enabled: bool = True
         self.project_path = project_path
         self.settings = settings
         self._global_settings = global_settings
@@ -368,6 +381,21 @@ class ExecutionManager:
 
     def set_global_settings(self, gs: GlobalSettings) -> None:
         self._global_settings = gs
+
+    @property
+    def memory_guard_enabled(self) -> bool:
+        """Whether the memory guard (admission check + watchdog) is active.
+
+        Session-only; not persisted to settings.yaml. When False, the
+        scheduler admits jobs regardless of the memory reserve and the
+        watchdog stops killing — the OS remains the only backstop.
+        """
+        return self._memory_guard_enabled
+
+    @memory_guard_enabled.setter
+    def memory_guard_enabled(self, value: bool) -> None:
+        with self._lock:
+            self._memory_guard_enabled = bool(value)
 
     def _compute_memory_budget_for_job(self, job: ExecutionJob | None = None) -> float:
         """Return per-job memory budget in GB. 0 means no budget set.
@@ -710,6 +738,62 @@ class ExecutionManager:
     # Scheduler
     # ------------------------------------------------------------------
 
+    def _pick_next_pending(self) -> "ExecutionJob | None":
+        """Choose the next pending scenario job to dispatch this tick.
+
+        Must be called while holding ``self._lock``. Resets and sets the
+        ``_thread_limited`` / ``_memory_limited`` status flags, and on a
+        successful pick increments ``_running_count``. Returns the chosen
+        job, or ``None`` when nothing can start.
+
+        Admission rules, in order:
+          1. Thread slots (``max_workers``) always bind — a full pool sets
+             ``_thread_limited`` and nothing starts, even forced jobs.
+          2. Memory guard OFF ⇒ admit the first pending job (the reserve
+             check is skipped entirely; the watchdog is also dormant).
+          3. A job flagged ``force_start`` bypasses the memory-reserve
+             check and is admitted ahead of the queue. The watchdog still
+             applies to it, so a genuine OOM can still kill it.
+          4. Otherwise the memory-reserve check (``_can_admit_memory``)
+             binds; failing it sets ``_memory_limited``.
+        """
+        self._thread_limited = False
+        self._memory_limited = False
+        if self._wind_down:
+            return None
+
+        candidate: ExecutionJob | None = None
+        forced: ExecutionJob | None = None
+        for job in self._jobs:
+            if job.job_type == JobType.SCENARIO and job.status == JobStatus.PENDING:
+                if candidate is None:
+                    candidate = job
+                if forced is None and job.force_start:
+                    forced = job
+                if forced is not None:
+                    break
+        if candidate is None:
+            return None
+
+        if self._running_count >= self._max_workers:
+            self._thread_limited = True
+            return None
+
+        if not self._memory_guard_enabled:
+            chosen = candidate
+        elif forced is not None:
+            chosen = forced
+        else:
+            estimate_gb = self._compute_memory_budget_for_job(candidate)
+            if self._can_admit_memory(estimate_gb):
+                chosen = candidate
+            else:
+                self._memory_limited = True
+                return None
+
+        self._running_count += 1
+        return chosen
+
     def _scheduler_loop(self) -> None:
         """Main loop of the scheduler thread.
 
@@ -723,28 +807,7 @@ class ExecutionManager:
                 if self._stopped:
                     break
 
-                # Find the first pending scenario job (if any)
-                candidate: ExecutionJob | None = None
-                for job in self._jobs:
-                    if job.job_type == JobType.SCENARIO and job.status == JobStatus.PENDING:
-                        candidate = job
-                        break
-
-                # Reset both flags; we'll set whichever applies below
-                self._thread_limited = False
-                self._memory_limited = False
-
-                next_job: ExecutionJob | None = None
-                if not self._wind_down and candidate is not None:
-                    if self._running_count >= self._max_workers:
-                        self._thread_limited = True
-                    else:
-                        estimate_gb = self._compute_memory_budget_for_job(candidate)
-                        if self._can_admit_memory(estimate_gb):
-                            next_job = candidate
-                            self._running_count += 1
-                        else:
-                            self._memory_limited = True
+                next_job = self._pick_next_pending()
 
                 # Check if all SCENARIO jobs are done (auxiliary jobs are
                 # managed externally and don't block the scheduler)
@@ -1332,6 +1395,23 @@ class ExecutionManager:
             if nxt.status == JobStatus.PENDING:
                 self._jobs[idx], self._jobs[idx + 1] = self._jobs[idx + 1], self._jobs[idx]
 
+    def set_force_start(self, job_id: int, force: bool = True) -> None:
+        """Flag (or unflag) a pending scenario job to bypass the memory check.
+
+        Only affects ``PENDING`` ``SCENARIO`` jobs; finished or running jobs
+        are ignored. A forced job is admitted by the scheduler ahead of the
+        memory-reserve check, but still respects the thread-slot limit and
+        the watchdog.
+        """
+        with self._lock:
+            job = self._get_job(job_id)
+            if (
+                job is not None
+                and job.job_type == JobType.SCENARIO
+                and job.status == JobStatus.PENDING
+            ):
+                job.force_start = bool(force)
+
     # ------------------------------------------------------------------
     # Query methods
     # ------------------------------------------------------------------
@@ -1367,6 +1447,7 @@ class ExecutionManager:
             total_gb         float — system RAM total
             thread_limited   bool  — pending jobs are being held by max_workers
             memory_limited   bool  — pending jobs are being held by memory reserve
+            memory_guard     bool  — whether the memory guard is active this session
         """
         with self._lock:
             running = self._running_count
@@ -1377,6 +1458,7 @@ class ExecutionManager:
             )
             thread_limited = self._thread_limited
             memory_limited = self._memory_limited
+            memory_guard = self._memory_guard_enabled
         try:
             vm = psutil.virtual_memory()
             total_gb = vm.total / (1024 ** 3)
@@ -1392,6 +1474,7 @@ class ExecutionManager:
             "total_gb": total_gb,
             "thread_limited": thread_limited,
             "memory_limited": memory_limited,
+            "memory_guard": memory_guard,
         }
 
     def has_pending_or_running_scenarios(self) -> bool:

@@ -1,0 +1,117 @@
+"""Tests for force-start admission and the memory-guard master switch.
+
+These exercise the scheduler's admission decision (`_pick_next_pending`)
+in isolation: the manager is constructed but never `.start()`ed, so no
+scheduler thread, watchdog, or subprocess runs. `_can_admit_memory` is
+monkeypatched to simulate a system that the reserve check considers full.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from flextool.gui.data_models import ProjectSettings
+from flextool.gui.execution_manager import (
+    ExecutionJob,
+    ExecutionManager,
+    JobStatus,
+    JobType,
+)
+
+
+def _make_manager(tmp_path: Path) -> ExecutionManager:
+    return ExecutionManager(project_path=tmp_path, settings=ProjectSettings())
+
+
+def _pending_scenario(job_id: int, name: str) -> ExecutionJob:
+    return ExecutionJob(
+        job_id=job_id,
+        job_type=JobType.SCENARIO,
+        scenario_name=name,
+        output_subdir=name,
+        status=JobStatus.PENDING,
+    )
+
+
+@pytest.fixture
+def mgr(tmp_path: Path) -> ExecutionManager:
+    m = _make_manager(tmp_path)
+    m._jobs = [_pending_scenario(1, "a"), _pending_scenario(2, "b")]
+    # Simulate a system the reserve check always rejects.
+    m._can_admit_memory = lambda est: False  # type: ignore[assignment]
+    return m
+
+
+class TestForceStartAdmission:
+    def test_unforced_is_held_when_memory_full(self, mgr: ExecutionManager) -> None:
+        with mgr._lock:
+            chosen = mgr._pick_next_pending()
+        assert chosen is None
+        assert mgr._memory_limited is True
+        assert mgr._running_count == 0
+
+    def test_forced_job_bypasses_reserve_check(self, mgr: ExecutionManager) -> None:
+        mgr.set_force_start(2, True)
+        with mgr._lock:
+            chosen = mgr._pick_next_pending()
+        assert chosen is not None and chosen.job_id == 2
+        assert mgr._memory_limited is False
+        assert mgr._running_count == 1
+
+    def test_forced_job_still_respects_thread_limit(self, mgr: ExecutionManager) -> None:
+        mgr.set_force_start(2, True)
+        mgr._running_count = mgr._max_workers  # pool full
+        with mgr._lock:
+            chosen = mgr._pick_next_pending()
+        assert chosen is None
+        assert mgr._thread_limited is True
+        assert mgr._memory_limited is False
+
+    def test_unforcing_restores_memory_limit(self, mgr: ExecutionManager) -> None:
+        mgr.set_force_start(2, True)
+        mgr.set_force_start(2, False)
+        with mgr._lock:
+            chosen = mgr._pick_next_pending()
+        assert chosen is None
+        assert mgr._memory_limited is True
+
+    def test_set_force_start_ignores_non_pending(self, mgr: ExecutionManager) -> None:
+        mgr._jobs[0].status = JobStatus.RUNNING
+        mgr.set_force_start(1, True)
+        assert mgr._jobs[0].force_start is False
+
+    def test_set_force_start_ignores_non_scenario(self, tmp_path: Path) -> None:
+        m = _make_manager(tmp_path)
+        aux = ExecutionJob(job_id=9, job_type=JobType.OUTPUT_ACTION,
+                           status=JobStatus.PENDING, display_name="plots")
+        m._jobs = [aux]
+        m.set_force_start(9, True)
+        assert aux.force_start is False
+
+
+class TestMemoryGuardSwitch:
+    def test_guard_off_admits_despite_full_memory(self, mgr: ExecutionManager) -> None:
+        mgr.memory_guard_enabled = False
+        with mgr._lock:
+            chosen = mgr._pick_next_pending()
+        assert chosen is not None and chosen.job_id == 1  # first candidate
+        assert mgr._memory_limited is False
+        assert mgr._running_count == 1
+
+    def test_guard_default_on(self, tmp_path: Path) -> None:
+        assert _make_manager(tmp_path).memory_guard_enabled is True
+
+    def test_guard_state_surfaced_in_status(self, mgr: ExecutionManager) -> None:
+        assert mgr.get_execution_status()["memory_guard"] is True
+        mgr.memory_guard_enabled = False
+        assert mgr.get_execution_status()["memory_guard"] is False
+
+    def test_guard_off_still_respects_thread_limit(self, mgr: ExecutionManager) -> None:
+        mgr.memory_guard_enabled = False
+        mgr._running_count = mgr._max_workers
+        with mgr._lock:
+            chosen = mgr._pick_next_pending()
+        assert chosen is None
+        assert mgr._thread_limited is True

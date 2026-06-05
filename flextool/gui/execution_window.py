@@ -32,6 +32,8 @@ def _format_status_text(status: dict) -> str:
         f"{status['running']}/{status['max_threads']} threads | "
         f"{status['used_gb']:.1f}/{status['total_gb']:.1f} GB"
     )
+    if not status.get('memory_guard', True):
+        base += " | Memory guard OFF"
     if status['pending'] > 0:
         if status['thread_limited']:
             base += " | Thread limited"
@@ -47,9 +49,13 @@ def _limit_status_color(status: dict, theme: str) -> str | None:
     is treated as dark to match ``main_window``'s sv_ttk fallback.  Returns
     ``None`` when no limit is active so the caller can clear the override.
     """
-    if status.get('pending', 0) <= 0:
-        return None
-    if not (status.get('thread_limited') or status.get('memory_limited')):
+    # A disabled memory guard is a standing safety warning, independent of
+    # whether any job is currently being held back.
+    guard_off = not status.get('memory_guard', True)
+    held = status.get('pending', 0) > 0 and (
+        status.get('thread_limited') or status.get('memory_limited')
+    )
+    if not (guard_off or held):
         return None
     return "#c62828" if theme == "light" else "#ff6b6b"
 
@@ -60,6 +66,21 @@ class ExecutionWindow(tk.Toplevel):
     This window coexists with the main window -- it never calls
     ``grab_set()`` or ``wait_window()``.
     """
+
+    _FORCE_TIP = (
+        "Start the selected queued scenario(s) even when the queue says\n"
+        "\"Memory limited\". The memory estimate is a precaution based on\n"
+        "earlier runs and can be too conservative — forcing tells FlexTool\n"
+        "to admit the job anyway, ahead of the reserve check.\n"
+        "\n"
+        "Click again to cancel the force flag while the job is still queued.\n"
+        "\n"
+        "Forcing only bypasses the start-time reserve check; it does not\n"
+        "raise the parallel-job limit, and the memory watchdog still runs —\n"
+        "if the system genuinely runs out of memory a forced job can still\n"
+        "be killed. The normal memory limiting resumes automatically once\n"
+        "the forced scenarios finish."
+    )
 
     def __init__(
         self,
@@ -209,8 +230,37 @@ class ExecutionWindow(tk.Toplevel):
         attach_tooltip(mem_label, _budget_tip)
         attach_tooltip(self._mem_cap_spin, _budget_tip)
 
+        # Memory guard master switch (session-only; never persisted)
+        self._memory_guard_var = tk.BooleanVar(value=self._mgr.memory_guard_enabled)
+        self._memory_guard_chk = ttk.Checkbutton(
+            top_frame,
+            text="  Memory guard",
+            variable=self._memory_guard_var,
+            command=self._on_memory_guard_toggled,
+        )
+        self._memory_guard_chk.pack(side="left", padx=(15, 5))
+
+        _guard_tip = (
+            "Master switch for FlexTool's memory protection (this session\n"
+            "only — never saved; it is back ON next time you open the\n"
+            "project).\n"
+            "\n"
+            "ON (default): the scheduler holds a scenario back when starting\n"
+            "it would breach the reserve, and the watchdog kills the most\n"
+            "over-budget run if the system genuinely runs out of memory.\n"
+            "\n"
+            "OFF: every queued scenario starts as soon as a thread slot is\n"
+            "free, and nothing is ever killed for memory. Min free RAM and\n"
+            "Allow swap below become non-binding (greyed out). Use only when\n"
+            "you know the estimates are too conservative — with the guard\n"
+            "off the OS may still keep the machine alive by swapping, but\n"
+            "expect a considerable slow-down, and a true runaway can OOM-\n"
+            "crash FlexTool or other applications."
+        )
+        attach_tooltip(self._memory_guard_chk, _guard_tip)
+
         # Min free RAM
-        min_free_label = ttk.Label(top_frame, text="  Min free RAM (GB):")
+        min_free_label = self._min_free_label = ttk.Label(top_frame, text="  Min free RAM (GB):")
         min_free_label.pack(side="left", padx=(15, 5))
 
         initial_reserve = limits.system_reserve_gb
@@ -242,7 +292,7 @@ class ExecutionWindow(tk.Toplevel):
         attach_tooltip(self._min_free_spin, _min_free_tip)
 
         # Allow swap
-        swap_label = ttk.Label(top_frame, text="  Allow swap (GB):")
+        swap_label = self._swap_label = ttk.Label(top_frame, text="  Allow swap (GB):")
         swap_label.pack(side="left", padx=(15, 5))
 
         initial_swap = limits.swap_allowance_gb
@@ -278,6 +328,10 @@ class ExecutionWindow(tk.Toplevel):
         )
         attach_tooltip(swap_label, _swap_tip)
         attach_tooltip(self._swap_allow_spin, _swap_tip)
+
+        # Grey out the reserve/swap controls if the guard starts off
+        # (carried over from a prior window in the same session).
+        self._update_guard_dependent_states()
 
         # ── Horizontal PanedWindow for Jobs / Progress ─────────────────
         self._paned = ttk.PanedWindow(self, orient="horizontal")
@@ -326,6 +380,10 @@ class ExecutionWindow(tk.Toplevel):
 
         self._job_tree.bind("<<TreeviewSelect>>", self._on_job_selected)
         self._job_tree.bind("<B1-Motion>", self._on_drag_select)
+        # Right-click context menu (Button-2 on macOS, Button-3 elsewhere)
+        self._context_menu = tk.Menu(self._job_tree, tearoff=0)
+        self._job_tree.bind("<Button-3>", self._on_tree_context_menu)
+        self._job_tree.bind("<Button-2>", self._on_tree_context_menu)
 
         # ── Progress panel (right) ───────────────────────────────────
         right_frame = ttk.LabelFrame(self._paned, text="Progress", padding=5)
@@ -383,6 +441,13 @@ class ExecutionWindow(tk.Toplevel):
         )
         self._move_down_btn.grid(row=1, column=0, padx=(0, 2))
         ttk.Label(move_frame, text="(PgDn)").grid(row=1, column=1, padx=(0, 4))
+
+        col += 1
+        self._force_btn = ttk.Button(
+            btn_frame, text="Force start selected", command=self._on_force_selected
+        )
+        self._force_btn.grid(row=0, column=col, rowspan=2, padx=(0, 10), sticky="ns")
+        attach_tooltip(self._force_btn, self._FORCE_TIP)
 
         col += 1
         self._kill_btn = ttk.Button(
@@ -562,8 +627,10 @@ class ExecutionWindow(tk.Toplevel):
         # Remember current selection so we can restore it
         prev_selection = set(self._job_tree.selection())
 
-        # Configure tags for failed/killed rows (bright red)
+        # Configure tags for failed/killed rows (bright red) and forced
+        # pending rows (amber — they will bypass the memory-limit check).
         self._job_tree.tag_configure("failed", foreground="#ff3333")
+        self._job_tree.tag_configure("forced", foreground="#e0a800")
 
         # Suppress <<TreeviewSelect>> events while we rebuild the tree
         self._refreshing_list = True
@@ -589,6 +656,8 @@ class ExecutionWindow(tk.Toplevel):
                 tags: tuple[str, ...] = ()
                 if job.status in (JobStatus.FAILED, JobStatus.KILLED):
                     tags = ("failed",)
+                elif job.status == JobStatus.PENDING and getattr(job, "force_start", False):
+                    tags = ("forced",)
 
                 peak_col = f"{job.peak_rss_mb / 1024:.1f}" if job.peak_rss_mb > 0 else ""
                 if peak_col and getattr(job, 'killed_for_memory', False):
@@ -884,10 +953,22 @@ class ExecutionWindow(tk.Toplevel):
         )
         self._kill_btn.configure(state="normal" if can_kill else "disabled")
 
-        # Remove: enabled if any selected job is finished or killed
+        # Force start: enabled if any selected job is a pending scenario
+        can_force = any(
+            job_by_id.get(jid) is not None
+            and job_by_id[jid].job_type == JobType.SCENARIO
+            and job_by_id[jid].status == JobStatus.PENDING
+            for jid in selected_ids
+        )
+        self._force_btn.configure(state="normal" if can_force else "disabled")
+
+        # Remove: enabled if any selected job is pending, finished, or killed
+        # (anything except a still-running job, which must be killed first).
         can_remove = any(
             job_by_id.get(jid) is not None
-            and job_by_id[jid].status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED)
+            and job_by_id[jid].status in (
+                JobStatus.PENDING, JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED
+            )
             for jid in selected_ids
         )
         self._remove_btn.configure(state="normal" if can_remove else "disabled")
@@ -998,7 +1079,11 @@ class ExecutionWindow(tk.Toplevel):
         self._update_button_states()
 
     def _on_remove_selected(self) -> None:
-        """Remove all selected finished or killed jobs from the list."""
+        """Remove all selected pending, finished, or killed jobs from the list.
+
+        Running jobs are left alone (they must be killed first); ``remove_job``
+        ignores them.
+        """
         selected_ids = self._get_selected_job_ids()
         if not selected_ids:
             return
@@ -1008,6 +1093,113 @@ class ExecutionWindow(tk.Toplevel):
 
         self._refresh_job_list()
         self._update_button_states()
+
+    def _selected_forceable_jobs(self) -> list[int]:
+        """Job IDs of selected jobs that are pending scenarios (forceable)."""
+        jobs = {j.job_id: j for j in self._mgr.get_jobs()}
+        out: list[int] = []
+        for jid in self._get_selected_job_ids():
+            job = jobs.get(jid)
+            if (
+                job is not None
+                and job.job_type == JobType.SCENARIO
+                and job.status == JobStatus.PENDING
+            ):
+                out.append(jid)
+        return out
+
+    def _on_force_selected(self) -> None:
+        """Toggle the force-start flag on the selected pending scenario(s).
+
+        If any selected pending scenario is not yet forced, force them all;
+        if they are all already forced, clear the flag (cancel the force).
+        """
+        forceable = self._selected_forceable_jobs()
+        if not forceable:
+            return
+        jobs = {j.job_id: j for j in self._mgr.get_jobs()}
+        # Force unless every target is already forced, in which case unforce.
+        target = not all(jobs[jid].force_start for jid in forceable)
+        for jid in forceable:
+            self._mgr.set_force_start(jid, target)
+        self._refresh_job_list()
+        self._update_button_states()
+
+    def _on_tree_context_menu(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Pop up the per-scenario right-click menu under the cursor.
+
+        Right-clicking a row that isn't part of the current selection
+        selects just that row first (matching common file-manager
+        behaviour); right-clicking inside an existing multi-selection
+        keeps it so the action applies to all selected rows.
+        """
+        iid = self._job_tree.identify_row(event.y)
+        if iid and iid not in self._job_tree.selection():
+            self._job_tree.selection_set(iid)
+            self._job_tree.focus(iid)
+
+        jobs = {j.job_id: j for j in self._mgr.get_jobs()}
+        selected = [jobs[jid] for jid in self._get_selected_job_ids() if jid in jobs]
+
+        def _state(predicate) -> str:
+            return "normal" if any(predicate(j) for j in selected) else "disabled"
+
+        can_remove = _state(lambda j: j.status in (
+            JobStatus.PENDING, JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED
+        ))
+        can_force = _state(lambda j: (
+            j.job_type == JobType.SCENARIO and j.status == JobStatus.PENDING
+        ))
+        can_kill = _state(lambda j: j.status in (JobStatus.RUNNING, JobStatus.PENDING))
+
+        # Pause is the global scheduler toggle (no per-job pause exists).
+        has_pending_scenarios = any(
+            j.status == JobStatus.PENDING and j.job_type == JobType.SCENARIO
+            for j in jobs.values()
+        )
+        is_paused = self._mgr.is_paused
+        pause_label = "Continue executions" if is_paused else "Pause executions"
+        pause_state = "normal" if (has_pending_scenarios or is_paused) else "disabled"
+
+        menu = self._context_menu
+        menu.delete(0, "end")
+        menu.add_command(label="Force start", command=self._on_force_selected, state=can_force)
+        menu.add_command(label=pause_label, command=self._on_pause_toggle, state=pause_state)
+        menu.add_command(label="Kill", command=self._on_kill_selected, state=can_kill)
+        menu.add_separator()
+        menu.add_command(label="Remove", command=self._on_remove_selected, state=can_remove)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _on_memory_guard_toggled(self) -> None:
+        """Apply the memory-guard master switch (session-only, not persisted)."""
+        enabled = bool(self._memory_guard_var.get())
+        self._mgr.memory_guard_enabled = enabled
+        self._update_guard_dependent_states()
+        self._refresh_job_list()
+
+    def _update_guard_dependent_states(self) -> None:
+        """Grey out Min free RAM / Allow swap when the memory guard is off.
+
+        Those thresholds are only consulted by the admission check and the
+        watchdog, both of which are dormant while the guard is disabled, so
+        the controls would be misleading if left active.
+        """
+        on = bool(self._memory_guard_var.get())
+        spin_state = "normal" if on else "disabled"
+        for widget in (self._min_free_spin, self._swap_allow_spin):
+            try:
+                widget.configure(state=spin_state)
+            except tk.TclError:
+                pass
+        label_state = ["!disabled"] if on else ["disabled"]
+        for widget in (self._min_free_label, self._swap_label):
+            try:
+                widget.state(label_state)
+            except tk.TclError:
+                pass
 
     def _on_kill_all(self) -> None:
         """Kill all running processes and cancel pending jobs.
