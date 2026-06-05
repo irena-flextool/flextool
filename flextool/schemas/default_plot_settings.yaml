@@ -191,16 +191,27 @@ entities:
   unit:
     # Per-project unit colors, keyed by unit name (case-insensitive).
     # Entry order defines stacking order; an optional ``neg_color`` colors
-    # the unit's negative-side part of a mixed column, e.g.
-    #   chp: { color: "#E64A19", neg_color: "#9c3010" }
-    # (Left empty here — fill in per project.)
+    # the unit's negative-side part of a mixed column.  These colors apply
+    # to the unit's stacked/line flow and online time-series plots (e.g.
+    # "Flows: unit to node", "Flows: node to unit", "Unit online").
+    # (Left empty here — fill in per project.)  Accepted formats, e.g.:
+    #   coal_plant: "#212121"                                  # bare color (both sides)
+    #   chp:        { color: "#E64A19", neg_color: "#9c3010" } # distinct negative side
   connection:
     # Per-project connection colors, keyed by connection name
     # (case-insensitive).  Entry order defines stacking order; an optional
-    # ``neg_color`` colors the negative side.
-    # (Left empty here — fill in per project.)
+    # ``neg_color`` colors the negative side.  These colors apply to the
+    # connection's stacked/line flow time-series plots (e.g. "Flows
+    # connection", "Connection leftward", "Connection rightward").
+    # (Left empty here — fill in per project.)  Accepted formats, e.g.:
+    #   AC_link:  "#888888"                                  # bare color (both sides)
+    #   DC_tie:   { color: "#5b8fbf", neg_color: "#3c5e8a" } # distinct negative side
   node:
     # Per-project node colors, keyed by node name (case-insensitive).
     # Entry order defines stacking order; an optional ``neg_color`` colors
-    # the negative side.
-    # (Left empty here — fill in per project.)
+    # the negative side.  These colors apply to the node's state time-series
+    # plot ("Node state").  The node *balance* plot ("Node") stays
+    # category-coloured (see categories.node_flows above), by design.
+    # (Left empty here — fill in per project.)  Accepted formats, e.g.:
+    #   elec_A:   "#4FC3F7"                                  # bare color (both sides)
+    #   storage:  { color: "#43A047", neg_color: "#2e7d32" } # distinct negative side

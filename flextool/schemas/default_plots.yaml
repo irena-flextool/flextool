@@ -598,6 +598,7 @@ plots:
         variant: h
         legend: all
         map_dimensions_for_plots: [dt_ee, tt_su]
+        color_entity_class: unit
         max_items_per_plot: 12
         max_subplots_per_file: 6
         base_length: 5
@@ -612,6 +613,7 @@ plots:
         variant: w
         legend: all
         map_dimensions_for_plots: [dt_ee, ti_su]
+        color_entity_class: unit
         time_average_duration: 168
         max_items_per_plot: 30
         max_subplots_per_file: 6
@@ -626,6 +628,7 @@ plots:
       time_plots:
         variant: l
         map_dimensions_for_plots: [dt_ee, tt_lu]
+        color_entity_class: unit
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 6
@@ -668,6 +671,7 @@ plots:
         variant: h
         legend: all
         map_dimensions_for_plots: [dt_ee, tt_su]
+        color_entity_class: unit
         max_items_per_plot: 30
         max_subplots_per_file: 6
         base_length: 5
@@ -684,6 +688,7 @@ plots:
         variant: w
         legend: all
         map_dimensions_for_plots: [dt_ee, ti_su]
+        color_entity_class: unit
         max_items_per_plot: 30
         time_average_duration: 168
         max_subplots_per_file: 6
@@ -697,6 +702,7 @@ plots:
       time_plots:
         variant: l
         map_dimensions_for_plots: [dt_ee, tt_lu]
+        color_entity_class: unit
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 6
@@ -742,6 +748,7 @@ plots:
       default:
         variant: h
         map_dimensions_for_plots: [dt_e, tt_s]
+        color_entity_class: connection
         max_items_per_plot: 10
         max_subplots_per_file: 6
         base_length: 5
@@ -755,6 +762,7 @@ plots:
         plot_name: 'Flows connection weekly avg'
         variant: w
         map_dimensions_for_plots: [dt_e, ti_s]
+        color_entity_class: connection
         time_average_duration: 168
         max_items_per_plot: 10
         max_subplots_per_file: 6
@@ -768,6 +776,7 @@ plots:
       time_plots:
         variant: l
         map_dimensions_for_plots: [dt_ee, tt_l]
+        color_entity_class: connection
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 6
@@ -804,6 +813,7 @@ plots:
       debug:
         variant: h
         map_dimensions_for_plots: [dt_ee, tt_su]
+        color_entity_class: connection
         max_items_per_plot: 10
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
@@ -817,6 +827,7 @@ plots:
         plot_name: 'Connection leftward weekly avg'
         variant: w
         map_dimensions_for_plots: [dt_ee, ti_su]
+        color_entity_class: connection
         time_average_duration: 168
         max_items_per_plot: 10
         max_subplots_per_file: 6
@@ -830,6 +841,7 @@ plots:
       time_plots:
         variant: l
         map_dimensions_for_plots: [dt_ee, tt_lu]
+        color_entity_class: connection
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 6
@@ -866,6 +878,7 @@ plots:
       debug:
         variant: h
         map_dimensions_for_plots: [dt_ee, tt_lu]
+        color_entity_class: connection
         max_items_per_plot: 10
         max_subplots_per_file: 6
         base_length: 5
@@ -879,6 +892,7 @@ plots:
         plot_name: 'Connection rightward weekly avg'
         variant: w
         map_dimensions_for_plots: [dt_ee, ti_lu]
+        color_entity_class: connection
         time_average_duration: 168
         max_items_per_plot: 10
         max_subplots_per_file: 6
@@ -892,6 +906,7 @@ plots:
       time_plots:
         variant: l
         map_dimensions_for_plots: [dt_ee, tt_lu]
+        color_entity_class: connection
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 6
@@ -1677,6 +1692,7 @@ plots:
       default:
         variant: h
         map_dimensions_for_plots: [dt_e, tt_l]
+        color_entity_class: node
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: MWh
@@ -1689,6 +1705,7 @@ plots:
         plot_name: 'Node state weekly avg'
         variant: w
         map_dimensions_for_plots: [dt_e, ui_l]
+        color_entity_class: node
         time_average_duration: 168
         max_items_per_plot: 10
         max_subplots_per_file: 6
@@ -1755,6 +1772,7 @@ plots:
       default:
         variant: h
         map_dimensions_for_plots: [dt_e, tt_l]
+        color_entity_class: unit
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: units online
@@ -1763,6 +1781,7 @@ plots:
         plot_name: 'Unit online weekly avg'
         variant: w
         map_dimensions_for_plots: [dt_e, ti_l]
+        color_entity_class: unit
         time_average_duration: 168
         max_items_per_plot: 10
         max_subplots_per_file: 6
