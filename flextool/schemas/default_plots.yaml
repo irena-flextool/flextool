@@ -464,6 +464,7 @@ plots:
       default:
         variant: h
         map_dimensions_for_plots: [dt_ee, tt_lu]
+        color_entity_class: unit
         legend: all
         subplots_per_row: 2
         max_subplots_per_file: 6
@@ -476,6 +477,7 @@ plots:
         plot_name: 'Curtail. amount weekly avg'
         variant: w
         map_dimensions_for_plots: [dt_ee, ti_lu]
+        color_entity_class: unit
         time_average_duration: 168
         legend: all
         subplots_per_row: 2
@@ -1903,6 +1905,7 @@ plots:
       default:
         variant: h
         map_dimensions_for_plots: [dt_e, tt_l]
+        color_entity_class: connection
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: MWh/h
@@ -1911,6 +1914,7 @@ plots:
         plot_name: 'Connection losses weekly avg'
         variant: w
         map_dimensions_for_plots: [dt_e, ti_l]
+        color_entity_class: connection
         time_average_duration: 168
         max_items_per_plot: 10
         max_subplots_per_file: 6
