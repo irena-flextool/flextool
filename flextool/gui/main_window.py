@@ -108,6 +108,17 @@ def _is_ghost_iid(iid: str) -> bool:
 # Animated spinner frames for output action progress indication
 _SPINNER_FRAMES = ["\u25d0", "\u25d3", "\u25d1", "\u25d2"]  # rotating circle (Geometric Shapes; render on Windows Tk, unlike the old U+29D6/7 hourglasses)
 
+# Glyphs for the File-outputs "Gen." button. The button is clickable to
+# (re-)generate the output; the recycle ring (U+21BB) is the persistent
+# affordance that signals "press me", and the trailing mark reports state.
+_GEN_RING = "\u21bb"                  # recycle ring -- the clickable affordance
+# The status slot is ALWAYS filled (ring + mark) so the ring and the mark keep a
+# fixed horizontal position in every row; a "no data yet" row shows an en-dash
+# placeholder rather than a blank, which would otherwise re-centre the ring.
+_GEN_PENDING = f"{_GEN_RING} \u2013"  # not produced yet (ring + en-dash placeholder)
+_GEN_EXISTS = f"{_GEN_RING} \u2713"   # produced (ring + check)
+_GEN_FAILED = f"{_GEN_RING} \u2717"   # last run failed (ring + cross)
+
 
 class MainWindow(tk.Tk):
     """Main application window for FlexTool GUI.
@@ -226,6 +237,20 @@ class MainWindow(tk.Tk):
             "Grey.TButton",
             foreground=[("active", "#888888"), ("disabled", "#888888")],
         )
+
+        # Compact buttons for the File-outputs table — small vertical
+        # padding so the rows sit tightly together. (horizontal, vertical)
+        style.configure("Output.TButton", padding=(5, 0))
+        style.configure("Output.Grey.TButton", foreground="#888888", padding=(5, 0))
+        style.map(
+            "Output.Grey.TButton",
+            foreground=[("active", "#888888"), ("disabled", "#888888")],
+        )
+        # The Gen. button text is LEFT-anchored so the ↻ ring sits at a fixed x
+        # in every row.  Combined with the always-filled status slot
+        # (↻ –/✓/✗) the trailing mark also stays put; centred text would shift
+        # the ring whenever a row's mark is absent or a different width.
+        style.configure("Gen.TButton", padding=(5, 0), anchor="w")
 
         # ── State ──────────────────────────────────────────────────
         self.current_project: str | None = None
@@ -377,8 +402,8 @@ class MainWindow(tk.Tk):
             "\n"
             "  • Auto-gen: produce this output automatically after\n"
             "    every scenario run.\n"
-            "  • Status: ✓ = exists, ✗ = last run failed,\n"
-            "    blank = not produced yet. Click to (re-)generate.\n"
+            "  • Gen.: click the ↻ to (re-)generate. ↻ = not produced\n"
+            "    yet, ↻ ✓ = exists, ↻ ✗ = last run failed.\n"
             "  • Show: open the folder (or the file, for Comparison\n"
             "    SpineDB / Excel) in the system file manager.\n"
             "\n"
@@ -480,12 +505,12 @@ class MainWindow(tk.Tk):
         self.auto_comp_excel_var = tk.BooleanVar(value=False)
         self.auto_comp_spinedb_var = tk.BooleanVar(value=False)
 
-        # ttk.LabelFrame gives a themed border that matches the rest of
-        # the UI in both light and dark sv_ttk themes \u2014 no manual bg
-        # juggling. The legacy green-tint affordance is dropped (it
-        # didn't survive the move to ttk and the table makes the
-        # row-by-row state visible anyway).
-        self.output_frame = ttk.LabelFrame(outer, padding=(8, 4))
+        # The legacy green-tint affordance is dropped (it didn't survive the
+        # move to ttk and the per-row \u21bb \u2713/\u2717 state makes it redundant).
+        # sv_ttk's Card.TFrame: a themed bordered panel WITHOUT the empty-title
+        # top reservation that ttk.LabelFrame imposes (~21 px), which was the
+        # stubborn gap between the "File outputs" header and the first row.
+        self.output_frame = ttk.Frame(outer, style="Card.TFrame", padding=(8, 2))
         self.output_frame.grid(
             row=2, column=5, rowspan=7,
             sticky="ne", padx=(20, 0), pady=0,
@@ -498,10 +523,13 @@ class MainWindow(tk.Tk):
         ttk.Label(self.output_frame, text="Auto-gen").grid(
             row=0, column=1, padx=(0, 8), pady=(0, 2),
         )
-        ttk.Label(self.output_frame, text="Status").grid(
+        # "Gen." (not "Status"): the cell is a button that (re-)generates
+        # the output; the ↻ ring makes that evident. The action column header
+        # is left blank — the Show/Open button labels are self-explanatory.
+        ttk.Label(self.output_frame, text="Gen.").grid(
             row=0, column=2, padx=(0, 8), pady=(0, 2),
         )
-        ttk.Label(self.output_frame, text="Action").grid(
+        ttk.Label(self.output_frame, text="").grid(
             row=0, column=3, padx=(0, 0), pady=(0, 2),
         )
 
@@ -593,27 +621,30 @@ class MainWindow(tk.Tk):
             name_lbl = ttk.Label(
                 self.output_frame, text=display_name, anchor="w",
             )
-            name_lbl.grid(row=row_i, column=0, sticky="w", padx=(0, 8), pady=1)
+            name_lbl.grid(row=row_i, column=0, sticky="w", padx=(0, 8), pady=0)
             attach_tooltip(name_lbl, _row_tooltips[key])
 
             cb = ttk.Checkbutton(self.output_frame, variable=auto_var)
-            cb.grid(row=row_i, column=1, padx=(0, 8), pady=1)
+            cb.grid(row=row_i, column=1, padx=(0, 8), pady=0)
 
-            # Status / generate button: text shows the icon, click
-            # triggers (re-)generation.
+            # "Gen." button: the recycle ring (↻) is the persistent
+            # click-to-(re)generate affordance; a trailing ✓/✗ reports
+            # state. Compact style keeps the row short.
             status_btn = ttk.Button(
-                self.output_frame, text="  ", width=3,
+                self.output_frame, text=_GEN_PENDING, width=4,
+                style="Gen.TButton",
                 command=getattr(self, _gen_commands[key]),
             )
-            status_btn.grid(row=row_i, column=2, padx=(0, 8), pady=1)
+            status_btn.grid(row=row_i, column=2, padx=(0, 8), pady=0)
             self.output_status_labels[key] = status_btn
             self._output_spinners[key] = status_btn  # alias
 
             action_btn = ttk.Button(
                 self.output_frame, text=show_label, width=5,
+                style="Output.TButton",
                 command=getattr(self, _show_commands[key]),
             )
-            action_btn.grid(row=row_i, column=3, sticky="w", padx=(0, 0), pady=1)
+            action_btn.grid(row=row_i, column=3, sticky="w", padx=(0, 0), pady=0)
             self.output_action_btns[key] = action_btn
 
         # Trace auto-generate vars to save settings on toggle.
@@ -4848,17 +4879,17 @@ class MainWindow(tk.Tk):
         # button itself is clickable to (re-)generate.
         for key, has_output in status_map.items():
             if has_output:
-                self._output_spinners[key].configure(text="\u2713")
+                self._output_spinners[key].configure(text=_GEN_EXISTS)
                 if key in self.output_action_btns:
-                    self.output_action_btns[key].configure(style="TButton")
+                    self.output_action_btns[key].configure(style="Output.TButton")
             elif key in self._output_action_failed:
-                self._output_spinners[key].configure(text="\u2717")
+                self._output_spinners[key].configure(text=_GEN_FAILED)
                 if key in self.output_action_btns:
-                    self.output_action_btns[key].configure(style="Grey.TButton")
+                    self.output_action_btns[key].configure(style="Output.Grey.TButton")
             else:
-                self._output_spinners[key].configure(text="  ")
+                self._output_spinners[key].configure(text=_GEN_PENDING)
                 if key in self.output_action_btns:
-                    self.output_action_btns[key].configure(style="Grey.TButton")
+                    self.output_action_btns[key].configure(style="Output.Grey.TButton")
 
         self._update_output_frame_style()
         self._update_view_results_btn()
@@ -4866,9 +4897,9 @@ class MainWindow(tk.Tk):
     def _reset_output_status(self) -> None:
         """Reset all output status indicators to the default blank state."""
         for key in self._output_display_names:
-            self._output_spinners[key].configure(text="  ")
+            self._output_spinners[key].configure(text=_GEN_PENDING)
             if key in self.output_action_btns:
-                self.output_action_btns[key].configure(style="Grey.TButton")
+                self.output_action_btns[key].configure(style="Output.Grey.TButton")
 
     # ── Auto-generate checkbox management ─────────────────────────
 
@@ -5326,7 +5357,7 @@ class MainWindow(tk.Tk):
                 pass
         label = self._output_spinners.get(key)
         if label is not None:
-            label.configure(text="  ")
+            label.configure(text=_GEN_PENDING)
 
     def _animate_spinner(self, key: str, frame_idx: int) -> None:
         """Update the spinner label to the next animation frame."""
@@ -5354,9 +5385,9 @@ class MainWindow(tk.Tk):
             self._output_action_failed.add(action_name)
         if action_name in self._output_spinners:
             if success:
-                self._output_spinners[action_name].configure(text="\u2713")
+                self._output_spinners[action_name].configure(text=_GEN_EXISTS)
             else:
-                self._output_spinners[action_name].configure(text="\u2717")
+                self._output_spinners[action_name].configure(text=_GEN_FAILED)
         if action_name in self.output_status_labels:
             self.output_status_labels[action_name].configure(state="normal")
         self._update_output_status()
