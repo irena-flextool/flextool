@@ -457,7 +457,7 @@ renders comparison plots.
 | `data_models.py` | `TimeSeriesResults`, `DispatchMappings`. |
 | `db_reader.py` | Load scenario parquet files into `TimeSeriesResults`. |
 | `dispatch_mappings.py` | Load dispatch-mapping parquets. |
-| `config_io.py` / `config_builder.py` | Parse / write / construct dispatch `config.yaml`. |
+| `config_builder.py` | Discover dispatch entity/scenario names + assign palette colors (seeded into `plot_settings.yaml`). |
 | `dispatch_data.py` / `dispatch_plots.py` | Per-scenario dispatch DataFrame prep and stacked-area rendering. |
 | `constants.py` | Colors and special column-name lists. |
 | `orchestrator.py` | Top-level `run()` function. |

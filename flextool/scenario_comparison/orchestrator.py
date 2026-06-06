@@ -12,9 +12,7 @@ from flextool.lean_parquet import write_lean_parquet
 
 from flextool.scenario_comparison.config_builder import (
     assign_palette_colors,
-    create_or_update_dispatch_config,
     discover_dispatch_entities,
-    get_scenarios_from_config,
 )
 from flextool.scenario_comparison.data_models import DispatchMappings
 from flextool.scenario_comparison.db_reader import get_scenario_results
@@ -203,16 +201,11 @@ def run(
     if group_node_combined is not None and not group_node_combined.empty:
         group_node_combined.reset_index()
 
-    # Create or update dispatch config
-    dispatch_config = None
+    # Additively seed discovered entity / scenario colors into the project
+    # ``plot_settings.yaml`` (the durable, comment-preserving colors file the
+    # renderers read).  This is the sole color/order/scenario source now; the
+    # legacy ``config.yaml`` system has been removed.
     if dispatch_plots:
-        dispatch_config = create_or_update_dispatch_config(
-            plot_dir, results, dispatch_scenarios, mappings
-        )
-        # Additively seed discovered entity / scenario colors into the
-        # project ``plot_settings.yaml`` (the durable, comment-preserving
-        # colors file the renderers read).  ``config.yaml`` is still written
-        # above for now (4.1 made the renderers ignore its colors).
         _seed_dispatch_colors_into_plot_settings(
             Path(plot_dir).parent, color_path, mappings, dispatch_scenarios
         )
@@ -324,11 +317,11 @@ def run(
 
     # Generate dispatch plots
     if dispatch_plots:
-        if dispatch_config and combined_mapping_dfs:
+        if combined_mapping_dfs:
             print("\nGenerating dispatch plots...")
             create_dispatch_plots(
-                results, mappings, dispatch_config, plot_dir,
-                scenarios=get_scenarios_from_config(dispatch_config),
+                results, mappings, plot_dir,
+                scenarios=dispatch_scenarios,
                 show_plot=show_plots,
                 write_xlsx=write_dispatch_xlsx,
                 break_times=break_times,

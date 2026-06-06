@@ -13,7 +13,6 @@ from flextool.scenario_comparison.dispatch_data import (
     prepare_dispatch_data,
     prepare_node_dispatch_data,
 )
-from flextool.scenario_comparison.config_builder import get_scenarios_from_config
 
 
 def _auto_assign_node_colors_with_existing(
@@ -395,9 +394,8 @@ def union_dispatch_metadata(
 def create_dispatch_plots(
     results: TimeSeriesResults,
     mappings: DispatchMappings,
-    config: dict,
     plot_dir: str | Path,
-    scenarios: list[str] | None = None,
+    scenarios: list[str],
     show_plot: bool = False,
     write_xlsx: bool = False,
     plot_rows: list[int] | tuple[int, int] | None = None,
@@ -410,11 +408,11 @@ def create_dispatch_plots(
     are generated for ALL nodes that have dispatch data (discovered from the
     results, never curated) ONLY when *debug* is true; otherwise no node
     plots are produced.  There is no persisted node selection.
+
+    *scenarios* is the run's scenario set (the data-derived dispatch tags),
+    passed in by the caller; there is no longer a ``config.yaml`` fallback.
     """
     plot_dir = Path(plot_dir)
-
-    if scenarios is None:
-        scenarios = get_scenarios_from_config(config)
 
     # Dispatch colors + stacking order now come from the project's
     # ``plot_settings.yaml`` (``entities`` for per-entity flows, new
@@ -451,13 +449,14 @@ def create_dispatch_plots(
     )
     colors: dict[str, str] = {}
 
-    # Use plot_rows from GUI/CLI if provided, otherwise fall back to config.yaml
+    # Time window comes from ``plot_rows`` (GUI/CLI, derived from
+    # ``PlotSettings.start_time``/``duration``); a sane default covers the
+    # rare path where the caller omits it (the old ``config.yaml``
+    # ``time_to_plot`` source is gone).
     if plot_rows and len(plot_rows) >= 2:
         timeline = (int(plot_rows[0]), int(plot_rows[1]) + 1)  # plot_rows is inclusive
     else:
-        first = config.get('time_to_plot', {}).get('first_timestep', 0)
-        n_steps = config.get('time_to_plot', {}).get('number_of_timesteps', 168)
-        timeline = (first, first + n_steps)
+        timeline = (0, 168)
 
     # Get nodeGroups from data (dispatch_groups mapping), not config
     dispatch_groups_df = mappings.dispatch_groups

@@ -131,8 +131,6 @@ class TestCreateDispatchPlotsDebugGating(unittest.TestCase):
         self.mappings = DispatchMappings()
         self.mappings.dispatch_groups = pd.DataFrame({"group": ["G1"]})
         self.results = _results_with_nodes(["n1", "n2"])
-        # Legacy curation list that MUST be ignored.
-        self.config = {"nodes": ["curated_only"]}
 
     def _run(self, debug: bool):
         """Run create_dispatch_plots with rendering + group prep stubbed.
@@ -164,7 +162,6 @@ class TestCreateDispatchPlotsDebugGating(unittest.TestCase):
             dispatch_plots.create_dispatch_plots(
                 self.results,
                 self.mappings,
-                self.config,
                 self.plot_dir,
                 scenarios=["scen"],
                 debug=debug,
@@ -178,10 +175,9 @@ class TestCreateDispatchPlotsDebugGating(unittest.TestCase):
     def test_all_nodes_when_debug_on(self) -> None:
         node_calls = self._run(debug=True)
         # Two passes (ylim + plot) over both discovered nodes; the SET of
-        # nodes is what matters and must equal the data universe, never the
-        # curated ``config['nodes']``.
+        # nodes is what matters and must equal the data universe (there is no
+        # longer any curated node selection to override it).
         self.assertEqual(set(node_calls), {"n1", "n2"})
-        self.assertNotIn("curated_only", node_calls)
 
 
 if __name__ == "__main__":
