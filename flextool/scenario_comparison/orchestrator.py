@@ -11,7 +11,9 @@ import yaml
 from flextool.lean_parquet import write_lean_parquet
 
 from flextool.scenario_comparison.config_builder import (
+    assign_palette_colors,
     create_or_update_dispatch_config,
+    discover_dispatch_entities,
     get_scenarios_from_config,
 )
 from flextool.scenario_comparison.data_models import DispatchMappings
@@ -28,6 +30,70 @@ from flextool.scenario_comparison.plan_union import (
 from flextool.plot_outputs.config import _is_single_config, flatten_new_format
 from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
 from flextool.plot_outputs.color_template import resolve_plot_settings_path
+
+
+def _seed_dispatch_colors_into_plot_settings(
+    project_path: Path,
+    color_path: Path,
+    mappings: DispatchMappings,
+    dispatch_scenarios: list[str],
+) -> None:
+    """Auto-seed discovered dispatch entity / scenario colors additively.
+
+    Relocates ``config_builder``'s color-seeding intent from ``config.yaml``
+    to the project ``plot_settings.yaml``: discover the run's group / unit /
+    connection / scenario names, assign each a default palette color, and
+    splice the genuinely-new ones into the project settings file without
+    disturbing existing content.
+
+    When *color_path* is the bundled fallback (the project has no own
+    ``plot_settings.yaml`` yet), seed the project copy first via
+    :func:`flextool.gui.project_utils.seed_plot_settings` so we never write
+    the packaged default.  Non-fatal: any failure is logged and the run
+    continues.
+    """
+    from flextool.plot_outputs.color_template import (
+        _clear_cache,
+        _default_path,
+    )
+    from flextool.scenario_comparison.plot_settings_seed import (
+        seed_colors_into_plot_settings,
+    )
+
+    try:
+        discovered = discover_dispatch_entities(mappings, dispatch_scenarios)
+        entity_colors: dict[str, dict[str, str]] = {}
+        for cls in ("group", "unit", "connection"):
+            names = discovered.get(cls) or []
+            if names:
+                entity_colors[cls] = assign_palette_colors(names)
+        scenario_colors = assign_palette_colors(
+            discovered.get("scenarios") or [], use_tab10=True
+        )
+        if not any(entity_colors.values()) and not scenario_colors:
+            return
+
+        # Resolve to the project's own file; if the resolver handed back the
+        # bundled default, seed the project copy first (never write the
+        # package file).
+        target = Path(color_path)
+        if target == Path(_default_path()):
+            from flextool.gui.project_utils import seed_plot_settings
+            target = seed_plot_settings(project_path)
+
+        changed = seed_colors_into_plot_settings(
+            target, entity_colors, scenario_colors
+        )
+        if changed:
+            # The settings file changed on disk — drop the mtime-keyed cache
+            # so downstream readers in this same process see the new colors.
+            _clear_cache()
+            print(f"Seeded dispatch colors into {target}")
+    except Exception as exc:  # noqa: BLE001 - seeding must never abort a run
+        import logging as _logging
+        _logging.warning(
+            "Auto-seeding plot_settings.yaml failed (non-fatal): %s", exc
+        )
 
 
 def _derive_comparison_settings(plots_flat: dict) -> dict:
@@ -142,6 +208,17 @@ def run(
         dispatch_config = create_or_update_dispatch_config(
             plot_dir, results, dispatch_scenarios, mappings
         )
+        # Additively seed discovered entity / scenario colors into the
+        # project ``plot_settings.yaml`` (the durable, comment-preserving
+        # colors file the renderers read).  ``config.yaml`` is still written
+        # above for now (4.1 made the renderers ignore its colors).
+        _seed_dispatch_colors_into_plot_settings(
+            Path(plot_dir).parent, color_path, mappings, dispatch_scenarios
+        )
+        # Seeding may have created the project ``plot_settings.yaml`` (when
+        # only the bundled default existed); re-resolve so the renderers and
+        # the viewer plan use the freshly-seeded project file.
+        color_path = resolve_plot_settings_path(Path(plot_dir).parent)
 
     # Flatten new-format entries to flat result_key mapping for downstream use.
     # Then derive comparison-mode configs from each leaf (single rules +
