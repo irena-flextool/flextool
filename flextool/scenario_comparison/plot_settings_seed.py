@@ -41,7 +41,7 @@ _SUB_INDENT = 2
 _ENTRY_UNDER_SUB_INDENT = 4
 _ENTRY_UNDER_TOP_INDENT = 2
 
-_ENTITY_CLASSES = ("group", "unit", "connection")
+_ENTITY_CLASSES = ("group", "unit", "connection", "node")
 
 
 def _leading_spaces(line: str) -> int:

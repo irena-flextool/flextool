@@ -549,6 +549,38 @@ class ExecutionManager:
                     "Could not persist bare_output_owners to settings.yaml",
                     exc_info=True,
                 )
+
+        # Upfront, additive seeding of input-DB entity colors into the
+        # project plot_settings.yaml (Stage 5).  This runs ONCE here in the
+        # GUI thread (the single writer) — scenarios themselves run as
+        # parallel subprocesses, so per-scenario writes would race.  We seed
+        # OUTSIDE self._lock: the DB fetch + file splice is slow I/O that must
+        # not hold the manager lock and block other job operations.  The jobs
+        # created above are all SCENARIO jobs (add_jobs only enqueues
+        # scenarios; auxiliary jobs go through add_auxiliary_job).
+        #
+        # Collect the DISTINCT input DB URLs of the newly-added jobs whose
+        # backing sqlite file exists on disk.  xlsx sources point at a
+        # not-yet-created intermediate/<stem>.sqlite; those are skipped here
+        # and picked up on a later batch once the intermediate DB exists
+        # (known limitation).  Best-effort / non-fatal: any failure is logged
+        # and never breaks job queuing.  GUI-execution path only; the headless
+        # CLI path is out of scope.
+        input_db_urls = list(
+            dict.fromkeys(j.input_db_url for j in new_jobs if j.input_db_url)
+        )
+        if input_db_urls:
+            try:
+                from flextool.scenario_comparison.input_entity_colors import (
+                    seed_input_entity_colors,
+                )
+                seed_input_entity_colors(self.project_path, input_db_urls)
+            except Exception:
+                logger.warning(
+                    "Upfront input-DB color seeding failed (non-fatal)",
+                    exc_info=True,
+                )
+
         return new_jobs
 
     # ------------------------------------------------------------------
