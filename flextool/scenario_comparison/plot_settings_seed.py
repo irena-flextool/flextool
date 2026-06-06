@@ -158,19 +158,18 @@ def _find_subsection(
     return header, end
 
 
-def _last_entry_line(lines: list[str], start: int, end: int, entry_indent: int) -> int:
-    """Index after the last *active* entry line in ``lines[start:end]``.
+def _block_end_insert_point(lines: list[str], start: int, end: int) -> int:
+    """Index after the last *content* (comment or entry) line in the block.
 
-    An active entry is a non-comment, non-blank line indented at
-    ``entry_indent``.  Returns the insertion point (one past the last such
-    line), or *start* when the block has no active entries.
+    Auto-added entries are appended at the END of a (sub)section, after both
+    the instruction comments and any existing entries, so the comments stay
+    ABOVE the seeded entities.  Trailing blank lines (the separator before the
+    next section) are skipped so new entries sit directly under the last
+    content line.  Returns *start* when the block is entirely blank.
     """
     insert_at = start
     for i in range(start, end):
-        line = lines[i]
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if _leading_spaces(line) >= entry_indent:
+        if lines[i].strip():  # any non-blank line (comment or entry)
             insert_at = i + 1
     return insert_at
 
@@ -270,9 +269,7 @@ def seed_colors_into_plot_settings(
         ]
         if not missing:
             continue
-        insert_at = _last_entry_line(
-            lines, sub_start + 1, sub_end, _ENTRY_UNDER_SUB_INDENT
-        )
+        insert_at = _block_end_insert_point(lines, sub_start + 1, sub_end)
         new_lines = [
             _format_entry(_ENTRY_UNDER_SUB_INDENT, n, c) for n, c in missing
         ]
@@ -294,9 +291,7 @@ def seed_colors_into_plot_settings(
             (n, c) for n, c in scenario_colors.items() if n.lower() not in existing
         ]
         if missing:
-            insert_at = _last_entry_line(
-                lines, sec_start + 1, sec_end, _ENTRY_UNDER_TOP_INDENT
-            )
+            insert_at = _block_end_insert_point(lines, sec_start + 1, sec_end)
             new_lines = [
                 _format_entry(_ENTRY_UNDER_TOP_INDENT, n, c) for n, c in missing
             ]

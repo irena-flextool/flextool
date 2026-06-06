@@ -384,3 +384,66 @@ def test_orchestrator_hook_idempotent(tmp_path: Path):
         project, project_file, m, ["S1"]
     )
     assert project_file.read_text(encoding="utf-8") == first
+
+
+# --------------------------------------------------------------------------
+# Regression: comment placement + no collision with illustrative examples
+# --------------------------------------------------------------------------
+
+class TestSeedBelowCommentsNoExampleCollision:
+    """Bundled subsections carry instruction comments (incl. ``<name>``
+    format placeholders). Seeded entities must land BELOW those comments,
+    and a real entity must NOT be skipped just because its name resembles a
+    (now placeholder-named) example comment.
+    """
+
+    def test_real_names_seed_below_comments(self, tmp_path: Path) -> None:
+        import shutil
+        from flextool._resources import package_data_path
+
+        f = tmp_path / "plot_settings.yaml"
+        shutil.copy2(package_data_path("schemas/default_plot_settings.yaml"), f)
+
+        # coal_plant / chp used to collide with the old commented examples
+        # (chp also exists as an active *group* entry, so scope to ``unit``).
+        changed = seed_colors_into_plot_settings(
+            f, {"unit": {"coal_plant": "#111111", "chp": "#222222"}}, {}
+        )
+        assert changed is True
+        lines = f.read_text(encoding="utf-8").splitlines()
+
+        def indent(s: str) -> int:
+            return len(s) - len(s.lstrip(" "))
+
+        # Bound the unit subsection: header .. next <=2-space-indented key.
+        unit_hdr = next(i for i, ln in enumerate(lines) if ln.strip() == "unit:")
+        sub_end = next(
+            (i for i in range(unit_hdr + 1, len(lines))
+             if lines[i].strip() and not lines[i].lstrip().startswith("#")
+             and indent(lines[i]) <= 2),
+            len(lines),
+        )
+        unit = range(unit_hdr + 1, sub_end)
+        coal_idx = next(i for i in unit if lines[i].strip().startswith("coal_plant:"))
+        chp_idx = next(i for i in unit if lines[i].strip().startswith("chp:"))
+        last_comment = max(
+            i for i in range(unit_hdr + 1, coal_idx)
+            if lines[i].strip().startswith("#")
+        )
+        # Instruction comments stay ABOVE the seeded rows; both names added.
+        assert unit_hdr < last_comment < coal_idx < chp_idx
+        assert lines[coal_idx].strip() == 'coal_plant: "#111111"'
+        assert lines[chp_idx].strip() == 'chp: "#222222"'
+
+    def test_idempotent_after_seeding_real_names(self, tmp_path: Path) -> None:
+        import shutil
+        from flextool._resources import package_data_path
+
+        f = tmp_path / "plot_settings.yaml"
+        shutil.copy2(package_data_path("schemas/default_plot_settings.yaml"), f)
+        seed_colors_into_plot_settings(f, {"unit": {"coal_plant": "#111111"}}, {})
+        before = f.read_text(encoding="utf-8")
+        assert seed_colors_into_plot_settings(
+            f, {"unit": {"coal_plant": "#111111"}}, {}
+        ) is False
+        assert f.read_text(encoding="utf-8") == before
