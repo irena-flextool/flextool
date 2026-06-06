@@ -145,6 +145,83 @@ def _make_stub_viewer(project_path: Path, live_plan=None):
     return stub
 
 
+# ---------------------------------------------------------------------------
+#  PlotDialog — shared "Colors, order..." button
+# ---------------------------------------------------------------------------
+
+
+def _iter_buttons(widget):
+    """Yield every ttk/tk Button in *widget*'s subtree."""
+    from tkinter import ttk
+    for child in widget.winfo_children():
+        if isinstance(child, ttk.Button):
+            yield child
+        yield from _iter_buttons(child)
+
+
+class TestPlotDialogColorsButton:
+    def test_button_seeds_and_opens_shared_editor(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """The dialog-level "Colors, order..." button seeds the project
+        ``plot_settings.yaml`` and opens the shared ``PlotSettingsEditor``
+        on that project copy (never a dispatch ``config.yaml``)."""
+        from flextool.gui.dialogs.plot_dialog import PlotDialog
+        from flextool.gui.data_models import ProjectSettings
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        assert not (project / "plot_settings.yaml").exists()
+
+        opened = {}
+
+        class _FakeEditor:
+            def __init__(self, parent, path):
+                opened["parent"] = parent
+                opened["path"] = Path(path)
+
+        monkeypatch.setattr(
+            "flextool.gui.dialogs.plot_settings_editor.PlotSettingsEditor",
+            _FakeEditor,
+        )
+
+        captured = {}
+
+        def drive():
+            dlg = captured["dialog"]
+            buttons = [
+                b for b in _iter_buttons(dlg)
+                if str(b.cget("text")) == "Colors, order..."
+            ]
+            captured["button_count"] = len(buttons)
+            if buttons:
+                buttons[0].invoke()
+            dlg._on_ok()
+
+        class _Probe(PlotDialog):
+            def __init__(self, parent, project_path, settings):
+                captured["dialog"] = self
+                parent.after(0, drive)
+                super().__init__(parent, project_path, settings)
+
+        _Probe(tk_root, project, ProjectSettings())
+
+        # Exactly one dialog-level "Colors, order..." button exists.
+        assert captured["button_count"] == 1
+        # It seeded the project copy and opened the shared editor on it.
+        seeded = project / "plot_settings.yaml"
+        assert seeded.is_file()
+        assert seeded.read_bytes() == _bundled_default().read_bytes()
+        assert opened["path"] == seeded
+
+    def test_dispatch_config_editor_is_gone(self):
+        """The old ``DispatchConfigEditor`` and its handler are removed."""
+        from flextool.gui.dialogs import plot_dialog
+
+        assert not hasattr(plot_dialog, "DispatchConfigEditor")
+        assert not hasattr(plot_dialog._PlotSection, "_on_edit_dispatch_config")
+
+
 class TestOnChangeColorsSeeding:
     def test_seeds_project_file_when_absent(self, tk_root, tmp_path, monkeypatch):
         import flextool.gui.result_viewer as rv
