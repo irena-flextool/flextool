@@ -45,7 +45,11 @@ dependencies = [
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.
     "highspy<=1.14.0",
-    "polars",
+    # polars 1.40 introduced `pl.struct(...).is_sorted()` (and polar_high's
+    # `_verify_dense_sorted` relies on the same call); older versions raise
+    # "could not apply comparison on series of dtype 'binary[offset]'" and
+    # silently bypass autoscale Layer 2/3.
+    "polars>=1.40",
     # Core data + I/O.
     "pandas",
     "spinedb-api",
