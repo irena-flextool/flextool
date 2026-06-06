@@ -162,6 +162,16 @@ class ResultViewer(tk.Toplevel):
         self._live_plan: 'PlotPlan | None' = None
         self._live_plan_key: tuple[str, str, str] = ("", "", "")
 
+        # One-shot flag: when set, the next single-mode render bypasses any
+        # pre-computed DISK plot-plan and recomputes the live plan from the
+        # freshly-read template.  Set by :meth:`_on_change_colors` after a
+        # color edit when the cached/disk plan cannot be recolored in place
+        # (e.g. a legacy disk plan written before the plan carried
+        # ``color_category`` / ``color_entity_class`` hints — an in-place
+        # rebuild there silently reverts to palette colors and ignores the
+        # edited ``plot_settings.yaml``).  Cleared once consumed.
+        self._force_plan_recompute: bool = False
+
         # Cross-scenario axis-bounds manifest.  Loaded lazily on first
         # use and reloaded whenever the on-disk file's mtime advances
         # (so batch runs in the background pick up naturally on the next
@@ -2139,18 +2149,34 @@ class ResultViewer(tk.Toplevel):
         from flextool.plot_outputs.plan import rebuild_plan_color_map
         _clear_cache()
 
-        # True in-place recolor/reorder: when a plan is already cached,
+        # True in-place recolor/reorder: when a plan is already cached AND
+        # it carries color hints (``color_category`` / ``color_entity_class``),
         # rebuild ONLY its shared_color_map (new colors + new file order)
-        # from the edited template via the plan's stored color hints —
-        # no parquet reload, no dimension-rule / layout / processed_df
-        # recompute.  Prefetched figures hold the OLD colors so they must
-        # be dropped (but the live plan is preserved).  When nothing is
-        # rendered yet (no live plan), fall back to the full cache clear so
-        # the next render computes from the freshly read template.
-        if self._live_plan is not None:
+        # from the edited template via those hints — no parquet reload, no
+        # dimension-rule / layout / processed_df recompute.  Prefetched
+        # figures hold the OLD colors so they must be dropped (but the live
+        # plan is preserved).
+        #
+        # A plan WITHOUT color hints cannot be recolored in place: that path
+        # is hit by a legacy DISK plan written before plans carried the hints
+        # (they deserialize as ``None``), whose baked color map AND an
+        # in-place rebuild both silently ignore the edited ``entities`` /
+        # ``categories`` template and revert to palette colors.  For those —
+        # and when nothing is rendered yet — force a from-scratch recompute
+        # against the freshly read template (bypassing the stale disk plan).
+        plan = self._live_plan
+        can_rebuild_in_place = (
+            plan is not None
+            and plan.shared_color_map
+            and (
+                plan.color_category is not None
+                or plan.color_entity_class is not None
+            )
+        )
+        if can_rebuild_in_place:
             try:
                 rebuild_plan_color_map(
-                    self._live_plan,
+                    plan,
                     color_path=resolve_plot_settings_path(self._project_path),
                 )
             except Exception:  # noqa: BLE001
@@ -2158,12 +2184,16 @@ class ResultViewer(tk.Toplevel):
                     "In-place color rebuild failed; recomputing plan",
                     exc_info=True,
                 )
+                self._force_plan_recompute = True
                 self._clear_figure_cache()
                 self._trigger_replot()
                 return
             self._clear_prefetched_figures()
             self._trigger_replot()
         else:
+            # No usable hints (legacy disk plan / no live plan) → recompute
+            # from scratch so the edited template is actually honored.
+            self._force_plan_recompute = True
             self._clear_figure_cache()
             self._trigger_replot()
 
@@ -2799,12 +2829,32 @@ class ResultViewer(tk.Toplevel):
                 load_plot_plan, compute_live_plan,
             )
             plan_key = (scenario, variant.result_key, variant.sub_config)
-            if self._live_plan_key == plan_key and self._live_plan is not None:
+            # A pending color edit may demand a from-scratch recompute that
+            # bypasses any cached/disk plan (see _force_plan_recompute).
+            force_recompute = self._force_plan_recompute
+            self._force_plan_recompute = False
+            if (
+                not force_recompute
+                and self._live_plan_key == plan_key
+                and self._live_plan is not None
+            ):
                 plan = self._live_plan
             else:
-                # Try disk plan first, then compute on-the-fly
-                plan_dir = self._project_path / "output_parquet" / scenario / "plot_plans"
-                plan = load_plot_plan(plan_dir, variant.result_key, variant.sub_config)
+                # Try the pre-computed DISK plan first (instant), then
+                # compute on-the-fly.  On a forced recompute we skip the
+                # disk plan entirely: a legacy disk plan carries no color
+                # hints, so its baked colors AND an in-place rebuild both
+                # ignore the freshly edited template — only a recompute
+                # against the new template honors the edit.
+                plan = None
+                if not force_recompute:
+                    plan_dir = (
+                        self._project_path / "output_parquet" / scenario
+                        / "plot_plans"
+                    )
+                    plan = load_plot_plan(
+                        plan_dir, variant.result_key, variant.sub_config,
+                    )
                 if plan is None:
                     plan = compute_live_plan(
                         df, config, plot_name, break_times,
