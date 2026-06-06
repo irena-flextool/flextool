@@ -86,6 +86,18 @@ def main() -> None:
         '--comparison-parquet-dir', default=None,
         help='Directory to write combined comparison parquet files for viewer integration'
     )
+    parser.add_argument(
+        '--debug',
+        nargs='?',
+        const='basic',
+        default='off',
+        choices=['off', 'basic', 'full'],
+        metavar='LEVEL',
+        help='Diagnostic verbosity level (default: off).  Any level other '
+             'than ``off`` additionally generates per-node dispatch plots '
+             'for every available node (no node curation).  Mirrors the '
+             '``--debug`` flag of cmd_run_flextool.',
+    )
 
     args = parser.parse_args()
     db_url = args.db_url
@@ -251,6 +263,7 @@ def main() -> None:
         shared_legend=shared_legend,
         only_first_file=args.only_first_file_per_plot,
         comparison_parquet_dir=args.comparison_parquet_dir,
+        debug=args.debug != 'off',
     )
 
 

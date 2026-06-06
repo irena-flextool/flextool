@@ -402,8 +402,15 @@ def create_dispatch_plots(
     write_xlsx: bool = False,
     plot_rows: list[int] | tuple[int, int] | None = None,
     break_times: set[str] | None = None,
+    debug: bool = False,
 ) -> None:
-    """Create dispatch plots for all configured nodeGroups and nodes."""
+    """Create dispatch plots for all nodeGroups (and, in debug, all nodes).
+
+    nodeGroup dispatch plots are always generated.  Per-node dispatch plots
+    are generated for ALL nodes that have dispatch data (discovered from the
+    results, never curated) ONLY when *debug* is true; otherwise no node
+    plots are produced.  There is no persisted node selection.
+    """
     plot_dir = Path(plot_dir)
 
     if scenarios is None:
@@ -465,7 +472,14 @@ def create_dispatch_plots(
     node_ylims: dict[str, tuple[float, float]] = {}
     ng_columns: dict[str, list[str]] = {}
     node_columns: dict[str, list[str]] = {}
-    nodes = config.get('nodes', [])
+    # No node curation: ``config['nodes']`` is no longer consumed.  Per-node
+    # dispatch is a debug-only convenience covering ALL nodes that have
+    # dispatch data (discovered from the results), and is skipped entirely
+    # when ``debug`` is false.
+    from flextool.scenario_comparison.dispatch_data import (
+        available_dispatch_nodes,
+    )
+    nodes = available_dispatch_nodes(results) if debug else []
 
     for scenario in scenarios:
         for ng in node_groups:

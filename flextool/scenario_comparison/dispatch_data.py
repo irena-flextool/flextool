@@ -650,3 +650,91 @@ def prepare_node_dispatch_data(
         import traceback
         traceback.print_exc()
         return None, None
+
+
+# ---------------------------------------------------------------------------
+# Node discovery + dispatch-tree structure (Stage 4.4)
+# ---------------------------------------------------------------------------
+
+def available_dispatch_nodes(results: TimeSeriesResults) -> list[str]:
+    """Return the sorted set of nodes that have dispatch (node-balance) data.
+
+    Mirrors the node universe ``config_builder`` used for ``available_nodes``:
+    the ``node`` level of the ``node_d_ep`` (node energy/period balance)
+    MultiIndex columns.  This is the same data ``prepare_node_dispatch_data``
+    operates on, so every returned node can render an individual node
+    dispatch plot.
+    """
+    node_d_ep = results.node_d_ep
+    if node_d_ep is None:
+        return []
+    cols = node_d_ep.columns
+    if isinstance(cols, pd.MultiIndex):
+        if 'node' in (cols.names or []):
+            return sorted(set(cols.get_level_values('node')))
+        # Fall back to positional level 1 ((scenario, node, measure)).
+        if cols.nlevels >= 2:
+            return sorted(set(cols.get_level_values(1)))
+    return []
+
+
+def build_dispatch_tree(
+    group_node_df: pd.DataFrame | None,
+    node_groups: list[str],
+    available_nodes: list[str],
+    ungrouped_label: str = "Ungrouped nodes",
+) -> list[tuple[str, list[str]]]:
+    """Build the hierarchical dispatch tree structure.
+
+    Parameters
+    ----------
+    group_node_df:
+        nodeGroup→node membership (columns ``group`` and ``node``); may be
+        ``None`` or empty.
+    node_groups:
+        Dispatchable nodeGroups (already filtered) to render as parents, in
+        the desired display order.
+    available_nodes:
+        All nodes that have dispatch data (see
+        :func:`available_dispatch_nodes`).
+    ungrouped_label:
+        Label of the catch-all parent that collects nodes belonging to no
+        *displayed* nodeGroup.
+
+    Returns
+    -------
+    list of ``(parent_label, [child_node, ...])``
+        One entry per displayed nodeGroup (children = its member nodes that
+        are in *available_nodes*, sorted), followed by a single
+        ``(ungrouped_label, [...])`` entry when there are ungrouped nodes.
+        A node in several displayed groups appears under each.  The
+        "Ungrouped nodes" parent is omitted entirely when empty.
+    """
+    available_set = set(available_nodes)
+
+    # Map each displayed nodeGroup to its member nodes (restricted to nodes
+    # that actually have dispatch data).
+    group_members: dict[str, set[str]] = {ng: set() for ng in node_groups}
+    grouped_nodes: set[str] = set()
+    if (
+        group_node_df is not None
+        and not group_node_df.empty
+        and 'group' in group_node_df.columns
+        and 'node' in group_node_df.columns
+    ):
+        for grp, nd in zip(group_node_df['group'], group_node_df['node']):
+            if nd not in available_set:
+                continue
+            if grp in group_members:
+                group_members[grp].add(nd)
+                grouped_nodes.add(nd)
+
+    tree: list[tuple[str, list[str]]] = []
+    for ng in node_groups:
+        tree.append((ng, sorted(group_members[ng])))
+
+    ungrouped = sorted(available_set - grouped_nodes)
+    if ungrouped:
+        tree.append((ungrouped_label, ungrouped))
+
+    return tree

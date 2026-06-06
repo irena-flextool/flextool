@@ -152,6 +152,7 @@ def run(
     shared_legend: bool = True,
     only_first_file: bool = False,
     comparison_parquet_dir: str | None = None,
+    debug: bool = False,
 ) -> None:
     """Run the full scenario-comparison pipeline.
 
@@ -332,6 +333,7 @@ def run(
                 write_xlsx=write_dispatch_xlsx,
                 break_times=break_times,
                 plot_rows=plot_rows,
+                debug=debug,
             )
         else:
             print("Warning: Cannot generate dispatch plots - missing dispatch mappings")

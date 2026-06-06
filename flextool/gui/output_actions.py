@@ -277,6 +277,12 @@ class OutputActionManager:
         if plots and comp.dispatch_plots:
             cmd.append("--dispatch-plots")
 
+        # When the project debug level is on, generate per-node dispatch
+        # plots too (Stage 4.4).  Reuse the project ``debug_level`` rather
+        # than inventing a new flag; ``off`` stays node-plot-free.
+        if plots and comp.dispatch_plots and settings.debug_level != "off":
+            cmd.append(f"--debug={settings.debug_level}")
+
         if excel:
             cmd.extend(["--write-to-xlsx", "--write-dispatch-xlsx"])
             cmd.extend(["--excel-dir", str(self.project_path)])

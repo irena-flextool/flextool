@@ -31,7 +31,12 @@ from flextool.scenario_comparison.data_models import DispatchMappings, TimeSerie
 from flextool.scenario_comparison.db_reader import (
     build_scenario_folders_from_dir, collect_parquet_files, combine_parquet_files,
 )
-from flextool.scenario_comparison.dispatch_data import prepare_dispatch_data
+from flextool.scenario_comparison.dispatch_data import (
+    available_dispatch_nodes,
+    build_dispatch_tree,
+    prepare_dispatch_data,
+    prepare_node_dispatch_data,
+)
 from flextool.scenario_comparison.dispatch_mappings import (
     load_dispatch_mappings,
     resolve_data_scenario_tag,
@@ -43,6 +48,23 @@ if TYPE_CHECKING:
     from flextool.plot_outputs.plan import PlotPlan
 
 logger = logging.getLogger(__name__)
+
+# Dispatch tree iid prefixes.  ``dispatch_`` parents are nodeGroups (aggregate
+# dispatch); ``dispatchnode_`` children are individual nodes.  The two prefixes
+# are deliberately DISJOINT (``dispatchnode_`` does NOT start with
+# ``dispatch_``) so a nodeGroup and a node with the same bare name can never
+# collide.  ``_is_dispatch_iid`` recognises either; handlers route via
+# ``_display_dispatch_iid``.
+_DISPATCH_GROUP_PREFIX = "dispatch_"
+_DISPATCH_NODE_PREFIX = "dispatchnode_"
+_DISPATCH_UNGROUPED_LABEL = "Ungrouped nodes"
+
+
+def _is_dispatch_iid(iid: str) -> bool:
+    """True for any dispatch-tree iid (nodeGroup parent or node child)."""
+    return iid.startswith(_DISPATCH_NODE_PREFIX) or iid.startswith(
+        _DISPATCH_GROUP_PREFIX
+    )
 
 
 class ResultViewer(tk.Toplevel):
@@ -194,6 +216,11 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_data_tag: str = ""  # in-data scenario tag (may differ from folder)
         self._dispatch_ylims: dict[str, tuple[float, float]] = {}  # accumulated per-nodeGroup
         self._dispatch_columns: dict[str, list[str]] = {}  # accumulated column order
+        # Dispatch node-child iid → node name.  A node can be a member of
+        # several nodeGroups, so its child iids must be unique per parent
+        # (Treeview iids are global); this map recovers the node name from
+        # the unique iid for the renderer.
+        self._dispatch_node_iids: dict[str, str] = {}
 
         # ── Font metrics for DPI-aware sizing ────────────────────────
         from flextool.gui.ui_metrics import get_metrics
@@ -929,10 +956,9 @@ class ResultViewer(tk.Toplevel):
             self._populate_dispatch_tree()
             # Trigger replot if something is selected
             selection = self._plot_tree.selection()
-            if selection and selection[0].startswith("dispatch_"):
-                node_group = selection[0][len("dispatch_"):]
+            if selection and _is_dispatch_iid(selection[0]):
                 if scenarios:
-                    self._display_dispatch(scenarios[0], node_group)
+                    self._display_dispatch_iid(scenarios[0], selection[0])
             return
         if mode == "comparison":
             # Scenario selection is informational in comparison mode
@@ -964,12 +990,12 @@ class ResultViewer(tk.Toplevel):
         if iid.startswith("group_"):
             return
 
-        # Handle dispatch mode
-        if iid.startswith("dispatch_"):
-            node_group = iid[len("dispatch_"):]
+        # Handle dispatch mode.  ``_display_dispatch_iid`` routes a node
+        # child (``dispatchnode_``) vs a nodeGroup parent (``dispatch_``).
+        if _is_dispatch_iid(iid):
             scenarios = self._get_selected_scenarios()
             if scenarios:
-                self._display_dispatch(scenarios[0], node_group)
+                self._display_dispatch_iid(scenarios[0], iid)
             return
 
         # If disabled, find nearest non-disabled entry
@@ -1122,13 +1148,19 @@ class ResultViewer(tk.Toplevel):
     def _on_tree_motion(self, event: tk.Event) -> None:
         """Show tooltip with full name when hovering over an entry."""
         item = self._plot_tree.identify_row(event.y)
-        if not item or (not item.startswith("entry_") and not item.startswith("dispatch_")):
+        if not item or (
+            not item.startswith("entry_") and not _is_dispatch_iid(item)
+        ):
             self._hide_tooltip()
             return
 
-        # Dispatch items use the nodeGroup name directly
-        if item.startswith("dispatch_"):
-            full_text = item[len("dispatch_"):]
+        # Dispatch items show the nodeGroup / node name.  Check the node
+        # prefix first; node iids are position-qualified, so recover the
+        # node name from the map rather than slicing the prefix.
+        if item.startswith(_DISPATCH_NODE_PREFIX):
+            full_text = self._dispatch_node_iids.get(item, "")
+        elif item.startswith(_DISPATCH_GROUP_PREFIX):
+            full_text = item[len(_DISPATCH_GROUP_PREFIX):]
         else:
             entry = self._tree_entry_map.get(item)
             if entry is None:
@@ -2298,6 +2330,7 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_results = None
         self._dispatch_ylims.clear()
         self._dispatch_columns.clear()
+        self._dispatch_node_iids.clear()
         if hasattr(self, '_dispatch_metadata_cache'):
             del self._dispatch_metadata_cache
         self._plot_canvas._cache.clear()
@@ -3023,9 +3056,8 @@ class ResultViewer(tk.Toplevel):
         # Dispatch mode is handled directly by _on_tree_selected
         if mode == "dispatch":
             selection = self._plot_tree.selection()
-            if selection and selection[0].startswith("dispatch_"):
-                node_group = selection[0][len("dispatch_"):]
-                self._display_dispatch(scenarios[0], node_group)
+            if selection and _is_dispatch_iid(selection[0]):
+                self._display_dispatch_iid(scenarios[0], selection[0])
             return
 
         selection = self._plot_tree.selection()
@@ -3542,11 +3574,22 @@ class ResultViewer(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def _populate_dispatch_tree(self) -> None:
-        """Populate the tree with nodeGroups from dispatch data."""
+        """Populate the tree with a hierarchical dispatch view.
+
+        Each dispatchable nodeGroup is a parent (``dispatch_<ng>`` iid,
+        renders the aggregate group dispatch).  Its member nodes (from
+        ``group_node.parquet``, restricted to nodes that have dispatch
+        data) are children (``dispatchnode_<node>`` iid, renders an
+        individual node dispatch).  A node in several displayed groups
+        appears under each.  A catch-all parent "Ungrouped nodes" holds
+        every available dispatch node that belongs to no displayed
+        nodeGroup.
+        """
         # Clear existing tree and entry map
         for item in self._plot_tree.get_children():
             self._plot_tree.delete(item)
         self._tree_entry_map.clear()
+        self._dispatch_node_iids.clear()
 
         scenarios = self._get_selected_scenarios()
         if not scenarios:
@@ -3572,24 +3615,55 @@ class ResultViewer(tk.Toplevel):
         group_col = 'group' if 'group' in df.columns else 'nodeGroupDispatch'
         flagged_groups = set(df[group_col].unique())
 
-        # Filter to groups that actually have node members (group_node.parquet)
+        # group_node.parquet gives nodeGroup→node membership.  Keep only
+        # groups that actually have node members.
+        gn_df: pd.DataFrame | None = None
         group_node_path = parquet_dir / "group_node.parquet"
         if group_node_path.exists():
-            gn_df = read_lean_parquet(group_node_path)
-            if not gn_df.empty and 'group' in gn_df.columns:
-                groups_with_nodes = set(gn_df['group'].unique())
+            loaded = read_lean_parquet(group_node_path)
+            if not loaded.empty and 'group' in loaded.columns:
+                gn_df = loaded
+                groups_with_nodes = set(loaded['group'].unique())
                 flagged_groups &= groups_with_nodes
 
         node_groups = sorted(flagged_groups)
 
-        # Insert as flat list items (no group hierarchy)
-        for ng in node_groups:
-            iid = f"dispatch_{ng}"
-            self._plot_tree.insert("", "end", iid=iid, text=ng)
+        # Discover all nodes with dispatch data (the same universe
+        # ``prepare_node_dispatch_data`` operates on) so "Ungrouped nodes"
+        # can be computed.  Loading the dispatch results here is cheap and
+        # idempotent (cached on ``self._dispatch_scenario``).
+        available_nodes: list[str] = []
+        if self._load_dispatch_data(scenario) and self._dispatch_results is not None:
+            available_nodes = available_dispatch_nodes(self._dispatch_results)
 
-        # Select first item
-        if node_groups:
-            first_iid = f"dispatch_{node_groups[0]}"
+        tree = build_dispatch_tree(
+            gn_df, node_groups, available_nodes,
+            ungrouped_label=_DISPATCH_UNGROUPED_LABEL,
+        )
+
+        first_iid: str | None = None
+        for parent_idx, (parent_label, child_nodes) in enumerate(tree):
+            parent_iid = f"{_DISPATCH_GROUP_PREFIX}{parent_label}"
+            self._plot_tree.insert(
+                "", "end", iid=parent_iid, text=parent_label, open=False,
+            )
+            if first_iid is None:
+                first_iid = parent_iid
+            for child_idx, node in enumerate(child_nodes):
+                # Treeview iids are global, but a node can appear under
+                # several groups — so qualify the child iid by its position
+                # to keep it unique, and map it back to the node name.
+                child_iid = (
+                    f"{_DISPATCH_NODE_PREFIX}{parent_idx}_{child_idx}_{node}"
+                )
+                self._dispatch_node_iids[child_iid] = node
+                self._plot_tree.insert(
+                    parent_iid, "end", iid=child_iid, text=node,
+                )
+
+        # Select first item (a nodeGroup parent — or the "Ungrouped nodes"
+        # parent when no nodeGroups are flagged).
+        if first_iid is not None:
             self._plot_tree.selection_set(first_iid)
             self._plot_tree.see(first_iid)
 
@@ -3710,14 +3784,150 @@ class ResultViewer(tk.Toplevel):
             self._plot_canvas.show_message("Select a scenario to view dispatch")
             return
         selection = self._plot_tree.selection()
-        if not selection or not selection[0].startswith("dispatch_"):
+        if not selection or not _is_dispatch_iid(selection[0]):
             # No node groups in the tree — nothing to render
             self._plot_canvas.show_message(
                 "No dispatch node groups available for this scenario"
             )
             return
-        node_group = selection[0][len("dispatch_"):]
-        self._display_dispatch(scenarios[0], node_group)
+        self._display_dispatch_iid(scenarios[0], selection[0])
+
+    def _display_dispatch_iid(self, scenario: str, iid: str) -> None:
+        """Route a dispatch-tree iid to the right renderer.
+
+        ``dispatchnode_<node>`` → individual node dispatch;
+        ``dispatch_<ng>`` → aggregate nodeGroup dispatch.  The node prefix
+        is checked first because it also starts with ``dispatch_``.  The
+        "Ungrouped nodes" parent is a pure container with no plot of its
+        own, so selecting it shows a hint.
+        """
+        if iid.startswith(_DISPATCH_NODE_PREFIX):
+            node = self._dispatch_node_iids.get(iid)
+            if node is not None:
+                self._display_node_dispatch(scenario, node)
+            return
+        if iid.startswith(_DISPATCH_GROUP_PREFIX):
+            label = iid[len(_DISPATCH_GROUP_PREFIX):]
+            if label == _DISPATCH_UNGROUPED_LABEL:
+                self._plot_canvas.show_message(
+                    "Select a node under “Ungrouped nodes” to view "
+                    "its dispatch"
+                )
+                return
+            self._display_dispatch(scenario, label)
+
+    def _resolve_dispatch_template(self):
+        """Load the project plot-settings template + entity stacking order.
+
+        Shared by the nodeGroup and node dispatch renderers so both honor
+        the same ``plot_settings.yaml`` colors/order (Stage 4.1).
+        """
+        from flextool.plot_outputs.color_template import (
+            load_color_template,
+            resolve_dispatch_colors_and_order,
+            template_entity_names,
+        )
+
+        template = load_color_template(
+            resolve_plot_settings_path(self._project_path)
+        )
+        _, config_order = resolve_dispatch_colors_and_order(
+            template, template_entity_names(template),
+        )
+        return template, config_order
+
+    def _display_node_dispatch(self, scenario: str, node: str) -> None:
+        """Render and display an individual node dispatch plot."""
+        from flextool.plot_outputs.color_template import (
+            resolve_dispatch_colors_and_order,
+        )
+        from flextool.scenario_comparison.dispatch_plots import _compute_ylim
+
+        if not self._load_dispatch_data(scenario):
+            self._plot_canvas.show_message(
+                f"Could not load dispatch data for {scenario}"
+            )
+            return
+
+        results = self._dispatch_results
+
+        # Node dispatch threads the same plot_settings.yaml colors/order the
+        # group path uses, so the live node plot matches the PNG export.
+        template, _config_order = self._resolve_dispatch_template()
+
+        # Slice by the in-data scenario tag (may differ from folder name).
+        df_node, inflow = prepare_node_dispatch_data(
+            results, self._dispatch_data_tag, node,
+        )
+
+        if (df_node is None or df_node.empty) and (
+            inflow is None or inflow.empty
+        ):
+            self._plot_canvas.show_message(f"No dispatch data for {node}")
+            return
+        if df_node is None or df_node.empty:
+            idx = inflow.index if inflow is not None else pd.RangeIndex(1)
+            df_node = pd.DataFrame(index=idx)
+
+        self._update_time_range(len(df_node))
+
+        start = self._start_var.get()
+        duration = self._duration_var.get()
+        timeline = (start, start + duration)
+
+        # Accumulate ylims + column order across scenarios for this node.
+        node_key = f"{_DISPATCH_NODE_PREFIX}{node}"
+        ymin, ymax = _compute_ylim(df_node, timeline, inflow)
+        if node_key in self._dispatch_ylims:
+            old_min, old_max = self._dispatch_ylims[node_key]
+            self._dispatch_ylims[node_key] = (
+                min(old_min, ymin), max(old_max, ymax),
+            )
+            for col in df_node.columns:
+                if col not in self._dispatch_columns[node_key]:
+                    self._dispatch_columns[node_key].append(col)
+        else:
+            self._dispatch_ylims[node_key] = (ymin, ymax)
+            self._dispatch_columns[node_key] = list(df_node.columns)
+
+        acc_min, acc_max = self._dispatch_ylims[node_key]
+        margin = (acc_max - acc_min) * 0.05
+        ylim = (acc_min - margin, acc_max + margin)
+
+        for col in self._dispatch_columns[node_key]:
+            if col not in df_node.columns:
+                df_node[col] = 0.0
+        df_node = df_node[
+            [c for c in self._dispatch_columns[node_key] if c in df_node.columns]
+        ]
+
+        break_times = self._load_break_times(scenario)
+
+        # Resolve per-column colors from the template (entity / node-level
+        # columns + special tokens); unresolved columns fall back to the
+        # palette inside ``_build_dispatch_figure``.
+        colors, _ = resolve_dispatch_colors_and_order(
+            template, [str(c) for c in df_node.columns],
+        )
+
+        fig = _build_dispatch_figure(
+            df_node, inflow,
+            title=f"{node} — {scenario}",
+            colors=colors,
+            timeline=timeline,
+            ylim=ylim,
+            break_times=break_times,
+        )
+
+        if fig is None:
+            self._plot_canvas.show_message(f"No plottable data for {node}")
+            return
+
+        self._file_count = 1
+        self._file_index = 0
+        self._update_file_nav()
+
+        self._plot_canvas.display_figure(fig)
 
     def _display_dispatch(self, scenario: str, node_group: str) -> None:
         """Render and display a dispatch plot for a nodeGroup."""
