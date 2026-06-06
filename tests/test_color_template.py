@@ -1184,3 +1184,125 @@ class TestOrderLabelsByTemplate:
         out = ct.order_labels_by_template(labels, tpl, category="costs")
         assert sorted(out) == sorted(labels)
         assert len(out) == len(labels)
+
+
+# ---------------------------------------------------------------------------
+# Dispatch color / order resolution (Stage 4.1)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveDispatchColorsAndOrder:
+    """`resolve_dispatch_colors_and_order` — the three dispatch column kinds.
+
+    Kind 1: bare entity names (processGroup aggregates / units / connections)
+            → ``entities`` (case-insensitive across group/unit/connection/node).
+    Kind 2: special tokens (LossOfLoad, Charge, internal_losses, …)
+            → ``categories.dispatch`` (exact); fixed pos/neg positions, so
+            NOT placed in ``config_order``.
+    Kind 3: composite ``(process, node)`` / ``(connection)`` reprs and
+            node-level ``<unit>_out`` / ``<conn>_left`` columns (with optional
+            ``_pos`` / ``_neg``) → entity name extracted, then ``entities``.
+    """
+
+    TEMPLATE = {
+        "categories": {
+            "dispatch": {
+                "LossOfLoad": "crimson",
+                "Charge": "lime",
+                "internal_losses": "darkgray",
+            }
+        },
+        "entities": {
+            "group": {"wind": "#4FC3F7", "coal": "#212121"},
+            "unit": {
+                "chp": {"color": "#E64A19", "neg_color": "#9c3010"},
+                "battery": "#43A047",
+            },
+            "connection": {"AC_link": "#888888"},
+        },
+    }
+
+    def test_special_tokens_resolve_to_dispatch_category(self):
+        colors, order = ct.resolve_dispatch_colors_and_order(
+            self.TEMPLATE, ["LossOfLoad", "Charge", "internal_losses"]
+        )
+        assert colors["LossOfLoad"] == "crimson"
+        assert colors["Charge"] == "lime"
+        assert colors["internal_losses"] == "darkgray"
+        # Special tokens keep their pipeline-fixed positions → not in order.
+        assert order == []
+
+    def test_bare_entity_names_resolve_and_order(self):
+        colors, order = ct.resolve_dispatch_colors_and_order(
+            self.TEMPLATE, ["coal", "wind"]
+        )
+        assert colors["coal"] == "#212121"
+        assert colors["wind"] == "#4FC3F7"
+        # File order is wind, coal (group section) → top→bottom then reversed.
+        assert order == ["coal", "wind"]
+
+    def test_case_insensitive_entity_lookup(self):
+        colors, _ = ct.resolve_dispatch_colors_and_order(
+            self.TEMPLATE, ["WIND", "Coal"]
+        )
+        assert colors["WIND"] == "#4FC3F7"
+        assert colors["Coal"] == "#212121"
+
+    def test_composite_process_node_column(self):
+        colors, _ = ct.resolve_dispatch_colors_and_order(
+            self.TEMPLATE, ["(coal, elecA)", "(AC_link)"]
+        )
+        assert colors["(coal, elecA)"] == "#212121"
+        assert colors["(AC_link)"] == "#888888"
+
+    def test_node_level_suffix_columns(self):
+        colors, _ = ct.resolve_dispatch_colors_and_order(
+            self.TEMPLATE,
+            ["coal_out", "battery_in", "AC_link_left", "AC_link_right"],
+        )
+        assert colors["coal_out"] == "#212121"
+        assert colors["battery_in"] == "#43A047"
+        assert colors["AC_link_left"] == "#888888"
+        assert colors["AC_link_right"] == "#888888"
+
+    def test_neg_color_on_split_parts(self):
+        # Post-split columns as emitted by _order_dispatch_columns.
+        colors, _ = ct.resolve_dispatch_colors_and_order(
+            self.TEMPLATE, ["chp_pos", "chp_neg"]
+        )
+        assert colors["chp_pos"] == "#E64A19"   # positive side
+        assert colors["chp_neg"] == "#9c3010"   # distinct neg_color
+
+    def test_neg_color_registered_for_whole_mixed_column(self):
+        # A whole (not-yet-split) mixed column registers <col>_neg too.
+        colors, _ = ct.resolve_dispatch_colors_and_order(self.TEMPLATE, ["chp"])
+        assert colors["chp"] == "#E64A19"
+        assert colors["chp_neg"] == "#9c3010"
+
+    def test_bare_color_uses_same_color_both_sides(self):
+        colors, _ = ct.resolve_dispatch_colors_and_order(
+            self.TEMPLATE, ["battery_pos", "battery_neg"]
+        )
+        # battery has no neg_color → both sides identical, no separate key.
+        assert colors["battery_pos"] == "#43A047"
+        assert colors["battery_neg"] == "#43A047"
+
+    def test_unresolved_columns_omitted(self):
+        colors, order = ct.resolve_dispatch_colors_and_order(
+            self.TEMPLATE, ["unknown_unit", "(mystery, n1)"]
+        )
+        assert "unknown_unit" not in colors
+        assert "(mystery, n1)" not in colors
+        assert order == []
+
+    def test_empty_template_is_pure_fallback(self):
+        colors, order = ct.resolve_dispatch_colors_and_order(
+            {}, ["coal", "LossOfLoad", "chp_neg"]
+        )
+        assert colors == {}
+        assert order == []
+
+    def test_template_entity_names_file_order(self):
+        names = ct.template_entity_names(self.TEMPLATE)
+        # group (wind, coal) then unit (chp, battery) then connection (AC_link).
+        assert names == ["wind", "coal", "chp", "battery", "AC_link"]

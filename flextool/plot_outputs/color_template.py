@@ -431,6 +431,244 @@ def order_labels_by_template(
     return ordered + sorted(tail, key=str)
 
 
+# ---------------------------------------------------------------------------
+# Dispatch color / order resolution
+# ---------------------------------------------------------------------------
+
+# Entity classes the dispatch resolver searches, in precedence order.  A
+# dispatch column that is an entity name (a processGroup aggregate, a unit,
+# a connection, …) may live in any of these ``entities`` subsections; the
+# first one with a matching (case-insensitive) key wins.
+_DISPATCH_ENTITY_CLASSES: tuple[str, ...] = (
+    "group",
+    "unit",
+    "connection",
+    "node",
+)
+
+
+def _entities_section(template: dict) -> dict:
+    """Return the ``entities`` (or legacy ``entity_class``) mapping or {}."""
+    if not isinstance(template, dict):
+        return {}
+    section = template.get("entities")
+    if not isinstance(section, dict):
+        section = template.get("entity_class")
+    return section if isinstance(section, dict) else {}
+
+
+def _dispatch_special_section(template: dict) -> dict:
+    """Return the ``categories.dispatch`` mapping or {}."""
+    if not isinstance(template, dict):
+        return {}
+    cats = template.get("categories")
+    if not isinstance(cats, dict):
+        cats = template.get("category")
+    if not isinstance(cats, dict):
+        return {}
+    block = cats.get("dispatch")
+    return block if isinstance(block, dict) else {}
+
+
+def _extract_dispatch_entity_name(column: str) -> str | None:
+    """Extract the entity name from a dispatch column name.
+
+    Dispatch column names come in several shapes (see
+    ``scenario_comparison/dispatch_data.py``):
+
+    * bare entity name — a processGroup aggregate, e.g. ``"coal"`` ;
+    * ``"(process, node)"`` or ``"(connection)"`` repr composites for
+      not-in-aggregate flows — the *process*/*connection* is the entity ;
+    * node-level columns ``"<unit>_out"`` / ``"<unit>_in"`` /
+      ``"<conn>_left"`` / ``"<conn>_right"`` from the single-node path ;
+    * any of the above with a trailing ``_pos`` / ``_neg`` added by the
+      mixed-sign split in ``_order_dispatch_columns``.
+
+    Returns the bare entity name, or ``None`` if *column* is not a string.
+    """
+    if not isinstance(column, str):
+        return None
+    name = column
+
+    # Strip the mixed-sign split suffix first (it is appended last).
+    if name.endswith("_pos"):
+        name = name[:-4]
+    elif name.endswith("_neg"):
+        name = name[:-4]
+
+    # ``(process, node)`` / ``(connection)`` repr composites: take the
+    # first element (the process / connection entity).
+    s = name.strip()
+    if s.startswith("(") and s.endswith(")"):
+        inner = s[1:-1]
+        # First comma-separated field, stripped of surrounding quotes.
+        first = inner.split(",", 1)[0].strip().strip("'\"")
+        return first or None
+
+    # Node-level flow suffixes from the single-node dispatch path.
+    for suffix in ("_left_right", "_left", "_right", "_out", "_in"):
+        if name.endswith(suffix):
+            base = name[: -len(suffix)]
+            if base:
+                return base
+
+    return name or None
+
+
+def _lookup_entity_color(entities: dict, name: str, negative: bool):
+    """Look up *name* across the dispatch entity classes (case-insensitive).
+
+    Returns the raw color value (positive side, or ``neg_color`` when
+    *negative* and present) or ``None`` if no class lists *name*.
+    """
+    name_lc = str(name).lower()
+    for cls in _DISPATCH_ENTITY_CLASSES:
+        class_map = entities.get(cls)
+        if not isinstance(class_map, dict):
+            continue
+        for key, val in class_map.items():
+            if str(key).lower() == name_lc:
+                color_val, neg_val = _resolve_entity_value(val)
+                if negative and neg_val is not None:
+                    return neg_val
+                return color_val
+    return None
+
+
+def template_entity_names(template: dict) -> list[str]:
+    """Return all entity names listed in the template, in file order.
+
+    Concatenates the keys of every dispatch entity class
+    (``group`` / ``unit`` / ``connection`` / ``node``) in file order.  This
+    is the data-independent stacking order seed for the dispatch resolver:
+    bare-entity dispatch columns match these names, so passing them to
+    :func:`resolve_dispatch_colors_and_order` yields a stable
+    ``config_order`` without first enumerating the data columns.
+    """
+    names: list[str] = []
+    for cls in _DISPATCH_ENTITY_CLASSES:
+        names.extend(template_label_order(template, entity_class=cls))
+    return names
+
+
+def resolve_dispatch_colors_and_order(
+    template: dict,
+    columns,
+) -> tuple[dict[str, str], list[str]]:
+    """Build dispatch ``colors`` + ``config_order`` from a plot-settings template.
+
+    *columns* is the set of dispatch column names that may appear (the
+    union across scenarios, base names — i.e. before the mixed-sign
+    ``_pos`` / ``_neg`` split).  The result reproduces the shape that the
+    legacy ``config['positive'|'negative']`` parsing produced:
+
+    * ``colors`` maps each column name to its color value (a ``#RRGGBB``
+      hex string, an ``[r, g, b]`` list, or a matplotlib color name).  A
+      mixed-sign entity whose ``entities`` entry has ``neg_color`` also gets
+      a ``"<column>_neg"`` entry carrying that distinct negative-side color;
+      the ``"<column>_pos"`` part inherits the base color via
+      ``get_color_for_column``.
+    * ``config_order`` lists the **entity** column base names in matplotlib
+      stacking order (bottom-to-top), following ``entities`` file order.  As
+      in the legacy path the list is built top→bottom then reversed for
+      matplotlib.  Special tokens are deliberately **omitted** from
+      ``config_order`` so that ``_order_dispatch_columns`` keeps placing them
+      at their fixed ``POSITIVE_SPECIAL`` / ``NEGATIVE_SPECIAL`` positions
+      (its ``else`` branch is byte-for-byte the historical behavior when no
+      entity ordering is supplied).  Special-token *colors* still flow
+      through ``colors``.
+
+    Resolution per column:
+
+    1. **Special token** (exact key in ``categories.dispatch``) — e.g.
+       ``LossOfLoad``, ``Charge``, ``internal_losses``.  Contributes a color
+       only; ordering stays pipeline-fixed.
+    2. **Entity** — extract the entity name (bare / composite /
+       node-level, see :func:`_extract_dispatch_entity_name`) and look it
+       up case-insensitively across ``entities`` ``group`` / ``unit`` /
+       ``connection`` / ``node``.  Contributes both a color and a
+       ``config_order`` position.
+    3. **Fallback** — left out of ``colors`` and ``config_order`` so the
+       downstream ``_auto_assign_node_colors_with_existing`` palette (seeded
+       from the historical ``DEFAULT_SPECIAL_COLORS``) assigns it and
+       std-dev ordering places it, exactly as before.
+
+    For a project whose template has no dispatch entities (the common
+    case — the bundled default ships ``entities`` empty), only the special
+    tokens resolve (to the ``categories.dispatch`` values, which equal the
+    old ``DEFAULT_SPECIAL_COLORS``); ``config_order`` comes back empty, so
+    ``_order_dispatch_columns`` takes its ``else`` branch and every column —
+    specials included — is ordered exactly as before.
+    """
+    special = _dispatch_special_section(template)
+    entities = _entities_section(template)
+    cols = [str(c) for c in (columns or [])]
+
+    colors: dict[str, str] = {}
+
+    # Entity columns in template file order, then the unlisted tail.  We
+    # reuse the case-insensitive ordering machinery so file order is the
+    # single source of truth.  Build the union of entity-class file orders
+    # (group, unit, connection, node) as the order key.
+    entity_file_order: list[str] = []
+    for cls in _DISPATCH_ENTITY_CLASSES:
+        entity_file_order.extend(template_label_order(template, entity_class=cls))
+    entity_order_index = {
+        str(k).lower(): i for i, k in enumerate(entity_file_order)
+    }
+
+    entity_cols: list[str] = []
+    for col in cols:
+        if col in special:
+            color = special.get(col)
+            if color is not None:
+                colors[col] = color
+            continue
+        name = _extract_dispatch_entity_name(col)
+        if name is None:
+            continue
+        pos_color = _lookup_entity_color(entities, name, negative=False)
+        if pos_color is None:
+            continue
+        neg_color = _lookup_entity_color(entities, name, negative=True)
+        is_neg_part = isinstance(col, str) and col.endswith("_neg")
+        # The column may itself already be the negative-side split part
+        # (``<col>_neg``) — color it with ``neg_color``; otherwise it is the
+        # positive / whole column → ``color``.  ``get_color_for_column`` does
+        # an exact-key lookup, so we register the precise rendered name.
+        if is_neg_part and neg_color is not None and neg_color != pos_color:
+            colors[col] = neg_color
+        else:
+            colors[col] = pos_color
+            # A whole (not-yet-split) mixed column is split downstream into
+            # ``<col>_pos`` / ``<col>_neg``; register the ``<col>_neg`` key so
+            # its negative part picks up a distinct ``neg_color`` when set.
+            if (
+                not is_neg_part
+                and not col.endswith("_pos")
+                and neg_color is not None
+                and neg_color != pos_color
+            ):
+                colors[f"{col}_neg"] = neg_color
+        entity_cols.append(col)
+
+    # --- Order (top → bottom; reversed at the end for matplotlib) ---
+    # Only entity columns drive config_order, in template file order.
+    # Special tokens are left out so their fixed pos/neg placement (and the
+    # historical std-dev ordering of unlisted columns) is preserved.
+    ordered_entities = sorted(
+        entity_cols,
+        key=lambda c: entity_order_index.get(
+            str(_extract_dispatch_entity_name(c)).lower(), len(entity_order_index)
+        ),
+    )
+
+    config_order = list(ordered_entities)
+    config_order.reverse()
+
+    return colors, config_order
+
+
 def _clear_cache() -> None:
     """Clear the module-level cache (test hook)."""
     _TEMPLATE_CACHE.clear()
@@ -442,5 +680,7 @@ __all__ = [
     "resolve_label_color",
     "template_label_order",
     "order_labels_by_template",
+    "resolve_dispatch_colors_and_order",
+    "template_entity_names",
     "_clear_cache",
 ]

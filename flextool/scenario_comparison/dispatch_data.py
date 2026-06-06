@@ -119,21 +119,33 @@ def _order_dispatch_columns(
         # Use config order: columns present in config come first (in config order),
         # then any remaining columns sorted by std dev.
         # Also match _pos/_neg split columns to their base name in the config.
+        #
+        # Special tokens (POSITIVE_SPECIAL / NEGATIVE_SPECIAL) are never part
+        # of *config_order* (the plot-settings resolver supplies only entity
+        # columns); they keep their fixed pos/neg positions, matching the
+        # config-less ``else`` branch below.  They are excluded from the
+        # std-dev "remaining" buckets and re-inserted at fixed slots.
         config_set = set(config_order)
         ordered_from_config_neg: list[str] = []
         ordered_from_config_pos: list[str] = []
         remaining_neg: list[str] = []
         remaining_pos: list[str] = []
+        neg_special_present: list[str] = []
+        pos_special_present: list[str] = []
         for col in negative_cols:
             base = col.removesuffix('_neg') if col.endswith('_neg') else col
             if base in config_set or col in config_set:
                 ordered_from_config_neg.append(col)
+            elif col in NEGATIVE_SPECIAL:
+                neg_special_present.append(col)
             else:
                 remaining_neg.append(col)
         for col in positive_cols:
             base = col.removesuffix('_pos') if col.endswith('_pos') else col
             if base in config_set or col in config_set:
                 ordered_from_config_pos.append(col)
+            elif col in POSITIVE_SPECIAL:
+                pos_special_present.append(col)
             else:
                 remaining_pos.append(col)
         # Sort config-matched columns by their position in config_order
@@ -155,7 +167,22 @@ def _order_dispatch_columns(
         if remaining_pos:
             col_std = {col: df[col].std() for col in remaining_pos}
             remaining_pos.sort(key=lambda c: col_std.get(c, 0))
-        ordered_cols = ordered_from_config_neg + remaining_neg + ordered_from_config_pos + remaining_pos
+        # Re-insert special tokens at their fixed slots: negatives at the
+        # very bottom (internal_losses, Export, Charge), positives at the
+        # very top (Import, Discharge, LossOfLoad), mirroring the ``else``
+        # branch ordering.
+        neg_special_ordered = [
+            c for c in ['internal_losses', 'Export', 'Charge']
+            if c in neg_special_present
+        ]
+        pos_special_ordered = [
+            c for c in ['Import', 'Discharge', 'LossOfLoad']
+            if c in pos_special_present
+        ]
+        ordered_cols = (
+            ordered_from_config_neg + remaining_neg + neg_special_ordered
+            + ordered_from_config_pos + remaining_pos + pos_special_ordered
+        )
     else:
         # Fallback: sort by std dev with special columns in fixed positions
         pos_special = [c for c in positive_cols if c in POSITIVE_SPECIAL]

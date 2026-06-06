@@ -3730,10 +3730,27 @@ class ResultViewer(tk.Toplevel):
         results = self._dispatch_results
         mappings = self._dispatch_mappings
 
+        # Dispatch colors + stacking order come from the project's
+        # ``plot_settings.yaml`` (``entities`` + ``categories.dispatch``),
+        # identical to the PNG path, so the live viewer matches the export.
+        from flextool.plot_outputs.color_template import (
+            load_color_template,
+            resolve_dispatch_colors_and_order,
+            template_entity_names,
+        )
+
+        template = load_color_template(
+            resolve_plot_settings_path(self._project_path)
+        )
+        _, config_order = resolve_dispatch_colors_and_order(
+            template, template_entity_names(template),
+        )
+
         # Prepare dispatch data — slice by the in-data scenario tag, which
         # may differ from the folder name (GUI run-index suffix).
         df_dispatch, inflow = prepare_dispatch_data(
             results, mappings, self._dispatch_data_tag, node_group,
+            config_order=config_order,
         )
 
         if df_dispatch is None or df_dispatch.empty:
@@ -3782,10 +3799,18 @@ class ResultViewer(tk.Toplevel):
         # Load break times
         break_times = self._load_break_times(scenario)
 
+        # Resolve per-column colors from the template (special tokens +
+        # entity / composite / node-level columns); unresolved columns fall
+        # back to the palette inside ``_build_dispatch_figure``.
+        colors, _ = resolve_dispatch_colors_and_order(
+            template, [str(c) for c in df_dispatch.columns]
+        )
+
         # Build figure
         fig = _build_dispatch_figure(
             df_dispatch, inflow,
             title=f"{node_group} \u2014 {scenario}",
+            colors=colors,
             timeline=timeline,
             ylim=ylim,
             break_times=break_times,

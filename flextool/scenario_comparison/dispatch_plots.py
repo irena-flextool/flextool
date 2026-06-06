@@ -16,11 +16,6 @@ from flextool.scenario_comparison.dispatch_data import (
 from flextool.scenario_comparison.config_builder import get_scenarios_from_config
 
 
-def _auto_assign_node_colors(columns) -> dict[str, str]:
-    """Auto-assign tab20 colors for node dispatch columns."""
-    return _auto_assign_node_colors_with_existing(columns, {})
-
-
 def _auto_assign_node_colors_with_existing(
     columns, existing: dict[str, str | None],
 ) -> dict[str, str]:
@@ -414,24 +409,40 @@ def create_dispatch_plots(
     if scenarios is None:
         scenarios = get_scenarios_from_config(config)
 
-    # Merge colors from inline positive/negative sections, preserving config order.
-    # The config lists items top-to-bottom (first = on top of stack), but
-    # matplotlib stacks bottom-to-top, so we reverse the order.
-    colors: dict[str, str] = {}
-    config_order: list[str] = []
-    for section_key in ['negative', 'positive']:
-        section = config.get(section_key, {})
-        for cat in ['processGroups', 'processes_not_aggregated']:
-            cat_dict = section.get(cat, {})
-            if isinstance(cat_dict, dict):
-                colors.update(cat_dict)
-                config_order.extend(cat_dict.keys())
-    config_order.reverse()
+    # Dispatch colors + stacking order now come from the project's
+    # ``plot_settings.yaml`` (``entities`` for per-entity flows, new
+    # ``categories.dispatch`` block for the special tokens), resolved by
+    # ``resolve_dispatch_colors_and_order``.  This replaces the legacy
+    # ``config['positive'|'negative']`` parsing.  The project path is the
+    # parent of *plot_dir* (the comparison output dir lives under it).
+    #
+    # ``colors`` / ``config_order`` keep the same shape as before so the
+    # downstream ``prepare_dispatch_data`` → ``_order_dispatch_columns`` →
+    # render interface is unchanged.  ``colors`` is resolved once the union
+    # of actual dispatch columns is known (after the first / ylim pass);
+    # special-token colors and the entity ordering do not depend on the
+    # data, only the per-column color resolution does.
+    from flextool.plot_outputs.color_template import (
+        load_color_template,
+        resolve_dispatch_colors_and_order,
+        resolve_plot_settings_path,
+        template_entity_names,
+    )
 
-    # Fallback to special colors for any missing
-    for col, color in DEFAULT_SPECIAL_COLORS.items():
-        if col not in colors:
-            colors[col] = color
+    settings_path = resolve_plot_settings_path(plot_dir.parent)
+    template = load_color_template(settings_path)
+
+    # ``config_order`` (entity stacking order) depends only on the template's
+    # entity file order, not on the data, so resolve it once up front and use
+    # it identically in the ylim pass and the plot pass.  ``colors`` needs the
+    # actual column names (composite / node-level columns resolve to an entity
+    # name), so it is resolved after the union of columns is known (below).
+    # Resolving config_order from the template entity names keeps the two
+    # passes byte-consistent; per-column colors are filled in afterwards.
+    _, config_order = resolve_dispatch_colors_and_order(
+        template, template_entity_names(template),
+    )
+    colors: dict[str, str] = {}
 
     # Use plot_rows from GUI/CLI if provided, otherwise fall back to config.yaml
     if plot_rows and len(plot_rows) >= 2:
@@ -496,6 +507,22 @@ def create_dispatch_plots(
     for key, (ymin, ymax) in node_ylims.items():
         margin = (ymax - ymin) * 0.05
         node_ylims[key] = (ymin - margin, ymax + margin)
+
+    # Resolve per-column colors now that the union of dispatch columns
+    # (nodeGroup + node, base + split parts) is known.  Special tokens map to
+    # ``categories.dispatch`` (== the old DEFAULT_SPECIAL_COLORS); entity /
+    # composite / node-level columns map to ``entities``; anything unresolved
+    # is left to ``_auto_assign_node_colors_with_existing``'s palette below.
+    union_columns: list[str] = []
+    seen_cols: set[str] = set()
+    for col_list in list(ng_columns.values()) + list(node_columns.values()):
+        for col in col_list:
+            scol = str(col)
+            if scol not in seen_cols:
+                seen_cols.add(scol)
+                union_columns.append(scol)
+    resolved_colors, _ = resolve_dispatch_colors_and_order(template, union_columns)
+    colors = resolved_colors
 
     for scenario in scenarios:
         print(f"Creating dispatch plots for scenario: {scenario}")
@@ -575,7 +602,11 @@ def create_dispatch_plots(
                         )
                         df_node = pd.concat([df_node, zeros], axis=1)
                     df_node = df_node[node_columns[node]]
-                node_colors = _auto_assign_node_colors(df_node.columns)
+                # Seed with template-resolved colors (entity / special
+                # tokens), then auto-assign palette colors for the rest.
+                node_colors = _auto_assign_node_colors_with_existing(
+                    df_node.columns, colors,
+                )
                 output_path = plot_dir / f"dispatch_node_{node}_{scenario}.png"
                 plot_dispatch_area(
                     df_node, inflow_node, output_path,

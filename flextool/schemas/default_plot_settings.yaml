@@ -137,6 +137,27 @@ categories:
     slack_upward:                '#d62728'   # strong red — upward slack (unmet demand)
     slack_downward:              '#ff7f7f'   # light red — downward slack (spill)
 
+  # Dispatch special tokens.  These are the fixed-name columns that the
+  # dispatch stacked-area plots add alongside the per-entity flows: load of
+  # load / discharge / import on the POSITIVE side (top of the stack) and
+  # charge / export / internal losses on the NEGATIVE side (bottom).  Their
+  # stack positions are fixed by the pipeline (POSITIVE_SPECIAL /
+  # NEGATIVE_SPECIAL in scenario_comparison/constants.py), so only their
+  # color is configurable here.  Looked up by EXACT label match.  The values
+  # below are the historical dispatch defaults (DEFAULT_SPECIAL_COLORS); a
+  # project with no per-entity dispatch colors renders exactly as before.
+  # (The dashed ``Curtailed`` line and the solid ``Demand`` line are drawn
+  # with fixed red / black and are not configured here.)
+  dispatch:
+    # Positive side (top of the stacked area / top of the legend)
+    LossOfLoad:      crimson     # upward slack — unmet demand
+    Discharge:       aqua        # storage discharge into the group
+    Import:          indigo      # imports into the group
+    # Negative side (bottom of the stacked area / bottom of the legend)
+    Charge:          lime        # storage charge drawn from the group
+    Export:          purple      # exports out of the group
+    internal_losses: darkgray    # losses dissipated inside the group
+
 entities:
   # Colors for entities, keyed by entity name (case-insensitive).  The
   # subsections below correspond to entity classes.  Entry order within a
