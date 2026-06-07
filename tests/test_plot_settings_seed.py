@@ -1,17 +1,25 @@
-"""Tests for Stage 4.2 dispatch color auto-seeding.
+"""Tests for the structured ``plot_settings.yaml`` color seeder (Stage 6.1).
 
-Covers the append-only ``plot_settings.yaml`` writer
-(:mod:`flextool.scenario_comparison.plot_settings_seed`) and the
-discovery / classification helper
+Covers the structured read/modify/write writer
+(:func:`flextool.scenario_comparison.plot_settings_seed.seed_colors_into_plot_settings`)
+and the discovery / classification helper
 (:func:`flextool.scenario_comparison.config_builder.discover_dispatch_entities`).
+
+The writer is now a plain pyyaml load -> dict -> dump (``sort_keys=False``):
+comments are NOT preserved in the project file (the GUI is the editor), but key
+ORDER and existing VALUES are.
 
 Key invariants asserted:
 
-* the writer preserves every existing line (comments, commented examples,
-  existing entries, formatting) byte-for-byte in untouched regions;
-* it inserts missing names under the correct subsection at the correct
-  indentation;
-* a second run with no new names is byte-identical (idempotent);
+* ADD: missing names are appended AFTER existing entries; existing entry order
+  and values are never overwritten;
+* PRUNE (opt-in): stale entity names are removed from ``entities.*`` but
+  ``categories.*`` and ``scenarios`` are never pruned;
+* key order is preserved on dump (= stacking order);
+* bare ``"#RRGGBB"`` and ``{color, neg_color}`` values round-trip;
+* a pass that adds + prunes nothing is a no-op (returns ``False``, file
+  untouched);
+* the dispatch seed is add-only (does not prune);
 * discovery classifies units vs connections vs groups from a representative
   mappings fixture;
 * the bundled package file is never written (always the project copy).
@@ -23,6 +31,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from flextool.scenario_comparison.config_builder import (
     assign_palette_colors,
@@ -38,16 +47,11 @@ from flextool.scenario_comparison.plot_settings_seed import (
 # Fixtures
 # --------------------------------------------------------------------------
 
-# A representative settings file shaped like the bundled default: entities
-# with a populated ``group`` subsection and comment-only ``unit`` /
-# ``connection`` subsections, plus a comment-only ``scenarios`` section.
+# A representative structured settings file: scenarios + categories + entities
+# with a populated ``group`` subsection and empty unit / connection / node.
 _BASE_FILE = """\
-# Plot settings for this project.
-
 scenarios:
-  # Colors for comparison scenarios, keyed by scenario name, e.g.
-  #   S04_battery: "#1f77b4"
-  # (Left empty here — fill in per project.)
+  S0: "#aaaaaa"
 
 categories:
   costs:
@@ -55,18 +59,11 @@ categories:
 
 entities:
   group:
-    # Recommended colors for user-named flowGroup entities.
-    solar:          '#F4B400'   # gold / sun
-    wind:           '#4FC3F7'   # sky blue
-  unit:
-    # Per-project unit colors, keyed by unit name (case-insensitive).
-    #   coal_plant: "#212121"
-  connection:
-    # Per-project connection colors, keyed by connection name.
-    #   AC_link:  "#888888"
-  node:
-    # Per-project node colors.
-    #   elec_A:   "#4FC3F7"
+    solar: '#F4B400'
+    wind: '#4FC3F7'
+  unit: {}
+  connection: {}
+  node: {}
 """
 
 
@@ -75,6 +72,10 @@ def settings_file(tmp_path: Path) -> Path:
     p = tmp_path / "plot_settings.yaml"
     p.write_text(_BASE_FILE, encoding="utf-8")
     return p
+
+
+def _load(path: Path) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def _make_mappings() -> DispatchMappings:
@@ -152,7 +153,7 @@ def test_assign_palette_colors_stable_and_special():
 
 
 # --------------------------------------------------------------------------
-# Append-only writer: insertion + preservation
+# Structured writer: ADD
 # --------------------------------------------------------------------------
 
 def test_writer_inserts_under_correct_subsections(settings_file: Path):
@@ -166,45 +167,59 @@ def test_writer_inserts_under_correct_subsections(settings_file: Path):
         {"S1": "#444444"},
     )
     assert changed is True
-    out = settings_file.read_text(encoding="utf-8")
-    lines = out.splitlines()
+    data = _load(settings_file)
 
-    def _sub_block(name: str) -> list[str]:
-        start = next(i for i, ln in enumerate(lines) if ln == f"  {name}:")
-        block = []
-        for ln in lines[start + 1:]:
-            if ln and not ln.startswith("   ") and not ln.startswith("  #"):
-                if len(ln) - len(ln.lstrip()) <= 2 and ln.strip():
-                    break
-            block.append(ln)
-        return block
-
-    # New group entry sits under group, after the existing solar/wind.
-    grp = _sub_block("group")
-    assert '    thermal: "#111111"' in grp
-    assert any("solar:" in ln for ln in grp)  # existing preserved
-    # Unit / connection entries land under their own subsections.
-    assert '    gas_turbine: "#222222"' in _sub_block("unit")
-    assert '    DC_tie: "#333333"' in _sub_block("connection")
-    # Scenario entry under scenarios at 2-space indent.
-    assert '  S1: "#444444"' in lines
+    assert data["entities"]["group"]["thermal"] == "#111111"
+    assert data["entities"]["unit"]["gas_turbine"] == "#222222"
+    assert data["entities"]["connection"]["DC_tie"] == "#333333"
+    assert data["scenarios"]["S1"] == "#444444"
 
 
-def test_writer_preserves_existing_content_verbatim(settings_file: Path):
-    """Every original line must still be present, in order, untouched."""
-    original = settings_file.read_text(encoding="utf-8")
+def test_writer_add_preserves_existing_entries_order_and_values(
+    settings_file: Path,
+):
+    """New names are appended AFTER existing ones; existing order + values
+    are untouched."""
     seed_colors_into_plot_settings(
         settings_file,
-        {"unit": {"new_unit": "#abcabc"}},
+        {"group": {"thermal": "#111111", "battery": "#999999"}},
         {},
     )
-    out = settings_file.read_text(encoding="utf-8")
-    # Original lines appear as a subsequence (only additions, no edits).
-    orig_lines = original.splitlines()
-    out_lines = out.splitlines()
-    it = iter(out_lines)
-    for ol in orig_lines:
-        assert ol in it, f"original line lost or reordered: {ol!r}"
+    data = _load(settings_file)
+    grp = data["entities"]["group"]
+    # Existing entries first, in original order, with original values.
+    assert list(grp.keys()) == ["solar", "wind", "thermal", "battery"]
+    assert grp["solar"] == "#F4B400"
+    assert grp["wind"] == "#4FC3F7"
+    # New entries appended with the supplied colors.
+    assert grp["thermal"] == "#111111"
+    assert grp["battery"] == "#999999"
+
+
+def test_writer_never_overwrites_existing_color(settings_file: Path):
+    """A wanted name that already exists keeps the USER's color, not the
+    seed's."""
+    changed = seed_colors_into_plot_settings(
+        settings_file,
+        {"group": {"solar": "#000000"}},  # different color, already present
+        {},
+    )
+    assert changed is False  # nothing added
+    data = _load(settings_file)
+    assert data["entities"]["group"]["solar"] == "#F4B400"  # unchanged
+
+
+def test_writer_case_insensitive_dedup(tmp_path: Path):
+    p = tmp_path / "plot_settings.yaml"
+    p.write_text(
+        'entities:\n  unit:\n    Coal: "#212121"\n', encoding="utf-8"
+    )
+    changed = seed_colors_into_plot_settings(
+        p, {"unit": {"coal": "#222222"}}, {}
+    )
+    assert changed is False
+    data = _load(p)
+    assert list(data["entities"]["unit"].keys()) == ["Coal"]
 
 
 def test_writer_idempotent(settings_file: Path):
@@ -223,53 +238,25 @@ def test_writer_idempotent(settings_file: Path):
     assert settings_file.read_text(encoding="utf-8") == after_first
 
 
-def test_writer_skips_commented_example_keys(tmp_path: Path):
-    """A name already present only as a commented example is not duplicated."""
-    p = tmp_path / "plot_settings.yaml"
-    p.write_text(
-        "entities:\n"
-        "  unit:\n"
-        "    # coal_plant: \"#212121\"\n",
-        encoding="utf-8",
-    )
-    changed = seed_colors_into_plot_settings(
-        p, {"unit": {"coal_plant": "#222222"}}, {}
-    )
+def test_writer_no_change_returns_false(settings_file: Path):
+    before = settings_file.read_text(encoding="utf-8")
+    changed = seed_colors_into_plot_settings(settings_file, {}, {})
     assert changed is False
-    assert p.read_text(encoding="utf-8").count("coal_plant") == 1
-
-
-def test_writer_case_insensitive_dedup(tmp_path: Path):
-    p = tmp_path / "plot_settings.yaml"
-    p.write_text(
-        "entities:\n"
-        "  unit:\n"
-        "    Coal: \"#212121\"\n",
-        encoding="utf-8",
-    )
-    changed = seed_colors_into_plot_settings(
-        p, {"unit": {"coal": "#222222"}}, {}
-    )
-    assert changed is False
+    assert settings_file.read_text(encoding="utf-8") == before
 
 
 def test_writer_creates_missing_subsection(tmp_path: Path):
     p = tmp_path / "plot_settings.yaml"
     p.write_text(
-        "entities:\n"
-        "  group:\n"
-        "    solar: \"#F4B400\"\n",
-        encoding="utf-8",
+        'entities:\n  group:\n    solar: "#F4B400"\n', encoding="utf-8"
     )
     changed = seed_colors_into_plot_settings(
         p, {"connection": {"AC_link": "#333333"}}, {}
     )
     assert changed is True
-    out = p.read_text(encoding="utf-8")
-    assert "  connection:" in out
-    assert '    AC_link: "#333333"' in out
-    # Existing group content intact.
-    assert '    solar: "#F4B400"' in out
+    data = _load(p)
+    assert data["entities"]["connection"]["AC_link"] == "#333333"
+    assert data["entities"]["group"]["solar"] == "#F4B400"
 
 
 def test_writer_creates_missing_sections(tmp_path: Path):
@@ -280,44 +267,195 @@ def test_writer_creates_missing_sections(tmp_path: Path):
         p, {"unit": {"u1": "#111111"}}, {"S1": "#222222"}
     )
     assert changed is True
-    out = p.read_text(encoding="utf-8")
-    assert "entities:" in out and "  unit:" in out
-    assert '    u1: "#111111"' in out
-    assert "scenarios:" in out and '  S1: "#222222"' in out
-    # Original category content untouched.
-    assert "    co2: '#4d4d4d'" in out
+    data = _load(p)
+    assert data["entities"]["unit"]["u1"] == "#111111"
+    assert data["scenarios"]["S1"] == "#222222"
+    # Original category content preserved.
+    assert data["categories"]["costs"]["co2"] == "#4d4d4d"
 
 
-def test_writer_handles_section_at_eof_no_trailing_newline(tmp_path: Path):
+def test_writer_empty_file(tmp_path: Path):
+    """An empty (None) file loads as {} and seeds cleanly."""
     p = tmp_path / "plot_settings.yaml"
-    p.write_text(
-        "entities:\n  unit:",  # subsection header at EOF, no newline
-        encoding="utf-8",
-    )
+    p.write_text("", encoding="utf-8")
     changed = seed_colors_into_plot_settings(
         p, {"unit": {"u1": "#111111"}}, {}
     )
     assert changed is True
-    out = p.read_text(encoding="utf-8")
-    assert '    u1: "#111111"' in out
+    data = _load(p)
+    assert data["entities"]["unit"]["u1"] == "#111111"
 
 
-def test_writer_no_change_returns_false(settings_file: Path):
+# --------------------------------------------------------------------------
+# Structured writer: order + value round-trip
+# --------------------------------------------------------------------------
+
+def test_writer_preserves_key_order_on_dump(tmp_path: Path):
+    """sort_keys=False preserves dict insertion order (= stacking order)."""
+    p = tmp_path / "plot_settings.yaml"
+    p.write_text(
+        "entities:\n"
+        "  unit:\n"
+        '    zzz: "#010101"\n'
+        '    aaa: "#020202"\n'
+        '    mmm: "#030303"\n',
+        encoding="utf-8",
+    )
+    # Add nothing to unit but trigger a write via a new connection entry, so
+    # the dump round-trips the unit subsection.
+    seed_colors_into_plot_settings(
+        p, {"connection": {"c1": "#040404"}}, {}
+    )
+    data = _load(p)
+    # Original (non-alphabetical) order is preserved exactly.
+    assert list(data["entities"]["unit"].keys()) == ["zzz", "aaa", "mmm"]
+
+
+def test_writer_hex_and_neg_color_round_trip(tmp_path: Path):
+    p = tmp_path / "plot_settings.yaml"
+    p.write_text(
+        "entities:\n"
+        "  unit:\n"
+        '    coal_plant: "#1f4ea8"\n'
+        "    chp:\n"
+        '      color: "#E64A19"\n'
+        '      neg_color: "#9c3010"\n',
+        encoding="utf-8",
+    )
+    seed_colors_into_plot_settings(p, {"unit": {"new_u": "#abcdef"}}, {})
+    data = _load(p)
+    # Bare hex round-trips identically.
+    assert data["entities"]["unit"]["coal_plant"] == "#1f4ea8"
+    # {color, neg_color} dict round-trips identically.
+    assert data["entities"]["unit"]["chp"] == {
+        "color": "#E64A19",
+        "neg_color": "#9c3010",
+    }
+
+
+def test_writer_accepts_dict_color_values(tmp_path: Path):
+    """A seeded value may itself be a {color, neg_color} dict."""
+    p = tmp_path / "plot_settings.yaml"
+    p.write_text("entities:\n  unit: {}\n", encoding="utf-8")
+    seed_colors_into_plot_settings(
+        p,
+        {"unit": {"chp": {"color": "#E64A19", "neg_color": "#9c3010"}}},
+        {},
+    )
+    data = _load(p)
+    assert data["entities"]["unit"]["chp"] == {
+        "color": "#E64A19",
+        "neg_color": "#9c3010",
+    }
+
+
+# --------------------------------------------------------------------------
+# Structured writer: PRUNE
+# --------------------------------------------------------------------------
+
+def test_writer_prune_removes_stale_entities(settings_file: Path):
+    """Entity names not in the keep set are removed; kept ones survive."""
+    # Keep only 'solar' (drop 'wind'), add 'newgrp'.
+    changed = seed_colors_into_plot_settings(
+        settings_file,
+        {"group": {"newgrp": "#111111"}},
+        {},
+        prune_entities={"group": {"solar", "newgrp"}},
+    )
+    assert changed is True
+    data = _load(settings_file)
+    grp = data["entities"]["group"]
+    assert "wind" not in grp  # pruned
+    assert grp["solar"] == "#F4B400"  # kept
+    assert grp["newgrp"] == "#111111"  # added
+
+
+def test_writer_prune_is_case_insensitive(tmp_path: Path):
+    p = tmp_path / "plot_settings.yaml"
+    p.write_text(
+        'entities:\n  unit:\n    Coal: "#212121"\n    Gas: "#333333"\n',
+        encoding="utf-8",
+    )
+    # keep set is lowercased; 'Coal' should survive, 'Gas' should be pruned.
+    changed = seed_colors_into_plot_settings(
+        p, {}, {}, prune_entities={"unit": {"coal"}}
+    )
+    assert changed is True
+    data = _load(p)
+    assert list(data["entities"]["unit"].keys()) == ["Coal"]
+
+
+def test_writer_prune_never_touches_categories_or_scenarios(
+    settings_file: Path,
+):
+    """Prune only affects entities.*; categories.* and scenarios are safe."""
+    seed_colors_into_plot_settings(
+        settings_file,
+        {},
+        {},
+        # Empty keep sets for every class -> would prune everything in
+        # entities, but categories / scenarios must be untouched.
+        prune_entities={"group": set(), "unit": set(),
+                        "connection": set(), "node": set()},
+    )
+    data = _load(settings_file)
+    # Entities fully pruned.
+    assert data["entities"]["group"] == {}
+    # categories + scenarios preserved.
+    assert data["categories"]["costs"]["co2"] == "#4d4d4d"
+    assert data["scenarios"]["S0"] == "#aaaaaa"
+
+
+def test_writer_prune_none_is_add_only(settings_file: Path):
+    """prune_entities=None must not remove anything."""
+    seed_colors_into_plot_settings(
+        settings_file,
+        {"group": {"newgrp": "#111111"}},
+        {},
+        prune_entities=None,
+    )
+    data = _load(settings_file)
+    grp = data["entities"]["group"]
+    assert "solar" in grp and "wind" in grp  # nothing pruned
+    assert grp["newgrp"] == "#111111"
+
+
+def test_writer_prune_only_no_add_returns_true_when_stale(settings_file: Path):
+    """A pure prune (no adds) that removes something still writes."""
+    changed = seed_colors_into_plot_settings(
+        settings_file,
+        {},
+        {},
+        prune_entities={"group": {"solar"}},  # drop wind
+    )
+    assert changed is True
+    data = _load(settings_file)
+    assert list(data["entities"]["group"].keys()) == ["solar"]
+
+
+def test_writer_prune_only_no_stale_returns_false(settings_file: Path):
+    """A prune whose keep set already covers everything is a no-op."""
     before = settings_file.read_text(encoding="utf-8")
-    changed = seed_colors_into_plot_settings(settings_file, {}, {})
+    changed = seed_colors_into_plot_settings(
+        settings_file,
+        {},
+        {},
+        prune_entities={"group": {"solar", "wind"}},
+    )
     assert changed is False
     assert settings_file.read_text(encoding="utf-8") == before
 
 
+# --------------------------------------------------------------------------
+# Bundled package file safety
+# --------------------------------------------------------------------------
+
 def test_writer_never_touches_bundled_package_file():
-    """Seeding the orchestrator path must write the project copy, not the
-    packaged default."""
+    """Seeding writes the project copy, never the packaged default."""
     from flextool.plot_outputs.color_template import _default_path
 
     bundled = Path(_default_path())
     before = bundled.read_text(encoding="utf-8")
-    # The seed writer is only ever handed a project path; assert directly that
-    # the bundled file is byte-stable across a seed of a separate copy.
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         proj = Path(td) / "plot_settings.yaml"
@@ -329,7 +467,7 @@ def test_writer_never_touches_bundled_package_file():
 
 
 # --------------------------------------------------------------------------
-# Orchestrator hook
+# Orchestrator (dispatch) hook — ADD-ONLY (no prune)
 # --------------------------------------------------------------------------
 
 def test_orchestrator_hook_seeds_project_copy_not_bundled(tmp_path: Path):
@@ -347,19 +485,19 @@ def test_orchestrator_hook_seeds_project_copy_not_bundled(tmp_path: Path):
     project.mkdir()
     m = _make_mappings()
 
-    # color_path is the bundled default (no project file yet) → helper must
-    # seed the project copy.
     _seed_dispatch_colors_into_plot_settings(
         project, bundled, m, ["S1", "S2"]
     )
 
     project_file = project / "plot_settings.yaml"
     assert project_file.is_file()
-    out = project_file.read_text(encoding="utf-8")
-    # Discovered names landed in the project copy.
-    assert "coal_plant:" in out
-    assert "AC_link:" in out or "DC_tie:" in out
-    assert "S1:" in out and "S2:" in out
+    data = _load(project_file)
+    assert "coal_plant" in data["entities"]["unit"]
+    assert (
+        "AC_link" in data["entities"]["connection"]
+        or "DC_tie" in data["entities"]["connection"]
+    )
+    assert "S1" in data["scenarios"] and "S2" in data["scenarios"]
     # Bundled package file untouched.
     assert bundled.read_text(encoding="utf-8") == bundled_before
 
@@ -386,64 +524,28 @@ def test_orchestrator_hook_idempotent(tmp_path: Path):
     assert project_file.read_text(encoding="utf-8") == first
 
 
-# --------------------------------------------------------------------------
-# Regression: comment placement + no collision with illustrative examples
-# --------------------------------------------------------------------------
+def test_orchestrator_hook_does_not_prune(tmp_path: Path):
+    """The dispatch seed sees only a SUBSET of entities, so it must never
+    remove entities it didn't discover (add-only)."""
+    from flextool.scenario_comparison.orchestrator import (
+        _seed_dispatch_colors_into_plot_settings,
+    )
 
-class TestSeedBelowCommentsNoExampleCollision:
-    """Bundled subsections carry instruction comments (incl. ``<name>``
-    format placeholders). Seeded entities must land BELOW those comments,
-    and a real entity must NOT be skipped just because its name resembles a
-    (now placeholder-named) example comment.
-    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    # Pre-seed an existing unit that the dispatch mappings do NOT mention.
+    pf = project / "plot_settings.yaml"
+    pf.write_text(
+        'entities:\n  unit:\n    pre_existing_unit: "#abcdef"\n',
+        encoding="utf-8",
+    )
+    m = _make_mappings()  # discovers coal_plant / gas_turbine / wind_farm
 
-    def test_real_names_seed_below_comments(self, tmp_path: Path) -> None:
-        import shutil
-        from flextool._resources import package_data_path
+    _seed_dispatch_colors_into_plot_settings(project, pf, m, ["S1"])
 
-        f = tmp_path / "plot_settings.yaml"
-        shutil.copy2(package_data_path("schemas/default_plot_settings.yaml"), f)
-
-        # coal_plant / chp used to collide with the old commented examples
-        # (chp also exists as an active *group* entry, so scope to ``unit``).
-        changed = seed_colors_into_plot_settings(
-            f, {"unit": {"coal_plant": "#111111", "chp": "#222222"}}, {}
-        )
-        assert changed is True
-        lines = f.read_text(encoding="utf-8").splitlines()
-
-        def indent(s: str) -> int:
-            return len(s) - len(s.lstrip(" "))
-
-        # Bound the unit subsection: header .. next <=2-space-indented key.
-        unit_hdr = next(i for i, ln in enumerate(lines) if ln.strip() == "unit:")
-        sub_end = next(
-            (i for i in range(unit_hdr + 1, len(lines))
-             if lines[i].strip() and not lines[i].lstrip().startswith("#")
-             and indent(lines[i]) <= 2),
-            len(lines),
-        )
-        unit = range(unit_hdr + 1, sub_end)
-        coal_idx = next(i for i in unit if lines[i].strip().startswith("coal_plant:"))
-        chp_idx = next(i for i in unit if lines[i].strip().startswith("chp:"))
-        last_comment = max(
-            i for i in range(unit_hdr + 1, coal_idx)
-            if lines[i].strip().startswith("#")
-        )
-        # Instruction comments stay ABOVE the seeded rows; both names added.
-        assert unit_hdr < last_comment < coal_idx < chp_idx
-        assert lines[coal_idx].strip() == 'coal_plant: "#111111"'
-        assert lines[chp_idx].strip() == 'chp: "#222222"'
-
-    def test_idempotent_after_seeding_real_names(self, tmp_path: Path) -> None:
-        import shutil
-        from flextool._resources import package_data_path
-
-        f = tmp_path / "plot_settings.yaml"
-        shutil.copy2(package_data_path("schemas/default_plot_settings.yaml"), f)
-        seed_colors_into_plot_settings(f, {"unit": {"coal_plant": "#111111"}}, {})
-        before = f.read_text(encoding="utf-8")
-        assert seed_colors_into_plot_settings(
-            f, {"unit": {"coal_plant": "#111111"}}, {}
-        ) is False
-        assert f.read_text(encoding="utf-8") == before
+    data = _load(pf)
+    units = data["entities"]["unit"]
+    # The un-discovered pre-existing unit must NOT be pruned.
+    assert "pre_existing_unit" in units
+    # Discovered units were added.
+    assert "coal_plant" in units

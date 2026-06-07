@@ -94,16 +94,19 @@ def seed_input_entity_colors(
     project_path: Path,
     input_db_urls: list[str],
 ) -> bool:
-    """Fetch input-DB entities and additively seed their colors into settings.
+    """Fetch input-DB entities and seed (add + prune) their colors in settings.
 
     For each DISTINCT *input_db_url* whose backing sqlite file exists on disk,
     fetch all entities in the relevant classes (one DB open each), union the
     results across DBs, assign default palette colors with the same logic the
     dispatch seeding uses
     (:func:`flextool.scenario_comparison.config_builder.assign_palette_colors`),
-    and splice the genuinely-new names into the project ``plot_settings.yaml``
-    via the append-only, comment-preserving writer
+    and write them into the project ``plot_settings.yaml`` via the structured
+    writer
     (:func:`flextool.scenario_comparison.plot_settings_seed.seed_colors_into_plot_settings`).
+    Because the input DB is the AUTHORITATIVE full entity set, this seed passes
+    ``prune_entities`` (the full per-class DB name set) so entities no longer
+    in the DB are REMOVED as well as new ones added.
 
     The project file is resolved via
     :func:`flextool.plot_outputs.color_template.resolve_plot_settings_path`;
@@ -156,10 +159,16 @@ def seed_input_entity_colors(
             union[cls].update(names)
 
     entity_colors: dict[str, dict[str, str]] = {}
+    prune_entities: dict[str, set[str]] = {}
     for cls in RELEVANT_ENTITY_CLASSES:
         names = sorted(union[cls])
         if names:
             entity_colors[cls] = assign_palette_colors(names)
+        # The input DB is the AUTHORITATIVE full entity set per class: prune
+        # any entity in the file that the DB no longer has.  Pass the full
+        # (possibly empty) lowercased name set for every relevant class so a
+        # class that lost all its entities is fully cleared.
+        prune_entities[cls] = {n.lower() for n in names}
 
     if not any(entity_colors.values()):
         return False
@@ -172,7 +181,9 @@ def seed_input_entity_colors(
         from flextool.gui.project_utils import seed_plot_settings
         target = seed_plot_settings(project_path)
 
-    changed = seed_colors_into_plot_settings(target, entity_colors, {})
+    changed = seed_colors_into_plot_settings(
+        target, entity_colors, {}, prune_entities=prune_entities
+    )
     if changed:
         _clear_cache()
         logger.info("Seeded input-DB entity colors into %s", target)

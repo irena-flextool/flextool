@@ -5,10 +5,11 @@ Covers :mod:`flextool.scenario_comparison.input_entity_colors`:
 * ``fetch_entities_by_class`` opens one input DB and returns ALL entities in
   the relevant classes grouped by class (unit / connection / node / group),
   in a single pass;
-* ``seed_input_entity_colors`` additively seeds the fetched names into a
-  project ``plot_settings.yaml`` (preserving existing entries / comments),
-  is idempotent on a second run, never writes the bundled package file, and
-  skips a non-existent DB URL without error.
+* ``seed_input_entity_colors`` structurally seeds the fetched names into a
+  project ``plot_settings.yaml`` (preserving existing entries + their values),
+  PRUNES entities the DB no longer has (the input DB is the authoritative full
+  set), is idempotent on a second run, never writes the bundled package file,
+  and skips a non-existent DB URL without error.
 
 The input DB is a tiny throwaway Spine DB built with ``spinedb_api`` in a
 tmp fixture — no checked-in ``.sqlite`` is read.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
 from spinedb_api import DatabaseMapping
 
 from flextool.scenario_comparison.input_entity_colors import (
@@ -51,21 +53,22 @@ def _build_input_db(path: Path, entities: dict[str, list[str]]) -> str:
     return url
 
 
-# A project plot_settings.yaml with one pre-existing user entry per class and
-# representative comments, to prove additive / preserving behavior.
+# A structured project plot_settings.yaml with one pre-existing user entry to
+# prove additive / value-preserving behavior.
 _SEED_FILE = """\
-# Project plot settings (test fixture).
-
-scenarios:
+scenarios: {}
 
 entities:
   group:
-    solar: "#F4B400"   # user-set; must be preserved
-  unit:
-    # commented example: coal_plant: "#212121"
-  connection:
-  node:
+    solar: "#F4B400"
+  unit: {}
+  connection: {}
+  node: {}
 """
+
+
+def _load(path: Path) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------
@@ -135,19 +138,45 @@ def test_seed_adds_entities_additively(tmp_path):
     changed = seed_input_entity_colors(project, [url])
     assert changed is True
 
-    after = (project / "plot_settings.yaml").read_text(encoding="utf-8")
-    # Existing user entry preserved verbatim.
-    assert 'solar: "#F4B400"   # user-set; must be preserved' in after
+    data = _load(project / "plot_settings.yaml")
+    # Existing user entry preserved with its value.
+    assert data["entities"]["group"]["solar"] == "#F4B400"
     # New names added under each class.
-    assert "coal_plant:" in after
-    assert "battery:" in after
-    assert "AC_link:" in after
-    assert "elec_A:" in after
-    assert "wind:" in after
+    assert "coal_plant" in data["entities"]["unit"]
+    assert "battery" in data["entities"]["unit"]
+    assert "AC_link" in data["entities"]["connection"]
+    assert "elec_A" in data["entities"]["node"]
+    assert "wind" in data["entities"]["group"]
     # solar (already present) NOT duplicated.
-    assert after.count("solar:") == 1
-    # Bundled default file is NOT what was edited.
-    assert before != after
+    assert list(data["entities"]["group"].keys()).count("solar") == 1
+    # The file changed.
+    assert before != (project / "plot_settings.yaml").read_text(encoding="utf-8")
+
+
+def test_seed_prunes_entities_no_longer_in_db(tmp_path):
+    """The input DB is the authoritative full set: an entity present in the
+    file but absent from the DB is removed on seed."""
+    project = _project_with_settings(tmp_path)
+    # Add a 'group' entry that the DB will NOT contain.
+    pf = project / "plot_settings.yaml"
+    data = _load(pf)
+    data["entities"]["group"]["stale_group"] = "#dddddd"
+    pf.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    url = _build_input_db(
+        tmp_path / "in.sqlite",
+        {"group": ["solar", "wind"], "unit": ["coal_plant"]},
+    )
+    changed = seed_input_entity_colors(project, [url])
+    assert changed is True
+
+    after = _load(pf)
+    grp = after["entities"]["group"]
+    # stale_group pruned (not in DB), solar kept, wind added.
+    assert "stale_group" not in grp
+    assert grp["solar"] == "#F4B400"
+    assert "wind" in grp
+    assert "coal_plant" in after["entities"]["unit"]
 
 
 def test_seed_is_idempotent(tmp_path):
