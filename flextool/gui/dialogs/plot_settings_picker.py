@@ -84,6 +84,158 @@ def _resolve_pos_neg(value) -> tuple[object, object | None]:
     return value, None
 
 
+def _to_hex(value) -> str:
+    """Normalize any YAML color value to a lowercase ``#RRGGBB`` hex string.
+
+    Reuses the same best-effort parser as the swatches so a named color
+    (e.g. ``lime``) or an ``[r, g, b]`` list becomes a concrete hex the
+    color chooser can seed its initial swatch from.
+    """
+    return "#%02x%02x%02x" % _to_rgb255(value)
+
+
+class ColorPickerDialog(tk.Toplevel):
+    """Modal pos/neg color editor for one entity row.
+
+    A transient, modal sub-dialog of the picker.  It edits a positive and a
+    negative color with a single **"Link negative to positive"** checkbox
+    (the lock):
+
+    * **linked** (checkbox checked): the negative color mirrors the
+      positive.  Picking a new positive updates both; the negative
+      "Pick…" button is disabled.  This is the default for a bare
+      ``"#color"`` entry (one whose YAML value carries no ``neg_color``).
+    * **unlinked** (checkbox unchecked): positive and negative are
+      independent.  This is the default for a ``{color, neg_color}`` entry.
+
+    Deliberately picking a negative color while linked UNLINKS (unchecks the
+    box) and keeps the chosen negative.  Re-checking the box RE-LINKS
+    (``neg := pos``).
+
+    The result is read from :pyattr:`result` after ``wait_window``:
+    ``(pos_hex, neg_hex_or_None)`` on OK (``neg_hex`` is ``None`` when
+    linked, else the explicit negative), or ``None`` on Cancel.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        name: str,
+        pos_hex: str,
+        neg_hex: str,
+        linked: bool,
+    ) -> None:
+        super().__init__(parent)
+        self.title(f"Color — {name}")
+        self.transient(parent)
+        self.resizable(False, False)
+
+        self._pos = _to_hex(pos_hex)
+        self._neg = _to_hex(neg_hex)
+        self._linked = tk.BooleanVar(value=linked)
+        self.result: tuple[str, str | None] | None = None
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+
+        # Positive control: swatch + Pick button.
+        ttk.Label(body, text="Positive").grid(row=0, column=0, sticky="w")
+        self._pos_swatch = tk.Label(
+            body, width=3, relief="solid", borderwidth=1,
+        )
+        self._pos_swatch.grid(row=0, column=1, padx=6)
+        ttk.Button(body, text="Pick…", command=self._pick_pos).grid(
+            row=0, column=2,
+        )
+
+        # Negative control: swatch + Pick button.
+        ttk.Label(body, text="Negative").grid(row=1, column=0, sticky="w",
+                                               pady=(8, 0))
+        self._neg_swatch = tk.Label(
+            body, width=3, relief="solid", borderwidth=1,
+        )
+        self._neg_swatch.grid(row=1, column=1, padx=6, pady=(8, 0))
+        self._neg_button = ttk.Button(
+            body, text="Pick…", command=self._pick_neg,
+        )
+        self._neg_button.grid(row=1, column=2, pady=(8, 0))
+
+        # The lock.
+        ttk.Checkbutton(
+            body,
+            text="Link negative to positive",
+            variable=self._linked,
+            command=self._on_link_toggle,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
+        # OK / Cancel.
+        btns = ttk.Frame(self, padding=(12, 0, 12, 12))
+        btns.grid(row=1, column=0, sticky="ew")
+        ttk.Button(btns, text="Cancel", command=self._on_cancel).pack(
+            side="right", padx=(5, 0),
+        )
+        ttk.Button(btns, text="OK", command=self._on_ok).pack(side="right")
+
+        self._refresh()
+        self.bind("<Escape>", lambda _e: self._on_cancel())
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        # Modal: grab input and block until closed.
+        self.grab_set()
+
+    def _refresh(self) -> None:
+        """Sync the two swatches and the negative control's enabled state."""
+        linked = self._linked.get()
+        if linked:
+            self._neg = self._pos
+        self._pos_swatch.configure(background=self._pos)
+        self._neg_swatch.configure(background=self._neg)
+        self._neg_button.configure(
+            state="disabled" if linked else "normal",
+        )
+
+    def _ask(self, initial: str) -> str | None:
+        from tkinter import colorchooser
+
+        rgb_hex = colorchooser.askcolor(initialcolor=initial, parent=self)
+        if rgb_hex is None or rgb_hex[1] is None:
+            return None
+        return _to_hex(rgb_hex[1])
+
+    def _pick_pos(self) -> None:
+        chosen = self._ask(self._pos)
+        if chosen is None:
+            return
+        self._pos = chosen
+        # While linked, the negative mirrors the positive.
+        self._refresh()
+
+    def _pick_neg(self) -> None:
+        chosen = self._ask(self._neg)
+        if chosen is None:
+            return
+        # Deliberately picking a negative separates the two colors.
+        self._neg = chosen
+        if self._linked.get():
+            self._linked.set(False)
+        self._refresh()
+
+    def _on_link_toggle(self) -> None:
+        # Re-checking re-links (neg := pos); unchecking leaves both as-is.
+        self._refresh()
+
+    def _on_ok(self) -> None:
+        if self._linked.get():
+            self.result = (self._pos, None)
+        else:
+            self.result = (self._pos, self._neg)
+        self.destroy()
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.destroy()
+
+
 class PlotSettingsPicker(tk.Toplevel):
     """Non-modal color/order picker for a project ``plot_settings.yaml``.
 
@@ -129,6 +281,14 @@ class PlotSettingsPicker(tk.Toplevel):
         # dragged for the duration of a mouse drag.
         self._tree_section: dict[ttk.Treeview, tuple[str, ...]] = {}
         self._drag_item: dict[ttk.Treeview, str | None] = {}
+        # Whether a tree's rows carry a positive AND negative color
+        # (entities) or a single color (categories / scenarios).  Drives
+        # the double-click edit dialog and the swatch rebuild.
+        self._tree_composite: dict[ttk.Treeview, bool] = {}
+        # Per-row PhotoImage references after an in-place swatch rebuild,
+        # keyed by ``(tree, item_id)`` so the replacement survives GC
+        # (the originals in ``self._swatches`` stay too).
+        self._row_swatches: dict[tuple[ttk.Treeview, str], tk.PhotoImage] = {}
 
         # Working state = parsed dict; snapshot the original TEXT for Cancel.
         self._original_text = self._read_text()
@@ -294,11 +454,13 @@ class PlotSettingsPicker(tk.Toplevel):
         # Register for reordering and wire drag + keyboard moves.
         self._tree_section[tree] = section_path
         self._drag_item[tree] = None
+        self._tree_composite[tree] = composite
         tree.bind("<ButtonPress-1>", self._on_drag_start)
         tree.bind("<B1-Motion>", self._on_drag_motion)
         tree.bind("<ButtonRelease-1>", self._on_drag_end)
         tree.bind("<Alt-Up>", self._on_key_move_up)
         tree.bind("<Alt-Down>", self._on_key_move_down)
+        tree.bind("<Double-Button-1>", self._on_row_double_click)
 
         self._notebook.add(frame, text=title)
 
@@ -415,6 +577,113 @@ class PlotSettingsPicker(tk.Toplevel):
         for key in section_path[:-1]:
             parent = parent[key]
         parent[section_path[-1]] = rebuilt
+
+    # ── Color editing (double-click) ──────────────────────────────
+    def _on_row_double_click(self, event: tk.Event) -> str:
+        """Open the color editor for the double-clicked row.
+
+        Resolves the row under the cursor; a double-click on empty space is
+        ignored.  Returns ``"break"`` so the click is consumed and does not
+        feed the drag/select bindings from 6.3.
+        """
+        tree = event.widget
+        if tree not in self._tree_section:
+            return ""
+        item = tree.identify_row(event.y)
+        if not item:
+            return "break"
+        # A double-click must not leave a stale drag candidate primed.
+        self._drag_item[tree] = None
+        self._edit_row_color(tree, item)
+        return "break"
+
+    def _section_dict(self, section_path: tuple[str, ...]) -> dict | None:
+        """Resolve a section path to its mapping in the working dict."""
+        section = self._data
+        for key in section_path:
+            if not isinstance(section, dict):
+                return None
+            section = section.get(key)
+        return section if isinstance(section, dict) else None
+
+    def _edit_row_color(self, tree: ttk.Treeview, item: str) -> None:
+        """Open the appropriate color dialog and write the result back."""
+        section_path = self._tree_section[tree]
+        section = self._section_dict(section_path)
+        if section is None:
+            return
+        name = tree.item(item, "text")
+        if name not in section:
+            return
+        value = section[name]
+
+        if self._tree_composite.get(tree, False):
+            self._edit_entity_color(tree, item, section, name, value)
+        else:
+            self._edit_single_color(tree, item, section, name, value)
+
+    def _edit_entity_color(
+        self,
+        tree: ttk.Treeview,
+        item: str,
+        section: dict,
+        name: str,
+        value,
+    ) -> None:
+        """Edit a pos/neg entity entry via the modal lock dialog."""
+        pos_val, neg_val = _resolve_pos_neg(value)
+        # A bare entry (no explicit negative) opens LINKED.
+        linked = neg_val is None
+        pos_hex = _to_hex(pos_val)
+        neg_hex = _to_hex(neg_val if neg_val is not None else pos_val)
+
+        dialog = ColorPickerDialog(self, name, pos_hex, neg_hex, linked)
+        self.wait_window(dialog)
+        if dialog.result is None:
+            return  # Cancel: no change.
+
+        new_pos, new_neg = dialog.result
+        if new_neg is None:
+            section[name] = new_pos
+            self._rebuild_row_swatch(tree, item, new_pos, None)
+        else:
+            section[name] = {"color": new_pos, "neg_color": new_neg}
+            self._rebuild_row_swatch(tree, item, new_pos, new_neg)
+
+    def _edit_single_color(
+        self,
+        tree: ttk.Treeview,
+        item: str,
+        section: dict,
+        name: str,
+        value,
+    ) -> None:
+        """Edit a single-color (category / scenario) entry directly."""
+        from tkinter import colorchooser
+
+        rgb_hex = colorchooser.askcolor(
+            initialcolor=_to_hex(value), parent=self,
+        )
+        if rgb_hex is None or rgb_hex[1] is None:
+            return  # Cancel: no change.
+        new_color = _to_hex(rgb_hex[1])
+        section[name] = new_color
+        self._rebuild_row_swatch(tree, item, new_color, None)
+
+    def _rebuild_row_swatch(
+        self,
+        tree: ttk.Treeview,
+        item: str,
+        pos,
+        neg,
+    ) -> None:
+        """Rebuild and re-attach a row's composite swatch image in place."""
+        image = self._make_swatch(pos, neg)
+        # Keep a per-row reference so the replacement is not GC'd (the
+        # superseded image stays referenced in ``self._swatches`` too, but
+        # is no longer displayed).
+        self._row_swatches[(tree, item)] = image
+        tree.item(item, image=image)
 
     # ── Buttons ───────────────────────────────────────────────────
     def _on_apply_clicked(self) -> None:

@@ -387,6 +387,313 @@ class TestPickerReorder:
 
 
 # ---------------------------------------------------------------------------
+#  ColorPickerDialog — pos/neg + lock semantics (Stage 6.4)
+# ---------------------------------------------------------------------------
+
+
+def _mock_askcolor(monkeypatch, hex_value):
+    """Make ``tkinter.colorchooser.askcolor`` return a fixed hex (no UI)."""
+    import tkinter.colorchooser as cc
+
+    def _fake(*_a, **_k):
+        if hex_value is None:
+            return (None, None)  # Cancel.
+        return ((0, 0, 0), hex_value)
+
+    monkeypatch.setattr(cc, "askcolor", _fake)
+
+
+class TestColorPickerDialog:
+    def test_linked_pick_pos_mirrors_neg_returns_none_neg(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
+        _mock_askcolor(monkeypatch, "#00FF00")
+        dlg._pick_pos()
+        # While linked the negative mirrors the positive.
+        assert dlg._pos == "#00ff00"
+        assert dlg._neg == "#00ff00"
+        assert dlg._linked.get() is True
+        dlg._on_ok()
+        # Linked → neg returned as None (bare entry).
+        assert dlg.result == ("#00ff00", None)
+
+    def test_pick_neg_unlinks_and_separates(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
+        assert dlg._linked.get() is True
+        _mock_askcolor(monkeypatch, "#aabbcc")
+        dlg._pick_neg()
+        # Picking a negative deliberately unlinks and separates the colors.
+        assert dlg._linked.get() is False
+        assert dlg._pos == "#212121"
+        assert dlg._neg == "#aabbcc"
+        dlg._on_ok()
+        assert dlg.result == ("#212121", "#aabbcc")
+
+    def test_entry_with_neg_opens_unlinked(self, tk_root, tmp_path):
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        dlg = ColorPickerDialog(
+            tk_root, "chp", "#E64A19", "#9c3010", False,
+        )
+        assert dlg._linked.get() is False
+        # The negative "Pick…" button is enabled when unlinked.
+        assert str(dlg._neg_button.cget("state")) == "normal"
+        dlg._on_ok()
+        assert dlg.result == ("#e64a19", "#9c3010")
+
+    def test_relink_collapses_to_pos(self, tk_root, tmp_path):
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        dlg = ColorPickerDialog(
+            tk_root, "chp", "#E64A19", "#9c3010", False,
+        )
+        # Re-check the link box → neg := pos, neg button disabled.
+        dlg._linked.set(True)
+        dlg._on_link_toggle()
+        assert dlg._neg == "#e64a19"
+        assert str(dlg._neg_button.cget("state")) == "disabled"
+        dlg._on_ok()
+        assert dlg.result == ("#e64a19", None)
+
+    def test_cancel_returns_none(self, tk_root, tmp_path):
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
+        dlg._on_cancel()
+        assert dlg.result is None
+
+    def test_neg_button_disabled_when_linked(self, tk_root, tmp_path):
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
+        assert str(dlg._neg_button.cget("state")) == "disabled"
+
+
+# ---------------------------------------------------------------------------
+#  Picker double-click → edit → write-back + swatch rebuild (Stage 6.4)
+# ---------------------------------------------------------------------------
+
+
+def _patch_dialog(monkeypatch, result):
+    """Replace ``ColorPickerDialog`` with a non-blocking fake.
+
+    The real dialog blocks on ``wait_window``; the fake is a tiny Toplevel
+    that destroys itself immediately and exposes a preset ``result`` so the
+    picker's write-back path can be driven headlessly.
+    """
+    import flextool.gui.dialogs.plot_settings_picker as mod
+
+    class _FakeDialog(tk.Toplevel):
+        def __init__(self, parent, name, pos_hex, neg_hex, linked):
+            super().__init__(parent)
+            self.withdraw()
+            self.result = result
+            self.opened = (name, pos_hex, neg_hex, linked)
+            captured["dialog"] = self
+            self.after(0, self.destroy)
+
+    captured: dict = {}
+    monkeypatch.setattr(mod, "ColorPickerDialog", _FakeDialog)
+    return captured
+
+
+class TestPickerDoubleClickEdit:
+    def test_entity_linked_pick_writes_bare_color(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        captured = _patch_dialog(monkeypatch, ("#00ff00", None))
+        before = list(picker._swatches)
+        picker._edit_row_color(unit, coal)
+
+        # Bare "coal" opened LINKED; write-back is a bare color string.
+        assert captured["dialog"].opened[3] is True
+        sect = _section(picker._data, ("entities", "unit"))
+        assert sect["coal"] == "#00ff00"
+        # Order + other entries untouched.
+        assert list(sect.keys()) == ["coal", "chp"]
+        assert sect["chp"] == {"color": "#E64A19", "neg_color": "#9c3010"}
+        # A new swatch image was created and attached to the row.
+        assert len(picker._swatches) == len(before) + 1
+        assert (unit, coal) in picker._row_swatches
+        img = picker._row_swatches[(unit, coal)]
+        assert isinstance(img, tk.PhotoImage)
+        name = unit.item(coal, "image")
+        if isinstance(name, (list, tuple)):
+            name = name[0]
+        assert str(name) == str(img)
+
+    def test_entity_unlink_pick_writes_color_neg(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs.plot_settings_picker import _SWATCH_W
+
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        _patch_dialog(monkeypatch, ("#111111", "#222222"))
+        picker._edit_row_color(unit, coal)
+
+        sect = _section(picker._data, ("entities", "unit"))
+        assert sect["coal"] == {"color": "#111111", "neg_color": "#222222"}
+        # Composite (two-box) swatch now attached.
+        img = picker._row_swatches[(unit, coal)]
+        assert img.width() == _SWATCH_W * 2
+
+    def test_entity_with_neg_opens_unlinked(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        chp = unit.get_children("")[1]
+
+        captured = _patch_dialog(monkeypatch, ("#E64A19", "#9c3010"))
+        picker._edit_row_color(unit, chp)
+        # {color, neg_color} entry opened UNLINKED with both hexes seeded.
+        name, pos_hex, neg_hex, linked = captured["dialog"].opened
+        assert name == "chp"
+        assert linked is False
+        assert pos_hex == "#e64a19"
+        assert neg_hex == "#9c3010"
+
+    def test_relink_collapses_to_bare(self, tk_root, tmp_path, monkeypatch):
+        from flextool.gui.dialogs.plot_settings_picker import _SWATCH_W
+
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        chp = unit.get_children("")[1]
+
+        # Dialog returns linked result (neg None) for a previously-split row.
+        _patch_dialog(monkeypatch, ("#abcdef", None))
+        picker._edit_row_color(unit, chp)
+
+        sect = _section(picker._data, ("entities", "unit"))
+        assert sect["chp"] == "#abcdef"  # collapsed to bare
+        img = picker._row_swatches[(unit, chp)]
+        assert img.width() == _SWATCH_W  # single box
+
+    def test_category_row_edits_bare_color(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        costs = _tree_in_tab(picker, titles.index("costs"))
+        co2 = costs.get_children("")[0]
+
+        _mock_askcolor(monkeypatch, "#FEDCBA")
+        before = list(picker._swatches)
+        picker._edit_row_color(costs, co2)
+
+        sect = _section(picker._data, ("categories", "costs"))
+        assert sect["co2"] == "#fedcba"
+        assert len(picker._swatches) == len(before) + 1
+        assert (costs, co2) in picker._row_swatches
+
+    def test_scenario_row_edits_bare_color(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        scen = _tree_in_tab(picker, titles.index("scenarios"))
+        s1 = scen.get_children("")[0]
+
+        _mock_askcolor(monkeypatch, "#0a0b0c")
+        picker._edit_row_color(scen, s1)
+        sect = _section(picker._data, ("scenarios",))
+        assert sect["S1"] == "#0a0b0c"
+        assert list(sect.keys()) == ["S1", "S2"]  # order intact
+
+    def test_cancel_makes_no_change(self, tk_root, tmp_path, monkeypatch):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        _patch_dialog(monkeypatch, None)  # Cancel.
+        before = list(picker._swatches)
+        picker._edit_row_color(unit, coal)
+        sect = _section(picker._data, ("entities", "unit"))
+        assert sect["coal"] == "#212121"  # unchanged
+        # No new swatch, no row-swatch override.
+        assert len(picker._swatches) == len(before)
+        assert (unit, coal) not in picker._row_swatches
+
+    def test_category_cancel_makes_no_change(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        costs = _tree_in_tab(picker, titles.index("costs"))
+        co2 = costs.get_children("")[0]
+
+        _mock_askcolor(monkeypatch, None)  # Cancel.
+        picker._edit_row_color(costs, co2)
+        sect = _section(picker._data, ("categories", "costs"))
+        assert sect["co2"] == "#4d4d4d"  # unchanged
+
+    def test_double_click_empty_space_is_noop(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        monkeypatch.setattr(unit, "identify_row", lambda y: "")
+
+        called = []
+        monkeypatch.setattr(
+            picker, "_edit_row_color",
+            lambda *a, **k: called.append(a),
+        )
+        evt = types.SimpleNamespace(widget=unit, y=10_000)
+        result = picker._on_row_double_click(evt)
+        assert result == "break"
+        assert called == []  # no edit on empty space
+
+    def test_double_click_on_row_opens_editor_and_clears_drag(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+        monkeypatch.setattr(unit, "identify_row", lambda y: coal)
+        # Prime a stale drag candidate as a prior ButtonPress would.
+        picker._drag_item[unit] = coal
+
+        called = []
+        monkeypatch.setattr(
+            picker, "_edit_row_color",
+            lambda tree, item: called.append((tree, item)),
+        )
+        evt = types.SimpleNamespace(widget=unit, y=0)
+        result = picker._on_row_double_click(evt)
+        # Resolves the row, clears the drag candidate (no reorder), edits.
+        assert result == "break"
+        assert called == [(unit, coal)]
+        assert picker._drag_item[unit] is None
+
+    def test_double_click_binding_registered(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        for tree in picker._tree_section:
+            assert tree.bind("<Double-Button-1>")
+
+
+# ---------------------------------------------------------------------------
 #  PlotDialog — shared "Colors, order..." button opens the picker
 # ---------------------------------------------------------------------------
 
