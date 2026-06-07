@@ -527,7 +527,7 @@ def build_line_figures(
 
     # Build shared color map before splitting into file batches
     shared_color_map = None
-    if legend_position == 'shared' and line_level_names:
+    if (legend_position == 'shared' or category or entity_class) and line_level_names:
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
             for item in _get_column_items(df_sub, line_level_names):
@@ -887,7 +887,7 @@ def build_stack_figures(
 
     # Build shared color map before splitting into file batches
     shared_color_map = None
-    if legend_position == 'shared' and stack_level_names:
+    if (legend_position == 'shared' or category or entity_class) and stack_level_names:
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
             for item in _get_column_items(df_sub, stack_level_names):

@@ -757,7 +757,7 @@ def _compute_time_plan(
 
     # Build shared color map
     shared_color_map = None
-    if cfg.legend == 'shared' and item_level_names:
+    if (cfg.legend == 'shared' or cfg.color_category or cfg.color_entity_class) and item_level_names:
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
             for item in _get_column_items(df_sub, item_level_names):
@@ -1022,7 +1022,7 @@ def _compute_bar_plan(
 
     # Build shared color map
     shared_color_map = None
-    if cfg.legend == 'shared' and (stack_levels or grouped_bar_levels):
+    if (cfg.legend == 'shared' or cfg.color_category or cfg.color_entity_class) and (stack_levels or grouped_bar_levels):
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
             if grouped_bar_levels:

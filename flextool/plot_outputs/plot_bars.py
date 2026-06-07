@@ -1268,7 +1268,7 @@ def build_bar_figures(
 
     # Build shared color map
     shared_color_map = None
-    if legend_position == 'shared' and (stack_levels or grouped_bar_levels):
+    if (legend_position == 'shared' or category or entity_class) and (stack_levels or grouped_bar_levels):
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
             if grouped_bar_levels:

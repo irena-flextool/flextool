@@ -774,6 +774,120 @@ class TestColorTemplateForwardedToBuildFigures:
         )
 
 
+class TestColorHintBuildsMapWithoutSharedLegend:
+    """Regression: preset category/entity colors must apply regardless of
+    legend layout.
+
+    The defect: ``shared_color_map`` was built ONLY under
+    ``legend == 'shared'``.  The default costs config uses ``legend: right``
+    and entity-tagged plots commonly use ``legend: all`` — so an explicit
+    ``color_category`` / ``color_entity_class`` hint never reached
+    ``build_shared_color_map`` and the plot fell back to the tab10 palette.
+
+    Fix: build the color map whenever the legend is shared OR a color hint
+    is present; leave non-hinted non-shared plots untouched (palette).
+    """
+
+    def _write_template(self, tmp_path):
+        import yaml
+        tmpl = tmp_path / "plot_settings.yaml"
+        tmpl.write_text(
+            yaml.safe_dump(
+                {
+                    "scenarios": {},
+                    "categories": {"costs": {"node_0": "#123456"}},
+                    "entities": {"unit": {"node_0": "#abcdef"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        from flextool.plot_outputs import color_template as ct
+        ct._clear_cache()
+        return tmpl
+
+    def test_color_category_applies_with_right_legend(self, tmp_path):
+        """A ``color_category`` plot with the default (non-shared) ``right``
+        legend gets its preset category color, not the palette."""
+        from flextool.plot_outputs.plan import compute_live_plan
+        tmpl = self._write_template(tmp_path)
+        df = _make_time_df(n_cols=4)
+        cfg = PlotConfig(
+            plot_name="costs",
+            map_dimensions_for_plots=["t_e", "t_l"],
+            color_category="costs",
+        )
+        # Sanity: this is the non-shared layout the bug missed.
+        assert cfg.legend == "right"
+        plan = compute_live_plan(df, cfg, "costs", color_path=tmpl)
+        assert plan is not None
+        assert plan.shared_color_map is not None, (
+            "color_category plot with legend=right must build a color map"
+        )
+        assert plan.shared_color_map.get("node_0") == (
+            0x12 / 255.0, 0x34 / 255.0, 0x56 / 255.0,
+        )
+
+    def test_color_entity_class_applies_with_all_legend(self, tmp_path):
+        """A ``color_entity_class`` plot with ``legend: all`` (non-shared)
+        gets its preset entity color, not the palette."""
+        from flextool.plot_outputs.plan import compute_live_plan
+        tmpl = self._write_template(tmp_path)
+        df = _make_time_df(n_cols=4)
+        cfg = PlotConfig(
+            plot_name="unit flows",
+            map_dimensions_for_plots=["t_e", "t_l"],
+            legend="all",
+            color_entity_class="unit",
+        )
+        plan = compute_live_plan(df, cfg, "unit flows", color_path=tmpl)
+        assert plan is not None
+        assert plan.shared_color_map is not None, (
+            "color_entity_class plot with legend=all must build a color map"
+        )
+        assert plan.shared_color_map.get("node_0") == (
+            0xab / 255.0, 0xcd / 255.0, 0xef / 255.0,
+        )
+
+    def test_color_category_applies_to_stacked_bars_with_right_legend(self, tmp_path):
+        """The bar-plan build gate honors the hint under a non-shared legend
+        too (stacked bars)."""
+        from flextool.plot_outputs.plan import compute_live_plan
+        tmpl = self._write_template(tmp_path)
+        df = pd.DataFrame(
+            {"node_0": [10.0, 20.0], "node_1": [11.0, 22.0]},
+            index=pd.Index(["catA", "catB"], name="category"),
+        )
+        df.columns.name = "entity"
+        cfg = PlotConfig(
+            plot_name="bars",
+            map_dimensions_for_plots=["d_e", "s_b"],
+            color_category="costs",
+        )
+        assert cfg.legend == "right"
+        plan = compute_live_plan(df, cfg, "bars", color_path=tmpl)
+        assert plan is not None
+        assert plan.shared_color_map is not None, (
+            "color_category stacked-bar plot with legend=right must build a map"
+        )
+
+    def test_non_hinted_non_shared_plot_builds_no_map(self, tmp_path):
+        """Guard the byte-identical path: a plot with NO color hint and a
+        non-shared legend must NOT build a shared color map (palette only)."""
+        from flextool.plot_outputs.plan import compute_live_plan
+        tmpl = self._write_template(tmp_path)
+        df = _make_time_df(n_cols=4)
+        cfg = PlotConfig(
+            plot_name="plain",
+            map_dimensions_for_plots=["t_e", "t_l"],
+            # no color_category / color_entity_class; legend defaults to right
+        )
+        plan = compute_live_plan(df, cfg, "plain", color_path=tmpl)
+        assert plan is not None
+        assert plan.shared_color_map is None, (
+            "non-hinted non-shared plot must stay on the per-subplot palette"
+        )
+
+
 class TestSingleColLevelStackUnstack:
     """Regression for the single-col-level stack-then-unstack quirk.
 
