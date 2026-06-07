@@ -256,18 +256,22 @@ def _make_project(tmp_path, *, legacy_plan, empty_initial):
 
 
 def _simulate_edit_and_save(viewer, settings_path, new_node_colors, monkeypatch):
-    """Edit the project template, then invoke the REAL _on_change_colors
-    post-save logic with the modal editor stubbed (saved=True)."""
-    _write_template(settings_path, new_node_colors)
+    """Edit the project template, then drive the REAL recolor path.
 
-    import flextool.gui.dialogs.plot_settings_editor as pse_mod
+    The picker is non-modal and runs the recolor on each Apply via its
+    ``on_apply`` callback.  We stub the picker to immediately edit the file
+    and invoke ``on_apply`` (= one Apply click), exercising the real
+    ``_on_change_colors`` -> ``_apply_color_settings`` body."""
+    import flextool.gui.dialogs.plot_settings_picker as psp_mod
     import flextool.gui.project_utils as pu_mod
 
-    class _FakeEditor:
-        def __init__(self, parent, path):
-            self.saved = True
+    class _FakePicker:
+        def __init__(self, parent, path, on_apply=None):
+            _write_template(path, new_node_colors)
+            if on_apply is not None:
+                on_apply()
 
-    monkeypatch.setattr(pse_mod, "PlotSettingsEditor", _FakeEditor)
+    monkeypatch.setattr(psp_mod, "PlotSettingsPicker", _FakePicker)
     monkeypatch.setattr(pu_mod, "seed_plot_settings", lambda p: settings_path)
     viewer._on_change_colors()
 

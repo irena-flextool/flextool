@@ -372,11 +372,12 @@ class PlotDialog(tk.Toplevel):
             )
             return
 
-        from flextool.gui.dialogs.plot_settings_editor import PlotSettingsEditor
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
         from flextool.gui.project_utils import seed_plot_settings
 
+        # No live preview in the batch dialog → no on_apply callback.
         project_file = seed_plot_settings(self._project_path)
-        PlotSettingsEditor(self, project_file)
+        PlotSettingsPicker(self, project_file)
 
     def _on_ok(self) -> None:
         """Save settings and close the dialog."""

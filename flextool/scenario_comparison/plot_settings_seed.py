@@ -42,6 +42,24 @@ import yaml
 _ENTITY_CLASSES = ("group", "unit", "connection", "node")
 
 
+def dump_plot_settings(data: dict) -> str:
+    """Serialize a ``plot_settings.yaml`` mapping to text.
+
+    Single source of truth for the dump parameters shared by the seed
+    writer here and the GUI color/order picker
+    (:mod:`flextool.gui.dialogs.plot_settings_picker`).  ``sort_keys=False``
+    preserves KEY ORDER (= stacking order); ``default_flow_style=False``
+    keeps the block style; ``allow_unicode=True`` round-trips unicode
+    entity names verbatim.
+    """
+    return yaml.safe_dump(
+        data,
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+    )
+
+
 def _load_mapping(path: Path) -> dict:
     """Load *path* as a YAML mapping (``None`` / empty -> ``{}``).
 
@@ -178,11 +196,5 @@ def seed_colors_into_plot_settings(
     if not modified:
         return False
 
-    out = yaml.safe_dump(
-        data,
-        sort_keys=False,
-        default_flow_style=False,
-        allow_unicode=True,
-    )
-    path.write_text(out, encoding="utf-8")
+    path.write_text(dump_plot_settings(data), encoding="utf-8")
     return True

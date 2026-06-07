@@ -2122,24 +2122,34 @@ class ResultViewer(tk.Toplevel):
             self._updating_time_range = False
 
     def _on_change_colors(self) -> None:
-        """Open the per-project colors editor and re-render on save.
+        """Open the non-modal colors/order picker; preview on each Apply.
 
         Always edits the PROJECT's ``plot_settings.yaml`` (seeding it from
         the bundled default if absent), never the bundled package file.
-        On a successful save the color-template cache is cleared and the
-        currently displayed plot is re-rendered with the new colors — the
-        already-loaded parquet/dataframe is reused (no reload).
+        The picker is NON-MODAL (usable alongside the viewer), so the
+        recolor must run on each of its Apply / Save / Cancel actions
+        rather than once after a modal close — it is wired in as the
+        picker's ``on_apply`` callback (:meth:`_apply_color_settings`).
         """
-        from flextool.gui.dialogs.plot_settings_editor import PlotSettingsEditor
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
         from flextool.gui.project_utils import seed_plot_settings
 
         # Edit the project copy; seed from the bundled default if missing.
         project_file = seed_plot_settings(self._project_path)
 
-        editor = PlotSettingsEditor(self, project_file)
-        if not editor.saved:
-            return
+        PlotSettingsPicker(
+            self, project_file, on_apply=self._apply_color_settings,
+        )
 
+    def _apply_color_settings(self) -> None:
+        """Re-render the displayed plot from the edited ``plot_settings.yaml``.
+
+        The already-loaded parquet/dataframe is reused (no reload): the
+        color-template cache is cleared so the edited file is re-read, then
+        the live plan's color map is rebuilt in place when it carries color
+        hints, else the plan is recomputed from scratch.  Invoked on every
+        picker Apply / Save / Cancel.
+        """
         # Colors changed → the cached template and any colored figures are
         # stale.  Clear the template cache so the edited file is re-read.
         from flextool.plot_outputs.color_template import (
