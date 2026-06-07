@@ -770,6 +770,290 @@ class TestPlotDialogColorsButton:
 
 
 # ---------------------------------------------------------------------------
+#  Refresh from DB — re-fetch entities, ADD new + PRUNE stale (Stage 6.5)
+# ---------------------------------------------------------------------------
+
+
+def _mock_fetch(monkeypatch, per_class):
+    """Patch ``fetch_entities_by_class`` to return a fixed per-class mapping
+    (no real DB), and patch ``_discover_input_dbs`` to report one DB so the
+    refresh runs the union/add/prune path headlessly."""
+    import flextool.scenario_comparison.input_entity_colors as iec
+
+    monkeypatch.setattr(
+        iec, "fetch_entities_by_class", lambda _url: dict(per_class),
+    )
+
+
+class TestPickerRefresh:
+    def test_refresh_adds_new_and_prunes_stale(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        picker, _ = _make_picker(tk_root, tmp_path)
+        # Discovery returns one DB; the DB has unit {coal, gas} and node {n1}.
+        # → unit: "chp" is stale (pruned), "gas" is new (added); node: n1 stays.
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
+
+        picker._on_refresh()
+
+        unit = _section(picker._data, ("entities", "unit"))
+        # coal kept (with its edited value), chp pruned, gas added.
+        assert "coal" in unit
+        assert "chp" not in unit
+        assert "gas" in unit
+        assert unit["coal"] == "#212121"  # existing value preserved
+        # New name got a palette hex color appended AFTER existing entries.
+        assert list(unit.keys()) == ["coal", "gas"]
+        assert isinstance(unit["gas"], str) and unit["gas"].startswith("#")
+        # node unchanged.
+        assert _section(picker._data, ("entities", "node")) == {"n1": "#4FC3F7"}
+        # categories / scenarios untouched.
+        assert picker._data["categories"] == _SAMPLE["categories"]
+        assert picker._data["scenarios"] == _SAMPLE["scenarios"]
+
+    def test_refresh_rebuilds_trees(self, tk_root, tmp_path, monkeypatch):
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        picker, _ = _make_picker(tk_root, tmp_path)
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
+
+        picker._on_refresh()
+
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        # Tree rows match the rebuilt dict: chp gone, gas present.
+        assert _row_names(unit) == ["coal", "gas"]
+
+    def test_refresh_records_one_undo_step(self, tk_root, tmp_path, monkeypatch):
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        picker, _ = _make_picker(tk_root, tmp_path)
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
+
+        before = {k: dict(v) if isinstance(v, dict) else v
+                  for k, v in picker._data["entities"].items()}
+        picker._on_refresh()
+        assert len(picker._undo_stack) == 1
+        # Undo restores the pre-refresh entities.
+        picker._on_undo()
+        assert picker._data["entities"]["unit"] == before["unit"]
+
+    def test_refresh_no_db_shows_info_and_no_change(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs import plot_settings_picker as mod
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        picker, _ = _make_picker(tk_root, tmp_path)
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs", lambda self: [],
+        )
+        shown = []
+        monkeypatch.setattr(
+            mod.messagebox, "showinfo",
+            lambda *a, **k: shown.append((a, k)),
+        )
+
+        before = picker._data
+        picker._on_refresh()
+        assert len(shown) == 1  # info box shown
+        assert picker._data == _SAMPLE  # unchanged
+        assert picker._data is before
+        assert picker._undo_stack == []  # no edit recorded
+
+    def test_refresh_idempotent_no_change_no_undo(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """A refresh whose DB exactly matches the current entities records no
+        undo step (nothing added or pruned)."""
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        picker, _ = _make_picker(tk_root, tmp_path)
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        # Exactly the current entities (unit: coal, chp; node: n1).
+        _mock_fetch(
+            monkeypatch, {"unit": ["coal", "chp"], "node": ["n1"]},
+        )
+        picker._on_refresh()
+        assert picker._undo_stack == []
+        assert list(_section(picker._data, ("entities", "unit")).keys()) == [
+            "coal", "chp",
+        ]
+
+    def test_discover_input_dbs_scans_both_dirs(self, tk_root, tmp_path):
+        """Discovery scans <project>/input_sources and <project>/intermediate
+        for *.sqlite (project root = settings file's parent)."""
+        project = tmp_path
+        (project / "input_sources").mkdir()
+        (project / "intermediate").mkdir()
+        (project / "input_sources" / "a.sqlite").write_bytes(b"")
+        (project / "intermediate" / "b.sqlite").write_bytes(b"")
+        # A non-sqlite file is ignored.
+        (project / "input_sources" / "notes.txt").write_text("x")
+
+        picker, _ = _make_picker(tk_root, tmp_path)
+        urls = picker._discover_input_dbs()
+        assert urls == [
+            f"sqlite:///{project / 'input_sources' / 'a.sqlite'}",
+            f"sqlite:///{project / 'intermediate' / 'b.sqlite'}",
+        ]
+
+
+# ---------------------------------------------------------------------------
+#  Undo / Redo over the working dict (Stage 6.5)
+# ---------------------------------------------------------------------------
+
+
+class TestPickerUndoRedo:
+    def test_color_edit_undo_restores_and_tree_shows_old(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        _patch_dialog(monkeypatch, ("#00ff00", None))
+        picker._edit_row_color(unit, coal)
+        assert _section(picker._data, ("entities", "unit"))["coal"] == "#00ff00"
+        assert len(picker._undo_stack) == 1
+
+        picker._on_undo()
+        # Working dict restored to the pre-edit value.
+        assert _section(picker._data, ("entities", "unit"))["coal"] == "#212121"
+        # Trees rebuilt to match: re-resolve the (new) tree + row.
+        titles = _tab_titles(picker)
+        unit2 = _tree_in_tab(picker, titles.index("unit"))
+        assert _row_names(unit2) == ["coal", "chp"]
+        assert picker._redo_stack and not picker._undo_stack
+
+    def test_redo_reapplies(self, tk_root, tmp_path, monkeypatch):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        _patch_dialog(monkeypatch, ("#00ff00", None))
+        picker._edit_row_color(unit, coal)
+        picker._on_undo()
+        assert _section(picker._data, ("entities", "unit"))["coal"] == "#212121"
+        picker._on_redo()
+        assert _section(picker._data, ("entities", "unit"))["coal"] == "#00ff00"
+
+    def test_reorder_undo_restores_order(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        first = unit.get_children("")[0]
+        unit.focus(first)
+        unit.selection_set(first)
+        picker._key_move(unit, +1)
+        assert list(_section(picker._data, ("entities", "unit")).keys()) == [
+            "chp", "coal",
+        ]
+        picker._on_undo()
+        assert list(_section(picker._data, ("entities", "unit")).keys()) == [
+            "coal", "chp",
+        ]
+        titles = _tab_titles(picker)
+        unit2 = _tree_in_tab(picker, titles.index("unit"))
+        assert _row_names(unit2) == ["coal", "chp"]
+
+    def test_multi_level_undo(self, tk_root, tmp_path, monkeypatch):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        # Edit 1: recolor coal.
+        _patch_dialog(monkeypatch, ("#111111", None))
+        picker._edit_row_color(unit, coal)
+        # Edit 2: recolor coal again.
+        _patch_dialog(monkeypatch, ("#222222", None))
+        coal = _tree_in_tab(
+            picker, _tab_titles(picker).index("unit"),
+        ).get_children("")[0]
+        picker._edit_row_color(
+            _tree_in_tab(picker, _tab_titles(picker).index("unit")), coal,
+        )
+        assert _section(picker._data, ("entities", "unit"))["coal"] == "#222222"
+        assert len(picker._undo_stack) == 2
+
+        picker._on_undo()
+        assert _section(picker._data, ("entities", "unit"))["coal"] == "#111111"
+        picker._on_undo()
+        assert _section(picker._data, ("entities", "unit"))["coal"] == "#212121"
+        assert not picker._undo_stack
+
+    def test_new_edit_clears_redo(self, tk_root, tmp_path, monkeypatch):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        coal = unit.get_children("")[0]
+
+        _patch_dialog(monkeypatch, ("#111111", None))
+        picker._edit_row_color(unit, coal)
+        picker._on_undo()
+        assert picker._redo_stack  # redo available
+
+        # A fresh edit clears the redo stack.
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        coal = unit.get_children("")[0]
+        _patch_dialog(monkeypatch, ("#333333", None))
+        picker._edit_row_color(unit, coal)
+        assert picker._redo_stack == []
+
+    def test_buttons_disabled_at_stack_ends(self, tk_root, tmp_path, monkeypatch):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        # Both stacks empty at open → both buttons disabled.
+        assert str(picker._undo_button.cget("state")) == "disabled"
+        assert str(picker._redo_button.cget("state")) == "disabled"
+
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        coal = unit.get_children("")[0]
+        _patch_dialog(monkeypatch, ("#111111", None))
+        picker._edit_row_color(unit, coal)
+        # After an edit: undo enabled, redo still disabled.
+        assert str(picker._undo_button.cget("state")) == "normal"
+        assert str(picker._redo_button.cget("state")) == "disabled"
+
+        picker._on_undo()
+        # After undo: undo disabled (stack empty), redo enabled.
+        assert str(picker._undo_button.cget("state")) == "disabled"
+        assert str(picker._redo_button.cget("state")) == "normal"
+
+    def test_undo_redo_key_bindings_registered(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        assert picker.bind("<Control-z>")
+        assert picker.bind("<Control-y>")
+        assert picker.bind("<Control-Shift-Z>")
+
+    def test_undo_on_empty_stack_is_noop(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        before = picker._data
+        picker._on_undo()  # no edits yet → no-op
+        assert picker._data is before
+        picker._on_redo()  # nothing to redo → no-op
+        assert picker._data is before
+
+
+# ---------------------------------------------------------------------------
 #  _on_change_colors — seeding + opens picker non-modally with on_apply
 # ---------------------------------------------------------------------------
 

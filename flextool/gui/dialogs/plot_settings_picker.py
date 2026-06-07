@@ -8,22 +8,24 @@ same time as the result viewer: the **Apply** button writes the file and
 calls an ``on_apply`` callback (the viewer re-renders = live preview) while
 the window stays open.
 
-This sub-commit (Stage 6.2) is the WINDOW SKELETON only: load the file,
-render one ``ttk.Notebook`` tab per present section, list every entry in a
-``ttk.Treeview`` with a composite ``[pos][neg]`` swatch image next to its
-name, and wire the three buttons (Apply / Save and exit / Cancel) to the
-file + the ``on_apply`` callback.  EDITING interactions — reordering, the
-color-picker dialog, refresh/undo — are LATER sub-commits and are
-deliberately not implemented here.
+The window loads the file, renders one ``ttk.Notebook`` tab per present
+section, lists every entry in a ``ttk.Treeview`` with a composite
+``[pos][neg]`` swatch image next to its name, and wires Apply / Save and
+exit / Cancel to the file + the ``on_apply`` callback.  Editing
+interactions: reorder (drag + Alt-arrow), per-row color dialog
+(double-click), **Refresh from DB** (re-fetch entity names from the
+project's input DB(s) and add new + prune stale), and multi-level
+**Undo/Redo** over the in-memory working dict.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 import yaml
 
@@ -294,6 +296,18 @@ class PlotSettingsPicker(tk.Toplevel):
         self._original_text = self._read_text()
         self._data = self._parse(self._original_text)
 
+        # In-memory edit history (deep copies of ``self._data``).  Every
+        # mutator calls ``_snapshot()`` (push pre-edit state, clear redo)
+        # before it changes ``self._data``; undo/redo move states between
+        # the two stacks and rebuild every tab from ``self._data``.  This
+        # history is independent of the on-disk Cancel snapshot above.
+        self._undo_stack: list[dict] = []
+        self._redo_stack: list[dict] = []
+        # Set by undo/redo button construction; refreshed by
+        # ``_update_history_buttons`` to reflect stack emptiness.
+        self._undo_button: ttk.Button | None = None
+        self._redo_button: ttk.Button | None = None
+
         # ── Sizing ────────────────────────────────────────────────
         from flextool.gui.ui_metrics import get_metrics
 
@@ -326,7 +340,24 @@ class PlotSettingsPicker(tk.Toplevel):
             side="right",
         )
 
+        # Refresh + Undo/Redo cluster on the left.
+        ttk.Button(
+            btn_frame, text="Refresh from DB", command=self._on_refresh,
+        ).pack(side="left")
+        self._undo_button = ttk.Button(
+            btn_frame, text="Undo", command=self._on_undo,
+        )
+        self._undo_button.pack(side="left", padx=(5, 0))
+        self._redo_button = ttk.Button(
+            btn_frame, text="Redo", command=self._on_redo,
+        )
+        self._redo_button.pack(side="left", padx=(5, 0))
+        self._update_history_buttons()
+
         self.bind("<Escape>", lambda _e: self._on_cancel())
+        self.bind("<Control-z>", lambda _e: self._on_undo())
+        self.bind("<Control-y>", lambda _e: self._on_redo())
+        self.bind("<Control-Shift-Z>", lambda _e: self._on_redo())
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
     # ── File I/O ──────────────────────────────────────────────────
@@ -383,6 +414,67 @@ class PlotSettingsPicker(tk.Toplevel):
 
         self._swatches.append(img)
         return img
+
+    # ── Edit history (undo / redo) ────────────────────────────────
+    def _snapshot(self) -> None:
+        """Push the PRE-edit ``self._data`` onto the undo stack.
+
+        Called by EVERY mutator (color write-back, reorder sync, refresh)
+        before it changes ``self._data``, so the undo stack always holds the
+        states to roll back to.  A fresh edit invalidates any redo history,
+        so the redo stack is cleared here.  States are deep copies so later
+        in-place edits to ``self._data`` cannot mutate them.
+        """
+        self._undo_stack.append(copy.deepcopy(self._data))
+        self._redo_stack.clear()
+        self._update_history_buttons()
+
+    def _on_undo(self) -> None:
+        """Roll back one edit: restore the last pre-edit ``self._data``."""
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(copy.deepcopy(self._data))
+        self._data = self._undo_stack.pop()
+        self._rebuild_all_tabs()
+        self._update_history_buttons()
+
+    def _on_redo(self) -> None:
+        """Re-apply one undone edit."""
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(copy.deepcopy(self._data))
+        self._data = self._redo_stack.pop()
+        self._rebuild_all_tabs()
+        self._update_history_buttons()
+
+    def _update_history_buttons(self) -> None:
+        """Enable/disable Undo/Redo to reflect each stack's emptiness."""
+        if self._undo_button is not None:
+            self._undo_button.configure(
+                state="normal" if self._undo_stack else "disabled",
+            )
+        if self._redo_button is not None:
+            self._redo_button.configure(
+                state="normal" if self._redo_stack else "disabled",
+            )
+
+    def _rebuild_all_tabs(self) -> None:
+        """Discard every tab/tree and rebuild them from ``self._data``.
+
+        Used by undo/redo/refresh so the displayed trees + swatches exactly
+        match the (possibly replaced) working dict — order, colors, and row
+        presence.  All per-tree bookkeeping and swatch references are reset
+        so stale rows/images cannot leak across a rebuild.
+        """
+        for tab_id in self._notebook.tabs():
+            self._notebook.forget(tab_id)
+            self.nametowidget(tab_id).destroy()
+        self._tree_section.clear()
+        self._drag_item.clear()
+        self._tree_composite.clear()
+        self._row_swatches.clear()
+        self._swatches.clear()
+        self._build_tabs()
 
     # ── Tab construction ──────────────────────────────────────────
     def _build_tabs(self) -> None:
@@ -571,8 +663,14 @@ class PlotSettingsPicker(tk.Toplevel):
             if name not in rebuilt:
                 rebuilt[name] = value
 
-        # Write back into the parent container so the change is in-place
-        # for the working dict that Apply/Save dump.
+        # A reorder that did not actually change the key order (e.g. a press
+        # + release with no motion) is a no-op — do not record an undo step.
+        if list(rebuilt.keys()) == list(section.keys()):
+            return
+
+        # Record the pre-edit state, then write back into the parent
+        # container so the change is in-place for the dict Apply/Save dump.
+        self._snapshot()
         parent = self._data
         for key in section_path[:-1]:
             parent = parent[key]
@@ -643,6 +741,8 @@ class PlotSettingsPicker(tk.Toplevel):
             return  # Cancel: no change.
 
         new_pos, new_neg = dialog.result
+        # Record the pre-edit state before mutating the working dict.
+        self._snapshot()
         if new_neg is None:
             section[name] = new_pos
             self._rebuild_row_swatch(tree, item, new_pos, None)
@@ -667,6 +767,8 @@ class PlotSettingsPicker(tk.Toplevel):
         if rgb_hex is None or rgb_hex[1] is None:
             return  # Cancel: no change.
         new_color = _to_hex(rgb_hex[1])
+        # Record the pre-edit state before mutating the working dict.
+        self._snapshot()
         section[name] = new_color
         self._rebuild_row_swatch(tree, item, new_color, None)
 
@@ -684,6 +786,122 @@ class PlotSettingsPicker(tk.Toplevel):
         # is no longer displayed).
         self._row_swatches[(tree, item)] = image
         tree.item(item, image=image)
+
+    # ── Refresh from the input DB ─────────────────────────────────
+    def _discover_input_dbs(self) -> list[str]:
+        """Return ``sqlite:///`` URLs for the project's input/intermediate DBs.
+
+        The project root is the settings file's parent directory.  Every
+        ``*.sqlite`` under ``<project>/input_sources`` and
+        ``<project>/intermediate`` is a candidate input DB; URLs are
+        returned in a stable (sorted) order so the union is deterministic.
+        """
+        project_root = self._settings_path.parent
+        urls: list[str] = []
+        for sub in ("input_sources", "intermediate"):
+            db_dir = project_root / sub
+            if not db_dir.is_dir():
+                continue
+            for path in sorted(db_dir.glob("*.sqlite")):
+                if path.is_file():
+                    urls.append(f"sqlite:///{path}")
+        return urls
+
+    def _fetch_entity_union(self, db_urls: list[str]) -> dict[str, set[str]]:
+        """Union per-class entity names across every input DB (one open each).
+
+        Reuses
+        :func:`flextool.scenario_comparison.input_entity_colors.fetch_entities_by_class`
+        — one :class:`DatabaseMapping` open per DB — and unions the returned
+        per-class name sets across DBs.
+        """
+        from flextool.scenario_comparison.input_entity_colors import (
+            RELEVANT_ENTITY_CLASSES,
+            fetch_entities_by_class,
+        )
+
+        union: dict[str, set[str]] = {
+            cls: set() for cls in RELEVANT_ENTITY_CLASSES
+        }
+        for url in db_urls:
+            per_db = fetch_entities_by_class(url)
+            for cls, names in per_db.items():
+                union[cls].update(names)
+        return union
+
+    def _on_refresh(self) -> None:
+        """Re-fetch entities from the project DB(s): ADD new + PRUNE stale.
+
+        Discovers the project's input DB(s), unions their per-class entity
+        names, and updates ``self._data['entities']`` in place: discovered
+        names not already present are appended with a default-palette color
+        (:func:`assign_palette_colors`); existing entries no longer in the DB
+        are removed; surviving entries keep their order and (edited) values.
+        ``categories`` and ``scenarios`` are never touched.  Records one undo
+        step and rebuilds the entity tabs.  Shows an info box and changes
+        nothing when no input DB is found.
+        """
+        from flextool.scenario_comparison.config_builder import (
+            assign_palette_colors,
+        )
+        from flextool.scenario_comparison.input_entity_colors import (
+            RELEVANT_ENTITY_CLASSES,
+        )
+
+        db_urls = self._discover_input_dbs()
+        if not db_urls:
+            messagebox.showinfo(
+                "Refresh from DB",
+                "No input database found.",
+                parent=self,
+            )
+            return
+
+        union = self._fetch_entity_union(db_urls)
+
+        # Build the new entities mapping per class: keep existing entries (in
+        # order, with their values) that still exist in the DB, append newly
+        # discovered names with a palette color.  Prune the rest.
+        entities = self._data.get("entities")
+        if not isinstance(entities, dict):
+            entities = {}
+
+        new_entities: dict[str, dict] = {}
+        changed = False
+        for cls in RELEVANT_ENTITY_CLASSES:
+            discovered = union.get(cls, set())
+            existing = entities.get(cls)
+            existing = existing if isinstance(existing, dict) else {}
+
+            rebuilt: dict[str, object] = {}
+            # Preserve existing entries (order + value) still in the DB.
+            for name, value in existing.items():
+                if name in discovered:
+                    rebuilt[name] = value
+                else:
+                    changed = True  # pruned a stale entry
+            # Append newly discovered names with a palette color.
+            new_names = sorted(n for n in discovered if n not in rebuilt)
+            if new_names:
+                changed = True
+                for name, color in assign_palette_colors(new_names).items():
+                    rebuilt[name] = color
+
+            if rebuilt:
+                new_entities[cls] = rebuilt
+            elif cls in existing and existing:
+                # The class lost all its entities; dropping it is a change.
+                changed = True
+
+        if not changed:
+            return
+
+        self._snapshot()
+        if new_entities:
+            self._data["entities"] = new_entities
+        else:
+            self._data.pop("entities", None)
+        self._rebuild_all_tabs()
 
     # ── Buttons ───────────────────────────────────────────────────
     def _on_apply_clicked(self) -> None:
