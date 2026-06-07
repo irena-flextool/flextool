@@ -122,6 +122,14 @@ class PlotSettingsPicker(tk.Toplevel):
         # (a GC'd image renders blank in the Treeview cell).
         self._swatches: list[tk.PhotoImage] = []
 
+        # Per-tree reorder bookkeeping: maps a Treeview to the
+        # ``(*keys,)`` path of its section in the working dict (e.g.
+        # ``("entities", "unit")`` or ``("scenarios",)``) so a reorder can
+        # rewrite exactly that section.  ``_drag_item`` holds the row being
+        # dragged for the duration of a mouse drag.
+        self._tree_section: dict[ttk.Treeview, tuple[str, ...]] = {}
+        self._drag_item: dict[ttk.Treeview, str | None] = {}
+
         # Working state = parsed dict; snapshot the original TEXT for Cancel.
         self._original_text = self._read_text()
         self._data = self._parse(self._original_text)
@@ -228,6 +236,7 @@ class PlotSettingsPicker(tk.Toplevel):
                         title=cls,
                         rows=list(section.items()),
                         composite=True,
+                        section_path=("entities", cls),
                     )
 
         categories = self._data.get("categories")
@@ -239,6 +248,7 @@ class PlotSettingsPicker(tk.Toplevel):
                         title=name,
                         rows=list(section.items()),
                         composite=False,
+                        section_path=("categories", name),
                     )
 
         scenarios = self._data.get("scenarios")
@@ -247,6 +257,7 @@ class PlotSettingsPicker(tk.Toplevel):
                 title="scenarios",
                 rows=list(scenarios.items()),
                 composite=False,
+                section_path=("scenarios",),
             )
 
     def _add_tab(
@@ -254,6 +265,7 @@ class PlotSettingsPicker(tk.Toplevel):
         title: str,
         rows: list[tuple[str, object]],
         composite: bool,
+        section_path: tuple[str, ...],
     ) -> None:
         """Add a Notebook tab with a scrollable single-column Treeview."""
         frame = ttk.Frame(self._notebook)
@@ -279,7 +291,130 @@ class PlotSettingsPicker(tk.Toplevel):
                 image = self._make_swatch(value, None)
             tree.insert("", "end", text=str(name), image=image)
 
+        # Register for reordering and wire drag + keyboard moves.
+        self._tree_section[tree] = section_path
+        self._drag_item[tree] = None
+        tree.bind("<ButtonPress-1>", self._on_drag_start)
+        tree.bind("<B1-Motion>", self._on_drag_motion)
+        tree.bind("<ButtonRelease-1>", self._on_drag_end)
+        tree.bind("<Alt-Up>", self._on_key_move_up)
+        tree.bind("<Alt-Down>", self._on_key_move_down)
+
         self._notebook.add(frame, text=title)
+
+    # ── Reordering (drag + keyboard) ──────────────────────────────
+    def _on_drag_start(self, event: tk.Event) -> None:
+        """Remember the row under the cursor as the drag candidate.
+
+        Normal click-to-select still happens (we do not consume the
+        event); we only record which item a subsequent ``<B1-Motion>``
+        should move.  A press on empty space records ``None`` so a drag
+        there is a no-op.
+        """
+        tree = event.widget
+        if tree not in self._drag_item:
+            return
+        self._drag_item[tree] = tree.identify_row(event.y) or None
+
+    def _on_drag_motion(self, event: tk.Event) -> None:
+        """Move the dragged row to the position under the cursor."""
+        tree = event.widget
+        item = self._drag_item.get(tree)
+        if not item:
+            return
+        target = tree.identify_row(event.y)
+        if not target or target == item:
+            return
+        new_index = tree.index(target)
+        tree.move(item, "", new_index)
+        # Keep the dragged row selected/visible as it travels.
+        tree.selection_set(item)
+        tree.focus(item)
+        tree.see(item)
+
+    def _on_drag_end(self, event: tk.Event) -> None:
+        """Finish a drag: persist the new order, clear the candidate."""
+        tree = event.widget
+        item = self._drag_item.get(tree)
+        self._drag_item[tree] = None
+        if not item:
+            return
+        section_path = self._tree_section.get(tree)
+        if section_path is not None:
+            self._sync_section_order_from_tree(section_path, tree)
+
+    def _on_key_move_up(self, event: tk.Event) -> str:
+        """Alt+Up: move the focused row up one position."""
+        return self._key_move(event.widget, -1)
+
+    def _on_key_move_down(self, event: tk.Event) -> str:
+        """Alt+Down: move the focused row down one position."""
+        return self._key_move(event.widget, +1)
+
+    def _key_move(self, tree: ttk.Treeview, delta: int) -> str:
+        """Shift the focused/selected row by ``delta`` and persist order.
+
+        Returns ``"break"`` so Tk's default Alt-arrow handling does not
+        also fire.
+        """
+        if tree not in self._tree_section:
+            return "break"
+        item = tree.focus() or (
+            tree.selection()[0] if tree.selection() else ""
+        )
+        if not item:
+            return "break"
+        children = list(tree.get_children(""))
+        cur = children.index(item)
+        new_index = cur + delta
+        if new_index < 0 or new_index >= len(children):
+            return "break"
+        tree.move(item, "", new_index)
+        tree.selection_set(item)
+        tree.focus(item)
+        tree.see(item)
+        self._sync_section_order_from_tree(self._tree_section[tree], tree)
+        return "break"
+
+    def _sync_section_order_from_tree(
+        self, section_path: tuple[str, ...], tree: ttk.Treeview,
+    ) -> None:
+        """Rebuild ``section_path`` in the working dict to match the tree.
+
+        The new dict preserves each entry's VALUE (bare color or
+        ``{color, neg_color}``) and only reorders the keys to match the
+        tree's current top-to-bottom row order.  Centralised so 6.5's
+        undo can reuse it.
+        """
+        # Resolve the existing section mapping (the value source of truth).
+        section = self._data
+        for key in section_path:
+            if not isinstance(section, dict):
+                return
+            section = section.get(key)
+        if not isinstance(section, dict):
+            return
+
+        # Tree row order, by name (column #0 text).
+        ordered_names = [
+            tree.item(iid, "text") for iid in tree.get_children("")
+        ]
+        # Rebuild preserving values; keep any keys not represented as rows
+        # (defensive — should not happen) appended in their original order.
+        rebuilt: dict[str, object] = {}
+        for name in ordered_names:
+            if name in section:
+                rebuilt[name] = section[name]
+        for name, value in section.items():
+            if name not in rebuilt:
+                rebuilt[name] = value
+
+        # Write back into the parent container so the change is in-place
+        # for the working dict that Apply/Save dump.
+        parent = self._data
+        for key in section_path[:-1]:
+            parent = parent[key]
+        parent[section_path[-1]] = rebuilt
 
     # ── Buttons ───────────────────────────────────────────────────
     def _on_apply_clicked(self) -> None:

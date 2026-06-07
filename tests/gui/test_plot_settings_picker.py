@@ -219,6 +219,174 @@ class TestPickerButtons:
 
 
 # ---------------------------------------------------------------------------
+#  PlotSettingsPicker — reordering (drag + keyboard) → persisted order
+# ---------------------------------------------------------------------------
+
+
+def _section(data: dict, path: tuple[str, ...]) -> dict:
+    cur = data
+    for key in path:
+        cur = cur[key]
+    return cur
+
+
+class TestPickerReorder:
+    def test_keyboard_alt_down_moves_row_and_syncs_dict(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        assert _row_names(unit) == ["coal", "chp"]
+
+        # Focus the top row and Alt-Down it.
+        first = unit.get_children("")[0]
+        unit.focus(first)
+        unit.selection_set(first)
+        picker._key_move(unit, +1)
+
+        # Tree order flipped and the moved row stays selected/focused.
+        assert _row_names(unit) == ["chp", "coal"]
+        assert unit.focus() == first
+        assert unit.selection() == (first,)
+
+        # Working dict section reordered; values intact (chp keeps mapping).
+        sect = _section(picker._data, ("entities", "unit"))
+        assert list(sect.keys()) == ["chp", "coal"]
+        assert sect["chp"] == {"color": "#E64A19", "neg_color": "#9c3010"}
+        assert sect["coal"] == "#212121"
+
+    def test_keyboard_alt_up_at_top_is_noop(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        scen = _tree_in_tab(picker, titles.index("scenarios"))
+        top = scen.get_children("")[0]
+        scen.focus(top)
+        picker._key_move(scen, -1)
+        assert _row_names(scen) == ["S1", "S2"]
+        assert list(_section(picker._data, ("scenarios",)).keys()) == ["S1", "S2"]
+
+    def test_alt_arrow_bindings_registered(self, tk_root, tmp_path):
+        """Each tree has <Alt-Up>/<Alt-Down> bound (event-level wiring).
+
+        A real keystroke cannot be routed headlessly without a window
+        manager (``focus_set`` cannot acquire input focus under bare
+        Xvfb), so we assert the bindings exist on every tab's tree and
+        that they dispatch our handlers.  The move+sync behaviour itself
+        is exercised through the handlers below.
+        """
+        picker, _ = _make_picker(tk_root, tmp_path)
+        for tree in picker._tree_section:
+            assert tree.bind("<Alt-Up>")
+            assert tree.bind("<Alt-Down>")
+            assert tree.bind("<ButtonPress-1>")
+            assert tree.bind("<B1-Motion>")
+            assert tree.bind("<ButtonRelease-1>")
+
+    def test_alt_down_event_invokes_handler(self, tk_root, tmp_path):
+        """Synthesise the <Alt-Down> event object and feed it through the
+        bound handler (the same callable Tk would invoke), proving the
+        event path — not just an ad-hoc method call — reorders + persists.
+        """
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        scen = _tree_in_tab(picker, titles.index("scenarios"))
+        first = scen.get_children("")[0]
+        scen.focus(first)
+        scen.selection_set(first)
+        evt = types.SimpleNamespace(widget=scen)
+        result = picker._on_key_move_down(evt)
+        assert result == "break"  # default Alt-arrow handling suppressed
+        assert _row_names(scen) == ["S2", "S1"]
+        assert list(_section(picker._data, ("scenarios",)).keys()) == ["S2", "S1"]
+
+    def test_drag_handlers_reorder_and_persist(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Driving the bound drag handlers reorders + persists order.
+
+        Headless Treeview rows have no real geometry, so we map cursor-y
+        to a row via a stubbed ``identify_row`` (the only Tk geometry call
+        the handlers make); everything else is the real handler logic.
+        """
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal, chp = unit.get_children("")
+
+        # y == 0 → coal (top), y == 1 → chp (bottom).
+        monkeypatch.setattr(
+            unit, "identify_row",
+            lambda y: {0: coal, 1: chp}.get(y, ""),
+        )
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=unit, y=y)
+
+        # Press on coal, drag down onto chp, release.
+        picker._on_drag_start(_ev(0))
+        assert picker._drag_item[unit] == coal
+        picker._on_drag_motion(_ev(1))
+        picker._on_drag_end(_ev(1))
+
+        assert _row_names(unit) == ["chp", "coal"]
+        assert picker._drag_item[unit] is None
+        sect = _section(picker._data, ("entities", "unit"))
+        assert list(sect.keys()) == ["chp", "coal"]
+        assert sect["chp"] == {"color": "#E64A19", "neg_color": "#9c3010"}
+
+    def test_drag_on_empty_space_is_noop(self, tk_root, tmp_path, monkeypatch):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        # identify_row off the rows returns "" → drag candidate None.
+        monkeypatch.setattr(unit, "identify_row", lambda y: "")
+        empty = types.SimpleNamespace(widget=unit, y=10_000)
+        picker._on_drag_start(empty)
+        assert picker._drag_item[unit] is None
+        picker._on_drag_motion(empty)
+        picker._on_drag_end(empty)
+        assert _row_names(unit) == ["coal", "chp"]
+
+    def test_reordered_order_is_written_to_file(self, tk_root, tmp_path):
+        """After a reorder, Apply writes the file with the new key order
+        and values intact (sort_keys=False preserves it)."""
+        picker, f = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        first = unit.get_children("")[0]
+        unit.focus(first)
+        unit.selection_set(first)
+        picker._key_move(unit, +1)  # coal → below chp
+
+        picker._on_apply_clicked()
+
+        loaded = yaml.safe_load(f.read_text(encoding="utf-8"))
+        # File key order matches the tree's new top-to-bottom order.
+        assert list(loaded["entities"]["unit"].keys()) == ["chp", "coal"]
+        # Values intact through the round-trip.
+        assert loaded["entities"]["unit"]["chp"] == {
+            "color": "#E64A19", "neg_color": "#9c3010",
+        }
+        assert loaded["entities"]["unit"]["coal"] == "#212121"
+        # Untouched sections unchanged.
+        assert loaded["scenarios"] == {"S1": "#1f77b4", "S2": "#ff7f0e"}
+
+    def test_sync_preserves_other_sections(self, tk_root, tmp_path):
+        """Reordering one tab must not disturb other sections of the dict."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        scen = _tree_in_tab(picker, titles.index("scenarios"))
+        first = scen.get_children("")[0]
+        scen.focus(first)
+        picker._key_move(scen, +1)
+        # entities/categories untouched and identical to the input.
+        assert picker._data["entities"] == _SAMPLE["entities"]
+        assert picker._data["categories"] == _SAMPLE["categories"]
+        assert list(picker._data["scenarios"].keys()) == ["S2", "S1"]
+
+
+# ---------------------------------------------------------------------------
 #  PlotDialog — shared "Colors, order..." button opens the picker
 # ---------------------------------------------------------------------------
 
