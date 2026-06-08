@@ -43,8 +43,13 @@ def nodeGroup_indicators(par, s, v, r, debug):
         else:
             group_inflow = pd.Series(0, index=dt_index)
 
-        # 2. Sum of annualized inflows [MWh]
-        annualized_inflow = group_inflow.div(par.complete_period_share_of_year)
+        # 2. Sum of annualized inflows [MWh].  Weight each (d, t) by
+        # par.rp_cost_weight (=1.0 with no/uniform timeset_weights →
+        # byte-identical) so the annualized inflow matches the cost-weighted
+        # objective.  group_inflow itself stays unweighted: it feeds the
+        # intensive VRE/slack *shares* below where the weight would cancel
+        # anyway, and the raw '5. Timestep inflow' output.
+        annualized_inflow = group_inflow.mul(par.rp_cost_weight, axis=0).div(par.complete_period_share_of_year)
 
         # Flow-derived quantities (r.flow_dt, potentialVREgen_dt) and q_state
         # slacks are MW at the timestep.  Multiply by step_duration so the
@@ -277,8 +282,11 @@ def nodeGroup_total_inflow(par, s, v, r, debug):
     result_multi_dt.columns.name = 'group'
     results.append((result_multi_dt, 'nodeGroup_flows_dt_g'))
 
-    # Aggregate to period level
-    result_multi_d = result_multi_dt.groupby(level='period').sum()
+    # Aggregate to period level.  Weight each (d, t) by par.rp_cost_weight
+    # (=1.0 with no/uniform timeset_weights → byte-identical) before the
+    # period sum.  result_multi_dt is group inflow (already MWh/step), so no
+    # step_duration.
+    result_multi_d = result_multi_dt.mul(par.rp_cost_weight, axis=0).groupby(level='period').sum()
     result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
     result_multi_d.columns.name = 'group'
     results.append((result_multi_d, 'nodeGroup_flows_d_g'))
@@ -453,8 +461,11 @@ def nodeGroup_flows(par, s, v, r, debug):
     # Return timestep results
     results.append((result_multi_dt, 'nodeGroup_flows_dt_gpe'))
 
-    # Aggregate to period level and annualize to match node_d_ep convention
-    result_multi_d = result_multi_dt.groupby(level='period').sum()
+    # Aggregate to period level and annualize to match node_d_ep convention.
+    # result_multi_dt is already energy (MWh/step); weight each (d, t) by
+    # par.rp_cost_weight (=1.0 with no/uniform timeset_weights →
+    # byte-identical) before the period sum.
+    result_multi_d = result_multi_dt.mul(par.rp_cost_weight, axis=0).groupby(level='period').sum()
     result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
 
     # Return period results

@@ -1,5 +1,7 @@
 import pandas as pd
 
+from flextool.process_outputs._annualize import annualize_dt_to_d
+
 
 # Threshold below which LP residuals on flow variables are treated as exact
 # zero.  HiGHS's primal feasibility tolerance is 1e-8 (see HiGHS options),
@@ -105,14 +107,13 @@ def unit_outputNode(par, s, v, r, debug):
     results.append((result_multi_dt, 'unit_outputNode_dt_ee'))
 
     # Aggregate to period level.  v_flow is in MW (MWh/h) — multiply by
-    # step_duration to get MWh per step, then sum to per-period MWh.
-    result_multi_d = (
-        result_multi_dt.mul(par.step_duration, axis=0)
-        .groupby(level='period').sum()
+    # step_duration to get MWh per step, weight each (d, t) by
+    # par.rp_cost_weight (=1.0 with no/uniform timeset_weights →
+    # byte-identical), then sum and annualize.
+    result_multi_d = annualize_dt_to_d(
+        result_multi_dt, par.rp_cost_weight,
+        par.complete_period_share_of_year, par.step_duration,
     )
-
-    # Divide by period shares to annualize
-    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
     result_multi_d = _clip_flow_residuals(result_multi_d)
 
     # Return period results
@@ -154,14 +155,12 @@ def unit_inputNode(par, s, v, r, debug):
     results.append((result_multi_dt, 'unit_inputNode_dt_ee'))
 
     # Aggregate to period level.  v_flow is MW — multiply by step_duration
-    # to get MWh per step before summing.
-    result_multi_d = (
-        result_multi_dt.mul(par.step_duration, axis=0)
-        .groupby(level='period').sum()
+    # to get MWh per step, weight each (d, t) by par.rp_cost_weight (=1.0
+    # with no/uniform timeset_weights → byte-identical), then sum/annualize.
+    result_multi_d = annualize_dt_to_d(
+        result_multi_dt, par.rp_cost_weight,
+        par.complete_period_share_of_year, par.step_duration,
     )
-
-    # Divide by period shares to annualize
-    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
     result_multi_d = _clip_flow_residuals(result_multi_d)
 
     # Return period results
@@ -218,13 +217,19 @@ def unit_VRE_curtailment_and_potential(par, s, v, r, debug):
         results.append((curtail_share_dt, 'unit_curtailment_share_outputNode_dt_ee'))
 
         # Aggregate to period level.  curtail_dt / potential_dt are MW —
-        # multiply by step_duration to get MWh per step before summing.
+        # multiply by step_duration to get MWh per step, then weight each
+        # (d, t) by par.rp_cost_weight (=1.0 with no/uniform timeset_weights
+        # → byte-identical) before summing.  Both numerator and denominator
+        # carry the same weight, so the curtailment-share ratio below is
+        # unchanged; only the absolute MWh outputs move.
         curtail_period = (
             curtail_dt.mul(par.step_duration, axis=0)
+            .mul(par.rp_cost_weight, axis=0)
             .groupby(level='period').sum()
         )
         potential_period = (
             potential_dt.mul(par.step_duration, axis=0)
+            .mul(par.rp_cost_weight, axis=0)
             .groupby(level='period').sum()
         )
 

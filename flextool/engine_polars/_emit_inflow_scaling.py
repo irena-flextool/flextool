@@ -13,6 +13,13 @@ Output CSVs (6 emitted — the 6 with a downstream consumer):
 
 These feed ``derive_pdtNodeInflow`` (5) and the lp-scaling emitter (1).
 
+One further standalone diagnostic CSV is emitted alongside (NOT part of
+the parity-gated 6, no LP consumer):
+
+* ``inflow_scaling_diagnostics.csv`` — (node, period, inflow_method,
+  annual_flow, f, level_shift_pct), the Part-B annualisation-divergence
+  ``f`` diagnostic.  See ``_compute_inflow_scaling_diagnostics``.
+
 The 9 internal middle parameters that used to be emitted as scratch CSVs
 — ``orig_flow_sum``, ``period_share_of_annual_flow``, ``new_peak_sign``,
 ``old_peak_max``, ``old_peak_min``, ``old_peak_sign``,
@@ -44,6 +51,7 @@ parity with the legacy emitter.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import polars as pl
@@ -53,6 +61,17 @@ from flextool.engine_polars._emit_provider_io import (
     _provider_key,
 )
 from flextool.engine_polars._vectorize import _render_value_column
+
+_logger = logging.getLogger(__name__)
+
+# Scaling inflow methods whose annualisation depends on the per-(d, t)
+# representative weight ``w = p_rp_cost_weight``.  ``use_original`` /
+# ``no_inflow`` do not annualise, so they carry no f diagnostic.
+_SCALING_METHODS = (
+    "scale_to_annual_flow",
+    "scale_in_proportion",
+    "scale_to_annual_and_peak_flow",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +290,18 @@ def _compute_inflow_scaling_frames(
         provider=provider,
     )
 
+    # Representative weight w[(d, t)] = p_rp_cost_weight[d, t] (the param
+    # the cost objective already uses).  Sourced from the per-solve
+    # ``rp_cost_weight.csv`` (period, time, weight) emitted by
+    # ``emit_rp_data`` / ``emit_empty_rp_data`` BEFORE this batch runs; it
+    # is therefore in the Provider already.  DEFAULT 1.0 for any (d, t) not
+    # present — when timeset_weights are absent/uniform the frame is empty
+    # (non-RP solve) or all-1.0, so w ≡ 1.0 and every weighted sum below
+    # reduces byte-for-byte to today's unweighted formula.
+    w_dt = _read_keyed2_float(
+        solve_data_dir / "rp_cost_weight.csv", provider=provider,
+    )
+
     # period__timeline (Python output): list of (period, timeline) pairs.
     period_timeline = _read_pairs(solve_data_dir / "period__timeline_set.csv",
                                    provider=provider)
@@ -341,24 +372,24 @@ def _compute_inflow_scaling_frames(
                 or _has_method(n, "scale_to_annual_and_peak_flow"))
 
     # ── orig_flow_sum ─────────────────────────────────────────────────
-    # value = sum_{t in complete_time_in_use} ptNode_inflow[n, t].
+    # value = sum_{t in complete_time_in_use} ptNode_inflow[n, t] · w[d, t]
+    #         (A3 — annual-energy ingredient, weighted by the representative
+    #         weight per period).  Because w is period-specific the sum can
+    #         no longer be cached period-independently; compute per (n, d).
+    #         With w ≡ 1.0 this reduces byte-for-byte to the former
+    #         period-independent t-sum.
     # Domain: (n, d) where annual_eligible AND pdNode annual_flow != 0.
     rows_orig: list[tuple[str, str, float]] = []
-    # Cache the t-sum per node (it's t-axis only — period-independent).
-    sum_complete_inflow: dict[str, float] = {}
     for n in nodes:
         if not _annual_eligible(n):
             continue
-        sum_complete_inflow[n] = sum(
-            pti[(n, t)] for t in complete_time_in_use
-        )
-    for n in nodes:
-        if not _annual_eligible(n):
-            continue
-        s = sum_complete_inflow[n]
         for d in period_in_use:
             if pdNode.get((n, "annual_flow", d), 0.0) == 0.0:
                 continue
+            s = sum(
+                pti[(n, t)] * w_dt.get((d, t), 1.0)
+                for t in complete_time_in_use
+            )
             rows_orig.append((n, d, s))
     out["orig_flow_sum.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_orig,
@@ -376,7 +407,10 @@ def _compute_inflow_scaling_frames(
             af = pdNode.get((n, "annual_flow", d), 0.0)
             if af == 0.0:
                 continue
-            s = sum(pti[(n, t)] for t in dt_complete_for_d.get(d, ()))
+            # A1 — weight each timestep's inflow by w[d, t] (representative
+            # weight); w ≡ 1.0 → today's unweighted sum byte-for-byte.
+            s = sum(pti[(n, t)] * w_dt.get((d, t), 1.0)
+                    for t in dt_complete_for_d.get(d, ()))
             rows_psaf.append((n, d, abs(s) / af))
     out["period_share_of_annual_flow.csv"] = _rows_to_frame(
         ("node", "period", "value"), rows_psaf,
@@ -406,20 +440,20 @@ def _compute_inflow_scaling_frames(
     #         (abs(sum_{t in time} ptNode_inflow[n, t]) /
     #          sum_{tl in period__timeline[d]} p_timeline_duration_in_years[tl]).
     rows_pfpm: list[tuple[str, str, float]] = []
-    # time_sum is t-axis only.
-    sum_time_inflow_by_n: dict[str, float] = {}
+    # A2 — weight the inflow sum by w[d, t] (representative weight) per
+    # period.  This makes the sum period-specific (was t-axis only); the
+    # iteration domain stays the full time_set, so with w ≡ 1.0 each term's
+    # factor is 1.0 and the sum is byte-identical to the former
+    # period-independent ``sum(pti[(n, t)] for t in time_set)``.
     for n in nodes:
         if not _has_method(n, "scale_in_proportion"):
             continue
-        sum_time_inflow_by_n[n] = sum(pti[(n, t)] for t in time_set)
-    for n in nodes:
-        if not _has_method(n, "scale_in_proportion"):
-            continue
-        time_sum = sum_time_inflow_by_n[n]
         for d in period_in_use:
             af = pdNode.get((n, "annual_flow", d), 0.0)
             if af == 0.0:
                 continue
+            time_sum = sum(pti[(n, t)] * w_dt.get((d, t), 1.0)
+                           for t in time_set)
             tdy_sum = sum(p_tdy.get(tl, 0.0)
                           for tl in timelines_for_d.get(d, ()))
             if tdy_sum == 0.0 or time_sum == 0.0:
@@ -663,6 +697,13 @@ def _compute_inflow_scaling_frames_vectorized(
         provider=provider,
     )
 
+    # Representative weight w[(d, t)] = p_rp_cost_weight[d, t] (see the
+    # legacy reader block for the full rationale).  DEFAULT 1.0 for any
+    # (d, t) absent → w ≡ 1.0 reduces every weighted sum below to today's.
+    w_dt = _read_keyed2_float(
+        solve_data_dir / "rp_cost_weight.csv", provider=provider,
+    )
+
     period_timeline = _read_pairs(solve_data_dir / "period__timeline_set.csv",
                                    provider=provider)
     timelines_for_d: dict[str, list[str]] = {}
@@ -811,9 +852,16 @@ def _compute_inflow_scaling_frames_vectorized(
         schema={"node": pl.Utf8, "period": pl.Utf8, "v_af": pl.Float64},
     )
 
-    # Per-node complete-timeline t-sum (period-independent): the legacy
-    # ``sum(pti[(n,t)] for t in complete_time_in_use)``.  Lift the t-list
-    # to a frame and inner-join the per-node inflow series, then group-sum.
+    # Representative-weight lookup w[(period, time)] → weight; left-joined
+    # below with ``fill_null(1.0)`` so any (d, t) absent contributes the
+    # neutral factor 1.0 (matching the legacy ``w_dt.get((d, t), 1.0)``).
+    w_lk = pl.DataFrame(
+        {"period": [k[0] for k in w_dt],
+         "time": [k[1] for k in w_dt],
+         "v_w": list(w_dt.values())},
+        schema={"period": pl.Utf8, "time": pl.Utf8, "v_w": pl.Float64},
+    )
+
     cti_lk = pl.DataFrame(
         {"time": list(complete_time_in_use)},
         schema={"time": pl.Utf8},
@@ -821,28 +869,40 @@ def _compute_inflow_scaling_frames_vectorized(
     # pti as a (node, time, v_pti) frame restricted to the per-node series.
     pti_series = pti_df.select(["node", "time", "value_f"]).rename(
         {"value_f": "v_pti"})
+    # Per-(node, period) complete-timeline WEIGHTED sum (A3): the legacy
+    # ``sum(pti[(n,t)] · w[d,t] for t in complete_time_in_use)``.  Build the
+    # dense (node, period, time) grid over the complete timeline, multiply
+    # pti by the period weight (fill 1.0), then group-sum per (node, period).
+    # With w ≡ 1.0 every weight factor is 1.0 → byte-identical to the former
+    # period-independent per-node sum.
     complete_sum_df = (
-        pti_series.join(cti_lk, on="time", how="inner")
-        .group_by("node")
-        .agg(pl.col("v_pti").sum().alias("v_complete"))
+        annual_eligible_eo.select("node")
+        .join(cti_lk, how="cross")
+        .join(period_po.select("period"), how="cross")
+        .join(pti_series, on=["node", "time"], how="left")
+        .join(w_lk, on=["period", "time"], how="left")
+        .with_columns(
+            (pl.col("v_pti").fill_null(0.0)
+             * pl.col("v_w").fill_null(1.0)).alias("v_term"),
+        )
+        .group_by(["node", "period"])
+        .agg(pl.col("v_term").sum().alias("v_complete"))
     )
 
     # ── Stage 3: orig_flow_sum (in-memory only — feeds npopis) ─────────
     # Domain: annual_eligible AND pdNode annual_flow != 0 (DROP on 0/miss).
-    # value = per-node complete-timeline sum (period-independent).  NOT
+    # value = per-(node, period) complete-timeline WEIGHTED sum (A3).  NOT
     # emitted (no external consumer); only the dict below is used (by the
     # fused912 npopis).  Because the CSV is no longer written there is no
-    # byte-parity contract — the empty-timeline ``sum(())`` int-0 ``"0"``
-    # vs ``"0.0"`` special-case (which existed ONLY to byte-match the
-    # dropped CSV) is gone; value_f is a plain Float64 sum.
+    # byte-parity contract.
     orig_df = (
         annual_eligible_eo
         .join(period_po, how="cross")
         .join(af_lk, on=["node", "period"], how="left")
         .filter(pl.col("v_af").fill_null(0.0) != 0.0)
-        .join(complete_sum_df, on="node", how="left")
-        # A node with NO complete-timeline rows contributes 0: the legacy
-        # ``sum(())`` over an empty complete_time_in_use is 0.
+        .join(complete_sum_df, on=["node", "period"], how="left")
+        # A (node, period) with NO complete-timeline rows contributes 0:
+        # the legacy ``sum(())`` over an empty complete_time_in_use is 0.
         .with_columns(pl.col("v_complete").fill_null(0.0).alias("value_f"))
     )
     # Reconstruct orig_flow_sum dict (float values) for downstream stages.
@@ -861,13 +921,18 @@ def _compute_inflow_scaling_frames_vectorized(
         schema={"period": pl.Utf8, "time": pl.Utf8},
     )
     # node × (period, time) restricted to annual_eligible nodes only, then
-    # group-sum the inflow series per (node, period).
+    # group-sum the WEIGHTED inflow series per (node, period) (A1): each
+    # term is pti[(n,t)] · w[d,t] (fill 1.0).  With w ≡ 1.0 → today's sum.
     dtc_sum_df = (
         annual_eligible_eo.select("node")
         .join(pti_series, on="node", how="inner")
         .join(dtc_pairs, on="time", how="inner")
+        .join(w_lk, on=["period", "time"], how="left")
+        .with_columns(
+            (pl.col("v_pti") * pl.col("v_w").fill_null(1.0)).alias("v_term"),
+        )
         .group_by(["node", "period"])
-        .agg(pl.col("v_pti").sum().alias("v_dtc"))
+        .agg(pl.col("v_term").sum().alias("v_dtc"))
     )
     psaf_df = (
         annual_eligible_eo
@@ -891,12 +956,20 @@ def _compute_inflow_scaling_frames_vectorized(
     # ── Stage 6: period_flow_proportional_multiplier (Tier B) ──────────
     # Domain: scale_in_proportion AND af != 0; DROP if tdy_sum==0 OR
     # time_sum==0.  value = af / (abs(time_sum) / tdy_sum).
-    # Per-node time-axis sum over the WHOLE time_set.
+    # Per-(node, period) WEIGHTED time-axis sum over the WHOLE time_set (A2):
+    # each term is pti[(n,t)] · w[d,t] (fill 1.0).  The iteration domain
+    # stays the full time_set (period-independent), so with w ≡ 1.0 the sum
+    # is byte-identical to the former per-node ``sum(pti) over time_set``.
     time_sum_df = (
         proportion_eo.select("node")
         .join(pti_series, on="node", how="inner")
-        .group_by("node")
-        .agg(pl.col("v_pti").sum().alias("v_timesum"))
+        .join(period_po.select("period"), how="cross")
+        .join(w_lk, on=["period", "time"], how="left")
+        .with_columns(
+            (pl.col("v_pti") * pl.col("v_w").fill_null(1.0)).alias("v_term"),
+        )
+        .group_by(["node", "period"])
+        .agg(pl.col("v_term").sum().alias("v_timesum"))
     )
     # Per-period tdy sum: sum p_tdy over timelines_for_d[d].
     pt_pairs = pl.DataFrame(
@@ -919,10 +992,10 @@ def _compute_inflow_scaling_frames_vectorized(
         .join(period_po, how="cross")
         .join(af_lk, on=["node", "period"], how="left")
         .filter(pl.col("v_af").fill_null(0.0) != 0.0)
-        .join(time_sum_df, on="node", how="left")
+        .join(time_sum_df, on=["node", "period"], how="left")
         .join(tdy_sum_df, on="period", how="left")
-        # A node missing the time-sum join means no inflow rows ⇒ legacy
-        # sum(()) == 0.0; a period missing tdy_sum ⇒ legacy sum(()) == 0.0.
+        # A (node, period) missing the time-sum join means no inflow rows ⇒
+        # legacy sum(()) == 0.0; a period missing tdy_sum ⇒ sum(()) == 0.0.
         .with_columns(
             pl.col("v_timesum").fill_null(0.0).alias("v_timesum"),
             pl.col("v_tdysum").fill_null(0.0).alias("v_tdysum"),
@@ -1156,6 +1229,160 @@ def _compute_inflow_scaling_frames_vectorized(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Part B — the ``f`` annualisation-divergence diagnostic.
+#
+# For every scaling node ``n`` and period ``d`` report the factor by which an
+# even-sample annualisation and the representative-weight annualisation
+# disagree:
+#
+#     f[n, d] = ( Σ_{t in dt_complete[d]} I[n, t] )
+#               / ( Σ_{t in dt_complete[d]} I[n, t]·w[d, t] )
+#             = multiplier_new / multiplier_old
+#
+# ``f == 1.0`` exactly when the weights are uniform/absent (``w ≡ 1.0``).
+# This is a PURE diagnostic: it never enters the LP and is NOT added to the
+# scaling frames returned by ``_compute_inflow_scaling_frames*`` (the parity
+# gate asserts those return EXACTLY the 6 consumed keys).  It is emitted as a
+# standalone ``solve_data/inflow_scaling_diagnostics.csv`` frame on the
+# Provider (surfaced by ``--csv-dump`` like the other solve_data artifacts),
+# and a WARNING is logged for any (n, d) whose timeset carries non-uniform
+# weights and whose ``|f - 1| > 0.01``.
+# ---------------------------------------------------------------------------
+
+
+def _compute_inflow_scaling_diagnostics(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+) -> tuple[pl.DataFrame, list[tuple[str, str, float]]]:
+    """Compute the per-(node, period) ``f`` diagnostic.
+
+    Reads the same sources as the scaling compute (nodes, periods,
+    inflow methods, the merged per-(n, t) inflow series, the
+    representative weight ``w[(d, t)]`` and ``annual_flow``).  Returns a
+    two-tuple ``(frame, warnings)`` where:
+
+    * ``frame`` carries one row per scaling (node, period) with columns
+      ``node, period, inflow_method, annual_flow, f, level_shift_pct``
+      (``level_shift_pct = 100·(f - 1)``).  ``inflow_method`` is the set of
+      scaling methods authored on the node joined by ``+`` (a node may
+      legitimately carry more than one).
+    * ``warnings`` is the subset of ``(node, period, f)`` for which the
+      node's period carries NON-UNIFORM weights AND ``|f - 1| > 0.01`` —
+      the rows the caller logs at WARNING level.
+
+    Guards mirror the scaling code: a (node, period) whose weighted
+    denominator is 0 (an all-zero / cancelling profile under the weights)
+    is reported with ``f = 1.0`` (no divergence to flag) rather than
+    dividing by zero; the same when the unweighted numerator is 0.
+    """
+    # ── Sources (subset of the scaling reader block) ───────────────────
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+    time_set = _read_singles(solve_data_dir / "time.csv", provider=provider)
+    p_node = _read_keyed2_float(input_dir / "p_node.csv", provider=provider)
+    pt_node_inflow = _read_keyed2_float(
+        solve_data_dir / "pt_node_inflow.csv", provider=provider,
+    )
+    node_time_inflow = frozenset(_read_pairs(
+        solve_data_dir / "pt_node_inflow.csv", provider=provider,
+    ))
+
+    inflow_method = _read_pairs(solve_data_dir / "node__inflow_method.csv",
+                                provider=provider)
+    methods_for_node: dict[str, set[str]] = {}
+    for n, m in inflow_method:
+        methods_for_node.setdefault(n, set()).add(m)
+
+    pdNode = _read_keyed3_float(solve_data_dir / "pdNode.csv", provider=provider)
+
+    # Representative weight w[(d, t)] = p_rp_cost_weight[d, t]; DEFAULT 1.0
+    # for any (d, t) absent → f == 1.0 when weights are uniform/absent.
+    w_dt = _read_keyed2_float(
+        solve_data_dir / "rp_cost_weight.csv", provider=provider,
+    )
+
+    # dt_complete from steps_complete_solve.csv — (period, step) pairs.
+    dt_complete_pairs = _read_pairs(
+        solve_data_dir / "steps_complete_solve.csv",
+        provider=provider,
+    )
+    dt_complete_for_d: dict[str, list[str]] = {}
+    for d, t in dt_complete_pairs:
+        dt_complete_for_d.setdefault(d, []).append(t)
+
+    # Merged per-(n, t) inflow series (same rule as the scaling Stage 1):
+    # explicit pt_node_inflow when (n, t) is set, else the per-node scalar
+    # default p_node[(n, "inflow")].
+    p_node_inflow_default = {
+        n: p_node.get((n, "inflow"), 0.0) for n in nodes
+    }
+    pti: dict[tuple[str, str], float] = {}
+    for n in nodes:
+        default = p_node_inflow_default[n]
+        for t in time_set:
+            if (n, t) in node_time_inflow:
+                pti[(n, t)] = pt_node_inflow.get((n, t), 0.0)
+            else:
+                pti[(n, t)] = default
+
+    rows: list[tuple[str, str, str, float, float, float]] = []
+    warnings: list[tuple[str, str, float]] = []
+    for n in nodes:
+        scaling = [m for m in _SCALING_METHODS
+                   if m in methods_for_node.get(n, ())]
+        if not scaling:
+            continue
+        method_label = "+".join(scaling)
+        for d in period_in_use:
+            af = pdNode.get((n, "annual_flow", d), 0.0)
+            steps = dt_complete_for_d.get(d, ())
+            # Unweighted numerator and weighted denominator over the
+            # complete-period timesteps.
+            num = sum(pti[(n, t)] for t in steps)
+            den = sum(pti[(n, t)] * w_dt.get((d, t), 1.0) for t in steps)
+            # Whether this period's timesteps carry a non-uniform weight
+            # (a divergence is only meaningful — and only warned on — when
+            # the representativeness actually varies across the sample).
+            weights_here = [w_dt.get((d, t), 1.0) for t in steps]
+            non_uniform = (
+                len(weights_here) > 1
+                and any(abs(wv - weights_here[0]) > 1e-12
+                        for wv in weights_here)
+            )
+            if den == 0.0 or num == 0.0:
+                # Degenerate profile under the weights — no meaningful
+                # divergence; report f = 1.0 (no shift) and never warn.
+                f_val = 1.0
+            else:
+                f_val = num / den
+            level_shift_pct = 100.0 * (f_val - 1.0)
+            rows.append((n, d, method_label, af, f_val, level_shift_pct))
+            if non_uniform and abs(f_val - 1.0) > 0.01:
+                warnings.append((n, d, f_val))
+
+    frame = pl.DataFrame(
+        {
+            "node": [r[0] for r in rows],
+            "period": [r[1] for r in rows],
+            "inflow_method": [r[2] for r in rows],
+            "annual_flow": [repr(r[3]) for r in rows],
+            "f": [repr(r[4]) for r in rows],
+            "level_shift_pct": [repr(r[5]) for r in rows],
+        },
+        schema={
+            "node": pl.Utf8,
+            "period": pl.Utf8,
+            "inflow_method": pl.Utf8,
+            "annual_flow": pl.Utf8,
+            "f": pl.Utf8,
+            "level_shift_pct": pl.Utf8,
+        },
+    )
+    return frame, warnings
+
+
 def emit_node_inflow_scaling_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -1167,8 +1394,27 @@ def emit_node_inflow_scaling_params(
     (:func:`_compute_inflow_scaling_frames_vectorized`); the legacy
     :func:`_compute_inflow_scaling_frames` is retained as the parity
     oracle (``tests/engine_polars/test_vectorize_inflow_scaling_parity.py``).
+
+    Additionally emits the standalone ``inflow_scaling_diagnostics.csv``
+    (the Part-B ``f`` divergence diagnostic) and logs a WARNING for any
+    scaling node/period whose non-uniform ``timeset_weights`` imply an
+    annualisation that differs from an even-sample one by ``|f - 1| > 1%``.
+    The diagnostic is NOT part of the parity-gated scaling-frame dict.
     """
     frames = _compute_inflow_scaling_frames_vectorized(
         input_dir, solve_data_dir, provider=provider)
     for basename, df in frames.items():
         _emit(provider, f"solve_data/{basename}", df)
+
+    diag, diag_warnings = _compute_inflow_scaling_diagnostics(
+        input_dir, solve_data_dir, provider=provider)
+    _emit(provider, "solve_data/inflow_scaling_diagnostics.csv", diag)
+    for n, d, f_val in diag_warnings:
+        pct = 100.0 * (f_val - 1.0)
+        _logger.warning(
+            "inflow scaling: node %s period %s: timeset_weights imply an "
+            "annualisation that differs from an even-sample annualisation "
+            "by f=%.5f (demand level %+.2f%%); check that timeset_weights "
+            "match the representativeness of the selected timesteps.",
+            n, d, f_val, pct,
+        )
