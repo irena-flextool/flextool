@@ -1314,7 +1314,7 @@ def build_bar_figures(
         # row index). Shared with the plan path for identical resolution.
         from flextool.plot_outputs.plan import build_simple_bar_color_map
         shared_color_map, color_bar_level = build_simple_bar_color_map(
-            df, effective_plots, entity_class, color_template,
+            df, entity_class, color_template,
         )
 
     # Compute layout

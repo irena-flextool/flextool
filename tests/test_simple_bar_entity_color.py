@@ -142,7 +142,7 @@ class TestBuildSimpleBarColorMap:
         )
         df = pd.DataFrame([[1.0, 2.0]], index=pd.Index(["p0"], name="period"), columns=cols)
         tpl = {"entities": {"unit": {"u1": RED, "u2": GREEN}}}
-        cmap, level = build_simple_bar_color_map(df, [(None, df)], "unit", tpl)
+        cmap, level = build_simple_bar_color_map(df, "unit", tpl)
         assert level == "process"
         assert cmap["u1"] == pytest.approx(to_rgb(RED))
         assert cmap["u2"] == pytest.approx(to_rgb(GREEN))
@@ -150,8 +150,21 @@ class TestBuildSimpleBarColorMap:
     def test_no_level_returns_none(self):
         df = pd.DataFrame([[1.0]], index=pd.Index(["p0"], name="period"),
                           columns=pd.Index(["n1"], name="node"))
-        cmap, level = build_simple_bar_color_map(df, [(None, df)], "unit", {})
+        cmap, level = build_simple_bar_color_map(df, "unit", {})
         assert cmap is None and level is None
+
+    def test_process_resolves_against_unit_and_connection(self):
+        # 'process' column carries both a unit (u1) and a connection (c1);
+        # each is resolved against its own class section.
+        cols = pd.MultiIndex.from_tuples(
+            [("u1", "n1"), ("c1", "n1")], names=["process", "node"]
+        )
+        df = pd.DataFrame([[1.0, 2.0]], index=pd.Index(["p0"], name="period"), columns=cols)
+        tpl = {"entities": {"unit": {"u1": RED}, "connection": {"c1": GREEN}}}
+        cmap, level = build_simple_bar_color_map(df, "process", tpl)
+        assert level == "process"
+        assert cmap["u1"] == pytest.approx(to_rgb(RED))
+        assert cmap["c1"] == pytest.approx(to_rgb(GREEN))
 
 
 # ---------------------------------------------------------------------------
@@ -237,3 +250,34 @@ class TestEndToEndColoring:
         colors = _bar_facecolors(figures)
         assert tuple(round(c, 3) for c in STEELBLUE_RGB) in colors
         assert tuple(round(c, 3) for c in to_rgb(RED)) not in colors
+
+    def test_process_variant_colors_units_and_connections(self, tmp_path):
+        # process_co2 shape: a 'process' bar level mixing a unit and a
+        # connection; color_entity_class: process resolves each against its
+        # own class section.
+        cols = pd.MultiIndex.from_tuples(
+            [("unit", "u1", "co2", "n1"), ("connection", "c1", "co2", "n1")],
+            names=["type", "process", "commodity", "node"],
+        )
+        df = pd.DataFrame(
+            np.array([[10.0, 20.0], [12.0, 22.0]]),
+            index=pd.Index(["2020", "2021"], name="period"), columns=cols,
+        )
+        p = tmp_path / "plot_settings.yaml"
+        p.write_text(
+            "entities:\n  unit:\n    u1: '%s'\n  connection:\n    c1: '%s'\n"
+            % (RED, GREEN)
+        )
+        cfg = PlotConfig(
+            plot_name="process co2",
+            map_dimensions_for_plots=["d_eeee", "b_xbxx"],
+            color_entity_class="process",
+        )
+        figures, total = prepare_plot_data(
+            df, cfg, plot_name="process co2", color_path=p
+        )
+        assert total >= 1
+        colors = _bar_facecolors(figures)
+        assert tuple(round(c, 3) for c in to_rgb(RED)) in colors      # unit u1
+        assert tuple(round(c, 3) for c in to_rgb(GREEN)) in colors    # connection c1
+        assert tuple(round(c, 3) for c in STEELBLUE_RGB) not in colors

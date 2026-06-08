@@ -1249,6 +1249,7 @@ plots:
       default:
         variant: p
         map_dimensions_for_plots: [d_eeee, b_xbxx]
+        color_entity_class: process
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1261,6 +1262,7 @@ plots:
         plot_name: 'Process CO2 emissions total'
         variant: a
         map_dimensions_for_plots: [d_eeee, y_xbxx]
+        color_entity_class: process
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8

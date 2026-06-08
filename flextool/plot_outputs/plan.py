@@ -913,14 +913,17 @@ def resolve_color_bar_level(
     Lines / stacked / grouped charts designate their colored level via a
     role char (``l`` / ``s`` / ``g``); a simple bar has none, so given
     ``color_entity_class: unit`` the engine must *find* the level holding
-    units. Returns the first level whose class-set contains ``entity_class``
-    (``process__source__sink`` never reaches plotting, so first-match is a
-    safe tiebreak), or ``None`` when nothing matches / no class is set.
+    units. A level matches when ``entity_class`` is one of the classes it
+    carries (e.g. ``unit`` matches ``process``) or when it is named exactly
+    ``entity_class`` — the latter lets ``color_entity_class: process`` pick
+    the mixed unit/connection ``process`` level directly. Returns the first
+    match (``process__source__sink`` never reaches plotting, so first-match
+    is a safe tiebreak), or ``None`` when nothing matches / no class is set.
     """
     if not entity_class:
         return None
     for name in level_names:
-        if entity_class in _LEVEL_NAME_TO_CLASSES.get(name, ()):
+        if entity_class == name or entity_class in _LEVEL_NAME_TO_CLASSES.get(name, ()):
             return name
     return None
 
@@ -947,19 +950,64 @@ def _color_level_values(df_sub: pd.DataFrame, level: str) -> list:
     return []
 
 
+def _multiclass_color_map(
+    labels: list, color_template: dict | None, classes: tuple,
+) -> dict:
+    """Color map for labels that resolve against more than one entity class.
+
+    For a mixed level like ``process`` (each value is *either* a unit or a
+    connection), resolve every label against ``classes`` in order — first
+    section that lists it wins — and give the rest tab10/tab20 palette
+    colors in input order (mirroring ``build_shared_color_map``'s fallback).
+    """
+    import matplotlib.pyplot as plt
+    from flextool.plot_outputs.color_template import resolve_label_color
+
+    template = color_template or {}
+    resolved: dict = {}
+    palette_needed = 0
+    for lbl in labels:
+        col = None
+        for cls in classes:
+            col = resolve_label_color(lbl, template, category=None, entity_class=cls)
+            if col is not None:
+                break
+        resolved[lbl] = col
+        if col is None:
+            palette_needed += 1
+    cmap_colors = (
+        plt.colormaps['tab10'].colors if palette_needed <= 10
+        else plt.colormaps['tab20'].colors
+    )
+    out: dict = {}
+    pi = 0
+    for lbl in labels:
+        if resolved[lbl] is not None:
+            out[lbl] = resolved[lbl]
+        else:
+            out[lbl] = cmap_colors[pi % len(cmap_colors)]
+            pi += 1
+    return out
+
+
 def build_simple_bar_color_map(
     df_fm: pd.DataFrame,
-    effective_plots: list,
     entity_class: str | None,
     color_template: dict | None,
 ) -> tuple[dict | None, str | None]:
     """Color map + color level for a simple (non-stacked, non-grouped) bar.
 
     Resolves the column/index level carrying ``entity_class`` and builds a
-    ``{value: rgb}`` map over that level's distinct values, ordered by the
-    picker's file order. Shared by the plan path (``_compute_bar_plan``) and
-    the live render path (``build_bar_figures``) so both color identically.
-    Returns ``(None, None)`` when no class is set or no level carries it.
+    ``{value: rgb}`` map over that level's distinct values (read from the
+    full ``df_fm`` so subplot levels — which subplot extraction would drop —
+    are still captured), ordered by the picker's file order. Shared by the
+    plan path (``_compute_bar_plan``) and the live render path
+    (``build_bar_figures``) so both color identically.
+
+    ``entity_class`` may name a mixed level: ``process`` carries both units
+    and connections, so each value is resolved against ``unit`` then
+    ``connection`` — the one place a plot author writes ``process``. Returns
+    ``(None, None)`` when no class is set or no level carries it.
     """
     from flextool.plot_outputs.legend_helpers import build_shared_color_map
     from flextool.plot_outputs.color_template import order_labels_by_template
@@ -969,23 +1017,29 @@ def build_simple_bar_color_map(
     idx_names = list(df_fm.index.names) if isinstance(
         df_fm.index, pd.MultiIndex) else [df_fm.index.name]
     # Index first: a 'b'-role dim (sum/total variant) lives on the index;
-    # an expand dim (period variant) lives on a column.
+    # an expand/subplot dim (period variant) lives on a column.
     color_bar_level = resolve_color_bar_level(idx_names + col_names, entity_class)
     if not color_bar_level:
         return None, None
     all_labels: list[str] = []
-    for _, df_sub in effective_plots:
-        for v in _color_level_values(df_sub, color_bar_level):
-            label = str(v)
-            if label not in all_labels:
-                all_labels.append(label)
-    all_labels = order_labels_by_template(
-        all_labels, color_template or {}, category=None, entity_class=entity_class,
-    )
-    shared_color_map = build_shared_color_map(
-        all_labels, color_template=color_template, category=None,
-        entity_class=entity_class,
-    )
+    for v in _color_level_values(df_fm, color_bar_level):
+        label = str(v)
+        if label not in all_labels:
+            all_labels.append(label)
+
+    # A mixed level (process) resolves against several classes; a plain one
+    # against itself.
+    classes = _LEVEL_NAME_TO_CLASSES.get(entity_class, (entity_class,))
+    if len(classes) > 1:
+        shared_color_map = _multiclass_color_map(all_labels, color_template, classes)
+    else:
+        cls = classes[0]
+        all_labels = order_labels_by_template(
+            all_labels, color_template or {}, category=None, entity_class=cls,
+        )
+        shared_color_map = build_shared_color_map(
+            all_labels, color_template=color_template, category=None, entity_class=cls,
+        )
     return shared_color_map, color_bar_level
 
 
@@ -1182,8 +1236,7 @@ def _compute_bar_plan(
         # entities.<class> resolution + picker order as the line path; shared
         # with the live render path via build_simple_bar_color_map.
         shared_color_map, color_bar_level = build_simple_bar_color_map(
-            df_fm, effective_plots, cfg.color_entity_class,
-            load_color_template(color_path),
+            df_fm, cfg.color_entity_class, load_color_template(color_path),
         )
 
     # Compute layout
