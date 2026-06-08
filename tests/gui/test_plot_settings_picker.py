@@ -345,30 +345,64 @@ class TestPickerReorder:
         def _ev(y):
             return types.SimpleNamespace(widget=unit, y=y)
 
-        # Press on coal, drag down onto chp, release.
-        picker._on_drag_start(_ev(0))
-        assert picker._drag_item[unit] == coal
+        # A move drag starts on an ALREADY-SELECTED row.  Select coal, then
+        # press on it, drag down onto chp, release.
+        unit.selection_set(coal)
+        assert picker._on_drag_start(_ev(0)) == "break"  # move mode engaged
+        assert picker._drag_move[unit] is True
         picker._on_drag_motion(_ev(1))
         picker._on_drag_end(_ev(1))
 
         assert _row_names(unit) == ["chp", "coal"]
-        assert picker._drag_item[unit] is None
+        assert picker._drag_move[unit] is False
         sect = _section(picker._data, ("entities", "unit"))
         assert list(sect.keys()) == ["chp", "coal"]
         assert sect["chp"] == {"color": "#E64A19", "neg_color": "#9c3010"}
 
-    def test_drag_on_empty_space_is_noop(self, tk_root, tmp_path, monkeypatch):
+    def test_drag_on_unselected_row_does_not_move(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Pressing an unselected row starts a DRAW-select (native), not a
+        move — our handlers must not reorder."""
         picker, _ = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
         unit = _tree_in_tab(picker, titles.index("unit"))
-        # identify_row off the rows returns "" → drag candidate None.
-        monkeypatch.setattr(unit, "identify_row", lambda y: "")
-        empty = types.SimpleNamespace(widget=unit, y=10_000)
-        picker._on_drag_start(empty)
-        assert picker._drag_item[unit] is None
-        picker._on_drag_motion(empty)
-        picker._on_drag_end(empty)
+        coal, chp = unit.get_children("")
+        monkeypatch.setattr(
+            unit, "identify_row", lambda y: {0: coal, 1: chp}.get(y, ""))
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=unit, y=y)
+
+        # Nothing selected → press on coal is NOT a move; drag is a no-op
+        # for our reorder logic (ttk handles selection natively).
+        assert picker._on_drag_start(_ev(0)) is None
+        assert picker._drag_move[unit] is False
+        picker._on_drag_motion(_ev(1))
+        picker._on_drag_end(_ev(1))
         assert _row_names(unit) == ["coal", "chp"]
+
+    def test_extended_selectmode(self, tk_root, tmp_path):
+        """Trees allow multi-selection (Shift/Ctrl + native draw-select)."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        for tree in picker._tree_section:
+            assert str(tree.cget("selectmode")) == "extended"
+
+    def test_alt_move_group_of_selected_rows(self, tk_root, tmp_path):
+        """Alt+Down moves the WHOLE selection as a block."""
+        data = {"entities": {"unit": {
+            "a": "#111111", "b": "#222222", "c": "#333333", "d": "#444444",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        a, b, c, d = unit.get_children("")
+        unit.selection_set(a, b)  # select the top two
+        picker._key_move(unit, +1)  # move the pair down one
+        assert _row_names(unit) == ["c", "a", "b", "d"]
+        assert set(unit.selection()) == {a, b}
+        assert list(_section(picker._data, ("entities", "unit")).keys()) == [
+            "c", "a", "b", "d",
+        ]
 
     def test_reordered_order_is_written_to_file(self, tk_root, tmp_path):
         """After a reorder, Apply writes the file with the new key order
@@ -696,8 +730,8 @@ class TestPickerDoubleClickEdit:
         unit = _tree_in_tab(picker, titles.index("unit"))
         coal = unit.get_children("")[0]
         monkeypatch.setattr(unit, "identify_row", lambda y: coal)
-        # Prime a stale drag candidate as a prior ButtonPress would.
-        picker._drag_item[unit] = coal
+        # Prime a stale move-drag as a prior ButtonPress would.
+        picker._drag_move[unit] = True
 
         called = []
         monkeypatch.setattr(
@@ -706,10 +740,10 @@ class TestPickerDoubleClickEdit:
         )
         evt = types.SimpleNamespace(widget=unit, y=0)
         result = picker._on_row_double_click(evt)
-        # Resolves the row, clears the drag candidate (no reorder), edits.
+        # Resolves the row, clears the move-drag (no reorder), edits.
         assert result == "break"
         assert called == [(unit, coal)]
-        assert picker._drag_item[unit] is None
+        assert picker._drag_move[unit] is False
 
     def test_double_click_binding_registered(self, tk_root, tmp_path):
         picker, _ = _make_picker(tk_root, tmp_path)

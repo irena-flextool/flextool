@@ -616,10 +616,16 @@ class PlotSettingsPicker(tk.Toplevel):
         # Per-tree reorder bookkeeping: maps a Treeview to the
         # ``(*keys,)`` path of its section in the working dict (e.g.
         # ``("entities", "unit")`` or ``("scenarios",)``) so a reorder can
-        # rewrite exactly that section.  ``_drag_item`` holds the row being
-        # dragged for the duration of a mouse drag.
+        # rewrite exactly that section.  Drag state distinguishes a MOVE
+        # drag (press began on an already-selected row → move the whole
+        # selection) from a native draw-select drag (press on an unselected
+        # row → let ttk extend the selection).  ``_drag_anchor`` is the
+        # pressed row; ``_drag_moved`` records whether the drag actually
+        # reordered (so a click-without-move can collapse the selection).
         self._tree_section: dict[ttk.Treeview, tuple[str, ...]] = {}
-        self._drag_item: dict[ttk.Treeview, str | None] = {}
+        self._drag_move: dict[ttk.Treeview, bool] = {}
+        self._drag_anchor: dict[ttk.Treeview, str | None] = {}
+        self._drag_moved: dict[ttk.Treeview, bool] = {}
         # Whether a tree's rows carry a positive AND negative color
         # (entities) or a single color (categories / scenarios).  Drives
         # the double-click edit dialog and the swatch rebuild.
@@ -841,7 +847,9 @@ class PlotSettingsPicker(tk.Toplevel):
             self._notebook.forget(tab_id)
             self.nametowidget(tab_id).destroy()
         self._tree_section.clear()
-        self._drag_item.clear()
+        self._drag_move.clear()
+        self._drag_anchor.clear()
+        self._drag_moved.clear()
         self._tree_composite.clear()
         self._row_swatches.clear()
         self._swatches.clear()
@@ -917,7 +925,7 @@ class PlotSettingsPicker(tk.Toplevel):
         frame.rowconfigure(0, weight=1)
 
         tree = ttk.Treeview(
-            frame, show="tree", selectmode="browse", style=self._tree_style,
+            frame, show="tree", selectmode="extended", style=self._tree_style,
         )
         tree.grid(row=0, column=0, sticky="nsew")
 
@@ -939,7 +947,9 @@ class PlotSettingsPicker(tk.Toplevel):
 
         # Register for reordering and wire drag + keyboard moves.
         self._tree_section[tree] = section_path
-        self._drag_item[tree] = None
+        self._drag_move[tree] = False
+        self._drag_anchor[tree] = None
+        self._drag_moved[tree] = False
         self._tree_composite[tree] = composite
         tree.bind("<ButtonPress-1>", self._on_drag_start)
         tree.bind("<B1-Motion>", self._on_drag_motion)
@@ -959,77 +969,135 @@ class PlotSettingsPicker(tk.Toplevel):
         self._notebook.add(frame, text=title)
 
     # ── Reordering (drag + keyboard) ──────────────────────────────
-    def _on_drag_start(self, event: tk.Event) -> None:
-        """Remember the row under the cursor as the drag candidate.
+    def _selected_rows(self, tree: ttk.Treeview) -> list[str]:
+        """Current selection in top-to-bottom row order (focus as fallback)."""
+        sel = set(tree.selection())
+        if not sel:
+            f = tree.focus()
+            if f:
+                sel = {f}
+        return [r for r in tree.get_children("") if r in sel]
 
-        Normal click-to-select still happens (we do not consume the
-        event); we only record which item a subsequent ``<B1-Motion>``
-        should move.  A press on empty space records ``None`` so a drag
-        there is a no-op.
+    def _reorder_selection_block(
+        self, tree: ttk.Treeview, insert_at: int,
+    ) -> bool:
+        """Place the selected rows as a contiguous block at *insert_at*.
+
+        *insert_at* is an index into the rows that are NOT selected (so the
+        block is dropped between them).  Preserves each row's value, keeps
+        the selection, and returns True iff the order actually changed.
+        """
+        order = list(tree.get_children(""))
+        selected = self._selected_rows(tree)
+        if not selected:
+            return False
+        remaining = [r for r in order if r not in set(selected)]
+        insert_at = max(0, min(insert_at, len(remaining)))
+        new_order = remaining[:insert_at] + selected + remaining[insert_at:]
+        if new_order == order:
+            return False
+        for i, row in enumerate(new_order):
+            tree.move(row, "", i)
+        tree.selection_set(selected)
+        tree.focus(selected[0])
+        return True
+
+    def _on_drag_start(self, event: tk.Event) -> str | None:
+        """Begin a MOVE drag only when the press is on a selected row.
+
+        Pressing an already-selected row starts moving the whole selection
+        (return ``"break"`` to keep the multi-selection intact).  Pressing
+        an unselected row / empty space is left to ttk's default handler so
+        a click selects and a drag DRAW-selects a range.
         """
         tree = event.widget
-        if tree not in self._drag_item:
-            return
-        self._drag_item[tree] = tree.identify_row(event.y) or None
+        if tree not in self._tree_section:
+            return None
+        row = tree.identify_row(event.y) or None
+        self._drag_moved[tree] = False
+        if row and row in set(tree.selection()):
+            self._drag_move[tree] = True
+            self._drag_anchor[tree] = row
+            return "break"
+        self._drag_move[tree] = False
+        self._drag_anchor[tree] = None
+        return None
 
     def _on_drag_motion(self, event: tk.Event) -> None:
-        """Move the dragged row to the position under the cursor."""
+        """Move the selection to follow the cursor (move drags only)."""
         tree = event.widget
-        item = self._drag_item.get(tree)
-        if not item:
-            return
+        if not self._drag_move.get(tree):
+            return  # native draw-select drag — do not interfere
         target = tree.identify_row(event.y)
-        if not target or target == item:
+        if not target:
             return
-        new_index = tree.index(target)
-        tree.move(item, "", new_index)
-        # Keep the dragged row selected/visible as it travels.
-        tree.selection_set(item)
-        tree.focus(item)
-        tree.see(item)
+        order = list(tree.get_children(""))
+        selected = set(self._selected_rows(tree))
+        target_idx = order.index(target)
+        # Drop the block where the cursor is: count non-selected rows above
+        # the target row to get the insertion slot among them.
+        insert_at = sum(
+            1 for r in order[:target_idx] if r not in selected
+        )
+        if target not in selected:
+            insert_at += 1  # land the block just past the hovered row
+        if self._reorder_selection_block(tree, insert_at):
+            self._drag_moved[tree] = True
+            tree.see(target)
 
     def _on_drag_end(self, event: tk.Event) -> None:
-        """Finish a drag: persist the new order, clear the candidate."""
+        """Finish a drag: persist a move, or collapse a no-move click."""
         tree = event.widget
-        item = self._drag_item.get(tree)
-        self._drag_item[tree] = None
-        if not item:
+        was_move = self._drag_move.get(tree)
+        self._drag_move[tree] = False
+        if not was_move:
             return
-        section_path = self._tree_section.get(tree)
-        if section_path is not None:
-            self._sync_section_order_from_tree(section_path, tree)
+        if self._drag_moved.get(tree):
+            section_path = self._tree_section.get(tree)
+            if section_path is not None:
+                self._sync_section_order_from_tree(section_path, tree)
+        else:
+            # A plain click on a selected row (no drag) collapses the
+            # multi-selection down to that one row, as a normal click would.
+            anchor = self._drag_anchor.get(tree)
+            if anchor and tree.exists(anchor):
+                tree.selection_set(anchor)
+                tree.focus(anchor)
 
     def _on_key_move_up(self, event: tk.Event) -> str:
-        """Alt+Up: move the focused row up one position."""
+        """Alt+Up: move the selected row(s) up one position."""
         return self._key_move(event.widget, -1)
 
     def _on_key_move_down(self, event: tk.Event) -> str:
-        """Alt+Down: move the focused row down one position."""
+        """Alt+Down: move the selected row(s) down one position."""
         return self._key_move(event.widget, +1)
 
     def _key_move(self, tree: ttk.Treeview, delta: int) -> str:
-        """Shift the focused/selected row by ``delta`` and persist order.
+        """Shift the selected row(s) by ``delta`` as a group; persist order.
 
         Returns ``"break"`` so Tk's default Alt-arrow handling does not
         also fire.
         """
         if tree not in self._tree_section:
             return "break"
-        item = tree.focus() or (
-            tree.selection()[0] if tree.selection() else ""
-        )
-        if not item:
+        order = list(tree.get_children(""))
+        selected = self._selected_rows(tree)
+        if not selected:
             return "break"
-        children = list(tree.get_children(""))
-        cur = children.index(item)
-        new_index = cur + delta
-        if new_index < 0 or new_index >= len(children):
+        sset = set(selected)
+        first = order.index(selected[0])
+        last = order.index(selected[-1])
+        if delta < 0 and first == 0:
             return "break"
-        tree.move(item, "", new_index)
-        tree.selection_set(item)
-        tree.focus(item)
-        tree.see(item)
-        self._sync_section_order_from_tree(self._tree_section[tree], tree)
+        if delta > 0 and last == len(order) - 1:
+            return "break"
+        # Unselected rows above the block; the block jumps one such row
+        # up (insert_at - 1) or down (insert_at + 1) among the others.
+        before = sum(1 for r in order[:first] if r not in sset)
+        insert_at = before - 1 if delta < 0 else before + 1
+        if self._reorder_selection_block(tree, insert_at):
+            tree.see(selected[0] if delta < 0 else selected[-1])
+            self._sync_section_order_from_tree(self._tree_section[tree], tree)
         return "break"
 
     def _sync_section_order_from_tree(
@@ -1143,8 +1211,8 @@ class PlotSettingsPicker(tk.Toplevel):
         item = tree.identify_row(event.y)
         if not item:
             return "break"
-        # A double-click must not leave a stale drag candidate primed.
-        self._drag_item[tree] = None
+        # A double-click must not leave a stale move-drag primed.
+        self._drag_move[tree] = False
         self._edit_row_color(tree, item)
         return "break"
 
