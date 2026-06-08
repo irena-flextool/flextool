@@ -661,9 +661,15 @@ class PlotSettingsPicker(tk.Toplevel):
         _metrics = get_metrics(self)
         cw = _metrics.cw
         lh = _metrics.lh
-        # +30% wider, +80% taller than the original 70x34 so more entity
-        # classes / scenarios are visible vertically without scrolling.
-        self.geometry(f"{cw * 91}x{lh * 61}")
+        # Sized so all entity-class tabs fit by default: 30% wider and 50%
+        # taller than the previous 91x61 default (which itself grew from the
+        # original 70x34) → fewer hidden tabs and less vertical scrolling.
+        # Clamp to the screen (40px margin) so the bigger default never runs
+        # off a smaller display.
+        _margin = 40
+        _w = min(cw * 118, self.winfo_screenwidth() - _margin)
+        _h = min(lh * 92, self.winfo_screenheight() - _margin)
+        self.geometry(f"{_w}x{_h}")
         self.resizable(True, True)
         self.minsize(cw * 40, lh * 16)
 
