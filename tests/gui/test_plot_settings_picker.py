@@ -399,89 +399,87 @@ class TestPickerReorder:
 # ---------------------------------------------------------------------------
 
 
-def _mock_askcolor(monkeypatch, hex_value):
-    """Make ``tkinter.colorchooser.askcolor`` return a fixed hex (no UI)."""
-    import tkinter.colorchooser as cc
-
-    def _fake(*_a, **_k):
-        if hex_value is None:
-            return (None, None)  # Cancel.
-        return ((0, 0, 0), hex_value)
-
-    monkeypatch.setattr(cc, "askcolor", _fake)
-
-
 class TestColorPickerDialog:
-    def test_linked_pick_pos_mirrors_neg_returns_none_neg(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
+    """Embedded two-chooser dialog: link semantics + result contract."""
+
+    def test_linked_default_mirrors_and_returns_none_neg(self, tk_root):
         from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
 
-        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
-        _mock_askcolor(monkeypatch, "#00FF00")
-        dlg._pick_pos()
-        # While linked the negative mirrors the positive.
-        assert dlg._pos == "#00ff00"
-        assert dlg._neg == "#00ff00"
+        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#777777", True)
+        # Linked: the negative mirrors the positive on open.
         assert dlg._linked.get() is True
+        assert dlg._neg_chooser.get_hex() == dlg._pos_chooser.get_hex()
         dlg._on_ok()
         # Linked → neg returned as None (bare entry).
-        assert dlg.result == ("#00ff00", None)
+        assert dlg.result == ("#212121", None)
 
-    def test_pick_neg_unlinks_and_separates(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
+    def test_pos_change_mirrors_to_linked_neg(self, tk_root):
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
+        # A positive change (e.g. via the square) mirrors onto the negative.
+        dlg._pos_chooser.set_hex("#00ff00", user=True)
+        assert dlg._neg_chooser.get_hex() == "#00ff00"
+        assert dlg._linked.get() is True
+
+    def test_editing_negative_breaks_link(self, tk_root):
         from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
 
         dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
         assert dlg._linked.get() is True
-        _mock_askcolor(monkeypatch, "#aabbcc")
-        dlg._pick_neg()
-        # Picking a negative deliberately unlinks and separates the colors.
+        # A USER edit of the negative separates the colors → auto-unlink.
+        dlg._neg_chooser.set_hex("#aabbcc", user=True)
         assert dlg._linked.get() is False
-        assert dlg._pos == "#212121"
-        assert dlg._neg == "#aabbcc"
         dlg._on_ok()
         assert dlg.result == ("#212121", "#aabbcc")
 
-    def test_entry_with_neg_opens_unlinked(self, tk_root, tmp_path):
+    def test_entry_with_neg_opens_unlinked(self, tk_root):
         from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
 
-        dlg = ColorPickerDialog(
-            tk_root, "chp", "#E64A19", "#9c3010", False,
-        )
+        dlg = ColorPickerDialog(tk_root, "chp", "#E64A19", "#9c3010", False)
         assert dlg._linked.get() is False
-        # The negative "Pick…" button is enabled when unlinked.
-        assert str(dlg._neg_button.cget("state")) == "normal"
+        assert dlg._pos_chooser.get_hex() == "#e64a19"
+        assert dlg._neg_chooser.get_hex() == "#9c3010"
         dlg._on_ok()
         assert dlg.result == ("#e64a19", "#9c3010")
 
-    def test_relink_collapses_to_pos(self, tk_root, tmp_path):
+    def test_relink_collapses_to_pos(self, tk_root):
         from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
 
-        dlg = ColorPickerDialog(
-            tk_root, "chp", "#E64A19", "#9c3010", False,
-        )
-        # Re-check the link box → neg := pos, neg button disabled.
+        dlg = ColorPickerDialog(tk_root, "chp", "#E64A19", "#9c3010", False)
+        # Re-check the link box → neg := pos.
         dlg._linked.set(True)
         dlg._on_link_toggle()
-        assert dlg._neg == "#e64a19"
-        assert str(dlg._neg_button.cget("state")) == "disabled"
+        assert dlg._neg_chooser.get_hex() == "#e64a19"
         dlg._on_ok()
         assert dlg.result == ("#e64a19", None)
 
-    def test_cancel_returns_none(self, tk_root, tmp_path):
+    def test_cancel_returns_none(self, tk_root):
         from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
 
         dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
         dlg._on_cancel()
         assert dlg.result is None
 
-    def test_neg_button_disabled_when_linked(self, tk_root, tmp_path):
+    def test_single_mode_hides_negative_and_returns_one_color(self, tk_root):
         from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
 
-        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
-        assert str(dlg._neg_button.cget("state")) == "disabled"
+        dlg = ColorPickerDialog(
+            tk_root, "co2", "#4d4d4d", "#4d4d4d", True, single=True,
+        )
+        # No negative chooser in single mode.
+        assert dlg._neg_chooser is None
+        assert dlg._pos_chooser.get_hex() == "#4d4d4d"
+        dlg._on_ok()
+        assert dlg.result == ("#4d4d4d", None)
+
+    def test_chooser_roundtrips_hex(self, tk_root):
+        from flextool.gui.dialogs.plot_settings_picker import _ColorChooser
+
+        ch = _ColorChooser(tk_root, "#3a7bd5")
+        assert ch.get_hex() == "#3a7bd5"
+        ch.set_hex("#ff8800")
+        assert ch.get_hex() == "#ff8800"
 
 
 # ---------------------------------------------------------------------------
@@ -499,11 +497,13 @@ def _patch_dialog(monkeypatch, result):
     import flextool.gui.dialogs.plot_settings_picker as mod
 
     class _FakeDialog(tk.Toplevel):
-        def __init__(self, parent, name, pos_hex, neg_hex, linked):
+        def __init__(self, parent, name, pos_hex, neg_hex, linked, *,
+                     single=False):
             super().__init__(parent)
             self.withdraw()
             self.result = result
             self.opened = (name, pos_hex, neg_hex, linked)
+            self.single = single
             captured["dialog"] = self
             self.after(0, self.destroy)
 
@@ -605,7 +605,7 @@ class TestPickerDoubleClickEdit:
         costs = _tree_in_tab(picker, titles.index("costs"))
         co2 = costs.get_children("")[0]
 
-        _mock_askcolor(monkeypatch, "#FEDCBA")
+        _patch_dialog(monkeypatch, ("#fedcba", None))
         before = list(picker._swatches)
         picker._edit_row_color(costs, co2)
 
@@ -622,7 +622,7 @@ class TestPickerDoubleClickEdit:
         scen = _tree_in_tab(picker, titles.index("scenarios"))
         s1 = scen.get_children("")[0]
 
-        _mock_askcolor(monkeypatch, "#0a0b0c")
+        _patch_dialog(monkeypatch, ("#0a0b0c", None))
         picker._edit_row_color(scen, s1)
         sect = _section(picker._data, ("scenarios",))
         assert sect["S1"] == "#0a0b0c"
@@ -651,7 +651,7 @@ class TestPickerDoubleClickEdit:
         costs = _tree_in_tab(picker, titles.index("costs"))
         co2 = costs.get_children("")[0]
 
-        _mock_askcolor(monkeypatch, None)  # Cancel.
+        _patch_dialog(monkeypatch, None)  # Cancel.
         picker._edit_row_color(costs, co2)
         sect = _section(picker._data, ("categories", "costs"))
         assert sect["co2"] == "#4d4d4d"  # unchanged
