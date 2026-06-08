@@ -283,11 +283,15 @@ def resolve_label_color(
     category: str | None = None,
     entity_class: str | None = None,
     negative: bool = False,
+    scenario: bool = False,
 ) -> tuple[float, float, float] | None:
     """Resolve *label* to a color via the plot-settings *template*.
 
     Lookup precedence:
-    * If *entity_class* is given, check the ``entities`` section
+    * If *scenario* is True, check the top-level ``scenarios`` section with
+      a case-insensitive key match (single color; ``negative`` has no
+      effect). Used to color the scenario series of comparison plots.
+    * Else if *entity_class* is given, check the ``entities`` section
       (legacy ``entity_class``) under ``[entity_class]`` with a
       case-insensitive key match.  An entity entry may be a bare color or
       a mapping ``{color: ..., neg_color: ...}``.  When *negative* is True
@@ -315,7 +319,16 @@ def resolve_label_color(
         return None
 
     raw = None
-    if entity_class:
+    if scenario:
+        section = template.get("scenarios")
+        if isinstance(section, dict):
+            label_lc = str(label).lower()
+            for key, val in section.items():
+                if str(key).lower() == label_lc:
+                    color_val, _neg = _resolve_entity_value(val)
+                    raw = color_val
+                    break
+    elif entity_class:
         section = template.get("entities")
         if not isinstance(section, dict):
             section = template.get("entity_class")
@@ -392,6 +405,7 @@ def template_label_order(
     template: dict,
     category: str | None = None,
     entity_class: str | None = None,
+    scenario: bool = False,
 ) -> list[str]:
     """Return the label keys of a template section in **file order**.
 
@@ -411,6 +425,12 @@ def template_label_order(
     (matching the lookup precedence in :func:`resolve_label_color`).
     """
     if not isinstance(template, dict):
+        return []
+
+    if scenario:
+        section = template.get("scenarios")
+        if isinstance(section, dict):
+            return [str(k) for k in section.keys()]
         return []
 
     if entity_class:
@@ -485,6 +505,7 @@ def order_labels_by_template(
     template: dict,
     category: str | None = None,
     entity_class: str | None = None,
+    scenario: bool = False,
 ) -> list[str]:
     """Order *labels* by template file order, appending unlisted tail sorted.
 
@@ -509,14 +530,15 @@ def order_labels_by_template(
     if category and category in _COMPOSITE_CATEGORIES and not entity_class:
         return _order_composite_labels(labels, template, category)
 
-    file_order = template_label_order(template, category=category, entity_class=entity_class)
+    file_order = template_label_order(
+        template, category=category, entity_class=entity_class, scenario=scenario)
     if not file_order:
         return sorted(labels, key=str)
 
     remaining = list(labels)
     ordered: list[str] = []
 
-    if entity_class:
+    if entity_class or scenario:
         # Case-insensitive: bucket remaining labels by lowercase.
         by_lc: dict[str, list[str]] = {}
         for lbl in remaining:

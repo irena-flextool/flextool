@@ -638,6 +638,10 @@ class PlotSettingsPicker(tk.Toplevel):
         # Working state = parsed dict; snapshot the original TEXT for Cancel.
         self._original_text = self._read_text()
         self._data = self._parse(self._original_text)
+        # Populate the scenarios section from the project's output folders so
+        # the always-shown scenarios tab is useful before any comparison run.
+        # Add-only; Cancel still restores the on-disk text untouched.
+        self._merge_scenarios_from_folders()
 
         # In-memory edit history (deep copies of ``self._data``).  Every
         # mutator calls ``_snapshot()`` (push pre-edit state, clear redo)
@@ -657,7 +661,9 @@ class PlotSettingsPicker(tk.Toplevel):
         _metrics = get_metrics(self)
         cw = _metrics.cw
         lh = _metrics.lh
-        self.geometry(f"{cw * 70}x{lh * 34}")
+        # +30% wider, +80% taller than the original 70x34 so more entity
+        # classes / scenarios are visible vertically without scrolling.
+        self.geometry(f"{cw * 91}x{lh * 61}")
         self.resizable(True, True)
         self.minsize(cw * 40, lh * 16)
 
@@ -882,8 +888,9 @@ class PlotSettingsPicker(tk.Toplevel):
 
         Entity-class tabs (nodeGroup / flowGroup / unit / connection / node)
         are ALWAYS shown — even when empty — so it is visible that a class
-        has no entities (and "Refresh from DB" can populate it).  Category
-        and scenario tabs are shown only when present.
+        has no entities (and "Refresh from DB" can populate it).  The
+        scenarios tab is ALWAYS shown too, and last.  Category tabs appear
+        only when present.
         """
         entities = self._data.get("entities")
         entities = entities if isinstance(entities, dict) else {}
@@ -909,14 +916,17 @@ class PlotSettingsPicker(tk.Toplevel):
                         section_path=("categories", name),
                     )
 
+        # Scenarios tab is ALWAYS shown, and last — users rarely edit it, but
+        # it must be discoverable so scenario-comparison colors are editable
+        # even before a comparison run (populated from output folders on open).
         scenarios = self._data.get("scenarios")
-        if isinstance(scenarios, dict) and scenarios:
-            self._add_tab(
-                title="scenarios",
-                rows=list(scenarios.items()),
-                composite=False,
-                section_path=("scenarios",),
-            )
+        scenarios = scenarios if isinstance(scenarios, dict) else {}
+        self._add_tab(
+            title="scenarios",
+            rows=list(scenarios.items()),
+            composite=False,
+            section_path=("scenarios",),
+        )
 
     def _add_tab(
         self,
@@ -1340,6 +1350,45 @@ class PlotSettingsPicker(tk.Toplevel):
                 if path.is_file():
                     urls.append(f"sqlite:///{path}")
         return urls
+
+    def _discover_scenario_names(self) -> list[str]:
+        """Executed-scenario folder names under ``<project>/output_parquet``.
+
+        These folder names are the scenario identities comparison plots key
+        off (the folder name, including any ``_<n>`` source suffix), so using
+        them verbatim makes picker-set colors line up with the plot labels.
+        ``_``-prefixed manifest dirs are skipped; order is stable (sorted).
+        """
+        parquet_dir = self._settings_path.parent / "output_parquet"
+        if not parquet_dir.is_dir():
+            return []
+        return [
+            entry.name
+            for entry in sorted(parquet_dir.iterdir())
+            if entry.is_dir() and not entry.name.startswith("_")
+        ]
+
+    def _merge_scenarios_from_folders(self) -> None:
+        """Add newly discovered scenario folder names to the working
+        ``scenarios`` section with a default palette color (add-only — never
+        prunes, never overwrites an existing/edited color).  Called on open so
+        the always-shown scenarios tab is immediately useful.
+        """
+        names = self._discover_scenario_names()
+        if not names:
+            return
+        from flextool.scenario_comparison.config_builder import (
+            assign_palette_colors,
+        )
+
+        scenarios = self._data.get("scenarios")
+        scenarios = scenarios if isinstance(scenarios, dict) else {}
+        new_names = [n for n in names if n not in scenarios]
+        if not new_names:
+            return
+        for name, color in assign_palette_colors(new_names).items():
+            scenarios[name] = color
+        self._data["scenarios"] = scenarios
 
     def _fetch_entity_union(self, db_urls: list[str]) -> dict[str, set[str]]:
         """Union per-class entity names across every input DB (one open each).
