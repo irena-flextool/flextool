@@ -146,8 +146,10 @@ def _apply_dimension_rules(
 
     ``period_weights`` provides the per-period years_represented values used
     by the 'y' (weighted sum) and 'z' (weighted average) rules.  May be None
-    when the caller doesn't have weights — 'y'/'z' then fall back to plain
-    sum/mean with a warning.
+    when the run carries no years_represented — every period then represents
+    one year (the model default), i.e. unit weights: 'y' is a plain sum and
+    'z' a plain mean.  This is a valid configuration, not a degradation, so
+    no warning is emitted.
 
     Returns (df, rules, chart_type, summed_dimensions, averaged_dimensions)
     or None if config is invalid / should be skipped.
@@ -237,13 +239,13 @@ def _apply_dimension_rules(
                 "row level, got '%s' — falling back to unweighted.",
                 cfg.plot_name, rules[i], df.index.names[i],
             )
-        if period_weights is None and valid_levels:
-            logger.warning(
-                "Plot config '%s': rules 'y'/'z' require years_represented "
-                "weights but none were provided — falling back to unweighted.",
-                cfg.plot_name,
-            )
-        elif valid_levels:
+        if valid_levels:
+            # Missing years_represented means every period represents one
+            # year (the model default) — all weights are 1.0, a valid choice
+            # rather than a degradation.  The weight helpers already treat
+            # period_weights=None as unit weights, so 'y' collapses to a
+            # plain sum and 'z' to a plain mean (sum / number of periods);
+            # no special-case and no warning are needed.
             period_level = valid_levels[0]
             periods_for_denom = df.index.get_level_values(period_level).unique()
             df = _weight_rows_by_period(df, period_weights, period_level)

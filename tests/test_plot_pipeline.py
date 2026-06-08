@@ -15,7 +15,11 @@ import numpy as np
 import pandas as pd
 
 from flextool.plot_outputs.config import PlotConfig
-from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes, prepare_plot_data
+from flextool.plot_outputs.orchestrator import (
+    _apply_dimension_rules,
+    plot_dict_of_dataframes,
+    prepare_plot_data,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +65,62 @@ def _make_time_multi_df(n_rows: int = 168, n_entities: int = 4, n_scenarios: int
 # ---------------------------------------------------------------------------
 # Tests for prepare_plot_data
 # ---------------------------------------------------------------------------
+
+class TestPeriodWeightingRules:
+    """The 'y' (period-weighted sum) and 'z' (period-weighted average) rules.
+
+    Missing ``years_represented`` means every period is one year (unit
+    weights) — a valid choice, not a degradation: 'y' must collapse to a
+    plain sum and 'z' to a plain mean, with NO warning.  Explicit weights
+    must weight both.
+    """
+
+    @staticmethod
+    def _period_df() -> pd.DataFrame:
+        # Two periods, one entity column. period is the collapsed row level.
+        df = pd.DataFrame(
+            {"eA": [10.0, 20.0]},
+            index=pd.Index(["p1", "p2"], name="period"),
+        )
+        df.columns.name = "entity"
+        return df
+
+    def _collapse(self, rules: str, period_weights=None) -> float:
+        cfg = PlotConfig(
+            plot_name="weight test",
+            map_dimensions_for_plots=["d_e", rules],
+        )
+        out = _apply_dimension_rules(
+            self._period_df(), cfg, (0, 100), period_weights=period_weights,
+        )
+        assert out is not None
+        return float(out[0].values.sum())
+
+    def test_y_without_weights_is_plain_sum(self):
+        # weighted sum with unit weights == plain sum
+        assert self._collapse("y_b") == 10.0 + 20.0
+
+    def test_z_without_weights_is_plain_mean(self):
+        # The bug being fixed: 'z' used to fall through to a SUM (30) when
+        # no weights were present; with unit weights it must be the mean.
+        assert self._collapse("z_b") == (10.0 + 20.0) / 2
+
+    def test_y_with_weights_is_weighted_sum(self):
+        w = pd.Series({"p1": 2.0, "p2": 3.0})
+        assert self._collapse("y_b", w) == 10.0 * 2 + 20.0 * 3
+
+    def test_z_with_weights_is_weighted_average(self):
+        w = pd.Series({"p1": 2.0, "p2": 3.0})
+        assert self._collapse("z_b", w) == (10.0 * 2 + 20.0 * 3) / (2 + 3)
+
+    def test_no_warning_when_weights_absent(self, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="flextool.plot_outputs.orchestrator"):
+            self._collapse("z_b")
+        assert not any(
+            "years_represented" in r.getMessage() for r in caplog.records
+        )
+
 
 class TestPreparePlotData:
     """Test that prepare_plot_data produces Figures for various chart types."""
