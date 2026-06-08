@@ -176,14 +176,21 @@ class ColorPickerDialog(tk.Toplevel):
         ttk.Button(btns, text="Cancel", command=self._on_cancel).pack(
             side="right", padx=(5, 0),
         )
-        ttk.Button(btns, text="OK", command=self._on_ok).pack(side="right")
+        ok_button = ttk.Button(
+            btns, text="OK", command=self._on_ok, default="active",
+        )
+        ok_button.pack(side="right")
 
         self._refresh()
+        # Enter accepts (OK) from anywhere in the dialog; OK is the default
+        # button so it also reads as the Enter target.  Escape cancels.
+        self.bind("<Return>", lambda _e: self._on_ok())
         self.bind("<Escape>", lambda _e: self._on_cancel())
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         # Modal: grab input and block until closed.
         self.grab_set()
+        ok_button.focus_set()
 
     def _refresh(self) -> None:
         """Sync the two swatches and the negative control's enabled state."""
@@ -327,32 +334,48 @@ class PlotSettingsPicker(tk.Toplevel):
         self._build_tabs()
 
         # ── Buttons ───────────────────────────────────────────────
+        # Buttons are CREATED in tab-traversal order (Refresh → Undo → Redo
+        # → Apply → Save and exit → Cancel) — Tk's focus traversal follows
+        # the parent's child order.  ``grid`` then places them visually
+        # (left cluster / flexible spacer / right cluster), decoupling the
+        # on-screen layout from the traversal order.
         btn_frame = ttk.Frame(self)
         btn_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 10))
+        btn_frame.columnconfigure(3, weight=1)  # spacer between clusters
 
-        ttk.Button(btn_frame, text="Cancel", command=self._on_cancel).pack(
-            side="right", padx=(5, 0),
-        )
-        ttk.Button(
-            btn_frame, text="Save and exit", command=self._on_save_exit,
-        ).pack(side="right", padx=(5, 0))
-        ttk.Button(btn_frame, text="Apply", command=self._on_apply_clicked).pack(
-            side="right",
-        )
-
-        # Refresh + Undo/Redo cluster on the left.
         ttk.Button(
             btn_frame, text="Refresh from DB", command=self._on_refresh,
-        ).pack(side="left")
+        ).grid(row=0, column=0)
         self._undo_button = ttk.Button(
             btn_frame, text="Undo", command=self._on_undo,
         )
-        self._undo_button.pack(side="left", padx=(5, 0))
+        self._undo_button.grid(row=0, column=1, padx=(5, 0))
         self._redo_button = ttk.Button(
             btn_frame, text="Redo", command=self._on_redo,
         )
-        self._redo_button.pack(side="left", padx=(5, 0))
+        self._redo_button.grid(row=0, column=2, padx=(5, 0))
+        ttk.Button(
+            btn_frame, text="Apply", command=self._on_apply_clicked,
+        ).grid(row=0, column=4, padx=(5, 0))
+        ttk.Button(
+            btn_frame, text="Save and exit", command=self._on_save_exit,
+        ).grid(row=0, column=5, padx=(5, 0))
+        ttk.Button(
+            btn_frame, text="Cancel", command=self._on_cancel,
+        ).grid(row=0, column=6, padx=(5, 0))
         self._update_history_buttons()
+
+        # ── Keyboard-shortcut hint strip ──────────────────────────
+        ttk.Label(
+            self,
+            text=(
+                "Enter: edit row / apply    "
+                "Alt+↑ Alt+↓: move row    drag: reorder    "
+                "Ctrl+Z: undo    Ctrl+Y: redo    Esc: close"
+            ),
+            foreground="gray",
+            anchor="w",
+        ).grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 8))
 
         self.bind("<Escape>", lambda _e: self._on_cancel())
         self.bind("<Control-z>", lambda _e: self._on_undo())
@@ -384,17 +407,24 @@ class PlotSettingsPicker(tk.Toplevel):
         )
 
     # ── Swatches ──────────────────────────────────────────────────
-    def _make_swatch(self, pos, neg=None) -> tk.PhotoImage:
-        """Build a composite swatch ``PhotoImage`` for one row.
+    def _make_swatch(self, pos, neg=None, reserve_neg: bool = False) -> tk.PhotoImage:
+        """Build a swatch ``PhotoImage`` for one row.
 
-        ``neg is None`` -> a SINGLE box (categories / scenarios, or an
-        entity with no distinct negative color).  Otherwise a TWO-box
-        ``[pos][neg]`` composite.  The returned image is also appended to
-        ``self._swatches`` so it survives garbage collection.
+        Two fixed columns of boxes: the LEFT (positive) box is always drawn;
+        the RIGHT (negative) box is drawn only when *neg* is set.  On entity
+        rows pass ``reserve_neg=True`` so the image is always two boxes wide
+        even when *neg* is ``None`` — the negative half is left transparent,
+        which keeps every row's name text aligned and makes the negative box
+        appear/disappear in a fixed column.  Categories / scenarios (no
+        negative concept) pass ``reserve_neg=False`` for a single box.
+
+        The returned image is appended to ``self._swatches`` so it survives
+        garbage collection (a GC'd image renders blank in the cell).
         """
         pos_rgb = _to_rgb255(pos)
-        composite = neg is not None
-        width = _SWATCH_W * 2 if composite else _SWATCH_W
+        has_neg = neg is not None
+        two_box = has_neg or reserve_neg
+        width = _SWATCH_W * 2 if two_box else _SWATCH_W
         img = tk.PhotoImage(width=width, height=_SWATCH_H)
 
         def _fill(x0: int, x1: int, rgb: tuple[int, int, int]) -> None:
@@ -409,8 +439,10 @@ class PlotSettingsPicker(tk.Toplevel):
                     img.put(border if edge else color, (x, y))
 
         _fill(0, _SWATCH_W, pos_rgb)
-        if composite:
-            _fill(_SWATCH_W, width, _to_rgb255(neg))
+        if has_neg:
+            _fill(_SWATCH_W, _SWATCH_W * 2, _to_rgb255(neg))
+        # else: a reserved-but-unset negative half stays transparent, so the
+        # box is invisible while the column (and name alignment) is kept.
 
         self._swatches.append(img)
         return img
@@ -538,7 +570,7 @@ class PlotSettingsPicker(tk.Toplevel):
         for name, value in rows:
             if composite:
                 pos, neg = _resolve_pos_neg(value)
-                image = self._make_swatch(pos, neg)
+                image = self._make_swatch(pos, neg, reserve_neg=True)
             else:
                 image = self._make_swatch(value, None)
             tree.insert("", "end", text=str(name), image=image)
@@ -553,6 +585,7 @@ class PlotSettingsPicker(tk.Toplevel):
         tree.bind("<Alt-Up>", self._on_key_move_up)
         tree.bind("<Alt-Down>", self._on_key_move_down)
         tree.bind("<Double-Button-1>", self._on_row_double_click)
+        tree.bind("<Return>", self._on_row_return)
 
         self._notebook.add(frame, text=title)
 
@@ -676,7 +709,33 @@ class PlotSettingsPicker(tk.Toplevel):
             parent = parent[key]
         parent[section_path[-1]] = rebuilt
 
-    # ── Color editing (double-click) ──────────────────────────────
+    # ── Color editing (double-click / Enter) ──────────────────────
+    def _restore_tree_focus(self, tree: ttk.Treeview, item: str) -> None:
+        """Return keyboard focus to *tree* and re-select/refocus *item*.
+
+        Called after a color dialog closes so the focus lands back in the
+        list (not lost to the window) and Enter can edit the next row.
+        """
+        tree.focus_set()
+        if item and tree.exists(item):
+            tree.selection_set(item)
+            tree.focus(item)
+            tree.see(item)
+
+    def _on_row_return(self, event: tk.Event) -> str:
+        """Enter on a row opens its color editor (keyboard parity with the
+        double-click)."""
+        tree = event.widget
+        if tree not in self._tree_section:
+            return ""
+        item = tree.focus() or (
+            tree.selection()[0] if tree.selection() else ""
+        )
+        if not item:
+            return "break"
+        self._edit_row_color(tree, item)
+        return "break"
+
     def _on_row_double_click(self, event: tk.Event) -> str:
         """Open the color editor for the double-clicked row.
 
@@ -737,6 +796,7 @@ class PlotSettingsPicker(tk.Toplevel):
 
         dialog = ColorPickerDialog(self, name, pos_hex, neg_hex, linked)
         self.wait_window(dialog)
+        self._restore_tree_focus(tree, item)
         if dialog.result is None:
             return  # Cancel: no change.
 
@@ -764,6 +824,7 @@ class PlotSettingsPicker(tk.Toplevel):
         rgb_hex = colorchooser.askcolor(
             initialcolor=_to_hex(value), parent=self,
         )
+        self._restore_tree_focus(tree, item)
         if rgb_hex is None or rgb_hex[1] is None:
             return  # Cancel: no change.
         new_color = _to_hex(rgb_hex[1])
@@ -779,8 +840,10 @@ class PlotSettingsPicker(tk.Toplevel):
         pos,
         neg,
     ) -> None:
-        """Rebuild and re-attach a row's composite swatch image in place."""
-        image = self._make_swatch(pos, neg)
+        """Rebuild and re-attach a row's swatch image in place."""
+        image = self._make_swatch(
+            pos, neg, reserve_neg=self._tree_composite.get(tree, False),
+        )
         # Keep a per-row reference so the replacement is not GC'd (the
         # superseded image stays referenced in ``self._swatches`` too, but
         # is no longer displayed).

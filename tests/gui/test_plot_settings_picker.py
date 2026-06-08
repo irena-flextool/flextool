@@ -142,24 +142,32 @@ class TestPickerBuild:
             assert isinstance(img, tk.PhotoImage)
             assert img.width() > 0 and img.height() > 0
 
-    def test_composite_vs_single_swatch_width(self, tk_root, tmp_path):
-        """Entity with neg_color → double-width composite; bare entity →
-        single box."""
+    def test_entity_swatches_always_reserve_neg_column(self, tk_root, tmp_path):
+        """Every entity row is two boxes wide so names align: the negative
+        column is reserved even for a bare entity (negative box transparent),
+        and an entity with neg_color fills it.  Category / scenario rows have
+        no negative concept → single box."""
         from flextool.gui.dialogs.plot_settings_picker import _SWATCH_W
 
         picker, _ = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
         unit = _tree_in_tab(picker, titles.index("unit"))
         coal_iid, chp_iid = unit.get_children("")
+        costs = _tree_in_tab(picker, titles.index("costs"))
+        co2_iid = costs.get_children("")[0]
 
-        def _img_width(iid) -> int:
-            name = unit.item(iid, "image")
+        def _img_width(tree, iid) -> int:
+            name = tree.item(iid, "image")
             if isinstance(name, (list, tuple)):
                 name = name[0]
             return int(tk_root.tk.call(name, "cget", "-width"))
 
-        assert _img_width(coal_iid) == _SWATCH_W       # bare → single box
-        assert _img_width(chp_iid) == _SWATCH_W * 2    # neg_color → composite
+        # Bare entity reserves the neg column (two boxes wide).
+        assert _img_width(unit, coal_iid) == _SWATCH_W * 2
+        # neg_color entity also two boxes wide (neg box drawn).
+        assert _img_width(unit, chp_iid) == _SWATCH_W * 2
+        # Category rows have no negative → single box.
+        assert _img_width(costs, co2_iid) == _SWATCH_W
 
     def test_non_modal_no_grab(self, tk_root, tmp_path):
         """The picker must not grab input (usable alongside the viewer)."""
@@ -585,7 +593,9 @@ class TestPickerDoubleClickEdit:
         sect = _section(picker._data, ("entities", "unit"))
         assert sect["chp"] == "#abcdef"  # collapsed to bare
         img = picker._row_swatches[(unit, chp)]
-        assert img.width() == _SWATCH_W  # single box
+        # Entity rows always reserve the (now transparent) negative column,
+        # so the image stays two boxes wide even after collapsing to bare.
+        assert img.width() == _SWATCH_W * 2
 
     def test_category_row_edits_bare_color(
         self, tk_root, tmp_path, monkeypatch,
@@ -1194,3 +1204,85 @@ class TestApplyColorSettings:
         assert stub._live_plan is plan
         assert plan.shared_color_map == {'coal': (0.0, 1.0, 0.0)}
         assert stub.calls == ["clear_prefetched_figures", "trigger_replot"]
+
+
+# ---------------------------------------------------------------------------
+#  Minor UX fixes: Enter-to-apply + focus, neg round-trip, tab order
+# ---------------------------------------------------------------------------
+
+
+class TestColorPickerDialogKeys:
+    def test_return_bound_and_ok_is_default(self, tk_root):
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
+        # Enter is bound at the dialog level (→ OK / apply).
+        assert dlg.bind("<Return>") != ""
+        # OK is the default button (the Enter target visually).
+        oks = [b for b in _iter_buttons(dlg) if str(b.cget("text")) == "OK"]
+        assert oks and str(oks[0].cget("default")) == "active"
+        dlg._on_cancel()
+
+
+class TestPickerKeyboardEdit:
+    def test_enter_on_row_opens_editor(self, tk_root, tmp_path, monkeypatch):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+        unit.focus(coal)
+
+        captured = _patch_dialog(monkeypatch, None)
+        picker._on_row_return(types.SimpleNamespace(widget=unit))
+        # The editor opened for the focused row.
+        assert captured["dialog"].opened[0] == "coal"
+
+    def test_focus_returns_to_tree_after_edit(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        _patch_dialog(monkeypatch, ("#00ff00", None))
+        picker._edit_row_color(unit, coal)
+        # Focus item + selection land back on the edited row.
+        assert unit.focus() == coal
+        assert coal in unit.selection()
+
+
+class TestPickerNegRoundTrip:
+    def test_set_neg_then_reopen_opens_unlinked_with_neg(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        # 1) Give bare 'coal' a distinct negative (unlinked) and save it.
+        _patch_dialog(monkeypatch, ("#111111", "#222222"))
+        picker._edit_row_color(unit, coal)
+        sect = _section(picker._data, ("entities", "unit"))
+        assert sect["coal"] == {"color": "#111111", "neg_color": "#222222"}
+
+        # 2) Reopen: the negative is remembered → opens UNLINKED with it.
+        captured = _patch_dialog(monkeypatch, None)
+        picker._edit_row_color(unit, coal)
+        name, pos_hex, neg_hex, linked = captured["dialog"].opened
+        assert (name, pos_hex, neg_hex, linked) == (
+            "coal", "#111111", "#222222", False,
+        )
+
+
+class TestPickerTabOrder:
+    def test_button_traversal_order(self, tk_root, tmp_path):
+        """Tk focus traversal follows child creation order; the buttons must
+        be created Refresh → Undo → Redo → Apply → Save → Cancel."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        texts = [str(b.cget("text")) for b in _iter_buttons(picker)]
+        assert texts == [
+            "Refresh from DB", "Undo", "Redo",
+            "Apply", "Save and exit", "Cancel",
+        ]
