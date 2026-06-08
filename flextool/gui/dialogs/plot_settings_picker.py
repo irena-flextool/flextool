@@ -39,7 +39,7 @@ from flextool.scenario_comparison.plot_settings_seed import dump_plot_settings
 logger = logging.getLogger(__name__)
 
 # Entity classes, in the order they should appear as tabs.
-_ENTITY_CLASSES = ("group", "unit", "connection", "node")
+_ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
 # Category subsections, in tab order.
 _CATEGORY_SECTIONS = ("costs", "node_flows", "nodegroup_flows", "dispatch")
 
@@ -878,18 +878,24 @@ class PlotSettingsPicker(tk.Toplevel):
         return name
 
     def _build_tabs(self) -> None:
-        """Create one tab per section present in the working dict."""
+        """Create the tabs.
+
+        Entity-class tabs (nodeGroup / flowGroup / unit / connection / node)
+        are ALWAYS shown — even when empty — so it is visible that a class
+        has no entities (and "Refresh from DB" can populate it).  Category
+        and scenario tabs are shown only when present.
+        """
         entities = self._data.get("entities")
-        if isinstance(entities, dict):
-            for cls in _ENTITY_CLASSES:
-                section = entities.get(cls)
-                if isinstance(section, dict) and section:
-                    self._add_tab(
-                        title=cls,
-                        rows=list(section.items()),
-                        composite=True,
-                        section_path=("entities", cls),
-                    )
+        entities = entities if isinstance(entities, dict) else {}
+        for cls in _ENTITY_CLASSES:
+            section = entities.get(cls)
+            rows = list(section.items()) if isinstance(section, dict) else []
+            self._add_tab(
+                title=cls,
+                rows=rows,
+                composite=True,
+                section_path=("entities", cls),
+            )
 
         categories = self._data.get("categories")
         if isinstance(categories, dict):
