@@ -728,9 +728,9 @@ def resolve_dispatch_colors_and_order(
        only; ordering stays pipeline-fixed.
     2. **Entity** — extract the entity name (bare / composite /
        node-level, see :func:`_extract_dispatch_entity_name`) and look it
-       up case-insensitively across ``entities`` ``group`` / ``unit`` /
-       ``connection`` / ``node``.  Contributes both a color and a
-       ``config_order`` position.
+       up case-insensitively across ``entities`` ``nodeGroup`` /
+       ``flowGroup`` / ``unit`` / ``connection`` / ``node`` (and legacy
+       ``group``).  Contributes both a color and a ``config_order`` position.
     3. **Fallback** — left out of ``colors`` and ``config_order`` so the
        downstream ``_auto_assign_node_colors_with_existing`` palette (seeded
        from the historical ``DEFAULT_SPECIAL_COLORS``) assigns it and
