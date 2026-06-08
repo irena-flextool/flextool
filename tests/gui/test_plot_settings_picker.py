@@ -124,11 +124,36 @@ class TestPickerBuild:
             "entities": {"unit": {}, "node": {"n1": "#abcdef"}},
         }
         picker, _ = _make_picker(tk_root, tmp_path, data=data)
-        # Every entity class shows (so absent classes are visible); empty
-        # category/scenario sections are still skipped.
+        # Every entity class shows (so absent classes are visible); the
+        # scenarios tab is always shown and last; empty category sections are
+        # still skipped.  (tmp_path has no output_parquet, so scenarios stays
+        # empty.)
         assert _tab_titles(picker) == [
-            "nodeGroup", "flowGroup", "unit", "connection", "node",
+            "nodeGroup", "flowGroup", "unit", "connection", "node", "scenarios",
         ]
+
+    def test_scenarios_populated_from_output_folders(self, tk_root, tmp_path):
+        # Executed-scenario folders under output_parquet/ seed the scenarios
+        # section on open (palette colors); _-prefixed manifest dirs skipped.
+        pq = tmp_path / "output_parquet"
+        (pq / "base_1").mkdir(parents=True)
+        (pq / "high_2").mkdir()
+        (pq / "_manifest").mkdir()
+        picker, _ = _make_picker(tk_root, tmp_path, data={"entities": {"unit": {}}})
+        assert "scenarios" in _tab_titles(picker)
+        scen = picker._data.get("scenarios", {})
+        assert set(scen) == {"base_1", "high_2"}
+        assert all(isinstance(v, str) and v.startswith("#") for v in scen.values())
+
+    def test_scenario_folder_merge_is_add_only(self, tk_root, tmp_path):
+        pq = tmp_path / "output_parquet"
+        (pq / "base_1").mkdir(parents=True)
+        (pq / "new_1").mkdir()
+        data = {"scenarios": {"base_1": "#123456"}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        scen = picker._data["scenarios"]
+        assert scen["base_1"] == "#123456"  # existing color preserved
+        assert "new_1" in scen and scen["new_1"].startswith("#")
 
     def test_rows_populated_with_names(self, tk_root, tmp_path):
         picker, _ = _make_picker(tk_root, tmp_path)
