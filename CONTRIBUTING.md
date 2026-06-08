@@ -13,9 +13,10 @@
 
 2. Install in editable mode with dev dependencies:
    ```bash
-   pip install -e .
-   pip install pytest pyyaml matplotlib
+   pip install -e ".[dev]"
+   pip install pyyaml matplotlib
    ```
+   The `[dev]` extra pulls in `pytest`, `pytest-xdist` and `pytest-timeout`.
 
 3. Verify the setup by running the tests:
    ```bash
@@ -32,6 +33,9 @@ Run the full test suite:
 ```bash
 pytest tests/
 ```
+The suite runs across 8 worker processes by default (`-n 8`, via
+`pytest-xdist`). Pass `-n 0` to disable parallelism when you need `-s` / `--pdb`
+for interactive debugging.
 
 Run a specific test file:
 ```bash

@@ -7,7 +7,7 @@ name = "flextool"
 # restructure are in.  4.0.0 final follows after the remaining
 # minor-functionality additions, cleanup and testing land.  PEP 440
 # pre-release suffix: 4.0.0a1, 4.0.0a2, ... 4.0.0b1, 4.0.0rc1, then 4.0.0.
-version = "4.0.0b4"
+version = "4.0.0b5"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
@@ -91,6 +91,10 @@ engine-polars = []
 dev = [
     "pytest>=8.0",
     "pytest-timeout>=2.3",
+    # Parallel test execution.  The default ``addopts`` runs the suite with
+    # ``-n 8`` (see ``[tool.pytest.ini_options]`` below), so xdist is a hard
+    # dev/CI requirement, not optional.
+    "pytest-xdist>=3.0",
     "ruff>=0.5",
 ]
 
@@ -119,7 +123,11 @@ flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-addopts = "--import-mode=importlib"
+# ``-n 8`` runs the suite across 8 worker processes by default (pytest-xdist,
+# a [dev] dependency).  Each worker is a separate process, so the per-test
+# global-state resets stay isolated.  Pass ``-n 0`` to disable parallelism for
+# interactive debugging (``-s`` / ``--pdb`` need a single process).
+addopts = "--import-mode=importlib -n 8"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",

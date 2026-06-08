@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pyyaml matplotlib
+          pip install pytest pytest-xdist pyyaml matplotlib
 
       - name: Set solver binary permissions
         run: |
@@ -59,7 +59,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pyyaml matplotlib
+          pip install pytest pytest-xdist pyyaml matplotlib
 
       - name: Set solver binary permissions
         run: |
@@ -91,7 +91,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pyyaml matplotlib
+          pip install pytest pytest-xdist pyyaml matplotlib
 
       - name: Set solver binary permissions
         run: |

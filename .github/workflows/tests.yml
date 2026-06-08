@@ -60,7 +60,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pyyaml matplotlib
+          pip install pytest pytest-xdist pyyaml matplotlib
 
       - name: Set glpsol executable permission
         if: runner.os != 'Windows'

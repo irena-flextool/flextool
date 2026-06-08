@@ -1,3 +1,182 @@
+## Release 4.0.0b5 (8.6.2026) — multi-solve output union; plot colour/order system; timeslice-weight alignment; SpineDB output; Python 3.13
+
+Requires a **database migration to v57** (`FLEXTOOL_DB_VERSION` 56 → 57;
+timeslice-weighting doc descriptions). New dependency floor **`polars>=1.40`**
+(older polars silently bypasses autoscale Layers 2/3 — see below);
+`polar-high>=2.4.0` and `highspy<=1.14.0` unchanged. This release contains model
+and constraint changes; they are byte-identical to b4 where the relevant inputs
+(timeset weights, capacity coefficients, availabilities) are uniform/absent.
+
+### Multi-solve output unioning
+
+A nested / multi-solve run (e.g. invest → dispatch, or several rolling solves)
+now **unions** each sub-solve's realized outputs into one complete result set
+instead of letting the last writer win.
+
+- A cross-solve `OutputTimelineBundle` (realized dispatch + invest union, with
+  `[d,t]→solve` / `period→solve` maps) is built once from the authoritative
+  realized timelines; output writers consume it to union per-roll param/set
+  slices, oracle-parity with a single-solve run.
+- A **raising disjointness guard** replaces the legacy silent earliest-wins
+  trim: overlapping realized `(period, timestep)` or invest period across solves
+  is now a `FlexToolConfigError` naming both solves, not a masked truncation.
+- Deterministic **period-share annualisation**: the per-period dispatch
+  denominator is reduced by max-per-period, fixing an order-dependent dedup that
+  could intermittently inflate dispatch totals/costs (≈120× on short invest
+  windows) depending on filesystem glob order.
+- The realized **invest-eligible set** is unioned so the invested capacity
+  breakdown survives a dispatch-only child roll; invest cost inputs union across
+  sub-solves.
+
+### Plot colour & ordering system
+
+A per-project, editable colour and stacking-order system for all plots, driven
+by `<project>/plot_settings.yaml` (falls back to the bundled default when
+absent; byte-identical output for projects without one).
+
+- Colours/order resolve from the project file through both PNG export and the
+  result viewer; entity colours are **auto-seeded from the input DB** at job
+  start (additive, append-only) so the list is complete and editable while
+  scenarios run.
+- New GUI **"Colors, order…"** picker: a non-modal window with an **embedded HSV
+  colour picker** (SV square + hue slider, no Pillow), side-by-side
+  positive/negative swatches with an auto-breaking link, drag/keyboard row
+  reordering, multi-select group moves, Refresh-from-DB, and Undo/Redo.
+- Colour simple bars / time-series / dispatch by **entity class**
+  (`color_entity_class`), including subplot- and file-split entities; the
+  `group` class is split into **nodeGroup / flowGroup** by membership.
+- **Comparison plots** colour their scenario series from an editable `scenarios`
+  section; the dead `config.yaml` system is removed.
+
+### Timeslice / representative-period weighting alignment
+
+One representative weight (`p_rp_cost_weight`, = 1 without `timeset_weights`) is
+now routed through inflow demand-scaling **and** every extensive `dt→d`
+energy/emissions output aggregation — matching the cost objective, which already
+used it — so **served == reported == costed** energy. Adds an f annualisation-
+divergence diagnostic + warning; missing `years_represented` is treated as unit
+weights (no noisy warning). Doc descriptions authored via the **v57 migration**.
+Byte-identical when weights are uniform/absent.
+
+### SpineDB results output
+
+A new `spinedb` write-method dumps the processed result tables into a Spine
+database using the FlexTool results schema, alongside the CSV / parquet / Excel
+outputs.
+
+- `write_spinedb` writer with round-trip tests + the checked-in results schema
+  JSON; wired into the dispatcher and CLIs (`--write-methods spinedb`, or the
+  `output-spinedb` setting in the output template). One Spine **alternative** per
+  run; time series as nested `Map` values on the model entity classes.
+- Desktop GUI: a "Comparison SpineDB" File-outputs row drives the new method.
+  Documented in `docs/results.md`.
+
+### Investment duals
+
+- Synthesize a complete signed **effective investment dual** (positive = more
+  investment would lower total cost); extract the **min-side** duals; retire the
+  redundant standalone `dual_invest_*_d_e` outputs. The sign convention is stated
+  on the plot value-axis label.
+- Fixes: `1/scale_the_objective` on the `v_invest` reduced-cost writer; period-
+  cap constraints aligned to `coef = unitsize` / RHS-in-MW; a guaranteed period
+  axis for the sole-binding `maxInvest_total`; cover cross-solve invest
+  candidates in the densify universe.
+
+### Model & constraint changes
+
+- **Densify availability** in the profile/online and node-state RHS so
+  default-1.0 units (wind / solar / coal, profile storage nodes) aren't
+  inner-join-dropped to zero generation.
+- Wire **`capacity_min_coeff`** into the `minFlow_minload` floor and apply
+  **`capacity_max_coeff`** to direct arcs (both were previously ignored on those
+  paths).
+- **Reverse flow for lossless 2-way connections** (`method_2way_1var_off`) via a
+  shared non-negative `v_flow_back` aux unifying DC and non-DC arcs (verified
+  against a hand-calc) — a lossless 2-way connection could not previously carry
+  reverse flow.
+- Rename the four flow-bound constraints to per-edge names
+  (`maxToSink* → maxFlow*`, `minToSink_minload → minFlow_minload`); LP-internal
+  identifiers only, no output/golden/migration impact.
+- **INFLOW-1**: derive the inflow signed-split on synthetic / rolling sub-solves
+  so the `non_sync` and `capacity_margin` demand budget survives (was silently
+  dropped, pinning VRE to zero).
+
+### Environment robustness — solver-stack auto-heal
+
+Compiled-extension native crashes (a bare exit code — Windows `0xC0000005`,
+POSIX SIGILL/SIGABRT/SIGSEGV — that no `try/except` can catch) are now diagnosed
+and, where fixable, auto-healed.
+
+- `flextool/env_check.py` probes the **whole solver stack** in one child process
+  — polars (a real SIMD op) → highspy (`Highs`) → polar_high (`Problem`) —
+  flushing a marker after each so the surviving markers pinpoint the dead
+  extension.
+- Per-component remediation: `polars` → `polars-lts-cpu`; `highspy` 1.14.0 →
+  `highspy==1.13.1` (HiGHS#2964 import-crashes 1.14.0 on Server 2019 /
+  Win10 1809-era machines); a clear "rebuild your environment" message when the
+  fault is the Python environment itself (Anaconda-mixed venv, network drive),
+  which no pip install can fix.
+- Wired into self-update (auto-fix), GUI startup (one-click fix, fingerprinted
+  OK-cache), and the scenario crash path. `faulthandler` enabled in
+  `cmd_run_flextool`. Neither remediation is made the default;
+  `FLEXTOOL_NO_ENV_CHECK` opts out. 31 tests in `tests/test_env_check.py`.
+
+### Dispatch, comparison & import
+
+- **Folder name is the scenario identity** at the load boundary, so two output
+  folders holding the same model scenario (different settings) stay distinct in
+  legends/titles/filenames instead of collapsing under the shared in-data tag
+  (guarded no-op — byte-identical — on the DB/CLI path).
+- Slice dispatch / comparison by the in-data scenario tag, not the output-folder
+  name; allow a comparison view via an override `map_dimensions_for_plots`.
+- Old-FlexTool (FlexTool-2) import now opens the execution window and runs the
+  migration as its own visible job; the importer is pinned to the frozen v56
+  schema and always migrates.
+
+### Desktop GUI
+
+- Theme-aware run-log colouring (command echo, timer/memory rows, solve-start,
+  HiGHS dump block, warnings/errors blended from the log widget's live colours);
+  clearer solve-phase layout with an `Autoscale by polar-high:` checkpoint so the
+  "Solver" row reports pure HiGHS time.
+- **Memory guard** master switch (session-only) + per-job **"Force start"**
+  override to admit a scenario past the memory limit; a jobs-list right-click
+  menu (Force start / Pause / Kill / Remove).
+- Track retired input sources and fix source-number drift.
+
+### Packaging — Python 3.13 + dependency floor
+
+- Officially support and CI-test **Python 3.13** (classifier + a 3.13 leg on
+  Linux / Windows / macOS); the full suite passes on CPython 3.13 (polars 1.41,
+  pandas 3.0). `requires-python` stays `>=3.9`.
+- Pin **`polars>=1.40`**: 1.40 introduced `pl.struct(...).is_sorted()` (used by
+  polar_high's `_verify_dense_sorted`); older polars raised on it and silently
+  bypassed autoscale Layers 2/3.
+
+### Plot & output fixes
+
+- Keep value labels on sub-pixel bars in comparison charts; avoid a
+  stack + grouped-bar conflict; use the settings-group name as the default
+  disk-plan title; apply category/entity colours regardless of legend layout.
+- `perf(outputs)`: densify entity columns in one reindex instead of a
+  per-column loop.
+
+### Internal cleanup
+
+- Remove the experimental `--fast-single-solve` engine path and a temporary
+  diagnostic dump block.
+- Stop emitting unconsumed scratch/middle-product CSVs and delete the dead
+  `derive_*` emit wrappers across the per-roll emitters; fuse the inflow-peak
+  stages into one closed-form graph; remove a dead duplicate `_inflow_scaling.py`
+  and an orphaned golden; reconcile the emit manifest.
+- Drop the dead `group_label_width` from the bar-chart layout (the expand-axis
+  group was already folded into the bar tick label).
+- The test suite now runs in parallel by default (`pytest-xdist`, `-n 8`; a
+  `[dev]` dependency, wired into CI). Worker processes keep the per-test
+  global-state resets isolated; `-n 0` disables it for interactive debugging.
+
+---
+
 ## Release 4.0.0b4 (2.6.2026) — vectorized per-roll preprocessing; glpsol scaffolding removed
 
 ### Per-roll preprocessing — vectorized
