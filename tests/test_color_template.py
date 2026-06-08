@@ -810,31 +810,56 @@ class TestNodeGroupFlowsComposite:
     def setup_method(self) -> None:
         ct._clear_cache()
 
-    def test_shipped_template_has_nodegroup_flow_types(self):
-        """The ``type`` vocabulary produced by
-        ``flextool/process_outputs/out_group.py::nodeGroup_flows`` must
-        all resolve as plain keys (non-composite) so a type-only lookup
-        succeeds for user-chosen item names."""
+    def test_shipped_template_group_property_types_resolve(self):
+        """The group-property types emitted by
+        ``flextool/process_outputs/out_group.py::nodeGroup_flows`` —
+        ``inflow``, the three ``internal_losses`` item subtypes and the
+        two ``slack`` items — stay category-colored and must resolve on
+        the shipped template (``<type>_<item>`` then ``<type>``)."""
         tpl = ct.load_color_template()
-        expected_types = [
-            "from_unitGroup",
-            "from_unit",
-            "from_connectionGroup",
-            "from_connection",
-            "to_unitGroup",
-            "to_unit",
-            "to_connectionGroup",
-            "to_connection",
-            "inflow",
-            "internal_losses",
-            "slack",
+        group_property_labels = [
+            "inflow | elec",
+            "internal_losses | storages",
+            "internal_losses | units",
+            "internal_losses | connections",
+            "slack | upward",
+            "slack | downward",
         ]
-        for t in expected_types:
+        for label in group_property_labels:
             assert ct.resolve_label_color(
-                t, tpl, category="nodegroup_flows",
+                label, tpl, category="nodegroup_flows",
             ) is not None, (
-                f"Shipped template missing nodegroup_flows type {t!r}"
+                f"Shipped template missing nodegroup_flows label {label!r}"
             )
+
+    def test_shipped_internal_losses_subtypes_are_distinct(self):
+        """The three ``internal_losses`` item subtypes must each get their
+        own color (requirement: color internal losses separately)."""
+        tpl = ct.load_color_template()
+        storages = ct.resolve_label_color(
+            "internal_losses | storages", tpl, category="nodegroup_flows")
+        units = ct.resolve_label_color(
+            "internal_losses | units", tpl, category="nodegroup_flows")
+        connections = ct.resolve_label_color(
+            "internal_losses | connections", tpl, category="nodegroup_flows")
+        assert storages != units != connections and storages != connections
+
+    def test_entity_types_route_to_entities_section(self):
+        """A per-participant flow type is colored by its ``item`` via the
+        entity class fixed by the type — ``from_unitGroup`` items resolve
+        in ``entities.group`` (shipped with convention colors), not via a
+        type key (there is none)."""
+        tpl = ct.load_color_template()
+        # 'wind' ships in entities.group; the unitGroup item 'Wind' resolves
+        # to that exact color (case-insensitive).
+        wind = ct.resolve_label_color(
+            "from_unitGroup | Wind", tpl, category="nodegroup_flows")
+        assert wind == ct._parse_color_value("#4FC3F7")
+        # An un-listed unit item falls through to the palette (entities.unit
+        # ships empty).
+        assert ct.resolve_label_color(
+            "from_unit | coal_plant_DE", tpl, category="nodegroup_flows",
+        ) is None
 
     def test_composite_pipe_label_resolves_type_qualified(self):
         """``"slack | upward"`` should hit ``slack_upward`` (more specific
@@ -874,22 +899,52 @@ class TestNodeGroupFlowsComposite:
         assert c is not None
         assert c == pytest.approx(expected)
 
-    def test_composite_falls_back_to_type_only(self):
-        """When ``<type>_<item>`` isn't in the YAML, the lookup falls
-        back to the ``<type>`` key alone.  Item names are user-chosen
-        (unit/connection process names, node names), so this is the
-        common case."""
-        tpl = ct.load_color_template()
-        # ``from_unit`` exists; ``from_unit_coal_plant_DE`` does not.
-        c = ct.resolve_label_color(
-            "from_unit | coal_plant_DE", tpl, category="nodegroup_flows",
-        )
-        type_only = ct.resolve_label_color(
-            "from_unit", tpl, category="nodegroup_flows",
-        )
-        assert c is not None
-        assert type_only is not None
-        assert c == pytest.approx(type_only)
+    def test_entity_type_pos_neg_colors(self):
+        """Entity-routed types color by item; the ``to_*`` (draw) side uses
+        the entity's ``neg_color`` when set, else the same ``color``.  Both
+        the bare-color and ``{color, neg_color}`` YAML forms must work."""
+        tpl = {
+            "categories": {"nodegroup_flows": {"inflow": "#7dd87a"}},
+            "entities": {
+                "unit": {
+                    "coal_DE": "#111111",                       # bare color
+                    "batt_DE": {"color": "#222222", "neg_color": "#333333"},
+                },
+                "group": {"Wind": "#4fc3f7"},
+            },
+        }
+        red = ct._parse_color_value
+        # Bare color: from_ and to_ both use it.
+        assert ct.resolve_label_color(
+            "from_unit | coal_DE", tpl, category="nodegroup_flows") == red("#111111")
+        assert ct.resolve_label_color(
+            "to_unit | coal_DE", tpl, category="nodegroup_flows") == red("#111111")
+        # Dict color: from_ uses color, to_ uses neg_color.
+        assert ct.resolve_label_color(
+            "from_unit | batt_DE", tpl, category="nodegroup_flows") == red("#222222")
+        assert ct.resolve_label_color(
+            "to_unit | batt_DE", tpl, category="nodegroup_flows") == red("#333333")
+        # unitGroup item routes to entities.group, not entities.unit.
+        assert ct.resolve_label_color(
+            "from_unitGroup | Wind", tpl, category="nodegroup_flows") == red("#4fc3f7")
+
+    def test_entity_type_does_not_cross_classes(self):
+        """The type fixes the class: a ``from_unit`` item is looked up only
+        in ``entities.unit`` — a same-named ``entities.group`` entry must
+        NOT leak in (and vice-versa)."""
+        tpl = {
+            "entities": {
+                "group": {"shared_name": "#aaaaaa"},
+                "unit": {},
+            },
+        }
+        # from_unit looks in entities.unit only → miss → None (palette).
+        assert ct.resolve_label_color(
+            "from_unit | shared_name", tpl, category="nodegroup_flows") is None
+        # from_unitGroup looks in entities.group → hit.
+        assert ct.resolve_label_color(
+            "from_unitGroup | shared_name", tpl, category="nodegroup_flows",
+        ) == ct._parse_color_value("#aaaaaa")
 
     def test_composite_unknown_type_returns_none(self):
         """A composite label whose type isn't in the template falls
@@ -994,25 +1049,39 @@ class TestNodeGroupFlowsPlanIntegration:
     def setup_method(self) -> None:
         ct._clear_cache()
 
-    def test_bar_plan_uses_template_colors_for_composite_labels(self):
+    def test_bar_plan_colors_composite_labels_by_item(self, tmp_path):
         import numpy as np
         import pandas as pd
 
         from flextool.plot_outputs.color_template import resolve_label_color
         from flextool.plot_outputs.plan import compute_live_plan
 
-        tpl = ct.load_color_template()
+        # Custom template: entity colors for the two units (so from_unit
+        # routes to them), plus the group-property specials.
+        color_yaml = tmp_path / "plot_settings.yaml"
+        color_yaml.write_text(
+            "categories:\n"
+            "  nodegroup_flows:\n"
+            "    inflow: '#7dd87a'\n"
+            "    slack_upward: '#d62728'\n"
+            "    slack_downward: '#ff7f7f'\n"
+            "entities:\n"
+            "  unit:\n"
+            "    coal_DE: '#111111'\n"
+            "    gas_DE: '#999999'\n",
+            encoding="utf-8",
+        )
+        tpl = ct.load_color_template(color_yaml)
 
         # Simulate the ``nodeGroup_flows_d_gpe`` shape (single-group
         # slice): periods on the row; columns have ``type`` and ``item``
-        # levels that stack on the bar.  Mirrors the frame that
-        # out_group.nodeGroup_flows emits.
+        # levels that stack on the bar.
         type_item_pairs = [
-            ("slack", "upward"),        # → slack_upward (templated red)
-            ("slack", "downward"),      # → slack_downward (templated light red)
-            ("from_unit", "coal_DE"),   # → type-only fallback (green)
-            ("from_unit", "gas_DE"),    # → same type-only color as above
-            ("inflow", "nodeA"),        # → type-only fallback (light green)
+            ("slack", "upward"),        # → slack_upward (category red)
+            ("slack", "downward"),      # → slack_downward (category light red)
+            ("from_unit", "coal_DE"),   # → entities.unit.coal_DE (by item)
+            ("from_unit", "gas_DE"),    # → entities.unit.gas_DE (distinct)
+            ("inflow", "nodeA"),        # → category inflow
             ("mystery", "thing"),       # → no match, palette fallback
         ]
         periods = ["p1", "p2", "p3"]
@@ -1027,68 +1096,34 @@ class TestNodeGroupFlowsPlanIntegration:
 
         cfg = PlotConfig(
             plot_name="NodeGroup flows",
-            # Two stack levels: type (s) + item (s).  Bar rows are
-            # periods (b).  Matches ``[d_pe, b_ss]`` — a simplified
-            # version of the real ``[d_gpe, b_uss]`` collapsed down to a
-            # single subplot (group dimension merged out).
             map_dimensions_for_plots=["d_pe", "b_ss"],
             legend="shared",
             color_category="nodegroup_flows",
         )
-        plan = compute_live_plan(df, cfg, plot_name="NodeGroup flows")
+        plan = compute_live_plan(
+            df, cfg, plot_name="NodeGroup flows", color_path=color_yaml,
+        )
         assert plan is not None, "compute_live_plan returned None"
-        assert plan.shared_color_map is not None, (
-            "shared_color_map not populated under legend='shared'"
-        )
+        assert plan.shared_color_map is not None
 
-        # Labels arrive in the "<type> | <item>" form for bar plans.
-        slack_up_key = "slack | upward"
-        slack_down_key = "slack | downward"
-        from_unit_coal_key = "from_unit | coal_DE"
-        from_unit_gas_key = "from_unit | gas_DE"
-        inflow_key = "inflow | nodeA"
-        mystery_key = "mystery | thing"
-
-        # Known type-qualified (slack_upward / slack_downward).
-        expected_slack_up = resolve_label_color(
-            "slack_upward", tpl, category="nodegroup_flows",
-        )
-        expected_slack_down = resolve_label_color(
-            "slack_downward", tpl, category="nodegroup_flows",
-        )
-        assert tuple(plan.shared_color_map[slack_up_key]) == pytest.approx(
-            expected_slack_up,
-        )
-        assert tuple(plan.shared_color_map[slack_down_key]) == pytest.approx(
-            expected_slack_down,
-        )
-
-        # Type-only fallback: both coal_DE and gas_DE share the
-        # ``from_unit`` color, even though their items differ.
-        expected_from_unit = resolve_label_color(
-            "from_unit", tpl, category="nodegroup_flows",
-        )
-        assert tuple(plan.shared_color_map[from_unit_coal_key]) == pytest.approx(
-            expected_from_unit,
-        )
-        assert tuple(plan.shared_color_map[from_unit_gas_key]) == pytest.approx(
-            expected_from_unit,
-        )
-
-        # ``inflow`` — type-only, item is a user-chosen node name.
-        expected_inflow = resolve_label_color(
-            "inflow", tpl, category="nodegroup_flows",
-        )
-        assert tuple(plan.shared_color_map[inflow_key]) == pytest.approx(
-            expected_inflow,
-        )
-
-        # Unknown type — falls back to tab10[0] (first palette slot
-        # consumed, since it's the only non-templated label).
+        cmap = plan.shared_color_map
+        # Specials keep their category colors.
+        assert tuple(cmap["slack | upward"]) == pytest.approx(
+            resolve_label_color("slack_upward", tpl, category="nodegroup_flows"))
+        assert tuple(cmap["slack | downward"]) == pytest.approx(
+            resolve_label_color("slack_downward", tpl, category="nodegroup_flows"))
+        assert tuple(cmap["inflow | nodeA"]) == pytest.approx(
+            resolve_label_color("inflow", tpl, category="nodegroup_flows"))
+        # Entity types colored by item — coal_DE and gas_DE get their OWN
+        # (distinct) entity colors, no longer collapsed to one type color.
+        assert tuple(cmap["from_unit | coal_DE"]) == pytest.approx(
+            ct._parse_color_value("#111111"))
+        assert tuple(cmap["from_unit | gas_DE"]) == pytest.approx(
+            ct._parse_color_value("#999999"))
+        assert cmap["from_unit | coal_DE"] != cmap["from_unit | gas_DE"]
+        # Unknown type — palette fallback (only un-templated label → tab10[0]).
         tab10 = plt.colormaps["tab10"].colors
-        assert plan.shared_color_map[mystery_key] == tab10[0], (
-            "Unknown-type composite label did not fall back to tab10[0]"
-        )
+        assert cmap["mystery | thing"] == tab10[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1157,19 +1192,34 @@ class TestOrderLabelsByTemplate:
         ]
 
     def test_composite_category_ordering(self):
-        # nodegroup_flows composite labels match on <type>_<item> then <type>.
+        # nodegroup_flows orders by fixed type band order, then within an
+        # entity-routed band by that entity class's file order, and within a
+        # special band by categories file order.
         tpl = {
             "categories": {
-                "nodegroup_flows": {"inflow": "#1", "from_units_gas": "#2"}
-            }
+                "nodegroup_flows": {
+                    "inflow": "#1", "slack_upward": "#2", "slack_downward": "#3",
+                }
+            },
+            "entities": {"group": {"Wind": "#a", "Solar": "#b"}},
         }
-        labels = ["from_units | gas", "inflow", "z_other"]
+        labels = [
+            "to_unitGroup | Solar",      # draw band (last), group order Solar
+            "from_unitGroup | Solar",    # supply band, group order Solar (1)
+            "from_unitGroup | Wind",     # supply band, group order Wind (0)
+            "inflow | n",                # inflow band
+            "slack | downward",          # slack band
+        ]
         out = ct.order_labels_by_template(
             labels, tpl, category="nodegroup_flows"
         )
-        # 'inflow' (type-only) listed first, then 'from_units|gas'
-        # (type_item) match, then unlisted tail.
-        assert out == ["inflow", "from_units | gas", "z_other"]
+        assert out == [
+            "from_unitGroup | Wind",
+            "from_unitGroup | Solar",
+            "inflow | n",
+            "slack | downward",
+            "to_unitGroup | Solar",
+        ]
 
     def test_all_unlisted_is_pure_alpha(self):
         tpl = {"categories": {"costs": {"x": 1}}}

@@ -435,6 +435,18 @@ def nodeGroup_flows(par, s, v, r, debug):
     ], names=['group', 'type', 'item'])
     result_multi_dt[r.group_node_down_slack__dt.columns] = r.group_node_down_slack__dt
 
+    # Tidy: drop all-zero (group, type, item) columns.  The inflow,
+    # internal_losses storages and slack families are pre-allocated one
+    # column per group (filled with 0.0 even when a group has no inflow /
+    # no self-discharge node / no slack), unlike the join-built unit /
+    # connection families which only appear when non-empty.  Without this
+    # an ``elec`` group that is a single loss-free node still emits an
+    # ``internal_losses | storages`` column of zeros, which reads as a
+    # spurious participant in the plot legend.  ``result_multi_d`` is
+    # derived from ``result_multi_dt`` below, so both stay consistent.
+    if result_multi_dt.shape[1] > 0:
+        result_multi_dt = result_multi_dt.loc[:, (result_multi_dt != 0).any(axis=0)]
+
     result_multi_dt.columns.names = ['group', 'type', 'item']
     result_multi_dt = result_multi_dt.sort_index(axis=1, level='group', sort_remaining=False)
 

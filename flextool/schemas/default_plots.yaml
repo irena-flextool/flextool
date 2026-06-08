@@ -1295,6 +1295,7 @@ plots:
         max_subplots_per_file: 4
         map_dimensions_for_plots: [d_gpe, b_uss]
         ylabel: MWh (annualized)
+        skip_data_with_only_zeroes: true
         color_category: nodegroup_flows
         scenario_rule: e
         comparison_overrides:
@@ -1311,6 +1312,7 @@ plots:
         max_subplots_per_file: 4
         map_dimensions_for_plots: [d_gpe, y_uss]
         ylabel: MWh (horizon total)
+        skip_data_with_only_zeroes: true
         color_category: nodegroup_flows
         scenario_rule: b
         comparison_overrides:
@@ -1326,6 +1328,7 @@ plots:
         legend: all
         map_dimensions_for_plots: [dt_gpe, tt_uss]
         ylabel: MWh/h
+        skip_data_with_only_zeroes: true
         color_category: nodegroup_flows
         scenario_rule: f
         comparison_overrides:
@@ -1342,6 +1345,7 @@ plots:
         map_dimensions_for_plots: [dt_gpe, ui_uss]
         time_average_duration: 168
         ylabel: MWh/h
+        skip_data_with_only_zeroes: true
         color_category: nodegroup_flows
         scenario_rule: f
         comparison_overrides:

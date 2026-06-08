@@ -106,26 +106,28 @@ categories:
   # index there has two levels, ``type`` and ``item``; legend labels arrive
   # as either ``"<type> | <item>"`` (bar plans, via _format_legend_labels)
   # or Python tuple repr ``"('<type>', '<item>')"`` (time-series stacks).
-  # The resolver splits both forms and looks up, in order:
-  #   1. ``<type>_<item>`` (e.g. ``slack_upward``)
-  #   2. ``<type>`` alone (e.g. ``unit``)
-  # If neither hits, the label falls back to the tab10/tab20 palette.  The
-  # palette for the fixed ``type`` vocabulary keeps the node_flows
-  # semantics: supply side (units, inflow) greens, draw side blues,
-  # losses gray, slacks red — so dashboards that mix a node-balance plot
-  # and a nodegroup-flows plot share a visual vocabulary.
+  #
+  # Coloring is split by ``type``:
+  #
+  #   * The per-participant flow types — ``from_unitGroup`` / ``to_unitGroup``
+  #     / ``from_unit`` / ``to_unit`` / ``from_connectionGroup`` /
+  #     ``to_connectionGroup`` / ``from_connection`` / ``to_connection`` —
+  #     are colored by their ``item`` (the participating entity), looked up
+  #     in the ``entities`` section below: ``*unit*`` items in ``entities.unit``,
+  #     ``*connection*`` items in ``entities.connection`` and the ``*Group``
+  #     aggregates in ``entities.group``.  The ``to_*`` (draw) side uses the
+  #     entity's ``neg_color`` when one is set, else its ``color``.  So a unit
+  #     keeps the same color here as in its node-flow / dispatch plots, and an
+  #     item with no ``entities`` entry falls back to the tab10/tab20 palette.
+  #     These types are therefore NOT listed here.
+  #
+  #   * The group-property aggregates below — ``inflow``, ``internal_losses``
+  #     (three ``item`` subtypes) and ``slack`` (upward/downward) — aren't
+  #     entities, so they keep explicit category colors, looked up as
+  #     ``<type>_<item>`` then ``<type>``.  Reds match costs / node_flows
+  #     slacks; grays read as "dissipated inside the group".
   nodegroup_flows:
-    # Supply side (positive contributions to the group)
-    from_unitGroup:              '#1f9c1f'   # dark green — unit aggregates into group
-    from_unit:                   '#2ca02c'   # green — individual unit flows in
-    from_connectionGroup:        '#0d7a8a'   # dark teal — connection aggregates in
-    from_connection:             '#17a2b8'   # teal — individual connections in
     inflow:                      '#7dd87a'   # light green — exogenous node inflow
-    # Draw side (negative contributions to the group)
-    to_unitGroup:                '#144a7a'   # dark blue — unit aggregates out
-    to_unit:                     '#1f77b4'   # strong blue — individual unit flows out
-    to_connectionGroup:          '#3c5e8a'   # dark steel blue — connection aggregates out
-    to_connection:               '#5b8fbf'   # steel blue — individual connections out
     # Internal losses (neutral grays — "energy dissipated inside the group")
     internal_losses:             '#808080'   # gray — generic losses fallback
     internal_losses_connections: '#9e9e9e'   # lighter gray — connection losses
@@ -189,6 +191,7 @@ entities:
     # blues for hydro vs pumped hydro) so stacked plots read naturally.
     # Renewables — bright, warm-to-cool gradient
     solar:          '#F4B400'   # gold / sun
+    pv:             '#F4B400'   # gold / sun (alias for solar PV)
     wind:           '#4FC3F7'   # sky blue
     hydro:          '#1565C0'   # deep blue (flowing water)
     biomass:        '#33691E'   # forest green

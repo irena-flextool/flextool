@@ -211,6 +211,71 @@ def _resolve_entity_value(raw):
     return raw, None
 
 
+# For the ``nodegroup_flows`` composite category each flow ``type`` is
+# colored by its ``item`` (the participating entity), resolved in exactly
+# one ``entities`` class — the ``type`` fixes the class (``from_unitGroup``
+# items are ``group`` entities, ``from_unit`` items are ``unit`` entities,
+# etc.).  ``to_*`` types are the draw (negative) side and use the entity's
+# ``neg_color`` when one is defined.  Types absent from this table
+# (``inflow`` / ``internal_losses`` / ``slack``) are group-property
+# aggregates and stay category-colored.
+_NODEGROUP_TYPE_TO_ENTITY_CLASS: dict[str, str] = {
+    "from_unitGroup": "group",
+    "to_unitGroup": "group",
+    "from_connectionGroup": "group",
+    "to_connectionGroup": "group",
+    "from_unit": "unit",
+    "to_unit": "unit",
+    "from_connection": "connection",
+    "to_connection": "connection",
+}
+
+# Stacking band order for ``nodegroup_flows`` types (supply types first,
+# draw types last; the series sign decides which side of zero each lands
+# on, this only fixes the order *within* a side).  Items inside an
+# entity-routed band are ordered by their ``entities`` class file order
+# (so the picker's entity reordering carries through); items inside a
+# special band (slack upward/downward, internal_losses
+# storages/units/connections) by ``categories.nodegroup_flows`` file order.
+_NODEGROUP_TYPE_ORDER: tuple[str, ...] = (
+    "from_unitGroup",
+    "from_unit",
+    "from_connectionGroup",
+    "from_connection",
+    "inflow",
+    "slack",
+    "internal_losses",
+    "to_connection",
+    "to_connectionGroup",
+    "to_unit",
+    "to_unitGroup",
+)
+
+
+def _lookup_entity_color_in_class(
+    template: dict, entity_class: str, name: str, negative: bool,
+):
+    """Look up *name* in a single ``entities`` class (case-insensitive).
+
+    Returns the raw color value (``neg_color`` when *negative* and the
+    entry defines one, else ``color``) or ``None`` when that class lists no
+    *name*.  Unlike :func:`_lookup_entity_color` this does **not** search
+    the other classes — the nodegroup ``type`` already fixes the class.
+    """
+    section = _entities_section(template)
+    class_map = section.get(entity_class)
+    if not isinstance(class_map, dict):
+        return None
+    name_lc = str(name).lower()
+    for key, val in class_map.items():
+        if str(key).lower() == name_lc:
+            color_val, neg_val = _resolve_entity_value(val)
+            if negative and neg_val is not None:
+                return neg_val
+            return color_val
+    return None
+
+
 def resolve_label_color(
     label: str,
     template: dict,
@@ -264,6 +329,42 @@ def resolve_label_color(
                         color_val, neg_val = _resolve_entity_value(val)
                         raw = neg_val if (negative and neg_val is not None) else color_val
                         break
+    elif category and category in _COMPOSITE_CATEGORIES:
+        # Composite categories (nodegroup_flows): entity-routed types color
+        # by their ``item`` via the ``entities`` section — which works even
+        # when ``categories.<category>`` is absent — while group-property
+        # types (inflow / internal_losses / slack) stay category-keyed.
+        section = template.get("categories")
+        if not isinstance(section, dict):
+            section = template.get("category")
+        cat_map = section.get(category) if isinstance(section, dict) else None
+        if not isinstance(cat_map, dict):
+            cat_map = {}
+        entity_routed = False
+        parts = _split_composite_label(label)
+        if parts is not None:
+            type_key, item_key = parts
+            entity_cls = _NODEGROUP_TYPE_TO_ENTITY_CLASS.get(type_key)
+            if entity_cls is not None:
+                # Entity-routed type: color by the item via its single
+                # entities class; ``to_*`` is the draw (negative) side.  No
+                # type-color fallback — un-listed items go to the palette,
+                # otherwise a per-type color would re-collapse every item to
+                # one hue (the bug this routing fixes).
+                entity_routed = True
+                raw = _lookup_entity_color_in_class(
+                    template, entity_cls, item_key,
+                    negative=type_key.startswith("to_"),
+                )
+            else:
+                # Group-property aggregate: type_item first then type.
+                raw = cat_map.get(f"{type_key}_{item_key}")
+                if raw is None:
+                    raw = cat_map.get(type_key)
+        # Exact-key fallback for non-composite labels / verbatim entries;
+        # entity-routed misses fall through to the palette instead.
+        if raw is None and not entity_routed:
+            raw = cat_map.get(label)
     elif category:
         section = template.get("categories")
         if not isinstance(section, dict):
@@ -271,23 +372,7 @@ def resolve_label_color(
         if isinstance(section, dict):
             cat_map = section.get(category)
             if isinstance(cat_map, dict):
-                # Composite categories: split the label and try the
-                # type-qualified key first, then the type alone.  This
-                # lets the YAML express "all unit flows are green" while
-                # also letting specific sub-types (slack_upward vs
-                # slack_downward) pin their own color.
-                if category in _COMPOSITE_CATEGORIES:
-                    parts = _split_composite_label(label)
-                    if parts is not None:
-                        type_key, item_key = parts
-                        raw = cat_map.get(f"{type_key}_{item_key}")
-                        if raw is None:
-                            raw = cat_map.get(type_key)
-                # Fall back to exact-key lookup on the original label
-                # (covers non-composite labels and any YAML entries that
-                # happen to match the joined form verbatim).
-                if raw is None:
-                    raw = cat_map.get(label)
+                raw = cat_map.get(label)
 
     if raw is None:
         return None
@@ -348,6 +433,52 @@ def template_label_order(
     return []
 
 
+def _order_composite_labels(
+    labels: list[str], template: dict, category: str,
+) -> list[str]:
+    """Order ``nodegroup_flows`` composite ``(type, item)`` labels.
+
+    Bands follow :data:`_NODEGROUP_TYPE_ORDER`.  Within an entity-routed
+    band items follow their ``entities`` class file order (honoring the
+    picker's reordering); within a special band they follow
+    ``categories.<category>`` file order.  Labels that don't parse as a
+    composite, and items not listed anywhere, sort to the tail by name.
+    The result is a permutation of *labels* (stable on ties via the
+    original index).
+    """
+    band_index = {t: i for i, t in enumerate(_NODEGROUP_TYPE_ORDER)}
+    n_band = len(_NODEGROUP_TYPE_ORDER)
+
+    entity_orders: dict[str, dict[str, int]] = {}
+    for cls in set(_NODEGROUP_TYPE_TO_ENTITY_CLASS.values()):
+        order = template_label_order(template, entity_class=cls)
+        entity_orders[cls] = {str(k).lower(): i for i, k in enumerate(order)}
+
+    cat_order = template_label_order(template, category=category)
+    special_index = {str(k): i for i, k in enumerate(cat_order)}
+    n_special = len(special_index)
+
+    def sort_key(item):
+        idx, label = item
+        parts = _split_composite_label(label)
+        if parts is None:
+            return (n_band, 0, str(label), idx)
+        type_key, item_key = parts
+        band = band_index.get(type_key, n_band)
+        entity_cls = _NODEGROUP_TYPE_TO_ENTITY_CLASS.get(type_key)
+        if entity_cls is not None:
+            class_order = entity_orders[entity_cls]
+            within = class_order.get(str(item_key).lower(), len(class_order))
+        else:
+            within = special_index.get(
+                f"{type_key}_{item_key}",
+                special_index.get(type_key, n_special),
+            )
+        return (band, within, str(item_key), idx)
+
+    return [lbl for _, lbl in sorted(enumerate(labels), key=sort_key)]
+
+
 def order_labels_by_template(
     labels: list[str],
     template: dict,
@@ -371,6 +502,12 @@ def order_labels_by_template(
     The returned list is a permutation of *labels* (no labels are dropped
     or duplicated even if a file key has no matching label).
     """
+    # Composite categories (nodegroup_flows) route items to entity classes
+    # for both color and order, so they use a dedicated band+entity sorter
+    # rather than the single category-section file order below.
+    if category and category in _COMPOSITE_CATEGORIES and not entity_class:
+        return _order_composite_labels(labels, template, category)
+
     file_order = template_label_order(template, category=category, entity_class=entity_class)
     if not file_order:
         return sorted(labels, key=str)
