@@ -1520,7 +1520,7 @@
     [
       "model",
       "version",
-      56.0,
+      57.0,
       null,
       "Contains database version information.",
       "model"

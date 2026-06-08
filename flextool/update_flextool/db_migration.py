@@ -1637,6 +1637,38 @@ def migrate_database(
                 # lives in SpineDBBackend.find_entities / entities /
                 # parameter_values and SpineDbReader.
                 _migrate_v56_reactivate_is_enabled_parameter(db)
+            elif next_version == 57:
+                # Clarify the descriptions of the three parameters that
+                # together drive timeslice weighting / annualisation:
+                # ``node.inflow_method`` (how the annual-energy scaling
+                # uses each timestep's share of the year),
+                # ``timeset.timeset_duration`` (defines the *selection*
+                # of timesteps) and ``timeset.timeset_weights`` (defines
+                # the *representativeness* — each timestep's share of the
+                # year, used identically for inflow scaling, energy
+                # reporting and the operating-cost objective).  Wording
+                # per spec ``specs/timeslice_weight_alignment.md`` section
+                # B2.  Pure description text — engine semantics, default
+                # values and value-list bindings are untouched.
+                db.update_item(
+                    "parameter_definition",
+                    entity_class_name="node",
+                    name="inflow_method",
+                    description="Choice how to treat inflow time series. Empty defaults to 'use_original', which does not scale the time series. 'no_inflow' ignores the inflow time series. 'scale_to_annual_flow' scales the inflow time series by a single factor (shape preserved) so its annual energy equals 'annual_flow'. The annualisation uses each timestep's share of the year: for a full or evenly sampled timeline this is 8760/'hours_in_solve' (every step weighted equally); for a representative timeset with 'timeset_weights', each timestep is weighted by its declared share of the year, so a biased sample of timesteps still annualises correctly. The same weighting is used for energy reporting and operating-cost accounting, so the energy the model is scaled to serve, reports, and costs all coincide. If 'timeset_weights' do not reflect the true representativeness of your selected timesteps, the scaling factor - and therefore the absolute demand level - shifts accordingly; see the per-node 'f' diagnostic (inflow_scaling_diagnostics.csv). 'scale_in_proprotion' calculates a scaling factor by dividing 'annual_flow' with the sum of time series inflow (after it has been annualized using 'timeline_duration_in_years'). (With a representative timeset, the annual-energy match uses 'timeset_weights' as above.) 'scale_to_annual_and_peak_flow' scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'. (With a representative timeset, the annual-energy match uses 'timeset_weights' as above; the peak match stays unweighted.)",
+                )
+                db.update_item(
+                    "parameter_definition",
+                    entity_class_name="timeset",
+                    name="timeset_duration",
+                    description="Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps. Defines the *selection*: which timesteps are in the solve and how many (this sets 'hours_in_solve'). Representativeness - each timestep's share of the year - is set separately by 'timeset_weights'.",
+                )
+                db.update_item(
+                    "parameter_definition",
+                    entity_class_name="timeset",
+                    name="timeset_weights",
+                    description="Per-timestep weight map (index: timestep name, value: float) defining *representativeness*: each timestep's share of the year. Drives the annualisation of demand, energy, and cost alike (the inflow scaling, the annual energy outputs, and the operating-cost objective all use this same weight), so the energy the model is scaled to serve, reports, and costs all coincide. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset.",
+                )
+                db.commit_session("Clarify inflow_method/timeset_duration/timeset_weights descriptions for timeslice weighting")
             else:
                 print("Version invalid")
             last_completed_version = next_version
