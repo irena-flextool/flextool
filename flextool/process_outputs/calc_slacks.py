@@ -40,12 +40,17 @@ def compute_slacks(par, s, v, r) -> None:
     # node_capacity_for_scaling / node_penalty_* are complete over nodeBalance
     # (⊇ the q_state nodes) and solve-keyed (concat-unioned), so direct column
     # indexing is safe — no missing-column densify needed here.
+    # The annualised ``_d`` reporting series weights each (d, t) by
+    # par.rp_cost_weight (=1.0 with no/uniform timeset_weights →
+    # byte-identical) before the period sum, matching the cost-weighted
+    # objective.  The ``_not_annualized`` diagnostic sums (used for the raw
+    # Created/Removed slack-event reports) stay unweighted.
     r.upward_node_slack_dt = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).mul(par.step_duration, axis=0)
     r.upward_node_slack_d_not_annualized = r.upward_node_slack_dt.groupby('period').sum()
-    r.upward_node_slack_d = r.upward_node_slack_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.upward_node_slack_d = r.upward_node_slack_dt.mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
     r.downward_node_slack_dt = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).mul(par.step_duration, axis=0)
     r.downward_node_slack_d_not_annualized = r.downward_node_slack_dt.groupby('period').sum()
-    r.downward_node_slack_d = r.downward_node_slack_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.downward_node_slack_d = r.downward_node_slack_dt.mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
     # Node-state slack penalty: apply rp_cost_weight (step_duration already in _slack_dt).
     upward_node_penalty = r.upward_node_slack_dt.mul(par.node_penalty_up[v.q_state_up.columns]) \
                                                .mul(par.rp_cost_weight, axis=0)
@@ -59,14 +64,16 @@ def compute_slacks(par, s, v, r) -> None:
     # Per-step cost = q × inertia_limit × penalty × step_duration × rp_cost_weight.
     r.q_inertia_dt = v.q_inertia.mul(par.group_inertia_limit)
     r.q_inertia_d_not_annualized = r.q_inertia_dt.mul(par.step_duration, axis=0).groupby('period').sum()
-    r.q_inertia_d = r.q_inertia_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.q_inertia_d = r.q_inertia_dt.mul(par.step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
     r.costPenalty_inertia_dt = r.q_inertia_dt.mul(par.group_penalty_inertia).mul(step_x_rp, axis=0)
 
     # Non-synchronous penalty: mod uses × step_duration × rp_cost_weight (objective line ~2382).
     r.q_non_synchronous_dt = v.q_non_synchronous.mul(par.group_capacity_for_scaling[s.groupNonSync])
     r.q_non_synchronous_d_not_annualized = r.q_non_synchronous_dt.mul(par.step_duration, axis=0) \
         .groupby('period').sum()
-    r.q_non_synchronous_d = r.q_non_synchronous_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.q_non_synchronous_d = r.q_non_synchronous_dt.mul(par.step_duration, axis=0) \
+        .mul(par.rp_cost_weight, axis=0).groupby('period').sum() \
+        .div(par.complete_period_share_of_year, axis=0)
     r.costPenalty_non_synchronous_dt = r.q_non_synchronous_dt \
         .mul(par.group_penalty_non_synchronous) \
         .mul(step_x_rp, axis=0)
@@ -84,7 +91,7 @@ def compute_slacks(par, s, v, r) -> None:
 
     r.q_reserves_dt = v.q_reserve.mul(par.reserve_upDown_group_reservation[v.q_reserve.columns], axis=1)
     r.q_reserves_d_not_annualized = r.q_reserves_dt.mul(par.step_duration, axis=0).groupby(level='period').sum()
-    r.q_reserves_d = r.q_reserves_d_not_annualized.div(par.complete_period_share_of_year, axis=0)
+    r.q_reserves_d = r.q_reserves_dt.mul(par.step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby(level='period').sum().div(par.complete_period_share_of_year, axis=0)
     # Reserve slack penalty: step_duration is already here (line below);
     # add rp_cost_weight to match mod line ~2388.
     r.costPenalty_reserve_upDown_dt = v.q_reserve.mul(par.step_duration, axis=0) \

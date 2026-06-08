@@ -36,8 +36,8 @@ def compute_group_flows(par, s, v, r) -> None:
     else:
         r.nodeGroupDispatch__to_connection_not_in_aggregate__dt = _empty_gp.copy()
 
-    r.nodeGroupDispatch__from_connection_not_in_aggregate__d = r.nodeGroupDispatch__from_connection_not_in_aggregate__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.nodeGroupDispatch__from_connection_not_in_aggregate__dt.empty else _empty_gp.copy()
-    r.nodeGroupDispatch__to_connection_not_in_aggregate__d = r.nodeGroupDispatch__to_connection_not_in_aggregate__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.nodeGroupDispatch__to_connection_not_in_aggregate__dt.empty else _empty_gp.copy()
+    r.nodeGroupDispatch__from_connection_not_in_aggregate__d = r.nodeGroupDispatch__from_connection_not_in_aggregate__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.nodeGroupDispatch__from_connection_not_in_aggregate__dt.empty else _empty_gp.copy()
+    r.nodeGroupDispatch__to_connection_not_in_aggregate__d = r.nodeGroupDispatch__to_connection_not_in_aggregate__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.nodeGroupDispatch__to_connection_not_in_aggregate__dt.empty else _empty_gp.copy()
 
     from_conn_agg_set = s.nodeGroupDispatch__processGroup__process__connection__to_node.droplevel('connection')
     if not from_conn_agg_set.empty and not r.from_conn.empty:
@@ -57,8 +57,8 @@ def compute_group_flows(par, s, v, r) -> None:
     else:
         r.nodeGroupDispatch__to_connection_aggregate__dt = _empty_gga.copy()
 
-    r.nodeGroupDispatch__from_connection_aggregate__d = r.nodeGroupDispatch__from_connection_aggregate__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.nodeGroupDispatch__from_connection_aggregate__dt.empty else _empty_gga.copy()
-    r.nodeGroupDispatch__to_connection_aggregate__d = r.nodeGroupDispatch__to_connection_aggregate__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.nodeGroupDispatch__to_connection_aggregate__dt.empty else _empty_gga.copy()
+    r.nodeGroupDispatch__from_connection_aggregate__d = r.nodeGroupDispatch__from_connection_aggregate__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.nodeGroupDispatch__from_connection_aggregate__dt.empty else _empty_gga.copy()
+    r.nodeGroupDispatch__to_connection_aggregate__d = r.nodeGroupDispatch__to_connection_aggregate__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0) if not r.nodeGroupDispatch__to_connection_aggregate__dt.empty else _empty_gga.copy()
 
     losses_set = s.nodeGroupDispatch__process_fully_inside
     if not losses_set.empty and not r.connection_losses_dt.empty:
@@ -66,7 +66,7 @@ def compute_group_flows(par, s, v, r) -> None:
         losses_selected = r.connection_losses_dt[group_losses_sets.droplevel('group')]
         losses_selected.columns = group_losses_sets
         r.nodeGroupDispatch_Internal_connection_losses__dt = losses_selected
-        r.nodeGroupDispatch_Internal_connection_losses__d = r.nodeGroupDispatch_Internal_connection_losses__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+        r.nodeGroupDispatch_Internal_connection_losses__d = r.nodeGroupDispatch_Internal_connection_losses__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
     else:
         r.nodeGroupDispatch_Internal_connection_losses__dt = pd.DataFrame()
         r.nodeGroupDispatch_Internal_connection_losses__d = pd.DataFrame()
@@ -96,8 +96,8 @@ def compute_group_flows(par, s, v, r) -> None:
     node_to_unit_selected.columns = group_sets
     r.nodeGroupDispatch__node_to_unit_not_in_aggregate__dt = node_to_unit_selected
 
-    r.nodeGroupDispatch__unit_to_node_not_in_aggregate__d = r.nodeGroupDispatch__unit_to_node_not_in_aggregate__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
-    r.nodeGroupDispatch__node_to_unit_not_in_aggregate__d = r.nodeGroupDispatch__node_to_unit_not_in_aggregate__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.nodeGroupDispatch__unit_to_node_not_in_aggregate__d = r.nodeGroupDispatch__unit_to_node_not_in_aggregate__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.nodeGroupDispatch__node_to_unit_not_in_aggregate__d = r.nodeGroupDispatch__node_to_unit_not_in_aggregate__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     unit_to_group_set = s.nodeGroupDispatch__processGroup__process__unit__to_node.droplevel('unit')
     group_agg_sets = unit_to_node.columns.join(unit_to_group_set, how='inner')
@@ -124,8 +124,8 @@ def compute_group_flows(par, s, v, r) -> None:
     r.nodeGroupDispatch__group_aggregate_Group_to_unit__dt = r.nodeGroupDispatch__group_aggregate_Group_to_unit_positive__dt.sub(
         r.nodeGroupDispatch__group_aggregate_Unit_to_group_negative__dt, fill_value=0.0)
 
-    r.nodeGroupDispatch__group_aggregate_Group_to_unit__d = r.nodeGroupDispatch__group_aggregate_Group_to_unit__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
-    r.nodeGroupDispatch__group_aggregate_Unit_to_group__d = r.nodeGroupDispatch__group_aggregate_Unit_to_group__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.nodeGroupDispatch__group_aggregate_Group_to_unit__d = r.nodeGroupDispatch__group_aggregate_Group_to_unit__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.nodeGroupDispatch__group_aggregate_Unit_to_group__d = r.nodeGroupDispatch__group_aggregate_Unit_to_group__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     losses_set = s.nodeGroupDispatch__process_fully_inside
     group_losses_sets_node_to_unit = losses_set.join(node_to_unit.columns, how='inner')
@@ -138,7 +138,7 @@ def compute_group_flows(par, s, v, r) -> None:
 
     unit_losses_dt = node_to_unit_filtered.sub(unit_to_node_filtered, axis=1, fill_value=0.0)
     r.nodeGroupDispatch_Internal_unit_losses__dt = unit_losses_dt
-    r.nodeGroupDispatch_Internal_unit_losses__d = r.nodeGroupDispatch_Internal_unit_losses__dt.mul(step_duration, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.nodeGroupDispatch_Internal_unit_losses__d = r.nodeGroupDispatch_Internal_unit_losses__dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     # --- Node inflow by group ---
     dt_dispatch_idx = s.dt_realize_dispatch
