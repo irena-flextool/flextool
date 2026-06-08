@@ -138,6 +138,13 @@ class PlotPlan:
     color_category: str | None = None
     color_entity_class: str | None = None
 
+    # For simple (non-stacked, non-grouped) bar charts only: the column-index
+    # level whose value supplies each bar's color, resolved from
+    # ``color_entity_class`` via ``resolve_color_bar_level``. Lines / stacked /
+    # grouped charts don't need this — their colored level is fixed by a role
+    # char. ``None`` => bars fall back to the default single color.
+    color_bar_level: str | None = None
+
     # Layout (stored as plain dict for JSON serialization)
     layout_type: str = ''  # 'line' or 'bar'
     layout_params: dict = field(default_factory=dict)
@@ -212,6 +219,7 @@ def save_plot_plan(
         ),
         'color_category': plan.color_category,
         'color_entity_class': plan.color_entity_class,
+        'color_bar_level': plan.color_bar_level,
         'axis_bounds': _json_safe(plan.axis_bounds),
         'layout_type': plan.layout_type,
         'layout_params': _json_safe(plan.layout_params),
@@ -326,6 +334,7 @@ def load_plot_plan(
             shared_color_map=color_map,
             color_category=meta.get('color_category'),
             color_entity_class=meta.get('color_entity_class'),
+            color_bar_level=meta.get('color_bar_level'),
             axis_bounds=meta.get('axis_bounds'),
             layout_type=meta.get('layout_type', ''),
             layout_params=meta.get('layout_params', {}),
@@ -596,6 +605,7 @@ def build_figure_from_plan(
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
             plan.skip_data_with_only_zeroes,
+            color_bar_level=plan.color_bar_level,
         )
 
     return None
@@ -876,6 +886,171 @@ def _compute_time_plan(
     )
 
 
+# Engine-internal map from a column/index level NAME (set by the output
+# processing, see ``flextool/process_outputs/*.py`` ``.columns.names = [...]``)
+# to the entity class(es) that level can carry. Some levels are *mixed*: a
+# ``process`` is a unit or a connection, and a ``group`` is a nodeGroup or a
+# flowGroup (the entity-class split keyed them apart). This is the inverse of
+# the masking the engine already owns, so a plot author writes the class hint
+# (``color_entity_class: unit`` / ``group``) and never an internal level name.
+# A hint that is itself a mixed key (``process`` / ``group``) resolves each
+# value against both constituent classes.
+_LEVEL_NAME_TO_CLASSES: dict[str, tuple[str, ...]] = {
+    'process': ('unit', 'connection'),
+    'unit': ('unit',),
+    'connection': ('connection',),
+    'node': ('node',),
+    'source': ('node',),
+    'sink': ('node',),
+    'group': ('nodeGroup', 'flowGroup'),
+    'node_group': ('nodeGroup',),
+    'flow_group': ('flowGroup',),
+    'nodeGroup': ('nodeGroup',),
+    'flowGroup': ('flowGroup',),
+    'commodity': ('commodity',),
+}
+
+
+def resolve_color_bar_level(
+    level_names: list, entity_class: str | None
+) -> str | None:
+    """Pick the column/index level that carries ``entity_class`` for a bar.
+
+    Lines / stacked / grouped charts designate their colored level via a
+    role char (``l`` / ``s`` / ``g``); a simple bar has none, so given
+    ``color_entity_class: unit`` the engine must *find* the level holding
+    units. A level matches when its class-set and the hint's class-set
+    overlap — so ``unit`` matches the mixed ``process`` level, ``group``
+    (= nodeGroup+flowGroup) matches a ``group`` or ``node_group`` level, and
+    a literal name match always wins. Returns the first match
+    (``process__source__sink`` never reaches plotting, so first-match is a
+    safe tiebreak), or ``None`` when nothing matches / no class is set.
+    """
+    if not entity_class:
+        return None
+    want = set(_LEVEL_NAME_TO_CLASSES.get(entity_class, (entity_class,)))
+    for name in level_names:
+        have = set(_LEVEL_NAME_TO_CLASSES.get(name, (name,)))
+        if name == entity_class or (want & have):
+            return name
+    return None
+
+
+def _color_level_values(df_sub: pd.DataFrame, level: str) -> list:
+    """Distinct values of ``level`` in ``df_sub``, from columns or index.
+
+    The color-bar level may sit on the columns (expand / subplot dim) or on
+    the row index (a ``b``-role dim moved there by the fm-transform). Returns
+    ``[]`` when the level is on neither (e.g. a level dropped from this slice).
+    """
+    col_multi = isinstance(df_sub.columns, pd.MultiIndex)
+    col_names = list(df_sub.columns.names) if col_multi else [df_sub.columns.name]
+    if level in col_names:
+        if col_multi:
+            return df_sub.columns.get_level_values(level).unique().tolist()
+        return df_sub.columns.unique().tolist()
+    idx_multi = isinstance(df_sub.index, pd.MultiIndex)
+    idx_names = list(df_sub.index.names) if idx_multi else [df_sub.index.name]
+    if level in idx_names:
+        if idx_multi:
+            return df_sub.index.get_level_values(level).unique().tolist()
+        return df_sub.index.unique().tolist()
+    return []
+
+
+def _multiclass_color_map(
+    labels: list, color_template: dict | None, classes: tuple,
+) -> dict:
+    """Color map for labels that resolve against more than one entity class.
+
+    For a mixed level like ``process`` (each value is *either* a unit or a
+    connection), resolve every label against ``classes`` in order — first
+    section that lists it wins — and give the rest tab10/tab20 palette
+    colors in input order (mirroring ``build_shared_color_map``'s fallback).
+    """
+    import matplotlib.pyplot as plt
+    from flextool.plot_outputs.color_template import resolve_label_color
+
+    template = color_template or {}
+    resolved: dict = {}
+    palette_needed = 0
+    for lbl in labels:
+        col = None
+        for cls in classes:
+            col = resolve_label_color(lbl, template, category=None, entity_class=cls)
+            if col is not None:
+                break
+        resolved[lbl] = col
+        if col is None:
+            palette_needed += 1
+    cmap_colors = (
+        plt.colormaps['tab10'].colors if palette_needed <= 10
+        else plt.colormaps['tab20'].colors
+    )
+    out: dict = {}
+    pi = 0
+    for lbl in labels:
+        if resolved[lbl] is not None:
+            out[lbl] = resolved[lbl]
+        else:
+            out[lbl] = cmap_colors[pi % len(cmap_colors)]
+            pi += 1
+    return out
+
+
+def build_simple_bar_color_map(
+    df_fm: pd.DataFrame,
+    entity_class: str | None,
+    color_template: dict | None,
+) -> tuple[dict | None, str | None]:
+    """Color map + color level for a simple (non-stacked, non-grouped) bar.
+
+    Resolves the column/index level carrying ``entity_class`` and builds a
+    ``{value: rgb}`` map over that level's distinct values (read from the
+    full ``df_fm`` so subplot levels — which subplot extraction would drop —
+    are still captured), ordered by the picker's file order. Shared by the
+    plan path (``_compute_bar_plan``) and the live render path
+    (``build_bar_figures``) so both color identically.
+
+    ``entity_class`` may name a mixed level: ``process`` carries both units
+    and connections, so each value is resolved against ``unit`` then
+    ``connection`` — the one place a plot author writes ``process``. Returns
+    ``(None, None)`` when no class is set or no level carries it.
+    """
+    from flextool.plot_outputs.legend_helpers import build_shared_color_map
+    from flextool.plot_outputs.color_template import order_labels_by_template
+
+    col_names = list(df_fm.columns.names) if isinstance(
+        df_fm.columns, pd.MultiIndex) else [df_fm.columns.name]
+    idx_names = list(df_fm.index.names) if isinstance(
+        df_fm.index, pd.MultiIndex) else [df_fm.index.name]
+    # Index first: a 'b'-role dim (sum/total variant) lives on the index;
+    # an expand/subplot dim (period variant) lives on a column.
+    color_bar_level = resolve_color_bar_level(idx_names + col_names, entity_class)
+    if not color_bar_level:
+        return None, None
+    all_labels: list[str] = []
+    for v in _color_level_values(df_fm, color_bar_level):
+        label = str(v)
+        if label not in all_labels:
+            all_labels.append(label)
+
+    # A mixed level (process) resolves against several classes; a plain one
+    # against itself.
+    classes = _LEVEL_NAME_TO_CLASSES.get(entity_class, (entity_class,))
+    if len(classes) > 1:
+        shared_color_map = _multiclass_color_map(all_labels, color_template, classes)
+    else:
+        cls = classes[0]
+        all_labels = order_labels_by_template(
+            all_labels, color_template or {}, category=None, entity_class=cls,
+        )
+        shared_color_map = build_shared_color_map(
+            all_labels, color_template=color_template, category=None, entity_class=cls,
+        )
+    return shared_color_map, color_bar_level
+
+
 def _compute_bar_plan(
     df_fm: pd.DataFrame,
     effective_plot_name: str,
@@ -1022,6 +1197,7 @@ def _compute_bar_plan(
 
     # Build shared color map
     shared_color_map = None
+    color_bar_level: str | None = None
     if (cfg.legend == 'shared' or cfg.color_category or cfg.color_entity_class) and (stack_levels or grouped_bar_levels):
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
@@ -1059,6 +1235,16 @@ def _compute_bar_plan(
             color_template=template,
             category=cfg.color_category,
             entity_class=cfg.color_entity_class,
+        )
+    elif cfg.color_entity_class and not (stack_levels or grouped_bar_levels):
+        # Simple bars: no role char designates a colored level, so resolve
+        # the level carrying the entity class and color each bar by its value
+        # there — a column (expand → per-bar; subplot → whole-subplot) or the
+        # row index (a 'b'-role dim, e.g. the sum/total variant). Same
+        # entities.<class> resolution + picker order as the line path; shared
+        # with the live render path via build_simple_bar_color_map.
+        shared_color_map, color_bar_level = build_simple_bar_color_map(
+            df_fm, cfg.color_entity_class, load_color_template(color_path),
         )
 
     # Compute layout
@@ -1189,6 +1375,7 @@ def _compute_bar_plan(
         shared_color_map=shared_color_map,
         color_category=cfg.color_category,
         color_entity_class=cfg.color_entity_class,
+        color_bar_level=color_bar_level,
         axis_bounds=axis_bounds,
         layout_type='bar',
         layout_params=layout_params,
@@ -1247,6 +1434,7 @@ def compute_plot_plans_for_result(
     from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
     from flextool.plot_outputs.orchestrator import (
         _apply_dimension_rules, _resolve_shared_axis_bounds, _process_file_member,
+        reattach_file_level_for_color,
     )
     from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
     from flextool.plot_outputs.format_helpers import insert_timeline_breaks
@@ -1366,6 +1554,13 @@ def compute_plot_plans_for_result(
              fm_grouped_bar_levels, fm_stack_levels, fm_expand_axis_levels,
              fm_subplot_levels, fm_line_levels) = result
 
+            # Simple bar colored by the file-split entity: restore the file
+            # member's value so the whole file gets that group's color.
+            if chart_type == 'bar' and cfg.color_entity_class:
+                file_level_names = [df_processed.columns.names[i] for i in file_levels]
+                df_fm = reattach_file_level_for_color(
+                    df_fm, file_member, file_level_names, cfg.color_entity_class)
+
             # Apply skip_zeroes, multiply_by, timeline breaks
             if cfg.skip_data_with_only_zeroes:
                 df_fm = df_fm.loc[:, (df_fm.abs() > 1e-6).any()]
@@ -1440,6 +1635,7 @@ def compute_live_plan(
     """
     from flextool.plot_outputs.orchestrator import (
         _apply_dimension_rules, _resolve_shared_axis_bounds, _process_file_member,
+        reattach_file_level_for_color,
     )
     from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
     from flextool.plot_outputs.format_helpers import insert_timeline_breaks
@@ -1491,6 +1687,11 @@ def compute_live_plan(
     (df_fm, effective_plot_name, _member_str,
      fm_grouped_bar_levels, fm_stack_levels, fm_expand_axis_levels,
      fm_subplot_levels, fm_line_levels) = result
+
+    if chart_type == 'bar' and cfg.color_entity_class:
+        file_level_names = [df_processed.columns.names[i] for i in file_levels]
+        df_fm = reattach_file_level_for_color(
+            df_fm, file_member, file_level_names, cfg.color_entity_class)
 
     if cfg.skip_data_with_only_zeroes:
         df_fm = df_fm.loc[:, (df_fm.abs() > 1e-6).any()]

@@ -16,6 +16,10 @@ BAR_GAP_FRACTION = 0.10
 REFERENCE_BAR_THICKNESS = 0.0558    # matches plot_bars.REFERENCE_BAR_THICKNESS
 SOLO_BAR_THICKNESS = 0.1116         # = 2 × REFERENCE_BAR_THICKNESS
 
+# Default fill for simple bars when the plot doesn't opt into entity coloring
+# (no color_entity_class), and the fallback for an unresolved entity value.
+DEFAULT_SIMPLE_BAR_COLOR = 'steelblue'
+
 
 def _min_visible_data_width(ax, axis: str) -> float:
     """Smallest data-axis width that still renders at >= 1 display pixel.
@@ -554,8 +558,17 @@ def _plot_simple_bars(
     slot_heights: list[float] | None = None,
     value_axis_lim: tuple[float, float] | None = None,
     thickness_mult: float = 1.0,
+    shared_color_map: dict[str, tuple] | None = None,
+    color_bar_level: str | None = None,
 ) -> None:
-    """Render simple single-color bars onto ax for one subplot (no stacking, no grouping)."""
+    """Render simple bars onto ax for one subplot (no stacking, no grouping).
+
+    Bars are a single default color unless ``shared_color_map`` and
+    ``color_bar_level`` are supplied (from ``color_entity_class`` on the
+    plot): then each bar takes the color of its value at ``color_bar_level``
+    — an expand-axis level (per-bar color) or the subplot level (whole
+    subplot one color). Unresolved values fall back to the default color.
+    """
     if not all_bars:
         return
 
@@ -614,26 +627,101 @@ def _plot_simple_bars(
     else:
         ax.set_ylim(lo, hi)
 
+    # Per-bar color. The default keeps the historic single-color render
+    # (scalar 'steelblue' → byte-identical) unless the plot opted into
+    # entity coloring via color_entity_class (shared_color_map +
+    # color_bar_level). Color is a property of the bar's expand/subplot
+    # value, so it's resolved once per unique group and reused.
+    bar_color: object = DEFAULT_SIMPLE_BAR_COLOR
+    if shared_color_map and color_bar_level:
+        bar_color = [
+            _resolve_bar_color(
+                group, period, df_sub, expand_axis_level_names,
+                color_bar_level, shared_color_map,
+            )
+            for group, period in all_bars
+        ]
+
     data_mask = values_arr != 0
     if data_mask.all():
         draw_y = y_pos_vec
         draw_v = values_arr
+        draw_color = bar_color
     else:
         draw_y = y_pos_vec[data_mask]
         draw_v = values_arr[data_mask]
+        draw_color = (
+            [c for c, keep in zip(bar_color, data_mask) if keep]
+            if isinstance(bar_color, list) else bar_color
+        )
 
     # Single vectorised draw call replacing the per-bar loop.
     bar_h = SOLO_BAR_THICKNESS
     bar_h *= thickness_mult
     if horizontal:
-        container = ax.barh(draw_y, draw_v, height=bar_h, color='steelblue')
+        container = ax.barh(draw_y, draw_v, height=bar_h, color=draw_color)
     else:  # vertical
-        container = ax.bar(draw_y, draw_v, width=bar_h, color='steelblue')
+        container = ax.bar(draw_y, draw_v, width=bar_h, color=draw_color)
     if value_fmt:
         if value_fmt == 'dynamic':
             ax.bar_label(container, fmt=lambda x: format_value_label(x), padding=3)
         else:
             ax.bar_label(container, fmt=lambda x, _s=value_fmt: format(x, _s), padding=3)
+
+
+def _resolve_bar_color(
+    group,
+    period,
+    df_sub: pd.DataFrame,
+    expand_axis_level_names: list,
+    color_bar_level: str,
+    shared_color_map: dict[str, tuple],
+    default=DEFAULT_SIMPLE_BAR_COLOR,
+):
+    """Color for one simple bar, keyed by its ``color_bar_level`` value.
+
+    The color level can sit in three places:
+      * an **expand-axis** column level → the value is the ``group`` (or its
+        component when several dims expand together) — per-bar color;
+      * the **row index** → the bar itself IS the entity (a ``b``-role dim
+        moved to the index, e.g. the sum/total variant), so the value is the
+        bar's index value ``period``;
+      * a **subplot / single-valued** column level → constant across
+        ``df_sub``, so the whole subplot is one color.
+    Falls back to ``default`` when the value isn't in the color map (e.g. an
+    entity the template doesn't list).
+    """
+    key = None
+    if color_bar_level in expand_axis_level_names:
+        if len(expand_axis_level_names) == 1:
+            key = group
+        elif isinstance(group, (tuple, list)):
+            pos = expand_axis_level_names.index(color_bar_level)
+            if pos < len(group):
+                key = group[pos]
+    else:
+        idx_multi = isinstance(df_sub.index, pd.MultiIndex)
+        idx_names = list(df_sub.index.names) if idx_multi else [df_sub.index.name]
+        if color_bar_level in idx_names:
+            if idx_multi and isinstance(period, (tuple, list)):
+                pos = idx_names.index(color_bar_level)
+                if pos < len(period):
+                    key = period[pos]
+            else:
+                key = period
+        else:
+            col_multi = isinstance(df_sub.columns, pd.MultiIndex)
+            col_names = list(df_sub.columns.names) if col_multi else [df_sub.columns.name]
+            if color_bar_level in col_names:
+                vals = (
+                    df_sub.columns.get_level_values(color_bar_level).unique()
+                    if col_multi else df_sub.columns.unique()
+                )
+                if len(vals):
+                    key = vals[0]
+    if key is None:
+        return default
+    return shared_color_map.get(str(key), default)
 
 
 def _hashable(value):
