@@ -886,13 +886,15 @@ def _compute_time_plan(
     )
 
 
-# Engine-internal map from a column-index level NAME (set by the output
+# Engine-internal map from a column/index level NAME (set by the output
 # processing, see ``flextool/process_outputs/*.py`` ``.columns.names = [...]``)
-# to the entity class(es) that level can carry. ``process`` masks both unit
-# and connection; the node side appears as ``node`` / ``source`` / ``sink``.
-# This is the inverse of the masking the engine already owns, so a plot
-# author only ever writes the class (``color_entity_class: unit``) and never
-# the internal level name.
+# to the entity class(es) that level can carry. Some levels are *mixed*: a
+# ``process`` is a unit or a connection, and a ``group`` is a nodeGroup or a
+# flowGroup (the entity-class split keyed them apart). This is the inverse of
+# the masking the engine already owns, so a plot author writes the class hint
+# (``color_entity_class: unit`` / ``group``) and never an internal level name.
+# A hint that is itself a mixed key (``process`` / ``group``) resolves each
+# value against both constituent classes.
 _LEVEL_NAME_TO_CLASSES: dict[str, tuple[str, ...]] = {
     'process': ('unit', 'connection'),
     'unit': ('unit',),
@@ -900,7 +902,11 @@ _LEVEL_NAME_TO_CLASSES: dict[str, tuple[str, ...]] = {
     'node': ('node',),
     'source': ('node',),
     'sink': ('node',),
-    'group': ('group',),
+    'group': ('nodeGroup', 'flowGroup'),
+    'node_group': ('nodeGroup',),
+    'flow_group': ('flowGroup',),
+    'nodeGroup': ('nodeGroup',),
+    'flowGroup': ('flowGroup',),
     'commodity': ('commodity',),
 }
 
@@ -908,22 +914,24 @@ _LEVEL_NAME_TO_CLASSES: dict[str, tuple[str, ...]] = {
 def resolve_color_bar_level(
     level_names: list, entity_class: str | None
 ) -> str | None:
-    """Pick the column level that carries ``entity_class`` for a simple bar.
+    """Pick the column/index level that carries ``entity_class`` for a bar.
 
     Lines / stacked / grouped charts designate their colored level via a
     role char (``l`` / ``s`` / ``g``); a simple bar has none, so given
     ``color_entity_class: unit`` the engine must *find* the level holding
-    units. A level matches when ``entity_class`` is one of the classes it
-    carries (e.g. ``unit`` matches ``process``) or when it is named exactly
-    ``entity_class`` — the latter lets ``color_entity_class: process`` pick
-    the mixed unit/connection ``process`` level directly. Returns the first
-    match (``process__source__sink`` never reaches plotting, so first-match
-    is a safe tiebreak), or ``None`` when nothing matches / no class is set.
+    units. A level matches when its class-set and the hint's class-set
+    overlap — so ``unit`` matches the mixed ``process`` level, ``group``
+    (= nodeGroup+flowGroup) matches a ``group`` or ``node_group`` level, and
+    a literal name match always wins. Returns the first match
+    (``process__source__sink`` never reaches plotting, so first-match is a
+    safe tiebreak), or ``None`` when nothing matches / no class is set.
     """
     if not entity_class:
         return None
+    want = set(_LEVEL_NAME_TO_CLASSES.get(entity_class, (entity_class,)))
     for name in level_names:
-        if entity_class == name or entity_class in _LEVEL_NAME_TO_CLASSES.get(name, ()):
+        have = set(_LEVEL_NAME_TO_CLASSES.get(name, (name,)))
+        if name == entity_class or (want & have):
             return name
     return None
 

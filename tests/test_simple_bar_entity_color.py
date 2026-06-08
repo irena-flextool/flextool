@@ -61,6 +61,16 @@ class TestResolveColorBarLevel:
     def test_no_class_returns_none(self):
         assert resolve_color_bar_level(["process"], None) is None
 
+    def test_group_meta_matches_group_and_node_group_levels(self):
+        # 'group' is a mixed hint (nodeGroup + flowGroup) — it matches a
+        # 'group' level and the reserve plot's 'node_group' level.
+        assert resolve_color_bar_level(["reserve", "updown", "group"], "group") == "group"
+        assert resolve_color_bar_level(
+            ["reserve", "updown", "node_group"], "group") == "node_group"
+
+    def test_node_group_level_does_not_match_unit(self):
+        assert resolve_color_bar_level(["reserve", "node_group"], "unit") is None
+
 
 # ---------------------------------------------------------------------------
 # _color_level_values — distinct values from columns or index
@@ -166,6 +176,19 @@ class TestBuildSimpleBarColorMap:
         assert cmap["u1"] == pytest.approx(to_rgb(RED))
         assert cmap["c1"] == pytest.approx(to_rgb(GREEN))
 
+    def test_group_resolves_against_node_and_flow_group(self):
+        # Post-split: a 'group' level mixes node groups and flow groups; each
+        # value resolves against its own class section.
+        df = pd.DataFrame(
+            [[1.0, 2.0]], index=pd.Index(["p0"], name="period"),
+            columns=pd.Index(["ng1", "fg1"], name="group"),
+        )
+        tpl = {"entities": {"nodeGroup": {"ng1": RED}, "flowGroup": {"fg1": GREEN}}}
+        cmap, level = build_simple_bar_color_map(df, "group", tpl)
+        assert level == "group"
+        assert cmap["ng1"] == pytest.approx(to_rgb(RED))
+        assert cmap["fg1"] == pytest.approx(to_rgb(GREEN))
+
 
 # ---------------------------------------------------------------------------
 # End-to-end render: bars take entity colors, not steelblue
@@ -265,7 +288,7 @@ class TestEndToEndColoring:
             index=pd.Index(["2020", "2021"], name="period"), columns=cols,
         )
         p = tmp_path / "plot_settings.yaml"
-        p.write_text("entities:\n  group:\n    g1: '%s'\n    g2: '%s'\n" % (RED, GREEN))
+        p.write_text("entities:\n  nodeGroup:\n    g1: '%s'\n    g2: '%s'\n" % (RED, GREEN))
         cfg = PlotConfig(
             plot_name="reserve", map_dimensions_for_plots=["d_eeg", "y_bbu"],
             color_entity_class="group",
@@ -290,7 +313,7 @@ class TestEndToEndColoring:
             index=idx, columns=pd.Index(["VRE_share", "inflow"], name="param"),
         )
         p = tmp_path / "plot_settings.yaml"
-        p.write_text("entities:\n  group:\n    g1: '%s'\n    g2: '%s'\n" % (RED, GREEN))
+        p.write_text("entities:\n  nodeGroup:\n    g1: '%s'\n    g2: '%s'\n" % (RED, GREEN))
         cfg = PlotConfig(
             plot_name="indicators", map_dimensions_for_plots=["gd_p", "fb_u"],
             color_entity_class="group",
