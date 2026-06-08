@@ -43,11 +43,22 @@ _ENTITY_CLASSES = ("group", "unit", "connection", "node")
 # Category subsections, in tab order.
 _CATEGORY_SECTIONS = ("costs", "node_flows", "nodegroup_flows", "dispatch")
 
-# Swatch geometry (pixels).  Two side-by-side boxes for entities, one for
-# categories / scenarios.
+# Swatch geometry (pixels).  Entity rows show two boxes (positive | gap |
+# negative); categories / scenarios show one.  ``_SWATCH_GAP`` separates the
+# two boxes; ``_SWATCH_PAD_L`` / ``_SWATCH_PAD_R`` inset the boxes from the
+# (indicator-less) cell edge and from the row name.
 _SWATCH_H = 14
-_SWATCH_W = 14  # width of ONE box; a composite (pos|neg) is twice this.
+_SWATCH_W = 14  # width of ONE box
+_SWATCH_GAP = 4  # transparent gap between the positive and negative boxes
+_SWATCH_PAD_L = 3  # small left inset
+_SWATCH_PAD_R = 6  # gap after the boxes, before the row name
 _SWATCH_BORDER = (0x80, 0x80, 0x80)  # gray 1px frame so swatches read on any bg
+
+
+def _swatch_width(two_box: bool) -> int:
+    """Total swatch image width for a two-box (entity) or single row."""
+    boxes = _SWATCH_W * 2 + _SWATCH_GAP if two_box else _SWATCH_W
+    return _SWATCH_PAD_L + boxes + _SWATCH_PAD_R
 
 
 def _to_rgb255(value) -> tuple[int, int, int]:
@@ -647,6 +658,8 @@ class PlotSettingsPicker(tk.Toplevel):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
+        self._tree_style = self._make_tree_style()
+
         # ── Notebook with one tab per present section ─────────────
         self._notebook = ttk.Notebook(self)
         self._notebook.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
@@ -749,7 +762,7 @@ class PlotSettingsPicker(tk.Toplevel):
         pos_rgb = _to_rgb255(pos)
         has_neg = neg is not None
         two_box = has_neg or reserve_neg
-        width = _SWATCH_W * 2 if two_box else _SWATCH_W
+        width = _swatch_width(two_box)
         img = tk.PhotoImage(width=width, height=_SWATCH_H)
 
         def _fill(x0: int, x1: int, rgb: tuple[int, int, int]) -> None:
@@ -763,11 +776,12 @@ class PlotSettingsPicker(tk.Toplevel):
                     )
                     img.put(border if edge else color, (x, y))
 
-        _fill(0, _SWATCH_W, pos_rgb)
+        _fill(_SWATCH_PAD_L, _SWATCH_PAD_L + _SWATCH_W, pos_rgb)
         if has_neg:
-            _fill(_SWATCH_W, _SWATCH_W * 2, _to_rgb255(neg))
-        # else: a reserved-but-unset negative half stays transparent, so the
-        # box is invisible while the column (and name alignment) is kept.
+            nx = _SWATCH_PAD_L + _SWATCH_W + _SWATCH_GAP
+            _fill(nx, nx + _SWATCH_W, _to_rgb255(neg))
+        # else: a reserved-but-unset negative box stays transparent, so it is
+        # invisible while the column (and name alignment) is kept.
 
         self._swatches.append(img)
         return img
@@ -834,6 +848,27 @@ class PlotSettingsPicker(tk.Toplevel):
         self._build_tabs()
 
     # ── Tab construction ──────────────────────────────────────────
+    def _make_tree_style(self) -> str:
+        """Return a Treeview style whose item layout drops the disclosure
+        indicator, so leaf rows start flush-left (no ~18px indent) — the
+        swatch carries its own small inset instead.  Falls back to the
+        default ``"Treeview"`` style if the layout override is rejected.
+        """
+        name = "PlotSettingsPicker.Treeview"
+        style = ttk.Style(self)
+        try:
+            style.layout(name, style.layout("Treeview"))
+            style.layout(
+                f"{name}.Item",
+                [("Treeitem.padding", {"sticky": "nswe", "children": [
+                    ("Treeitem.image", {"side": "left", "sticky": ""}),
+                    ("Treeitem.text", {"side": "left", "sticky": ""}),
+                ]})],
+            )
+        except tk.TclError:
+            return "Treeview"
+        return name
+
     def _build_tabs(self) -> None:
         """Create one tab per section present in the working dict."""
         entities = self._data.get("entities")
@@ -881,7 +916,9 @@ class PlotSettingsPicker(tk.Toplevel):
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
-        tree = ttk.Treeview(frame, show="tree", selectmode="browse")
+        tree = ttk.Treeview(
+            frame, show="tree", selectmode="browse", style=self._tree_style,
+        )
         tree.grid(row=0, column=0, sticky="nsew")
 
         vscroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)

@@ -147,7 +147,7 @@ class TestPickerBuild:
         column is reserved even for a bare entity (negative box transparent),
         and an entity with neg_color fills it.  Category / scenario rows have
         no negative concept → single box."""
-        from flextool.gui.dialogs.plot_settings_picker import _SWATCH_W
+        from flextool.gui.dialogs.plot_settings_picker import _swatch_width
 
         picker, _ = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
@@ -162,12 +162,26 @@ class TestPickerBuild:
                 name = name[0]
             return int(tk_root.tk.call(name, "cget", "-width"))
 
-        # Bare entity reserves the neg column (two boxes wide).
-        assert _img_width(unit, coal_iid) == _SWATCH_W * 2
-        # neg_color entity also two boxes wide (neg box drawn).
-        assert _img_width(unit, chp_iid) == _SWATCH_W * 2
-        # Category rows have no negative → single box.
-        assert _img_width(costs, co2_iid) == _SWATCH_W
+        # Bare entity reserves the neg column (two-box width).
+        assert _img_width(unit, coal_iid) == _swatch_width(True)
+        # neg_color entity also two-box width (neg box drawn).
+        assert _img_width(unit, chp_iid) == _swatch_width(True)
+        # Category rows have no negative → single-box width.
+        assert _img_width(costs, co2_iid) == _swatch_width(False)
+        # Two-box rows are wider than single (reserved gap + neg box).
+        assert _swatch_width(True) > _swatch_width(False)
+
+    def test_rows_start_flush_left_no_indicator(self, tk_root, tmp_path):
+        """The disclosure-indicator indent is removed (its ~18px is the
+        empty space on the left), so the swatch starts flush-left and
+        carries its own small inset instead."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        if picker._tree_style == "Treeview":
+            pytest.skip("custom Treeview layout unsupported in this Tk")
+        style = ttk.Style(picker)
+        layout = repr(style.layout(f"{picker._tree_style}.Item")).lower()
+        assert "indicator" not in layout  # the left-indent source is gone
+        assert "image" in layout
 
     def test_non_modal_no_grab(self, tk_root, tmp_path):
         """The picker must not grab input (usable alongside the viewer)."""
@@ -545,7 +559,7 @@ class TestPickerDoubleClickEdit:
     def test_entity_unlink_pick_writes_color_neg(
         self, tk_root, tmp_path, monkeypatch,
     ):
-        from flextool.gui.dialogs.plot_settings_picker import _SWATCH_W
+        from flextool.gui.dialogs.plot_settings_picker import _swatch_width
 
         picker, _ = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
@@ -559,7 +573,7 @@ class TestPickerDoubleClickEdit:
         assert sect["coal"] == {"color": "#111111", "neg_color": "#222222"}
         # Composite (two-box) swatch now attached.
         img = picker._row_swatches[(unit, coal)]
-        assert img.width() == _SWATCH_W * 2
+        assert img.width() == _swatch_width(True)
 
     def test_entity_with_neg_opens_unlinked(
         self, tk_root, tmp_path, monkeypatch,
@@ -579,7 +593,7 @@ class TestPickerDoubleClickEdit:
         assert neg_hex == "#9c3010"
 
     def test_relink_collapses_to_bare(self, tk_root, tmp_path, monkeypatch):
-        from flextool.gui.dialogs.plot_settings_picker import _SWATCH_W
+        from flextool.gui.dialogs.plot_settings_picker import _swatch_width
 
         picker, _ = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
@@ -594,8 +608,8 @@ class TestPickerDoubleClickEdit:
         assert sect["chp"] == "#abcdef"  # collapsed to bare
         img = picker._row_swatches[(unit, chp)]
         # Entity rows always reserve the (now transparent) negative column,
-        # so the image stays two boxes wide even after collapsing to bare.
-        assert img.width() == _SWATCH_W * 2
+        # so the image stays two-box width even after collapsing to bare.
+        assert img.width() == _swatch_width(True)
 
     def test_category_row_edits_bare_color(
         self, tk_root, tmp_path, monkeypatch,
