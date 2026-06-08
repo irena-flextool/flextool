@@ -571,6 +571,7 @@ plots:
       default:
         variant: p
         map_dimensions_for_plots: [d_ee, b_eu]
+        color_entity_class: unit
         ylabel: Node
         value_label: dynamic
         xlabel: MWh (annualized)
@@ -584,6 +585,7 @@ plots:
         plot_name: 'Flows: unit to node total'
         variant: a
         map_dimensions_for_plots: [d_ee, y_be]
+        color_entity_class: unit
         ylabel: Node
         value_label: dynamic
         xlabel: MWh (horizon total)
@@ -646,6 +648,7 @@ plots:
       default:
         variant: p
         map_dimensions_for_plots: [d_ee, b_eu]
+        color_entity_class: unit
         ylabel: Node
         xlabel: MWh (annualized)
         max_items_per_plot: 40
@@ -658,6 +661,7 @@ plots:
         plot_name: 'Flows: node to unit total'
         variant: a
         map_dimensions_for_plots: [d_ee, y_be]
+        color_entity_class: unit
         ylabel: Node
         xlabel: MWh (horizon total)
         axis_bounds: shared
@@ -722,6 +726,7 @@ plots:
         xlabel: MWh (annualized)
         ylabel: Connection
         map_dimensions_for_plots: [d_e, b_e]
+        color_entity_class: connection
         max_items_per_plot: 40
         max_subplots_per_file: 6
         subplots_per_row: 2
@@ -737,6 +742,7 @@ plots:
         xlabel: MWh (horizon total)
         ylabel: Connection
         map_dimensions_for_plots: [d_e, y_b]
+        color_entity_class: connection
         max_items_per_plot: 40
         max_subplots_per_file: 6
         subplots_per_row: 2

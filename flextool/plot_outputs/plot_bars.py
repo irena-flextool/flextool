@@ -328,6 +328,7 @@ def _build_bar_figure(
     layout: BarLayoutParams | None = None,
     shared_color_map: dict[str, tuple] | None = None,
     skip_data_with_only_zeroes: bool = False,
+    color_bar_level: str | None = None,
 ) -> plt.Figure | None:
     """Build a bar-chart Figure and return it (without saving or closing)."""
     # Calculate subplot grid
@@ -809,7 +810,9 @@ def _build_bar_figure(
                               bar_orientation, value_fmt,
                               y_positions=y_positions, slot_heights=per_bar_heights,
                               value_axis_lim=value_axis_lim,
-                              thickness_mult=thickness_mult)
+                              thickness_mult=thickness_mult,
+                              shared_color_map=shared_color_map,
+                              color_bar_level=color_bar_level)
 
         # Set up axis with groups and bars
         # Build bar labels for display (matching all_bars structure). The
@@ -1268,6 +1271,7 @@ def build_bar_figures(
 
     # Build shared color map
     shared_color_map = None
+    color_bar_level = None
     if (legend_position == 'shared' or category or entity_class) and (stack_levels or grouped_bar_levels):
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
@@ -1304,6 +1308,13 @@ def build_bar_figures(
             color_template=color_template,
             category=category,
             entity_class=entity_class,
+        )
+    elif entity_class and not (stack_levels or grouped_bar_levels):
+        # Simple bars: color by the level carrying entity_class (column or
+        # row index). Shared with the plan path for identical resolution.
+        from flextool.plot_outputs.plan import build_simple_bar_color_map
+        shared_color_map, color_bar_level = build_simple_bar_color_map(
+            df, effective_plots, entity_class, color_template,
         )
 
     # Compute layout
@@ -1403,6 +1414,7 @@ def build_bar_figures(
             value_fmt, axis_bounds, axis_tick_format,
             always_include_zero_in_axis,
             layout, shared_color_map, skip_data_with_only_zeroes,
+            color_bar_level=color_bar_level,
         )
         if fig is not None:
             result.append((batch_title, fig))
