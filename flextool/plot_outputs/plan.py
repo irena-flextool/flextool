@@ -1426,6 +1426,7 @@ def compute_plot_plans_for_result(
     from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config
     from flextool.plot_outputs.orchestrator import (
         _apply_dimension_rules, _resolve_shared_axis_bounds, _process_file_member,
+        reattach_file_level_for_color,
     )
     from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
     from flextool.plot_outputs.format_helpers import insert_timeline_breaks
@@ -1545,6 +1546,13 @@ def compute_plot_plans_for_result(
              fm_grouped_bar_levels, fm_stack_levels, fm_expand_axis_levels,
              fm_subplot_levels, fm_line_levels) = result
 
+            # Simple bar colored by the file-split entity: restore the file
+            # member's value so the whole file gets that group's color.
+            if chart_type == 'bar' and cfg.color_entity_class:
+                file_level_names = [df_processed.columns.names[i] for i in file_levels]
+                df_fm = reattach_file_level_for_color(
+                    df_fm, file_member, file_level_names, cfg.color_entity_class)
+
             # Apply skip_zeroes, multiply_by, timeline breaks
             if cfg.skip_data_with_only_zeroes:
                 df_fm = df_fm.loc[:, (df_fm.abs() > 1e-6).any()]
@@ -1619,6 +1627,7 @@ def compute_live_plan(
     """
     from flextool.plot_outputs.orchestrator import (
         _apply_dimension_rules, _resolve_shared_axis_bounds, _process_file_member,
+        reattach_file_level_for_color,
     )
     from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
     from flextool.plot_outputs.format_helpers import insert_timeline_breaks
@@ -1670,6 +1679,11 @@ def compute_live_plan(
     (df_fm, effective_plot_name, _member_str,
      fm_grouped_bar_levels, fm_stack_levels, fm_expand_axis_levels,
      fm_subplot_levels, fm_line_levels) = result
+
+    if chart_type == 'bar' and cfg.color_entity_class:
+        file_level_names = [df_processed.columns.names[i] for i in file_levels]
+        df_fm = reattach_file_level_for_color(
+            df_fm, file_member, file_level_names, cfg.color_entity_class)
 
     if cfg.skip_data_with_only_zeroes:
         df_fm = df_fm.loc[:, (df_fm.abs() > 1e-6).any()]

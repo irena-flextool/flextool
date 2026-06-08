@@ -598,6 +598,40 @@ def _process_file_member(
             fm_subplot_levels, fm_line_levels)
 
 
+def reattach_file_level_for_color(
+    df_fm, file_member, file_level_names, entity_class,
+):
+    """Re-add the file-split level when a simple bar is colored by it.
+
+    A ``f``-role entity (e.g. NodeGroup indicators — one file per node group)
+    is dropped by ``_process_file_member`` before the bar renderer sees it,
+    so all bars in a file would render in the default color. When
+    ``entity_class`` resolves to a file level, re-attach the file member's
+    value as a constant (innermost) column level so the simple-bar color
+    machinery treats it like any surviving level: the whole file gets that
+    group's color — same as a subplot. No-op otherwise.
+    """
+    if file_member is None or not entity_class or not file_level_names:
+        return df_fm
+    from flextool.plot_outputs.plan import resolve_color_bar_level
+    if not resolve_color_bar_level(file_level_names, entity_class):
+        return df_fm
+    vals = list(file_member) if isinstance(file_member, tuple) else [file_member]
+    if len(vals) != len(file_level_names):
+        return df_fm
+    cols = df_fm.columns
+    if not isinstance(cols, pd.MultiIndex):
+        cols = pd.MultiIndex.from_arrays([cols], names=[cols.name])
+    arrays = [cols.get_level_values(i) for i in range(cols.nlevels)]
+    names = list(cols.names)
+    for nm, v in zip(file_level_names, vals):
+        arrays.append([v] * len(df_fm.columns))
+        names.append(nm)
+    df_fm = df_fm.copy()
+    df_fm.columns = pd.MultiIndex.from_arrays(arrays, names=names)
+    return df_fm
+
+
 def prepare_plot_data(
     df: pd.DataFrame,
     plot_config: PlotConfig,
@@ -686,6 +720,13 @@ def prepare_plot_data(
         (df_fm, effective_plot_name, member_str,
          fm_grouped_bar_levels, fm_stack_levels, fm_expand_axis_levels,
          fm_subplot_levels, fm_line_levels) = fm_result
+
+        # Simple bar colored by the file-split entity: restore the file
+        # member's value so the whole file gets that group's color.
+        if chart_type == 'bar' and color_entity_class:
+            file_level_names = [df_processed.columns.names[i] for i in file_levels]
+            df_fm = reattach_file_level_for_color(
+                df_fm, file_member, file_level_names, color_entity_class)
 
         # Drop near-zero columns and rows when skip_data_with_only_zeroes is enabled
         if cfg.skip_data_with_only_zeroes:

@@ -277,6 +277,31 @@ class TestEndToEndColoring:
         assert tuple(round(c, 3) for c in to_rgb(GREEN)) in colors
         assert tuple(round(c, 3) for c in STEELBLUE_RGB) not in colors
 
+    def test_file_level_colors_each_file(self, tmp_path):
+        # NodeGroup-indicators shape: the node group is the FILE-split dim
+        # (one file per group), parameter is the subplot, period is the bar.
+        # Each file's bars take that group's color.
+        idx = pd.MultiIndex.from_tuples(
+            [("g1", "2020"), ("g1", "2021"), ("g2", "2020"), ("g2", "2021")],
+            names=["group", "period"],
+        )
+        df = pd.DataFrame(
+            np.array([[0.3, 10.0], [0.4, 11.0], [0.5, 12.0], [0.6, 13.0]]),
+            index=idx, columns=pd.Index(["VRE_share", "inflow"], name="param"),
+        )
+        p = tmp_path / "plot_settings.yaml"
+        p.write_text("entities:\n  group:\n    g1: '%s'\n    g2: '%s'\n" % (RED, GREEN))
+        cfg = PlotConfig(
+            plot_name="indicators", map_dimensions_for_plots=["gd_p", "fb_u"],
+            color_entity_class="group",
+        )
+        figures, total = prepare_plot_data(df, cfg, plot_name="indicators", color_path=p)
+        assert total == 2  # one file per group
+        colors = _bar_facecolors(figures)
+        assert tuple(round(c, 3) for c in to_rgb(RED)) in colors
+        assert tuple(round(c, 3) for c in to_rgb(GREEN)) in colors
+        assert tuple(round(c, 3) for c in STEELBLUE_RGB) not in colors
+
     def test_process_variant_colors_units_and_connections(self, tmp_path):
         # process_co2 shape: a 'process' bar level mixing a unit and a
         # connection; color_entity_class: process resolves each against its
