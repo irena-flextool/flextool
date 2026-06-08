@@ -1223,6 +1223,31 @@ class TestColorPickerDialogKeys:
         assert oks and str(oks[0].cget("default")) == "active"
         dlg._on_cancel()
 
+    def test_grab_not_viewable_does_not_abort_construction(
+        self, tk_root, monkeypatch,
+    ):
+        """A ``grab_set`` that fails because the window is not yet viewable
+        must NOT propagate out of ``__init__`` — otherwise the whole color
+        edit aborts and nothing is saved (the real-WM crash).  The grab is
+        retried on the event loop instead."""
+        from flextool.gui.dialogs.plot_settings_picker import ColorPickerDialog
+
+        calls = {"n": 0}
+        orig = tk.Toplevel.grab_set
+
+        def flaky(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise tk.TclError("grab failed: window not viewable")
+            return orig(self)
+
+        monkeypatch.setattr(tk.Toplevel, "grab_set", flaky)
+        # Must construct cleanly despite the first grab_set raising.
+        dlg = ColorPickerDialog(tk_root, "coal", "#212121", "#212121", True)
+        assert dlg.winfo_exists()
+        assert calls["n"] >= 1
+        dlg._on_cancel()
+
 
 class TestPickerKeyboardEdit:
     def test_enter_on_row_opens_editor(self, tk_root, tmp_path, monkeypatch):

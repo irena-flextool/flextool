@@ -176,10 +176,10 @@ class ColorPickerDialog(tk.Toplevel):
         ttk.Button(btns, text="Cancel", command=self._on_cancel).pack(
             side="right", padx=(5, 0),
         )
-        ok_button = ttk.Button(
+        self._ok_button = ttk.Button(
             btns, text="OK", command=self._on_ok, default="active",
         )
-        ok_button.pack(side="right")
+        self._ok_button.pack(side="right")
 
         self._refresh()
         # Enter accepts (OK) from anywhere in the dialog; OK is the default
@@ -188,9 +188,29 @@ class ColorPickerDialog(tk.Toplevel):
         self.bind("<Escape>", lambda _e: self._on_cancel())
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
-        # Modal: grab input and block until closed.
-        self.grab_set()
-        ok_button.focus_set()
+        # Modal: grab input once the window is viewable (see below).
+        self._grab_when_viewable()
+
+    def _grab_when_viewable(self) -> None:
+        """Acquire the modal grab as soon as the window is mapped.
+
+        ``grab_set`` on a not-yet-mapped Toplevel raises ``"grab failed:
+        window not viewable"`` under some window managers (the Toplevel is
+        created but the WM hasn't mapped it yet).  Retry on the Tk event
+        loop until it maps, then take keyboard focus on OK (the Enter
+        target).  Guarded against a window destroyed before it ever mapped.
+        """
+        if not self.winfo_exists():
+            return
+        try:
+            self.grab_set()
+        except tk.TclError:
+            self.after(20, self._grab_when_viewable)
+            return
+        try:
+            self._ok_button.focus_set()
+        except tk.TclError:
+            pass
 
     def _refresh(self) -> None:
         """Sync the two swatches and the negative control's enabled state."""
