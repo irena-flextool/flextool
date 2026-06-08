@@ -47,8 +47,10 @@ def _build_input_db(
     classification (nodeGroup vs flowGroup) is derived from these.  An extra
     irrelevant class is always present to prove filtering.
 
-    Groups in *entities* with no membership default to nodeGroup; pass the
-    matching ``group__*`` membership to make a group a flowGroup.
+    Classification is membership-driven: pass ``group__node`` membership to
+    make a group a nodeGroup, or a ``group__unit*`` / ``group__connection*``
+    membership to make it a flowGroup.  A group with NO membership belongs to
+    neither bucket and is dropped.
     """
     memberships = memberships or {}
     url = "sqlite:///" + str(path)
@@ -144,6 +146,24 @@ def test_group_without_flow_membership_is_nodegroup(tmp_path):
     )
     result = fetch_entities_by_class(url)
     assert result["nodeGroup"] == ["plain"]
+    assert "flowGroup" not in result
+
+
+def test_group_without_any_membership_is_dropped(tmp_path):
+    """A group with neither node nor flow membership (e.g. ``oil`` /
+    ``pumphydro`` with no ``group__node`` / ``group__unit*`` /
+    ``group__connection*`` entries) has nothing to colour and must NOT appear
+    in nodeGroup (nor flowGroup)."""
+    url = _build_input_db(
+        tmp_path / "in.sqlite",
+        {"group": ["oil", "pumphydro", "elec"], "node": ["n1"]},
+        # Only "elec" is a real nodeGroup; oil/pumphydro have no membership.
+        memberships={"group__node": [("elec", "n1")]},
+    )
+    result = fetch_entities_by_class(url)
+    assert result["nodeGroup"] == ["elec"]
+    assert "oil" not in result.get("nodeGroup", [])
+    assert "pumphydro" not in result.get("nodeGroup", [])
     assert "flowGroup" not in result
 
 

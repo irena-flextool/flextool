@@ -48,14 +48,21 @@ logger = logging.getLogger(__name__)
 RELEVANT_ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
 
 # SpineDB membership relationship classes that make a ``group`` a flowGroup
-# (it aggregates FLOWS).  A group with none of these is a nodeGroup (a
-# collection of nodes — typically ``group__node``).  The group is the FIRST
-# element of the membership entity's byname.
+# (it aggregates FLOWS).  The group is the FIRST element of the membership
+# entity's byname.
 _FLOWGROUP_MEMBERSHIP_CLASSES = (
     "group__unit__node",
     "group__unit",
     "group__connection__node",
     "group__connection",
+)
+
+# SpineDB membership relationship class that makes a ``group`` a nodeGroup
+# (a collection of nodes — the dispatch subject).  A group with NO membership
+# of any kind (neither node nor flow) belongs to NEITHER list and is dropped:
+# it has no entities to colour.
+_NODEGROUP_MEMBERSHIP_CLASSES = (
+    "group__node",
 )
 
 
@@ -71,8 +78,10 @@ def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
     queries per scenario / alternative — one fetch returns everything.
 
     Classification: a group appearing in any
-    :data:`_FLOWGROUP_MEMBERSHIP_CLASSES` membership is a **flowGroup**;
-    every other group is a **nodeGroup**.
+    :data:`_FLOWGROUP_MEMBERSHIP_CLASSES` membership is a **flowGroup**; a
+    group with :data:`_NODEGROUP_MEMBERSHIP_CLASSES` (``group__node``)
+    membership but no flow membership is a **nodeGroup**.  A group with no
+    membership of any kind has nothing to colour and is dropped from both.
 
     The base pattern mirrors
     :func:`flextool.export_to_tabular.db_reader._read_entities`
@@ -83,6 +92,7 @@ def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
     connections: set[str] = set()
     nodes: set[str] = set()
     flow_group_names: set[str] = set()
+    node_group_names: set[str] = set()
 
     db = DatabaseMapping(db_url, create=False)
     try:
@@ -100,11 +110,20 @@ def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
                 byname = item.get("entity_byname")
                 if byname:
                     flow_group_names.add(byname[0])  # group is the 1st member
+            elif cls in _NODEGROUP_MEMBERSHIP_CLASSES:
+                byname = item.get("entity_byname")
+                if byname:
+                    node_group_names.add(byname[0])  # group is the 1st member
     finally:
         db.close()
 
     by_class: dict[str, list[str]] = {
-        "nodeGroup": sorted(g for g in groups if g not in flow_group_names),
+        # A group lands in nodeGroup only if it actually has node members and
+        # no flow members; membership-less groups appear in neither list.
+        "nodeGroup": sorted(
+            g for g in groups
+            if g in node_group_names and g not in flow_group_names
+        ),
         "flowGroup": sorted(g for g in groups if g in flow_group_names),
         "unit": sorted(units),
         "connection": sorted(connections),
