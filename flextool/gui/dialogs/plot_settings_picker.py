@@ -690,7 +690,7 @@ class PlotSettingsPicker(tk.Toplevel):
             text=(
                 "Enter: edit selected row    "
                 "Alt+↑ / Alt+↓: move row    drag: reorder\n"
-                "Ctrl+Enter: apply to open plot    "
+                "Ctrl+Enter: Apply    "
                 "Ctrl+Z: undo    Ctrl+Y: redo    Esc: close"
             ),
             foreground="gray",
@@ -911,6 +911,13 @@ class PlotSettingsPicker(tk.Toplevel):
         tree.bind("<Alt-Down>", self._on_key_move_down)
         tree.bind("<Double-Button-1>", self._on_row_double_click)
         tree.bind("<Return>", self._on_row_return)
+        tree.bind("<FocusIn>", self._on_tree_focus_in)
+        # Ctrl+Enter must Apply even with the tree focused: the plain
+        # ``<Return>`` (no-modifier) binding above otherwise also matches a
+        # Ctrl+Return and consumes it (returns "break"), so bind the more
+        # specific accelerator on the tree too — it wins on this widget.
+        tree.bind("<Control-Return>", self._on_apply_shortcut)
+        tree.bind("<Control-KP_Enter>", self._on_apply_shortcut)
 
         self._notebook.add(frame, text=title)
 
@@ -1046,6 +1053,31 @@ class PlotSettingsPicker(tk.Toplevel):
             tree.selection_set(item)
             tree.focus(item)
             tree.see(item)
+
+    def _on_apply_shortcut(self, _event: tk.Event | None = None) -> str:
+        """Ctrl+Enter from a tree → Apply (write + re-render), consume key."""
+        self._on_apply_clicked()
+        return "break"
+
+    def _on_tree_focus_in(self, event: tk.Event) -> None:
+        """Activate a row when the tree gains focus (e.g. via Tab).
+
+        Without an active row the arrow / Alt-arrow keys have nothing to act
+        on.  Tk's item-focus persists across focus changes, so reuse the
+        last-active row when it still exists, otherwise activate the first.
+        """
+        tree = event.widget
+        if tree not in self._tree_section:
+            return
+        item = tree.focus()
+        if not item or not tree.exists(item):
+            children = tree.get_children("")
+            if not children:
+                return
+            item = children[0]
+        tree.focus(item)
+        tree.selection_set(item)
+        tree.see(item)
 
     def _on_row_return(self, event: tk.Event) -> str:
         """Enter on a row opens its color editor (keyboard parity with the

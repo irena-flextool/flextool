@@ -1318,10 +1318,52 @@ class TestPickerApplyShortcut:
         picker, _ = _make_picker(tk_root, tmp_path)
         # Ctrl+Enter is bound at the window level (→ tool Apply).
         assert picker.bind("<Control-Return>") != ""
-        # Plain Enter on a row still edits, not applies (distinct binding).
+        # AND on the tree, so it wins over the tree's plain <Return> (edit)
+        # when the tree is focused (no-modifier binding also matches Ctrl).
         titles = _tab_titles(picker)
         unit = _tree_in_tab(picker, titles.index("unit"))
         assert unit.bind("<Return>") != ""
+        assert unit.bind("<Control-Return>") != ""
+
+    def test_ctrl_enter_on_tree_applies_not_edits(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        calls = {"apply": 0, "edit": 0}
+        picker, _ = _make_picker(
+            tk_root, tmp_path, on_apply=lambda: calls.__setitem__(
+                "apply", calls["apply"] + 1),
+        )
+        monkeypatch.setattr(
+            picker, "_edit_row_color",
+            lambda *a, **k: calls.__setitem__("edit", calls["edit"] + 1),
+        )
+        # The tree's Ctrl+Enter handler must Apply, not open the editor.
+        assert picker._on_apply_shortcut() == "break"
+        assert calls == {"apply": 1, "edit": 0}
+
+    def test_focus_in_activates_first_row_when_none(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        # Nothing active yet (never clicked / never tabbed in).
+        assert unit.focus() == ""
+        picker._on_tree_focus_in(types.SimpleNamespace(widget=unit))
+        first = unit.get_children("")[0]
+        assert unit.focus() == first
+        assert first in unit.selection()
+
+    def test_focus_in_keeps_last_active_row(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        last = unit.get_children("")[1]  # second row was active last
+        unit.focus(last)
+        picker._on_tree_focus_in(types.SimpleNamespace(widget=unit))
+        # The previously-active row is reused, not reset to the first.
+        assert unit.focus() == last
+        assert last in unit.selection()
 
     def test_hint_label_is_two_rows(self, tk_root, tmp_path):
         picker, _ = _make_picker(tk_root, tmp_path)
