@@ -120,6 +120,7 @@ plots:
         variant: a
         value_label: dynamic
         map_dimensions_for_plots: [d_e, y_b]
+        color_entity_class: node
         xlabel: MWh (horizon total)
         ylabel: Node
         skip_data_with_only_zeroes: true
@@ -186,6 +187,7 @@ plots:
         variant: a
         value_label: dynamic
         map_dimensions_for_plots: [d_e, y_b]
+        color_entity_class: node
         xlabel: MWh (horizon total)
         ylabel: Node
         skip_data_with_only_zeroes: true
@@ -338,6 +340,7 @@ plots:
         plot_name: 'Lack of inertia total'
         variant: a
         map_dimensions_for_plots: [d_g, y_b]
+        color_entity_class: group
         ylabel: NodeGroup
         xlabel: MWs (horizon total)
         skip_data_with_only_zeroes: true
@@ -394,6 +397,7 @@ plots:
         plot_name: 'Lack of nonsynchronous sources total'
         variant: a
         map_dimensions_for_plots: [d_g, y_b]
+        color_entity_class: group
         ylabel: NodeGroup
         xlabel: MWh (horizon total)
         skip_data_with_only_zeroes: true
@@ -421,6 +425,7 @@ plots:
         plot_name: 'Violation of capacity margin average'
         variant: a
         map_dimensions_for_plots: [d_g, z_b]
+        color_entity_class: group
         ylabel: NodeGroup
         xlabel: MW (weighted average)
         skip_data_with_only_zeroes: true
@@ -451,6 +456,7 @@ plots:
         plot_name: 'Curtail. amount total'
         variant: a
         map_dimensions_for_plots: [d_ee, y_bb]
+        color_entity_class: unit
         value_label: dynamic
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
@@ -509,6 +515,7 @@ plots:
         variant: p
         value_label: '.0%'
         map_dimensions_for_plots: [d_ee, b_eu]
+        color_entity_class: unit
         skip_data_with_only_zeroes: true
         subplots_per_row: 2
         max_subplots_per_file: 4
@@ -801,6 +808,7 @@ plots:
       debug:
         variant: p
         map_dimensions_for_plots: [d_ee, b_eu]
+        color_entity_class: connection
         max_items_per_plot: 40
         max_subplots_per_file: 6
         subplots_per_row: 2
@@ -866,6 +874,7 @@ plots:
       debug:
         variant: p
         map_dimensions_for_plots: [d_ee, b_eu]
+        color_entity_class: connection
         max_items_per_plot: 40
         max_subplots_per_file: 8
         skip_data_with_only_zeroes: true
@@ -1149,6 +1158,7 @@ plots:
       default:
         variant: p
         map_dimensions_for_plots: [d_e, b_e]
+        color_entity_class: node
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1165,6 +1175,7 @@ plots:
       default:
         variant: p
         map_dimensions_for_plots: [d_e, b_e]
+        color_entity_class: unit
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1181,6 +1192,7 @@ plots:
       default:
         variant: p
         map_dimensions_for_plots: [d_e, b_e]
+        color_entity_class: connection
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1224,6 +1236,7 @@ plots:
         plot_name: 'Emissions CO2 per nodeGroup total'
         variant: a
         map_dimensions_for_plots: [d_g, y_b]
+        color_entity_class: group
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1436,6 +1449,7 @@ plots:
         plot_name: 'NodeGroup VRE share average'
         variant: a
         map_dimensions_for_plots: [d_g, z_b]
+        color_entity_class: group
         legend: shared
         subplots_per_row: 1
         max_items_per_plot: 40
@@ -1736,6 +1750,7 @@ plots:
       default:
         variant: p
         map_dimensions_for_plots: [d_ee, b_ee]
+        color_entity_class: unit
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
@@ -1746,6 +1761,7 @@ plots:
       sum_periods:
         variant: a
         map_dimensions_for_plots: [d_ee, z_eb]
+        color_entity_class: unit
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
@@ -1760,6 +1776,7 @@ plots:
       default:
         variant: p
         map_dimensions_for_plots: [d_ee, b_ee]
+        color_entity_class: unit
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
@@ -1770,6 +1787,7 @@ plots:
       sum_periods:
         variant: a
         map_dimensions_for_plots: [d_ee, z_eb]
+        color_entity_class: unit
         max_items_per_plot: 40
         max_subplots_per_file: 8
         subplots_per_row: 2
@@ -1814,6 +1832,7 @@ plots:
         plot_name: 'Unit online average'
         variant: a
         map_dimensions_for_plots: [d_e, z_b]
+        color_entity_class: unit
         max_items_per_plot: 40
         xlabel: units online (weighted average)
         scenario_rule: g
@@ -1882,6 +1901,7 @@ plots:
         plot_name: 'Unit startup total'
         variant: a
         map_dimensions_for_plots: [d_e, y_b]
+        color_entity_class: unit
         max_items_per_plot: 40
         xlabel: starts (horizon total)
         scenario_rule: g
@@ -1906,6 +1926,7 @@ plots:
         variant: a
         xlabel: MWh (horizon total)
         map_dimensions_for_plots: [d_e, y_b]
+        color_entity_class: connection
         max_items_per_plot: 40
         scenario_rule: g
         comparison_overrides:
@@ -1950,6 +1971,7 @@ plots:
         plot_name: 'Connection cf average'
         variant: a
         map_dimensions_for_plots: [d_e, z_b]
+        color_entity_class: connection
         max_items_per_plot: 40
         axis_bounds: [0, 1]
         axis_tick_format: '.0%'
@@ -2031,6 +2053,7 @@ plots:
       debug:
         variant: p
         map_dimensions_for_plots: [d_ee, e_bu]
+        color_entity_class: unit
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
