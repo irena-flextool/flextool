@@ -90,6 +90,7 @@ def build_shared_color_map(
     color_template: dict | None = None,
     category: str | None = None,
     entity_class: str | None = None,
+    scenario: bool = False,
 ) -> dict[str, tuple]:
     """Assign consistent colors to a list of labels.
 
@@ -112,10 +113,11 @@ def build_shared_color_map(
     # "fall back to palette".
     template_colors: list[tuple | None] = [None] * n
     palette_needed = n
-    if color_template and (category or entity_class):
+    if color_template and (category or entity_class or scenario):
         for i, label in enumerate(labels):
             c = resolve_label_color(
-                label, color_template, category=category, entity_class=entity_class,
+                label, color_template, category=category,
+                entity_class=entity_class, scenario=scenario,
             )
             if c is not None:
                 template_colors[i] = c

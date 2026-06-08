@@ -765,9 +765,18 @@ def _compute_time_plan(
     if not effective_plots:
         return None
 
-    # Build shared color map
+    # Build shared color map. When the colored (legend) series IS the
+    # scenario dim — comparison plots with scenario_rule 'l'/'s' — color it
+    # from the project's scenarios section instead of the entity/category
+    # hint (which describes a different, non-legend dim here).
     shared_color_map = None
-    if (cfg.legend == 'shared' or cfg.color_category or cfg.color_entity_class) and item_level_names:
+    use_scenario = (
+        len(item_level_names) == 1 and str(item_level_names[0]) == 'scenario'
+    )
+    if (cfg.legend == 'shared' or cfg.color_category or cfg.color_entity_class
+            or use_scenario) and item_level_names:
+        cat = None if use_scenario else cfg.color_category
+        ent = None if use_scenario else cfg.color_entity_class
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
             for item in _get_column_items(df_sub, item_level_names):
@@ -777,16 +786,12 @@ def _compute_time_plan(
         template = load_color_template(color_path)
         # Listed labels first in file order; unlisted appended alphabetically.
         all_labels = order_labels_by_template(
-            all_labels,
-            template,
-            category=cfg.color_category,
-            entity_class=cfg.color_entity_class,
+            all_labels, template,
+            category=cat, entity_class=ent, scenario=use_scenario,
         )
         shared_color_map = build_shared_color_map(
-            all_labels,
-            color_template=template,
-            category=cfg.color_category,
-            entity_class=cfg.color_entity_class,
+            all_labels, color_template=template,
+            category=cat, entity_class=ent, scenario=use_scenario,
         )
 
     # Compute layout
@@ -1195,10 +1200,19 @@ def _compute_bar_plan(
     if not effective_plots:
         return None
 
-    # Build shared color map
+    # Build shared color map. When the colored (legend) series IS the
+    # scenario dim — comparison plots with scenario_rule 'g'/'s' — color it
+    # from the scenarios section rather than the entity/category hint.
     shared_color_map = None
     color_bar_level: str | None = None
-    if (cfg.legend == 'shared' or cfg.color_category or cfg.color_entity_class) and (stack_levels or grouped_bar_levels):
+    colored_names = grouped_bar_level_names if grouped_bar_levels else stack_level_names
+    use_scenario = (
+        len(colored_names) == 1 and str(colored_names[0]) == 'scenario'
+    )
+    if (cfg.legend == 'shared' or cfg.color_category or cfg.color_entity_class
+            or use_scenario) and (stack_levels or grouped_bar_levels):
+        cat = None if use_scenario else cfg.color_category
+        ent = None if use_scenario else cfg.color_entity_class
         all_labels: list[str] = []
         for _, df_sub in effective_plots:
             if grouped_bar_levels:
@@ -1225,16 +1239,12 @@ def _compute_bar_plan(
         template = load_color_template(color_path)
         # Listed labels first in file order; unlisted appended alphabetically.
         all_labels = order_labels_by_template(
-            all_labels,
-            template,
-            category=cfg.color_category,
-            entity_class=cfg.color_entity_class,
+            all_labels, template,
+            category=cat, entity_class=ent, scenario=use_scenario,
         )
         shared_color_map = build_shared_color_map(
-            all_labels,
-            color_template=template,
-            category=cfg.color_category,
-            entity_class=cfg.color_entity_class,
+            all_labels, color_template=template,
+            category=cat, entity_class=ent, scenario=use_scenario,
         )
     elif cfg.color_entity_class and not (stack_levels or grouped_bar_levels):
         # Simple bars: no role char designates a colored level, so resolve
