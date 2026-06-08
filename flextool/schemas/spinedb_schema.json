@@ -1618,7 +1618,7 @@
       "inflow_method",
       "use_original",
       "inflow_methods",
-      "Choice how to treat inflow time series. Empty defaults to 'use_original', which does not scale the time series. 'no_inflow' ignores the inflow time series. 'scale_to_annual_flow' will scale the time series to match the 'annual_flow' so that the sum of inflow is multiplied by 8760/'hours_in_solve'. 'scale_in_proprotion' calculates a scaling factor by dividing 'annual_flow' with the sum of time series inflow (after it has been annualized using 'timeline_duration_in_years'). 'scale_to_annual_and_peak_flow' scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'.",
+      "Choice how to treat inflow time series. Empty defaults to 'use_original', which does not scale the time series. 'no_inflow' ignores the inflow time series. 'scale_to_annual_flow' scales the inflow time series by a single factor (shape preserved) so its annual energy equals 'annual_flow'. The annualisation uses each timestep's share of the year: for a full or evenly sampled timeline this is 8760/'hours_in_solve' (every step weighted equally); for a representative timeset with 'timeset_weights', each timestep is weighted by its declared share of the year, so a biased sample of timesteps still annualises correctly. The same weighting is used for energy reporting and operating-cost accounting, so the energy the model is scaled to serve, reports, and costs all coincide. If 'timeset_weights' do not reflect the true representativeness of your selected timesteps, the scaling factor - and therefore the absolute demand level - shifts accordingly; see the per-node 'f' diagnostic (inflow_scaling_diagnostics.csv). 'scale_in_proprotion' calculates a scaling factor by dividing 'annual_flow' with the sum of time series inflow (after it has been annualized using 'timeline_duration_in_years'). (With a representative timeset, the annual-energy match uses 'timeset_weights' as above.) 'scale_to_annual_and_peak_flow' scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'. (With a representative timeset, the annual-energy match uses 'timeset_weights' as above; the peak match stays unweighted.)",
       "basics"
     ],
     [
@@ -2138,7 +2138,7 @@
       "timeset_duration",
       null,
       null,
-      "Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps",
+      "Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps. Defines the *selection*: which timesteps are in the solve and how many (this sets 'hours_in_solve'). Representativeness - each timestep's share of the year - is set separately by 'timeset_weights'.",
       "timeline"
     ],
     [
@@ -2146,7 +2146,7 @@
       "timeset_weights",
       null,
       null,
-      "Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset.",
+      "Per-timestep weight map (index: timestep name, value: float) defining *representativeness*: each timestep's share of the year. Drives the annualisation of demand, energy, and cost alike (the inflow scaling, the annual energy outputs, and the operating-cost objective all use this same weight), so the energy the model is scaled to serve, reports, and costs all coincide. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset.",
       "timeline"
     ],
     [

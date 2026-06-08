@@ -13,6 +13,13 @@ Output CSVs (6 emitted — the 6 with a downstream consumer):
 
 These feed ``derive_pdtNodeInflow`` (5) and the lp-scaling emitter (1).
 
+One further standalone diagnostic CSV is emitted alongside (NOT part of
+the parity-gated 6, no LP consumer):
+
+* ``inflow_scaling_diagnostics.csv`` — (node, period, inflow_method,
+  annual_flow, f, level_shift_pct), the Part-B annualisation-divergence
+  ``f`` diagnostic.  See ``_compute_inflow_scaling_diagnostics``.
+
 The 9 internal middle parameters that used to be emitted as scratch CSVs
 — ``orig_flow_sum``, ``period_share_of_annual_flow``, ``new_peak_sign``,
 ``old_peak_max``, ``old_peak_min``, ``old_peak_sign``,
@@ -44,6 +51,7 @@ parity with the legacy emitter.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import polars as pl
@@ -53,6 +61,17 @@ from flextool.engine_polars._emit_provider_io import (
     _provider_key,
 )
 from flextool.engine_polars._vectorize import _render_value_column
+
+_logger = logging.getLogger(__name__)
+
+# Scaling inflow methods whose annualisation depends on the per-(d, t)
+# representative weight ``w = p_rp_cost_weight``.  ``use_original`` /
+# ``no_inflow`` do not annualise, so they carry no f diagnostic.
+_SCALING_METHODS = (
+    "scale_to_annual_flow",
+    "scale_in_proportion",
+    "scale_to_annual_and_peak_flow",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1210,6 +1229,160 @@ def _compute_inflow_scaling_frames_vectorized(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Part B — the ``f`` annualisation-divergence diagnostic.
+#
+# For every scaling node ``n`` and period ``d`` report the factor by which an
+# even-sample annualisation and the representative-weight annualisation
+# disagree:
+#
+#     f[n, d] = ( Σ_{t in dt_complete[d]} I[n, t] )
+#               / ( Σ_{t in dt_complete[d]} I[n, t]·w[d, t] )
+#             = multiplier_new / multiplier_old
+#
+# ``f == 1.0`` exactly when the weights are uniform/absent (``w ≡ 1.0``).
+# This is a PURE diagnostic: it never enters the LP and is NOT added to the
+# scaling frames returned by ``_compute_inflow_scaling_frames*`` (the parity
+# gate asserts those return EXACTLY the 6 consumed keys).  It is emitted as a
+# standalone ``solve_data/inflow_scaling_diagnostics.csv`` frame on the
+# Provider (surfaced by ``--csv-dump`` like the other solve_data artifacts),
+# and a WARNING is logged for any (n, d) whose timeset carries non-uniform
+# weights and whose ``|f - 1| > 0.01``.
+# ---------------------------------------------------------------------------
+
+
+def _compute_inflow_scaling_diagnostics(
+    input_dir: Path, solve_data_dir: Path,
+    *, provider: "object | None" = None,
+) -> tuple[pl.DataFrame, list[tuple[str, str, float]]]:
+    """Compute the per-(node, period) ``f`` diagnostic.
+
+    Reads the same sources as the scaling compute (nodes, periods,
+    inflow methods, the merged per-(n, t) inflow series, the
+    representative weight ``w[(d, t)]`` and ``annual_flow``).  Returns a
+    two-tuple ``(frame, warnings)`` where:
+
+    * ``frame`` carries one row per scaling (node, period) with columns
+      ``node, period, inflow_method, annual_flow, f, level_shift_pct``
+      (``level_shift_pct = 100·(f - 1)``).  ``inflow_method`` is the set of
+      scaling methods authored on the node joined by ``+`` (a node may
+      legitimately carry more than one).
+    * ``warnings`` is the subset of ``(node, period, f)`` for which the
+      node's period carries NON-UNIFORM weights AND ``|f - 1| > 0.01`` —
+      the rows the caller logs at WARNING level.
+
+    Guards mirror the scaling code: a (node, period) whose weighted
+    denominator is 0 (an all-zero / cancelling profile under the weights)
+    is reported with ``f = 1.0`` (no divergence to flag) rather than
+    dividing by zero; the same when the unweighted numerator is 0.
+    """
+    # ── Sources (subset of the scaling reader block) ───────────────────
+    nodes = _read_singles(input_dir / "node.csv", provider=provider)
+    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
+                                   provider=provider)
+    time_set = _read_singles(solve_data_dir / "time.csv", provider=provider)
+    p_node = _read_keyed2_float(input_dir / "p_node.csv", provider=provider)
+    pt_node_inflow = _read_keyed2_float(
+        solve_data_dir / "pt_node_inflow.csv", provider=provider,
+    )
+    node_time_inflow = frozenset(_read_pairs(
+        solve_data_dir / "pt_node_inflow.csv", provider=provider,
+    ))
+
+    inflow_method = _read_pairs(solve_data_dir / "node__inflow_method.csv",
+                                provider=provider)
+    methods_for_node: dict[str, set[str]] = {}
+    for n, m in inflow_method:
+        methods_for_node.setdefault(n, set()).add(m)
+
+    pdNode = _read_keyed3_float(solve_data_dir / "pdNode.csv", provider=provider)
+
+    # Representative weight w[(d, t)] = p_rp_cost_weight[d, t]; DEFAULT 1.0
+    # for any (d, t) absent → f == 1.0 when weights are uniform/absent.
+    w_dt = _read_keyed2_float(
+        solve_data_dir / "rp_cost_weight.csv", provider=provider,
+    )
+
+    # dt_complete from steps_complete_solve.csv — (period, step) pairs.
+    dt_complete_pairs = _read_pairs(
+        solve_data_dir / "steps_complete_solve.csv",
+        provider=provider,
+    )
+    dt_complete_for_d: dict[str, list[str]] = {}
+    for d, t in dt_complete_pairs:
+        dt_complete_for_d.setdefault(d, []).append(t)
+
+    # Merged per-(n, t) inflow series (same rule as the scaling Stage 1):
+    # explicit pt_node_inflow when (n, t) is set, else the per-node scalar
+    # default p_node[(n, "inflow")].
+    p_node_inflow_default = {
+        n: p_node.get((n, "inflow"), 0.0) for n in nodes
+    }
+    pti: dict[tuple[str, str], float] = {}
+    for n in nodes:
+        default = p_node_inflow_default[n]
+        for t in time_set:
+            if (n, t) in node_time_inflow:
+                pti[(n, t)] = pt_node_inflow.get((n, t), 0.0)
+            else:
+                pti[(n, t)] = default
+
+    rows: list[tuple[str, str, str, float, float, float]] = []
+    warnings: list[tuple[str, str, float]] = []
+    for n in nodes:
+        scaling = [m for m in _SCALING_METHODS
+                   if m in methods_for_node.get(n, ())]
+        if not scaling:
+            continue
+        method_label = "+".join(scaling)
+        for d in period_in_use:
+            af = pdNode.get((n, "annual_flow", d), 0.0)
+            steps = dt_complete_for_d.get(d, ())
+            # Unweighted numerator and weighted denominator over the
+            # complete-period timesteps.
+            num = sum(pti[(n, t)] for t in steps)
+            den = sum(pti[(n, t)] * w_dt.get((d, t), 1.0) for t in steps)
+            # Whether this period's timesteps carry a non-uniform weight
+            # (a divergence is only meaningful — and only warned on — when
+            # the representativeness actually varies across the sample).
+            weights_here = [w_dt.get((d, t), 1.0) for t in steps]
+            non_uniform = (
+                len(weights_here) > 1
+                and any(abs(wv - weights_here[0]) > 1e-12
+                        for wv in weights_here)
+            )
+            if den == 0.0 or num == 0.0:
+                # Degenerate profile under the weights — no meaningful
+                # divergence; report f = 1.0 (no shift) and never warn.
+                f_val = 1.0
+            else:
+                f_val = num / den
+            level_shift_pct = 100.0 * (f_val - 1.0)
+            rows.append((n, d, method_label, af, f_val, level_shift_pct))
+            if non_uniform and abs(f_val - 1.0) > 0.01:
+                warnings.append((n, d, f_val))
+
+    frame = pl.DataFrame(
+        {
+            "node": [r[0] for r in rows],
+            "period": [r[1] for r in rows],
+            "inflow_method": [r[2] for r in rows],
+            "annual_flow": [repr(r[3]) for r in rows],
+            "f": [repr(r[4]) for r in rows],
+            "level_shift_pct": [repr(r[5]) for r in rows],
+        },
+        schema={
+            "node": pl.Utf8,
+            "period": pl.Utf8,
+            "inflow_method": pl.Utf8,
+            "annual_flow": pl.Utf8,
+            "f": pl.Utf8,
+            "level_shift_pct": pl.Utf8,
+        },
+    )
+    return frame, warnings
+
+
 def emit_node_inflow_scaling_params(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
@@ -1221,8 +1394,27 @@ def emit_node_inflow_scaling_params(
     (:func:`_compute_inflow_scaling_frames_vectorized`); the legacy
     :func:`_compute_inflow_scaling_frames` is retained as the parity
     oracle (``tests/engine_polars/test_vectorize_inflow_scaling_parity.py``).
+
+    Additionally emits the standalone ``inflow_scaling_diagnostics.csv``
+    (the Part-B ``f`` divergence diagnostic) and logs a WARNING for any
+    scaling node/period whose non-uniform ``timeset_weights`` imply an
+    annualisation that differs from an even-sample one by ``|f - 1| > 1%``.
+    The diagnostic is NOT part of the parity-gated scaling-frame dict.
     """
     frames = _compute_inflow_scaling_frames_vectorized(
         input_dir, solve_data_dir, provider=provider)
     for basename, df in frames.items():
         _emit(provider, f"solve_data/{basename}", df)
+
+    diag, diag_warnings = _compute_inflow_scaling_diagnostics(
+        input_dir, solve_data_dir, provider=provider)
+    _emit(provider, "solve_data/inflow_scaling_diagnostics.csv", diag)
+    for n, d, f_val in diag_warnings:
+        pct = 100.0 * (f_val - 1.0)
+        _logger.warning(
+            "inflow scaling: node %s period %s: timeset_weights imply an "
+            "annualisation that differs from an even-sample annualisation "
+            "by f=%.5f (demand level %+.2f%%); check that timeset_weights "
+            "match the representativeness of the selected timesteps.",
+            n, d, f_val, pct,
+        )
