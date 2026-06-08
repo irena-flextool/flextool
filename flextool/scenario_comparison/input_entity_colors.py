@@ -41,41 +41,76 @@ from spinedb_api import DatabaseMapping
 logger = logging.getLogger(__name__)
 
 
-# Entity classes whose entities surface as plot legend labels and map 1:1 to
-# the ``entities`` subsections of ``plot_settings.yaml``.  Verified against
-# flextool/schemas/spinedb_schema.json (classes ``unit`` / ``connection`` /
-# ``node`` / ``group`` all exist as top-level, non-dimensional classes).
-RELEVANT_ENTITY_CLASSES = ("group", "unit", "connection", "node")
+# ``plot_settings.yaml`` ``entities`` subsections that plot legend labels map
+# to.  ``group`` (a top-level SpineDB class) is split by membership into
+# ``nodeGroup`` / ``flowGroup`` (see :func:`fetch_entities_by_class`); the
+# rest map 1:1 to top-level SpineDB classes.
+RELEVANT_ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
+
+# SpineDB membership relationship classes that make a ``group`` a flowGroup
+# (it aggregates FLOWS).  A group with none of these is a nodeGroup (a
+# collection of nodes — typically ``group__node``).  The group is the FIRST
+# element of the membership entity's byname.
+_FLOWGROUP_MEMBERSHIP_CLASSES = (
+    "group__unit__node",
+    "group__unit",
+    "group__connection__node",
+    "group__connection",
+)
 
 
 def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
-    """Open one input DB and return entity names grouped by entity class.
+    """Open one input DB and return entity names grouped by plot entity class.
 
     Opens a single :class:`~spinedb_api.DatabaseMapping` (``create=False``),
-    reads ALL entity items in one pass, keeps the ones in
-    :data:`RELEVANT_ENTITY_CLASSES`, and closes the mapping.  Returns a
-    mapping ``{entity_class -> sorted unique entity names}`` containing only
-    classes that have at least one entity.  Never queries per scenario or
-    alternative — one fetch returns every entity.
+    reads ALL entity items in ONE pass (units / connections / nodes / groups
+    plus the group-membership relationship classes), classifies each
+    ``group`` as ``nodeGroup`` or ``flowGroup`` by its membership, and closes
+    the mapping.  Returns ``{class -> sorted unique names}`` for the classes
+    in :data:`RELEVANT_ENTITY_CLASSES` that have at least one entity.  Never
+    queries per scenario / alternative — one fetch returns everything.
 
-    The pattern mirrors
+    Classification: a group appearing in any
+    :data:`_FLOWGROUP_MEMBERSHIP_CLASSES` membership is a **flowGroup**;
+    every other group is a **nodeGroup**.
+
+    The base pattern mirrors
     :func:`flextool.export_to_tabular.db_reader._read_entities`
     (``db.get_entity_items()`` grouped by ``entity_class_name``).
     """
-    by_class: dict[str, set[str]] = {cls: set() for cls in RELEVANT_ENTITY_CLASSES}
+    groups: set[str] = set()
+    units: set[str] = set()
+    connections: set[str] = set()
+    nodes: set[str] = set()
+    flow_group_names: set[str] = set()
+
     db = DatabaseMapping(db_url, create=False)
     try:
         for item in db.get_entity_items():
             cls = item["entity_class_name"]
-            if cls in by_class:
-                by_class[cls].add(item["name"])
+            if cls == "group":
+                groups.add(item["name"])
+            elif cls == "unit":
+                units.add(item["name"])
+            elif cls == "connection":
+                connections.add(item["name"])
+            elif cls == "node":
+                nodes.add(item["name"])
+            elif cls in _FLOWGROUP_MEMBERSHIP_CLASSES:
+                byname = item.get("entity_byname")
+                if byname:
+                    flow_group_names.add(byname[0])  # group is the 1st member
     finally:
         db.close()
-    return {
-        cls: sorted(names)
-        for cls, names in by_class.items()
-        if names
+
+    by_class: dict[str, list[str]] = {
+        "nodeGroup": sorted(g for g in groups if g not in flow_group_names),
+        "flowGroup": sorted(g for g in groups if g in flow_group_names),
+        "unit": sorted(units),
+        "connection": sorted(connections),
+        "node": sorted(nodes),
     }
+    return {cls: names for cls, names in by_class.items() if names}
 
 
 def _url_to_path(db_url: str) -> Path | None:

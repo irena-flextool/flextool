@@ -268,10 +268,11 @@ class TestShippedTemplateNewSchema:
         # Legacy keys are gone from the bundled file.
         assert "category" not in tpl
         assert "entity_class" not in tpl
-        # entities subsections present; unit/connection/node start empty.
+        # entities subsections present; flowGroup ships convention colors,
+        # nodeGroup/unit/connection/node start empty.
         entities = tpl["entities"]
-        assert "group" in entities and isinstance(entities["group"], dict)
-        for sub in ("unit", "connection", "node"):
+        assert "flowGroup" in entities and isinstance(entities["flowGroup"], dict)
+        for sub in ("nodeGroup", "unit", "connection", "node"):
             assert sub in entities
             assert entities[sub] in (None, {}), (
                 f"{sub} subsection should ship empty"
@@ -288,10 +289,10 @@ class TestShippedTemplateNewSchema:
 
     def test_bundled_group_entity_color_unchanged(self):
         tpl = ct.load_color_template()
-        c = ct.resolve_label_color("solar", tpl, entity_class="group")
+        c = ct.resolve_label_color("solar", tpl, entity_class="flowGroup")
         assert c == pytest.approx(
             (0xF4 / 255, 0xB4 / 255, 0x00 / 255)
-        ), "solar group color drifted after schema rename"
+        ), "solar flowGroup color drifted after schema rename"
 
 
 # ---------------------------------------------------------------------------
@@ -687,7 +688,7 @@ class TestFlowGroupEntityClassIntegration:
         ]
         for lbl in expected_labels:
             assert ct.resolve_label_color(
-                lbl, tpl, entity_class="group",
+                lbl, tpl, entity_class="flowGroup",
             ) is not None, (
                 f"Shipped template is missing flowGroup label {lbl!r}"
             )
@@ -701,10 +702,10 @@ class TestFlowGroupEntityClassIntegration:
             ("wind", ["Wind", "WIND"]),
             ("h2_storage", ["H2_Storage", "H2_STORAGE"]),
         ]:
-            base = ct.resolve_label_color(canonical, tpl, entity_class="group")
+            base = ct.resolve_label_color(canonical, tpl, entity_class="flowGroup")
             assert base is not None
             for v in variants:
-                got = ct.resolve_label_color(v, tpl, entity_class="group")
+                got = ct.resolve_label_color(v, tpl, entity_class="flowGroup")
                 assert got == pytest.approx(base), (
                     f"{v!r} did not resolve to same color as {canonical!r}"
                 )
@@ -743,7 +744,7 @@ class TestFlowGroupEntityClassIntegration:
             plot_name="FlowGroup bars",
             map_dimensions_for_plots=["d_g", "b_s"],
             legend="shared",
-            color_entity_class="group",
+            color_entity_class="flowGroup",
         )
         plan = compute_live_plan(df, cfg, plot_name="FlowGroup bars")
         assert plan is not None, "compute_live_plan returned None"
@@ -753,7 +754,7 @@ class TestFlowGroupEntityClassIntegration:
 
         # Templated labels match the YAML (case-insensitive).
         for lbl in ("solar", "Wind"):
-            expected = resolve_label_color(lbl, tpl, entity_class="group")
+            expected = resolve_label_color(lbl, tpl, entity_class="flowGroup")
             assert expected is not None
             got = plan.shared_color_map[lbl]
             assert tuple(got) == pytest.approx(expected), (
@@ -773,10 +774,10 @@ class TestFlowGroupEntityClassIntegration:
         vice versa.  Locks down the precedence documented in
         :func:`resolve_label_color`."""
         tpl = ct.load_color_template()
-        # "solar" is an entity_class.group key; it should resolve under
-        # entity_class='group' but NOT under category='costs'.
+        # "solar" is an entities.flowGroup key; it should resolve under
+        # entity_class='flowGroup' but NOT under category='costs'.
         assert ct.resolve_label_color(
-            "solar", tpl, entity_class="group",
+            "solar", tpl, entity_class="flowGroup",
         ) is not None
         assert ct.resolve_label_color(
             "solar", tpl, category="costs",
@@ -847,11 +848,11 @@ class TestNodeGroupFlowsComposite:
     def test_entity_types_route_to_entities_section(self):
         """A per-participant flow type is colored by its ``item`` via the
         entity class fixed by the type — ``from_unitGroup`` items resolve
-        in ``entities.group`` (shipped with convention colors), not via a
+        in ``entities.flowGroup`` (shipped with convention colors), not via a
         type key (there is none)."""
         tpl = ct.load_color_template()
-        # 'wind' ships in entities.group; the unitGroup item 'Wind' resolves
-        # to that exact color (case-insensitive).
+        # 'wind' ships in entities.flowGroup; the unitGroup item 'Wind'
+        # resolves to that exact color (case-insensitive).
         wind = ct.resolve_label_color(
             "from_unitGroup | Wind", tpl, category="nodegroup_flows")
         assert wind == ct._parse_color_value("#4FC3F7")
@@ -910,7 +911,7 @@ class TestNodeGroupFlowsComposite:
                     "coal_DE": "#111111",                       # bare color
                     "batt_DE": {"color": "#222222", "neg_color": "#333333"},
                 },
-                "group": {"Wind": "#4fc3f7"},
+                "flowGroup": {"Wind": "#4fc3f7"},
             },
         }
         red = ct._parse_color_value
@@ -924,24 +925,24 @@ class TestNodeGroupFlowsComposite:
             "from_unit | batt_DE", tpl, category="nodegroup_flows") == red("#222222")
         assert ct.resolve_label_color(
             "to_unit | batt_DE", tpl, category="nodegroup_flows") == red("#333333")
-        # unitGroup item routes to entities.group, not entities.unit.
+        # unitGroup item routes to entities.flowGroup, not entities.unit.
         assert ct.resolve_label_color(
             "from_unitGroup | Wind", tpl, category="nodegroup_flows") == red("#4fc3f7")
 
     def test_entity_type_does_not_cross_classes(self):
         """The type fixes the class: a ``from_unit`` item is looked up only
-        in ``entities.unit`` — a same-named ``entities.group`` entry must
+        in ``entities.unit`` — a same-named ``entities.flowGroup`` entry must
         NOT leak in (and vice-versa)."""
         tpl = {
             "entities": {
-                "group": {"shared_name": "#aaaaaa"},
+                "flowGroup": {"shared_name": "#aaaaaa"},
                 "unit": {},
             },
         }
         # from_unit looks in entities.unit only → miss → None (palette).
         assert ct.resolve_label_color(
             "from_unit | shared_name", tpl, category="nodegroup_flows") is None
-        # from_unitGroup looks in entities.group → hit.
+        # from_unitGroup looks in entities.flowGroup → hit.
         assert ct.resolve_label_color(
             "from_unitGroup | shared_name", tpl, category="nodegroup_flows",
         ) == ct._parse_color_value("#aaaaaa")
@@ -1201,12 +1202,12 @@ class TestOrderLabelsByTemplate:
                     "inflow": "#1", "slack_upward": "#2", "slack_downward": "#3",
                 }
             },
-            "entities": {"group": {"Wind": "#a", "Solar": "#b"}},
+            "entities": {"flowGroup": {"Wind": "#a", "Solar": "#b"}},
         }
         labels = [
-            "to_unitGroup | Solar",      # draw band (last), group order Solar
-            "from_unitGroup | Solar",    # supply band, group order Solar (1)
-            "from_unitGroup | Wind",     # supply band, group order Wind (0)
+            "to_unitGroup | Solar",      # draw band (last), flowGroup order Solar
+            "from_unitGroup | Solar",    # supply band, flowGroup order Solar (1)
+            "from_unitGroup | Wind",     # supply band, flowGroup order Wind (0)
             "inflow | n",                # inflow band
             "slack | downward",          # slack band
         ]
@@ -1263,7 +1264,7 @@ class TestResolveDispatchColorsAndOrder:
             }
         },
         "entities": {
-            "group": {"wind": "#4FC3F7", "coal": "#212121"},
+            "flowGroup": {"wind": "#4FC3F7", "coal": "#212121"},
             "unit": {
                 "chp": {"color": "#E64A19", "neg_color": "#9c3010"},
                 "battery": "#43A047",
@@ -1354,5 +1355,5 @@ class TestResolveDispatchColorsAndOrder:
 
     def test_template_entity_names_file_order(self):
         names = ct.template_entity_names(self.TEMPLATE)
-        # group (wind, coal) then unit (chp, battery) then connection (AC_link).
+        # flowGroup (wind, coal) then unit (chp, battery) then connection.
         assert names == ["wind", "coal", "chp", "battery", "AC_link"]

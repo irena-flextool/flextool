@@ -105,23 +105,30 @@ def _row_names(tree) -> list[str]:
 
 
 class TestPickerBuild:
-    def test_tabs_only_for_present_sections(self, tk_root, tmp_path):
+    def test_tabs_entity_classes_always_shown_then_present_categories(
+        self, tk_root, tmp_path,
+    ):
         picker, _ = _make_picker(tk_root, tmp_path)
-        # entities: unit, node (group/connection absent) → categories: costs,
-        # dispatch (node_flows/nodegroup_flows absent) → scenarios.
+        # All entity-class tabs always appear (even empty nodeGroup/flowGroup/
+        # connection), then present categories (costs, dispatch), then
+        # scenarios.
         assert _tab_titles(picker) == [
-            "unit", "node", "costs", "dispatch", "scenarios",
+            "nodeGroup", "flowGroup", "unit", "connection", "node",
+            "costs", "dispatch", "scenarios",
         ]
 
-    def test_empty_sections_skipped(self, tk_root, tmp_path):
+    def test_entity_tabs_shown_even_when_empty(self, tk_root, tmp_path):
         data = {
             "scenarios": {},
             "categories": {"costs": {}},
             "entities": {"unit": {}, "node": {"n1": "#abcdef"}},
         }
         picker, _ = _make_picker(tk_root, tmp_path, data=data)
-        # Only the non-empty node entities tab survives.
-        assert _tab_titles(picker) == ["node"]
+        # Every entity class shows (so absent classes are visible); empty
+        # category/scenario sections are still skipped.
+        assert _tab_titles(picker) == [
+            "nodeGroup", "flowGroup", "unit", "connection", "node",
+        ]
 
     def test_rows_populated_with_names(self, tk_root, tmp_path):
         picker, _ = _make_picker(tk_root, tmp_path)

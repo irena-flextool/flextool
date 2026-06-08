@@ -33,21 +33,47 @@ from flextool.scenario_comparison.input_entity_colors import (
 # --------------------------------------------------------------------------
 
 
-def _build_input_db(path: Path, entities: dict[str, list[str]]) -> str:
+def _build_input_db(
+    path: Path,
+    entities: dict[str, list[str]],
+    memberships: dict[str, list[tuple[str, ...]]] | None = None,
+) -> str:
     """Build a minimal FlexTool-shaped Spine DB and return its sqlite URL.
 
-    *entities* maps entity_class_name -> list of entity names.  Includes the
-    four relevant classes plus an extra irrelevant class to prove filtering.
+    *entities* maps entity_class_name -> list of entity names.  *memberships*
+    maps a group-membership relationship class (e.g. ``group__node`` or
+    ``group__unit__node``) -> list of ``entity_byname`` tuples; the member
+    entities they reference must already appear in *entities*.  Group
+    classification (nodeGroup vs flowGroup) is derived from these.  An extra
+    irrelevant class is always present to prove filtering.
+
+    Groups in *entities* with no membership default to nodeGroup; pass the
+    matching ``group__*`` membership to make a group a flowGroup.
     """
+    memberships = memberships or {}
     url = "sqlite:///" + str(path)
     with DatabaseMapping(url, create=True) as db:
-        classes = set(entities) | {"unit", "connection", "node", "group", "commodity"}
-        for cls in classes:
+        # 0-dimensional element classes first…
+        base_classes = (
+            set(entities) | {"unit", "connection", "node", "group", "commodity"}
+        )
+        for cls in base_classes:
             db.add_update_item("entity_class", name=cls)
         for cls, names in entities.items():
             for name in names:
                 db.add_update_item(
                     "entity", entity_class_name=cls, name=name, entity_byname=(name,)
+                )
+        # …then the multi-dimensional membership relationship classes (their
+        # dimensions are the names split on "__") + their member entities.
+        for cls in memberships:
+            db.add_update_item(
+                "entity_class", name=cls, dimension_name_list=tuple(cls.split("__")),
+            )
+        for cls, bynames in memberships.items():
+            for byname in bynames:
+                db.add_update_item(
+                    "entity", entity_class_name=cls, entity_byname=tuple(byname),
                 )
         db.commit_session("input entity color test fixture")
     return url
@@ -59,7 +85,8 @@ _SEED_FILE = """\
 scenarios: {}
 
 entities:
-  group:
+  nodeGroup: {}
+  flowGroup:
     solar: "#F4B400"
   unit: {}
   connection: {}
@@ -83,19 +110,41 @@ def test_fetch_groups_by_relevant_class_and_filters(tmp_path):
             "unit": ["coal_plant", "battery"],
             "connection": ["AC_link"],
             "node": ["elec_A", "elec_B"],
-            "group": ["solar", "wind"],
+            "group": ["solar", "wind", "elec"],
             "commodity": ["coal", "gas"],  # irrelevant class — must be dropped
+        },
+        memberships={
+            # solar/wind aggregate flows → flowGroup; elec collects nodes →
+            # nodeGroup.
+            "group__unit__node": [
+                ("solar", "coal_plant", "elec_A"),
+                ("wind", "battery", "elec_A"),
+            ],
+            "group__node": [("elec", "elec_A")],
         },
     )
     result = fetch_entities_by_class(url)
 
-    assert set(result) == {"unit", "connection", "node", "group"}
-    assert "commodity" not in result
+    assert set(result) == {"nodeGroup", "flowGroup", "unit", "connection", "node"}
+    assert "commodity" not in result and "group" not in result
     # Names returned sorted + complete (all entities, one pass).
     assert result["unit"] == ["battery", "coal_plant"]
     assert result["connection"] == ["AC_link"]
     assert result["node"] == ["elec_A", "elec_B"]
-    assert result["group"] == ["solar", "wind"]
+    # Groups split by membership.
+    assert result["flowGroup"] == ["solar", "wind"]
+    assert result["nodeGroup"] == ["elec"]
+
+
+def test_group_without_flow_membership_is_nodegroup(tmp_path):
+    url = _build_input_db(
+        tmp_path / "in.sqlite",
+        {"group": ["plain"], "node": ["n1"]},
+        memberships={"group__node": [("plain", "n1")]},
+    )
+    result = fetch_entities_by_class(url)
+    assert result["nodeGroup"] == ["plain"]
+    assert "flowGroup" not in result
 
 
 def test_fetch_omits_empty_classes(tmp_path):
@@ -105,9 +154,11 @@ def test_fetch_omits_empty_classes(tmp_path):
 
 
 def test_relevant_classes_match_schema_subsections():
-    # The four classes verified against flextool/schemas/spinedb_schema.json
-    # and the plot_settings.yaml entities subsections.
-    assert set(RELEVANT_ENTITY_CLASSES) == {"unit", "connection", "node", "group"}
+    # The output buckets: group is split into nodeGroup/flowGroup; the rest
+    # map 1:1 to top-level SpineDB classes.
+    assert set(RELEVANT_ENTITY_CLASSES) == {
+        "nodeGroup", "flowGroup", "unit", "connection", "node",
+    }
 
 
 # --------------------------------------------------------------------------
@@ -129,8 +180,9 @@ def test_seed_adds_entities_additively(tmp_path):
             "unit": ["coal_plant", "battery"],
             "connection": ["AC_link"],
             "node": ["elec_A"],
-            "group": ["solar", "wind"],  # solar already present
+            "group": ["solar", "wind"],  # solar already present (flowGroup)
         },
+        memberships={"group__unit": [("solar", "coal_plant"), ("wind", "battery")]},
     )
     project = _project_with_settings(tmp_path)
     before = (project / "plot_settings.yaml").read_text(encoding="utf-8")
@@ -140,15 +192,15 @@ def test_seed_adds_entities_additively(tmp_path):
 
     data = _load(project / "plot_settings.yaml")
     # Existing user entry preserved with its value.
-    assert data["entities"]["group"]["solar"] == "#F4B400"
+    assert data["entities"]["flowGroup"]["solar"] == "#F4B400"
     # New names added under each class.
     assert "coal_plant" in data["entities"]["unit"]
     assert "battery" in data["entities"]["unit"]
     assert "AC_link" in data["entities"]["connection"]
     assert "elec_A" in data["entities"]["node"]
-    assert "wind" in data["entities"]["group"]
+    assert "wind" in data["entities"]["flowGroup"]
     # solar (already present) NOT duplicated.
-    assert list(data["entities"]["group"].keys()).count("solar") == 1
+    assert list(data["entities"]["flowGroup"].keys()).count("solar") == 1
     # The file changed.
     assert before != (project / "plot_settings.yaml").read_text(encoding="utf-8")
 
@@ -157,21 +209,22 @@ def test_seed_prunes_entities_no_longer_in_db(tmp_path):
     """The input DB is the authoritative full set: an entity present in the
     file but absent from the DB is removed on seed."""
     project = _project_with_settings(tmp_path)
-    # Add a 'group' entry that the DB will NOT contain.
+    # Add a flowGroup entry that the DB will NOT contain.
     pf = project / "plot_settings.yaml"
     data = _load(pf)
-    data["entities"]["group"]["stale_group"] = "#dddddd"
+    data["entities"]["flowGroup"]["stale_group"] = "#dddddd"
     pf.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
     url = _build_input_db(
         tmp_path / "in.sqlite",
         {"group": ["solar", "wind"], "unit": ["coal_plant"]},
+        memberships={"group__unit": [("solar", "coal_plant"), ("wind", "coal_plant")]},
     )
     changed = seed_input_entity_colors(project, [url])
     assert changed is True
 
     after = _load(pf)
-    grp = after["entities"]["group"]
+    grp = after["entities"]["flowGroup"]
     # stale_group pruned (not in DB), solar kept, wind added.
     assert "stale_group" not in grp
     assert grp["solar"] == "#F4B400"
@@ -183,6 +236,7 @@ def test_seed_is_idempotent(tmp_path):
     url = _build_input_db(
         tmp_path / "in.sqlite",
         {"unit": ["coal_plant"], "node": ["elec_A"], "group": ["wind"]},
+        memberships={"group__unit": [("wind", "coal_plant")]},
     )
     project = _project_with_settings(tmp_path)
 

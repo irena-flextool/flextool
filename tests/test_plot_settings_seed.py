@@ -58,7 +58,8 @@ categories:
     co2: '#4d4d4d'
 
 entities:
-  group:
+  nodeGroup: {}
+  flowGroup:
     solar: '#F4B400'
     wind: '#4FC3F7'
   unit: {}
@@ -114,9 +115,9 @@ def test_discover_classifies_units_connections_groups():
     m = _make_mappings()
     discovered = discover_dispatch_entities(m, ["S1", "S2"])
 
-    assert set(discovered["group"]) == {
-        "elec_grid", "heat_grid", "thermal_units", "transmission",
-    }
+    # Dispatch group names → nodeGroup; processGroup aggregates → flowGroup.
+    assert set(discovered["nodeGroup"]) == {"elec_grid", "heat_grid"}
+    assert set(discovered["flowGroup"]) == {"thermal_units", "transmission"}
     assert set(discovered["unit"]) == {"coal_plant", "gas_turbine", "wind_farm"}
     assert set(discovered["connection"]) == {"AC_link", "DC_tie"}
     assert discovered["scenarios"] == ["S1", "S2"]
@@ -132,7 +133,7 @@ def test_discover_group_wins_over_individual():
         {"unit": ["coal_plant"], "node": ["elecA"]}
     )
     discovered = discover_dispatch_entities(m, [])
-    assert "coal_plant" in discovered["group"]
+    assert "coal_plant" in discovered["flowGroup"]
     assert "coal_plant" not in discovered["unit"]
 
 
@@ -160,7 +161,7 @@ def test_writer_inserts_under_correct_subsections(settings_file: Path):
     changed = seed_colors_into_plot_settings(
         settings_file,
         {
-            "group": {"thermal": "#111111"},
+            "flowGroup": {"thermal": "#111111"},
             "unit": {"gas_turbine": "#222222"},
             "connection": {"DC_tie": "#333333"},
         },
@@ -169,7 +170,7 @@ def test_writer_inserts_under_correct_subsections(settings_file: Path):
     assert changed is True
     data = _load(settings_file)
 
-    assert data["entities"]["group"]["thermal"] == "#111111"
+    assert data["entities"]["flowGroup"]["thermal"] == "#111111"
     assert data["entities"]["unit"]["gas_turbine"] == "#222222"
     assert data["entities"]["connection"]["DC_tie"] == "#333333"
     assert data["scenarios"]["S1"] == "#444444"
@@ -182,11 +183,11 @@ def test_writer_add_preserves_existing_entries_order_and_values(
     are untouched."""
     seed_colors_into_plot_settings(
         settings_file,
-        {"group": {"thermal": "#111111", "battery": "#999999"}},
+        {"flowGroup": {"thermal": "#111111", "battery": "#999999"}},
         {},
     )
     data = _load(settings_file)
-    grp = data["entities"]["group"]
+    grp = data["entities"]["flowGroup"]
     # Existing entries first, in original order, with original values.
     assert list(grp.keys()) == ["solar", "wind", "thermal", "battery"]
     assert grp["solar"] == "#F4B400"
@@ -201,12 +202,12 @@ def test_writer_never_overwrites_existing_color(settings_file: Path):
     seed's."""
     changed = seed_colors_into_plot_settings(
         settings_file,
-        {"group": {"solar": "#000000"}},  # different color, already present
+        {"flowGroup": {"solar": "#000000"}},  # different color, already present
         {},
     )
     assert changed is False  # nothing added
     data = _load(settings_file)
-    assert data["entities"]["group"]["solar"] == "#F4B400"  # unchanged
+    assert data["entities"]["flowGroup"]["solar"] == "#F4B400"  # unchanged
 
 
 def test_writer_case_insensitive_dedup(tmp_path: Path):
@@ -358,13 +359,13 @@ def test_writer_prune_removes_stale_entities(settings_file: Path):
     # Keep only 'solar' (drop 'wind'), add 'newgrp'.
     changed = seed_colors_into_plot_settings(
         settings_file,
-        {"group": {"newgrp": "#111111"}},
+        {"flowGroup": {"newgrp": "#111111"}},
         {},
-        prune_entities={"group": {"solar", "newgrp"}},
+        prune_entities={"flowGroup": {"solar", "newgrp"}},
     )
     assert changed is True
     data = _load(settings_file)
-    grp = data["entities"]["group"]
+    grp = data["entities"]["flowGroup"]
     assert "wind" not in grp  # pruned
     assert grp["solar"] == "#F4B400"  # kept
     assert grp["newgrp"] == "#111111"  # added
@@ -395,12 +396,12 @@ def test_writer_prune_never_touches_categories_or_scenarios(
         {},
         # Empty keep sets for every class -> would prune everything in
         # entities, but categories / scenarios must be untouched.
-        prune_entities={"group": set(), "unit": set(),
+        prune_entities={"flowGroup": set(), "unit": set(),
                         "connection": set(), "node": set()},
     )
     data = _load(settings_file)
     # Entities fully pruned.
-    assert data["entities"]["group"] == {}
+    assert data["entities"]["flowGroup"] == {}
     # categories + scenarios preserved.
     assert data["categories"]["costs"]["co2"] == "#4d4d4d"
     assert data["scenarios"]["S0"] == "#aaaaaa"
@@ -410,12 +411,12 @@ def test_writer_prune_none_is_add_only(settings_file: Path):
     """prune_entities=None must not remove anything."""
     seed_colors_into_plot_settings(
         settings_file,
-        {"group": {"newgrp": "#111111"}},
+        {"flowGroup": {"newgrp": "#111111"}},
         {},
         prune_entities=None,
     )
     data = _load(settings_file)
-    grp = data["entities"]["group"]
+    grp = data["entities"]["flowGroup"]
     assert "solar" in grp and "wind" in grp  # nothing pruned
     assert grp["newgrp"] == "#111111"
 
@@ -426,11 +427,11 @@ def test_writer_prune_only_no_add_returns_true_when_stale(settings_file: Path):
         settings_file,
         {},
         {},
-        prune_entities={"group": {"solar"}},  # drop wind
+        prune_entities={"flowGroup": {"solar"}},  # drop wind
     )
     assert changed is True
     data = _load(settings_file)
-    assert list(data["entities"]["group"].keys()) == ["solar"]
+    assert list(data["entities"]["flowGroup"].keys()) == ["solar"]
 
 
 def test_writer_prune_only_no_stale_returns_false(settings_file: Path):
@@ -440,7 +441,7 @@ def test_writer_prune_only_no_stale_returns_false(settings_file: Path):
         settings_file,
         {},
         {},
-        prune_entities={"group": {"solar", "wind"}},
+        prune_entities={"flowGroup": {"solar", "wind"}},
     )
     assert changed is False
     assert settings_file.read_text(encoding="utf-8") == before

@@ -39,7 +39,11 @@ from pathlib import Path
 
 import yaml
 
-_ENTITY_CLASSES = ("group", "unit", "connection", "node")
+# Entity classes managed in the ``entities`` section (the group class is split
+# into nodeGroup/flowGroup by membership upstream).  Legacy ``group`` is NOT
+# listed — old projects keep an inert ``entities.group`` section, never
+# written or pruned here.
+_ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
 
 
 def dump_plot_settings(data: dict) -> str:
@@ -121,8 +125,9 @@ def seed_colors_into_plot_settings(
 ) -> bool:
     """Structurally add (and optionally prune) colors in ``plot_settings.yaml``.
 
-    *entity_colors* maps entity class (``group`` / ``unit`` / ``connection`` /
-    ``node``) to an ordered ``{name -> color}`` mapping; *scenario_colors* is
+    *entity_colors* maps entity class (``nodeGroup`` / ``flowGroup`` /
+    ``unit`` / ``connection`` / ``node``) to an ordered ``{name -> color}``
+    mapping (unknown classes are ignored); *scenario_colors* is
     the ``{name -> color}`` mapping for the ``scenarios`` section.  Color
     values are written verbatim (``"#RRGGBB"`` strings, matplotlib color
     names, or ``{color, neg_color}`` dicts — whatever the caller supplies).
