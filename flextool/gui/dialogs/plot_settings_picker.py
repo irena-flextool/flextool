@@ -385,19 +385,25 @@ class PlotSettingsPicker(tk.Toplevel):
         ).grid(row=0, column=6, padx=(5, 0))
         self._update_history_buttons()
 
-        # ── Keyboard-shortcut hint strip ──────────────────────────
+        # ── Keyboard-shortcut hint strip (two rows) ───────────────
         ttk.Label(
             self,
             text=(
-                "Enter: edit row / apply    "
-                "Alt+↑ Alt+↓: move row    drag: reorder    "
+                "Enter: edit selected row    "
+                "Alt+↑ / Alt+↓: move row    drag: reorder\n"
+                "Ctrl+Enter: apply to open plot    "
                 "Ctrl+Z: undo    Ctrl+Y: redo    Esc: close"
             ),
             foreground="gray",
             anchor="w",
+            justify="left",
         ).grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 8))
 
         self.bind("<Escape>", lambda _e: self._on_cancel())
+        # Ctrl+Enter applies the whole tool (write + re-render the open
+        # plot), distinct from a plain Enter (edit the selected row).
+        self.bind("<Control-Return>", lambda _e: self._on_apply_clicked())
+        self.bind("<Control-KP_Enter>", lambda _e: self._on_apply_clicked())
         self.bind("<Control-z>", lambda _e: self._on_undo())
         self.bind("<Control-y>", lambda _e: self._on_redo())
         self.bind("<Control-Shift-Z>", lambda _e: self._on_redo())

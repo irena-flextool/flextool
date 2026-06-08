@@ -1311,3 +1311,23 @@ class TestPickerTabOrder:
             "Refresh from DB", "Undo", "Redo",
             "Apply", "Save and exit", "Cancel",
         ]
+
+
+class TestPickerApplyShortcut:
+    def test_ctrl_enter_bound_to_apply(self, tk_root, tmp_path, monkeypatch):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        # Ctrl+Enter is bound at the window level (→ tool Apply).
+        assert picker.bind("<Control-Return>") != ""
+        # Plain Enter on a row still edits, not applies (distinct binding).
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        assert unit.bind("<Return>") != ""
+
+    def test_hint_label_is_two_rows(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path)
+        labels = [
+            w for w in picker.winfo_children() if isinstance(w, ttk.Label)
+        ]
+        assert labels
+        assert "\n" in str(labels[-1].cget("text"))
+        assert "Ctrl+Enter" in str(labels[-1].cget("text"))
