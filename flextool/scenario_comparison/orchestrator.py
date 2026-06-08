@@ -61,7 +61,7 @@ def _seed_dispatch_colors_into_plot_settings(
     try:
         discovered = discover_dispatch_entities(mappings, dispatch_scenarios)
         entity_colors: dict[str, dict[str, str]] = {}
-        for cls in ("group", "unit", "connection"):
+        for cls in ("nodeGroup", "flowGroup", "unit", "connection"):
             names = discovered.get(cls) or []
             if names:
                 entity_colors[cls] = assign_palette_colors(names)

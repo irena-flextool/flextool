@@ -23,10 +23,12 @@ def discover_dispatch_entities(
     Reads the dispatch-mapping fields and classifies each discovered name
     into the entity class the project ``plot_settings.yaml`` expects:
 
-    * ``group``       — processGroup / unitGroup / connectionGroup aggregate
+    * ``nodeGroup``   — the dispatch ``group`` name(s) being plotted (the
+      group__node collection that is the plot subject);
+    * ``flowGroup``   — processGroup / unitGroup / connectionGroup aggregate
       names (``group_aggregate`` of ``processGroup_Unit_to_group`` /
-      ``processGroup_Group_to_unit`` / ``processGroup_Connection``, plus the
-      dispatch ``group`` names);
+      ``processGroup_Group_to_unit`` / ``processGroup_Connection``) that
+      stack as items in the dispatch plot;
     * ``unit``        — individual (not-aggregated) unit names, taken as the
       bare ``unit`` / ``process`` entity of the unit member and
       ``not_in_aggregate`` unit fields;
@@ -41,19 +43,22 @@ def discover_dispatch_entities(
     dataset-coupled and are not seeded into the portable settings file).
 
     Returns a mapping ``{class -> sorted list of names}`` with the keys
-    ``group``, ``unit``, ``connection`` and ``scenarios``; empty lists when a
-    class has no members.
+    ``nodeGroup``, ``flowGroup``, ``unit``, ``connection`` and ``scenarios``;
+    empty lists when a class has no members.
     """
-    groups: set[str] = set()
+    node_groups: set[str] = set()
+    flow_groups: set[str] = set()
     units: set[str] = set()
     connections: set[str] = set()
 
-    # --- Group aggregate names (processGroups / unit- and connectionGroups) ---
+    # --- nodeGroups: the dispatch group(s) being plotted (group__node). ---
     dispatch_groups_df = mappings.dispatch_groups
     if dispatch_groups_df is not None and not dispatch_groups_df.empty:
         if 'group' in dispatch_groups_df.columns:
-            groups.update(str(g) for g in dispatch_groups_df['group'].unique())
+            node_groups.update(str(g) for g in dispatch_groups_df['group'].unique())
 
+    # --- flowGroups: the processGroup aggregate names (unit/connection
+    #     aggregates that stack as items in the dispatch plot). ---
     for pg_attr in (
         'processGroup_Unit_to_group',
         'processGroup_Group_to_unit',
@@ -61,7 +66,7 @@ def discover_dispatch_entities(
     ):
         pg_df = getattr(mappings, pg_attr, None)
         if pg_df is not None and not pg_df.empty and 'group_aggregate' in pg_df.columns:
-            groups.update(str(g) for g in pg_df['group_aggregate'].unique())
+            flow_groups.update(str(g) for g in pg_df['group_aggregate'].unique())
 
     # --- Individual unit names (bare entity, not the composite) ---
     # processGroup_*_members carry the units/connections that DO aggregate but
@@ -108,15 +113,17 @@ def discover_dispatch_entities(
 
     # A name discovered as both a group aggregate and an individual entity is
     # a group (the aggregate is the durable, project-portable color).
-    units -= groups
-    connections -= groups
+    all_groups = node_groups | flow_groups
+    units -= all_groups
+    connections -= all_groups
     # Guard against a name landing in both individual classes.
     connections -= units
 
     scenario_names = [str(s) for s in scenarios if s]
 
     return {
-        'group': sorted(groups),
+        'nodeGroup': sorted(node_groups),
+        'flowGroup': sorted(flow_groups),
         'unit': sorted(units),
         'connection': sorted(connections),
         'scenarios': sorted(dict.fromkeys(scenario_names)),
