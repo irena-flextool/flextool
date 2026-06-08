@@ -63,6 +63,36 @@ BAR_LABEL_MAX_CHARS = 24
 _ELLIPSIS = "…"
 
 
+def _reattach_constant_levels(df_sub, sub, sub_names: list[str], all_consumed: bool):
+    """Re-add subplot levels that ``_extract_subplot_data`` dropped.
+
+    The live render path drops the subplot level(s); the plan path keeps
+    them. To color a simple bar by a subplot-level entity uniformly across
+    both paths, restore the dropped level(s) as constant column levels
+    (value = this subplot's ``sub``). Level position doesn't matter — the
+    color lookup and bar machinery key off level *names*.
+
+    When the subplot consumed *all* column levels (``all_consumed``),
+    extraction left a spurious value-as-label column, so rebuild the column
+    index as the constant tuple; otherwise prepend the level(s) to the real
+    remaining ones.
+    """
+    sub_vals = list(sub) if isinstance(sub, tuple) else [sub]
+    if len(sub_vals) != len(sub_names):
+        return df_sub
+    if all_consumed:
+        df_sub = df_sub.copy()
+        df_sub.columns = pd.MultiIndex.from_tuples(
+            [tuple(sub_vals)] * df_sub.shape[1], names=sub_names,
+        )
+        return df_sub
+    for name, val in zip(reversed(sub_names), reversed(sub_vals)):
+        df_sub = pd.concat(
+            {val: df_sub}, axis=1, names=[name] + list(df_sub.columns.names),
+        )
+    return df_sub
+
+
 def _truncate_middle(text: str, cap: int = BAR_LABEL_MAX_CHARS) -> str:
     """Shorten *text* to *cap* chars keeping head and tail, ellipsis in between."""
     if len(text) <= cap:
@@ -1205,12 +1235,34 @@ def build_bar_figures(
         expand_level_name = None
         n_expand_groups = 1
 
+    # When a simple bar is colored by a SUBPLOT-level entity (e.g. reserve
+    # slack, colored by its node group), the colour value is the subplot's
+    # own value — which _extract_subplot_data drops below. The plan/cached
+    # render path keeps it (it reconstructs df_sub with every level), so
+    # re-attach it here as a constant column level to match that shape; the
+    # per-bar lookup then reads it uniformly in both paths. Resolved up front
+    # (cheap, name-only) so we know whether to re-attach during extraction.
+    reattach_sub_names: list[str] = []
+    reattach_all_consumed = False
+    if entity_class and not (stack_levels or grouped_bar_levels) and sub_levels:
+        from flextool.plot_outputs.plan import resolve_color_bar_level
+        col_nm = list(df.columns.names) if isinstance(df.columns, pd.MultiIndex) else [df.columns.name]
+        idx_nm = list(df.index.names) if isinstance(df.index, pd.MultiIndex) else [df.index.name]
+        early_level = resolve_color_bar_level(idx_nm + col_nm, entity_class)
+        sub_names = [col_nm[i] for i in sub_levels]
+        if early_level in sub_names:
+            reattach_sub_names = sub_names
+            reattach_all_consumed = len(sub_levels) == len(col_nm)
+
     # Build effective_plots — split subplots that exceed max_items_per_plot.
     # The "items" are visual bar-label rows: n_rows * n_expand_groups.
     # Splitting can happen by expand groups, by rows, or both.
     effective_plots: list[tuple[str | None, pd.DataFrame]] = []
     for sub in subs:
         df_sub = _extract_subplot_data(df, sub, sub_levels)
+        if reattach_sub_names and sub is not None:
+            df_sub = _reattach_constant_levels(
+                df_sub, sub, reattach_sub_names, reattach_all_consumed)
         df_sub = df_sub.dropna(how='all')
         if df_sub.empty:
             continue

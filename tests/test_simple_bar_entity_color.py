@@ -251,6 +251,32 @@ class TestEndToEndColoring:
         assert tuple(round(c, 3) for c in STEELBLUE_RGB) in colors
         assert tuple(round(c, 3) for c in to_rgb(RED)) not in colors
 
+    def test_subplot_level_colors_each_subplot(self, tmp_path):
+        # Reserve-slack shape: bars are (reserve, updown), the node group is
+        # the SUBPLOT — color each subplot's bars by its group. Exercises the
+        # live path's re-attach of the dropped subplot level.
+        cols = pd.MultiIndex.from_tuples(
+            [("primary", "up", "g1"), ("primary", "up", "g2"),
+             ("primary", "down", "g1"), ("primary", "down", "g2")],
+            names=["reserve", "updown", "group"],
+        )
+        df = pd.DataFrame(
+            np.array([[5.0, 7.0, 3.0, 2.0], [6.0, 8.0, 4.0, 2.5]]),
+            index=pd.Index(["2020", "2021"], name="period"), columns=cols,
+        )
+        p = tmp_path / "plot_settings.yaml"
+        p.write_text("entities:\n  group:\n    g1: '%s'\n    g2: '%s'\n" % (RED, GREEN))
+        cfg = PlotConfig(
+            plot_name="reserve", map_dimensions_for_plots=["d_eeg", "y_bbu"],
+            color_entity_class="group",
+        )
+        figures, total = prepare_plot_data(df, cfg, plot_name="reserve", color_path=p)
+        assert total >= 1
+        colors = _bar_facecolors(figures)
+        assert tuple(round(c, 3) for c in to_rgb(RED)) in colors
+        assert tuple(round(c, 3) for c in to_rgb(GREEN)) in colors
+        assert tuple(round(c, 3) for c in STEELBLUE_RGB) not in colors
+
     def test_process_variant_colors_units_and_connections(self, tmp_path):
         # process_co2 shape: a 'process' bar level mixing a unit and a
         # connection; color_entity_class: process resolves each against its
