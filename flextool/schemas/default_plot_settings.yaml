@@ -166,12 +166,24 @@ entities:
   # subsection defines stacking order; an optional ``neg_color`` colors an
   # entity's negative-side part of a mixed (both-signs) stacked column.
   #
-  # The ``group`` subsection ships with recommended colors for commonly
-  # used flowGroup names.  The ``unit`` / ``connection`` / ``node``
-  # subsections start empty — per-project entity colors are filled in by
-  # you (or auto-populated from the entities present in your results);
-  # leaving them empty means no change from the palette fallback.
-  group:
+  # ``group`` entities are split by their membership into two subsections:
+  #   * ``nodeGroup``  — a group whose membership is ``group__node`` (a
+  #     collection of nodes, e.g. the balance/dispatch group being plotted).
+  #   * ``flowGroup``  — a group whose membership is ``group__unit__node`` /
+  #     ``group__connection`` (it aggregates FLOWS, e.g. "Battery", "Coal").
+  #     These are the per-participant items colored in nodeGroup-dispatch
+  #     plots, so they ship with recommended technology/fuel colors below.
+  # The ``unit`` / ``connection`` / ``node`` / ``nodeGroup`` subsections
+  # start empty — per-project entity colors are filled in by you (or
+  # auto-populated from the entities present in your results); leaving them
+  # empty means no change from the palette fallback.  (Projects seeded
+  # before the split keep a legacy ``group`` subsection, which the dispatch
+  # resolver still reads; a "Refresh from DB" re-buckets into
+  # nodeGroup/flowGroup.)
+  nodeGroup:
+    # Per-project nodeGroup colors, keyed by group name (case-insensitive).
+    # (Left empty here — fill in per project.)
+  flowGroup:
     # Recommended colors for user-named flowGroup entities.  A flowGroup is a
     # ``group`` entity whose membership is ``group__unit__node`` or
     # ``group__connection__node`` (i.e. it aggregates flows, not nodes) and

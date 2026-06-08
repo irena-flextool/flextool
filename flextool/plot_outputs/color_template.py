@@ -6,8 +6,9 @@ these label sections:
 * ``categories`` — keyed by a category name declared by a plot entry via
   ``color_category``.  Label lookup is *exact* (these are parameter or
   result names whose casing is controlled by the pipeline).
-* ``entities`` — keyed by an entity-class name (``group`` / ``unit`` /
-  ``connection`` / ``node``) declared via ``color_entity_class``.  Label
+* ``entities`` — keyed by an entity-class name (``nodeGroup`` /
+  ``flowGroup`` / ``unit`` / ``connection`` / ``node``; legacy ``group``
+  still read for dispatch) declared via ``color_entity_class``.  Label
   lookup is *case-insensitive* (entity names come from the data and can be
   mixed-case).  An entity entry may be a bare color or a mapping
   ``{color: ..., neg_color: ...}`` whose ``neg_color`` colors the
@@ -220,10 +221,10 @@ def _resolve_entity_value(raw):
 # (``inflow`` / ``internal_losses`` / ``slack``) are group-property
 # aggregates and stay category-colored.
 _NODEGROUP_TYPE_TO_ENTITY_CLASS: dict[str, str] = {
-    "from_unitGroup": "group",
-    "to_unitGroup": "group",
-    "from_connectionGroup": "group",
-    "to_connectionGroup": "group",
+    "from_unitGroup": "flowGroup",
+    "to_unitGroup": "flowGroup",
+    "from_connectionGroup": "flowGroup",
+    "to_connectionGroup": "flowGroup",
     "from_unit": "unit",
     "to_unit": "unit",
     "from_connection": "connection",
@@ -573,14 +574,19 @@ def order_labels_by_template(
 # ---------------------------------------------------------------------------
 
 # Entity classes the dispatch resolver searches, in precedence order.  A
-# dispatch column that is an entity name (a processGroup aggregate, a unit,
-# a connection, …) may live in any of these ``entities`` subsections; the
-# first one with a matching (case-insensitive) key wins.
+# dispatch column that is an entity name (a flowGroup aggregate, a unit, a
+# connection, …) may live in any of these ``entities`` subsections; the
+# first one with a matching (case-insensitive) key wins.  ``group`` is kept
+# last as a LEGACY fallback so projects seeded before the
+# nodeGroup/flowGroup split still resolve their old ``entities.group``
+# colors; new seeds write ``nodeGroup`` / ``flowGroup``.
 _DISPATCH_ENTITY_CLASSES: tuple[str, ...] = (
-    "group",
+    "nodeGroup",
+    "flowGroup",
     "unit",
     "connection",
     "node",
+    "group",
 )
 
 
