@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import tkinter as tk
+from dataclasses import replace
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -256,9 +257,15 @@ class _PlotSection:
 class PlotDialog(tk.Toplevel):
     """Modal dialog for configuring plot settings.
 
-    Provides two sections -- one for single-scenario plots and one for
-    scenario-comparison plots -- each with start-time, duration,
-    config-file selection and active-config checkboxes.
+    A "Colors, order..." button (top row) opens the shared per-project
+    ``plot_settings.yaml`` editor, which applies to ALL plots.  Below it
+    a single section holds the plot-generation settings (start-time,
+    duration, config-file selection, dispatch toggle and active-config
+    checkboxes).  Single-scenario and comparison plots used to take
+    separate config files; they now share ``default_plots.yaml``, so one
+    section drives both — its values are written to both the single and
+    comparison ``PlotSettings`` (still consumed by separate output
+    commands) on OK.
     """
 
     def __init__(
@@ -283,9 +290,10 @@ class PlotDialog(tk.Toplevel):
         lh: int = _metrics.lh
 
         # ── Dialog size ──────────────────────────────────────────
-        self.geometry(f"{cw * 198}x{lh * 42}")
+        # One section now (was two side-by-side), so roughly half-width.
+        self.geometry(f"{cw * 104}x{lh * 42}")
         self.resizable(True, True)
-        self.minsize(cw * 144, lh * 28)
+        self.minsize(cw * 76, lh * 28)
 
         self._build_widgets()
 
@@ -310,49 +318,48 @@ class PlotDialog(tk.Toplevel):
     # ── Widget construction ──────────────────────────────────────
 
     def _build_widgets(self) -> None:
-        # Use grid so the two sections sit side-by-side and expand
         self.columnconfigure(0, weight=1)
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)  # the settings section expands
 
-        # ── Single scenario section (left) ───────────────────────
-        self._single_section = _PlotSection(
-            self,
-            label="Single scenario settings:",
-            settings=self._settings.single_plot_settings,
-            default_config_file="templates/default_plots.yaml",
-        )
-        self._single_section.frame.grid(
-            row=0, column=0, sticky="nsew", padx=(10, 5), pady=(10, 5),
-        )
+        # ── "Colors, order..." on its own row at the top ─────────
+        # ``plot_settings.yaml`` (colors / order / sign) applies to ALL
+        # plots — single, comparison and dispatch — so its editor sits in
+        # its own row above the (shared) plot-generation settings rather
+        # than tucked into a corner.
+        top_frame = ttk.Frame(self)
+        top_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        ttk.Button(
+            top_frame, text="Colors, order...", command=self._on_change_colors,
+        ).pack(side="left")
 
-        # ── Comparison section (right) ───────────────────────────
-        self._comp_section = _PlotSection(
+        # ── Plot-generation settings (single + comparison share one) ─
+        # Single-scenario and comparison plots used to take separate
+        # config files; they now share ``default_plots.yaml``, so one
+        # section drives both.  ``dispatch_plots`` (comparison-only) is
+        # carried from the comparison settings into this merged section.
+        section_settings = replace(
+            self._settings.single_plot_settings,
+            dispatch_plots=self._settings.comparison_plot_settings.dispatch_plots,
+        )
+        self._section = _PlotSection(
             self,
-            label="Scenario comparison settings:",
-            settings=self._settings.comparison_plot_settings,
+            label="Plot settings:",
+            settings=section_settings,
             default_config_file="templates/default_plots.yaml",
             show_dispatch=True,
             project_path=self._project_path,
         )
-        self._comp_section.frame.grid(
-            row=0, column=1, sticky="nsew", padx=(5, 10), pady=(10, 5),
+        self._section.frame.grid(
+            row=1, column=0, sticky="nsew", padx=10, pady=(0, 5),
         )
 
         # ── Button row ───────────────────────────────────────────
         btn_frame = ttk.Frame(self)
-        btn_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(5, 10))
+        btn_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(5, 10))
 
         ttk.Button(btn_frame, text="OK", width=10, command=self._on_ok).pack(
             side="right",
         )
-
-        # ``plot_settings.yaml`` applies to ALL plots (single, comparison,
-        # dispatch), so its editor lives at dialog level rather than inside
-        # one section.
-        ttk.Button(
-            btn_frame, text="Colors, order...", command=self._on_change_colors,
-        ).pack(side="left")
 
     # ── Actions ──────────────────────────────────────────────────
 
@@ -381,8 +388,19 @@ class PlotDialog(tk.Toplevel):
 
     def _on_ok(self) -> None:
         """Save settings and close the dialog."""
-        self._settings.single_plot_settings = self._single_section.collect()
-        self._settings.comparison_plot_settings = self._comp_section.collect()
+        # One section drives both single-scenario and comparison plots;
+        # write its values into both PlotSettings (still consumed by
+        # separate output commands).  ``variant_durations`` is not edited
+        # here, so carry each object's existing values forward.
+        collected = self._section.collect()
+        self._settings.single_plot_settings = replace(
+            collected,
+            variant_durations=self._settings.single_plot_settings.variant_durations,
+        )
+        self._settings.comparison_plot_settings = replace(
+            collected,
+            variant_durations=self._settings.comparison_plot_settings.variant_durations,
+        )
 
         try:
             save_project_settings(self._project_path, self._settings)
