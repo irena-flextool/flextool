@@ -122,20 +122,23 @@ categories:
   #     These types are therefore NOT listed here.
   #
   #   * The group-property aggregates below — ``inflow``, ``internal_losses``
-  #     (three ``item`` subtypes) and ``slack`` (upward/downward) — aren't
-  #     entities, so they keep explicit category colors, looked up as
-  #     ``<type>_<item>`` then ``<type>``.  Reds match costs / node_flows
-  #     slacks; grays read as "dissipated inside the group".
+  #     and ``slack`` — aren't entities, so they keep explicit category
+  #     colors, looked up as ``<type>_<item>`` then ``<type>``.  Reds match
+  #     costs / node_flows slacks; grays read as "dissipated inside the
+  #     group".  ``internal_losses`` and ``slack`` have a CLOSED set of item
+  #     subtypes (connections/units/storages; upward/downward — see
+  #     out_group.py::nodeGroup_flows), so every series hits a ``<type>_<item>``
+  #     key and no bare ``<type>`` fallback is needed.  ``inflow`` keeps a
+  #     bare key because its item is the node name (open set), resolved via
+  #     the ``<type>`` step.
   nodegroup_flows:
     inflow:                      '#7dd87a'   # light green — exogenous node inflow
     # Internal losses (neutral grays — "energy dissipated inside the group")
-    internal_losses:             '#808080'   # gray — generic losses fallback
     internal_losses_connections: '#9e9e9e'   # lighter gray — connection losses
     internal_losses_units:       '#6b6b6b'   # darker gray — unit losses
     internal_losses_storages:    '#5c5c5c'   # darkest gray — storage self-discharge
     # Slacks (red family; aligned with costs.upward/downward slack penalty
     # and node_flows.Loss of load / Excess load)
-    slack:                       '#d62728'   # strong red — generic slack fallback
     slack_upward:                '#d62728'   # strong red — upward slack (unmet demand)
     slack_downward:              '#ff7f7f'   # light red — downward slack (spill)
 

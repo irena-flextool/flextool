@@ -833,6 +833,23 @@ class TestNodeGroupFlowsComposite:
                 f"Shipped template missing nodegroup_flows label {label!r}"
             )
 
+    def test_shipped_template_drops_redundant_bare_fallbacks(self):
+        """``internal_losses`` and ``slack`` have a closed set of item
+        subtypes (each with its own ``<type>_<item>`` key), so the bare
+        ``<type>`` fallback keys are redundant and not shipped.  ``inflow``
+        (open item set: node names) keeps its bare key."""
+        tpl = ct.load_color_template()
+        ngf = tpl["categories"]["nodegroup_flows"]
+        assert "internal_losses" not in ngf
+        assert "slack" not in ngf
+        assert "inflow" in ngf
+        # The closed-set subtype keys are all present.
+        for key in (
+            "internal_losses_connections", "internal_losses_units",
+            "internal_losses_storages", "slack_upward", "slack_downward",
+        ):
+            assert key in ngf
+
     def test_shipped_internal_losses_subtypes_are_distinct(self):
         """The three ``internal_losses`` item subtypes must each get their
         own color (requirement: color internal losses separately)."""
