@@ -2141,6 +2141,52 @@ class ResultViewer(tk.Toplevel):
             self, project_file, on_apply=self._apply_color_settings,
         )
 
+    def _reapply_template_to_plan(
+        self, plan, df, config, plot_name, break_times,
+    ):
+        """Re-apply the current ``plot_settings.yaml`` to a loaded disk plan.
+
+        Disk plot-plans are baked at solve time, so their colors/order
+        reflect the template AS IT WAS THEN.  Without this, a color/order
+        edit saved while viewing one scenario would not appear when the user
+        navigates to another scenario (or back to the edited one), because
+        each scenario loads its own stale disk plan.
+
+        When the plan carries color hints, rebuild its color map + order in
+        place (cheap — no parquet reload).  Legacy hintless plans whose
+        config nonetheless asks for template coloring are recomputed from
+        scratch so the edit is honored.  Plans that don't colour by template
+        are returned untouched.
+        """
+        from flextool.plot_outputs.plan import (
+            compute_live_plan,
+            rebuild_plan_color_map,
+        )
+        color_path = resolve_plot_settings_path(self._project_path)
+        if plan.shared_color_map and (
+            plan.color_category is not None
+            or plan.color_entity_class is not None
+        ):
+            try:
+                rebuild_plan_color_map(plan, color_path=color_path)
+                return plan
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "In-place recolor of disk plan failed; recomputing",
+                    exc_info=True,
+                )
+        if config.color_category is not None or config.color_entity_class is not None:
+            try:
+                return compute_live_plan(
+                    df, config, plot_name, break_times, color_path=color_path,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Recompute of disk plan failed; using disk plan as-is",
+                    exc_info=True,
+                )
+        return plan
+
     def _apply_color_settings(self) -> None:
         """Re-render the displayed plot from the edited ``plot_settings.yaml``.
 
@@ -2865,6 +2911,15 @@ class ResultViewer(tk.Toplevel):
                     plan = load_plot_plan(
                         plan_dir, variant.result_key, variant.sub_config,
                     )
+                    if plan is not None:
+                        # Disk plans are baked at solve time, so they carry
+                        # whatever colors/order plot_settings.yaml had THEN.
+                        # Re-apply the CURRENT template so an edit saved while
+                        # viewing one scenario shows on every scenario (and
+                        # when navigating back), not just the edited one.
+                        plan = self._reapply_template_to_plan(
+                            plan, df, config, plot_name, break_times,
+                        )
                 if plan is None:
                     plan = compute_live_plan(
                         df, config, plot_name, break_times,

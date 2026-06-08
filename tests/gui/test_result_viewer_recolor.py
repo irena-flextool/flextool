@@ -338,3 +338,41 @@ def test_recolor_updates_displayed_plot(
         (0.1882, 0.1882, 0.1882),
         (0.251, 0.251, 0.251),
     }
+
+
+@pytest.mark.parametrize("legacy_plan", [False, True])
+def test_disk_plan_reapplies_current_template_on_load(
+    tk_root, tmp_path, monkeypatch, legacy_plan
+):
+    """A disk plan baked with OLD colors must adopt the CURRENT
+    ``plot_settings.yaml`` when it is loaded (e.g. on a scenario switch) —
+    not only when the user re-saves.
+
+    Regression for: colors/order edited & saved while viewing one scenario
+    vanished when switching to another scenario (and on returning), because
+    each scenario loaded its own stale baked disk plan.
+    """
+    from flextool.plot_outputs import color_template as ct
+
+    # Disk plan baked with red/green/blue.
+    proj, settings_path, plot_cfg = _make_project(
+        tmp_path, legacy_plan=legacy_plan, empty_initial=False,
+    )
+    # Simulate an edit saved in ANOTHER scenario session: the file now holds
+    # the EDITED colors, but THIS scenario's disk plan is still the old bake.
+    _write_template(settings_path, _EDITED)
+    ct._clear_cache()
+
+    viewer = _RecolorViewer(tk_root, proj, plot_cfg, settings_path)
+    variant = _Variant()
+    viewer._replot_target = (SCEN, None, variant)
+
+    # Fresh load (NO force_recompute, NO save) → loads the stale disk plan.
+    viewer._display_from_parquet(SCEN, None, variant)
+    assert viewer._plot_canvas.figure is not None, viewer._plot_canvas.message
+
+    after = _collect_fill_colors(viewer._plot_canvas.figure)
+    assert _EDITED_RGB.issubset(after), (
+        f"disk plan was not recolored from the current template on load "
+        f"(legacy_plan={legacy_plan}): {sorted(after)}"
+    )
