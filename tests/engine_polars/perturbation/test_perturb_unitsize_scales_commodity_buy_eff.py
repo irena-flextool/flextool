@@ -5,7 +5,7 @@ The §2.2 term is::
 
     + Σ_{(p, source, sink) ∈ process_source_sink_eff, (d,t) ∈ dt}
           v_flow * p_unitsize * pdtProcess_slope
-              × pdtCommodity_price × p_step_duration × p_rp_cost_weight
+              × pdtCommodity_price × p_step_duration × p_timestep_weight
               × p_inflation_op / p_period_share
               × pdt_branch_weight
               × (sink_coef / source_coef if process_unit)
@@ -71,7 +71,7 @@ def _commodity_buy_eff_term(d, sol) -> float:
                   .rename({"value": "cprice"}).collect(),
               on=["c", "d", "t"])
         .join(d.p_step_duration.frame.rename({"value": "dur"}), on=["d", "t"])
-        .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}), on=["d", "t"])
+        .join(d.p_timestep_weight.frame.rename({"value": "rpcw"}), on=["d", "t"])
         .join(d.p_inflation_op.frame.rename({"value": "infl"}), on="d")
         .join(d.p_period_share.frame.rename({"value": "psh"}), on="d")
     )

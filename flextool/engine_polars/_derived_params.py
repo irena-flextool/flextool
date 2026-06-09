@@ -4,7 +4,7 @@ This module covers the first batch of Derived Params per the
 ``audit/db_direct_param_map.md`` §3 deep-dive:
 
 * ``§3.1`` Time / weighting:
-  ``dt`` / ``p_step_duration``, ``p_rp_cost_weight``,
+  ``dt`` / ``p_step_duration``, ``p_timestep_weight``,
   ``p_inflation_op``, ``p_period_share``.
 * ``§3.2`` Nodes:
   ``p_inflow`` (scaling step on top of node.inflow Map).
@@ -27,7 +27,7 @@ once per public function.
 
 Per-solve scope
 ---------------
-Several Params (``dt``, ``p_step_duration``, ``p_rp_cost_weight``,
+Several Params (``dt``, ``p_step_duration``, ``p_timestep_weight``,
 ``pdt_branch_weight``, ``pd_branch_weight``) are per-active-solve.  The
 helpers accept an explicit ``active_solve`` argument; the
 :func:`apply_derived_a` integration entrypoint reads
@@ -713,11 +713,11 @@ def p_inflation_op_from_source(
 
 
 # ---------------------------------------------------------------------------
-# §3.1.2 — p_rp_cost_weight
+# §3.1.2 — p_timestep_weight
 # ---------------------------------------------------------------------------
 
 
-def p_rp_cost_weight_from_source(
+def p_timestep_weight_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
     active_solve: str | None = None,
@@ -749,7 +749,7 @@ def p_rp_cost_weight_from_source(
 
     RP path (``representative_period_weights`` set):
       Currently deferred — RP fixtures don't appear in the regression
-      set this helper unblocks.  The CSV-loaded ``rp_cost_weight.csv``
+      set this helper unblocks.  The CSV-loaded ``timestep_weight.csv``
       already encodes the canonical weights; the helper emits ``None``
       via the empty-frame fallback so the CSV value survives.
 
@@ -1277,7 +1277,7 @@ DERIVED_A_FIELDS = (
     "p_step_duration",
     "p_period_share",
     "p_inflation_op",
-    "p_rp_cost_weight",
+    "p_timestep_weight",
     "pd_branch_weight",
     "pdt_branch_weight",
     "p_inflow",
@@ -1303,7 +1303,7 @@ def apply_derived_a(
     in place.
 
     Δ.12b — assignment is unconditional for the helpers that are
-    authoritative producers (``p_inflation_op``, ``p_rp_cost_weight``,
+    authoritative producers (``p_inflation_op``, ``p_timestep_weight``,
     ``pd_branch_weight``, ``pdt_branch_weight``, ``p_penalty_up``,
     ``p_penalty_down``).  ``p_inflow`` and ``p_process_existing_count``
     retain a conditional assignment because the helpers have known
@@ -1314,7 +1314,7 @@ def apply_derived_a(
 
     Dependency order:
         dt / p_step_duration → p_period_share, p_inflation_op,
-        p_rp_cost_weight, pd_branch_weight, pdt_branch_weight, p_inflow
+        p_timestep_weight, pd_branch_weight, pdt_branch_weight, p_inflow
         → p_process_existing_count, p_profile_value (high-risk, last).
     """
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
@@ -1384,10 +1384,10 @@ def apply_derived_a(
     flex_data.p_inflation_op = p_inflation_op_from_source(
         source, usable_dt, active_solve)
 
-    # 4. p_rp_cost_weight — Δ.12b: unconditional.  None == no
+    # 4. p_timestep_weight — Δ.12b: unconditional.  None == no
     #    timeset.timeset_weights declared (default 1.0 broadcast handled
     #    inside the helper).
-    flex_data.p_rp_cost_weight = p_rp_cost_weight_from_source(
+    flex_data.p_timestep_weight = p_timestep_weight_from_source(
         source, usable_dt, active_solve)
 
     # 5. pd_branch_weight + pdt_branch_weight — Δ.12b: unconditional.
@@ -1451,10 +1451,25 @@ def apply_derived_a(
         p_penalty_up_from_source,
         p_penalty_down_from_source,
     )
+    # The penalty callee broadcasts penalties over the node set it's GIVEN
+    # and filters to it.  Slack vars span ``nodeBalance ∪
+    # nodeBalancePeriod`` (period nodes also carry ``vq_state_up/down``),
+    # so pass the dtype-safe union — otherwise period-node slack is dropped
+    # from the objective penalty term.  Both frames come from the same
+    # ``rename_to_axis({"node":"n"})`` in ``input.py:_load_node`` so dtypes
+    # align.  When the period set is empty/None the union collapses to
+    # exactly ``nb_df`` → byte-identical legacy behavior.
     nb_df = getattr(flex_data, "nodeBalance", None)
-    flex_data.p_penalty_up = p_penalty_up_from_source(source, nb_df, usable_dt)
+    nbp_df = getattr(flex_data, "nodeBalancePeriod", None)
+    penalty_nodes = nb_df
+    if (nb_df is not None and nbp_df is not None and nbp_df.height > 0):
+        penalty_nodes = (pl.concat([nb_df.select("n"), nbp_df.select("n")])
+                           .unique()
+                           .select("n"))
+    flex_data.p_penalty_up = p_penalty_up_from_source(
+        source, penalty_nodes, usable_dt)
     flex_data.p_penalty_down = p_penalty_down_from_source(
-        source, nb_df, usable_dt)
+        source, penalty_nodes, usable_dt)
 
 
 # ---------------------------------------------------------------------------
@@ -2708,7 +2723,24 @@ def apply_derived_b(
         # block-compat filter when bundle data is present, but the
         # seed produced here already includes the filter so the
         # overlay is a no-op.
+        # Source-side flows must be gathered for BOTH plain ``nodeBalance``
+        # nodes and ``balance_within_period`` (``nodeBalancePeriod``) nodes —
+        # a period node that is a *source* on an arc (e.g. GAS → gas plant)
+        # must contribute its source-side flow term to ``nodeBalancePeriod_eq``,
+        # else the period balance is vacuous and the source draws for free.
+        # Pass the dtype-safe union to the seed (which filters ``pss.source ∈
+        # n``).  Both frames come from the same ``rename_to_axis({"node":"n"})``
+        # in ``input.py:_load_node`` so the ``n`` Enum aligns.  When the period
+        # set is empty/None the union collapses to exactly ``nb_for_ffnb``
+        # (no concat/unique/reorder) → byte-identical legacy behavior.
         nb_for_ffnb = getattr(flex_data, "nodeBalance", None)
+        _nbp_for_ffnb = getattr(flex_data, "nodeBalancePeriod", None)
+        if (nb_for_ffnb is not None and _nbp_for_ffnb is not None
+                and _nbp_for_ffnb.height > 0):
+            nb_for_ffnb = (pl.concat([nb_for_ffnb.select("n"),
+                                      _nbp_for_ffnb.select("n")])
+                             .unique()
+                             .select("n"))
         pss_eff_frame = getattr(flex_data, "process_source_sink_eff", None)
         pss_noEff_frame = getattr(flex_data, "process_source_sink_noEff",
                                     None)
@@ -5018,11 +5050,23 @@ def p_node_capacity_for_scaling_from_source(source: "InputSource",
                 pass
     if scaling_active:
         return None  # defer; CSV path handles pow10 cascade
-    # nodeBalance projection — same set as the slow path's filter.
-    from ._projection_params import nodeBalance as _nodeBalance_proj
+    # nodeBalance projection — same set as the slow path's filter.  Slack
+    # vars span ``nodeBalance ∪ nodeBalancePeriod`` (period nodes also
+    # carry ``vq_state_up/down``), so union the period nodes in before the
+    # cross-join.  Dtype-safe; when the period set is empty the union
+    # collapses to exactly ``nb`` → byte-identical legacy behavior.
+    from ._projection_params import (
+        nodeBalance as _nodeBalance_proj,
+        nodeBalancePeriod as _nodeBalancePeriod_proj,
+    )
     nb = _nodeBalance_proj(source)
     if nb is None or nb.height == 0:
         return None
+    nbp = _nodeBalancePeriod_proj(source)
+    if nbp is not None and nbp.height > 0:
+        nb = (pl.concat([nb.select("n"), nbp.select("n")])
+                .unique()
+                .select("n"))
     out = (nb.lazy()
               .join(axis_lazyframe({"d": period_in_use}), how="cross")
               .with_columns(value=pl.lit(1.0))

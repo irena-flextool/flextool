@@ -54,8 +54,8 @@ def test_step_duration_string_cast_and_scattered_periods(tiny_workdir):
                                                     rel=1e-7)
 
 
-def test_rp_cost_weight_strict_false_scientific_notation(tiny_workdir):
-    """Covers A1-rp_cost_weight_strict_false (direct).  String values
+def test_timestep_weight_strict_false_scientific_notation(tiny_workdir):
+    """Covers A1-timestep_weight_strict_false (direct).  String values
     in scientific notation must round-trip via cast(Float64,
     strict=False) and the override must merge over the per-(d,t)
     default of 1.0.
@@ -64,11 +64,11 @@ def test_rp_cost_weight_strict_false_scientific_notation(tiny_workdir):
         {"period": "p2020", "step": "t0001", "step_duration": 1.0},
         {"period": "p2020", "step": "t0002", "step_duration": 1.0},
     ])
-    write_csv(tiny_workdir, "rp_cost_weight.csv", [
+    write_csv(tiny_workdir, "timestep_weight.csv", [
         {"period": "p2020", "time": "t0001", "value": "1.5e-3"},
     ])
     data = load_flextool(tiny_workdir)
-    rp = data.p_rp_cost_weight.frame.sort(["d", "t"])
+    rp = data.p_timestep_weight.frame.sort(["d", "t"])
     # Hand-calc: t0001 override 1.5e-3, t0002 default 1.0.
     assert rp["value"].to_list() == pytest.approx([1.5e-3, 1.0], rel=1e-7)
 

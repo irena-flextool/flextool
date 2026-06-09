@@ -33,12 +33,12 @@ INP = Path("input")
 SDD = Path("solve_data")
 
 
-def _base_provider(*, rp_cost_weight: dict[tuple[str, str], float] | None,
+def _base_provider(*, timestep_weight: dict[tuple[str, str], float] | None,
                    ) -> FlexDataProvider:
     """A minimal Provider with one scaling node (``annN``,
     scale_to_annual_flow) over a single period ``d1`` with four timesteps.
 
-    When *rp_cost_weight* is given it is authored as ``rp_cost_weight.csv``
+    When *timestep_weight* is given it is authored as ``timestep_weight.csv``
     (period, time, weight); when ``None`` the file is absent → ``w ≡ 1.0``.
     Inflow profile is deliberately non-flat (1, 2, 3, 4) so a non-uniform
     weight moves the weighted sum away from the unweighted one.
@@ -78,11 +78,11 @@ def _base_provider(*, rp_cost_weight: dict[tuple[str, str], float] | None,
     put("solve_data", "steps_complete_solve", pl.DataFrame({
         "period": ["d1"] * 4, "time": times}))
 
-    if rp_cost_weight is not None:
-        put("solve_data", "rp_cost_weight", pl.DataFrame({
-            "period": [k[0] for k in rp_cost_weight],
-            "time": [k[1] for k in rp_cost_weight],
-            "weight": list(rp_cost_weight.values())}))
+    if timestep_weight is not None:
+        put("solve_data", "timestep_weight", pl.DataFrame({
+            "period": [k[0] for k in timestep_weight],
+            "time": [k[1] for k in timestep_weight],
+            "weight": list(timestep_weight.values())}))
 
     return provider
 
@@ -101,7 +101,7 @@ def _diag_rows(frame: pl.DataFrame) -> dict[tuple[str, str], dict]:
 
 def test_uniform_input_f_is_one_and_no_warning():
     """Weight-free input: f == 1.0 everywhere, no warning."""
-    provider = _base_provider(rp_cost_weight=None)
+    provider = _base_provider(timestep_weight=None)
     frame, warnings = _compute_inflow_scaling_diagnostics(
         INP, SDD, provider=provider)
 
@@ -119,7 +119,7 @@ def test_uniform_explicit_weights_f_is_one():
     """Explicit but UNIFORM weights (all 1.0) also give f == 1.0 and no
     warning (the divergence is only meaningful for non-uniform weights)."""
     w = {("d1", t): 1.0 for t in ("t1", "t2", "t3", "t4")}
-    provider = _base_provider(rp_cost_weight=w)
+    provider = _base_provider(timestep_weight=w)
     frame, warnings = _compute_inflow_scaling_diagnostics(
         INP, SDD, provider=provider)
     rows = _diag_rows(frame)
@@ -134,7 +134,7 @@ def test_nonuniform_weights_f_matches_handcompute_and_warns():
     times = ["t1", "t2", "t3", "t4"]
     inflow = [1.0, 2.0, 3.0, 4.0]
     w = {("d1", t): wv for t, wv in zip(times, weights)}
-    provider = _base_provider(rp_cost_weight=w)
+    provider = _base_provider(timestep_weight=w)
 
     frame, warnings = _compute_inflow_scaling_diagnostics(
         INP, SDD, provider=provider)
@@ -164,7 +164,7 @@ def test_warning_logged_at_warning_level(caplog):
     weights = [0.5, 1.0, 1.5, 2.0]
     times = ["t1", "t2", "t3", "t4"]
     w = {("d1", t): wv for t, wv in zip(times, weights)}
-    provider = _base_provider(rp_cost_weight=w)
+    provider = _base_provider(timestep_weight=w)
 
     with caplog.at_level(
         logging.WARNING,
@@ -189,7 +189,7 @@ def test_warning_logged_at_warning_level(caplog):
 def test_no_warning_on_uniform_input_via_emitter(caplog):
     """Uniform input through the public emitter logs NO inflow-scaling
     warning."""
-    provider = _base_provider(rp_cost_weight=None)
+    provider = _base_provider(timestep_weight=None)
     with caplog.at_level(
         logging.WARNING,
         logger="flextool.engine_polars._emit_inflow_scaling",

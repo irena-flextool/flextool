@@ -4,7 +4,7 @@ flextool's test exercises ``write_timeset_cost_weight`` — the
 solve-side writer that normalizes per-timestep weights so the
 period-sum equals ``n_active_steps`` (so a uniform input reproduces
 weight=1 per step).  polar_high doesn't have an equivalent writer; it
-*consumes* the canonical ``rp_cost_weight.csv`` on disk via
+*consumes* the canonical ``timestep_weight.csv`` on disk via
 :func:`flextool.input._load_time`.
 
 Porting strategy (loader-side instead of writer-side, per gap-B6
@@ -13,10 +13,10 @@ verify the same correctness assertions"):
 
 1. Build a tiny ``solve_data/`` directory in ``tmp_path`` matching
    polar_high's loader contract (``steps_in_use.csv`` for the (d, t)
-   index; ``rp_cost_weight.csv`` with the canonical
+   index; ``timestep_weight.csv`` with the canonical
    ``period,time,weight`` header; the inflation / period_share
    files needed to make ``_load_time`` succeed).
-2. Drive ``_load_time`` and inspect ``p_rp_cost_weight.frame``.
+2. Drive ``_load_time`` and inspect ``p_timestep_weight.frame``.
 3. Assert the same correctness invariants the flextool writer-test
    pins:
    * The handoff example {0.4, 0.8, 1.2, 1.6} loads verbatim.
@@ -28,7 +28,7 @@ verify the same correctness assertions"):
 
 The flextool writer guarantees the on-disk file already encodes
 the *normalized × n* values; this test pins the loader contract
-that produces ``p_rp_cost_weight`` from that file.
+that produces ``p_timestep_weight`` from that file.
 """
 from __future__ import annotations
 
@@ -60,8 +60,8 @@ def _write_steps_in_use(sd: Path, period_steps: dict[str, list[str]]) -> None:
     pl.DataFrame(rows).write_csv(sd / "steps_in_use.csv")
 
 
-def _write_rp_cost_weight(sd: Path, rows: list[tuple[str, str, float]]) -> None:
-    """Write canonical ``rp_cost_weight.csv`` with header ``period,time,weight``."""
+def _write_timestep_weight(sd: Path, rows: list[tuple[str, str, float]]) -> None:
+    """Write canonical ``timestep_weight.csv`` with header ``period,time,weight``."""
     if rows:
         df = pl.DataFrame(
             rows, schema=["period", "time", "weight"], orient="row"
@@ -70,7 +70,7 @@ def _write_rp_cost_weight(sd: Path, rows: list[tuple[str, str, float]]) -> None:
         df = pl.DataFrame(
             schema={"period": pl.Utf8, "time": pl.Utf8, "weight": pl.Float64}
         )
-    df.write_csv(sd / "rp_cost_weight.csv")
+    df.write_csv(sd / "timestep_weight.csv")
 
 
 def _write_aux(sd: Path, periods: list[str]) -> None:
@@ -99,7 +99,7 @@ def _rpcw_dict(rp_cw_param) -> dict[tuple[str, str], float]:
     }
 
 
-class TestLoadRpCostWeight:
+class TestLoadTimestepWeight:
     """Each test mirrors a flextool ``TestWriteTimesetCostWeight`` case,
     but operates on the *loader* (post-writer) end.  Inputs encode the
     values the writer would have produced (normalized × n)."""
@@ -110,7 +110,7 @@ class TestLoadRpCostWeight:
         (already-summing-to-1 × n=4); the loader must read those values
         back unchanged."""
         sd = _setup(tmp_path, {"p1": ["t1", "t2", "t3", "t4"]})
-        _write_rp_cost_weight(sd, [
+        _write_timestep_weight(sd, [
             ("p1", "t1", 0.4),
             ("p1", "t2", 0.8),
             ("p1", "t3", 1.2),
@@ -132,7 +132,7 @@ class TestLoadRpCostWeight:
         """Mirrors ``test_uniform_input_reproduces_default``.  All-1.0
         on disk must come back as all-1.0."""
         sd = _setup(tmp_path, {"p1": ["t1", "t2", "t3", "t4"]})
-        _write_rp_cost_weight(sd, [
+        _write_timestep_weight(sd, [
             ("p1", "t1", 1.0),
             ("p1", "t2", 1.0),
             ("p1", "t3", 1.0),
@@ -159,7 +159,7 @@ class TestLoadRpCostWeight:
         #   {t1: 2.0, t2: 0.0, t3: 2.0, t4: 0.0}
         # but polar_high's loader fixture mirrors the file flextool writes,
         # so we put those exact values on disk:
-        _write_rp_cost_weight(sd, [
+        _write_timestep_weight(sd, [
             ("p", "t1", 2.0),
             ("p", "t2", 0.0),
             ("p", "t3", 2.0),
@@ -175,15 +175,15 @@ class TestLoadRpCostWeight:
         The writer skips emission when no timeset has weights; the
         loader must default every (d, t) to 1.0 in that case."""
         sd = _setup(tmp_path, {"p": ["t1", "t2"]})
-        # No rp_cost_weight.csv at all.
+        # No timestep_weight.csv at all.
         _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         assert _rpcw_dict(rp_cw) == {("p", "t1"): 1.0, ("p", "t2"): 1.0}
 
     def test_empty_csv_defaults_to_one(self, tmp_path: Path) -> None:
-        """Header-only ``rp_cost_weight.csv`` (no rows) is also a
+        """Header-only ``timestep_weight.csv`` (no rows) is also a
         legitimate "no overrides" state.  Loader must default to 1.0."""
         sd = _setup(tmp_path, {"p": ["t1", "t2"]})
-        _write_rp_cost_weight(sd, [])
+        _write_timestep_weight(sd, [])
         _, _, rp_cw, _, _ = _load_time(sd, provider=_provider_for(sd))
         assert _rpcw_dict(rp_cw) == {("p", "t1"): 1.0, ("p", "t2"): 1.0}
 
@@ -195,7 +195,7 @@ class TestLoadRpCostWeight:
             "p1": ["t1", "t2"],
             "p2": ["t3", "t4", "t5"],
         })
-        _write_rp_cost_weight(sd, [
+        _write_timestep_weight(sd, [
             ("p1", "t1", 0.5), ("p1", "t2", 1.5),
             ("p2", "t3", 0.3), ("p2", "t4", 1.2), ("p2", "t5", 1.5),
         ])
@@ -219,7 +219,7 @@ class TestLoadRpCostWeight:
             "p1": ["t1", "t2"],
             "p2": ["t3", "t4"],
         })
-        _write_rp_cost_weight(sd, [
+        _write_timestep_weight(sd, [
             ("p1", "t1", 0.4), ("p1", "t2", 1.6),
             # p2 absent — writer skipped emission for that period.
         ])
@@ -238,7 +238,7 @@ def test_real_fixture_has_writer_invariant(scenario_workdir) -> None:
     invariant — period-sum equals n_active_steps (= 48 here).
     """
     work = scenario_workdir("base_weighted", db_fixture="main")
-    df = pl.read_csv(work / "solve_data" / "rp_cost_weight.csv")
+    df = pl.read_csv(work / "solve_data" / "timestep_weight.csv")
     by_period = df.group_by("period").agg(pl.col("weight").sum())
     n_per_period = (df.group_by("period")
                       .agg(pl.col("time").n_unique().alias("n")))

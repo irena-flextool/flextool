@@ -58,7 +58,7 @@ def test_blank_when_nodeState_absent_or_empty(tmp_path: Path):
     nb = _empty_nb()
 
     # (1) nodeState.csv absent.
-    out1 = _load_storage(inp, sd, dt, nb, None, None, None, None)
+    out1 = _load_storage(inp, sd, dt, nb, None, None, None, None, None)
     # Hand-calc: missing file -> blank dict; every nodeState/storage key None.
     for k in ("nodeState", "nodeState_dt", "nodeState_first_dt",
               "p_state_upper", "storage_bind_within_timeblock",
@@ -67,7 +67,7 @@ def test_blank_when_nodeState_absent_or_empty(tmp_path: Path):
 
     # (2) nodeState.csv exists with header only.
     _write(sd / "nodeState.csv", "node\n")
-    out2 = _load_storage(inp, sd, dt, nb, None, None, None, None)
+    out2 = _load_storage(inp, sd, dt, nb, None, None, None, None, None)
     # Hand-calc: height==0 short-circuit -> identical blank dict.
     for k in ("nodeState", "nodeState_dt", "p_state_upper",
               "storage_bind_within_timeblock"):
@@ -94,7 +94,7 @@ def test_first_dt_precedence_and_fallback(tmp_path: Path):
     # (1) Both period files populated -> fpos wins.
     _write(sd / "period_first_of_solve.csv", "period\nd2\n")
     _write(sd / "period_first.csv", "period\nd1\n")
-    out1 = _load_storage(inp, sd, dt, nb, None, None, None, None)
+    out1 = _load_storage(inp, sd, dt, nb, None, None, None, None, None)
     # Hand-calc: fpos=[d2] -> group_by(n,d).agg(t.min()) on (n1,d2)
     # rows -> (n1, d2, t1).
     fdt1 = out1["nodeState_first_dt"].sort("n", "d", "t")
@@ -104,7 +104,7 @@ def test_first_dt_precedence_and_fallback(tmp_path: Path):
     # (2) Drop both period files -> lex-smallest fallback.
     (sd / "period_first_of_solve.csv").unlink()
     (sd / "period_first.csv").unlink()
-    out2 = _load_storage(inp, sd, dt, nb, None, None, None, None)
+    out2 = _load_storage(inp, sd, dt, nb, None, None, None, None, None)
     # Hand-calc: dt unique d -> {d1,d2}; sort head(1) -> d1; min t over
     # (d1,*) rows is t1 -> first_dt = (n1, d1, t1).
     fdt2 = out2["nodeState_first_dt"].sort("n", "d", "t")
@@ -130,7 +130,7 @@ def test_storage_start_end_method_input_over_solve_data(tmp_path: Path):
            "node,storage_start_end_method\nn1,fix_start\n")
     _write(sd / "node__storage_start_end_method.csv",
            "node,method\nn2,fix_end\n")
-    out = _load_storage(inp, sd, dt, _empty_nb(), None, None, None, None)
+    out = _load_storage(inp, sd, dt, _empty_nb(), None, None, None, None, None)
     # Hand-calc: input/ wins -> only fix_start row consumed; n2/fix_end
     # in sd/ never read -> fix_start={n1}, fix_end / fix_start_end empty.
     assert out["storage_fix_start"]["n"].to_list() == ["n1"]
@@ -163,7 +163,7 @@ def test_use_reference_value_excludes_competing_methods(tmp_path: Path):
            "n1,use_reference_value\nn2,use_reference_value\n")
     _write(inp / "node__storage_start_end_method.csv",
            "node,storage_start_end_method\nn2,fix_end\n")
-    out = _load_storage(inp, sd, dt, _empty_nb(), None, None, None, None)
+    out = _load_storage(inp, sd, dt, _empty_nb(), None, None, None, None, None)
     # Hand-calc: ref-value={n1,n2} anti-join fix_end={n2} -> {n1}.
     assert out["storage_use_reference_value"] is not None
     assert out["storage_use_reference_value"]["n"].to_list() == ["n1"]

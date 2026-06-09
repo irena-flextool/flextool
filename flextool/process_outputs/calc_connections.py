@@ -66,17 +66,17 @@ def compute_connection_flows(par, s, v, r) -> None:
     r.connection_to_left_node__dt = conn_to_left.sub(left_to_conn, fill_value=0)
     r.connection_to_right_node__dt = conn_to_right.sub(right_to_conn, fill_value=0)
     # v_flow is MW — multiply by step_duration for MWh, then weight each
-    # (d, t) by par.rp_cost_weight (=1.0 with no/uniform timeset_weights →
+    # (d, t) by par.timestep_weight (=1.0 with no/uniform timeset_weights →
     # byte-identical) before the period sum and annualisation.
     r.connection_to_left_node__d = (
         r.connection_to_left_node__dt.mul(step_duration, axis=0)
-        .mul(par.rp_cost_weight, axis=0)
+        .mul(par.timestep_weight, axis=0)
         .groupby('period').sum()
         .div(par.complete_period_share_of_year, axis=0)
     )
     r.connection_to_right_node__d = (
         r.connection_to_right_node__dt.mul(step_duration, axis=0)
-        .mul(par.rp_cost_weight, axis=0)
+        .mul(par.timestep_weight, axis=0)
         .groupby('period').sum()
         .div(par.complete_period_share_of_year, axis=0)
     )
@@ -85,10 +85,10 @@ def compute_connection_flows(par, s, v, r) -> None:
     r.from_conn = pd.concat([conn_to_left, conn_to_right], axis=1)  # columns: ['process', 'node']
     r.to_conn = pd.concat([left_to_conn, right_to_conn], axis=1)    # columns: ['process', 'node']
 
-    # connection_d — weight each (d, t) by par.rp_cost_weight (=1.0 with
+    # connection_d — weight each (d, t) by par.timestep_weight (=1.0 with
     # no/uniform timeset_weights → byte-identical) here at the period sum;
     # the cpsoy annualisation is applied downstream in out_ancillary.
-    r_conn_weighted = r.connection_dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0)
+    r_conn_weighted = r.connection_dt.mul(step_duration, axis=0).mul(par.timestep_weight, axis=0)
     if not r_conn_weighted.empty:
         r.connection_d = r_conn_weighted[
             r_conn_weighted.index.get_level_values('period').isin(s.d_realized_period)
@@ -99,9 +99,9 @@ def compute_connection_flows(par, s, v, r) -> None:
             columns=pd.Index([], name='process'),
         )
 
-    # connection_losses_d — weight each (d, t) by par.rp_cost_weight as above
+    # connection_losses_d — weight each (d, t) by par.timestep_weight as above
     # (cpsoy annualisation applied downstream in out_ancillary).
-    r_conn_losses_weighted = r.connection_losses_dt.mul(step_duration, axis=0).mul(par.rp_cost_weight, axis=0)
+    r_conn_losses_weighted = r.connection_losses_dt.mul(step_duration, axis=0).mul(par.timestep_weight, axis=0)
     if not r_conn_losses_weighted.empty:
         r.connection_losses_d = r_conn_losses_weighted[
             r_conn_losses_weighted.index.get_level_values('period').isin(s.d_realized_period)

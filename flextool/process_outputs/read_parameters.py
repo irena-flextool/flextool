@@ -1115,8 +1115,8 @@ def read_parameters(
     p.step_duration = _pdt_series_solve_period_time(
         flex_data.p_step_duration, solve_name=solve_name,
     )
-    p.rp_cost_weight = _pdt_series_solve_period_time(
-        flex_data.p_rp_cost_weight, solve_name=solve_name,
+    p.timestep_weight = _pdt_series_solve_period_time(
+        flex_data.p_timestep_weight, solve_name=solve_name,
     )
 
     # flow_min / flow_max — multi-column DataFrames.  FlexData has
@@ -1441,10 +1441,22 @@ def read_parameters(
     # node_capacity_for_scaling / group_capacity_for_scaling.
     # Densify nodes for downstream slack-scaling lookups in
     # ``out_node.py`` / ``calc_slacks.py``.
+    # The slack vars span ``nodeBalance ∪ nodeBalancePeriod`` (period nodes
+    # also carry ``vq_state_up/down``), so the densify universe must cover
+    # both — otherwise period-node ``q_state`` columns are missing from the
+    # output frame.  De-duplicate while preserving order; when there are no
+    # period nodes the universe is exactly ``nodeBalance`` (byte-identical).
     nodes_universe = []
     if (flex_data.nodeBalance is not None
             and flex_data.nodeBalance.height > 0):
         nodes_universe = flex_data.nodeBalance["n"].to_list()
+    if (flex_data.nodeBalancePeriod is not None
+            and flex_data.nodeBalancePeriod.height > 0):
+        seen = set(nodes_universe)
+        for n in flex_data.nodeBalancePeriod["n"].to_list():
+            if n not in seen:
+                nodes_universe.append(n)
+                seen.add(n)
     p.node_capacity_for_scaling = _pdX_per_entity(
         flex_data.p_node_capacity_for_scaling, solve_name=solve_name,
         entity_dim="n", col_name="node", flex_data=flex_data,

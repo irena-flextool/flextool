@@ -88,7 +88,7 @@ Required existing data fields (must be present before ``add_constraints``)
 * ``v_invest_p`` / ``v_divest_p``       (only if the scenario has invest;
   used by capacity_margin LHS for available-capacity-with-invest).
 * ``p_unitsize``, ``p_slope``, ``p_section`` (already on ``d``).
-* ``p_step_duration``, ``p_rp_cost_weight``, ``p_inflation_op``,
+* ``p_step_duration``, ``p_timestep_weight``, ``p_inflation_op``,
   ``p_period_share`` (already on ``d``).
 * ``p_process_existing_count``, ``edd_invest_set``, ``pd_divest_set``,
   ``edd_divest_active`` (only when invest is active).
@@ -1182,9 +1182,9 @@ def add_objective_terms(m, d, vars: dict, op_factor) -> "Expr | None":
 
     9.1 Inertia slack:
       + Σ_{g,d,t} pdt_branch_weight · vq_inertia · pdGroup_inertia_limit
-                  · pdGroup_penalty_inertia · step_duration · rp_cost_weight
+                  · pdGroup_penalty_inertia · step_duration · timestep_weight
                   · inflation_op / period_share
-      The ``op_factor`` encodes ``step_duration · rp_cost_weight ·
+      The ``op_factor`` encodes ``step_duration · timestep_weight ·
       inflation_op / period_share``; the model.py caller folds
       ``pdt_branch_weight`` into ``op_factor`` when stochastics is active
       (A6 close), so this term inherits the per-(d,t) probability
@@ -1192,10 +1192,10 @@ def add_objective_terms(m, d, vars: dict, op_factor) -> "Expr | None":
 
     9.2 Non-sync slack:
       + Σ_{g,d,t} pdt_branch_weight · vq_non_synchronous · group_capacity_for_scaling
-                  · pdGroup_penalty_non_synchronous · step_duration · rp_cost_weight
+                  · pdGroup_penalty_non_synchronous · step_duration · timestep_weight
                   · inflation_op / period_share
 
-    9.3 Capacity-margin slack (period-only, NO step_duration / rp_cost_weight /
+    9.3 Capacity-margin slack (period-only, NO step_duration / timestep_weight /
     pdt_branch_weight):
       + Σ_{g,d} vq_capacity_margin · group_capacity_for_scaling
                 · pdGroup_penalty_capacity_margin · 1000 · inflation_op
@@ -1231,7 +1231,7 @@ def add_objective_terms(m, d, vars: dict, op_factor) -> "Expr | None":
     if "vq_capacity_margin" in vars and d.p_group_capacity_for_scaling is not None \
             and d.pdGroup_penalty_capacity_margin is not None \
             and d.p_inflation_op is not None:
-        # Period-only term: no step_duration / rp_cost_weight / period_share.
+        # Period-only term: no step_duration / timestep_weight / period_share.
         # BUG A4 fix: include the × 1000 unit conversion (CUR/kW → CUR/MW)
         # that matches ``calc_slacks.costPenalty_capacity_margin_d``'s
         # ``.mul(1000.0)``.  Without it the LP objective under-counts the

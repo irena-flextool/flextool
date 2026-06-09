@@ -119,7 +119,7 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
     # ─── Time / weighting ─────────────────────────────────────────────
     "p_step_duration": ("solve_data", "steps_in_use.csv",
                         {"d": "period", "t": "step", "value": "step_duration"}),
-    "p_rp_cost_weight": ("solve_data", "rp_cost_weight.csv",
+    "p_timestep_weight": ("solve_data", "timestep_weight.csv",
                          {"d": "period", "t": "time", "value": "weight"}),
     "p_inflation_op": ("solve_data", "p_inflation_factor_operations_yearly.csv",
                         {"d": "period", "value": "value"}),

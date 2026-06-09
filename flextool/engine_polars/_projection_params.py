@@ -123,6 +123,26 @@ def nodeBalance(source: "InputSource") -> pl.DataFrame:
               .collect())
 
 
+def nodeBalancePeriod(source: "InputSource") -> pl.DataFrame:
+    """Nodes with ``node_type == 'balance_within_period'``.
+
+    Schema: ``[n]``.  Mirrors :func:`nodeBalance` exactly except for the
+    filter literal — these nodes enforce their energy balance once per
+    period (legacy ``balance_within_period``) and also carry slack vars
+    ``vq_state_up/down``, so they participate in the same slack-scaling /
+    penalty params as ``nodeBalance``.
+    """
+    df = _try_param(source, "node", "node_type")
+    if df is None:
+        return _empty({"n": pl.Utf8})
+    return (df.lazy()
+              .filter(pl.col("value").is_in(["balance_within_period"]))
+              .pipe(rename_to_axis, {"name": "n"})
+              .select("n")
+              .sort("n")
+              .collect())
+
+
 # ---------------------------------------------------------------------------
 # §1.3 — Process topology Projections
 # ---------------------------------------------------------------------------

@@ -17,13 +17,13 @@ Closed-form perturbation tests for six currently-untested terms:
 * B18-7 — ``vq_capacity_margin · p_group_capacity_for_scaling
           · pdGroup_penalty_capacity_margin · p_inflation_op``
           (_group_slack.py:1174-1182).  CRITICAL: NO step_duration /
-          rp_cost_weight / period_share / pdt_branch_weight — only
+          timestep_weight / period_share / pdt_branch_weight — only
           ``inflation_op`` applies; the asymmetry is load-bearing.
 
 Pattern: solve baseline, perturb exactly one penalty parameter, solve
 again, assert ``Δobj == Δpen · vq · weights`` per the model formulas.
 B18-7 additionally pins the asymmetry by perturbing the penalty under
-``step_duration=2, rp_cost_weight=2, period_share=0.5`` and verifying
+``step_duration=2, timestep_weight=2, period_share=0.5`` and verifying
 Δobj does NOT scale with the temporal weights.
 """
 from __future__ import annotations
@@ -248,22 +248,22 @@ def test_b18_6_vq_non_synchronous_penalty_isolated(toy_group_reserve):
 
 
 # ---------------------------------------------------------------------------
-# B18-7 — vq_capacity_margin penalty: NO step_duration / rp_cost_weight /
+# B18-7 — vq_capacity_margin penalty: NO step_duration / timestep_weight /
 # period_share scaling — only p_inflation_op.
 #
 # Strategy: solve under non-trivial temporal weights (step_duration=2,
-# rp_cost_weight=2, period_share=0.5) and perturb the capacity_margin
+# timestep_weight=2, period_share=0.5) and perturb the capacity_margin
 # penalty.  If the asymmetry holds, Δobj == Δpen · vq · scale · infl.
 # A regression that re-uses the full op_factor would inflate Δobj by
 # step·rpcw/psh = 2·2/0.5 = 8×.
 
 def test_b18_7_vq_capacity_margin_no_step_duration_scaling(toy_group_reserve):
     """Covers B18-7 — capacity_margin penalty must scale ONLY by
-    inflation_op, NOT by step_duration / rp_cost_weight / period_share.
+    inflation_op, NOT by step_duration / timestep_weight / period_share.
 
     Setup: raise pdGroup_capacity_margin to 200 so producer cap (=100)
     cannot meet demand+margin (50+200=250) ⇒ vq_capacity_margin=150.
-    Set step_duration=2, rp_cost_weight=2, period_share=0.5: a regression
+    Set step_duration=2, timestep_weight=2, period_share=0.5: a regression
     that mistakenly applies these to the slack penalty would 8× Δobj.
 
     Hand-calc: Δobj = vq(=150) · scale(=1) · Δpen(=400) · infl(=1) = 60000.
@@ -276,7 +276,7 @@ def test_b18_7_vq_capacity_margin_no_step_duration_scaling(toy_group_reserve):
     p_rp = Param(("d", "t"), dt.with_columns(value=pl.lit(2.0)))
     p_psh = Param(("d",), pl.DataFrame({"d": ["d1"], "value": [0.5]}))
     base = replace(d,
-        p_step_duration=p_step, p_rp_cost_weight=p_rp, p_period_share=p_psh,
+        p_step_duration=p_step, p_timestep_weight=p_rp, p_period_share=p_psh,
         pdGroup_capacity_margin=Param(("g", "d"),
             pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [200.0]})),
         pdGroup_penalty_capacity_margin=Param(("g", "d"),
@@ -305,6 +305,6 @@ def test_b18_7_vq_capacity_margin_no_step_duration_scaling(toy_group_reserve):
     # CUR/MW.  The test's original 60_000.0 expectation predates that
     # commit and was bit-rotted by it.
     # A regression that mis-applies op_factor would yield 60_000_000·8
-    # = 480_000_000 (the 8× step_duration/rp_cost_weight/period_share
+    # = 480_000_000 (the 8× step_duration/timestep_weight/period_share
     # composition); we still catch that here at rel=1e-7.
     assert float(sp.obj) - float(sb.obj) == pytest.approx(60_000_000.0, rel=1e-7)

@@ -15,7 +15,7 @@ oracles (B20):
           accounts ONLY for commodity-priced flows.
 * B20-3 — Annualisation factor ``inflation_op / period_share`` on the
           ladder objective contribution (``_commodity_ladder.py:538-540,
-          548-549, 556-557``).  Step_duration / rp_cost_weight do NOT
+          548-549, 556-557``).  Step_duration / timestep_weight do NOT
           enter the ladder term — that asymmetry is also pinned.
 * B20-4 — Legacy commodity price suppression for ladder commodities
           (``model.py:2401-2414``).  When the same commodity carries
@@ -124,7 +124,7 @@ def _add_fuel_ladder_annual(
 
 # ---------------------------------------------------------------------------
 # B20-3 — annualisation factor inflation_op / period_share scales the
-# ladder cost; step_duration / rp_cost_weight do NOT.
+# ladder cost; step_duration / timestep_weight do NOT.
 
 def test_b20_3_ladder_annualisation_factor_isolated(toy_1n1p_1d2t):
     """Covers B20-3 — change ``inflation_op`` and ``period_share`` and

@@ -32,7 +32,7 @@ def _closed_form(d) -> float:
             .join(d.p_penalty_up.frame.rename({"value": "pen_up"}), on=["n","d","t"])
             .join(d.p_penalty_down.frame.rename({"value": "pen_dn"}), on=["n","d","t"])
             .join(d.p_step_duration.frame.rename({"value": "dur"}), on=["d","t"])
-            .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}), on=["d","t"])
+            .join(d.p_timestep_weight.frame.rename({"value": "rpcw"}), on=["d","t"])
             .join(d.p_inflation_op.frame.rename({"value": "infl"}), on="d")
             .join(d.p_period_share.frame.rename({"value": "psh"}), on="d")
          )

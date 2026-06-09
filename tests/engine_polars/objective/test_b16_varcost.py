@@ -153,7 +153,7 @@ def _build_eff_connection_data(varcost: float) -> FlexData:
                           .select("p", "d", "t", "value"))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen, p_penalty_down=p_pen,
@@ -244,7 +244,7 @@ def _build_commodity_sell_data(price: float) -> FlexData:
           .select("c", "d", "t", "value"))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen, p_penalty_down=p_pen,

@@ -41,7 +41,7 @@ def tiny_workdir(tmp_path: Path, scenario_workdir) -> Path:
     ``base`` is the smallest end-to-end scenario in
     ``tests/fixtures/tests.json`` (1 node, 1 process, 1 period,
     dispatch-only).  Tests layer on additional CSVs via :func:`write_csv`
-    (e.g. ``rp_cost_weight.csv`` overrides) without touching the
+    (e.g. ``timestep_weight.csv`` overrides) without touching the
     session-shared source — every test gets a fresh isolated copy.
     """
     source = scenario_workdir("base")

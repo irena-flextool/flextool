@@ -63,7 +63,7 @@ def data() -> FlexData:
     dt = pl.DataFrame({"d": ["p2020"]*4, "t": ts})
     p_step_duration = Param(("d", "t"),
         pl.DataFrame({"d": ["p2020"]*4, "t": ts, "value": [1.0]*4}))
-    p_rp_cost_weight = Param(("d", "t"),
+    p_timestep_weight = Param(("d", "t"),
         pl.DataFrame({"d": ["p2020"]*4, "t": ts, "value": [1.0]*4}))
     p_inflation_op = Param(("d",), pl.DataFrame({"d": ["p2020"], "value": [1.0]}))
     p_period_share = Param(("d",), pl.DataFrame({"d": ["p2020"], "value": [1.0]}))
@@ -150,7 +150,7 @@ def data() -> FlexData:
     return FlexData(
         dt=dt,
         p_step_duration=p_step_duration,
-        p_rp_cost_weight=p_rp_cost_weight,
+        p_timestep_weight=p_timestep_weight,
         p_inflation_op=p_inflation_op,
         p_period_share=p_period_share,
         nodeBalance=nodeBalance,

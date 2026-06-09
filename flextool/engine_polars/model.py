@@ -69,7 +69,7 @@ ALWAYS: tuple[str, ...] = (
     "dt", "nodeBalance",
     # Phase E.3: ``nodeBalance_dt`` is no longer materialised eagerly;
     # consumers call ``_pdt_join.compute_nodeBalance_dt`` on demand.
-    "p_step_duration", "p_rp_cost_weight", "p_inflation_op", "p_period_share",
+    "p_step_duration", "p_timestep_weight", "p_inflation_op", "p_period_share",
     "p_inflow", "p_penalty_up", "p_penalty_down",
 )
 PROCESSES: tuple[str, ...] = (
@@ -590,8 +590,38 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     if has_proc:
         v_flow = m.add_var("v_flow",
                            ("p","source","sink","d","t"), pss_dt, lower=0.0)
-    vq_up   = m.add_var("vq_state_up",   ("n","d","t"), nodeBalance_dt, lower=0.0)
-    vq_down = m.add_var("vq_state_down", ("n","d","t"), nodeBalance_dt, lower=0.0)
+    # The .mod declares the balance slacks over ``nodeBalance ∪
+    # nodeBalancePeriod`` × dt (flextool.mod:1716-1717), so period nodes
+    # can carry balance slack just like per-(d,t) balance nodes.  We
+    # widen the slack-var index to that union here.  CRITICAL byte-
+    # identity: when there are no period nodes (``nodeBalancePeriod`` None
+    # or empty) ``vq_idx`` must stay EXACTLY ``nodeBalance_dt`` — no
+    # concat / unique / reorder — so existing fixtures (which have no
+    # period nodes) declare the slack vars over an unchanged index and
+    # their LP column ids / goldens are unaffected.  ``nodeBalance_eq``
+    # below keeps ``over=nb_over`` (balance nodes only), so the extra
+    # period rows never enter that constraint; they are referenced only
+    # by ``nodeBalancePeriod_eq``.
+    vq_idx = nodeBalance_dt
+    if d.nodeBalancePeriod is not None and d.nodeBalancePeriod.height > 0:
+        # Build (n, d, t) for the period nodes from nodeBalancePeriod × dt
+        # and union it with nodeBalance_dt.  nodeBalancePeriod shares
+        # nodeBalance's exact ``n`` schema (input.py builds it via the
+        # same axis pipe / nb.clear()) and dt is the shared source, so the
+        # dtypes already match; cast defensively before concat (mirrors
+        # the twoway1var_arcs union above) and de-duplicate.
+        nbp_dt = (d.nodeBalancePeriod.lazy()
+                  .join(d.dt.lazy(), how="cross")
+                  .select("n", "d", "t")
+                  .collect())
+        ref_schema = nodeBalance_dt.schema
+        for col in ("n", "d", "t"):
+            if nbp_dt.schema[col] != ref_schema[col]:
+                nbp_dt = nbp_dt.with_columns(
+                    pl.col(col).cast(ref_schema[col], strict=False))
+        vq_idx = pl.concat([nodeBalance_dt, nbp_dt]).unique()
+    vq_up   = m.add_var("vq_state_up",   ("n","d","t"), vq_idx, lower=0.0)
+    vq_down = m.add_var("vq_state_down", ("n","d","t"), vq_idx, lower=0.0)
     if has_storage:
         # Per-row upper bound is enforced via the maxState constraint
         # below; the var-level upper stays at +inf to avoid having to
@@ -888,6 +918,12 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             nb_terms.update(_dc_power_flow.nodeBalance_back_flow_terms(
                 twoway1var_arcs, v_flow_back,
                 d.p_unitsize, d.p_step_duration))
+
+    # Snapshot the flow + slack terms (everything before the storage
+    # state machinery) for reuse by nodeBalancePeriod_eq below.  Period
+    # nodes are never storage, so they take only these terms — summed
+    # over t per (n, d).  See flextool.mod:2056 nodeBalancePeriod_eq.
+    nbp_flow_slack_terms = dict(nb_terms)
 
     # Each node lands in exactly one storage_bind_* frame (v54 contract — see disjointness assertion above).
     if has_storage and d.storage_bind_within_timeblock is not None:
@@ -1595,6 +1631,100 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         lhs_terms = nb_terms,
         rhs_terms = {"neg_inflow": -d.p_inflow},
     )
+
+    # ─── nodeBalancePeriod_eq ─────────────────────────────────────────────
+    # Energy balance within a period for ``balance_within_period`` nodes —
+    # the polars port of flextool.mod:2056-2082 (``nodeBalancePeriod_eq``).
+    #
+    # This is structurally the SAME equation as ``nodeBalance_eq``'s flow +
+    # slack terms, but:
+    #   (a) summed over every timestep ``t`` in the period — one row per
+    #       (n, d) instead of (n, d, t).  We wrap each captured flow/slack
+    #       term in ``Sum(.. * d.p_timestep_weight, over=("t",))`` to collapse
+    #       ``t`` and leave the open dims (n, d).  Each captured term already
+    #       carries its ``* d.p_step_duration`` weighting (it is the exact
+    #       ``nb_terms`` snapshot taken before the storage machinery), so the
+    #       per-step energy weighting is identical to ``nodeBalance_eq``; the
+    #       extra ``timestep_weight`` factor annualizes the timeslice flows —
+    #       see the WHY note at the emission site below.  (This deliberately
+    #       does NOT mirror ``_emit_cumulative_flow_period``'s step-duration-
+    #       only integration: that is a one-sided CAP and cannot expose a
+    #       two-sided weight mismatch, whereas this two-sided balance does.)
+    #   (b) NO storage state-change / self-discharge / fwd_fix / roll_continue
+    #       terms — period nodes are restricted to ``n not in nodeState``
+    #       (mod:2056), so they are never storage and take only the flow +
+    #       slack terms snapshotted in ``nbp_flow_slack_terms`` at line ~922.
+    #
+    # Inflow: ``Sum(...)`` only accepts an Expr/Var (polar_high engine), not a
+    # Param, so we cannot write ``-Sum(d.p_inflow, over=("t",))``.  Instead we
+    # pre-aggregate the inflow Param ``Σ_t p_inflow`` into a (n, d) Param and
+    # place ``-inflow_period`` on the RHS — algebraically identical to
+    # ``nodeBalance_eq``'s ``rhs_terms = {"neg_inflow": -d.p_inflow}``, just
+    # t-collapsed and rp-weighted.  The final equation is therefore
+    #   Σ_t w·(sink − source + slack_up − slack_down)  ==  Σ_t w·(−inflow)
+    # (w = timestep_weight) — the rp-weighted t-sum of ``nodeBalance_eq``.
+    if (d.nodeBalancePeriod is not None and d.nodeBalancePeriod.height > 0
+            and d.period_in_use_set is not None):
+        # Index frame (n, d): period nodes × periods-in-use, anti-joined
+        # against nodeState on ``n`` to honor the ``n not in nodeState``
+        # guard (mod:2056).
+        nbp_over = (d.nodeBalancePeriod.select("n").lazy()
+                    .join(d.period_in_use_set.select("d").lazy(), how="cross"))
+        if d.nodeState is not None and d.nodeState.height > 0:
+            nbp_over = nbp_over.join(
+                d.nodeState.select("n").lazy(), on="n", how="anti")
+        nbp_over = nbp_over.select("n", "d").collect()
+        if nbp_over.height > 0:
+            # Annualization weight.  Unlike the per-step ``nodeBalance_eq``
+            # (which balances each timestep locally and therefore omits
+            # ``timestep_weight``), a PERIOD balance integrates each
+            # timeslice's flow into its annual contribution and so MUST
+            # weight every ``(d, t)`` term by ``p_timestep_weight`` before
+            # collapsing ``t``.  ``timestep_weight`` is the only per-(d,t)
+            # factor that differs across timeslices in the annualization
+            # (``op_factor`` at ~3624 is
+            # ``step_duration · timestep_weight · inflation_op / period_share``;
+            # ``inflation_op`` and ``period_share`` are per-``d`` and so are
+            # common to every term in a given (n, d) balance row and cancel,
+            # and ``step_duration`` already rides each captured term).  Without
+            # this weight the LP balances UNWEIGHTED timeslice sums: in
+            # Rivendell S16 it imports gas in low-``timestep_weight`` timeslices
+            # while plants draw in high-weight ones, yielding a ~0.838
+            # import/draw ratio with zero slack.  Weighting every term
+            # (sink, source_eff/noEff, section, back-flow, AND the slack
+            # terms) uniformly keeps the row homogeneous in annual-energy
+            # units; the objective already rp-weights the slack penalty, so
+            # this keeps slack consistent.  ``p_timestep_weight`` is in the
+            # ALWAYS field set (line ~72) — always present and non-None here,
+            # so no identity guard is needed.  When it is ≡ 1.0 (every
+            # non-S16 fixture) ``v * 1.0 == v`` and the LP is unchanged.
+            nbp_lhs = {k: Sum(v * d.p_timestep_weight, over=("t",))
+                       for k, v in nbp_flow_slack_terms.items()}
+            # Σ_t (p_inflow · timestep_weight) per (n, d), restricted to the
+            # period nodes.  Inflow is already per-step energy (mirrors
+            # ``nodeBalance_eq``'s bare ``-d.p_inflow`` — NO ``step_duration``);
+            # we only fold in the same annualization weight as the LHS so both
+            # sides of the period balance are in annual-energy units.  The
+            # ``p_inflow * p_timestep_weight`` Param product joins on the shared
+            # ``(d, t)`` axis through the engine's dtype-safe enum-aligned
+            # join, then we aggregate over ``t`` per (n, d).
+            inflow_weighted = d.p_inflow * d.p_timestep_weight
+            inflow_period_frame = (
+                inflow_weighted.frame.lazy()
+                .join(d.nodeBalancePeriod.select("n").lazy(),
+                      on="n", how="inner")
+                .group_by("n", "d")
+                .agg(pl.col("value").sum())
+                .select("n", "d", "value")
+                .collect())
+            inflow_period = Param(("n", "d"), inflow_period_frame)
+            m.add_cstr(
+                "nodeBalancePeriod_eq",
+                over      = nbp_over,
+                sense     = "==",
+                lhs_terms = nbp_lhs,
+                rhs_terms = {"neg_inflow": -inflow_period},
+            )
 
     # ─── node_balance_fix_quantity_eq_lower (mod:2760) ───────────────────
     # Pins v_state[n, d_last, t_last] * unitsize == Σ_{(d,t,t2) in
@@ -2833,14 +2963,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             lhs_terms_co2["emissions_eff"] = Sum(
                 Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_capped)
                 * d.p_co2_content
-                * d.p_step_duration * d.p_rp_cost_weight / d.p_period_share,
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
                 over=("p","source","sink","c","t"),
             )
         if has_co2_cap_noEff:
             lhs_terms_co2["emissions_noEff"] = Sum(
                 Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_noEff)
                 * d.p_co2_content
-                * d.p_step_duration * d.p_rp_cost_weight / d.p_period_share,
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
                 over=("p","source","sink","c","t"),
             )
         m.add_cstr(
@@ -2868,7 +2998,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 Where(v_flow * d.p_unitsize * d.p_slope,
                       d.flow_from_co2_capped_total)
                 * d.p_co2_content
-                * d.p_step_duration * d.p_rp_cost_weight / d.p_period_share,
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
                 over=("p", "source", "sink", "c", "d", "t"),
             )
         if has_co2_cap_total_noEff:
@@ -2876,7 +3006,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 Where(v_flow * d.p_unitsize,
                       d.flow_from_co2_capped_total_noEff)
                 * d.p_co2_content
-                * d.p_step_duration * d.p_rp_cost_weight / d.p_period_share,
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
                 over=("p", "source", "sink", "c", "d", "t"),
             )
         m.add_cstr(
@@ -3516,14 +3646,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # ``op_factor`` matches the .mod's per-(d, t) cost coefficient on every
     # dispatch-class objective term:
     #
-    #     step_duration * rp_cost_weight * inflation_op / period_share
+    #     step_duration * timestep_weight * inflation_op / period_share
     #     * pdt_branch_weight    ← folded in here (A6)
     #
     # When stochastics is inactive ``pdt_branch_weight`` is ``None`` and
     # the factor reduces to the deterministic four-Param product.
     # Folding it into a single Param product keeps every downstream Sum
     # builder unchanged — the multiplier rides on op_factor.
-    op_factor = (d.p_step_duration * d.p_rp_cost_weight
+    op_factor = (d.p_step_duration * d.p_timestep_weight
                  * d.p_inflation_op / d.p_period_share)
     if d.pdt_branch_weight is not None:
         op_factor = op_factor * d.pdt_branch_weight
@@ -3689,10 +3819,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             * d.p_pdt_varCost_process * op_factor)
 
     # Startup cost: v_startup * startup_cost * unitsize, weighted by
-    # rp_cost_weight / inflation / period_share — *no step_duration*
+    # timestep_weight / inflation / period_share — *no step_duration*
     # (startup is a discrete event, not duration-weighted).  Also carries
     # ``pdt_branch_weight`` when stochastics active (mod:2110).
-    startup_factor = (d.p_rp_cost_weight * d.p_inflation_op
+    startup_factor = (d.p_timestep_weight * d.p_inflation_op
                       / d.p_period_share)
     if d.pdt_branch_weight is not None:
         startup_factor = startup_factor * d.pdt_branch_weight
@@ -3715,7 +3845,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     #   - Σ_{n ∈ nodeState, (d, t) ∈ period__time_last : d ∈ period_last}
     #         p_storage_state_reference_price[n, d]
     #         * v_state[n, d, t] * unitsize[n]
-    #         * rp_cost_weight[d, t] * inflation_op[d] / period_share[d]
+    #         * timestep_weight[d, t] * inflation_op[d] / period_share[d]
     #         * pdt_branch_weight[d, t]
     #
     # The minus sign makes this a revenue term: a higher terminal state
@@ -3737,7 +3867,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                   on=["n", "d"], how="inner")
             .select("n", "d", "t").unique())
         if ssrp_over.height > 0:
-            ref_price_factor = (d.p_rp_cost_weight * d.p_inflation_op
+            ref_price_factor = (d.p_timestep_weight * d.p_inflation_op
                                 / d.p_period_share)
             if d.pdt_branch_weight is not None:
                 ref_price_factor = ref_price_factor * d.pdt_branch_weight
@@ -3914,7 +4044,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             p_unitsize=d.p_unitsize,
             p_slope=d.p_slope,
             p_step_duration=d.p_step_duration,
-            p_rp_cost_weight=d.p_rp_cost_weight,
+            p_timestep_weight=d.p_timestep_weight,
             flow_from_commodity_eff=d.flow_from_commodity_eff,
             flow_from_commodity_noEff=d.flow_from_commodity_noEff,
             flow_to_commodity=d.flow_to_commodity,

@@ -299,12 +299,12 @@ def co2_duals(par, s, v, r, debug):
     (same convention as investment duals).  Its scalar per group is
     broadcast across periods for uniform (period × group) shape.
 
-    Caveat: the constraint LHS does not include p_rp_cost_weight whereas
+    Caveat: the constraint LHS does not include p_timestep_weight whereas
     the objective does.  In rp (representative-period) scenarios the raw
-    dual therefore picks up an extra rp_cost_weight factor, inflating
+    dual therefore picks up an extra timestep_weight factor, inflating
     shadow prices relative to chrono runs.  Fixing that requires either
     adding the weight to the constraint LHS in the mod, or post-dividing
-    by a representative value of rp_cost_weight per period.
+    by a representative value of timestep_weight per period.
     """
     import pandas as pd
 

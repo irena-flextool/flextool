@@ -108,11 +108,11 @@ def compute_storage_and_vre(par, s, v, r) -> None:
         )
     r.self_discharge_loss_d = r.self_discharge_loss_dt.mul(step_duration, axis=0).groupby('period').sum()
 
-    # node_inflow_d — weight each (d, t) by par.rp_cost_weight (=1.0 with
+    # node_inflow_d — weight each (d, t) by par.timestep_weight (=1.0 with
     # no/uniform timeset_weights → byte-identical) before the period sum,
     # matching the cost-weighted annualisation.  par.node_inflow is already
     # MWh/step, so no step_duration.
-    r.node_inflow_d = par.node_inflow.mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.node_inflow_d = par.node_inflow.mul(par.timestep_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
 
     # potentialVREgen
     vre_with_sink = s.process_VRE[s.process_VRE.isin(s.process_sink)]

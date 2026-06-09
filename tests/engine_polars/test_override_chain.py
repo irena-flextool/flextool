@@ -11,18 +11,18 @@ correctly so the LP doesn't regress.
 The Γ.6.D handoff (``audit/handoff_csv_retirement.md``) and the
 Γ.8.E dispatch identified six fixtures that previously regressed:
 
-1. ``work_base_weighted`` — was 6% obj gap (p_rp_cost_weight returned
+1. ``work_base_weighted`` — was 6% obj gap (p_timestep_weight returned
    trivial 1.0 instead of reading ``timeset.timeset_weights``).
 2. ``work_fullYear_roll`` — was 80% obj gap (p_inflation_op returned
    1.0 instead of reading ``solve.years_represented`` for rolling
    solves which key by parent solve name).
-3. ``test_cost_aggregation_semantics::TestRpCostWeightFactor::
-   test_rp_cost_weight_factor_is_non_trivial`` — same as 1.
+3. ``test_cost_aggregation_semantics::TestTimestepWeightFactor::
+   test_timestep_weight_factor_is_non_trivial`` — same as 1.
 4-6. ``work_multi_fullYear_battery_nested_*`` — investigated and
      verified clean already.
 
 Γ.8.E commits:
-* ``ce180421`` p_rp_cost_weight wires to timeset_weights.
+* ``ce180421`` p_timestep_weight wires to timeset_weights.
 * ``151109e6`` p_inflation_op handles multi-year-per-period.
 
 This test loops the regression fixtures and asserts CSV-path obj ==
@@ -87,25 +87,25 @@ def test_override_chain_db_reader_solve_parity(
     )
 
 
-def test_p_rp_cost_weight_non_trivial_on_base_weighted(
+def test_p_timestep_weight_non_trivial_on_base_weighted(
     scenario_workdir,
 ) -> None:
-    """Direct unit test on the helper: ``p_rp_cost_weight_from_source``
+    """Direct unit test on the helper: ``p_timestep_weight_from_source``
     must produce non-uniform weights for ``work_base_weighted``.
 
     Companion to ``test_cost_aggregation_semantics::
-    TestRpCostWeightFactor::test_rp_cost_weight_factor_is_non_trivial``.
+    TestTimestepWeightFactor::test_timestep_weight_factor_is_non_trivial``.
     Without the Γ.8.E wire-up the helper returns the trivial 1.0
     default and the LP reproduces only by coincidence.
     """
     from flextool.engine_polars._derived_params import (
-        p_rp_cost_weight_from_source,
+        p_timestep_weight_from_source,
     )
     work = scenario_workdir("base_weighted")
     sqlite = work / "tests.sqlite"
     reader = SpineDbReader(f"sqlite:///{sqlite}", "base_weighted")
     data = load_flextool(work)
-    rp = p_rp_cost_weight_from_source(reader, data.dt, "y2020_2day_dispatch")
+    rp = p_timestep_weight_from_source(reader, data.dt, "y2020_2day_dispatch")
     assert rp is not None
     uniques = sorted(rp.frame["value"].unique().to_list())
     # Fixture has 4 distinct weight blocks (0.4, 0.8, 1.2, 1.6).

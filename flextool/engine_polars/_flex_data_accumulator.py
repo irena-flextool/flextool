@@ -290,7 +290,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "rp_block_first.csv",
     "rp_block_last.csv",
     "rp_block_start_last.csv",
-    "rp_cost_weight.csv",
+    "timestep_weight.csv",
     # _emit_period_calc — Phase E-b8 (12 + 2 CSVs)
     "p_inflation_factor_operations_yearly.csv",
     "complete_period_share_of_year_calc.csv",

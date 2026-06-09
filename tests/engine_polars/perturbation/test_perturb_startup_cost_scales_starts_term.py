@@ -6,7 +6,7 @@ The §6 startup-cost term is::
 
     + Σ_{(p, d, t) ∈ pdt_online_integer ∪ pdt_online_linear}
           v_startup * p_startup_cost * p_unitsize
-              * p_rp_cost_weight * p_inflation_op / p_period_share
+              * p_timestep_weight * p_inflation_op / p_period_share
 
 (no ``p_step_duration`` factor — startup is a discrete event, not a
 duration-weighted flow.)
@@ -23,7 +23,7 @@ equals the baseline §6 term.
 
 A failure here narrows the bug to: a missing ``p_startup_cost``
 factor on the §6 obj term, or a missed factor in the chain
-(unitsize, rp_cost_weight, inflation, /period_share, or an
+(unitsize, timestep_weight, inflation, /period_share, or an
 inadvertent step_duration multiplier).
 
 flextool counterpart:
@@ -64,7 +64,7 @@ def _startup_term(d, sol) -> float:
     """
     total = 0.0
     base_factor_cols = ["p_startup_cost", "p_unitsize",
-                        "p_rp_cost_weight", "p_inflation_op",
+                        "p_timestep_weight", "p_inflation_op",
                         "p_period_share"]
     del base_factor_cols  # not used directly; left here for documentation
 
@@ -79,7 +79,7 @@ def _startup_term(d, sol) -> float:
             .join(d.p_startup_cost.frame.rename({"value": "sc"}),
                   on=["p", "d"])
             .join(d.p_unitsize.frame.rename({"value": "us"}), on="p")
-            .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}),
+            .join(d.p_timestep_weight.frame.rename({"value": "rpcw"}),
                   on=["d", "t"])
             .join(d.p_inflation_op.frame.rename({"value": "infl"}),
                   on="d")

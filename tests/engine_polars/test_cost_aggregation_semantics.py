@@ -30,13 +30,13 @@ Cases (each pins a different factor set):
                                equals obj.  Pins the slack factor
                                set with rpcw=1 everywhere.
 * ``base_weighted``           — same scenario with non-uniform
-                               ``p_rp_cost_weight``.  Decomposition
+                               ``p_timestep_weight``.  Decomposition
                                equals obj — and the rpcw factor is
                                provably non-trivial (control: a
                                version computed with rpcw≡1 differs
                                from obj).
 * ``capacity_margin``         — ``vq_capacity_margin`` is period-only
-                               (NO step_duration, NO rp_cost_weight,
+                               (NO step_duration, NO timestep_weight,
                                NO /period_share); pins that distinct
                                factor set, alongside the standard
                                state-slack contribution.
@@ -84,7 +84,7 @@ def _state_slack_term(d, sol, *, side: str) -> float:
         sol.value(var).rename({"value": "vq"})
         .join(pen.frame.rename({"value": "pen"}), on=["n", "d", "t"])
         .join(d.p_step_duration.frame.rename({"value": "dur"}), on=["d", "t"])
-        .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}), on=["d", "t"])
+        .join(d.p_timestep_weight.frame.rename({"value": "rpcw"}), on=["d", "t"])
         .join(d.p_inflation_op.frame.rename({"value": "infl"}), on="d")
         .join(d.p_period_share.frame.rename({"value": "psh"}), on="d")
     )
@@ -124,7 +124,7 @@ def _commodity_buy_eff_term(d, sol) -> float:
               on=["c", "d", "t"], how="left")
         .join(d.p_step_duration.frame.rename({"value": "dur"}),
               on=["d", "t"])
-        .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}),
+        .join(d.p_timestep_weight.frame.rename({"value": "rpcw"}),
               on=["d", "t"])
         .join(d.p_inflation_op.frame.rename({"value": "infl"}), on="d")
         .join(d.p_period_share.frame.rename({"value": "psh"}), on="d")
@@ -155,7 +155,7 @@ def _co2_price_term(d, sol) -> float:
               on=["g", "d", "t"], how="left")
         .join(d.p_step_duration.frame.rename({"value": "dur"}),
               on=["d", "t"])
-        .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}),
+        .join(d.p_timestep_weight.frame.rename({"value": "rpcw"}),
               on=["d", "t"])
         .join(d.p_inflation_op.frame.rename({"value": "infl"}), on="d")
         .join(d.p_period_share.frame.rename({"value": "psh"}), on="d")
@@ -171,7 +171,7 @@ def _capacity_margin_slack_term(d, sol) -> float:
     """Σ vq_capacity_margin * group_capacity_for_scaling * penalty * inflation
     * 1000.
 
-    Period-only: NO step_duration, NO rp_cost_weight, NO /period_share.
+    Period-only: NO step_duration, NO timestep_weight, NO /period_share.
     The × 1000 is the CUR/kW → CUR/MW unit conversion in
     ``_group_slack.py:1233-1238`` (BUG A4 fix); mirrors
     ``flextool.process_outputs.calc_slacks.costPenalty_capacity_margin_d``'s
@@ -210,7 +210,7 @@ def _solve(work: Path):
 # ---------------------------------------------------------------------------
 
 class TestPurePenaltyBase:
-    """``base`` — uniform rp_cost_weight (= 1 everywhere), pure-penalty obj.
+    """``base`` — uniform timestep_weight (= 1 everywhere), pure-penalty obj.
 
     Mirrors flextool's ``TestBaseControl::test_solver_obj_matches_python_total``
     and ``test_hand_derived_penalty_matches``.
@@ -243,7 +243,7 @@ class TestPurePenaltyBase:
                   on=["n", "d", "t"])
             .join(d.p_step_duration.frame.rename({"value": "dur"}),
                   on=["d", "t"])
-            .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}),
+            .join(d.p_timestep_weight.frame.rename({"value": "rpcw"}),
                   on=["d", "t"])
             .join(d.p_inflation_op.frame.rename({"value": "infl"}), on="d")
             .join(d.p_period_share.frame.rename({"value": "psh"}), on="d")
@@ -274,11 +274,11 @@ class TestPurePenaltyBase:
         )
 
 
-class TestRpCostWeightFactor:
-    """``base_weighted`` — same scenario, non-uniform rp_cost_weight.
+class TestTimestepWeightFactor:
+    """``base_weighted`` — same scenario, non-uniform timestep_weight.
 
-    Mirrors flextool's ``TestRpCostWeightSlackPenalty`` — verifies that
-    the rp_cost_weight factor is applied to slack penalties (was the
+    Mirrors flextool's ``TestTimestepWeightSlackPenalty`` — verifies that
+    the timestep_weight factor is applied to slack penalties (was the
     P3b bug).
     """
 
@@ -291,16 +291,16 @@ class TestRpCostWeightFactor:
             f"base_weighted: decomposition {decomp} vs obj {sol.obj}, rel={rel}"
         )
 
-    def test_rp_cost_weight_factor_is_non_trivial(self, scenario_workdir) -> None:
+    def test_timestep_weight_factor_is_non_trivial(self, scenario_workdir) -> None:
         """Positive control: re-compute the slack-up term with rpcw≡1 and
         verify it differs materially from obj.  This proves the rpcw
         factor is actively scaling the cost — not silently ignored.
         """
         d, sol = _solve(scenario_workdir("base_weighted"))
-        rpcw_unique = sorted(d.p_rp_cost_weight.frame["value"].unique().to_list())
+        rpcw_unique = sorted(d.p_timestep_weight.frame["value"].unique().to_list())
         assert len(rpcw_unique) > 1, (
             "fixture invariant: work_base_weighted must have non-uniform "
-            f"rp_cost_weight; got unique values {rpcw_unique}"
+            f"timestep_weight; got unique values {rpcw_unique}"
         )
 
         # Recompute the slack-up term replacing rpcw with 1.0 everywhere.
@@ -340,7 +340,7 @@ class TestCapacityMarginPeriodOnly:
     """``capacity_margin`` — vq_capacity_margin is the period-only slack.
 
     Mirrors flextool's ``TestCapacityMarginPenalty`` — the cap-margin
-    penalty has a *different* factor set (NO step_duration / rp_cost_weight
+    penalty has a *different* factor set (NO step_duration / timestep_weight
     / period_share).  flextool's test was the bug-finder for the missing
     1000 multiplier in flextool; polar_high's analogue verifies the period-only
     semantics.
@@ -373,7 +373,7 @@ class TestCapacityMarginPeriodOnly:
     def test_capacity_margin_does_NOT_use_step_duration(self, scenario_workdir) -> None:
         """Negative control: rebuild the cap-margin term using the FULL
         (state-slack-style) factor set including step_duration /
-        rp_cost_weight / period_share, and verify it gives a *different*
+        timestep_weight / period_share, and verify it gives a *different*
         answer.  This directly pins the "period-only, no per-(d,t)
         scaling" semantic.  Both sides include the × 1000 unit conversion
         (CUR/kW → CUR/MW) so the ratio cleanly isolates the
