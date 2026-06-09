@@ -991,29 +991,29 @@ def _load_time(sd: Path,
     # determinism wrapper skip its O(n log n) boundary sort.
     dt = siu.select("d", "t").sort(["d", "t"])
     step_dur = Param(("d","t"), siu.select("d", "t", "value"))
-    # rp_cost_weight: canonical ``rp_cost_weight.csv``
+    # timestep_weight: canonical ``timestep_weight.csv``
     # (.mod's ``p_rp_cost_weight.csv`` is a printf debug-export).
     # Defaults to 1.0 per (d, t) when the canonical file is empty
     # (matches .mod's ``param p_rp_cost_weight ... default 1`` clause).
-    rp_default = dt.with_columns(value=pl.lit(1.0))
-    rp_cw_path = sd / "rp_cost_weight.csv"
-    if _provider_has(provider, "solve_data/rp_cost_weight", rp_cw_path):
-        rp_df = _provider_read(provider, "solve_data/rp_cost_weight", rp_cw_path)
-        if rp_df.height > 0:
+    tsw_default = dt.with_columns(value=pl.lit(1.0))
+    tsw_path = sd / "timestep_weight.csv"
+    if _provider_has(provider, "solve_data/timestep_weight", tsw_path):
+        tsw_df = _provider_read(provider, "solve_data/timestep_weight", tsw_path)
+        if tsw_df.height > 0:
             # canonical column is named ``weight`` per .mod's ``table data IN``.
-            value_col = "weight" if "weight" in rp_df.columns else "value"
-            rp_df = (rp_df.pipe(rename_to_axis, {"period": "d", "time": "t",
+            value_col = "weight" if "weight" in tsw_df.columns else "value"
+            tsw_df = (tsw_df.pipe(rename_to_axis, {"period": "d", "time": "t",
                                     value_col: "value"})
                           .with_columns(value=pl.col("value")
                                                  .cast(pl.Float64, strict=False))
                           .select("d", "t", "value"))
             # Left-join the default with explicit overrides.
-            rp_default = (rp_default.join(rp_df, on=["d","t"], how="left",
+            tsw_default = (tsw_default.join(tsw_df, on=["d","t"], how="left",
                                             suffix="__r")
                                      .with_columns(value=pl.coalesce(
                                           pl.col("value__r"), pl.col("value")))
                                      .select("d","t","value"))
-    rp_cw = Param(("d","t"), rp_default)
+    tsw = Param(("d","t"), tsw_default)
     infl = Param(("d",),
         _read_long(sd / "p_inflation_factor_operations_yearly.csv",
                     rename={"period": "d"}, provider=provider))
@@ -1022,7 +1022,7 @@ def _load_time(sd: Path,
     psh = Param(("d",),
         _read_long(sd / "complete_period_share_of_year_calc.csv",
                     rename={"period": "d"}, provider=provider))
-    return dt, step_dur, rp_cw, infl, psh
+    return dt, step_dur, tsw, infl, psh
 
 
 def _load_node(sd: Path, dt: pl.DataFrame,
@@ -4213,7 +4213,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # becomes a no-op or is replaced by passing the live layout in.
         block_layout = BlockLayout.load_from_solve_data(sd, provider=provider)
 
-        dt, step_dur, rp_cw, infl, psh = _load_time(sd, provider=provider)
+        dt, step_dur, tsw, infl, psh = _load_time(sd, provider=provider)
         nb, nbp, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt, provider=provider)
         _load_mem("load_node_end", "load_flextool: time + node loaded")
 
@@ -4419,7 +4419,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         flex_data = FlexData(
             dt = dt,
             p_step_duration = step_dur,
-            p_timestep_weight = rp_cw,
+            p_timestep_weight = tsw,
             p_inflation_op = infl,
             p_period_share = psh,
 

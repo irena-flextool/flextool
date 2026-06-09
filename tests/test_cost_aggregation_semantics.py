@@ -245,17 +245,17 @@ def _read_pdt_step_duration(
     )
 
 
-def _read_pdt_rp_cost_weight(
+def _read_pdt_timestep_weight(
     solve_data: Path, *, solve: str, periods: list[str], times: list[str],
 ) -> pd.Series:
-    """Return per-(solve, period, time) ``rp_cost_weight`` Series.
+    """Return per-(solve, period, time) ``timestep_weight`` Series.
 
-    The cascade emits ``solve_data/rp_cost_weight.csv`` sparsely
+    The cascade emits ``solve_data/timestep_weight.csv`` sparsely
     (header-only when all weights default to 1.0).  Fill missing rows
     with 1.0 to match the .mod default, then index by
     (solve, period, time).
     """
-    p = solve_data / "rp_cost_weight.csv"
+    p = solve_data / "timestep_weight.csv"
     df = pd.read_csv(p)
     weights: dict[tuple[str, str], float] = {}
     if not df.empty and "period" in df.columns and "time" in df.columns:
@@ -275,7 +275,7 @@ def _read_pdt_rp_cost_weight(
             ],
             names=["solve", "period", "time"],
         ),
-        name="rp_cost_weight",
+        name="timestep_weight",
     )
 
 
@@ -409,7 +409,7 @@ class TestBaseControl:
     def test_hand_derived_penalty_matches(self, csv_dir: Path) -> None:
         """Penalty = Σ |demand| * penalty_up / period_share (annualized).
 
-        With uniform weights and 1-h steps, rp_cost_weight == 1 everywhere
+        With uniform weights and 1-h steps, timestep_weight == 1 everywhere
         and ``step_duration`` is 1, so the hand-calc is just
         Σ demand * penalty / period_share.
         """
@@ -423,9 +423,9 @@ class TestBaseControl:
 
 
 # ===========================================================================
-# Target: ``base_weighted`` — non-uniform rp_cost_weight.
+# Target: ``base_weighted`` — non-uniform timestep_weight.
 #
-# EXPECTED TO FAIL on current code (missing rp_cost_weight in Python
+# EXPECTED TO FAIL on current code (missing timestep_weight in Python
 # aggregation).  PASSES after calc_slacks and calc_costs are fixed.
 # ===========================================================================
 
@@ -440,7 +440,7 @@ class TestRpCostWeightSlackPenalty:
     def test_solver_matches_python(self, csv_dir: Path) -> None:
         """The decisive test.  LP objective (from HiGHS) must equal the
         full-horizon calculated total.  Delta on current code is the
-        missing ``rp_cost_weight`` factor on the slack penalty.
+        missing ``timestep_weight`` factor on the slack penalty.
         """
         s = _read_summary_solve(csv_dir)
         assert s["objective"] == pytest.approx(s["total_calc"], rel=1e-4), (
@@ -450,7 +450,7 @@ class TestRpCostWeightSlackPenalty:
 
     def test_weighted_hand_calc(self, csv_dir: Path) -> None:
         """Penalty = Σ |demand[t]| * penalty_up * step_duration *
-        rp_cost_weight[t] / period_share.
+        timestep_weight[t] / period_share.
         """
         s = _read_summary_solve(csv_dir)
         weighted_mwh = sum(
@@ -788,11 +788,11 @@ class TestMinLoadEfficiencySectionTerm:
 
         # Per-step scaling factor used by compute_costs.  Cascade-native:
         # ``steps_in_use.csv`` carries (period, step, step_duration);
-        # ``rp_cost_weight.csv`` is sparse with implicit 1.0 default.
+        # ``timestep_weight.csv`` is sparse with implicit 1.0 default.
         step_duration = _read_pdt_step_duration(solve_data, solve=solve_label)
         periods = step_duration.index.get_level_values("period").tolist()
         times = step_duration.index.get_level_values("time").tolist()
-        rp_cost_weight = _read_pdt_rp_cost_weight(
+        timestep_weight = _read_pdt_timestep_weight(
             solve_data, solve=solve_label, periods=periods, times=times,
         )
 
@@ -816,7 +816,7 @@ class TestMinLoadEfficiencySectionTerm:
             flow_source
             * self.VAR_COST
             * step_duration.reindex(idx)
-            * rp_cost_weight.reindex(idx)
+            * timestep_weight.reindex(idx)
         )
 
         # The bucket should be non-trivially non-zero somewhere (sanity).
@@ -858,7 +858,7 @@ class TestMinLoadEfficiencySectionTerm:
         step_duration = _read_pdt_step_duration(solve_data, solve=solve_label)
         periods = step_duration.index.get_level_values("period").tolist()
         times = step_duration.index.get_level_values("time").tolist()
-        rp_cost_weight = _read_pdt_rp_cost_weight(
+        timestep_weight = _read_pdt_timestep_weight(
             solve_data, solve=solve_label, periods=periods, times=times,
         )
 
@@ -871,7 +871,7 @@ class TestMinLoadEfficiencySectionTerm:
             * unitsize_coal
             * self.VAR_COST
             * step_duration.reindex(idx)
-            * rp_cost_weight.reindex(idx)
+            * timestep_weight.reindex(idx)
         )
         # Sanity: section term must be a meaningful share of the bucket --
         # otherwise the main assertion doesn't actually exercise the code

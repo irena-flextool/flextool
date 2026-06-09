@@ -749,7 +749,7 @@ def p_timestep_weight_from_source(
 
     RP path (``representative_period_weights`` set):
       Currently deferred — RP fixtures don't appear in the regression
-      set this helper unblocks.  The CSV-loaded ``rp_cost_weight.csv``
+      set this helper unblocks.  The CSV-loaded ``timestep_weight.csv``
       already encodes the canonical weights; the helper emits ``None``
       via the empty-frame fallback so the CSV value survives.
 

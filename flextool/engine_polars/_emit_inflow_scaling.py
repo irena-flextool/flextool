@@ -292,14 +292,14 @@ def _compute_inflow_scaling_frames(
 
     # Representative weight w[(d, t)] = p_timestep_weight[d, t] (the param
     # the cost objective already uses).  Sourced from the per-solve
-    # ``rp_cost_weight.csv`` (period, time, weight) emitted by
+    # ``timestep_weight.csv`` (period, time, weight) emitted by
     # ``emit_rp_data`` / ``emit_empty_rp_data`` BEFORE this batch runs; it
     # is therefore in the Provider already.  DEFAULT 1.0 for any (d, t) not
     # present — when timeset_weights are absent/uniform the frame is empty
     # (non-RP solve) or all-1.0, so w ≡ 1.0 and every weighted sum below
     # reduces byte-for-byte to today's unweighted formula.
     w_dt = _read_keyed2_float(
-        solve_data_dir / "rp_cost_weight.csv", provider=provider,
+        solve_data_dir / "timestep_weight.csv", provider=provider,
     )
 
     # period__timeline (Python output): list of (period, timeline) pairs.
@@ -701,7 +701,7 @@ def _compute_inflow_scaling_frames_vectorized(
     # legacy reader block for the full rationale).  DEFAULT 1.0 for any
     # (d, t) absent → w ≡ 1.0 reduces every weighted sum below to today's.
     w_dt = _read_keyed2_float(
-        solve_data_dir / "rp_cost_weight.csv", provider=provider,
+        solve_data_dir / "timestep_weight.csv", provider=provider,
     )
 
     period_timeline = _read_pairs(solve_data_dir / "period__timeline_set.csv",
@@ -1300,7 +1300,7 @@ def _compute_inflow_scaling_diagnostics(
     # Representative weight w[(d, t)] = p_timestep_weight[d, t]; DEFAULT 1.0
     # for any (d, t) absent → f == 1.0 when weights are uniform/absent.
     w_dt = _read_keyed2_float(
-        solve_data_dir / "rp_cost_weight.csv", provider=provider,
+        solve_data_dir / "timestep_weight.csv", provider=provider,
     )
 
     # dt_complete from steps_complete_solve.csv — (period, step) pairs.

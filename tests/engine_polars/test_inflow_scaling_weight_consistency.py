@@ -41,7 +41,7 @@ def _provider(
     peak_inflow: float | None = None,
 ) -> tuple[FlexDataProvider, list[str]]:
     """One node ``annN`` over one period ``d1`` with ``len(inflow)``
-    timesteps.  ``weights=None`` → no ``rp_cost_weight.csv`` (``w ≡ 1``);
+    timesteps.  ``weights=None`` → no ``timestep_weight.csv`` (``w ≡ 1``);
     a list → the per-(period, time) representative weight.
     """
     provider = FlexDataProvider()
@@ -86,7 +86,7 @@ def _provider(
         "period": ["d1"] * len(times), "time": times}))
 
     if weights is not None:
-        put("solve_data", "rp_cost_weight", pl.DataFrame({
+        put("solve_data", "timestep_weight", pl.DataFrame({
             "period": ["d1"] * len(weights),
             "time": times,
             "weight": weights}))
@@ -136,7 +136,7 @@ def test_scale_to_annual_flow_hand_calculated():
 
 
 def test_uniform_control_hand_calculated():
-    """Control: w ≡ 1 (no rp_cost_weight) on the same inputs.
+    """Control: w ≡ 1 (no timestep_weight) on the same inputs.
 
         Σ I = 40,  period_share = 40/80 = 0.5,  M = 0.5/0.5 = 1.0
         reported = Σ scaled / cpsoy = 40 / 0.5 = 80 = annual_flow

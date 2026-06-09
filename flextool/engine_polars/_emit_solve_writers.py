@@ -25,7 +25,7 @@ This module owns the ~36 ``emit_*`` functions that build the
   ``dtt__delay_duration``, and the two representative-period CSVs
   (``rp_weights``, ``rp_base_chain``, ``rp_base_first``,
   ``rp_base_last``, ``rp_block_first``, ``rp_block_last``,
-  ``rp_block_start_last``, ``rp_cost_weight``).
+  ``rp_block_start_last``, ``timestep_weight``).
 
 Each ``emit_*`` builds an all-``Utf8`` polars frame (inline or via a
 shared ``_compute_*`` helper) and registers it on the Provider with the
@@ -906,7 +906,7 @@ def _compute_rp_frames(
     ``rp_base_first.csv``, ``rp_base_last.csv``, ``rp_block_first.csv``,
     ``rp_block_last.csv``, ``rp_block_start_last.csv``,
     ``rp_base_period_set.csv``, ``rp_rep_period_set.csv``,
-    ``rp_cost_weight.csv``.
+    ``timestep_weight.csv``.
 
     ``timeline_steps`` is the ordered list of step IDs for the timeline
     this timeset belongs to; it anchors ``(start, count)`` block entries
@@ -986,7 +986,7 @@ def _compute_rp_frames(
             wp_rep_period_rows.extend(
                 p_sub["rp_rep_period_set.csv"].iter_rows())
             wp_weights_rows.extend(p_sub["rp_weights.csv"].iter_rows())
-            wp_cost_rows.extend(p_sub["rp_cost_weight.csv"].iter_rows())
+            wp_cost_rows.extend(p_sub["timestep_weight.csv"].iter_rows())
         out: dict[str, pl.DataFrame] = {}
         out["rp_weights.csv"] = _to_utf8_frame(
             ("base_start", "rep_start", "weight"), wp_weights_rows,
@@ -1019,7 +1019,7 @@ def _compute_rp_frames(
         out["rp_rep_period_set.csv"] = _to_utf8_frame(
             ("period",), wp_rep_period_rows,
         )
-        out["rp_cost_weight.csv"] = _to_utf8_frame(
+        out["timestep_weight.csv"] = _to_utf8_frame(
             ("period", "time", "weight"), wp_cost_rows,
         )
         return out
@@ -1111,7 +1111,7 @@ def _compute_rp_frames(
         ("period",), [(r,) for r in rp_starts],
     )
 
-    # 6. rp_cost_weight.csv — normalised per-timestep weight.
+    # 6. timestep_weight.csv — normalised per-timestep weight.
     w_r: dict[str, float] = {r: 0.0 for r in rp_starts}
     for base_weights in rp_weights.values():
         for rep, weight in base_weights.items():
@@ -1126,7 +1126,7 @@ def _compute_rp_frames(
             cost_rows.append(
                 (period_name, timeline_steps[t_idx], str(weight))
             )
-    out["rp_cost_weight.csv"] = _to_utf8_frame(
+    out["timestep_weight.csv"] = _to_utf8_frame(
         ("period", "time", "weight"), cost_rows,
     )
 
@@ -1149,7 +1149,7 @@ _RP_BASENAME_TO_PROVIDER_KEY: dict[str, str] = {
     "rp_block_start_last.csv": K.SOLVE_DATA_RP_BLOCK_START_LAST,
     "rp_base_period_set.csv": K.SOLVE_DATA_RP_BASE_PERIOD_SET,
     "rp_rep_period_set.csv": K.SOLVE_DATA_RP_REP_PERIOD_SET,
-    "rp_cost_weight.csv": "solve_data/rp_cost_weight",
+    "timestep_weight.csv": "solve_data/timestep_weight",
 }
 
 
@@ -1222,7 +1222,7 @@ def emit_timeset_cost_weight(
     )
     if not any_written:
         return False
-    _emit(provider, "solve_data/rp_cost_weight.csv",
+    _emit(provider, "solve_data/timestep_weight.csv",
                    _to_utf8_frame(("period", "time", "weight"), rows))
     return True
 
@@ -1237,7 +1237,7 @@ _EMPTY_RP_HEADERS: dict[str, tuple[str, ...]] = {
     "rp_block_start_last.csv": ("rep_start", "last_step"),
     "rp_base_period_set.csv": ("period",),
     "rp_rep_period_set.csv": ("period",),
-    "rp_cost_weight.csv": ("period", "time", "weight"),
+    "timestep_weight.csv": ("period", "time", "weight"),
 }
 
 

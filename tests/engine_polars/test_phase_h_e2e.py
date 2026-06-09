@@ -127,7 +127,7 @@ _DOCUMENTED_OUT_OF_SCOPE_SOLVE_DATA: frozenset[str] = frozenset({
     "period_capacity.csv",
     "costs_discounted.csv",
     "co2.csv",
-    "rp_cost_weight.csv",
+    "timestep_weight.csv",
     # Legacy preprocessing emitters (preprocessing/*.py — Φ.2 / Δ.x
     # writers running outside the accumulator surface).  These are
     # block / pbt / pdt / pt families plus the timeline_matching_map
