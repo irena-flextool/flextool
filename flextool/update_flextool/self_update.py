@@ -124,6 +124,41 @@ def _ensure_compatible_solver_stack():
         print("\n" + env_check.UNFIXABLE_HELP)
 
 
+def _sync_settings_param_defs(json_template, sqlite_path):
+    """Back-fill parameter DEFINITIONS from a settings template into an
+    EXISTING user settings DB.
+
+    The user-editable settings DBs (``output_settings.sqlite`` etc.) are only
+    created-if-absent, so a DB made by an older FlexTool version never gains
+    options added later (e.g. ``output-spinedb``).  This imports just the
+    schema — entity classes + parameter definitions/types — so new options
+    appear in the editor, WITHOUT importing ``parameter_values`` (the user's
+    existing choices are never overwritten).  Idempotent; non-fatal on error.
+    """
+    from flextool.update_flextool.export_database import keep_serialized_unparse
+    try:
+        with open(json_template) as json_file:
+            template = json.load(json_file)
+        payload = {
+            key: template[key]
+            for key in ("entity_classes", "parameter_definitions", "parameter_types")
+            if key in template
+        }
+        if not payload:
+            return
+        with DatabaseMapping('sqlite:///' + sqlite_path, create=False) as db:
+            (num, _log) = import_data(db, unparse_value=keep_serialized_unparse, **payload)
+            if num:
+                db.commit_session(
+                    "flextool-update: back-fill settings parameter definitions"
+                )
+    except NothingToCommit:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: could not sync parameter definitions into "
+              f"{sqlite_path}: {exc}")
+
+
 def update_flextool(skip_git):
 
     shutil.copy("./.spinetoolbox/project.json", "./.spinetoolbox/project_temp.json")
@@ -170,6 +205,19 @@ def update_flextool(skip_git):
         initialize_database(output_info_json, "output_info.sqlite")
     if not os.path.exists("comparison_settings.sqlite"):
         initialize_database(comparison_settings_json, "comparison_settings.sqlite")
+
+    # Back-fill parameter definitions added in newer versions into EXISTING
+    # user settings DBs.  The create-if-absent above only seeds them once, so
+    # options added later (e.g. output-spinedb) must be added to DBs made by
+    # older versions.  Only schema is synced; user parameter values are
+    # untouched.
+    for sqlite_rel, json_src in (
+        ("output_settings.sqlite", output_settings_json),
+        ("output_info.sqlite", output_info_json),
+        ("comparison_settings.sqlite", comparison_settings_json),
+    ):
+        if os.path.exists(sqlite_rel):
+            _sync_settings_param_defs(json_src, sqlite_rel)
 
     # Keep CWD-resident template SQLites up-to-date (Spine Toolbox refs).
     for sqlite_rel, json_src in (
