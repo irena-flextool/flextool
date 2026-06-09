@@ -65,8 +65,11 @@ The items that actually ship in `.spinetoolbox/project.json` are:
 - **Read input spreadsheet** (Tool) — runs the `Read tabular data` specification to import
   the contents of **Excel input** into **Input data**. See
   [Excel interface](excel_interface.md) for the file format.
-- **FlexTool location** (Data Connection) — small text file recording the path to the
-  FlexTool checkout; the **FlexTool** tool resolves its sources through it.
+- **FlexTool location** (Data Connection) — small user-local text file
+  (`templates/project_folder.txt`) recording the **project folder** the run
+  roots its outputs at. See [Choosing the project folder](#choosing-the-project-folder)
+  below. (This replaces the older `flextool_location.txt`; you may rename the
+  connection to "Project folder" in the Toolbox GUI if you like.)
 - **FlexTool** (Tool) — the solve step. Runs `flextool/cli/cmd_run_flextool.py` (the same
   module as the `flextool-run` console script) as a subprocess. Receives the **Input
   data**, **Output info**, and **Output settings** database URLs as arguments.
@@ -98,6 +101,80 @@ There is **no CSV hand-off** between the workflow and the engine. The CSV files 
 `solve_data/` only appear when `--debug --csv-dump` is passed, and they are not
 load-bearing for anything downstream. See [Architecture](dev/architecture.md) for the
 full data-flow diagram.
+
+## Project folders and results
+
+A Toolbox run roots **all** of its outputs — `output_parquet/`, `results.sqlite`,
+plots, and the per-project `plot_settings.yaml` — at a **project folder** you
+choose, instead of scattering them at the repo root. This makes the Toolbox
+track a peer of the [FlexTool GUI](flextool_gui_interface.md): the GUI picks up
+Toolbox-produced results, and the Toolbox can run a GUI-made project.
+
+### Choosing the project folder
+
+The project folder is set by editing **one line** in the user-local, gitignored
+file `templates/project_folder.txt` (seeded for you by `flextool-update`):
+
+```
+projects/Rivendell
+```
+
+The path may be **absolute** or **relative to the FlexTool root**. Leave the
+file **blank** (or with only comment lines) to send outputs to the FlexTool root
+— the old behavior. Because the file is gitignored, editing it never dirties git,
+so you switch projects simply by editing this line (and pointing the **Input
+data** Data Store at that project's input database).
+
+### Producing the results SpineDB
+
+To get a results SpineDB at `<project>/results.sqlite`, set
+`output-spinedb = true` in the **Output settings** database. The **Re-create
+results** step then writes it, with **each scenario as a Spine *alternative***,
+by replaying the processed parquet — **no re-solve**. (The parallel solve step
+deliberately does *not* write it, to avoid work-directory races; it is produced
+once by Re-create.) Whatever else you tick in Output settings
+(`output-plot` / `output-excel` / `output-csv`) Re-create also produces.
+
+Two caveats on this parquet-replay path:
+
+- The two inflation / discount-factor parameters are omitted (they need the live
+  solve). Everything else matches a native-solve results DB.
+- For a *bidirectional* connection the `(source, sink)` byname uses the parquet
+  `(node_1, node_2)` geometry; one-directional connections are exact.
+
+### Per-project plot settings
+
+Place a `plot_settings.yaml` in the project folder
+(`projects/<Name>/plot_settings.yaml`) to control plot colours and stacking
+order. It is now honored automatically by both the per-scenario plots and the
+comparison plots in the Toolbox track (previously the Toolbox track silently used
+the bundled default).
+
+### FlexTool GUI interoperability
+
+Outputs under `projects/<Name>/output_parquet/<scenario>/` are discovered
+automatically by the FlexTool GUI — the folder name is the result identity. A
+Toolbox-produced scenario appears under "source 0" in the GUI, which is cosmetic.
+Conversely, the Toolbox can run a project built in the GUI: point the **Input
+data** Data Store at `projects/<Name>/input_sources/<db>.sqlite` and set
+`templates/project_folder.txt` to `projects/<Name>`.
+
+### Migration
+
+There is **no forced migration** — existing workflows keep working, and a blank
+`project_folder.txt` reproduces the old repo-root behavior. The only steps:
+
+1. Run `flextool-update` (or `python update_flextool.py`). It seeds
+   `templates/project_folder.txt` and refreshes the settings databases (which
+   already carry the `output-spinedb` option).
+2. **Only if** you forked or customized `.spinetoolbox/project.json`: update the
+   FlexTool Tool's command argument from
+   `--flextool-location <project>/templates/flextool_location.txt` to
+   `--project-folder-file <project>/templates/project_folder.txt`. The legacy
+   `--flextool-location` argument still works as a fallback.
+3. To direct outputs into a project folder, put its path in
+   `templates/project_folder.txt`. To get `results.sqlite`, set
+   `output-spinedb=true` in **Output settings**.
 
 ## Customising the workflow
 
