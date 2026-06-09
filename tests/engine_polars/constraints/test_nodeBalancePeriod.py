@@ -279,3 +279,250 @@ def test_nodeBalancePeriod_excludes_nodeState_nodes():
     pb = Problem()
     build_flextool(pb, data)
     assert pb.cstr_row_count("nodeBalancePeriod_eq") == 0
+
+
+# ---------------------------------------------------------------------------
+# (4) — SOURCE-side drain.  The tests above drain the period node via the
+# SINK side (``flow_to_n`` into N) + inflow only, so they never exercise
+# the ``source_eff`` / ``source_noEff`` terms of ``nodeBalancePeriod_eq``.
+# That gap let a real bug ship: the cascade producer
+# (``_derived_params.apply_derived_b``) seeded ``flow_from_nodeBalance_eff``
+# from ``nodeBalance`` ALONE, dropping every ``balance_within_period`` node,
+# so a period node that is the SOURCE on an arc (e.g. Rivendell GAS → gas
+# plant) had NO source term in its period row → the constraint was VACUOUS
+# and the source drew for free.  The model.py assembly was correct; the
+# fixtures simply never reached it.
+#
+# This builder drains the period node ``G`` as a SOURCE: a conversion
+# process ``p`` draws FROM ``G`` (source) and delivers INTO a regular
+# per-(d,t) balance node ``B`` (the load).  ``B``'s per-step balance forces
+# ``v_flow[t] == demand[t]`` each step, hence Σ_t v_flow == period demand.
+# ``G``'s period balance is then
+#
+#     −Σ_t(v_flow · slope)  +  Σ_t(slack_up − slack_down)  ==  −Σ_t inflow_G
+#
+# i.e. the SOURCE draw out of G must be matched by G's own supply (inflow)
+# plus period slack.  With inflow_G < demand the shortfall is forced onto
+# ``vq_state_up`` (priced).  WITHOUT the ``source_eff`` term the period row
+# degenerates to  slack_up − slack_down == −Σ_t inflow_G  — G's drain
+# vanishes, B is fed for free, and the slack takes a different value.
+
+# Per-step demand on the downstream load node B (negative = draw).
+_B_DEMAND_T01 = -3.0
+_B_DEMAND_T02 = -10.0
+_B_PERIOD_DEMAND = -(_B_DEMAND_T01 + _B_DEMAND_T02)  # 13.0
+# Per-step supply (positive inflow) INTO the period source node G.
+_G_INFLOW_PER_STEP = 4.0
+_G_PERIOD_INFLOW = _G_INFLOW_PER_STEP * 2  # 8.0
+# The period balance forces the shortfall onto G's up-slack.
+_G_EXPECTED_UP_SLACK = _B_PERIOD_DEMAND - _G_PERIOD_INFLOW  # 5.0
+
+
+def _period_axes_base():
+    """Shared 1-period / 2-timestep time axes (step_duration ≡ 1)."""
+    dt = pl.DataFrame({"d": ["d1", "d1"], "t": ["t01", "t02"]})
+    p_step = Param(("d", "t"), dt.with_columns(value=pl.lit(1.0)))
+    p_rp = Param(("d", "t"), dt.with_columns(value=pl.lit(1.0)))
+    p_infl = Param(("d",), pl.DataFrame({"d": ["d1"], "value": [1.0]}))
+    p_psh = Param(("d",), pl.DataFrame({"d": ["d1"], "value": [1.0]}))
+    return dt, p_step, p_rp, p_infl, p_psh
+
+
+def _source_drained_period_data(*, slope: float = 1.0,
+                                b_penalty: float = 1e9,
+                                g_penalty: float = 1.0) -> FlexData:
+    """Smallest model where a ``balance_within_period`` node ``G`` is
+    drained from the SOURCE side.
+
+    Topology::
+
+        (inflow +4/step) → [G : balance_within_period]
+                              │  source-side draw  (flow_from_nodeBalance_eff)
+                              ▼
+                       process p  (efficiency unit, slope=``slope``)
+                              │  flow_to_n into B
+                              ▼
+                  [B : nodeBalance] ← load (−3, −10)
+
+    ``B`` is an ordinary per-(d,t) balance node.  Its load slack is priced
+    far above ``G``'s period slack (``b_penalty`` ≫ ``g_penalty``), so the
+    cost-minimiser serves B's full demand by drawing through ``p`` out of
+    ``G`` rather than failing B — forcing ``Σ_t v_flow·slope == 13``.  That
+    13 MWh source draw is then reconciled in ``G``'s period row against
+    ``G``'s own supply (inflow 8) + period slack (the binding 5 MWh).
+    """
+    dt, p_step, p_rp, p_infl, p_psh = _period_axes_base()
+
+    # G is the PERIOD (source) node; B is the regular per-(d,t) node.
+    nbp = pl.DataFrame({"n": ["G"]})
+    nodeBalance = pl.DataFrame({"n": ["B"]})
+    nodeBalance_dt = nodeBalance.join(dt, how="cross")
+    period_in_use_set = pl.DataFrame({"d": ["d1"]})
+
+    # Inflow lives on BOTH nodes: +supply on G, −load on B.  (n,d,t) frame.
+    infl_nodes = pl.DataFrame({"n": ["G", "G", "B", "B"],
+                               "d": ["d1"] * 4,
+                               "t": ["t01", "t02", "t01", "t02"]})
+    p_inflow = Param(("n", "d", "t"), infl_nodes.with_columns(
+        value=pl.when(pl.col("n") == "G").then(pl.lit(_G_INFLOW_PER_STEP))
+              .when(pl.col("t") == "t01").then(pl.lit(_B_DEMAND_T01))
+              .otherwise(pl.lit(_B_DEMAND_T02))
+    ).select("n", "d", "t", "value"))
+    # B's load-shed slack is priced far above G's period slack so the
+    # optimum fully serves B (drawing through G) rather than failing it —
+    # this is what fixes Σ_t v_flow at the period demand.
+    _pen_expr = (pl.when(pl.col("n") == "B").then(pl.lit(b_penalty))
+                   .otherwise(pl.lit(g_penalty)))
+    p_pen_up = Param(("n", "d", "t"), infl_nodes.with_columns(
+        value=_pen_expr).select("n", "d", "t", "value"))
+    p_pen_dn = Param(("n", "d", "t"), infl_nodes.with_columns(
+        value=_pen_expr).select("n", "d", "t", "value"))
+
+    # Process p: G (source) → B (sink).  ``p`` is an efficiency unit, so its
+    # source-side draw lands in ``flow_from_nodeBalance_eff`` (slope-scaled).
+    pss = pl.DataFrame({"p": ["p"], "source": ["G"], "sink": ["B"]})
+    pss_eff = pss.clone()
+    pss_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+    pss_dt = pss.join(dt, how="cross")
+    # Sink-side: p feeds B.
+    flow_to_n = pss.with_columns(n=pl.col("sink"))
+    # Source-side: p draws from G — THIS is the row the bug dropped.  In a
+    # real DB run the cascade builds this from process_source_sink_eff
+    # filtered to ``source ∈ nodeBalance ∪ nodeBalancePeriod``; here we set
+    # it explicitly so the in-engine model assembly is exercised directly.
+    flow_from_nodeBalance_eff = pss.with_columns(n=pl.col("source"))
+
+    p_unitsize = Param(("p",), pl.DataFrame({"p": ["p"], "value": [1.0]}))
+    p_flow_upper = Param(("p", "source", "sink", "d", "t"),
+        pss_dt.with_columns(value=pl.lit(100.0))
+              .select("p", "source", "sink", "d", "t", "value"))
+    p_slope = Param(("p", "d", "t"),
+        dt.with_columns(p=pl.lit("p"), value=pl.lit(slope))
+          .select("p", "d", "t", "value"))
+    # No commodity on the G→B arc — G is supplied by node inflow, not a
+    # priced commodity.  The ``processes`` feature gate still requires these
+    # frames be non-None, so supply empty-schema frames.
+    flow_from_commodity_eff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "c": pl.Utf8})
+    flow_from_commodity_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "c": pl.Utf8})
+    p_commodity_price = Param(("c", "d", "t"),
+        pl.DataFrame(schema={"c": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+                             "value": pl.Float64}))
+
+    return FlexData(
+        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        p_inflation_op=p_infl, p_period_share=p_psh,
+        nodeBalance=nodeBalance, nodeBalance_dt=nodeBalance_dt,
+        nodeBalancePeriod=nbp,
+        period_in_use_set=period_in_use_set,
+        p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
+        process_source_sink=pss,
+        process_source_sink_eff=pss_eff,
+        process_source_sink_noEff=pss_noEff,
+        pss_dt=pss_dt, flow_to_n=flow_to_n,
+        flow_from_nodeBalance_eff=flow_from_nodeBalance_eff,
+        flow_from_commodity_eff=flow_from_commodity_eff,
+        flow_from_commodity_noEff=flow_from_commodity_noEff,
+        p_commodity_price=p_commodity_price,
+        p_unitsize=p_unitsize, p_flow_upper=p_flow_upper,
+        p_slope=p_slope,
+    )
+
+
+def test_nodeBalancePeriod_source_term_present_in_row():
+    """In-engine MODEL guard (diagnosis item #3): the ``source_eff`` term
+    of a period node lands in the (n=G, d) period row.
+
+    The downstream load on ``B`` forces ``Σ_t v_flow == 13`` (per-step
+    balance on B), so the source draw out of ``G`` is fixed at 13.  ``G``'s
+    period balance must then carry that draw on the LHS — the constraint
+    cannot be satisfied with the source term absent unless the slack absorbs
+    a value consistent with the *draw*, not just the inflow.  We assert the
+    binding slack equals ``demand − inflow`` (5), which is ONLY true when
+    the source term is present and summed over t into the (G, d) row.
+    """
+    data = _source_drained_period_data()
+    pb = Problem()
+    build_flextool(pb, data)
+
+    # Structural: one (G, d1) period row.
+    assert "nodeBalancePeriod_eq" in set(pb.cstr_names())
+    assert pb.cstr_row_count("nodeBalancePeriod_eq") == 1
+    rec = pb.cstrs_named("nodeBalancePeriod_eq")[0]
+    assert rec.over["n"].to_list() == ["G"]
+    assert rec.over["d"].to_list() == ["d1"]
+    # The source-side draw row exists for the period node G.
+    assert (data.flow_from_nodeBalance_eff
+            .filter(pl.col("source") == "G").height) == 1
+
+    sol = pb.solve(options=solver_options())
+    assert sol.optimal
+
+    # B's per-step balance forces the source draw out of G to equal the
+    # period demand (13), regardless of the slope (=1 here).
+    src_total = _flow_total(sol)
+    assert src_total == pytest.approx(_B_PERIOD_DEMAND, rel=1e-9)  # 13.0
+
+    # G's period balance: −draw + up − dn == −inflow  ⇒  up = draw − inflow.
+    up = float(sol.value("vq_state_up").filter(pl.col("n") == "G")["value"].sum())
+    dn = float(sol.value("vq_state_down").filter(pl.col("n") == "G")["value"].sum())
+    assert up == pytest.approx(_G_EXPECTED_UP_SLACK, rel=1e-6)  # 5.0
+    assert dn == pytest.approx(0.0, abs=1e-6)
+    # Period balance closes: inflow + up == draw.
+    assert _G_PERIOD_INFLOW + up == pytest.approx(src_total, rel=1e-9)
+
+
+def test_nodeBalancePeriod_source_term_binds_without_it_vacuous():
+    """Decisive numerical contrast: with the ``source_eff`` term the period
+    constraint BINDS the source draw to inflow + slack; were the term absent
+    (the shipped bug) the row would reduce to ``up − dn == −inflow_G`` and
+    the up-slack would be 0 (inflow alone closes a source-less balance),
+    leaving the 13 MWh draw unaccounted.
+
+    We assert the slack takes the value that is only attainable WITH the
+    source term (5.0), and is strictly different from the source-less value
+    (0.0).  ``_G_EXPECTED_UP_SLACK`` is the witness.
+    """
+    data = _source_drained_period_data(slope=1.0)
+    pb, sol = _solve(data)
+    assert sol.optimal
+
+    up = float(sol.value("vq_state_up").filter(pl.col("n") == "G")["value"].sum())
+    # WITH source term: up = demand − inflow = 5.0.
+    assert up == pytest.approx(_G_EXPECTED_UP_SLACK, rel=1e-6)
+    # The source-less degenerate value would be 0.0 — assert we are NOT there.
+    assert up > 1.0  # strictly bound away from the vacuous 0.0
+
+
+def test_nodeBalancePeriod_source_term_slope_scaled():
+    """The SOURCE term is slope-scaled (``v_flow · unitsize · slope``);
+    the SINK term into B is not.  This pins the ``* d.p_slope`` factor that
+    the source-side branch of ``nodeBalancePeriod_eq`` applies (model.py
+    line ~881) — distinct from the sink-side ``flow_to_n`` term which omits
+    it.
+
+    B's per-step balance is in delivered-flow units, so v_flow is still 13
+    (unchanged by slope).  But the energy drawn OUT of G is
+    ``Σ_t v_flow · slope`` = 13·2 = 26, so the period balance forces a much
+    larger up-slack: ``26 − inflow(8)`` = 18.  Were the slope factor missing
+    the slack would collapse back to the slope-1 value of 5 — so the 18 is
+    the witness that ``* p_slope`` is applied to the source term.
+    """
+    slope = 2.0
+    data = _source_drained_period_data(slope=slope)
+    pb, sol = _solve(data)
+    assert sol.optimal
+
+    # The sink-side term into B is NOT slope-scaled → v_flow tracks demand.
+    src_flow = _flow_total(sol)
+    assert src_flow == pytest.approx(_B_PERIOD_DEMAND, rel=1e-9)  # 13.0
+
+    # Source-side energy out of G = Σ v_flow·slope = 26 → up-slack = 26−8.
+    g_draw = _B_PERIOD_DEMAND * slope                       # 26.0
+    expected_up = g_draw - _G_PERIOD_INFLOW                 # 18.0
+    up = float(sol.value("vq_state_up").filter(pl.col("n") == "G")["value"].sum())
+    assert up == pytest.approx(expected_up, rel=1e-6)       # 18.0
+    # And strictly larger than the slope-1 value — the slope factor binds.
+    assert up > _G_EXPECTED_UP_SLACK + 1.0

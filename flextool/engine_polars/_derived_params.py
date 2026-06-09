@@ -2723,7 +2723,24 @@ def apply_derived_b(
         # block-compat filter when bundle data is present, but the
         # seed produced here already includes the filter so the
         # overlay is a no-op.
+        # Source-side flows must be gathered for BOTH plain ``nodeBalance``
+        # nodes and ``balance_within_period`` (``nodeBalancePeriod``) nodes —
+        # a period node that is a *source* on an arc (e.g. GAS → gas plant)
+        # must contribute its source-side flow term to ``nodeBalancePeriod_eq``,
+        # else the period balance is vacuous and the source draws for free.
+        # Pass the dtype-safe union to the seed (which filters ``pss.source ∈
+        # n``).  Both frames come from the same ``rename_to_axis({"node":"n"})``
+        # in ``input.py:_load_node`` so the ``n`` Enum aligns.  When the period
+        # set is empty/None the union collapses to exactly ``nb_for_ffnb``
+        # (no concat/unique/reorder) → byte-identical legacy behavior.
         nb_for_ffnb = getattr(flex_data, "nodeBalance", None)
+        _nbp_for_ffnb = getattr(flex_data, "nodeBalancePeriod", None)
+        if (nb_for_ffnb is not None and _nbp_for_ffnb is not None
+                and _nbp_for_ffnb.height > 0):
+            nb_for_ffnb = (pl.concat([nb_for_ffnb.select("n"),
+                                      _nbp_for_ffnb.select("n")])
+                             .unique()
+                             .select("n"))
         pss_eff_frame = getattr(flex_data, "process_source_sink_eff", None)
         pss_noEff_frame = getattr(flex_data, "process_source_sink_noEff",
                                     None)
