@@ -531,8 +531,8 @@
         "Re-create results": {
             "type": "Tool",
             "description": "",
-            "x": 149.5520209256511,
-            "y": -83.29811605946422,
+            "x": 134.33275816800634,
+            "y": -83.2900074808384,
             "specification": "Process outputs",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -567,8 +567,8 @@
         "Open results DB": {
             "type": "Tool",
             "description": "",
-            "x": 280.0,
-            "y": -83.29811605946422,
+            "x": 262.8731308873898,
+            "y": -249.80080039851651,
             "specification": "Open results DB",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -587,8 +587,8 @@
         "Output settings": {
             "type": "Data Store",
             "description": "",
-            "x": 61.25916756087045,
-            "y": -218.95027571670272,
+            "x": 20.89339849671486,
+            "y": -176.38499146705217,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -649,8 +649,8 @@
         "FlexTool location": {
             "type": "Data Connection",
             "description": "",
-            "x": -180.23956600265151,
-            "y": -168.71705999666122,
+            "x": -129.78438181711348,
+            "y": -265.11383270703743,
             "file_references": [
                 {
                     "type": "path",
@@ -665,8 +665,8 @@
         "Comparison settings": {
             "type": "Data Store",
             "description": "",
-            "x": 301.2745945616581,
-            "y": -93.39512431411403,
+            "x": 388.53170103882167,
+            "y": -108.61438707175886,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
