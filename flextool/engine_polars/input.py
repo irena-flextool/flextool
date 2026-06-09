@@ -427,6 +427,15 @@ class FlexData:
     p_penalty_up: Param                      # (n, d, t)
     p_penalty_down: Param                    # (n, d, t)
 
+    # Companion to ``nodeBalance`` above: the subset of balance nodes whose
+    # balance is enforced once per period (legacy ``balance_within_period``)
+    # rather than per (d, t).  Defaults to ``None`` (kept here in the
+    # default-field region so dataclass ordering stays valid next to the
+    # non-default node fields above); ``load_flextool`` always supplies an
+    # (empty when the CSV is absent / header-only) frame, so existing
+    # FlexData(...) constructors that omit it stay valid and unchanged.
+    nodeBalancePeriod: pl.DataFrame | None = None  # set: (n,)
+
     # Per-period years-represented R (e.g. 5.0 for a 5-year invest period).
     # Built from ``solve.years_represented`` via
     # ``p_years_represented_d_from_source``.  None when the source
@@ -1021,6 +1030,20 @@ def _load_node(sd: Path, dt: pl.DataFrame,
                 provider: "object | None" = None):
     nb = _provider_read(provider, "solve_data/nodeBalance",
                          sd / "nodeBalance.csv").pipe(rename_to_axis, {"node": "n"})
+    # ``nodeBalancePeriod`` — nodes whose balance is enforced once per
+    # period (legacy ``balance_within_period``) rather than per (d, t).
+    # Same single-column (``node`` → ``n``) shape, dtype and axis handling
+    # as ``nb``.  The CSV may be absent (older fixtures predating the
+    # feature) or header-only (no period nodes); in both cases keep ``nbp``
+    # an empty DataFrame with ``nb``'s exact schema so every downstream
+    # union collapses cleanly to ``nb`` (byte-identical legacy behavior).
+    if _provider_has(provider, "solve_data/nodeBalancePeriod",
+                     sd / "nodeBalancePeriod.csv"):
+        nbp = _provider_read(provider, "solve_data/nodeBalancePeriod",
+                             sd / "nodeBalancePeriod.csv").pipe(
+                                 rename_to_axis, {"node": "n"})
+    else:
+        nbp = nb.clear()
     # pdtNodeInflow.csv is canonical (.mod reads it via `table data IN`).
     # TODO(Δ.18+): retire pdtNodeInflow.csv read when ``apply_derived_a``
     # extends ``p_inflow_from_source`` to cover ``inflow_method ∈ {scale_to_*}``
@@ -1055,7 +1078,7 @@ def _load_node(sd: Path, dt: pl.DataFrame,
 
     # Phase E.3: ``nodeBalance_dt`` no longer materialised; consumers
     # call ``_pdt_join.compute_nodeBalance_dt`` on demand.
-    return (nb, None,
+    return (nb, nbp, None,
             Param(("n","d","t"), inflow_long.select("n","d","t","value")),
             Param(("n","d","t"), pen_up_df),
             Param(("n","d","t"), pen_dn_df))
@@ -2270,6 +2293,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
 
 def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                    nb: pl.DataFrame,
+                   nbp: pl.DataFrame | None,
                    pss_eff: pl.DataFrame | None,
                    pss_noEff: pl.DataFrame | None,
                    cap_pd: pl.DataFrame | None,
@@ -2297,7 +2321,27 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # stays e so the downstream block-compat join with eb_l.n (also
     # cast to e below) composes natively in Enum).
     _enums_local = get_global_axis_enums()
-    nb_as_source = nb.lazy().pipe(rename_to_axis, {"n": "source"})
+    # Membership set for the source-side semi-join is the UNION of the
+    # per-(d,t) balance nodes (``nb``) and the per-period balance nodes
+    # (``nbp``, legacy ``balance_within_period``): a process whose source
+    # is *either* kind of balance node must still contribute its flow to
+    # that node's balance.  ``nbp`` carries the identical ``n``-column
+    # dtype as ``nb`` (both produced by the same ``rename_to_axis
+    # {"node": "n"}``), so the concat is dtype-safe with no extra cast.
+    #
+    # Byte-identity guarantee: when ``nbp`` is None or empty (every
+    # fixture except the new period-node ones) the union collapses to
+    # ``nb`` verbatim — we take the ``nb`` branch unchanged, with no
+    # concat and no ``.unique()`` reorder.  The semi-join only consumes
+    # the distinct ``source`` membership and emits rows in left-frame
+    # (``pss_*``) order, so even when the union path runs it cannot
+    # reorder or duplicate the existing ``nb``-only matches.
+    if nbp is not None and nbp.height > 0:
+        nb_source_set = (pl.concat([nb.select("n"), nbp.select("n")])
+                         .unique())
+    else:
+        nb_source_set = nb
+    nb_as_source = nb_source_set.lazy().pipe(rename_to_axis, {"n": "source"})
     if pss_eff is not None:
         flow_from_nb_eff = (pss_eff.lazy()
             .join(nb_as_source.select("source"), on="source", how="semi")
@@ -4160,7 +4204,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         block_layout = BlockLayout.load_from_solve_data(sd, provider=provider)
 
         dt, step_dur, rp_cw, infl, psh = _load_time(sd, provider=provider)
-        nb, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt, provider=provider)
+        nb, nbp, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt, provider=provider)
         _load_mem("load_node_end", "load_flextool: time + node loaded")
 
         proc = _load_process_topology(inp, sd, dt, block_layout=block_layout,
@@ -4283,7 +4327,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                                                 provider=provider)
 
         # ─── Storage (nodeState + binding methods + dtttdt + node-balance source-side flows)
-        storage = _load_storage(inp, sd, dt, nb,
+        storage = _load_storage(inp, sd, dt, nb, nbp,
                                  proc["pss_eff"], proc["pss_noEff"],
                                  base_cap_pd, proc["unitsize"],
                                  block_layout=block_layout,
@@ -4370,6 +4414,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             p_period_share = psh,
 
             nodeBalance = nb,
+            nodeBalancePeriod = nbp,
             nodeBalance_dt = nb_dt,
             p_inflow = inflow,
             p_penalty_up = pen_up,
