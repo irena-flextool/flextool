@@ -5,10 +5,19 @@ full solve) and assert the SpineDB round-trips entities, alternatives, and
 nested Map parameter values per the schema.
 """
 
+import logging
+import multiprocessing as mp
+
 import pandas as pd
 import pytest
 from spinedb_api import DatabaseMapping, from_database
 
+from flextool.process_outputs.spinedb_replay import (
+    _CONNECTION_PREFIX,
+    _collect_process_names,
+    _process_node_map,
+    build_replay_s,
+)
 from flextool.process_outputs.write_spinedb import (
     ensure_results_db,
     write_spinedb,
@@ -201,6 +210,144 @@ def test_unknown_table_ignored(tmp_path):
         # no entity class / param exists for the unknown table
         ec_names = {e["name"] for e in db.get_entity_class_items()}
         assert "some_unknown_table_xyz" not in ec_names
+
+
+# ---------------------------------------------------------------------------
+# Replay shim: squeezed single-column Series handling (#5)
+# ---------------------------------------------------------------------------
+
+def test_collect_process_names_handles_squeezed_series():
+    """A connection frame squeezed to a single-column ``Series`` (label in
+    ``.name``, no ``.columns``) must still contribute its process — otherwise
+    the process set silently under-covers."""
+    # connection_dt_eee squeezed to a Series: name = bare connection.
+    squeezed_bare = pd.Series(
+        [1.0, 2.0], index=_dt_index(), name="conn_only_via_series",
+    )
+    # connection_leftward_dt_eee squeezed: name = (process, node) tuple.
+    squeezed_tuple = pd.Series(
+        [3.0, 4.0], index=_dt_index(), name=("conn_via_tuple", "nodeA"),
+    )
+    results = {
+        "connection_dt_eee": squeezed_bare,
+        "connection_leftward_dt_eee": squeezed_tuple,
+    }
+    names = _collect_process_names(results, _CONNECTION_PREFIX)
+    assert set(names) == {"conn_only_via_series", "conn_via_tuple"}, (
+        "squeezed Series frames dropped from the process set"
+    )
+
+
+def test_process_node_map_handles_squeezed_series():
+    """A squeezed ``(process, node)`` directional Series must still map its
+    node (label in ``.name``)."""
+    squeezed = pd.Series(
+        [5.0, 6.0], index=_dt_index(), name=("cX", "west"),
+    )
+    out = _process_node_map({"connection_leftward_dt_eee": squeezed},
+                            "leftward")
+    assert out == {"cX": "west"}
+
+
+# ---------------------------------------------------------------------------
+# Replay shim: 2-way (bidirectional) connection detection / warning (#7)
+# ---------------------------------------------------------------------------
+
+def _conn_dir_df(direction_node):
+    """connection_<direction>_dt_eee with one (process, node) column."""
+    cols = pd.MultiIndex.from_tuples([direction_node], names=["process", "node"])
+    return pd.DataFrame(
+        {direction_node: [1.0, 1.0]}, index=_dt_index(), columns=cols,
+    )
+
+
+def _net_flow_df(connection, values):
+    """connection_dt_eee net-flow frame: column = bare connection name."""
+    cols = pd.Index([connection], name="process")
+    return pd.DataFrame(
+        {connection: values}, index=_dt_index(), columns=cols,
+    )
+
+
+def test_two_way_connection_warns(caplog):
+    """A connection whose NET flow takes both signs is bidirectional; the
+    replay shim must warn and name it."""
+    results = {
+        "connection_leftward_dt_eee": _conn_dir_df(("cBi", "west")),
+        "connection_rightward_dt_eee": _conn_dir_df(("cBi", "battery")),
+        # net flow flips sign across the two timesteps -> 2-way.
+        "connection_dt_eee": _net_flow_df("cBi", [5.0, -3.0]),
+    }
+    with caplog.at_level(
+        logging.WARNING, logger="flextool.process_outputs.spinedb_replay"
+    ):
+        build_replay_s(results)
+    msgs = [r.getMessage() for r in caplog.records
+            if "bidirectional" in r.getMessage()]
+    assert msgs, "no 2-way warning emitted for a bidirectional connection"
+    assert any("cBi" in m for m in msgs), f"warning did not name cBi: {msgs}"
+
+
+def test_one_way_connection_does_not_warn(caplog):
+    """A connection whose net flow is single-signed is 1-way; NO warning."""
+    results = {
+        "connection_leftward_dt_eee": _conn_dir_df(("cUni", "west")),
+        "connection_rightward_dt_eee": _conn_dir_df(("cUni", "east")),
+        # net flow strictly positive -> 1-way.
+        "connection_dt_eee": _net_flow_df("cUni", [5.0, 3.0]),
+    }
+    with caplog.at_level(
+        logging.WARNING, logger="flextool.process_outputs.spinedb_replay"
+    ):
+        s = build_replay_s(results)
+    msgs = [r.getMessage() for r in caplog.records
+            if "bidirectional" in r.getMessage()]
+    assert not msgs, f"unexpected 2-way warning for a 1-way connection: {msgs}"
+    # 1-way triple round-trips exactly (source=left, sink=right).
+    assert list(s.process_source_sink) == [("cUni", "west", "east")]
+
+
+# ---------------------------------------------------------------------------
+# Concurrent cold-start safety on a shared results DB (#4)
+# ---------------------------------------------------------------------------
+
+def _ensure_worker(url: str) -> str:
+    """Subprocess entry point: ensure the schema DB, return 'ok' or the error
+    repr.  Module-level so it is picklable under the 'spawn' start method."""
+    try:
+        ensure_results_db(url)
+        return "ok"
+    except Exception as exc:  # noqa: BLE001
+        return f"ERR:{type(exc).__name__}:{exc}"
+
+
+def test_concurrent_cold_start_creates_one_valid_db(tmp_path):
+    """Many processes cold-starting the SAME shared results DB must converge
+    on ONE valid schema DB (the lock serializes the create; no temp clobbers a
+    DB another process is using)."""
+    url = "sqlite:///" + str(tmp_path / "shared_results.sqlite")
+    ctx = mp.get_context("spawn")
+    n = 6
+    with ctx.Pool(n) as pool:
+        outcomes = pool.map(_ensure_worker, [url] * n)
+    assert all(o == "ok" for o in outcomes), f"worker failures: {outcomes}"
+
+    # Exactly one DB file, valid schema, no leftover temp / lock churn that
+    # would indicate a clobber.
+    path = tmp_path / "shared_results.sqlite"
+    assert path.exists()
+    leftovers = list(tmp_path.glob(".results-*.sqlite.tmp"))
+    assert not leftovers, f"leftover temp DBs: {leftovers}"
+    with DatabaseMapping(url) as db:
+        assert len(db.get_entity_class_items()) == 12
+        assert len(db.get_parameter_definition_items()) == 52
+
+    # The DB stays usable for an append after the concurrent create.
+    write_spinedb({"unit_outputNode_dt_ee": _flow_df()}, StubS(), url,
+                  "scenA", "s1")
+    with DatabaseMapping(url) as db:
+        flow = _read_value(db, "unit__node", ("u1", "n1"), "flow_t", "scenA")
+        assert flow is not None
 
 
 if __name__ == "__main__":

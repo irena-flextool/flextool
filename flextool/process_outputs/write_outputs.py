@@ -1082,21 +1082,33 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
     # Write to SpineDB results database
     if 'spinedb' in write_methods:
+        db_url = results_db_url or (
+            'sqlite:///' + os.path.join(output_location or '.', 'results.sqlite')
+        )
         if read_parquet_dir:
-            # ``s`` / ``par`` are UNDEFINED on the read_parquet_dir path
-            # (assigned only in the native ``else`` branch above), so the
-            # writer — which needs them for solve reconstruction and
-            # discount factors — cannot run here.
-            logging.warning(
-                "spinedb write-method needs the native solve path "
-                "(s/par unavailable under read_parquet_dir); skipping."
+            # Replay path: ``s`` / ``par`` are UNDEFINED here (assigned only
+            # in the native ``else`` branch above).  Rebuild the minimal
+            # ``s`` shim the writer needs purely from the processed
+            # ``results`` (no output_raw, no input DB).  ``par`` is None, so
+            # the two discount-factor params (#33/#34) are intentionally
+            # dropped — the writer degrades gracefully and logs that.
+            from flextool.process_outputs.spinedb_replay import build_replay_s
+            s_shim = build_replay_s(results)
+            # Prefer the real solve label recovered from node_prices_dt_e so
+            # the ``collapse_solve`` frame (cost_discounted_solve) gets the
+            # same single ``solve`` Map key the native path used; fall back
+            # to the caller's ``solve_name`` / scenario name when no solve
+            # axis is recoverable.
+            replay_solve_name = (
+                s_shim.replay_solve_name or solve_name or scenario_name
+            )
+            write_spinedb(
+                results, s_shim, db_url, scenario_name,
+                replay_solve_name, par=None,
             )
         else:
-            db_url = results_db_url or (
-                'sqlite:///' + os.path.join(output_location or '.', 'results.sqlite')
-            )
             write_spinedb(results, s, db_url, scenario_name, solve_name or scenario_name, par=par)
-            start = log_time('Wrote to SpineDB', start, timing_recorder)
+        start = log_time('Wrote to SpineDB', start, timing_recorder)
 
     # Phase F — write manifest.json describing the output bundle.
     # Idempotent (safe to call multiple times); rooted at the work
