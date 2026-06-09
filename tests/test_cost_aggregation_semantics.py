@@ -429,7 +429,7 @@ class TestBaseControl:
 # aggregation).  PASSES after calc_slacks and calc_costs are fixed.
 # ===========================================================================
 
-class TestRpCostWeightSlackPenalty:
+class TestTimestepWeightSlackPenalty:
     @pytest.fixture(scope="class")
     def csv_dir(
         self, test_db_url: str, test_solver_config_dir: Path, tmp_path_factory: pytest.TempPathFactory

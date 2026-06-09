@@ -274,10 +274,10 @@ class TestPurePenaltyBase:
         )
 
 
-class TestRpCostWeightFactor:
+class TestTimestepWeightFactor:
     """``base_weighted`` — same scenario, non-uniform timestep_weight.
 
-    Mirrors flextool's ``TestRpCostWeightSlackPenalty`` — verifies that
+    Mirrors flextool's ``TestTimestepWeightSlackPenalty`` — verifies that
     the timestep_weight factor is applied to slack penalties (was the
     P3b bug).
     """

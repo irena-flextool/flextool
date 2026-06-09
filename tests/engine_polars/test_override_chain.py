@@ -16,7 +16,7 @@ The Γ.6.D handoff (``audit/handoff_csv_retirement.md``) and the
 2. ``work_fullYear_roll`` — was 80% obj gap (p_inflation_op returned
    1.0 instead of reading ``solve.years_represented`` for rolling
    solves which key by parent solve name).
-3. ``test_cost_aggregation_semantics::TestRpCostWeightFactor::
+3. ``test_cost_aggregation_semantics::TestTimestepWeightFactor::
    test_timestep_weight_factor_is_non_trivial`` — same as 1.
 4-6. ``work_multi_fullYear_battery_nested_*`` — investigated and
      verified clean already.
@@ -94,7 +94,7 @@ def test_p_timestep_weight_non_trivial_on_base_weighted(
     must produce non-uniform weights for ``work_base_weighted``.
 
     Companion to ``test_cost_aggregation_semantics::
-    TestRpCostWeightFactor::test_timestep_weight_factor_is_non_trivial``.
+    TestTimestepWeightFactor::test_timestep_weight_factor_is_non_trivial``.
     Without the Γ.8.E wire-up the helper returns the trivial 1.0
     default and the LP reproduces only by coincidence.
     """

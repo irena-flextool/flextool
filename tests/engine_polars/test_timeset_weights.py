@@ -99,7 +99,7 @@ def _rpcw_dict(rp_cw_param) -> dict[tuple[str, str], float]:
     }
 
 
-class TestLoadRpCostWeight:
+class TestLoadTimestepWeight:
     """Each test mirrors a flextool ``TestWriteTimesetCostWeight`` case,
     but operates on the *loader* (post-writer) end.  Inputs encode the
     values the writer would have produced (normalized × n)."""
