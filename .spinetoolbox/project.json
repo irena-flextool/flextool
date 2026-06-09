@@ -51,6 +51,11 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/process_outputs.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/open_results_db.json"
                 }
             ]
         },
@@ -348,6 +353,42 @@
                         "scenario_filter": true
                     }
                 }
+            },
+            {
+                "name": "from FlexTool location to Open results DB",
+                "from": [
+                    "FlexTool location",
+                    "right"
+                ],
+                "to": [
+                    "Open results DB",
+                    "left"
+                ],
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Re-create results to Open results DB",
+                "from": [
+                    "Re-create results",
+                    "right"
+                ],
+                "to": [
+                    "Open results DB",
+                    "left"
+                ],
+                "filter_settings": {
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
             }
         ],
         "jumps": [
@@ -518,6 +559,26 @@
                 {
                     "type": "literal",
                     "arg": "png"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Open results DB": {
+            "type": "Tool",
+            "description": "",
+            "x": 280.0,
+            "y": -83.29811605946422,
+            "specification": "Open results DB",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "literal",
+                    "arg": "--project-folder-file"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/templates/project_folder.txt"
                 }
             ],
             "kill_completed_processes": false,

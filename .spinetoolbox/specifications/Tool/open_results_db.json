@@ -1,0 +1,13 @@
+{
+    "name": "Open results DB",
+    "tooltype": "python",
+    "includes": [
+        "cmd_open_results_db.py"
+    ],
+    "description": "Open the project's results.sqlite in the standalone Spine DB editor. Resolves the project folder at runtime from templates/project_folder.txt (the same user-local redirect the FlexTool run Tool uses), then launches the editor detached.",
+    "inputfiles": [],
+    "inputfiles_opt": [],
+    "outputfiles": [],
+    "cmdline_args": [],
+    "includes_main_path": "../../../flextool/cli"
+}
