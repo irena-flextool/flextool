@@ -222,6 +222,26 @@ def update_flextool(skip_git):
             "solver_config/highs.opt",
         )
 
+    # Seed templates/flextool_location.txt on first run.  Its CONTENTS are
+    # never read; it exists purely as a stable on-disk anchor that Spine
+    # Toolbox's legacy ``--flextool-location <project>/templates/
+    # flextool_location.txt`` profile points at, so the CLI can walk
+    # ``.parent.parent`` from it to derive the project output root (see
+    # the 4-tier resolver in flextool/cli/cmd_run_flextool.py).  Idempotent:
+    # never overwrites an existing file.
+    os.makedirs("templates", exist_ok=True)
+    if not os.path.exists("templates/flextool_location.txt"):
+        with open("templates/flextool_location.txt", "w", encoding="utf-8") as fh:
+            fh.write(
+                "# This file's CONTENTS are ignored. Its only purpose is to be a\n"
+                "# fixed on-disk anchor inside the project: when Spine Toolbox\n"
+                "# passes --flextool-location <project>/templates/"
+                "flextool_location.txt,\n"
+                "# the CLI walks .parent.parent from this path to derive the\n"
+                "# legacy output root (<project>). See cmd_run_flextool.py\n"
+                "# resolve_output_path.\n"
+            )
+
     # Migrate user-owned SQLites (canonical ones are already at current
     # version because they were just materialized from the canonical
     # JSONs, which migrate-all keeps at FLEXTOOL_DB_VERSION).

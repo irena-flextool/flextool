@@ -149,6 +149,95 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
     return 0, last_step
 
 
+def resolve_output_path(input_db_url, flextool_location, output_location, cwd):
+    """Resolve the TRUE output root for a CLI run (4-tier rule).
+
+    This is the path that outputs actually land under, so it is what
+    gets persisted to the "Output info" DB as ``scenario/output_location``
+    (Toolbox's comparison / re-create steps read it back to locate each
+    scenario's parquet) AND what is passed as ``fallback_output_location``
+    to ``write_outputs`` and used for the timings.csv directory.
+
+    The four tiers, in precedence order:
+
+    1. **Explicit ``--output-location``** wins outright.  ``write_outputs``
+       already honours an explicit ``output_location`` over the
+       ``fallback_output_location`` (see ``_resolve_settings``), so before
+       this change an explicit ``--output-location`` steered where files
+       were written but was NOT reflected in the persisted Output-info
+       record (which used the fallback ``output_path``).  Folding it into
+       tier 1 fixes that latent inconsistency: the recorded location now
+       matches where the files actually go.
+
+    2. **GUI-project layout.**  When the input DB file sits directly inside
+       a directory named ``input_sources`` (the FlexTool GUI project
+       layout, ``<project>/input_sources/<db>.sqlite``), the output root is
+       that directory's parent — the project folder.  This is
+       location-agnostic: it works wherever the project lives on disk.
+       The DB filesystem path is recovered from ``input_db_url`` (which may
+       be a ``sqlite:///`` URL possibly carrying an appended filter
+       query-config) using the same ``sqlite:///`` stripping idiom used
+       elsewhere in this file, plus a query-part strip.  If the path can't
+       be resolved to an existing file, this tier is skipped (no crash).
+
+    3. **Legacy ``--flextool-location`` bridge.**  ``.parent.parent`` of the
+       resolved flextool-location path (the historical Spine Toolbox
+       anchor; see ``templates/flextool_location.txt``).
+
+    4. **Fallback** to the current working directory.
+
+    Pure path logic — deterministic, no randomness, no side effects.
+    """
+    # Tier 1 — explicit override wins.
+    if output_location:
+        return Path(output_location)
+
+    # Tier 2 — GUI project layout: <project>/input_sources/<db>.sqlite.
+    db_fs_path = _input_db_filesystem_path(input_db_url)
+    if db_fs_path is not None:
+        try:
+            resolved = db_fs_path.resolve()
+        except OSError:
+            resolved = None
+        if resolved is not None and resolved.is_file() \
+                and resolved.parent.name == "input_sources":
+            return resolved.parent.parent
+
+    # Tier 3 — legacy flextool-location anchor walk.
+    if flextool_location:
+        return Path(flextool_location).resolve().parent.parent
+
+    # Tier 4 — fallback to CWD.
+    return Path(cwd)
+
+
+def _input_db_filesystem_path(input_db_url):
+    """Best-effort filesystem path for a (possibly sqlite) input DB URL.
+
+    Returns a :class:`~pathlib.Path` for ``sqlite:///`` URLs and bare
+    filesystem paths, stripping any appended filter query-config
+    (``?spinedbfilter=...``); returns ``None`` for non-sqlite URLs (e.g.
+    ``mysql://``) or when the value is empty.  Does not touch the
+    filesystem — purely string → path.
+    """
+    if not input_db_url:
+        return None
+    # A non-sqlite scheme (mysql, postgresql, …) is not a local file.
+    if "://" in input_db_url and not input_db_url.startswith("sqlite:"):
+        return None
+    # Strip an appended Spine filter query-config, e.g.
+    # ``sqlite:///proj/input_sources/db.sqlite?spinedbfilter=...``.
+    # ``urlsplit`` keeps everything before ``?`` in ``.path`` for URLs and
+    # leaves a bare path untouched in ``.path`` too, but to stay aligned
+    # with the file-local ``.replace('sqlite:///', '')`` idiom we strip the
+    # scheme prefix first, then split off the query manually.
+    no_scheme = input_db_url.replace("sqlite:///", "", 1)
+    no_query = no_scheme.split("?", 1)[0]
+    if not no_query:
+        return None
+    return Path(no_query)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.description = "Run flextool using the specified database URL. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
@@ -440,14 +529,20 @@ def main():
         os.environ.setdefault('FLEXTOOL_MEMORY_VERBOSE', '1')
     if debug_level == 'full':
         os.environ.setdefault('FLEXTOOL_MEMORY_DIAGNOSTICS', '1')
-    # Legacy: Spine Toolbox passed ``--flextool-location <repo>/template/flextool_location.txt``
-    # so the output dir resolved to the repo root via ``.parent.parent``.
-    # Now defaults to CWD (the user's project directory) when unset, and
-    # still honours the explicit path-walk for old Toolbox profiles.
-    if args.flextool_location:
-        output_path = Path(args.flextool_location).resolve().parent.parent
-    else:
-        output_path = Path.cwd()
+    # The TRUE output root (where outputs land, and what is persisted to
+    # the "Output info" DB as scenario/output_location) is resolved by a
+    # 4-tier rule (see ``resolve_output_path`` for the full rationale):
+    #   1. ``--output-location``                         (explicit wins),
+    #   2. ``<project>`` when the input DB sits in an    (GUI project
+    #      ``input_sources/`` dir                         layout),
+    #   3. ``--flextool-location``.parent.parent         (legacy bridge),
+    #   4. CWD                                            (fallback).
+    output_path = resolve_output_path(
+        input_db_url=args.input_db_url,
+        flextool_location=args.flextool_location,
+        output_location=args.output_location,
+        cwd=Path.cwd(),
+    )
     work_folder = Path(args.work_folder) if args.work_folder else Path.cwd()
     work_folder.mkdir(parents=True, exist_ok=True)
     wf = work_folder
