@@ -314,8 +314,18 @@
       null
     ],
     [
-      "group",
-      "anti_energy_group",
+      "flowGroup",
+      "coal_electricity",
+      null
+    ],
+    [
+      "flowGroup",
+      "connections_with_east",
+      null
+    ],
+    [
+      "flowGroup",
+      "to_west_node",
       null
     ],
     [
@@ -331,16 +341,6 @@
     [
       "group",
       "co2_price",
-      null
-    ],
-    [
-      "group",
-      "coal_electricity",
-      null
-    ],
-    [
-      "group",
-      "connections_with_east",
       null
     ],
     [
@@ -361,11 +361,6 @@
     [
       "group",
       "heat",
-      null
-    ],
-    [
-      "group",
-      "to_west_node",
       null
     ],
     [
@@ -1003,7 +998,7 @@
       null
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
         "connections_with_east",
         "east_north",
@@ -1012,7 +1007,7 @@
       null
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
         "connections_with_east",
         "east_north",
@@ -1021,7 +1016,7 @@
       null
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
         "connections_with_east",
         "west_east",
@@ -1030,7 +1025,7 @@
       null
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
         "connections_with_east",
         "west_east",
@@ -1039,7 +1034,7 @@
       null
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
         "to_west_node",
         "west_east",
@@ -1048,7 +1043,7 @@
       null
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
         "to_west_node",
         "west_north",
@@ -1057,7 +1052,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "coal_electricity",
         "coal_chp",
@@ -1066,7 +1061,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "coal_electricity",
         "coal_plant",
@@ -1075,7 +1070,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "to_west_node",
         "anti_energy_plant",
@@ -1084,7 +1079,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "to_west_node",
         "coal_chp",
@@ -1093,7 +1088,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "to_west_node",
         "coal_plant",
@@ -1102,7 +1097,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "to_west_node",
         "fusion_plant",
@@ -1111,7 +1106,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "to_west_node",
         "water_pump",
@@ -1523,6 +1518,13 @@
       true
     ],
     [
+      "flowGroup",
+      [],
+      null,
+      null,
+      true
+    ],
+    [
       "group",
       [],
       null,
@@ -1694,9 +1696,9 @@
       true
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
-        "group",
+        "flowGroup",
         "connection",
         "node"
       ],
@@ -1705,9 +1707,9 @@
       true
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
-        "group",
+        "flowGroup",
         "unit",
         "node"
       ],
@@ -2113,11 +2115,54 @@
       "constraint"
     ],
     [
+      "flowGroup",
+      "flow_aggregator",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "flow_aggregator_methods",
+      "Choice of flow-aggregation method for this flowGroup: 'none' (flow limits / investment only, no aggregated output), 'dispatch_plots_only' (bands inside a node group's dispatch table), 'standalone_aggregator_only' (own timewise summed-flow series plus per-period cumulative/average totals), 'both'.",
+      "output"
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      null,
+      null,
+      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      null,
+      null,
+      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      null,
+      null,
+      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      null,
+      null,
+      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+      "flow_limit"
+    ],
+    [
       "group",
       "base_MVA",
       null,
       null,
-      null,
+      "[MVA] Base power for the per-unit system used in DC power flow. Default 100. susceptance = base_MVA / reactance_pu.",
       "network"
     ],
     [
@@ -2125,7 +2170,7 @@
       "candidate_precapacity_to_avoid_big_m",
       null,
       null,
-      null,
+      "[MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This avoids the need for big-M / MIP constraints by ensuring the angle constraint is always active. Default 0.1 MW. The value should be small enough to not affect results but large enough for numerical stability.",
       "network"
     ],
     [
@@ -2194,14 +2239,6 @@
       "decomposition_methods",
       "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solved as an independent region with shared-commodity coupling).",
       "solve_advanced"
-    ],
-    [
-      "group",
-      "flow_aggregator",
-      null,
-      "yes_no",
-      "Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from output_aggregate_flows.",
-      "output"
     ],
     [
       "group",
@@ -2285,38 +2322,6 @@
     ],
     [
       "group",
-      "max_cumulative_flow",
-      null,
-      null,
-      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      null,
-      null,
-      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      null,
-      null,
-      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      null,
-      null,
-      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
       "new_stepduration",
       null,
       null,
@@ -2330,30 +2335,6 @@
       null,
       "[share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.",
       "network"
-    ],
-    [
-      "group",
-      "output_flowGroup_indicators",
-      null,
-      "yes_no",
-      "Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).",
-      "output"
-    ],
-    [
-      "group",
-      "output_nodeGroup_dispatch",
-      null,
-      "yes_no",
-      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
-      "output"
-    ],
-    [
-      "group",
-      "output_nodeGroup_indicators",
-      null,
-      "yes_no",
-      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
-      "output"
     ],
     [
       "group",
@@ -2390,10 +2371,26 @@
     ],
     [
       "group",
+      "print_dispatch",
+      null,
+      "yes_no",
+      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
+      "output"
+    ],
+    [
+      "group",
+      "print_indicators",
+      null,
+      "yes_no",
+      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
+      "output"
+    ],
+    [
+      "group",
       "reference_node",
       null,
       null,
-      null,
+      "Name of the reference bus node (angle fixed to zero) for DC power flow. Optional — if not specified, automatically selected as the node with the largest existing capacity in each connected component of the DC power flow network.",
       "network"
     ],
     [
@@ -2481,7 +2478,7 @@
       "model",
       "version",
       [
-        "57",
+        "58",
         "float"
       ],
       null,
@@ -2606,7 +2603,7 @@
       "invest_forced",
       null,
       null,
-      null,
+      "[MWh] Forces the model to invest exactly this amount of new storage capacity, overriding the investment optimisation (equivalent to setting invest_min and invest_max equal). Constant or period.",
       "investment"
     ],
     [
@@ -4022,6 +4019,84 @@
       0
     ],
     [
+      "flowGroup",
+      "flow_aggregator",
+      "str",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "map",
+      2
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "map",
+      2
+    ],
+    [
+      "group",
+      "base_MVA",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "candidate_precapacity_to_avoid_big_m",
+      "float",
+      0
+    ],
+    [
       "group",
       "capacity_margin",
       "float",
@@ -4065,13 +4140,31 @@
     ],
     [
       "group",
-      "decomposition_method",
-      "str",
+      "cumulative_max_capacity",
+      "float",
       0
     ],
     [
       "group",
-      "flow_aggregator",
+      "cumulative_max_capacity",
+      "map",
+      1
+    ],
+    [
+      "group",
+      "cumulative_min_capacity",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "cumulative_min_capacity",
+      "map",
+      1
+    ],
+    [
+      "group",
+      "decomposition_method",
       "str",
       0
     ],
@@ -4143,54 +4236,6 @@
     ],
     [
       "group",
-      "max_cumulative_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "max_cumulative_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
       "new_stepduration",
       "float",
       0
@@ -4209,24 +4254,6 @@
     ],
     [
       "group",
-      "output_flowGroup_indicators",
-      "str",
-      0
-    ],
-    [
-      "group",
-      "output_nodeGroup_dispatch",
-      "str",
-      0
-    ],
-    [
-      "group",
-      "output_nodeGroup_indicators",
-      "str",
-      0
-    ],
-    [
-      "group",
       "penalty_capacity_margin",
       "float",
       0
@@ -4260,10 +4287,34 @@
       "penalty_non_synchronous",
       "map",
       1
+    ],
+    [
+      "group",
+      "print_dispatch",
+      "str",
+      0
+    ],
+    [
+      "group",
+      "print_indicators",
+      "str",
+      0
+    ],
+    [
+      "group",
+      "reference_node",
+      "str",
+      0
     ],
     [
       "group",
       "share_loss_of_load",
+      "str",
+      0
+    ],
+    [
+      "group",
+      "transfer_method",
       "str",
       0
     ],
@@ -5489,6 +5540,34 @@
       ]
     ],
     [
+      "flow_aggregator_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "\"dispatch_plots_only\"",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "\"standalone_aggregator_only\"",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "\"both\"",
+        "str"
+      ]
+    ],
+    [
       "has_DC",
       [
         "\"yes\"",
@@ -6577,24 +6656,34 @@
       "wind_growth_cap_pre_built"
     ],
     [
-      "group",
-      "anti_energy_group",
+      "flowGroup",
+      "coal_electricity",
       "flow_aggregator",
       [
-        "\"yes\"",
+        "\"both\"",
         "str"
       ],
       "aggregate_outputs"
     ],
     [
-      "group",
-      "anti_energy_group",
-      "output_nodeGroup_dispatch",
+      "flowGroup",
+      "connections_with_east",
+      "flow_aggregator",
       [
-        "\"yes\"",
+        "\"both\"",
         "str"
       ],
       "aggregate_outputs"
+    ],
+    [
+      "flowGroup",
+      "to_west_node",
+      "flow_aggregator",
+      [
+        "\"standalone_aggregator_only\"",
+        "str"
+      ],
+      "init"
     ],
     [
       "group",
@@ -6668,28 +6757,8 @@
     ],
     [
       "group",
-      "coal_electricity",
-      "flow_aggregator",
-      [
-        "\"yes\"",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
-      "connections_with_east",
-      "flow_aggregator",
-      [
-        "\"yes\"",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
-      "connections_with_east",
-      "output_flowGroup_indicators",
+      "east_group",
+      "print_dispatch",
       [
         "\"yes\"",
         "str"
@@ -6699,42 +6768,12 @@
     [
       "group",
       "east_group",
-      "flow_aggregator",
+      "print_indicators",
       [
         "\"yes\"",
         "str"
       ],
       "aggregate_outputs"
-    ],
-    [
-      "group",
-      "east_group",
-      "output_nodeGroup_dispatch",
-      [
-        "\"yes\"",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
-      "east_group",
-      "output_nodeGroup_indicators",
-      [
-        "\"yes\"",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
-      "electricity",
-      "flow_aggregator",
-      [
-        "\"yes\"",
-        "str"
-      ],
-      "init"
     ],
     [
       "group",
@@ -6759,26 +6798,6 @@
     [
       "group",
       "electricity",
-      "output_nodeGroup_dispatch",
-      [
-        "\"yes\"",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "group",
-      "electricity",
-      "output_nodeGroup_indicators",
-      [
-        "\"yes\"",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "group",
-      "electricity",
       "penalty_inertia",
       [
         "5000",
@@ -6788,18 +6807,8 @@
     ],
     [
       "group",
-      "to_west_node",
-      "flow_aggregator",
-      [
-        "\"yes\"",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
-      "to_west_node",
-      "output_flowGroup_indicators",
+      "electricity",
+      "print_dispatch",
       [
         "\"yes\"",
         "str"
@@ -6808,18 +6817,18 @@
     ],
     [
       "group",
-      "to_west_node",
-      "output_nodeGroup_dispatch",
+      "electricity",
+      "print_indicators",
       [
         "\"yes\"",
         "str"
       ],
-      "aggregate_outputs"
+      "init"
     ],
     [
       "group",
       "west_north",
-      "output_nodeGroup_dispatch",
+      "print_dispatch",
       [
         "\"yes\"",
         "str"

@@ -1669,6 +1669,8 @@ def migrate_database(
                     description="Per-timestep weight map (index: timestep name, value: float) defining *representativeness*: each timestep's share of the year. Drives the annualisation of demand, energy, and cost alike (the inflow scaling, the annual energy outputs, and the operating-cost objective all use this same weight), so the energy the model is scaled to serve, reports, and costs all coincide. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset.",
                 )
                 db.commit_session("Clarify inflow_method/timeset_duration/timeset_weights descriptions for timeslice weighting")
+            elif next_version == 58:
+                _migrate_v58_carve_flowgroup_out_of_group(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -5856,6 +5858,255 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
         f"active_by_default True on {flipped_classes!r}.  Orphan "
         f"is_active value list dropped: {dropped_is_active_vl}.",
     )
+
+
+_V58_FLOW_VALUE_PARAMS = ("max_instant_flow", "min_instant_flow", "max_cumulative_flow", "min_cumulative_flow")
+_V58_BOOL_FLOW_PARAMS = ("flow_aggregator", "output_flowGroup_indicators")
+_V58_ALL_FLOW_PARAMS = _V58_FLOW_VALUE_PARAMS + _V58_BOOL_FLOW_PARAMS
+_V58_THREE_DIM = ("group__unit__node", "group__connection__node")
+_V58_FLOWGROUP_THREE_DIM = {
+    "group__unit__node": "flowGroup__unit__node",
+    "group__connection__node": "flowGroup__connection__node",
+}
+_V58_GROUP_MEMBERSHIP = ("group__node", "group__unit", "group__connection")
+_V58_FLOW_LIMIT_DEFS = {
+    "max_instant_flow": (
+        ("float", "1d_map", "2d_map"),
+        "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+    ),
+    "min_instant_flow": (
+        ("float", "1d_map", "2d_map"),
+        "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+    ),
+    "max_cumulative_flow": (
+        ("float", "1d_map"),
+        "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+    ),
+    "min_cumulative_flow": (
+        ("float", "1d_map"),
+        "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+    ),
+}
+_V58_ENUM_FROM_BOOLS = {
+    ("yes", "no"): "dispatch_plots_only",
+    ("no", "yes"): "standalone_aggregator_only",
+    ("yes", "yes"): "both",
+    ("no", "no"): "none",
+}
+
+
+def _v58_find_one(db, table_name, **keys):
+    try:
+        return db.item(db.mapped_table(table_name), **keys)
+    except SpineDBAPIError:
+        return None
+
+
+def _v58_check(item_error, what):
+    """Raise on a truthy error from add/update_item ``(item, error)`` tuples."""
+    if isinstance(item_error, tuple) and len(item_error) == 2:
+        _, error = item_error
+        if error:
+            raise SpineDBAPIError(f"v58: {what} failed: {error}")
+    return item_error
+
+
+def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
+    # Step 1: create classes (guarded / idempotent)
+    if not db.find_entity_classes(name="flowGroup"):
+        db.add_entity_class(name="flowGroup")
+    if not db.find_entity_classes(name="flowGroup__unit__node"):
+        db.add_entity_class(name="flowGroup__unit__node", dimension_name_list=("flowGroup", "unit", "node"))
+    if not db.find_entity_classes(name="flowGroup__connection__node"):
+        db.add_entity_class(name="flowGroup__connection__node", dimension_name_list=("flowGroup", "connection", "node"))
+    _commit_step(db, "v58: create flowGroup + 3-dim membership classes")
+
+    # Step 2: value-list + flowGroup param defs
+    add_value_list_manual(db, [
+        ["flow_aggregator_methods", "none"],
+        ["flow_aggregator_methods", "dispatch_plots_only"],
+        ["flow_aggregator_methods", "standalone_aggregator_only"],
+        ["flow_aggregator_methods", "both"],
+    ])
+    for name, (type_list, desc) in _V58_FLOW_LIMIT_DEFS.items():
+        if not db.find_parameter_definitions(entity_class_name="flowGroup", name=name):
+            db.add_parameter_definition(
+                entity_class_name="flowGroup", name=name,
+                parameter_type_list=type_list, parameter_group_name="flow_limit", description=desc,
+            )
+    if not db.find_parameter_definitions(entity_class_name="flowGroup", name="flow_aggregator"):
+        none_val, none_type = to_database("none")
+        db.add_parameter_definition(
+            entity_class_name="flowGroup", name="flow_aggregator",
+            default_value=none_val, default_type=none_type,
+            parameter_value_list_name="flow_aggregator_methods",
+            parameter_type_list=("str",), parameter_group_name="output",
+            description=(
+                "Choice of flow-aggregation method for this flowGroup: 'none' (flow limits / investment only, "
+                "no aggregated output), 'dispatch_plots_only' (bands inside a node group's dispatch table), "
+                "'standalone_aggregator_only' (own timewise summed-flow series plus per-period cumulative/average totals), 'both'."
+            ),
+        )
+    _commit_step(db, "v58: flowGroup value-list + parameter definitions")
+
+    # Step 3: classify + migrate (snapshots taken before any mutation)
+    flow_mem = {}
+    for cls in _V58_THREE_DIM:
+        for ent in db.find_entities(entity_class_name=cls):
+            flow_mem.setdefault(ent["entity_byname"][0], {}).setdefault(cls, []).append(ent["entity_byname"])
+    group_mem = {}
+    for cls in _V58_GROUP_MEMBERSHIP:
+        for ent in db.find_entities(entity_class_name=cls):
+            group_mem.setdefault(ent["entity_byname"][0], set()).add(cls)
+    flow_pvals = {}
+    nonflow_param_names = {}
+    flag_only = set()
+    for pv in db.find_parameter_values(entity_class_name="group"):
+        g = pv["entity_byname"][0]
+        p = pv["parameter_definition_name"]
+        if p in _V58_FLOW_VALUE_PARAMS:
+            flow_pvals.setdefault(g, []).append(pv)
+        elif p in _V58_BOOL_FLOW_PARAMS:
+            # bool flow flags: re-mapped to the flow_aggregator enum below if the
+            # entity has flow membership; recorded here so a flag-only entity
+            # (no membership, no value, no non-flow param) is surfaced as vacuous.
+            flag_only.add(g)
+        else:
+            nonflow_param_names.setdefault(g, set()).add(p)
+    group_names = [e["name"] for e in db.find_entities(entity_class_name="group")]
+    migrated = []
+    split = []
+    dropped_vacuous = []
+    for g in group_names:
+        has_flow_mem = g in flow_mem
+        has_group_role = (g in group_mem) or (g in nonflow_param_names)
+        if not has_flow_mem:
+            # No flow membership: any flow content on this group is vacuous and
+            # will be dropped when its def leaves `group` (Step 4).  Surface a
+            # log entry both for stray flow VALUES and for flag-only orphans
+            # (only a flow_aggregator/output_flowGroup_indicators flag, with no
+            # 3-dim membership, no node/2-dim membership, and no non-flow param).
+            # The bare group entity is left in place (an empty group is harmless).
+            if (g in flow_pvals) or (g in flag_only and not has_group_role):
+                dropped_vacuous.append(g)
+            continue
+        if not db.find_entities(entity_class_name="flowGroup", name=g):
+            db.add_entity(entity_class_name="flowGroup", name=g)
+        for src_cls, target_cls in _V58_FLOWGROUP_THREE_DIM.items():
+            for byname in flow_mem.get(g, {}).get(src_cls, []):
+                new_byname = (g,) + tuple(byname[1:])
+                if not db.find_entities(entity_class_name=target_cls, entity_byname=new_byname):
+                    db.add_entity(entity_class_name=target_cls, entity_byname=new_byname)
+        for pv in flow_pvals.get(g, []):
+            if not db.find_parameter_values(
+                entity_class_name="flowGroup", entity_byname=(g,),
+                parameter_definition_name=pv["parameter_definition_name"], alternative_name=pv["alternative_name"],
+            ):
+                db.add_parameter_value(
+                    entity_class_name="flowGroup", entity_byname=(g,),
+                    parameter_definition_name=pv["parameter_definition_name"], alternative_name=pv["alternative_name"],
+                    value=pv["value"], type=pv["type"],
+                )
+        # bool flags -> method enum, per alternative (data-faithful; no collapse)
+        agg_by_alt = {}
+        ind_by_alt = {}
+        for pv in db.find_parameter_values(entity_class_name="group", entity_byname=(g,), parameter_definition_name="flow_aggregator"):
+            agg_by_alt[pv["alternative_name"]] = from_database(pv["value"], pv["type"])
+        for pv in db.find_parameter_values(entity_class_name="group", entity_byname=(g,), parameter_definition_name="output_flowGroup_indicators"):
+            ind_by_alt[pv["alternative_name"]] = from_database(pv["value"], pv["type"])
+        for alt in set(agg_by_alt) | set(ind_by_alt):
+            enum_val = _V58_ENUM_FROM_BOOLS.get((agg_by_alt.get(alt, "no"), ind_by_alt.get(alt, "no")), "none")
+            if enum_val == "none":
+                continue
+            ev, et = to_database(enum_val)
+            if not db.find_parameter_values(
+                entity_class_name="flowGroup", entity_byname=(g,),
+                parameter_definition_name="flow_aggregator", alternative_name=alt,
+            ):
+                db.add_parameter_value(
+                    entity_class_name="flowGroup", entity_byname=(g,),
+                    parameter_definition_name="flow_aggregator", alternative_name=alt, value=ev, type=et,
+                )
+        for ea in list(db.find_entity_alternatives(entity_class_name="group", entity_byname=(g,))):
+            if not db.find_entity_alternatives(entity_class_name="flowGroup", entity_byname=(g,), alternative_name=ea["alternative_name"]):
+                db.add_entity_alternative(
+                    entity_class_name="flowGroup", entity_byname=(g,),
+                    alternative_name=ea["alternative_name"], active=bool(ea.get("active", True)),
+                )
+        if has_group_role:
+            # SPLIT: keep the group entity (node/2-dim membership + non-flow
+            # params), drop only its 3-dim flow membership rows.
+            for src_cls in _V58_THREE_DIM:
+                for ent in list(db.find_entities(entity_class_name=src_cls)):
+                    if ent["entity_byname"][0] == g:
+                        db.remove_items("entity", ent["id"])
+            split.append(g)
+        else:
+            ge = _v58_find_one(db, "entity", entity_class_name="group", name=g)
+            if ge is not None:
+                db.remove_items("entity", ge["id"])
+            migrated.append(g)
+    _commit_step(db, f"v58: re-homed {migrated!r}; split {split!r}; vacuous dropped {dropped_vacuous!r}")
+
+    # Step 4: drop old flow defs + 3-dim classes from group (cascades values/members)
+    for name in _V58_ALL_FLOW_PARAMS:
+        pdef = _v58_find_one(db, "parameter_definition", entity_class_name="group", name=name)
+        if pdef is not None:
+            db.remove_items("parameter_definition", pdef["id"])
+    for cls in _V58_THREE_DIM:
+        ec = _v58_find_one(db, "entity_class", name=cls)
+        if ec is not None:
+            db.remove_items("entity_class", ec["id"])
+    _commit_step(db, "v58: dropped old group flow defs + 3-dim classes")
+
+    # Step 5: rename output flags on group
+    for old, new in (("output_nodeGroup_dispatch", "print_dispatch"), ("output_nodeGroup_indicators", "print_indicators")):
+        pdef = _v58_find_one(db, "parameter_definition", entity_class_name="group", name=old)
+        if pdef is not None:
+            _v58_check(db.update_item("parameter_definition", id=pdef["id"], name=new), f"rename group.{old}->{new}")
+    _commit_step(db, "v58: renamed output_nodeGroup_* -> print_*")
+
+    # Step 6: §8 metadata heal on group stragglers (no-op where already present)
+    _v58_metadata_heal = {
+        "base_MVA": (("float",), "[MVA] Base power for the per-unit system used in DC power flow. Default 100. susceptance = base_MVA / reactance_pu."),
+        "candidate_precapacity_to_avoid_big_m": (("float",), "[MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This avoids the need for big-M / MIP constraints by ensuring the angle constraint is always active. Default 0.1 MW. The value should be small enough to not affect results but large enough for numerical stability."),
+        "reference_node": (("str",), "Name of the reference bus node (angle fixed to zero) for DC power flow. Optional — if not specified, automatically selected as the node with the largest existing capacity in each connected component of the DC power flow network."),
+        "transfer_method": (("str",), None),
+        "cumulative_max_capacity": (("float", "1d_map"), None),
+        "cumulative_min_capacity": (("float", "1d_map"), None),
+    }
+    for name, (type_list, desc) in _v58_metadata_heal.items():
+        pdef = _v58_find_one(db, "parameter_definition", entity_class_name="group", name=name)
+        if pdef is None:
+            continue
+        kwargs = {"parameter_type_list": type_list}
+        if desc is not None:
+            kwargs["description"] = desc
+        _v58_check(db.update_item("parameter_definition", entity_class_name="group", name=name, **kwargs), f"heal group.{name}")
+    # §9: node.invest_forced gains its missing description (keep its type_list).
+    if _v58_find_one(db, "parameter_definition", entity_class_name="node", name="invest_forced") is not None:
+        _v58_check(
+            db.update_item(
+                "parameter_definition", entity_class_name="node", name="invest_forced",
+                description="[MWh] Forces the model to invest exactly this amount of new storage capacity, overriding the investment optimisation (equivalent to setting invest_min and invest_max equal). Constant or period.",
+            ),
+            "heal node.invest_forced description",
+        )
+    _commit_step(db, "v58: heal missing group/node parameter metadata (§8/§9)")
+
+    # Verification (raise on miss)
+    for cls in ("flowGroup", "flowGroup__unit__node", "flowGroup__connection__node"):
+        if not db.find_entity_classes(name=cls):
+            raise SpineDBAPIError(f"v58: {cls} missing")
+    for cls in _V58_THREE_DIM:
+        if db.find_entity_classes(name=cls):
+            raise SpineDBAPIError(f"v58: old {cls} still present")
+    for name in _V58_ALL_FLOW_PARAMS:
+        if db.find_parameter_definitions(entity_class_name="group", name=name):
+            raise SpineDBAPIError(f"v58: group.{name} not dropped")
+    for old in ("output_nodeGroup_dispatch", "output_nodeGroup_indicators"):
+        if db.find_parameter_definitions(entity_class_name="group", name=old):
+            raise SpineDBAPIError(f"v58: group.{old} not renamed")
 
 
 if __name__ == '__main__':

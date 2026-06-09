@@ -96,8 +96,8 @@ _STRUCTURAL_PARAM_NAMES: frozenset[str] = frozenset({
     # structural flags / references
     "is_DC", "sense", "node_type", "has_capacity_margin",
     "has_inertia", "has_non_synchronous", "include_stochastics",
-    "output_nodeGroup_dispatch", "output_nodeGroup_indicators",
-    "output_flowGroup_indicators", "flow_aggregator",
+    "print_dispatch", "print_indicators",
+    "flow_aggregator",
     "output_horizon",
     # set membership / name references
     "solves", "contains_solves", "model",
@@ -892,8 +892,15 @@ class SpineDBBackend:
                         "map_index": str(i_arr),
                     })
             elif ptype in ("str", "float", "bool"):
-                if filter_in_value is not None and param["parsed_value"] != filter_in_value:
-                    continue
+                if filter_in_value is not None:
+                    # A set/frozenset → membership test (v58 enum gating, e.g.
+                    # flow_aggregator ∈ {dispatch_plots_only, both}); a scalar →
+                    # exact match (backward compatible).
+                    if isinstance(filter_in_value, (set, frozenset)):
+                        if param["parsed_value"] not in filter_in_value:
+                            continue
+                    elif param["parsed_value"] != filter_in_value:
+                        continue
                 if no_value:
                     rows.append(first_cols)
                 else:

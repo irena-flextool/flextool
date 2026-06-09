@@ -110,7 +110,7 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 
 ## Node group results
 
-`group` entities with `output_group_node_indicators = yes` produce indicator tables aggregating flows / inflows / slacks over their member nodes:
+`group` entities with `print_indicators = yes` produce indicator tables aggregating flows / inflows / slacks over their member nodes:
 
 - `group` entity `indicator` (period table) — gives a set of indicators for all `node` members:
     - *Loss of load share* — [0–1] upward slack relative to inflow
@@ -125,17 +125,21 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 - `group` entity `total_inflow_annualized` parameter — [MWh] annualized sum of `inflow` to member nodes
 - `group` entity `total_inflow_t` parameter — [MWh/step] timestep inflow to member nodes
 
-`group` entities with `output_group_node_flows = yes` produce a multi-column dispatch table over the group:
+`group` entities with `print_dispatch = yes` produce a multi-column dispatch table over the group:
 
 - `group` entity `flows_t` parameter — [MWh/step] dispatch decomposed by `(type, item)` where `type` is one of: *slack* (upward/downward), *from_unit*, *from_unitGroup*, *to_unit*, *to_unitGroup*, *from_connection*, *from_connectionGroup*, *to_connection*, *to_connectionGroup*, *inflow*, *internal_losses* (units/connections/storages)
 - `group` entity `flows_annualized` parameter — [MWh] same decomposition, annualized period totals
 
 ## Flow group results
 
-`group` entities with `output_flowGroup_indicators = yes` produce aggregate flow statistics over their member `(process, node)` legs (listed via `group__process__node`):
+`flowGroup` entities whose `flow_aggregator` is `standalone_aggregator_only` or `both` produce aggregate flow statistics over their member `(process, node)` legs (listed via `flowGroup__unit__node` / `flowGroup__connection__node`):
 
-- `group` entity `cumulative_flow` parameter — [MWh] sum of |flow| over the period for all member legs
-- `group` entity `average_flow` parameter — [MW] average power equivalent (`cumulative_flow` / period hours)
+- `group_flow__d.csv` — per-(flowGroup, period) totals:
+    - `cumulative_flow` parameter — [MWh] sum of |flow| over the period for all member legs
+    - `average_flow` parameter — [MW] average power equivalent (`cumulative_flow` / period hours)
+- `group_flow__dt.csv` — per-(flowGroup, period, time) **signed net flow** [MW] (sign convention: flow *into* the group's nodes is positive, flow *out of* them is negative). Intended for spreadsheet post-processing; because the values are signed they do not stack, so this series is not meant for stacked dispatch plots.
+
+(For member flows shown as aggregated bands inside a node group's dispatch table, set `flow_aggregator` to `dispatch_plots_only` or `both` instead — see [Node group results](#node-group-results) and the [reference](reference.md#flow-groups-flowgroup).)
 
 ## Capacity and investment results
 
@@ -163,7 +167,7 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 
 - `group` entity `inertia_t` parameter — [MWs] total inertia in the group of nodes at each timestep
 - `group` entity `inertia_largest_flow_t` parameter — [MW] largest individual flow coming into the group of nodes with `has_inertia`
-- `group__unit__node` entity `inertia_t` parameter — [MWs] inertia contribution per (group, unit, node) at each timestep
+- `group` entity `inertia_unit_node_t` parameter — [MWs] inertia contribution per (unit, node) at each timestep, one column per contributing `(unit, node)`
 
 ## Ramps
 

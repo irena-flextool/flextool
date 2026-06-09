@@ -1491,10 +1491,10 @@ def _compute_node_group_dispatch_sets(
         g: frozenset(d.keys()) for g, d in g_nodes_acc.items()
     }
 
-    # group_process_node restricted to flowAggregator groups: (p, n) → [ga, ...]
+    # flowGroup_process_node restricted to flowAggregator groups: (p, n) → [ga, ...]
     pn_to_aggregators: dict[tuple[str, str], list[str]] = {}
     for g, p, n in _read_n_col_csv(
-        input_dir / "group__process__node.csv", 3, provider=provider,
+        input_dir / "flowGroup__process__node.csv", 3, provider=provider,
     ):
         if g in fag:
             pn_to_aggregators.setdefault((p, n), []).append(g)

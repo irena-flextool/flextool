@@ -389,7 +389,9 @@ Some `nodes` can act as a source or a sink of commodities instead of forcing a b
 
 ## Groups
 
-Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group entity and then creating an entity between the group and its members. The membership entity classes are `group__node`, `group__unit`, `group__connection`, `group__unit__node`, `group__connection__node` and `reserve__upDown__group`. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of `units` included in the group.
+Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group entity and then creating an entity between the group and its members. The membership entity classes are `group__node`, `group__unit`, `group__connection` and `reserve__upDown__group`. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of `units` included in the group.
+
+Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [`flowGroup`](#flow-groups-flowgroup) class with its own 3-dim membership classes `flowGroup__unit__node` and `flowGroup__connection__node`; see that section below.
 
 ### Capacity limits for nodes, units and connections
 
@@ -405,13 +407,6 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 - `base_MVA` - [MVA] Base power for the per-unit system used in DC power flow. Default 100. Only relevant when this group's `transfer_method = dc_power_flow_with_angles`.
 - `reference_node` - Name of the reference bus node (angle fixed to zero) for DC power flow. Optional; if not set the engine picks one deterministically.
 - `candidate_precapacity_to_avoid_big_m` - [MW] Small pre-existing capacity assigned to investment-candidate connections in DC power-flow subnets to avoid big-M angle constraints. Tuning parameter for numerical stability of the angle formulation.
-
-### Cumulative and instant flow limits for `unit__node`s and `connection__node`s
-
-- `max_cumulative_flow` - [MW] Limits the maximum cumulative flow for a group of connection_nodes and/or unit_nodes. It needs to be expressed as average flow, since the limit is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
-- `min_cumulative_flow` - [MW] Limits the minimum cumulative flow for a group of connection_nodes and/or unit_nodes. It needs to be expressed as average flow, since the limit is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
-- `max_instant_flow` - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.
-- `min_instant_flow` - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.
 
 ### Limits for nodes
 
@@ -447,19 +442,41 @@ Groups are used to make constraints that apply to a group of nodes, units and/or
 
 ### Controlling outputs
 
-Four group-level flags drive the extra outputs computed from a `group`. Each has a specific intent and requires a matching membership class on the group; setting the flag without the right members yields an empty result (the runner will log a warning).
+Two `group`-level flags drive the extra outputs computed from a node `group`, and the `flow_aggregator` method (on the [`flowGroup`](#flow-groups-flowgroup) class) drives the flow-aggregation outputs. Each has a specific intent and requires a matching membership class; setting it without the right members yields an empty result (the runner will log a warning).
 
-| You want … | Set this flag on the group | Group must contain |
+| You want … | Set this on … | Must contain |
 |---|---|---|
-| Summary metrics (loss of load, VRE share, curtailment, excess load, annualised inflow) for a collection of nodes | `output_nodeGroup_indicators: yes` | `group__node` rows |
-| Summary metrics (`cumulative_flow` MWh, `average_flow` MW — more may be added) for a collection of flows | `output_flowGroup_indicators: yes` | `group__unit__node` or `group__connection__node` rows |
-| A per-timestep in/out decomposition (`group_flow_t`) of a node collection, one column per contributing process/connection | `output_nodeGroup_dispatch: yes` | `group__node` rows |
-| A marker that the flow members of this group should be collapsed into a single aggregated column inside any `output_nodeGroup_dispatch` output that references them (no output on its own) | `flow_aggregator: yes` | `group__unit__node` or `group__connection__node` rows |
+| Summary metrics (loss of load, VRE share, curtailment, excess load, annualised inflow) for a collection of nodes | `print_indicators: yes` on `group` | `group__node` rows |
+| A per-timestep in/out decomposition (`group_flow_t`) of a node collection, one column per contributing process/connection | `print_dispatch: yes` on `group` | `group__node` rows |
+| Member flows shown as aggregated bands inside a node group's dispatch table | `flow_aggregator: dispatch_plots_only` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
+| The flowGroup's own aggregated outputs (per-period `cumulative_flow`/`average_flow` plus a signed net-flow timewise series) | `flow_aggregator: standalone_aggregator_only` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
+| Both of the above | `flow_aggregator: both` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
 
-- `output_nodeGroup_indicators` — emits aggregate indicator metrics (loss-of-load share, VRE share, curtailment share, excess-load share and annualised inflow) over the node members. Acts as a *summary* of the node group. Requires `group__node` members.
-- `output_flowGroup_indicators` — emits aggregate indicator metrics for a collection of flows. The initial metric set is `cumulative_flow` (MWh over the realised horizon) and `average_flow` (MW, derived from the cumulative flow and the period hours). Acts as a *summary* of a flow group. Requires `group__unit__node` or `group__connection__node` members.
-- `output_nodeGroup_dispatch` — emits the per-timestep in/out *decomposition* of the node group, with one column per contributing process or connection (units feeding the group, connections crossing its boundary, storage, slacks). Requires `group__node` members. If any of those contributing flows belong to another group that has `flow_aggregator: yes`, their columns are replaced by a single aggregated column in this dispatch table.
-- `flow_aggregator` — a re-bucketing *marker* used by `output_nodeGroup_dispatch`. It produces no output file on its own; it only affects how a separate node-group dispatch table is rendered. Requires `group__unit__node` or `group__connection__node` members.
+- `print_indicators` (on `group`) — emits aggregate indicator metrics (loss-of-load share, VRE share, curtailment share, excess-load share and annualised inflow) over the node members. Acts as a *summary* of the node group. Requires `group__node` members.
+- `print_dispatch` (on `group`) — emits the per-timestep in/out *decomposition* of the node group, with one column per contributing process or connection (units feeding the group, connections crossing its boundary, storage, slacks). Requires `group__node` members. If any of those contributing flows belong to a `flowGroup` whose `flow_aggregator` is `dispatch_plots_only` or `both`, their columns are replaced by a single aggregated band named after the flowGroup.
+
+See [Flow groups (`flowGroup`)](#flow-groups-flowgroup) for the `flow_aggregator` method values and the flow-limit parameters.
+
+## Flow groups (`flowGroup`)
+
+A `flowGroup` aggregates a set of *flows* — where each flow is a `(process, node)` arc. Members are declared through the 3-dim membership classes `flowGroup__unit__node` and `flowGroup__connection__node`. A `flowGroup` carries the flow-limit parameters and the `flow_aggregator` method; it does not carry any of the node-group / system-constraint / investment parameters (those stay on [`group`](#groups)).
+
+### Cumulative and instant flow limits
+
+- `max_cumulative_flow` - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
+- `min_cumulative_flow` - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
+- `max_instant_flow` - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.
+- `min_instant_flow` - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.
+
+### Flow aggregation method
+
+- `flow_aggregator` — choice of flow-aggregation method for this flowGroup (default `none`). Values:
+    - `none` (default) — no aggregated output; the flowGroup exists only for flow limits / investment.
+    - `dispatch_plots_only` — member flows are shown as aggregated bands inside a node group's dispatch table (the table produced by `print_dispatch` on a `group`). Produces no output file of its own.
+    - `standalone_aggregator_only` — emits the flowGroup's own outputs: the per-period `cumulative_flow` and `average_flow` totals, plus a signed net-flow timewise series (see [Results](results.md)). Does not feed any node-group dispatch table.
+    - `both` — both of the above.
+
+**Double-counting guard.** If a flow arc belongs to two flowGroups that are *both* dispatch-bound (`dispatch_plots_only` or `both`), the arc is double-counted in the node-group dispatch balance; the model emits a loud validation warning in this case. For overlapping thematic aggregates, use `standalone_aggregator_only` — overlap is harmless there.
 
 Some of the outputs are optional. They can be removed to speed up the post-processing of results. The user can enable/disable them by changing parameters of the the `model` entity:
 

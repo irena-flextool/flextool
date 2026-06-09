@@ -22,6 +22,13 @@
       true
     ],
     [
+      "flowGroup",
+      [],
+      null,
+      null,
+      true
+    ],
+    [
       "group",
       [],
       null,
@@ -193,9 +200,9 @@
       true
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
-        "group",
+        "flowGroup",
         "connection",
         "node"
       ],
@@ -204,9 +211,9 @@
       true
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
-        "group",
+        "flowGroup",
         "unit",
         "node"
       ],
@@ -398,38 +405,43 @@
       null
     ],
     [
-      "group",
+      "flowGroup",
       "H2toLH2",
       null
     ],
     [
-      "group",
+      "flowGroup",
       "H2toLOHC",
       null
     ],
     [
-      "group",
+      "flowGroup",
       "H2toMeOH",
       null
     ],
     [
-      "group",
+      "flowGroup",
       "H2toNH3",
       null
     ],
     [
-      "group",
+      "flowGroup",
       "LH2toH2",
       null
     ],
     [
-      "group",
+      "flowGroup",
       "LOHCtoH2",
       null
     ],
     [
-      "group",
+      "flowGroup",
       "NH3toH2",
+      null
+    ],
+    [
+      "flowGroup",
+      "oretoHBI",
       null
     ],
     [
@@ -470,11 +482,6 @@
     [
       "group",
       "grid_nh3",
-      null
-    ],
-    [
-      "group",
-      "oretoHBI",
       null
     ],
     [
@@ -2648,7 +2655,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toLH2",
         "ARG_H2toLH2",
@@ -2657,7 +2664,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toLH2",
         "AUS_H2toLH2",
@@ -2666,7 +2673,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toLH2",
         "CHI_H2toLH2",
@@ -2675,7 +2682,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toLOHC",
         "ARG_H2toLOHC",
@@ -2684,7 +2691,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toLOHC",
         "AUS_H2toLOHC",
@@ -2693,7 +2700,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toLOHC",
         "CHI_H2toLOHC",
@@ -2702,7 +2709,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toMeOH",
         "ARG_H2toMeOH",
@@ -2711,7 +2718,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toMeOH",
         "AUS_H2toMeOH",
@@ -2720,7 +2727,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toMeOH",
         "CHI_H2toMeOH",
@@ -2729,7 +2736,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toNH3",
         "ARG_H2toNH3",
@@ -2738,7 +2745,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toNH3",
         "AUS_H2toNH3",
@@ -2747,7 +2754,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "H2toNH3",
         "CHI_H2toNH3",
@@ -2756,7 +2763,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "LH2toH2",
         "ARG_LH2toH2",
@@ -2765,7 +2772,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "LH2toH2",
         "AUS_LH2toH2",
@@ -2774,7 +2781,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "LH2toH2",
         "CHI_LH2toH2",
@@ -2783,7 +2790,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "LOHCtoH2",
         "ARG_LOHCtoH2",
@@ -2792,7 +2799,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "LOHCtoH2",
         "AUS_LOHCtoH2",
@@ -2801,7 +2808,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "LOHCtoH2",
         "CHI_LOHCtoH2",
@@ -2810,7 +2817,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "NH3toH2",
         "ARG_NH3toH2",
@@ -2819,7 +2826,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "NH3toH2",
         "AUS_NH3toH2",
@@ -2828,7 +2835,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "NH3toH2",
         "CHI_NH3toH2",
@@ -2837,7 +2844,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "oretoHBI",
         "AUS_oretoHBI",
@@ -2846,7 +2853,7 @@
       null
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
         "oretoHBI",
         "CHI_oretoHBI",
@@ -3509,7 +3516,7 @@
       true
     ],
     [
-      "group",
+      "flowGroup",
       [
         "H2toLH2"
       ],
@@ -3517,7 +3524,7 @@
       true
     ],
     [
-      "group",
+      "flowGroup",
       [
         "H2toLOHC"
       ],
@@ -3525,7 +3532,7 @@
       true
     ],
     [
-      "group",
+      "flowGroup",
       [
         "H2toMeOH"
       ],
@@ -3533,7 +3540,7 @@
       true
     ],
     [
-      "group",
+      "flowGroup",
       [
         "H2toNH3"
       ],
@@ -3541,7 +3548,7 @@
       true
     ],
     [
-      "group",
+      "flowGroup",
       [
         "LH2toH2"
       ],
@@ -3549,7 +3556,7 @@
       true
     ],
     [
-      "group",
+      "flowGroup",
       [
         "LOHCtoH2"
       ],
@@ -3557,9 +3564,17 @@
       true
     ],
     [
-      "group",
+      "flowGroup",
       [
         "NH3toH2"
+      ],
+      "shared",
+      true
+    ],
+    [
+      "flowGroup",
+      [
+        "oretoHBI"
       ],
       "shared",
       true
@@ -3624,14 +3639,6 @@
       "group",
       [
         "grid_nh3"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group",
-      [
-        "oretoHBI"
       ],
       "shared",
       true
@@ -3848,236 +3855,6 @@
       [
         "grid_nh3",
         "CHI_NH3"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toLH2",
-        "ARG_H2toLH2",
-        "ARG_LH2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toLH2",
-        "AUS_H2toLH2",
-        "AUS_LH2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toLH2",
-        "CHI_H2toLH2",
-        "CHI_LH2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toLOHC",
-        "ARG_H2toLOHC",
-        "ARG_LOHC"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toLOHC",
-        "AUS_H2toLOHC",
-        "AUS_LOHC"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toLOHC",
-        "CHI_H2toLOHC",
-        "CHI_LOHC"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toMeOH",
-        "ARG_H2toMeOH",
-        "ARG_MeOH"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toMeOH",
-        "AUS_H2toMeOH",
-        "AUS_MeOH"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toMeOH",
-        "CHI_H2toMeOH",
-        "CHI_MeOH"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toNH3",
-        "ARG_H2toNH3",
-        "ARG_NH3"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toNH3",
-        "AUS_H2toNH3",
-        "AUS_NH3"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "H2toNH3",
-        "CHI_H2toNH3",
-        "CHI_NH3"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "LH2toH2",
-        "ARG_LH2toH2",
-        "ARG_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "LH2toH2",
-        "AUS_LH2toH2",
-        "AUS_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "LH2toH2",
-        "CHI_LH2toH2",
-        "CHI_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "LOHCtoH2",
-        "ARG_LOHCtoH2",
-        "ARG_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "LOHCtoH2",
-        "AUS_LOHCtoH2",
-        "AUS_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "LOHCtoH2",
-        "CHI_LOHCtoH2",
-        "CHI_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "NH3toH2",
-        "ARG_NH3toH2",
-        "ARG_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "NH3toH2",
-        "AUS_NH3toH2",
-        "AUS_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "NH3toH2",
-        "CHI_NH3toH2",
-        "CHI_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "oretoHBI",
-        "AUS_oretoHBI",
-        "AUS_HBI"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "group__unit__node",
-      [
-        "oretoHBI",
-        "CHI_oretoHBI",
-        "CHI_HBI"
       ],
       "shared",
       true
@@ -7011,6 +6788,34 @@
       ]
     ],
     [
+      "flow_aggregator_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "InN0YW5kYWxvbmVfYWdncmVnYXRvcl9vbmx5Ig==",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "ImJvdGgi",
+        "str"
+      ]
+    ],
+    [
       "has_DC",
       [
         "InllcyI=",
@@ -8276,6 +8081,61 @@
       "constraint"
     ],
     [
+      "flowGroup",
+      "flow_aggregator",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "flow_aggregator_methods",
+      "Choice of flow-aggregation method for this flowGroup: 'none' (flow limits / investment only, no aggregated output), 'dispatch_plots_only' (bands inside a node group's dispatch table), 'standalone_aggregator_only' (own timewise summed-flow series plus per-period cumulative/average totals), 'both'.",
+      "output"
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+      "flow_limit"
+    ],
+    [
       "group",
       "base_MVA",
       [
@@ -8384,17 +8244,6 @@
       "decomposition_methods",
       "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition \u2014 default), 'lagrangian_region' (group is solved as an independent region with shared-commodity coupling).",
       "solve_advanced"
-    ],
-    [
-      "group",
-      "flow_aggregator",
-      [
-        "bnVsbA==",
-        null
-      ],
-      "yes_no",
-      "Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from output_aggregate_flows.",
-      "output"
     ],
     [
       "group",
@@ -8508,50 +8357,6 @@
     ],
     [
       "group",
-      "max_cumulative_flow",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      [
-        "bnVsbA==",
-        null
-      ],
-      null,
-      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
       "new_stepduration",
       [
         "bnVsbA==",
@@ -8571,39 +8376,6 @@
       null,
       "[share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.",
       "network"
-    ],
-    [
-      "group",
-      "output_flowGroup_indicators",
-      [
-        "bnVsbA==",
-        null
-      ],
-      "yes_no",
-      "Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).",
-      "output"
-    ],
-    [
-      "group",
-      "output_nodeGroup_dispatch",
-      [
-        "bnVsbA==",
-        null
-      ],
-      "yes_no",
-      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
-      "output"
-    ],
-    [
-      "group",
-      "output_nodeGroup_indicators",
-      [
-        "bnVsbA==",
-        null
-      ],
-      "yes_no",
-      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
-      "output"
     ],
     [
       "group",
@@ -8637,6 +8409,28 @@
       null,
       "[CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.",
       "network"
+    ],
+    [
+      "group",
+      "print_dispatch",
+      [
+        "bnVsbA==",
+        null
+      ],
+      "yes_no",
+      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
+      "output"
+    ],
+    [
+      "group",
+      "print_indicators",
+      [
+        "bnVsbA==",
+        null
+      ],
+      "yes_no",
+      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
+      "output"
     ],
     [
       "group",
@@ -8752,7 +8546,7 @@
       "model",
       "version",
       [
-        "NTc=",
+        "NTg=",
         "float"
       ],
       null,
@@ -8910,7 +8704,7 @@
         null
       ],
       null,
-      null,
+      "[MWh] Forces the model to invest exactly this amount of new storage capacity, overriding the investment optimisation (equivalent to setting invest_min and invest_max equal). Constant or period.",
       "investment"
     ],
     [
@@ -10538,6 +10332,72 @@
       0
     ],
     [
+      "flowGroup",
+      "flow_aggregator",
+      "str",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "map",
+      2
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "map",
+      2
+    ],
+    [
       "group",
       "base_MVA",
       "float",
@@ -10623,12 +10483,6 @@
     ],
     [
       "group",
-      "flow_aggregator",
-      "str",
-      0
-    ],
-    [
-      "group",
       "has_capacity_margin",
       "str",
       0
@@ -10695,54 +10549,6 @@
     ],
     [
       "group",
-      "max_cumulative_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "max_cumulative_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
       "new_stepduration",
       "float",
       0
@@ -10761,24 +10567,6 @@
     ],
     [
       "group",
-      "output_flowGroup_indicators",
-      "str",
-      0
-    ],
-    [
-      "group",
-      "output_nodeGroup_dispatch",
-      "str",
-      0
-    ],
-    [
-      "group",
-      "output_nodeGroup_indicators",
-      "str",
-      0
-    ],
-    [
-      "group",
       "penalty_capacity_margin",
       "float",
       0
@@ -10812,6 +10600,18 @@
       "penalty_non_synchronous",
       "map",
       1
+    ],
+    [
+      "group",
+      "print_dispatch",
+      "str",
+      0
+    ],
+    [
+      "group",
+      "print_indicators",
+      "str",
+      0
     ],
     [
       "group",
@@ -13474,71 +13274,81 @@
       "shared"
     ],
     [
-      "group",
+      "flowGroup",
       "H2toLH2",
       "flow_aggregator",
       [
-        "InllcyI=",
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
         "str"
       ],
       "shared"
     ],
     [
-      "group",
+      "flowGroup",
       "H2toLOHC",
       "flow_aggregator",
       [
-        "InllcyI=",
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
         "str"
       ],
       "shared"
     ],
     [
-      "group",
+      "flowGroup",
       "H2toMeOH",
       "flow_aggregator",
       [
-        "InllcyI=",
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
         "str"
       ],
       "shared"
     ],
     [
-      "group",
+      "flowGroup",
       "H2toNH3",
       "flow_aggregator",
       [
-        "InllcyI=",
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
         "str"
       ],
       "shared"
     ],
     [
-      "group",
+      "flowGroup",
       "LH2toH2",
       "flow_aggregator",
       [
-        "InllcyI=",
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
         "str"
       ],
       "shared"
     ],
     [
-      "group",
+      "flowGroup",
       "LOHCtoH2",
       "flow_aggregator",
       [
-        "InllcyI=",
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
         "str"
       ],
       "shared"
     ],
     [
-      "group",
+      "flowGroup",
       "NH3toH2",
       "flow_aggregator",
       [
-        "InllcyI=",
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
+        "str"
+      ],
+      "shared"
+    ],
+    [
+      "flowGroup",
+      "oretoHBI",
+      "flow_aggregator",
+      [
+        "ImRpc3BhdGNoX3Bsb3RzX29ubHki",
         "str"
       ],
       "shared"
@@ -13546,7 +13356,7 @@
     [
       "group",
       "elec",
-      "output_nodeGroup_dispatch",
+      "print_dispatch",
       [
         "InllcyI=",
         "str"
@@ -13556,7 +13366,7 @@
     [
       "group",
       "grid_co2",
-      "output_nodeGroup_dispatch",
+      "print_dispatch",
       [
         "InllcyI=",
         "str"
@@ -13566,7 +13376,7 @@
     [
       "group",
       "grid_h2",
-      "output_nodeGroup_dispatch",
+      "print_dispatch",
       [
         "InllcyI=",
         "str"
@@ -13576,7 +13386,7 @@
     [
       "group",
       "grid_hbi",
-      "output_nodeGroup_dispatch",
+      "print_dispatch",
       [
         "InllcyI=",
         "str"
@@ -13586,7 +13396,7 @@
     [
       "group",
       "grid_lh2",
-      "output_nodeGroup_dispatch",
+      "print_dispatch",
       [
         "InllcyI=",
         "str"
@@ -13596,7 +13406,7 @@
     [
       "group",
       "grid_lohc",
-      "output_nodeGroup_dispatch",
+      "print_dispatch",
       [
         "InllcyI=",
         "str"
@@ -13606,7 +13416,7 @@
     [
       "group",
       "grid_meoh",
-      "output_nodeGroup_dispatch",
+      "print_dispatch",
       [
         "InllcyI=",
         "str"
@@ -13616,17 +13426,7 @@
     [
       "group",
       "grid_nh3",
-      "output_nodeGroup_dispatch",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "shared"
-    ],
-    [
-      "group",
-      "oretoHBI",
-      "flow_aggregator",
+      "print_dispatch",
       [
         "InllcyI=",
         "str"

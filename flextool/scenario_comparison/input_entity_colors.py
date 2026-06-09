@@ -42,25 +42,14 @@ logger = logging.getLogger(__name__)
 
 
 # ``plot_settings.yaml`` ``entities`` subsections that plot legend labels map
-# to.  ``group`` (a top-level SpineDB class) is split by membership into
-# ``nodeGroup`` / ``flowGroup`` (see :func:`fetch_entities_by_class`); the
-# rest map 1:1 to top-level SpineDB classes.
+# to.  v58 split: ``flowGroup`` is now its own top-level SpineDB class read
+# directly; ``nodeGroup`` is a ``group`` with ``group__node`` membership (see
+# :func:`fetch_entities_by_class`).  The rest map 1:1 to top-level classes.
 RELEVANT_ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
 
-# SpineDB membership relationship classes that make a ``group`` a flowGroup
-# (it aggregates FLOWS).  The group is the FIRST element of the membership
-# entity's byname.
-_FLOWGROUP_MEMBERSHIP_CLASSES = (
-    "group__unit__node",
-    "group__unit",
-    "group__connection__node",
-    "group__connection",
-)
-
 # SpineDB membership relationship class that makes a ``group`` a nodeGroup
-# (a collection of nodes — the dispatch subject).  A group with NO membership
-# of any kind (neither node nor flow) belongs to NEITHER list and is dropped:
-# it has no entities to colour.
+# (a collection of nodes — the dispatch subject).  A group with no
+# ``group__node`` membership has no nodes to colour and is dropped.
 _NODEGROUP_MEMBERSHIP_CLASSES = (
     "group__node",
 )
@@ -70,18 +59,19 @@ def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
     """Open one input DB and return entity names grouped by plot entity class.
 
     Opens a single :class:`~spinedb_api.DatabaseMapping` (``create=False``),
-    reads ALL entity items in ONE pass (units / connections / nodes / groups
-    plus the group-membership relationship classes), classifies each
-    ``group`` as ``nodeGroup`` or ``flowGroup`` by its membership, and closes
-    the mapping.  Returns ``{class -> sorted unique names}`` for the classes
-    in :data:`RELEVANT_ENTITY_CLASSES` that have at least one entity.  Never
-    queries per scenario / alternative — one fetch returns everything.
+    reads ALL entity items in ONE pass (units / connections / nodes / groups /
+    flowGroups plus the ``group__node`` membership class), classifies each
+    ``group`` as a ``nodeGroup`` by its membership, reads ``flowGroup``
+    directly, and closes the mapping.  Returns ``{class -> sorted unique
+    names}`` for the classes in :data:`RELEVANT_ENTITY_CLASSES` that have at
+    least one entity.  Never queries per scenario / alternative — one fetch
+    returns everything.
 
-    Classification: a group appearing in any
-    :data:`_FLOWGROUP_MEMBERSHIP_CLASSES` membership is a **flowGroup**; a
-    group with :data:`_NODEGROUP_MEMBERSHIP_CLASSES` (``group__node``)
-    membership but no flow membership is a **nodeGroup**.  A group with no
-    membership of any kind has nothing to colour and is dropped from both.
+    Classification (v58): ``flowGroup`` is read directly from the real
+    top-level ``flowGroup`` class; a ``group`` with
+    :data:`_NODEGROUP_MEMBERSHIP_CLASSES` (``group__node``) membership is a
+    **nodeGroup**.  A dual-role entity legitimately appearing in both buckets
+    is correct and left as-is (no collision-precedence logic).
 
     The base pattern mirrors
     :func:`flextool.export_to_tabular.db_reader._read_entities`
@@ -100,16 +90,14 @@ def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
             cls = item["entity_class_name"]
             if cls == "group":
                 groups.add(item["name"])
+            elif cls == "flowGroup":
+                flow_group_names.add(item["name"])  # v58 real top-level class
             elif cls == "unit":
                 units.add(item["name"])
             elif cls == "connection":
                 connections.add(item["name"])
             elif cls == "node":
                 nodes.add(item["name"])
-            elif cls in _FLOWGROUP_MEMBERSHIP_CLASSES:
-                byname = item.get("entity_byname")
-                if byname:
-                    flow_group_names.add(byname[0])  # group is the 1st member
             elif cls in _NODEGROUP_MEMBERSHIP_CLASSES:
                 byname = item.get("entity_byname")
                 if byname:
@@ -118,13 +106,10 @@ def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
         db.close()
 
     by_class: dict[str, list[str]] = {
-        # A group lands in nodeGroup only if it actually has node members and
-        # no flow members; membership-less groups appear in neither list.
-        "nodeGroup": sorted(
-            g for g in groups
-            if g in node_group_names and g not in flow_group_names
-        ),
-        "flowGroup": sorted(g for g in groups if g in flow_group_names),
+        # A group lands in nodeGroup if it has group__node members.
+        "nodeGroup": sorted(g for g in groups if g in node_group_names),
+        # flowGroup is the real top-level class read directly.
+        "flowGroup": sorted(flow_group_names),
         "unit": sorted(units),
         "connection": sorted(connections),
         "node": sorted(nodes),
