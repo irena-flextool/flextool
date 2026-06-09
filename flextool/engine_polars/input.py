@@ -3397,6 +3397,7 @@ def _load_fixed_cost(sd: Path,
 
 def _load_node_capacity_for_scaling(sd: Path,
                                      nb: pl.DataFrame,
+                                     nbp: pl.DataFrame | None = None,
                                      *,
                                      provider: "object | None" = None) -> dict:
     """Load node_capacity_for_scaling[n, d] for slack-penalty scaling."""
@@ -3409,9 +3410,18 @@ def _load_node_capacity_for_scaling(sd: Path,
         return blank
     df = df.pipe(rename_to_axis, {"node": "n", "period": "d"}) \
            .with_columns(value=pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
-    # Restrict to nodes in nodeBalance to avoid spurious rows
+    # Restrict to nodes carrying slack vars to avoid spurious rows.  The
+    # slack vars span ``nodeBalance ∪ nodeBalancePeriod`` (period nodes
+    # also carry ``vq_state_up/down``), so the restriction set is their
+    # dtype-safe union.  When ``nbp`` is None/empty the union collapses to
+    # exactly ``nb`` (no reorder/dup) → byte-identical legacy behavior.
     if nb is not None and nb.height > 0:
-        df = df.join(nb, on="n", how="inner")
+        nodes_restrict = nb
+        if nbp is not None and nbp.height > 0:
+            nodes_restrict = (pl.concat([nb.select("n"), nbp.select("n")])
+                                .unique()
+                                .select("n"))
+        df = df.join(nodes_restrict, on="n", how="inner")
     if df.height == 0:
         return blank
     return dict(p_node_capacity_for_scaling=Param(("n", "d"), df.select("n", "d", "value")))
@@ -4323,7 +4333,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         varcost = _load_varcost(sd, proc["pss"], provider=provider)
         _load_mem("load_varcost_end", "load_flextool: varcost loaded")
         fixed_cost = _load_fixed_cost(sd, provider=provider)
-        capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb,
+        capacity_for_scaling = _load_node_capacity_for_scaling(sd, nb, nbp,
                                                                 provider=provider)
 
         # ─── Storage (nodeState + binding methods + dtttdt + node-balance source-side flows)

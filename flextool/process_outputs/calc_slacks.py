@@ -37,8 +37,9 @@ def compute_slacks(par, s, v, r) -> None:
 
     # upward_node_slack_dt is already MWh per step (q_state_up × capacity × step_duration),
     # so the period aggregate is a plain groupby-sum; no extra step_duration.
-    # node_capacity_for_scaling / node_penalty_* are complete over nodeBalance
-    # (⊇ the q_state nodes) and solve-keyed (concat-unioned), so direct column
+    # node_capacity_for_scaling / node_penalty_* are complete over
+    # nodeBalance ∪ nodeBalancePeriod (⊇ the q_state nodes) and solve-keyed
+    # (concat-unioned), so direct column
     # indexing is safe — no missing-column densify needed here.
     # The annualised ``_d`` reporting series weights each (d, t) by
     # par.rp_cost_weight (=1.0 with no/uniform timeset_weights →

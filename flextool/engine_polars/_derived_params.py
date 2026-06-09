@@ -1451,10 +1451,25 @@ def apply_derived_a(
         p_penalty_up_from_source,
         p_penalty_down_from_source,
     )
+    # The penalty callee broadcasts penalties over the node set it's GIVEN
+    # and filters to it.  Slack vars span ``nodeBalance ∪
+    # nodeBalancePeriod`` (period nodes also carry ``vq_state_up/down``),
+    # so pass the dtype-safe union — otherwise period-node slack is dropped
+    # from the objective penalty term.  Both frames come from the same
+    # ``rename_to_axis({"node":"n"})`` in ``input.py:_load_node`` so dtypes
+    # align.  When the period set is empty/None the union collapses to
+    # exactly ``nb_df`` → byte-identical legacy behavior.
     nb_df = getattr(flex_data, "nodeBalance", None)
-    flex_data.p_penalty_up = p_penalty_up_from_source(source, nb_df, usable_dt)
+    nbp_df = getattr(flex_data, "nodeBalancePeriod", None)
+    penalty_nodes = nb_df
+    if (nb_df is not None and nbp_df is not None and nbp_df.height > 0):
+        penalty_nodes = (pl.concat([nb_df.select("n"), nbp_df.select("n")])
+                           .unique()
+                           .select("n"))
+    flex_data.p_penalty_up = p_penalty_up_from_source(
+        source, penalty_nodes, usable_dt)
     flex_data.p_penalty_down = p_penalty_down_from_source(
-        source, nb_df, usable_dt)
+        source, penalty_nodes, usable_dt)
 
 
 # ---------------------------------------------------------------------------
@@ -5018,11 +5033,23 @@ def p_node_capacity_for_scaling_from_source(source: "InputSource",
                 pass
     if scaling_active:
         return None  # defer; CSV path handles pow10 cascade
-    # nodeBalance projection — same set as the slow path's filter.
-    from ._projection_params import nodeBalance as _nodeBalance_proj
+    # nodeBalance projection — same set as the slow path's filter.  Slack
+    # vars span ``nodeBalance ∪ nodeBalancePeriod`` (period nodes also
+    # carry ``vq_state_up/down``), so union the period nodes in before the
+    # cross-join.  Dtype-safe; when the period set is empty the union
+    # collapses to exactly ``nb`` → byte-identical legacy behavior.
+    from ._projection_params import (
+        nodeBalance as _nodeBalance_proj,
+        nodeBalancePeriod as _nodeBalancePeriod_proj,
+    )
     nb = _nodeBalance_proj(source)
     if nb is None or nb.height == 0:
         return None
+    nbp = _nodeBalancePeriod_proj(source)
+    if nbp is not None and nbp.height > 0:
+        nb = (pl.concat([nb.select("n"), nbp.select("n")])
+                .unique()
+                .select("n"))
     out = (nb.lazy()
               .join(axis_lazyframe({"d": period_in_use}), how="cross")
               .with_columns(value=pl.lit(1.0))
