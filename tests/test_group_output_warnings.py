@@ -202,6 +202,54 @@ def test_flow_aggregator_none_does_not_warn(
     assert records == [], [r.getMessage() for r in records]
 
 
+def test_overlap_double_count_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two dispatch-bound flowGroups sharing one (process, node) arc must
+    trigger the double-counting warning naming both flowGroups."""
+    url = _build_db(
+        tmp_path,
+        parameter_values=[
+            ("fgA", "flow_aggregator", "both"),
+            ("fgB", "flow_aggregator", "dispatch_plots_only"),
+        ],
+        memberships={
+            "flowGroup__unit__node": [
+                ("fgA", "u1", "nA"),
+                ("fgB", "u1", "nA"),
+            ],
+        },
+    )
+    records = _run_validation(url, caplog)
+    msgs = [r.getMessage() for r in records]
+    assert any("u1" in m and "nA" in m and "fgA" in m and "fgB" in m
+               and "double-counted" in m for m in msgs), msgs
+
+
+def test_overlap_standalone_only_no_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two flowGroups sharing an arc where one is
+    ``standalone_aggregator_only`` are NOT both dispatch-bound, so the
+    overlap is legitimate and no double-count warning fires."""
+    url = _build_db(
+        tmp_path,
+        parameter_values=[
+            ("fgA", "flow_aggregator", "both"),
+            ("fgStandalone", "flow_aggregator", "standalone_aggregator_only"),
+        ],
+        memberships={
+            "flowGroup__unit__node": [
+                ("fgA", "u1", "nA"),
+                ("fgStandalone", "u1", "nA"),
+            ],
+        },
+    )
+    records = _run_validation(url, caplog)
+    msgs = [r.getMessage() for r in records]
+    assert not any("double-counted" in m for m in msgs), msgs
+
+
 def test_no_warnings_when_memberships_match(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -185,6 +185,11 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
     * ``flowGroup.flow_aggregator`` set to a non-``none`` method with no
       ``flowGroup__unit__node`` **or** ``flowGroup__connection__node`` row
 
+    Additionally, a double-counting guard warns when a single flow arc
+    ``(process, node)`` belongs to two or more *dispatch-bound* flowGroups
+    (``flow_aggregator`` in ``{dispatch_plots_only, both}``): the arc would
+    be summed once per such flowGroup into the nodeGroup dispatch table.
+
     Only warnings are emitted — a user may deliberately stage a partial
     configuration.
     """
@@ -226,6 +231,11 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
     # other than ``none`` requests dispatch bands and/or standalone
     # indicators, both of which need flowGroup__*__node members to produce
     # any data.
+    #
+    # We also record which flowGroups request dispatch *bands* — the values
+    # ``dispatch_plots_only`` and ``both`` — for the overlap check below.
+    _DISPATCH_BOUND = {"dispatch_plots_only", "both"}
+    dispatch_bound_flowgroups: set[str] = set()
     for pv in db.find_parameter_values(
         entity_class_name="flowGroup", parameter_definition_name="flow_aggregator"
     ):
@@ -234,12 +244,40 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
         if pv["parsed_value"] in (None, "none"):
             continue
         group_name = pv["entity_byname"][0]
+        if pv["parsed_value"] in _DISPATCH_BOUND:
+            dispatch_bound_flowgroups.add(group_name)
         if group_name not in flowgroups_with_flow_members:
             logger.warning(
                 "flowGroup '%s' has flow_aggregator: %s but no "
                 "flowGroup__unit__node or flowGroup__connection__node members "
                 "— output will be empty.",
                 group_name, pv["parsed_value"],
+            )
+
+    # Double-counting guard: a single flow arc ``(process, node)`` that
+    # belongs to two (or more) dispatch-bound flowGroups (flow_aggregator in
+    # {dispatch_plots_only, both}) contributes its flow as a band in the
+    # nodeGroup dispatch table once per such flowGroup, so the dispatch
+    # balance double-counts that arc.  Standalone-only overlap is legitimate
+    # (separate aggregator series), so it is excluded here.  Only a warning
+    # is emitted — the user may have intended overlapping membership.
+    pn_to_aggregators: dict[tuple[str, str], list[str]] = {}
+    for cls in ("flowGroup__unit__node", "flowGroup__connection__node"):
+        for ent in db.find_entities(entity_class_name=cls):
+            byname = ent["entity_byname"]
+            if not byname or len(byname) < 3:
+                continue
+            flowgroup, process, node = byname[0], byname[1], byname[2]
+            if flowgroup not in dispatch_bound_flowgroups:
+                continue
+            pn_to_aggregators.setdefault((process, node), []).append(flowgroup)
+    for (process, node), flowgroups in pn_to_aggregators.items():
+        if len(flowgroups) >= 2:
+            logger.warning(
+                "Flow arc (%s, %s) belongs to multiple dispatch-bound "
+                "flowGroups (%s) — it will be double-counted in the nodeGroup "
+                "dispatch table.",
+                process, node, ", ".join(sorted(flowgroups)),
             )
 
 
