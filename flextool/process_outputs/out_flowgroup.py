@@ -28,16 +28,30 @@ def _member_legs(s, g: str) -> pd.MultiIndex:
 
 
 def flowGroup_indicators(par, s, v, r, debug):
-    """Flow-group indicator results by period.
+    """Flow-group indicator results by period and a signed timewise series.
 
-    For each group in ``s.flowGroupIndicators``, sum the unsigned magnitudes
-    of all member unit- and connection-flows, weight by step duration to get
-    energy per period, and divide by period hours for the average power.
+    For each group in ``s.flowGroupIndicators`` two quantities are built per
+    timestep:
 
-    Returns a list ``[(frame, 'flowGroup_gd_p')]`` keyed by
-    ``(group, period)`` with columns ``cumulative_flow`` [MWh] and
-    ``average_flow`` [MW].  A group with no matched member flows gets
-    zeros rather than being dropped.
+    * ``magnitude_dt`` — the UNSIGNED sum of all member unit- and
+      connection-flow magnitudes (``.abs()``).  This is weighted by step
+      duration to get energy per period and divided by period hours for the
+      average power.  This path is unchanged (byte-identical).
+    * ``net_dt`` — the SIGNED net flow into the group's nodes (into-node
+      ``+``, out-of-node ``−``; matches ``calc_group_flows``/
+      ``calc_connections``).  A unit leg whose ``node`` is the flow's *sink*
+      counts ``+`` (delivery into the node); whose ``node`` is the *source*
+      counts ``−`` (withdrawal).  Connection ``from_conn`` (into node) counts
+      ``+`` and ``to_conn`` (out of node) counts ``−``.  No ``.abs()`` and no
+      step-duration weighting — it is MW per timestep.
+
+    Returns a list of two ``(frame, name)`` tuples:
+
+    * ``flowGroup_gd_p`` — keyed ``(group, period)`` with columns
+      ``cumulative_flow`` [MWh] and ``average_flow`` [MW].  A group with no
+      matched member flows gets zeros rather than being dropped.
+    * ``flowGroup_gd_t`` — keyed ``(group, period, time)`` with the single
+      column ``net_flow`` [MW], the signed per-timestep net flow.
     """
     results: list[tuple[pd.DataFrame, str]] = []
 
@@ -66,6 +80,7 @@ def flowGroup_indicators(par, s, v, r, debug):
         )
 
     rows: list[dict] = []
+    net_rows: list[dict] = []
     # Period hours = share of year * 8760 (same convention used by
     # out_flows.unit_online_and_startup for period-hour normalization).
     period_hours = par.complete_period_share_of_year.mul(8760.0)
@@ -73,21 +88,35 @@ def flowGroup_indicators(par, s, v, r, debug):
     for g in s.flowGroupIndicators:
         legs = _member_legs(s, g)  # MultiIndex[(process, node)]
 
-        # Accumulate |flow| (MW) at each timestep.
+        # Accumulate |flow| (MW) at each timestep (UNSIGNED magnitude path).
         magnitude_dt = pd.Series(0.0, index=dt_index)
+        # Accumulate signed net flow (MW) into the group's nodes at each
+        # timestep (into-node +, out-of-node −).
+        net_dt = pd.Series(0.0, index=dt_index)
 
         if len(legs) and flow_sink_pairs is not None:
             # Unit flows — pick every (process, source, sink) column whose
             # (process, sink) or (process, source) is a member leg.
             sink_hits = flow_sink_pairs.isin(legs)
             source_hits = flow_source_pairs.isin(legs)
-            unit_mask = (
-                flow_cols.get_level_values('process').isin(s.process_unit)
-                & (sink_hits | source_hits)
-            )
+            is_unit = flow_cols.get_level_values('process').isin(s.process_unit)
+            unit_mask = is_unit & (sink_hits | source_hits)
             if unit_mask.any():
                 magnitude_dt = magnitude_dt.add(
                     r.flow_dt.loc[:, unit_mask].abs().sum(axis=1), fill_value=0.0,
+                )
+
+            # Signed: node==sink (unit delivers into the node) counts +,
+            # node==source (unit withdraws from the node) counts −.
+            unit_into = is_unit & sink_hits
+            unit_out = is_unit & source_hits
+            if unit_into.any():
+                net_dt = net_dt.add(
+                    r.flow_dt.loc[:, unit_into].sum(axis=1), fill_value=0.0,
+                )
+            if unit_out.any():
+                net_dt = net_dt.sub(
+                    r.flow_dt.loc[:, unit_out].sum(axis=1), fill_value=0.0,
                 )
 
             # Connection flows — from_conn and to_conn are already keyed by
@@ -98,11 +127,19 @@ def flowGroup_indicators(par, s, v, r, debug):
                     magnitude_dt = magnitude_dt.add(
                         r.from_conn[conn_legs_from].abs().sum(axis=1), fill_value=0.0,
                     )
+                    # from_conn flows into the node → +.
+                    net_dt = net_dt.add(
+                        r.from_conn[conn_legs_from].sum(axis=1), fill_value=0.0,
+                    )
             if not r.to_conn.empty:
                 conn_legs_to = r.to_conn.columns.intersection(legs)
                 if len(conn_legs_to):
                     magnitude_dt = magnitude_dt.add(
                         r.to_conn[conn_legs_to].abs().sum(axis=1), fill_value=0.0,
+                    )
+                    # to_conn flows out of the node → −.
+                    net_dt = net_dt.sub(
+                        r.to_conn[conn_legs_to].sum(axis=1), fill_value=0.0,
                     )
 
         # Weight MW → MWh per step, then sum to period level.
@@ -124,6 +161,16 @@ def flowGroup_indicators(par, s, v, r, debug):
                 'average_flow': float(average_d.loc[period]),
             })
 
+        # Signed per-timestep net flow (MW) — one row per realized (period,
+        # time).  No step-duration weighting; this is instantaneous power.
+        for (period, time), value in net_dt.items():
+            net_rows.append({
+                'group': g,
+                'period': period,
+                'time': time,
+                'net_flow': float(value),
+            })
+
     if not rows:
         return results
 
@@ -132,4 +179,11 @@ def flowGroup_indicators(par, s, v, r, debug):
     ]
     frame.columns.name = 'parameter'
     results.append((frame, 'flowGroup_gd_p'))
+
+    if net_rows:
+        net_frame = pd.DataFrame(net_rows).set_index(
+            ['group', 'period', 'time'])[['net_flow']]
+        net_frame.columns.name = 'parameter'
+        results.append((net_frame, 'flowGroup_gd_t'))
+
     return results

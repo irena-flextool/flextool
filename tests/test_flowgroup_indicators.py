@@ -13,11 +13,13 @@ enough to guard the implementation in quick iterations.
 """
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import polars as pl
 import pytest
 
 from flextool.process_outputs.out_flowgroup import flowGroup_indicators
@@ -111,9 +113,12 @@ def test_flowgroup_indicators_basic_shape_and_values() -> None:
 
     results = flowGroup_indicators(par, s, v, r, debug=False)
 
-    assert len(results) == 1
+    # Now returns two frames: the per-period summary plus the signed
+    # per-(period,time) net-flow series.
+    assert len(results) == 2
     frame, name = results[0]
     assert name == 'flowGroup_gd_p'
+    assert results[1][1] == 'flowGroup_gd_t'
 
     # Index: (group, period) over all three groups × both periods.
     assert list(frame.index.names) == ['group', 'period']
@@ -158,3 +163,163 @@ def test_flowgroup_indicators_empty_realized_dispatch() -> None:
     par, s, v, r = _build_fixture()
     s.dt_realize_dispatch = pd.MultiIndex.from_tuples([], names=['period', 'time'])
     assert flowGroup_indicators(par, s, v, r, debug=False) == []
+
+
+def test_flowgroup_period_frame_byte_identical_regression() -> None:
+    """The unsigned per-period frame must be unchanged by the addition of the
+    signed series — a byte-identical regression guard.  The expected values
+    below replicate exactly what the period-only implementation produced."""
+    par, s, v, r = _build_fixture()
+
+    results = flowGroup_indicators(par, s, v, r, debug=False)
+    frame = results[0][0]
+
+    expected = pd.DataFrame(
+        [
+            {'group': 'gU', 'period': 'p1', 'cumulative_flow': 30.0,
+             'average_flow': 15.0},
+            {'group': 'gU', 'period': 'p2', 'cumulative_flow': 140.0,
+             'average_flow': 35.0},
+            {'group': 'gC', 'period': 'p1', 'cumulative_flow': 13.0,
+             'average_flow': 6.5},
+            {'group': 'gC', 'period': 'p2', 'cumulative_flow': 34.0,
+             'average_flow': 8.5},
+            {'group': 'gEmpty', 'period': 'p1', 'cumulative_flow': 0.0,
+             'average_flow': 0.0},
+            {'group': 'gEmpty', 'period': 'p2', 'cumulative_flow': 0.0,
+             'average_flow': 0.0},
+        ]
+    ).set_index(['group', 'period'])[['cumulative_flow', 'average_flow']]
+    expected.columns.name = 'parameter'
+
+    pd.testing.assert_frame_equal(frame, expected, check_exact=True)
+
+
+def test_flowgroup_gd_t_signed_net_flow() -> None:
+    """The signed per-(period,time) series uses into-node +, out-of-node −.
+
+    Fixture sign breakdown:
+      * gU — unit flow ``(coal_plant, coal, elec)`` with node ``elec`` as the
+        *sink* → all into-node (+): 10, 20, 30, 40.
+      * gC — connection ``west_east`` touching node ``west``:
+        ``from_conn`` = 5,5,5,5 (into node, +); ``to_conn`` = 1,2,3,4 (out of
+        node, −).  Signed net = 5−1, 5−2, 5−3, 5−4 = 4, 3, 2, 1.
+        (The UNSIGNED magnitude summed |5|+|1| etc → 6, 7, 8, 9.)
+      * gEmpty — no member flows → zeros.
+    """
+    par, s, v, r = _build_fixture()
+
+    results = flowGroup_indicators(par, s, v, r, debug=False)
+
+    by_name = {name: frame for frame, name in results}
+    assert 'flowGroup_gd_t' in by_name
+    net = by_name['flowGroup_gd_t']
+
+    assert list(net.index.names) == ['group', 'period', 'time']
+    assert list(net.columns) == ['net_flow']
+    assert net.columns.name == 'parameter'
+
+    # All three groups present at every realized (period, time).
+    expected_keys = {
+        (g, p, t)
+        for g in ('gU', 'gC', 'gEmpty')
+        for p in ('p1', 'p2')
+        for t in ('t1', 't2')
+    }
+    assert set(net.index) == expected_keys
+
+    # gU — unit sink, all positive.
+    assert net.loc[('gU', 'p1', 't1'), 'net_flow'] == pytest.approx(10.0)
+    assert net.loc[('gU', 'p1', 't2'), 'net_flow'] == pytest.approx(20.0)
+    assert net.loc[('gU', 'p2', 't1'), 'net_flow'] == pytest.approx(30.0)
+    assert net.loc[('gU', 'p2', 't2'), 'net_flow'] == pytest.approx(40.0)
+
+    # gC — signed net = from_conn − to_conn.
+    assert net.loc[('gC', 'p1', 't1'), 'net_flow'] == pytest.approx(4.0)
+    assert net.loc[('gC', 'p1', 't2'), 'net_flow'] == pytest.approx(3.0)
+    assert net.loc[('gC', 'p2', 't1'), 'net_flow'] == pytest.approx(2.0)
+    assert net.loc[('gC', 'p2', 't2'), 'net_flow'] == pytest.approx(1.0)
+
+    # gEmpty — zeros.
+    for t in ('t1', 't2'):
+        for p in ('p1', 'p2'):
+            assert net.loc[('gEmpty', p, t), 'net_flow'] == 0.0
+
+    # signed ≠ unsigned guard: for gC the signed magnitudes (4,3,2,1) sum
+    # strictly below the unsigned magnitudes (6,7,8,9).
+    signed_gc = net.xs('gC', level='group')['net_flow'].abs().sum()
+    unsigned_gc = 6.0 + 7.0 + 8.0 + 9.0
+    assert signed_gc < unsigned_gc
+
+
+class _FakeProvider:
+    """Minimal stand-in for the cascade FlexDataProvider — only the ``has``
+    / ``get`` keyed-frame interface used by ``_provider_lookup_df``."""
+
+    def __init__(self, frames: dict[str, pl.DataFrame]):
+        self._frames = frames
+
+    def has(self, name: str) -> bool:
+        return name in self._frames
+
+    def get(self, name: str) -> pl.DataFrame:
+        return self._frames[name]
+
+
+def test_backfill_group_process_node_from_provider() -> None:
+    """red→green guard for the latent backfill bug: ``read_sets`` leaves
+    ``s.group_process_node`` empty; the backfill must populate it from the
+    Provider key ``input/flowGroup__process__node``."""
+    # write_outputs is re-exported as a *function* on the package, so a plain
+    # ``import flextool.process_outputs.write_outputs`` resolves to the
+    # function, not the module.  Reach the module via importlib.
+    wo = importlib.import_module('flextool.process_outputs.write_outputs')
+
+    # read_sets-empty starting state.
+    s = SimpleNamespace(
+        nodeGroupDispatch=pd.Index([], name='group'),
+        nodeGroupIndicators=pd.Index([], name='group'),
+        flowGroupIndicators=pd.Index([], name='group'),
+        group_process_node=pd.MultiIndex.from_tuples(
+            [], names=['group', 'process', 'node']),
+    )
+    assert len(s.group_process_node) == 0  # red before
+
+    gpn_frame = pl.DataFrame(
+        {
+            'flowGroup': ['gA', 'gA', 'gB'],
+            'process': ['coal_plant', 'west_east', 'wind_plant'],
+            'node': ['elec', 'west', 'elec'],
+        }
+    )
+    provider = _FakeProvider({'input/flowGroup__process__node': gpn_frame})
+
+    wo._backfill_group_indicator_sets(s, output_dir=None, provider=provider)
+
+    # green after: the membership index is populated from the Provider.
+    assert isinstance(s.group_process_node, pd.MultiIndex)
+    assert list(s.group_process_node.names) == ['group', 'process', 'node']
+    assert set(s.group_process_node) == {
+        ('gA', 'coal_plant', 'elec'),
+        ('gA', 'west_east', 'west'),
+        ('gB', 'wind_plant', 'elec'),
+    }
+
+
+def test_backfill_group_process_node_absent_stays_empty() -> None:
+    """A group-less model (Provider carries no flowGroup membership key) must
+    leave ``s.group_process_node`` empty — tolerant, no error."""
+    wo = importlib.import_module('flextool.process_outputs.write_outputs')
+
+    s = SimpleNamespace(
+        nodeGroupDispatch=pd.Index([], name='group'),
+        nodeGroupIndicators=pd.Index([], name='group'),
+        flowGroupIndicators=pd.Index([], name='group'),
+        group_process_node=pd.MultiIndex.from_tuples(
+            [], names=['group', 'process', 'node']),
+    )
+    provider = _FakeProvider({})  # empty Provider — no keys
+
+    wo._backfill_group_indicator_sets(s, output_dir=None, provider=provider)
+
+    assert len(s.group_process_node) == 0

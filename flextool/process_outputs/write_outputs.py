@@ -93,6 +93,12 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     short-circuits to "empty" and the group_flows__dt / group_flows__d /
     flowGroup CSVs go missing.
 
+    Also backfills ``s.group_process_node`` — the flowGroup membership
+    MultiIndex consumed by ``out_flowgroup.flowGroup_indicators`` — from the
+    Provider key ``input/flowGroup__process__node``.  ``read_sets`` leaves it
+    empty (no FlexData field carries it), so without this backfill the
+    flowGroup indicators sum nothing and emit all-zero rows in production.
+
     Also backfills the 12 ``nodeGroupDispatch__*`` arc-union MultiIndex
     sets emitted by ``flextool/engine_polars/_emit_arc_unions.py``.
     Without these, ``calc_group_flows`` finds zero rows for the unit /
@@ -149,6 +155,21 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
         if not vals:
             continue
         setattr(s, attr, pd.Index(vals, name='group'))
+
+    # --- flowGroup membership (group_process_node) ---------------------------
+    # ``read_sets`` hardcodes ``s.group_process_node`` empty (no FlexData
+    # field carries it), so without this backfill ``out_flowgroup`` sums
+    # nothing and emits all-zero rows.  Source = the cascade Provider key
+    # ``input/flowGroup__process__node`` (3 cols: flowGroup, process, node).
+    # ``solve_data/group_process_node`` is ABSENT on the cascade path.  A
+    # missing key yields ``None`` here → the set stays empty, which is the
+    # correct tolerant behaviour for a group-less model.
+    gpn_pl = _provider_lookup_df(provider, "input", "flowGroup__process__node")
+    if gpn_pl is not None and not gpn_pl.is_empty() and gpn_pl.width >= 3:
+        gpn = gpn_pl.to_pandas()
+        gpn.columns = ['group', 'process', 'node']
+        s.group_process_node = pd.MultiIndex.from_frame(
+            gpn[['group', 'process', 'node']], names=['group', 'process', 'node'])
 
     # --- 12 nodeGroupDispatch__* arc-union sets (from solve_data/) -----------
     # Each entry: (attr-on-s, filename, csv→multi-index column map).
