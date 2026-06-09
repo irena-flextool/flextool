@@ -183,7 +183,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/kWh] Annual fixed cost for storage. Constant or period.
     ('fixed_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/kW] Annual fixed cost. Constant or period.
-    ('flow_aggregator', 'group'): QuantityType.DIMENSIONLESS,
+    ('flow_aggregator', 'flowGroup'): QuantityType.DIMENSIONLESS,
     # Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from out...
     ('has_capacity_margin', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has a capacity margin constraint in the investment mode.
@@ -297,21 +297,21 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the en...
     ('lifetime_method', 'unit'): QuantityType.DIMENSIONLESS,
     # Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the en...
-    ('max_cumulative_flow', 'group'): QuantityType.POWER,
+    ('max_cumulative_flow', 'flowGroup'): QuantityType.POWER,
     # [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multipli...
     ('max_flow_for_unconstrained_variables', 'model'): QuantityType.POWER,
     # [MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose capacity_max_coeff is ...
-    ('max_instant_flow', 'group'): QuantityType.POWER,
+    ('max_instant_flow', 'flowGroup'): QuantityType.POWER,
     # [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.
     ('max_share', 'reserve__upDown__connection__node'): QuantityType.FRACTION,
     # [factor] Maximum ratio for the transfer of reserve to this node. Constant.
     ('max_share', 'reserve__upDown__unit__node'): QuantityType.FRACTION,
     # [factor] Maximum ratio for the transfer of reserve to this node. Constant.
-    ('min_cumulative_flow', 'group'): QuantityType.POWER,
+    ('min_cumulative_flow', 'flowGroup'): QuantityType.POWER,
     # [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multipli...
     ('min_downtime', 'unit'): QuantityType.DURATION,
     # [hours] Minimum time the unit must stay offline after shutting down. Requires minimum_time_method set to 'min_downtime' or 'both'. Constant.
-    ('min_instant_flow', 'group'): QuantityType.POWER,
+    ('min_instant_flow', 'flowGroup'): QuantityType.POWER,
     # [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.
     ('min_load', 'unit'): QuantityType.FRACTION,
     # [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started u...
@@ -337,16 +337,14 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Boolean output toggle: per-timestep connection→node flows. Flag, no physical unit.
     ('output_connection_flow_separate', 'model'): QuantityType.DIMENSIONLESS,
     # Boolean output toggle: produce connection flows separately for each direction. Flag.
-    ('output_flowGroup_indicators', 'group'): QuantityType.DIMENSIONLESS,
-    # Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).
     ('output_horizon', 'model'): QuantityType.DIMENSIONLESS,
     # Outputs the flows in the horizons. Used for testing the model.
     ('output_node_balance_t', 'model'): QuantityType.DIMENSIONLESS,
     # Boolean output toggle: per-timestep node balance (inflows/outflows) for diagnostics. Flag.
-    ('output_nodeGroup_dispatch', 'group'): QuantityType.DIMENSIONLESS,
-    # Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.
-    ('output_nodeGroup_indicators', 'group'): QuantityType.DIMENSIONLESS,
-    # Flag to output node-group indicator results for groups whose members are nodes (group__node).
+    ('print_dispatch', 'group'): QuantityType.DIMENSIONLESS,
+    # Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_nodeGroup_dispatch.
+    ('print_indicators', 'group'): QuantityType.DIMENSIONLESS,
+    # Flag to output node-group indicator results for groups whose members are nodes (group__node). Renamed from output_nodeGroup_indicators.
     ('output_ramp_envelope', 'model'): QuantityType.DIMENSIONLESS,
     # Boolean output toggle: include the seven-parameter ramp-envelope diagnostic outputs. Flag.
     ('output_unit__node_flow_t', 'model'): QuantityType.DIMENSIONLESS,

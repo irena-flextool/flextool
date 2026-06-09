@@ -1591,18 +1591,18 @@ def group_process_node(source: "InputSource") -> pl.DataFrame:
     Schema: ``[g, p, n]``.
     """
     parts: list[pl.LazyFrame] = []
-    u = _try_entities(source, "group__unit__node")
+    u = _try_entities(source, "flowGroup__unit__node")
     if u is not None:
         parts.append(
             u.lazy().pipe(rename_to_axis,
-                           {"group": "g", "unit": "p", "node": "n"})
+                           {"flowGroup": "g", "unit": "p", "node": "n"})
                     .select("g", "p", "n"),
         )
-    c = _try_entities(source, "group__connection__node")
+    c = _try_entities(source, "flowGroup__connection__node")
     if c is not None:
         parts.append(
             c.lazy().pipe(rename_to_axis,
-                           {"group": "g", "connection": "p", "node": "n"})
+                           {"flowGroup": "g", "connection": "p", "node": "n"})
                     .select("g", "p", "n"),
         )
     if not parts:
@@ -1644,7 +1644,7 @@ def gdt_maxInstantFlow(source: "InputSource") -> pl.DataFrame:
 
     Schema: ``[g, d, t]``.
     """
-    df = _try_param(source, "group", "max_instant_flow")
+    df = _try_param(source, "flowGroup", "max_instant_flow")
     if df is None:
         return _empty({"g": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
     if "period" in df.columns:
@@ -1659,7 +1659,7 @@ def gdt_maxInstantFlow(source: "InputSource") -> pl.DataFrame:
 
 
 def gdt_minInstantFlow(source: "InputSource") -> pl.DataFrame:
-    df = _try_param(source, "group", "min_instant_flow")
+    df = _try_param(source, "flowGroup", "min_instant_flow")
     if df is None:
         return _empty({"g": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
     if "period" in df.columns:

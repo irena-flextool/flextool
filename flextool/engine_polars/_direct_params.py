@@ -799,15 +799,20 @@ def _entity_period_time_param(source: "InputSource", entity_class: str,
 
 # §5.14 — group scalars sliced from input/p_group.csv
 def _g_scalar(source: "InputSource", parameter_name: str,
-                *, filter_zero: bool = True) -> Param | None:
+                *, filter_zero: bool = True,
+                entity_class: str = "group") -> Param | None:
     """Group scalar Param ``Param(("g",), [g, value])``, dropping zero
     rows by default (mirrors ``_slice_pgroup``'s ``!= 0`` filter).
+
+    ``entity_class`` defaults to ``"group"`` (all non-flow callers); the
+    v58 cumulative-flow callers pass ``"flowGroup"`` since those four
+    flow params now live on the dedicated ``flowGroup`` class.
     """
     try:
-        df = source.parameter_explicit("group", parameter_name)
+        df = source.parameter_explicit(entity_class, parameter_name)
     except (KeyError, AttributeError):
         try:
-            df = source.parameter("group", parameter_name)
+            df = source.parameter(entity_class, parameter_name)
         except KeyError:
             return None
     if df is None or df.height == 0:
@@ -974,11 +979,11 @@ def p_group_retire_min_period_from_source(source: "InputSource",
 def pd_max_cumulative_flow_from_source(source: "InputSource",
                                          period_filter: pl.DataFrame | None = None,
                                          ) -> Param | None:
-    """``group.max_cumulative_flow`` → ``Param(("g","d"))``.
+    """``flowGroup.max_cumulative_flow`` → ``Param(("g","d"))``.
     Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
     """
     resolved = resolve_param_shape(
-        source, "group", "max_cumulative_flow",
+        source, "flowGroup", "max_cumulative_flow",
         period_filter=period_filter)
     return broadcast_to_period(
         resolved, "g", period_filter, filter_zero=True)
@@ -987,11 +992,11 @@ def pd_max_cumulative_flow_from_source(source: "InputSource",
 def pd_min_cumulative_flow_from_source(source: "InputSource",
                                          period_filter: pl.DataFrame | None = None,
                                          ) -> Param | None:
-    """``group.min_cumulative_flow`` → ``Param(("g","d"))``.
+    """``flowGroup.min_cumulative_flow`` → ``Param(("g","d"))``.
     Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
     """
     resolved = resolve_param_shape(
-        source, "group", "min_cumulative_flow",
+        source, "flowGroup", "min_cumulative_flow",
         period_filter=period_filter)
     return broadcast_to_period(
         resolved, "g", period_filter, filter_zero=True)
@@ -1023,24 +1028,24 @@ def p_group_invest_min_cumulative_from_source(source: "InputSource") -> Param | 
 
 
 def p_group_max_cumulative_flow_from_source(source: "InputSource") -> Param | None:
-    return _g_scalar(source, "max_cumulative_flow")
+    return _g_scalar(source, "max_cumulative_flow", entity_class="flowGroup")
 
 
 def p_group_min_cumulative_flow_from_source(source: "InputSource") -> Param | None:
-    return _g_scalar(source, "min_cumulative_flow")
+    return _g_scalar(source, "min_cumulative_flow", entity_class="flowGroup")
 
 
 # §1.16 — pdtGroup (Map period→time) instant flow caps
 def pdt_max_instant_flow_from_source(source: "InputSource",
                                       period_filter: pl.DataFrame | None = None,
                                       ) -> Param | None:
-    """``group.max_instant_flow`` → ``Param(("g", "d", "t"))``.
+    """``flowGroup.max_instant_flow`` → ``Param(("g", "d", "t"))``.
 
     Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
     shapes: scalar / 1d_map[period] / 1d_map[time] / 2d_map[period,time].
     """
     resolved = resolve_param_shape(
-        source, "group", "max_instant_flow", period_filter=period_filter)
+        source, "flowGroup", "max_instant_flow", period_filter=period_filter)
     return broadcast_to_period_time(
         resolved, "g", period_filter, filter_zero=True)
 
@@ -1048,13 +1053,13 @@ def pdt_max_instant_flow_from_source(source: "InputSource",
 def pdt_min_instant_flow_from_source(source: "InputSource",
                                       period_filter: pl.DataFrame | None = None,
                                       ) -> Param | None:
-    """``group.min_instant_flow`` → ``Param(("g", "d", "t"))``.
+    """``flowGroup.min_instant_flow`` → ``Param(("g", "d", "t"))``.
 
     Δ.17c — uses :func:`._param_shapes.resolve_param_shape`.  Allowed
     shapes: scalar / 1d_map[period] / 1d_map[time] / 2d_map[period,time].
     """
     resolved = resolve_param_shape(
-        source, "group", "min_instant_flow", period_filter=period_filter)
+        source, "flowGroup", "min_instant_flow", period_filter=period_filter)
     return broadcast_to_period_time(
         resolved, "g", period_filter, filter_zero=True)
 

@@ -175,17 +175,15 @@ def validate_ladder_methods(db, logger: logging.Logger) -> None:
 
 
 def validate_group_output_memberships(db, logger: logging.Logger) -> None:
-    """Warn when a group-level output flag is ``yes`` but the group lacks
+    """Warn when a group-level output flag is set but the group lacks
     the membership class required for that output to produce any data.
 
-    Four silent-no-op cases are detected:
+    Three silent-no-op cases are detected (v58 vocabulary):
 
-    * ``output_nodeGroup_dispatch: yes`` with no ``group__node`` row
-    * ``output_nodeGroup_indicators: yes`` with no ``group__node`` row
-    * ``output_flowGroup_indicators: yes`` with no ``group__unit__node``
-      **or** ``group__connection__node`` row
-    * ``flow_aggregator: yes`` with no ``group__unit__node`` **or**
-      ``group__connection__node`` row
+    * ``group.print_dispatch: yes`` with no ``group__node`` row
+    * ``group.print_indicators: yes`` with no ``group__node`` row
+    * ``flowGroup.flow_aggregator`` set to a non-``none`` method with no
+      ``flowGroup__unit__node`` **or** ``flowGroup__connection__node`` row
 
     Only warnings are emitted — a user may deliberately stage a partial
     configuration.
@@ -197,29 +195,19 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
         if byname:
             groups_with_node_members.add(byname[0])
 
-    groups_with_flow_members: set[str] = set()
-    for cls in ("group__unit__node", "group__connection__node"):
+    flowgroups_with_flow_members: set[str] = set()
+    for cls in ("flowGroup__unit__node", "flowGroup__connection__node"):
         for ent in db.find_entities(entity_class_name=cls):
             byname = ent["entity_byname"]
             if byname:
-                groups_with_flow_members.add(byname[0])
+                flowgroups_with_flow_members.add(byname[0])
 
-    # (parameter_name, required_membership_description, membership_set)
-    checks: list[tuple[str, str, set[str]]] = [
-        ("output_nodeGroup_dispatch", "group__node", groups_with_node_members),
-        ("output_nodeGroup_indicators", "group__node", groups_with_node_members),
-        (
-            "output_flowGroup_indicators",
-            "group__unit__node or group__connection__node",
-            groups_with_flow_members,
-        ),
-        (
-            "flow_aggregator",
-            "group__unit__node or group__connection__node",
-            groups_with_flow_members,
-        ),
+    # nodeGroup output flags: "yes" on the ``group`` class, need group__node.
+    node_checks: list[tuple[str, str, set[str]]] = [
+        ("print_dispatch", "group__node", groups_with_node_members),
+        ("print_indicators", "group__node", groups_with_node_members),
     ]
-    for param_name, required_members, membership_set in checks:
+    for param_name, required_members, membership_set in node_checks:
         for pv in db.find_parameter_values(
             entity_class_name="group", parameter_definition_name=param_name
         ):
@@ -233,6 +221,26 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
                     "Group '%s' has %s: yes but no %s members — output will be empty.",
                     group_name, param_name, required_members,
                 )
+
+    # flow_aggregator: an enum METHOD on the ``flowGroup`` class.  Any value
+    # other than ``none`` requests dispatch bands and/or standalone
+    # indicators, both of which need flowGroup__*__node members to produce
+    # any data.
+    for pv in db.find_parameter_values(
+        entity_class_name="flowGroup", parameter_definition_name="flow_aggregator"
+    ):
+        if pv["type"] is None:
+            continue
+        if pv["parsed_value"] in (None, "none"):
+            continue
+        group_name = pv["entity_byname"][0]
+        if group_name not in flowgroups_with_flow_members:
+            logger.warning(
+                "flowGroup '%s' has flow_aggregator: %s but no "
+                "flowGroup__unit__node or flowGroup__connection__node members "
+                "— output will be empty.",
+                group_name, pv["parsed_value"],
+            )
 
 
 def validate_connection_node_memberships(db, logger: logging.Logger) -> None:

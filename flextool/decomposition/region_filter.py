@@ -387,7 +387,7 @@ def _build_column_specs() -> dict[str, list[tuple[int, str]]]:
     # Group-related: col 0 group, col 1 node/process.
     specs["group__node.csv"] = [(1, "node")]  # keep group; filter node
     specs["group__process.csv"] = [(1, "process")]
-    specs["group__process__node.csv"] = [(1, "process"), (2, "node")]
+    specs["flowGroup__process__node.csv"] = [(1, "process"), (2, "node")]
 
     # Reserves (process, reserve, upDown, node) — col 0 process, col 3 node.
     specs["process__reserve__upDown__node.csv"] = [(0, "process"), (3, "node")]

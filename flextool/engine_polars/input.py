@@ -3441,11 +3441,11 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
     out["group_entity"] = ge
 
     # group_process_node: solve_data/group_process_node.csv (preprocessed long)
-    # or input/group__process__node.csv (raw long)
+    # or input/flowGroup__process__node.csv (raw long, v58)
     gpn = None
     for cand, mapping, key in [
         (sd / "group_process_node.csv",  {"group": "g", "process": "p", "node": "n"}, "solve_data/group_process_node"),
-        (inp / "group__process__node.csv", {"group": "g", "process": "p", "node": "n"}, "input/group__process__node"),
+        (inp / "flowGroup__process__node.csv", {"flowGroup": "g", "process": "p", "node": "n"}, "input/flowGroup__process__node"),
     ]:
         if _provider_has(provider, key, cand):
             df = _provider_read(provider, key, cand)

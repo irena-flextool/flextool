@@ -228,10 +228,11 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("group", "co2_price"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
-    ("group", "max_instant_flow"): {
+    # v58: the four flow-limit params live on the ``flowGroup`` class.
+    ("flowGroup", "max_instant_flow"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
-    ("group", "min_instant_flow"): {
+    ("flowGroup", "min_instant_flow"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
     # ─── group: period-only Params (no time variant) ─────────────────────
@@ -258,8 +259,8 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("group", "invest_min_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "retire_max_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "retire_min_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("group", "max_cumulative_flow"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("group", "min_cumulative_flow"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("flowGroup", "max_cumulative_flow"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("flowGroup", "min_cumulative_flow"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # ─── unit: period-only Params (no time variant) ──────────────────────
     # UC startup cost — Spine schema declares ``unit.startup_cost`` as
     # scalar OR 1d_map(period).  Cascade: pd → p (write_pUnit / startup
