@@ -149,8 +149,9 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
     return 0, last_step
 
 
-def resolve_output_path(input_db_url, flextool_location, output_location, cwd):
-    """Resolve the TRUE output root for a CLI run (4-tier rule).
+def resolve_output_path(input_db_url, flextool_location, output_location, cwd,
+                        project_folder_file=None):
+    """Resolve the TRUE output root for a CLI run (5-tier rule).
 
     This is the path that outputs actually land under, so it is what
     gets persisted to the "Output info" DB as ``scenario/output_location``
@@ -158,7 +159,7 @@ def resolve_output_path(input_db_url, flextool_location, output_location, cwd):
     scenario's parquet) AND what is passed as ``fallback_output_location``
     to ``write_outputs`` and used for the timings.csv directory.
 
-    The four tiers, in precedence order:
+    The five tiers, in precedence order:
 
     1. **Explicit ``--output-location``** wins outright.  ``write_outputs``
        already honours an explicit ``output_location`` over the
@@ -169,7 +170,25 @@ def resolve_output_path(input_db_url, flextool_location, output_location, cwd):
        tier 1 fixes that latent inconsistency: the recorded location now
        matches where the files actually go.
 
-    2. **GUI-project layout.**  When the input DB file sits directly inside
+    2. **Project-folder file (``--project-folder-file``).**  This is the
+       USER-LOCAL output redirect: the maintainer points Spine Toolbox's
+       FlexTool run Tool at a gitignored file (seeded by ``self_update``
+       as ``templates/project_folder.txt``) whose CONTENTS name a project
+       folder, so a user can redirect every output (``output_parquet/``,
+       ``results.sqlite``, plots, the per-project ``plot_settings.yaml``)
+       into a per-project directory with ZERO git-committed change.
+
+       The file's first non-empty, non-``#``-comment line is the project
+       folder.  If that line is an ABSOLUTE path it is used verbatim; if
+       RELATIVE it is resolved against the file's repo anchor —
+       ``file.resolve().parent.parent`` — the SAME anchor the legacy
+       ``--flextool-location`` walk uses, so a ``templates/
+       project_folder.txt`` line of ``projects/Rivendell`` lands the
+       output at ``<repo>/projects/Rivendell``.  If the file is missing,
+       unreadable, empty, or comment-only this tier does NOT fire (it
+       falls through to the next tier — no crash).
+
+    3. **GUI-project layout.**  When the input DB file sits directly inside
        a directory named ``input_sources`` (the FlexTool GUI project
        layout, ``<project>/input_sources/<db>.sqlite``), the output root is
        that directory's parent — the project folder.  This is
@@ -180,11 +199,11 @@ def resolve_output_path(input_db_url, flextool_location, output_location, cwd):
        elsewhere in this file, plus a query-part strip.  If the path can't
        be resolved to an existing file, this tier is skipped (no crash).
 
-    3. **Legacy ``--flextool-location`` bridge.**  ``.parent.parent`` of the
+    4. **Legacy ``--flextool-location`` bridge.**  ``.parent.parent`` of the
        resolved flextool-location path (the historical Spine Toolbox
-       anchor; see ``templates/flextool_location.txt``).
+       anchor; kept for backward compatibility one release).
 
-    4. **Fallback** to the current working directory.
+    5. **Fallback** to the current working directory.
 
     Pure path logic — deterministic, no randomness, no side effects.
     """
@@ -192,7 +211,12 @@ def resolve_output_path(input_db_url, flextool_location, output_location, cwd):
     if output_location:
         return Path(output_location)
 
-    # Tier 2 — GUI project layout: <project>/input_sources/<db>.sqlite.
+    # Tier 2 — project-folder file: CONTENTS name the project folder.
+    project_folder = _read_project_folder_file(project_folder_file)
+    if project_folder is not None:
+        return project_folder
+
+    # Tier 3 — GUI project layout: <project>/input_sources/<db>.sqlite.
     db_fs_path = _input_db_filesystem_path(input_db_url)
     if db_fs_path is not None:
         try:
@@ -203,12 +227,60 @@ def resolve_output_path(input_db_url, flextool_location, output_location, cwd):
                 and resolved.parent.name == "input_sources":
             return resolved.parent.parent
 
-    # Tier 3 — legacy flextool-location anchor walk.
+    # Tier 4 — legacy flextool-location anchor walk.
     if flextool_location:
         return Path(flextool_location).resolve().parent.parent
 
-    # Tier 4 — fallback to CWD.
+    # Tier 5 — fallback to CWD.
     return Path(cwd)
+
+
+def _read_project_folder_file(project_folder_file):
+    """Resolve a project-folder redirect from a ``--project-folder-file``.
+
+    The file's CONTENTS name the project folder: the first non-empty,
+    non-``#``-comment line is taken (whitespace-stripped).  An ABSOLUTE
+    line is returned verbatim; a RELATIVE line is resolved against the
+    file's repo anchor (``file.resolve().parent.parent``, the same anchor
+    the legacy ``--flextool-location`` walk uses), so a ``templates/
+    project_folder.txt`` line of ``projects/Rivendell`` maps to
+    ``<repo>/projects/Rivendell``.
+
+    Returns a :class:`~pathlib.Path` when a usable project folder is
+    found, or ``None`` when the path arg is empty, the file is missing /
+    unreadable, or it has no non-comment content (so the caller falls
+    through to the next tier).  Robust: any read error → ``None`` (never
+    raises).
+    """
+    if not project_folder_file:
+        return None
+    file_path = Path(project_folder_file)
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except OSError:
+        # Missing / unreadable / not a file — skip this tier silently.
+        return None
+    line = None
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        line = stripped
+        break
+    if line is None:
+        # Empty or comment-only — fall through.
+        return None
+    candidate = Path(line)
+    if candidate.is_absolute():
+        return candidate
+    # Relative → resolve against the file's repo anchor (parent.parent),
+    # matching the legacy --flextool-location walk so a templates/-anchored
+    # relative line roots at the repo root.
+    try:
+        anchor = file_path.resolve().parent.parent
+    except OSError:
+        return None
+    return anchor / candidate
 
 
 def _input_db_filesystem_path(input_db_url):
@@ -297,7 +369,22 @@ def main():
                              'other output dirs). Defaults to the scenario '
                              'name for backward compatibility.')
     parser.add_argument('--flextool-location', nargs='?', default=None, const=None,
-                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories). Defaults to the user\'s current working directory. The value may be omitted (Spine Toolbox sometimes passes the bare flag) — in that case the default is used.')
+                        help='When running in Spine Toolbox, this argument provides the location of FlexTool so outputs can be directed there (instead of work directories). Defaults to the user\'s current working directory. The value may be omitted (Spine Toolbox sometimes passes the bare flag) — in that case the default is used. Legacy bridge: kept for backward compatibility; prefer --project-folder-file.')
+    parser.add_argument('--project-folder-file', metavar='PATH', default=None,
+                        help='Path to a USER-LOCAL file whose CONTENTS name '
+                             'the project folder to direct outputs into '
+                             '(output_parquet/, results.sqlite, plots, and '
+                             'the per-project plot_settings.yaml).  The '
+                             'first non-empty, non-#-comment line is the '
+                             'project folder: an absolute path is used as-is; '
+                             'a relative path is resolved against the file\'s '
+                             'repo anchor (its .parent.parent).  Spine Toolbox '
+                             'points this at templates/project_folder.txt '
+                             '(gitignored, seeded by flextool-update).  A '
+                             'missing / empty / comment-only file is ignored. '
+                             'Lower precedence than --output-location, higher '
+                             'than the input_sources/ layout and '
+                             '--flextool-location.')
     parser.add_argument('--work-folder', metavar='PATH', default=None,
                         help='Working directory for intermediate files (default: current directory). '
                              'Enables parallel scenario execution by isolating each run.')
@@ -531,17 +618,20 @@ def main():
         os.environ.setdefault('FLEXTOOL_MEMORY_DIAGNOSTICS', '1')
     # The TRUE output root (where outputs land, and what is persisted to
     # the "Output info" DB as scenario/output_location) is resolved by a
-    # 4-tier rule (see ``resolve_output_path`` for the full rationale):
+    # 5-tier rule (see ``resolve_output_path`` for the full rationale):
     #   1. ``--output-location``                         (explicit wins),
-    #   2. ``<project>`` when the input DB sits in an    (GUI project
+    #   2. ``--project-folder-file`` CONTENTS            (user-local
+    #      name a project folder                          redirect),
+    #   3. ``<project>`` when the input DB sits in an    (GUI project
     #      ``input_sources/`` dir                         layout),
-    #   3. ``--flextool-location``.parent.parent         (legacy bridge),
-    #   4. CWD                                            (fallback).
+    #   4. ``--flextool-location``.parent.parent         (legacy bridge),
+    #   5. CWD                                            (fallback).
     output_path = resolve_output_path(
         input_db_url=args.input_db_url,
         flextool_location=args.flextool_location,
         output_location=args.output_location,
         cwd=Path.cwd(),
+        project_folder_file=args.project_folder_file,
     )
     work_folder = Path(args.work_folder) if args.work_folder else Path.cwd()
     work_folder.mkdir(parents=True, exist_ok=True)

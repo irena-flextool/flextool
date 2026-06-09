@@ -3,13 +3,15 @@
 ``resolve_output_path`` decides the TRUE output root for a CLI run — the
 path that outputs land under and that is persisted to the Output-info DB
 as ``scenario/output_location`` (Toolbox's comparison / re-create steps
-read it back to find each scenario's parquet).  The four tiers, in
+read it back to find each scenario's parquet).  The five tiers, in
 precedence order:
 
   1. explicit ``--output-location`` wins,
-  2. GUI project layout ``<project>/input_sources/<db>.sqlite`` → ``<project>``,
-  3. legacy ``--flextool-location``.parent.parent,
-  4. CWD fallback.
+  2. ``--project-folder-file`` CONTENTS name a project folder (user-local
+     redirect; relative lines anchored at the file's ``.parent.parent``),
+  3. GUI project layout ``<project>/input_sources/<db>.sqlite`` → ``<project>``,
+  4. legacy ``--flextool-location``.parent.parent,
+  5. CWD fallback.
 
 These are pure path-logic tests; no DB is read and nothing is solved.
 """
@@ -54,7 +56,142 @@ def test_tier1_output_location_wins_over_input_sources_layout(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Tier 2 — GUI project layout: <project>/input_sources/<db>.sqlite.
+# Tier 2 — --project-folder-file CONTENTS name the project folder.
+# ---------------------------------------------------------------------------
+
+
+def _write_pff(path: Path, contents: str) -> Path:
+    """Write *contents* to a project-folder file at *path* and return it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents, encoding="utf-8")
+    return path
+
+
+def test_pff_relative_line_anchored_at_repo_root(tmp_path):
+    """A RELATIVE project-folder line resolves against the file's repo
+    anchor (``file.resolve().parent.parent``), so a templates/-anchored
+    ``projects/Rivendell`` lands at ``<repo>/projects/Rivendell``."""
+    repo = tmp_path / "FlexTool"
+    pff = _write_pff(
+        repo / "templates" / "project_folder.txt",
+        "# header comment\n\nprojects/Rivendell\n",
+    )
+    out = resolve_output_path(
+        input_db_url=None,
+        flextool_location=None,
+        output_location=None,
+        cwd=tmp_path / "cwd",
+        project_folder_file=str(pff),
+    )
+    assert out == repo.resolve() / "projects" / "Rivendell"
+
+
+def test_pff_absolute_line_used_verbatim(tmp_path):
+    """An ABSOLUTE project-folder line is used as-is (not re-anchored)."""
+    abs_target = tmp_path / "somewhere" / "else" / "ProjectX"
+    pff = _write_pff(
+        tmp_path / "FlexTool" / "templates" / "project_folder.txt",
+        f"# comment\n{abs_target}\n",
+    )
+    out = resolve_output_path(
+        input_db_url=None,
+        flextool_location=None,
+        output_location=None,
+        cwd=tmp_path / "cwd",
+        project_folder_file=str(pff),
+    )
+    assert out == abs_target
+
+
+def test_pff_comment_only_falls_through(tmp_path):
+    """A comment-only / blank project-folder file does NOT fire tier 2 —
+    resolution falls through (here to CWD, tier 5)."""
+    cwd = tmp_path / "cwd"
+    pff = _write_pff(
+        tmp_path / "FlexTool" / "templates" / "project_folder.txt",
+        "# only comments here\n#   projects/Nope\n\n   \n",
+    )
+    out = resolve_output_path(
+        input_db_url=None,
+        flextool_location=None,
+        output_location=None,
+        cwd=cwd,
+        project_folder_file=str(pff),
+    )
+    assert out == Path(cwd)
+
+
+def test_pff_empty_file_falls_through(tmp_path):
+    """A completely empty project-folder file falls through to CWD."""
+    cwd = tmp_path / "cwd"
+    pff = _write_pff(tmp_path / "FlexTool" / "templates" / "project_folder.txt", "")
+    out = resolve_output_path(
+        input_db_url=None,
+        flextool_location=None,
+        output_location=None,
+        cwd=cwd,
+        project_folder_file=str(pff),
+    )
+    assert out == Path(cwd)
+
+
+def test_pff_missing_file_no_crash_falls_through(tmp_path):
+    """A missing project-folder file does NOT crash — tier 2 is skipped and
+    resolution falls through to the next applicable tier (CWD here)."""
+    cwd = tmp_path / "cwd"
+    missing = tmp_path / "FlexTool" / "templates" / "project_folder.txt"  # never created
+    out = resolve_output_path(
+        input_db_url=None,
+        flextool_location=None,
+        output_location=None,
+        cwd=cwd,
+        project_folder_file=str(missing),
+    )
+    assert out == Path(cwd)
+
+
+def test_output_location_wins_over_project_folder_file(tmp_path):
+    """Tier 1 (explicit --output-location) beats a populated tier-2
+    project-folder file."""
+    explicit = tmp_path / "explicit_out"
+    pff = _write_pff(
+        tmp_path / "FlexTool" / "templates" / "project_folder.txt",
+        "projects/Rivendell\n",
+    )
+    out = resolve_output_path(
+        input_db_url=None,
+        flextool_location=None,
+        output_location=str(explicit),
+        cwd=tmp_path / "cwd",
+        project_folder_file=str(pff),
+    )
+    assert out == Path(str(explicit))
+
+
+def test_pff_beats_input_sources_layout(tmp_path):
+    """Tier 2 (project-folder file) beats tier 3 (input_sources layout):
+    a populated project-folder file wins even when the input DB sits in an
+    ``input_sources/`` dir."""
+    project = tmp_path / "projects" / "Foo"
+    db = _touch_db(project / "input_sources" / "in.sqlite")
+    target = tmp_path / "Redirected"
+    pff = _write_pff(
+        tmp_path / "FlexTool" / "templates" / "project_folder.txt",
+        f"{target}\n",
+    )
+    out = resolve_output_path(
+        input_db_url=f"sqlite:///{db}",
+        flextool_location=None,
+        output_location=None,
+        cwd=tmp_path / "cwd",
+        project_folder_file=str(pff),
+    )
+    assert out == target
+    assert out != project.resolve()
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 — GUI project layout: <project>/input_sources/<db>.sqlite.
 # ---------------------------------------------------------------------------
 
 

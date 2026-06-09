@@ -222,24 +222,28 @@ def update_flextool(skip_git):
             "solver_config/highs.opt",
         )
 
-    # Seed templates/flextool_location.txt on first run.  Its CONTENTS are
-    # never read; it exists purely as a stable on-disk anchor that Spine
-    # Toolbox's legacy ``--flextool-location <project>/templates/
-    # flextool_location.txt`` profile points at, so the CLI can walk
-    # ``.parent.parent`` from it to derive the project output root (see
-    # the 4-tier resolver in flextool/cli/cmd_run_flextool.py).  Idempotent:
-    # never overwrites an existing file.
+    # Seed templates/project_folder.txt on first run.  Unlike the legacy
+    # anchor file, this file's CONTENTS are LOAD-BEARING: Spine Toolbox's
+    # FlexTool run Tool passes ``--project-folder-file <project>/templates/
+    # project_folder.txt`` and the CLI reads the first non-empty,
+    # non-comment line as the output project folder (absolute, or relative
+    # to the repo root).  The file is gitignored (user-local), so a user
+    # can redirect every output into a per-project folder with ZERO
+    # git-committed change.  Seeded with a commented template only; an
+    # empty/comment-only file means "use the FlexTool root" (the resolver
+    # falls through).  See the 5-tier resolver in
+    # flextool/cli/cmd_run_flextool.py.  Idempotent: never overwrites an
+    # existing file.
     os.makedirs("templates", exist_ok=True)
-    if not os.path.exists("templates/flextool_location.txt"):
-        with open("templates/flextool_location.txt", "w", encoding="utf-8") as fh:
+    if not os.path.exists("templates/project_folder.txt"):
+        with open("templates/project_folder.txt", "w", encoding="utf-8") as fh:
             fh.write(
-                "# This file's CONTENTS are ignored. Its only purpose is to be a\n"
-                "# fixed on-disk anchor inside the project: when Spine Toolbox\n"
-                "# passes --flextool-location <project>/templates/"
-                "flextool_location.txt,\n"
-                "# the CLI walks .parent.parent from this path to derive the\n"
-                "# legacy output root (<project>). See cmd_run_flextool.py\n"
-                "# resolve_output_path.\n"
+                "# FlexTool output project folder (user-local; not tracked by git).\n"
+                "# Write ONE path below — absolute, or relative to the FlexTool root —\n"
+                "# to direct this workflow's outputs (output_parquet/, results.sqlite,\n"
+                "# plots, and the per-project plot_settings.yaml) into that project folder.\n"
+                "# Leave blank to use the FlexTool root.\n"
+                "# e.g.:  projects/Rivendell\n"
             )
 
     # Migrate user-owned SQLites (canonical ones are already at current
