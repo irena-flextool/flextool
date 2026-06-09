@@ -29,7 +29,7 @@
       null
     ],
     [
-      "group",
+      "flowGroup",
       "group_to_nodeA_from_connection",
       null
     ],
@@ -125,7 +125,7 @@
       null
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
         "group_to_nodeA_from_connection",
         "A_B_connection",
@@ -213,6 +213,13 @@
       [],
       null,
       281107035649330,
+      true
+    ],
+    [
+      "flowGroup",
+      [],
+      null,
+      null,
       true
     ],
     [
@@ -387,9 +394,9 @@
       true
     ],
     [
-      "group__connection__node",
+      "flowGroup__connection__node",
       [
-        "group",
+        "flowGroup",
         "connection",
         "node"
       ],
@@ -398,9 +405,9 @@
       true
     ],
     [
-      "group__unit__node",
+      "flowGroup__unit__node",
       [
-        "group",
+        "flowGroup",
         "unit",
         "node"
       ],
@@ -809,6 +816,49 @@
       "constraint"
     ],
     [
+      "flowGroup",
+      "flow_aggregator",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "flow_aggregator_methods",
+      "Choice of flow-aggregation method for this flowGroup: 'none' (flow limits / investment only, no aggregated output), 'dispatch_plots_only' (bands inside a node group's dispatch table), 'standalone_aggregator_only' (own timewise summed-flow series plus per-period cumulative/average totals), 'both'.",
+      "output"
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      null,
+      null,
+      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      null,
+      null,
+      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      null,
+      null,
+      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      "flow_limit"
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      null,
+      null,
+      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+      "flow_limit"
+    ],
+    [
       "group",
       "base_MVA",
       null,
@@ -890,14 +940,6 @@
       "decomposition_methods",
       "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solved as an independent region with shared-commodity coupling).",
       "solve_advanced"
-    ],
-    [
-      "group",
-      "flow_aggregator",
-      null,
-      "yes_no",
-      "Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from output_aggregate_flows.",
-      "output"
     ],
     [
       "group",
@@ -990,38 +1032,6 @@
     ],
     [
       "group",
-      "max_cumulative_flow",
-      null,
-      null,
-      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      null,
-      null,
-      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      null,
-      null,
-      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      null,
-      null,
-      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.",
-      "flow_limit"
-    ],
-    [
-      "group",
       "new_stepduration",
       null,
       null,
@@ -1035,30 +1045,6 @@
       null,
       "[share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.",
       "network"
-    ],
-    [
-      "group",
-      "output_flowGroup_indicators",
-      null,
-      "yes_no",
-      "Flag to output flow-group indicator results for groups whose members are flows (group__unit__node or group__connection__node).",
-      "output"
-    ],
-    [
-      "group",
-      "output_nodeGroup_dispatch",
-      null,
-      "yes_no",
-      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
-      "output"
-    ],
-    [
-      "group",
-      "output_nodeGroup_indicators",
-      null,
-      "yes_no",
-      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
-      "output"
     ],
     [
       "group",
@@ -1092,6 +1078,22 @@
       null,
       "[CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.",
       "network"
+    ],
+    [
+      "group",
+      "print_dispatch",
+      null,
+      "yes_no",
+      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
+      "output"
+    ],
+    [
+      "group",
+      "print_indicators",
+      null,
+      "yes_no",
+      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
+      "output"
     ],
     [
       "group",
@@ -1189,7 +1191,7 @@
       "model",
       "version",
       [
-        "57",
+        "58",
         "float"
       ],
       null,
@@ -1314,7 +1316,7 @@
       "invest_forced",
       null,
       null,
-      null,
+      "[MWh] Forces the model to invest exactly this amount of new storage capacity, overriding the investment optimisation (equivalent to setting invest_min and invest_max equal). Constant or period.",
       "investment"
     ],
     [
@@ -2763,6 +2765,72 @@
       0
     ],
     [
+      "flowGroup",
+      "flow_aggregator",
+      "str",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_cumulative_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "max_instant_flow",
+      "map",
+      2
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "min_cumulative_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "float",
+      0
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "map",
+      1
+    ],
+    [
+      "flowGroup",
+      "min_instant_flow",
+      "map",
+      2
+    ],
+    [
       "group",
       "base_MVA",
       "float",
@@ -2818,13 +2886,31 @@
     ],
     [
       "group",
-      "decomposition_method",
-      "str",
+      "cumulative_max_capacity",
+      "float",
       0
     ],
     [
       "group",
-      "flow_aggregator",
+      "cumulative_max_capacity",
+      "map",
+      1
+    ],
+    [
+      "group",
+      "cumulative_min_capacity",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "cumulative_min_capacity",
+      "map",
+      1
+    ],
+    [
+      "group",
+      "decomposition_method",
       "str",
       0
     ],
@@ -2896,54 +2982,6 @@
     ],
     [
       "group",
-      "max_cumulative_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "max_cumulative_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "max_instant_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "min_cumulative_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      "float",
-      0
-    ],
-    [
-      "group",
-      "min_instant_flow",
-      "map",
-      1
-    ],
-    [
-      "group",
       "new_stepduration",
       "float",
       0
@@ -2962,24 +3000,6 @@
     ],
     [
       "group",
-      "output_flowGroup_indicators",
-      "str",
-      0
-    ],
-    [
-      "group",
-      "output_nodeGroup_dispatch",
-      "str",
-      0
-    ],
-    [
-      "group",
-      "output_nodeGroup_indicators",
-      "str",
-      0
-    ],
-    [
-      "group",
       "penalty_capacity_margin",
       "float",
       0
@@ -3013,6 +3033,18 @@
       "penalty_non_synchronous",
       "map",
       1
+    ],
+    [
+      "group",
+      "print_dispatch",
+      "str",
+      0
+    ],
+    [
+      "group",
+      "print_indicators",
+      "str",
+      0
     ],
     [
       "group",
@@ -4212,6 +4244,34 @@
       ]
     ],
     [
+      "flow_aggregator_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "\"dispatch_plots_only\"",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "\"standalone_aggregator_only\"",
+        "str"
+      ]
+    ],
+    [
+      "flow_aggregator_methods",
+      [
+        "\"both\"",
+        "str"
+      ]
+    ],
+    [
       "has_DC",
       [
         "\"yes\"",
@@ -5020,11 +5080,11 @@
       "network"
     ],
     [
-      "group",
+      "flowGroup",
       "group_to_nodeA_from_connection",
-      "output_flowGroup_indicators",
+      "flow_aggregator",
       [
-        "\"yes\"",
+        "\"standalone_aggregator_only\"",
         "str"
       ],
       "network"
