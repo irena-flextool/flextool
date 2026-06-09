@@ -5914,7 +5914,8 @@ def _v58_check(item_error, what):
 def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
     # Step 1: create classes (guarded / idempotent)
     if not db.find_entity_classes(name="flowGroup"):
-        db.add_entity_class(name="flowGroup")
+        # display_icon = icon_code (low 24 bits, group's icon) + (color #828094 << 24)
+        db.add_entity_class(name="flowGroup", display_icon=143488754774337)
     if not db.find_entity_classes(name="flowGroup__unit__node"):
         db.add_entity_class(name="flowGroup__unit__node", dimension_name_list=("flowGroup", "unit", "node"))
     if not db.find_entity_classes(name="flowGroup__connection__node"):
@@ -5942,9 +5943,11 @@ def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
             parameter_value_list_name="flow_aggregator_methods",
             parameter_type_list=("str",), parameter_group_name="output",
             description=(
-                "Choice of flow-aggregation method for this flowGroup: 'none' (flow limits / investment only, "
-                "no aggregated output), 'dispatch_plots_only' (bands inside a node group's dispatch table), "
-                "'standalone_aggregator_only' (own timewise summed-flow series plus per-period cumulative/average totals), 'both'."
+                "Choice of flow-aggregation method for this flowGroup: 'none' (used for flow limits only, "
+                "no aggregated output), 'dispatch_plots_only' (used as an aggregated flowGroup within "
+                "'print_dispatch' group of nodes - do not include one flow in multiple flow aggregators to "
+                "avoid double counting), 'standalone_aggregator_only' (just make time series available for "
+                "manual output processing / simple plots), 'both'."
             ),
         )
     _commit_step(db, "v58: flowGroup value-list + parameter definitions")
@@ -6059,11 +6062,25 @@ def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
             db.remove_items("entity_class", ec["id"])
     _commit_step(db, "v58: dropped old group flow defs + 3-dim classes")
 
-    # Step 5: rename output flags on group
+    # Step 5: rename output flags on group + set their new descriptions
+    _v58_rename_descs = {
+        "print_dispatch": (
+            "Combines unit/connection flows, flowGroup aggregated flows, and other balance elements "
+            "(slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group."
+        ),
+        "print_indicators": (
+            "Output indicators for the set of nodes in the group (Loss of Load, VRE generation, etc.)."
+        ),
+    }
     for old, new in (("output_nodeGroup_dispatch", "print_dispatch"), ("output_nodeGroup_indicators", "print_indicators")):
         pdef = _v58_find_one(db, "parameter_definition", entity_class_name="group", name=old)
         if pdef is not None:
-            _v58_check(db.update_item("parameter_definition", id=pdef["id"], name=new), f"rename group.{old}->{new}")
+            _v58_check(
+                db.update_item(
+                    "parameter_definition", id=pdef["id"], name=new, description=_v58_rename_descs[new],
+                ),
+                f"rename group.{old}->{new}",
+            )
     _commit_step(db, "v58: renamed output_nodeGroup_* -> print_*")
 
     # Step 6: §8 metadata heal on group stragglers (no-op where already present)

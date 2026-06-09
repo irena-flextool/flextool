@@ -85,7 +85,7 @@
       "flowGroup",
       [],
       null,
-      null,
+      143488754774337,
       true
     ],
     [
@@ -689,7 +689,7 @@
         "str"
       ],
       "flow_aggregator_methods",
-      "Choice of flow-aggregation method for this flowGroup: 'none' (flow limits / investment only, no aggregated output), 'dispatch_plots_only' (bands inside a node group's dispatch table), 'standalone_aggregator_only' (own timewise summed-flow series plus per-period cumulative/average totals), 'both'.",
+      "Choice of flow-aggregation method for this flowGroup: 'none' (used for flow limits only, no aggregated output), 'dispatch_plots_only' (used as an aggregated flowGroup within 'print_dispatch' group of nodes - do not include one flow in multiple flow aggregators to avoid double counting), 'standalone_aggregator_only' (just make time series available for manual output processing / simple plots), 'both'.",
       "output"
     ],
     [
@@ -950,7 +950,7 @@
       "print_dispatch",
       null,
       "yes_no",
-      "Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_node_flows.",
+      "Combines unit/connection flows, flowGroup aggregated flows, and other balance elements (slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group.",
       "output"
     ],
     [
@@ -958,7 +958,7 @@
       "print_indicators",
       null,
       "yes_no",
-      "Flag to output node-group indicator results for groups whose members are nodes (group__node).",
+      "Output indicators for the set of nodes in the group (Loss of Load, VRE generation, etc.).",
       "output"
     ],
     [
