@@ -324,11 +324,6 @@
     ],
     [
       "group",
-      "anti_energy_group",
-      null
-    ],
-    [
-      "group",
       "capacity_margin",
       null
     ],
@@ -6955,26 +6950,6 @@
     ],
     [
       "group",
-      "anti_energy_group",
-      "flow_aggregator",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
-      "anti_energy_group",
-      "output_nodeGroup_dispatch",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
       "capacity_margin",
       "capacity_margin",
       [
@@ -7076,16 +7051,6 @@
     [
       "group",
       "east_group",
-      "flow_aggregator",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "aggregate_outputs"
-    ],
-    [
-      "group",
-      "east_group",
       "output_nodeGroup_dispatch",
       [
         "InllcyI=",
@@ -7102,16 +7067,6 @@
         "str"
       ],
       "aggregate_outputs"
-    ],
-    [
-      "group",
-      "electricity",
-      "flow_aggregator",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "init"
     ],
     [
       "group",
@@ -7182,16 +7137,6 @@
         "str"
       ],
       "init"
-    ],
-    [
-      "group",
-      "to_west_node",
-      "output_nodeGroup_dispatch",
-      [
-        "InllcyI=",
-        "str"
-      ],
-      "aggregate_outputs"
     ],
     [
       "group",
