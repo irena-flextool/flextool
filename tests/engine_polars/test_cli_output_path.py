@@ -7,11 +7,14 @@ read it back to find each scenario's parquet).  The five tiers, in
 precedence order:
 
   1. explicit ``--output-location`` wins,
-  2. ``--project-folder-file`` CONTENTS name a project folder (user-local
-     redirect; relative lines anchored at the file's ``.parent.parent``),
+  2. ``--project-folder-file`` — a supplied file is a COMPLETE replacement
+     for ``--flextool-location`` and NEVER falls through to CWD: its
+     CONTENTS name a project folder (relative lines anchored at the file's
+     ``.parent.parent``) when present, else the file's ``.parent.parent``
+     repo root,
   3. GUI project layout ``<project>/input_sources/<db>.sqlite`` → ``<project>``,
   4. legacy ``--flextool-location``.parent.parent,
-  5. CWD fallback.
+  5. CWD fallback (reached only when no ``--project-folder-file`` is supplied).
 
 These are pure path-logic tests; no DB is read and nothing is solved.
 """
@@ -103,12 +106,16 @@ def test_pff_absolute_line_used_verbatim(tmp_path):
     assert out == abs_target
 
 
-def test_pff_comment_only_falls_through(tmp_path):
-    """A comment-only / blank project-folder file does NOT fire tier 2 —
-    resolution falls through (here to CWD, tier 5)."""
+def test_pff_comment_only_anchors_at_repo_root(tmp_path):
+    """A comment-only / blank project-folder file does NOT fall through to
+    CWD: a supplied --project-folder-file is a complete replacement for
+    --flextool-location, so the content-less file anchors at the file's
+    ``.parent.parent`` (the FlexTool repo root).  This matches the seeded
+    template's own comment ("Leave blank to use the FlexTool root")."""
+    repo = tmp_path / "FlexTool"
     cwd = tmp_path / "cwd"
     pff = _write_pff(
-        tmp_path / "FlexTool" / "templates" / "project_folder.txt",
+        repo / "templates" / "project_folder.txt",
         "# only comments here\n#   projects/Nope\n\n   \n",
     )
     out = resolve_output_path(
@@ -118,13 +125,17 @@ def test_pff_comment_only_falls_through(tmp_path):
         cwd=cwd,
         project_folder_file=str(pff),
     )
-    assert out == Path(cwd)
+    # repo root = templates/project_folder.txt -> .parent.parent
+    assert out == repo.resolve()
+    assert out != Path(cwd)
 
 
-def test_pff_empty_file_falls_through(tmp_path):
-    """A completely empty project-folder file falls through to CWD."""
+def test_pff_empty_file_anchors_at_repo_root(tmp_path):
+    """A completely empty project-folder file anchors at the file's repo
+    root (``.parent.parent``), NOT CWD."""
+    repo = tmp_path / "FlexTool"
     cwd = tmp_path / "cwd"
-    pff = _write_pff(tmp_path / "FlexTool" / "templates" / "project_folder.txt", "")
+    pff = _write_pff(repo / "templates" / "project_folder.txt", "")
     out = resolve_output_path(
         input_db_url=None,
         flextool_location=None,
@@ -132,14 +143,20 @@ def test_pff_empty_file_falls_through(tmp_path):
         cwd=cwd,
         project_folder_file=str(pff),
     )
-    assert out == Path(cwd)
+    assert out == repo.resolve()
+    assert out != Path(cwd)
 
 
-def test_pff_missing_file_no_crash_falls_through(tmp_path):
-    """A missing project-folder file does NOT crash — tier 2 is skipped and
-    resolution falls through to the next applicable tier (CWD here)."""
+def test_pff_missing_file_anchors_at_repo_root(tmp_path):
+    """A MISSING project-folder file does NOT crash and does NOT fall
+    through to CWD.  For a missing file the ``.parent.parent`` of the
+    GIVEN path is still well-defined, so resolution anchors at the
+    FlexTool repo root the seeded file would have lived under.  (Normally
+    the file IS present — seeded by self_update — but the resolver must
+    stay robust if it has been deleted.)"""
+    repo = tmp_path / "FlexTool"
     cwd = tmp_path / "cwd"
-    missing = tmp_path / "FlexTool" / "templates" / "project_folder.txt"  # never created
+    missing = repo / "templates" / "project_folder.txt"  # never created
     out = resolve_output_path(
         input_db_url=None,
         flextool_location=None,
@@ -147,7 +164,10 @@ def test_pff_missing_file_no_crash_falls_through(tmp_path):
         cwd=cwd,
         project_folder_file=str(missing),
     )
-    assert out == Path(cwd)
+    # .parent.parent of the given path == the (would-be) repo root.
+    assert out == missing.resolve().parent.parent
+    assert out == repo.resolve()
+    assert out != Path(cwd)
 
 
 def test_output_location_wins_over_project_folder_file(tmp_path):
@@ -188,6 +208,27 @@ def test_pff_beats_input_sources_layout(tmp_path):
     )
     assert out == target
     assert out != project.resolve()
+
+
+def test_pff_blank_does_not_reach_input_sources_or_cwd(tmp_path):
+    """A supplied-but-blank --project-folder-file pre-empts tiers 3-5
+    entirely: even with an input_sources-layout DB present (tier 3) and a
+    distinct CWD (tier 5), resolution anchors at the PFF's repo root."""
+    repo = tmp_path / "FlexTool"
+    project = tmp_path / "projects" / "Foo"
+    db = _touch_db(project / "input_sources" / "in.sqlite")
+    cwd = tmp_path / "cwd"
+    pff = _write_pff(repo / "templates" / "project_folder.txt", "# blank\n")
+    out = resolve_output_path(
+        input_db_url=f"sqlite:///{db}",
+        flextool_location=str(tmp_path / "anchor" / "templates" / "x.txt"),
+        output_location=None,
+        cwd=cwd,
+        project_folder_file=str(pff),
+    )
+    assert out == repo.resolve()
+    assert out != project.resolve()
+    assert out != Path(cwd)
 
 
 # ---------------------------------------------------------------------------

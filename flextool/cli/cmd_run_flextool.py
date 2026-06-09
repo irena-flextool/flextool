@@ -184,9 +184,19 @@ def resolve_output_path(input_db_url, flextool_location, output_location, cwd,
        ``file.resolve().parent.parent`` — the SAME anchor the legacy
        ``--flextool-location`` walk uses, so a ``templates/
        project_folder.txt`` line of ``projects/Rivendell`` lands the
-       output at ``<repo>/projects/Rivendell``.  If the file is missing,
-       unreadable, empty, or comment-only this tier does NOT fire (it
-       falls through to the next tier — no crash).
+       output at ``<repo>/projects/Rivendell``.
+
+       **A supplied ``--project-folder-file`` is a COMPLETE replacement
+       for the legacy ``--flextool-location`` and therefore NEVER falls
+       through to CWD.**  When the file is missing, unreadable, empty, or
+       comment-only — i.e. its CONTENTS name no folder — this tier still
+       fires, falling back to the FILE'S repo anchor
+       (``Path(project_folder_file).resolve().parent.parent``), the same
+       FlexTool root the legacy ``--flextool-location`` walk produced.
+       This matches the seeded ``templates/project_folder.txt`` whose own
+       comment says "Leave blank to use the FlexTool root".  Only when
+       ``--project-folder-file`` was NOT supplied at all (None / empty
+       arg) does resolution continue to tiers 3-5.
 
     3. **GUI-project layout.**  When the input DB file sits directly inside
        a directory named ``input_sources`` (the FlexTool GUI project
@@ -211,10 +221,26 @@ def resolve_output_path(input_db_url, flextool_location, output_location, cwd,
     if output_location:
         return Path(output_location)
 
-    # Tier 2 — project-folder file: CONTENTS name the project folder.
-    project_folder = _read_project_folder_file(project_folder_file)
-    if project_folder is not None:
-        return project_folder
+    # Tier 2 — project-folder file.  A supplied --project-folder-file is a
+    # COMPLETE replacement for --flextool-location: it ALWAYS yields an
+    # output root and never falls through to CWD.  Its CONTENTS name the
+    # project folder when present; otherwise (blank / comment-only /
+    # missing / unreadable) we fall back to the FILE'S repo anchor
+    # (.parent.parent), the same FlexTool root the legacy
+    # --flextool-location walk produced.  Only an unsupplied (None / empty)
+    # arg lets resolution continue to tiers 3-5.
+    if project_folder_file:
+        project_folder = _read_project_folder_file(project_folder_file)
+        if project_folder is not None:
+            return project_folder
+        # CONTENTS name no folder — anchor at the file's repo root.
+        try:
+            return Path(project_folder_file).resolve().parent.parent
+        except OSError:
+            # ``resolve()`` should not raise for a plain path on POSIX even
+            # when it doesn't exist, but degrade without crashing if it
+            # ever does: anchor at the un-resolved path's .parent.parent.
+            return Path(project_folder_file).parent.parent
 
     # Tier 3 — GUI project layout: <project>/input_sources/<db>.sqlite.
     db_fs_path = _input_db_filesystem_path(input_db_url)
@@ -246,11 +272,14 @@ def _read_project_folder_file(project_folder_file):
     project_folder.txt`` line of ``projects/Rivendell`` maps to
     ``<repo>/projects/Rivendell``.
 
-    Returns a :class:`~pathlib.Path` when a usable project folder is
-    found, or ``None`` when the path arg is empty, the file is missing /
-    unreadable, or it has no non-comment content (so the caller falls
-    through to the next tier).  Robust: any read error → ``None`` (never
-    raises).
+    Returns a :class:`~pathlib.Path` when the file's CONTENTS name a
+    usable project folder, or ``None`` when the path arg is empty, the
+    file is missing / unreadable, or it has no non-comment content.  A
+    ``None`` return does NOT mean "fall through to CWD": the caller
+    (``resolve_output_path``) treats a supplied-but-content-less
+    ``--project-folder-file`` as the FlexTool root by anchoring at the
+    file's ``.parent.parent`` — so this tier never reaches CWD once the
+    arg is supplied.  Robust: any read error → ``None`` (never raises).
     """
     if not project_folder_file:
         return None
@@ -380,11 +409,16 @@ def main():
                              'a relative path is resolved against the file\'s '
                              'repo anchor (its .parent.parent).  Spine Toolbox '
                              'points this at templates/project_folder.txt '
-                             '(gitignored, seeded by flextool-update).  A '
-                             'missing / empty / comment-only file is ignored. '
-                             'Lower precedence than --output-location, higher '
-                             'than the input_sources/ layout and '
-                             '--flextool-location.')
+                             '(gitignored, seeded by flextool-update).  This '
+                             'flag is a COMPLETE replacement for '
+                             '--flextool-location: a missing / empty / '
+                             'comment-only file does NOT fall through to the '
+                             'work dir but anchors at the file\'s repo root '
+                             '(its .parent.parent), so a supplied '
+                             '--project-folder-file never lands outputs in '
+                             'the CWD.  Lower precedence than '
+                             '--output-location, higher than the '
+                             'input_sources/ layout and --flextool-location.')
     parser.add_argument('--work-folder', metavar='PATH', default=None,
                         help='Working directory for intermediate files (default: current directory). '
                              'Enables parallel scenario execution by isolating each run.')
@@ -620,12 +654,16 @@ def main():
     # the "Output info" DB as scenario/output_location) is resolved by a
     # 5-tier rule (see ``resolve_output_path`` for the full rationale):
     #   1. ``--output-location``                         (explicit wins),
-    #   2. ``--project-folder-file`` CONTENTS            (user-local
-    #      name a project folder                          redirect),
+    #   2. ``--project-folder-file``                     (user-local
+    #      CONTENTS name a project folder; when blank/    redirect; a
+    #      missing, the file's .parent.parent repo root)  supplied file
+    #                                                      NEVER falls
+    #                                                      through to CWD),
     #   3. ``<project>`` when the input DB sits in an    (GUI project
     #      ``input_sources/`` dir                         layout),
     #   4. ``--flextool-location``.parent.parent         (legacy bridge),
     #   5. CWD                                            (fallback).
+    # Tiers 3-5 are only reached when NO --project-folder-file is supplied.
     output_path = resolve_output_path(
         input_db_url=args.input_db_url,
         flextool_location=args.flextool_location,
