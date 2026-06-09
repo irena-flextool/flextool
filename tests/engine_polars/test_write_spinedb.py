@@ -279,13 +279,13 @@ def test_two_way_connection_warns(caplog):
         "connection_dt_eee": _net_flow_df("cBi", [5.0, -3.0]),
     }
     with caplog.at_level(
-        logging.WARNING, logger="flextool.process_outputs.spinedb_replay"
+        logging.DEBUG, logger="flextool.process_outputs.spinedb_replay"
     ):
         build_replay_s(results)
     msgs = [r.getMessage() for r in caplog.records
             if "bidirectional" in r.getMessage()]
-    assert msgs, "no 2-way warning emitted for a bidirectional connection"
-    assert any("cBi" in m for m in msgs), f"warning did not name cBi: {msgs}"
+    assert msgs, "no 2-way breadcrumb emitted for a bidirectional connection"
+    assert any("cBi" in m for m in msgs), f"breadcrumb did not name cBi: {msgs}"
 
 
 def test_one_way_connection_does_not_warn(caplog):
@@ -297,12 +297,12 @@ def test_one_way_connection_does_not_warn(caplog):
         "connection_dt_eee": _net_flow_df("cUni", [5.0, 3.0]),
     }
     with caplog.at_level(
-        logging.WARNING, logger="flextool.process_outputs.spinedb_replay"
+        logging.DEBUG, logger="flextool.process_outputs.spinedb_replay"
     ):
         s = build_replay_s(results)
     msgs = [r.getMessage() for r in caplog.records
             if "bidirectional" in r.getMessage()]
-    assert not msgs, f"unexpected 2-way warning for a 1-way connection: {msgs}"
+    assert not msgs, f"unexpected 2-way breadcrumb for a 1-way connection: {msgs}"
     # 1-way triple round-trips exactly (source=left, sink=right).
     assert list(s.process_source_sink) == [("cUni", "west", "east")]
 

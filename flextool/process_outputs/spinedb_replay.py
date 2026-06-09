@@ -359,13 +359,16 @@ def _warn_two_way_connections(results: dict, connections: set) -> None:
     )
     if not two_way:
         return
-    logger.warning(
-        "spinedb replay: %d bidirectional (2-way) connection(s) detected "
-        "(%s). The (source, sink) node ordering of their "
-        "'connection__node__node' byname — and therefore which physical node "
-        "the flow_to_first_node / flow_to_second_node params describe — is "
-        "NOT recoverable from the processed parquet bundle and may be swapped "
-        "relative to a native solve. 1-way connections are exact.",
+    # The maintainer has accepted the parquet-derived (node_1, node_2)
+    # geometry as the canonical (source, sink) ordering on the replay path,
+    # so this is the intended convention — not a defect.  Emit a quiet debug
+    # breadcrumb (the ordering may differ from a native solve's
+    # lexicographic pick for these connections) without spamming normal runs.
+    logger.debug(
+        "spinedb replay: %d bidirectional (2-way) connection(s) (%s) use the "
+        "parquet (node_1, node_2) geometry for their 'connection__node__node' "
+        "(source, sink) byname; this may differ from a native solve's "
+        "ordering. 1-way connections are exact.",
         len(two_way), ", ".join(two_way),
     )
 

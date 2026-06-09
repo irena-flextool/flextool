@@ -319,9 +319,9 @@ def test_spinedb_parquet_replay_matches_native_multisolve(
         flex_data_provider=last_step.flex_data_provider,
     )
 
-    # --- 3. replay: spinedb from the processed parquet (capture warnings) ---
+    # --- 3. replay: spinedb from the processed parquet (capture breadcrumb) ---
     with caplog.at_level(
-        logging.WARNING, logger="flextool.process_outputs.spinedb_replay"
+        logging.DEBUG, logger="flextool.process_outputs.spinedb_replay"
     ):
         write_outputs(
             **common,
@@ -398,16 +398,16 @@ def test_spinedb_parquet_replay_matches_native_multisolve(
         f"keys) differ between native and replay: {mismatches[:10]}"
     )
 
-    # (c) the bidirectional connection must trigger the 2-way replay warning,
-    # naming it.  (For a 1-way connection no such warning fires — verified by
+    # (c) the bidirectional connection emits the 2-way replay debug breadcrumb,
+    # naming it.  (For a 1-way connection no such breadcrumb fires — verified by
     # the single-solve test, whose connection is unidirectional and exact.)
     two_way_warnings = [
         r.getMessage() for r in caplog.records
-        if r.levelno >= logging.WARNING
+        if r.levelno >= logging.DEBUG
         and "bidirectional" in r.getMessage()
     ]
     assert two_way_warnings, (
-        "expected a 2-way connection warning on the replay path for "
+        "expected a 2-way connection breadcrumb on the replay path for "
         f"{_MULTISOLVE_TWO_WAY_CONN!r}, got none"
     )
     assert any(
