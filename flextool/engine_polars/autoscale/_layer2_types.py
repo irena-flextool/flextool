@@ -193,6 +193,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Node balance (the central energy equation) — ENERGY.
     # flextool/engine_polars/model.py:1336
     "nodeBalance_eq": CstrFamily(QuantityType.ENERGY),
+    # Per-period energy balance for balance_within_period nodes — ENERGY.
+    # flextool/engine_polars/model.py:nodeBalancePeriod_eq
+    "nodeBalancePeriod_eq": CstrFamily(QuantityType.ENERGY),
     # flextool/engine_polars/model.py:1792
     "nodeBalanceBlock_eq": CstrFamily(QuantityType.ENERGY),
 
