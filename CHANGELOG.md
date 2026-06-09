@@ -1,4 +1,61 @@
-## Unreleased — Spine Toolbox ↔ project interoperability
+## Release 4.0.0b6 (10.6.2026) — period energy balance; flowGroup carve-out; Spine Toolbox ↔ project interoperability
+
+Requires a **database migration to v58** (`FLEXTOOL_DB_VERSION` 57 → 58; carves
+`flowGroup` out of the `group` class — see below). Dependency floors are
+unchanged (`polars>=1.40`, `polar-high>=2.4.0`, `highspy<=1.14.0`). The release
+is LP-neutral / byte-identical to b5 on all existing fixtures; the sole results
+change is the `balance_within_period` correctness fix, which only moves numbers
+for nodes that actually carry that method under non-uniform timeslice weights.
+
+### Period energy balance — `balance_within_period` nodes
+
+Ports the legacy `balance_within_period` node type to the polars engine
+(`nodeBalancePeriod_eq`): a per-`(node, period)` energy balance for annual-budget
+nodes (e.g. a yearly gas-import node), closing a bug where such a node was a free
+unconstrained source.
+
+- Emit `nodeBalancePeriod_eq` — one row per `(n, period)`, each flow/slack term
+  summed over `t` with RHS `-Σ_t inflow`, no storage / self-discharge terms,
+  excluding nodes that also carry a state; the `vq_state_up/down` slack domain is
+  widened to `nodeBalance ∪ nodeBalancePeriod`. Gated to a no-op (and collapses
+  to the per-`dt` `nodeBalance_eq`) when no period nodes are present.
+- **Annualize** every period-balance term (flows, sections, back-flow, slacks,
+  and the inflow RHS) by the per-`(d,t)` timeslice representativeness weight that
+  the cost objective, demand scaling, and the `dt→d` energy/emission outputs
+  already use — so a representative/timeslice-weighted solve conserves *physical
+  annual* energy, not the unweighted timeslice sum (verified: per-period
+  import/draw 0.838 → 1.000000, slack 0). The per-`dt` balance correctly omits
+  the weight; only a *period* balance annualizes.
+- Rename the internal `p_rp_cost_weight` → **`p_timestep_weight`** (Python field,
+  builder, output attribute, and wire-key): it is a temporal representativeness
+  weight — neither RP-specific nor a cost weight — that drives demand, energy and
+  cost annualization alike. No autoscale-registry or schema change.
+
+### flowGroup carve-out (schema v58)
+
+Splits the overloaded SpineDB `group` class: `group` keeps the node-balance /
+system / investment / structural concerns, and a new **`flowGroup`** class
+(3-dim `(process, node)` membership) owns the flow limits and aggregation.
+
+- New `flowGroup` entity class + `group__unit__node` / `group__connection__node`
+  re-homed to `flowGroup__*`; the engine read/solve path (flow-limit readers, the
+  3-dim membership index-set populator, `_param_shapes` allow-list, autoscale
+  `PARAMETER_TYPES`) now resolves the four flow-limit params against `flowGroup`.
+- `flow_aggregator` becomes a **method enum**
+  (`none` / `dispatch_plots_only` / `standalone_aggregator_only` / `both`) that
+  subsumes the dropped boolean `output_flowGroup_indicators`;
+  `output_nodeGroup_dispatch` / `output_nodeGroup_indicators` are renamed to
+  **`print_dispatch`** / **`print_indicators`**.
+- A **double-count overlap warning**: a flow arc bound into two dispatch-bound
+  aggregators (`dispatch_plots_only` / `both`) is named loudly — this was the
+  root-cause class that motivated the carve-out; overlap among standalone
+  aggregators is legitimate and not warned.
+- New signed `group_flow__dt.csv` standalone timewise output; fixes a latent
+  `group_process_node` backfill bug; heals missing DC-power-flow parameter
+  metadata. Migration authored with corrected `flowGroup` / `print_*`
+  descriptions. Validated LP-neutral by the full scenario suite.
+
+### Spine Toolbox ↔ project interoperability
 
 The Spine Toolbox workflow becomes a first-class peer of the FlexTool GUI: a
 Toolbox run now roots **all** its outputs at a user-chosen **project folder**,
@@ -6,7 +63,7 @@ the per-project `plot_settings.yaml` is honored, and a results SpineDB can be
 produced from the processed parquet without re-solving. **No forced migration**
 — existing workflows keep working unchanged.
 
-### Project-folder output rooting
+#### Project-folder output rooting
 
 - A Toolbox run roots `output_parquet/`, `results.sqlite`, plots, and the
   per-project `plot_settings.yaml` at a **project folder** instead of the repo
@@ -22,7 +79,7 @@ produced from the processed parquet without re-solving. **No forced migration**
   `--flextool-location` CLI argument still works as a fallback for old / forked
   setups.
 
-### Results SpineDB from parquet replay
+#### Results SpineDB from parquet replay
 
 - The **"Re-create results"** step now writes `<project>/results.sqlite` (each
   scenario as a Spine *alternative*) by **replaying the processed parquet — no
@@ -35,13 +92,13 @@ produced from the processed parquet without re-solving. **No forced migration**
   `(source, sink)` byname uses the parquet `(node_1, node_2)` geometry (1-way
   connections are exact). Everything else matches a native-solve results DB.
 
-### Per-project plot_settings in Toolbox
+#### Per-project plot_settings in Toolbox
 
 - A `plot_settings.yaml` placed in the project folder is now honored by both the
   per-scenario plots and the comparison plots in the Toolbox track (previously
   it silently used the bundled default).
 
-### GUI interoperability
+#### GUI interoperability
 
 - Outputs under `projects/<Name>/output_parquet/<scenario>/` are picked up
   automatically by the FlexTool GUI (the folder name is the result identity; a
@@ -49,10 +106,13 @@ produced from the processed parquet without re-solving. **No forced migration**
   run a GUI-made project by pointing "Input data" at the project's input DB and
   setting `project_folder.txt` to that project.
 
-### Migration
+#### Migration
 
 - Run `flextool-update` — it seeds `templates/project_folder.txt` and refreshes
-  the settings DBs (which already carry the `output-spinedb` option).
+  the settings DBs. The refresh now **back-fills new parameter definitions**
+  (e.g. `output-spinedb`) into *existing* settings DBs that predate them — schema
+  only, so existing user choices are preserved — so options added in later
+  versions appear in the editor without rebuilding the DB by hand.
 - **Only if** you forked / customized `.spinetoolbox/project.json`: update the
   FlexTool Tool's command argument from `--flextool-location …` to
   `--project-folder-file <project>/templates/project_folder.txt`.
