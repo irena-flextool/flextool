@@ -16,7 +16,7 @@ verify the same correctness assertions"):
    index; ``rp_cost_weight.csv`` with the canonical
    ``period,time,weight`` header; the inflation / period_share
    files needed to make ``_load_time`` succeed).
-2. Drive ``_load_time`` and inspect ``p_rp_cost_weight.frame``.
+2. Drive ``_load_time`` and inspect ``p_timestep_weight.frame``.
 3. Assert the same correctness invariants the flextool writer-test
    pins:
    * The handoff example {0.4, 0.8, 1.2, 1.6} loads verbatim.
@@ -28,7 +28,7 @@ verify the same correctness assertions"):
 
 The flextool writer guarantees the on-disk file already encodes
 the *normalized × n* values; this test pins the loader contract
-that produces ``p_rp_cost_weight`` from that file.
+that produces ``p_timestep_weight`` from that file.
 """
 from __future__ import annotations
 

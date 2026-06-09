@@ -28,7 +28,7 @@ Variables covered
 * ``vq_capacity_margin``                  — per-period group slack (MW)
 * ``vq_inertia``                          — per-timestep dimensionless slack
 * ``vq_non_synchronous``                  — per-timestep group slack (MW)
-* ``p_rp_cost_weight``                    — per-(period, timestep) weight
+* ``p_timestep_weight``                   — per-(period, timestep) weight
 * Pre-existing fixed cost / divest fixed cost (constants)
 
 Semantic classes

@@ -8,7 +8,7 @@ vacuously because the multiplier is *constructed* to invert the
 aggregation, so it would not catch a wrong formula).
 
 The load-bearing number is ``period_flow_annual_multiplier`` (``M``): A1
-builds it from the WEIGHTED sum ``Σ_t I·w`` (``w = p_rp_cost_weight``).
+builds it from the WEIGHTED sum ``Σ_t I·w`` (``w = p_timestep_weight``).
 Pinning ``M`` to its hand value catches a regression to the old uniform
 annualisation (which would give a different ``M``).  We also replay the A4
 output aggregation (``Σ scaled·w / cpsoy``) and check it lands on the hand

@@ -4,7 +4,7 @@ This module covers the first batch of Derived Params per the
 ``audit/db_direct_param_map.md`` §3 deep-dive:
 
 * ``§3.1`` Time / weighting:
-  ``dt`` / ``p_step_duration``, ``p_rp_cost_weight``,
+  ``dt`` / ``p_step_duration``, ``p_timestep_weight``,
   ``p_inflation_op``, ``p_period_share``.
 * ``§3.2`` Nodes:
   ``p_inflow`` (scaling step on top of node.inflow Map).
@@ -27,7 +27,7 @@ once per public function.
 
 Per-solve scope
 ---------------
-Several Params (``dt``, ``p_step_duration``, ``p_rp_cost_weight``,
+Several Params (``dt``, ``p_step_duration``, ``p_timestep_weight``,
 ``pdt_branch_weight``, ``pd_branch_weight``) are per-active-solve.  The
 helpers accept an explicit ``active_solve`` argument; the
 :func:`apply_derived_a` integration entrypoint reads
@@ -713,11 +713,11 @@ def p_inflation_op_from_source(
 
 
 # ---------------------------------------------------------------------------
-# §3.1.2 — p_rp_cost_weight
+# §3.1.2 — p_timestep_weight
 # ---------------------------------------------------------------------------
 
 
-def p_rp_cost_weight_from_source(
+def p_timestep_weight_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
     active_solve: str | None = None,
@@ -1277,7 +1277,7 @@ DERIVED_A_FIELDS = (
     "p_step_duration",
     "p_period_share",
     "p_inflation_op",
-    "p_rp_cost_weight",
+    "p_timestep_weight",
     "pd_branch_weight",
     "pdt_branch_weight",
     "p_inflow",
@@ -1303,7 +1303,7 @@ def apply_derived_a(
     in place.
 
     Δ.12b — assignment is unconditional for the helpers that are
-    authoritative producers (``p_inflation_op``, ``p_rp_cost_weight``,
+    authoritative producers (``p_inflation_op``, ``p_timestep_weight``,
     ``pd_branch_weight``, ``pdt_branch_weight``, ``p_penalty_up``,
     ``p_penalty_down``).  ``p_inflow`` and ``p_process_existing_count``
     retain a conditional assignment because the helpers have known
@@ -1314,7 +1314,7 @@ def apply_derived_a(
 
     Dependency order:
         dt / p_step_duration → p_period_share, p_inflation_op,
-        p_rp_cost_weight, pd_branch_weight, pdt_branch_weight, p_inflow
+        p_timestep_weight, pd_branch_weight, pdt_branch_weight, p_inflow
         → p_process_existing_count, p_profile_value (high-risk, last).
     """
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
@@ -1384,10 +1384,10 @@ def apply_derived_a(
     flex_data.p_inflation_op = p_inflation_op_from_source(
         source, usable_dt, active_solve)
 
-    # 4. p_rp_cost_weight — Δ.12b: unconditional.  None == no
+    # 4. p_timestep_weight — Δ.12b: unconditional.  None == no
     #    timeset.timeset_weights declared (default 1.0 broadcast handled
     #    inside the helper).
-    flex_data.p_rp_cost_weight = p_rp_cost_weight_from_source(
+    flex_data.p_timestep_weight = p_timestep_weight_from_source(
         source, usable_dt, active_solve)
 
     # 5. pd_branch_weight + pdt_branch_weight — Δ.12b: unconditional.

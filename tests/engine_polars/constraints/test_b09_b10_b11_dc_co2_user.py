@@ -129,7 +129,7 @@ def _build_dc_2bus(
         pl.DataFrame({"p": ["line"], "value": [susceptance]}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -275,7 +275,7 @@ def test_b10_co2_max_period_g_d_cardinality(toy_2node_chp):
            .select("p", "d", "t", "value"))
     process_indirect_dt = d.process_indirect.join(dt2, how="cross")
     d2 = dataclasses.replace(d,
-        dt=dt2, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt2, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance_dt=nb_dt2, p_inflow=p_inflow,
         p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -356,7 +356,7 @@ def _toy_2node_chp_with_co2_total(d: FlexData, *,
            .select("p", "d", "t", "value"))
     process_indirect_dt = d.process_indirect.join(dt2, how="cross")
     return dataclasses.replace(new,
-        dt=dt2, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt2, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance_dt=nb_dt2, p_inflow=p_inflow,
         p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -542,7 +542,7 @@ def _add_user_constraint_storage_invest(d: FlexData) -> FlexData:
         pl.DataFrame({"p": ["p"], "cn": ["c1"], "value": [1.0]}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -634,7 +634,7 @@ def _make_dummy() -> FlexData:
     return FlexData(
         dt=dt,
         p_step_duration=Param(("d", "t"), dt.with_columns(value=pl.lit(1.0))),
-        p_rp_cost_weight=Param(("d", "t"), dt.with_columns(value=pl.lit(1.0))),
+        p_timestep_weight=Param(("d", "t"), dt.with_columns(value=pl.lit(1.0))),
         p_inflation_op=Param(("d",), pl.DataFrame({"d": ["d1"], "value": [1.0]})),
         p_period_share=Param(("d",), pl.DataFrame({"d": ["d1"], "value": [1.0]})),
         nodeBalance=pl.DataFrame({"n": ["x"]}),

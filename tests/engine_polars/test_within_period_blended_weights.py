@@ -226,7 +226,7 @@ def _build_toy_rp_two_periods(*, method: str) -> FlexData:
         rp_base_last = pl.DataFrame({"b": ["b30"]})
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rpcw,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rpcw,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pup, p_penalty_down=p_pdn,

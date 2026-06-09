@@ -325,7 +325,7 @@ def test_storage_handoff_wiring_sc_b_fix_price(toy_storage_2t):
     when ``p_storage_state_reference_price`` is populated and
     ``nodeState_last_dt`` + ``period_last`` are present.
 
-    Hand-calc with unit weights (``p_rp_cost_weight=1``,
+    Hand-calc with unit weights (``p_timestep_weight=1``,
     ``p_inflation_op=1``, ``p_period_share=1``, no ``pdt_branch_weight``):
 
         ref_price_factor = 1.0

@@ -423,7 +423,7 @@ def add_constraints(
     p_unitsize=None,
     p_slope=None,
     p_step_duration=None,
-    p_rp_cost_weight=None,
+    p_timestep_weight=None,
     flow_from_commodity_eff=None,
     flow_from_commodity_noEff=None,
     flow_to_commodity=None,
@@ -438,7 +438,7 @@ def add_constraints(
         Process unitsize ``p_entity_unitsize[p]``.
     p_slope : Param
         Process efficiency slope ``pdtProcess_slope[p, d, t]``.
-    p_step_duration, p_rp_cost_weight : Param
+    p_step_duration, p_timestep_weight : Param
         Time-weight params.
     flow_from_commodity_eff / flow_from_commodity_noEff : pl.DataFrame
         Buy-side index frames ``(p, source, sink, c)``.  ``source``
@@ -474,7 +474,7 @@ def add_constraints(
     # Each contributes weighted v_flow.  Result is summed over
     # (p, source, sink, t) to give a (c, n, d) aggregate.
     rhs_terms: list = []
-    weight = (p_step_duration * p_rp_cost_weight) if p_step_duration is not None else None
+    weight = (p_step_duration * p_timestep_weight) if p_step_duration is not None else None
 
     if (flow_from_commodity_eff is not None
             and flow_from_commodity_eff.height > 0

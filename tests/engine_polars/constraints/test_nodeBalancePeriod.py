@@ -128,7 +128,7 @@ def _period_node_data(flow_cap: float, penalty: float = 1e6) -> FlexData:
           .select("c", "d", "t", "value"))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nodeBalance, nodeBalance_dt=nodeBalance_dt,
         nodeBalancePeriod=nbp,
@@ -412,7 +412,7 @@ def _source_drained_period_data(*, slope: float = 1.0,
                              "value": pl.Float64}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nodeBalance, nodeBalance_dt=nodeBalance_dt,
         nodeBalancePeriod=nbp,
@@ -529,10 +529,10 @@ def test_nodeBalancePeriod_source_term_slope_scaled():
 
 
 # ---------------------------------------------------------------------------
-# (5) — NON-UNIFORM rp_cost_weight.  Every fixture above uses
-# ``p_rp_cost_weight ≡ 1`` and so cannot catch the annualization bug: the
+# (5) — NON-UNIFORM timestep_weight.  Every fixture above uses
+# ``p_timestep_weight ≡ 1`` and so cannot catch the annualization bug: the
 # per-period balance must weight each ``(d, t)`` flow term by
-# ``rp_cost_weight`` BEFORE collapsing ``t`` (the per-(d,t) ``nodeBalance_eq``
+# ``timestep_weight`` BEFORE collapsing ``t`` (the per-(d,t) ``nodeBalance_eq``
 # correctly omits it — each step balances locally — but a PERIOD/annual
 # balance integrates each timeslice into its annual contribution).  Without
 # the weight the LP balances UNWEIGHTED timeslice sums and games it by
@@ -544,7 +544,7 @@ def test_nodeBalancePeriod_source_term_slope_scaled():
 # takes the rp-WEIGHTED value (NOT the unweighted one), which only holds
 # WITH the weight folded into both the LHS flow terms and the RHS inflow.
 
-# rp_cost_weight per timestep — deliberately NON-uniform.
+# timestep_weight per timestep — deliberately NON-uniform.
 _W_T01 = 1.0
 _W_T02 = 3.0
 # B's per-step demand (negative = draw) forces v_flow[t] == |demand[t]|.
@@ -567,10 +567,10 @@ _GW_UNWEIGHTED_SLACK = ((-_BW_DEMAND_T01) + (-_BW_DEMAND_T02)) - (2 * _GW_INFLOW
 def _nonuniform_weight_period_data(*, b_penalty: float = 1e9,
                                    g_penalty: float = 1.0) -> FlexData:
     """SOURCE-drain topology (period node ``G`` → process ``p`` → load ``B``)
-    with NON-UNIFORM ``p_rp_cost_weight`` across the two timesteps.
+    with NON-UNIFORM ``p_timestep_weight`` across the two timesteps.
 
     Identical wiring to :func:`_source_drained_period_data` (slope ≡ 1) but
-    with ``p_rp_cost_weight = [_W_T01, _W_T02] = [1.0, 3.0]``.  ``B``'s load
+    with ``p_timestep_weight = [_W_T01, _W_T02] = [1.0, 3.0]``.  ``B``'s load
     slack is priced far above ``G``'s period slack so the optimum serves B's
     full per-step demand by drawing through ``p`` out of ``G`` (forcing
     ``v_flow[t] == |demand[t]|`` each step); ``G``'s ANNUAL (rp-weighted)
@@ -579,7 +579,7 @@ def _nonuniform_weight_period_data(*, b_penalty: float = 1e9,
     """
     dt = pl.DataFrame({"d": ["d1", "d1"], "t": ["t01", "t02"]})
     p_step = Param(("d", "t"), dt.with_columns(value=pl.lit(1.0)))
-    # NON-UNIFORM rp_cost_weight — the crux of this test.
+    # NON-UNIFORM timestep_weight — the crux of this test.
     p_rp = Param(("d", "t"), dt.with_columns(
         value=pl.when(pl.col("t") == "t01").then(pl.lit(_W_T01))
               .otherwise(pl.lit(_W_T02))))
@@ -630,7 +630,7 @@ def _nonuniform_weight_period_data(*, b_penalty: float = 1e9,
                              "value": pl.Float64}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nodeBalance, nodeBalance_dt=nodeBalance_dt,
         nodeBalancePeriod=nbp,
@@ -650,7 +650,7 @@ def _nonuniform_weight_period_data(*, b_penalty: float = 1e9,
 
 
 def test_nodeBalancePeriod_nonuniform_rp_weight_conserves_annual_energy():
-    """Decisive regression for the rp_cost_weight annualization fix.
+    """Decisive regression for the timestep_weight annualization fix.
 
     With NON-UNIFORM weights ``w = [1.0, 3.0]`` the rp-weighted draw out of
     ``G`` is ``1·3 + 3·10 = 33`` while the UNWEIGHTED draw is ``3 + 10 = 13``;
@@ -659,7 +659,7 @@ def test_nodeBalancePeriod_nonuniform_rp_weight_conserves_annual_energy():
     the only free variable in ``G``'s period row is its slack.
 
     WITH the fix (every LHS flow/slack term AND the RHS inflow weighted by
-    ``rp_cost_weight`` before the t-sum) the period row reads, in annual
+    ``timestep_weight`` before the t-sum) the period row reads, in annual
     energy units::
 
         −Σ_t w·v_flow + (up − dn) == −Σ_t w·inflow
@@ -677,7 +677,7 @@ def test_nodeBalancePeriod_nonuniform_rp_weight_conserves_annual_energy():
 
     # Sanity: the weights really are non-uniform (mirrors the S16 hypothesis
     # check — a uniform weight could not expose the bug).
-    wvals = sorted(data.p_rp_cost_weight.frame["value"].unique().to_list())
+    wvals = sorted(data.p_timestep_weight.frame["value"].unique().to_list())
     assert wvals == [_W_T01, _W_T02]
     assert _W_T01 != _W_T02
     # The weighted and unweighted slacks must differ, else the test is

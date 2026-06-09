@@ -204,7 +204,7 @@ _MUTABLE_PARAMS: tuple[str, ...] = (
     "p_state_start", "p_roll_continue_state",
     "p_fix_storage_quantity",
     "p_commodity_price",
-    "p_step_duration", "p_rp_cost_weight",
+    "p_step_duration", "p_timestep_weight",
     "p_inflation_op", "p_period_share",
     "p_node_capacity_for_scaling",
     "p_state_existing_capacity",
@@ -247,7 +247,7 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     "p_penalty_up", "p_penalty_down",
     # Time-weight composites that touch every (d,t)-keyed obj/lhs term.
     "p_step_duration", "p_inflation_op",
-    "p_period_share", "p_rp_cost_weight",
+    "p_period_share", "p_timestep_weight",
     # Storage handoff / anchor — multi-cstr.
     "p_state_start", "p_roll_continue_state",
     "p_fix_storage_quantity", "p_state_existing_capacity",

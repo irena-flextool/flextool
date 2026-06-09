@@ -57,7 +57,7 @@ _REQUIRED_PARAM_ATTRS: tuple[str, ...] = (
     "process_source_conversion_flow_coeff",
     "reserve_upDown_group_penalty",
     "step_duration",
-    "rp_cost_weight",
+    "timestep_weight",
     "flow_min",
     "flow_max",
     "process_source",

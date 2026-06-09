@@ -68,7 +68,7 @@ def test_rp_cost_weight_strict_false_scientific_notation(tiny_workdir):
         {"period": "p2020", "time": "t0001", "value": "1.5e-3"},
     ])
     data = load_flextool(tiny_workdir)
-    rp = data.p_rp_cost_weight.frame.sort(["d", "t"])
+    rp = data.p_timestep_weight.frame.sort(["d", "t"])
     # Hand-calc: t0001 override 1.5e-3, t0002 default 1.0.
     assert rp["value"].to_list() == pytest.approx([1.5e-3, 1.0], rel=1e-7)
 

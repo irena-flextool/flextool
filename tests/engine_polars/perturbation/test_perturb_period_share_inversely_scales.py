@@ -44,7 +44,7 @@ def test_perturb_p_period_share_inversely_scales_dispatch_costs(coal_data):
     perturbed = scale_param(coal_data, "p_period_share", factor)
     perturbed_obj = solve_obj(perturbed)
 
-    # ``op_factor = step_duration * p_rp_cost_weight * p_inflation_op
+    # ``op_factor = step_duration * p_timestep_weight * p_inflation_op
     #               / p_period_share``; doubling p_period_share halves
     # every dispatch obj term.
     expected_delta = (1.0 / factor - 1.0) * base_obj

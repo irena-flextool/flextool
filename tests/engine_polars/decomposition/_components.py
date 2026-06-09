@@ -30,21 +30,21 @@ from flextool.engine_polars._param_shapes import promote_param_to_dt
 def _op_factor_frame(d) -> pl.DataFrame:
     """Per-(d, t) operational multiplier:
 
-        op_factor = step_duration * rp_cost_weight * inflation_op
+        op_factor = step_duration * timestep_weight * inflation_op
                     / period_share
 
     Matches ``op_factor`` in ``flextool/model.py:945-946``.
     """
     return (
         d.p_step_duration.frame.rename({"value": "step_duration"})
-        .join(d.p_rp_cost_weight.frame.rename({"value": "rp_cost_weight"}),
+        .join(d.p_timestep_weight.frame.rename({"value": "timestep_weight"}),
               on=["d", "t"])
         .join(d.p_inflation_op.frame.rename({"value": "inflation_op"}),
               on="d")
         .join(d.p_period_share.frame.rename({"value": "period_share"}),
               on="d")
         .with_columns(op_factor=(pl.col("step_duration")
-                                  * pl.col("rp_cost_weight")
+                                  * pl.col("timestep_weight")
                                   * pl.col("inflation_op")
                                   / pl.col("period_share")))
         .select("d", "t", "op_factor")
@@ -56,12 +56,12 @@ def _startup_factor_frame(d) -> pl.DataFrame:
     events, see audit §6.1).
     """
     return (
-        d.p_rp_cost_weight.frame.rename({"value": "rp_cost_weight"})
+        d.p_timestep_weight.frame.rename({"value": "timestep_weight"})
         .join(d.p_inflation_op.frame.rename({"value": "inflation_op"}),
               on="d")
         .join(d.p_period_share.frame.rename({"value": "period_share"}),
               on="d")
-        .with_columns(startup_factor=(pl.col("rp_cost_weight")
+        .with_columns(startup_factor=(pl.col("timestep_weight")
                                        * pl.col("inflation_op")
                                        / pl.col("period_share")))
         .select("d", "t", "startup_factor")
@@ -95,7 +95,7 @@ def slack_obj(data, sol) -> float:
     """§1.1 + §1.2: slack penalties on nodeBalance.
 
         Σ vq_state_up * penalty_up + vq_state_down * penalty_down,
-        weighted by step_duration * rp_cost_weight * inflation_op /
+        weighted by step_duration * timestep_weight * inflation_op /
         period_share, and (if loaded) by node_capacity_for_scaling[n,d].
 
     Mirrors ``flextool/model.py:953-960``.
@@ -762,7 +762,7 @@ def vq_capacity_margin_obj(data, sol) -> float:
 
 def vq_inertia_obj(data, sol) -> float:
     """§9.1: + Σ vq_inertia * inertia_limit * penalty_inertia
-    * step_duration * rp_cost_weight * inflation_op / period_share.
+    * step_duration * timestep_weight * inflation_op / period_share.
     """
     vq = _sol_value_or_empty(sol, "vq_inertia")
     if _is_empty(vq):
@@ -784,7 +784,7 @@ def vq_inertia_obj(data, sol) -> float:
 
 def vq_non_synchronous_obj(data, sol) -> float:
     """§9.2: + Σ vq_non_synchronous * group_capacity_for_scaling
-    * penalty_non_synchronous * step_duration * rp_cost_weight
+    * penalty_non_synchronous * step_duration * timestep_weight
     * inflation_op / period_share.
     """
     vq = _sol_value_or_empty(sol, "vq_non_synchronous")
@@ -808,7 +808,7 @@ def vq_non_synchronous_obj(data, sol) -> float:
 
 def vq_reserve_obj(data, sol) -> float:
     """§9.4: + Σ vq_reserve * pdtReserve_reservation
-    * penalty_reserve * step_duration * rp_cost_weight
+    * penalty_reserve * step_duration * timestep_weight
     * inflation_op / period_share.
     """
     vq = _sol_value_or_empty(sol, "vq_reserve")
@@ -837,7 +837,7 @@ def vq_reserve_obj(data, sol) -> float:
 
 def storage_state_reference_price_obj(data, sol) -> float:
     """§10.1: -Σ v_state(d_last, t_last) * unitsize *
-    storage_state_reference_price * rp_cost_weight * inflation_op
+    storage_state_reference_price * timestep_weight * inflation_op
     / period_share.  Sign is **negative** — terminal state is rewarded.
 
     Mirrors ``flextool/engine_polars/model.py`` §10.1 (B1b).  The term
@@ -866,7 +866,7 @@ def storage_state_reference_price_obj(data, sol) -> float:
         return 0.0
     ref = p_ref.frame.rename({"value": "ref"})
     us = data.p_state_unitsize.frame.rename({"value": "us"})
-    rp = data.p_rp_cost_weight.frame.rename({"value": "rp"})
+    rp = data.p_timestep_weight.frame.rename({"value": "rp"})
     infl = data.p_inflation_op.frame.rename({"value": "infl"})
     ps = data.p_period_share.frame.rename({"value": "ps"})
     df = (over

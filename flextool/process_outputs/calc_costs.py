@@ -33,9 +33,9 @@ def compute_costs(par, s, v, r) -> None:
     flow_from_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=1).isin(commodity_node.get_level_values(level=1))]]
     flow_to_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=2).isin(commodity_node.get_level_values(level=1))]]
 
-    # Per-step scaling factor: step_duration × rp_cost_weight.  Used by all
+    # Per-step scaling factor: step_duration × timestep_weight.  Used by all
     # per-(d, t) cost terms below to match the objective in flextool.mod.
-    step_x_rp = par.step_duration.mul(par.rp_cost_weight, axis=0)
+    step_x_rp = par.step_duration.mul(par.timestep_weight, axis=0)
 
     commodity_price = par.commodity_price[commodity_node.get_level_values('commodity').unique()]
     commodity_price.columns = commodity_price.columns.join(commodity_node)
@@ -76,7 +76,7 @@ def compute_costs(par, s, v, r) -> None:
 
     net_flow = flow_outof_node_grouped.sub(flow_into_node_grouped, fill_value=0)
     # Emissions are physical MWh, so only step_duration applies here (no
-    # rp_cost_weight).  rp_cost_weight is added downstream on the monetary
+    # timestep_weight).  timestep_weight is added downstream on the monetary
     # group_cost_co2_dt to match the objective's CO2-price term
     # (flextool.mod ~line 2312-2336).
     net_flow_with_duration = net_flow.mul(par.step_duration, axis=0)
@@ -90,11 +90,11 @@ def compute_costs(par, s, v, r) -> None:
     )
 
     # Reported annual emissions (tonnes) must match the already-weighted CO2
-    # cap and CO2 cost: weight each (d, t) by par.rp_cost_weight (=1.0 with
+    # cap and CO2 cost: weight each (d, t) by par.timestep_weight (=1.0 with
     # no/uniform timeset_weights → byte-identical) before the period sum.
-    # process_emissions_co2_dt carries step_duration but NOT rp_cost_weight
+    # process_emissions_co2_dt carries step_duration but NOT timestep_weight
     # (see net_flow_with_duration above), so this is the only weight applied.
-    r.process_emissions_co2_d = r.process_emissions_co2_dt.mul(par.rp_cost_weight, axis=0).groupby(level='period').sum()
+    r.process_emissions_co2_d = r.process_emissions_co2_dt.mul(par.timestep_weight, axis=0).groupby(level='period').sum()
     r.process_emissions_co2_d = r.process_emissions_co2_d.div(par.complete_period_share_of_year, axis=0)
 
     r.emissions_co2_d = r.process_emissions_co2_d.sum(axis=1)
@@ -108,26 +108,26 @@ def compute_costs(par, s, v, r) -> None:
         r.group_process_emissions_co2_dt[col] = r.process_emissions_co2_dt[col[:4]]
     r.group_co2_dt = r.group_process_emissions_co2_dt.T.groupby('group').sum().T
     # Reported annual group emissions (tonnes): weight each (d, t) by
-    # par.rp_cost_weight (=1.0 with no/uniform timeset_weights →
+    # par.timestep_weight (=1.0 with no/uniform timeset_weights →
     # byte-identical) before the period sum so it matches the CO2 cap/cost.
     # group_co2_dt derives from process_emissions_co2_dt (step_duration only,
-    # no rp_cost_weight), so this is the only weight applied.
-    r.group_co2_d = r.group_co2_dt.mul(par.rp_cost_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    # no timestep_weight), so this is the only weight applied.
+    r.group_co2_d = r.group_co2_dt.mul(par.timestep_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
     # Monetary CO2 cost = emissions × price.  Emissions already carry
-    # step_duration; add rp_cost_weight to match the objective's CO2-price
+    # step_duration; add timestep_weight to match the objective's CO2-price
     # term (flextool.mod ~line 2312-2336 where it has
-    # step_duration × rp_cost_weight).  Per-period cost_co2 is then
+    # step_duration × timestep_weight).  Per-period cost_co2 is then
     # aggregated from the rp-weighted cost_dt directly (instead of
     # multiplying the annualized physical emissions by price, which would
     # drop the per-step rp weighting).
-    r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price).mul(par.rp_cost_weight, axis=0)
+    r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price).mul(par.timestep_weight, axis=0)
     r.group_cost_co2_d = r.group_cost_co2_dt.groupby('period').sum()
     r.cost_co2_dt = r.group_cost_co2_dt.sum(axis=1)
     r.cost_co2_d = r.group_cost_co2_d.sum(axis=1)
 
     # --- Operational costs ---
     # Mod objective (~line 2347-2376): flow × unitsize × varCost ×
-    # step_duration × rp_cost_weight × inflation / period_share ×
+    # step_duration × timestep_weight × inflation / period_share ×
     # pdt_branch_weight.
     #
     # The mod splits the ``other_operational_cost`` contribution into
@@ -151,7 +151,7 @@ def compute_costs(par, s, v, r) -> None:
 
     # --- Startup costs ---
     # Mod objective (~line 2337-2346): v_startup × startup_cost × unitsize
-    # × rp_cost_weight × inflation / period_share × pdt_branch_weight.
+    # × timestep_weight × inflation / period_share × pdt_branch_weight.
     # No step_duration: startup is a per-event (not per-hour) cost.
     r.process_startup_dt = v.startup_linear.add(v.startup_integer, fill_value=0)
     r.cost_startup_dt = pd.DataFrame(0.0, index=r.process_startup_dt.index, columns=s.process_online, dtype=float)
@@ -161,7 +161,7 @@ def compute_costs(par, s, v, r) -> None:
         periods = cost.index.get_level_values('period')
         period_costs = par.process_startup_cost.loc[periods, valid_processes]
         period_costs.index = cost.index
-        r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.rp_cost_weight, axis=0)
+        r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.timestep_weight, axis=0)
 
     # --- Investment costs ---
     r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)

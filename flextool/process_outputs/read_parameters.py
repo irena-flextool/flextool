@@ -1115,8 +1115,8 @@ def read_parameters(
     p.step_duration = _pdt_series_solve_period_time(
         flex_data.p_step_duration, solve_name=solve_name,
     )
-    p.rp_cost_weight = _pdt_series_solve_period_time(
-        flex_data.p_rp_cost_weight, solve_name=solve_name,
+    p.timestep_weight = _pdt_series_solve_period_time(
+        flex_data.p_timestep_weight, solve_name=solve_name,
     )
 
     # flow_min / flow_max — multi-column DataFrames.  FlexData has

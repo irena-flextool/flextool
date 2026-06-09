@@ -221,7 +221,7 @@ def test_step_duration_1_handcomputed():
                  = 20 x 100 x 1 = 2000.0 EUR.
 
     Hand-derived value with period_share=1, inflation=1,
-    rp_cost_weight=1, so op_factor reduces to step_duration.
+    timestep_weight=1, so op_factor reduces to step_duration.
     """
     workdir = _DATA / "work_step_duration_1"
     if not workdir.exists():

@@ -119,7 +119,7 @@ def _build_toy_rp_2base_1rep(*, method: str) -> FlexData:
         "b": ["b1", "b2"], "r": ["t01", "t01"], "value": [1.0, 1.0]}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rpcw,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rpcw,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pup, p_penalty_down=p_pdn,

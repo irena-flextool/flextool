@@ -44,7 +44,7 @@ def toy_costs_only_1d2t() -> FlexData:
     dt = pl.DataFrame({"d": ["d1", "d1"], "t": ["t01", "t02"]})
     p_step_duration = Param(("d", "t"),
         dt.with_columns(value=pl.lit(1.0)))
-    p_rp_cost_weight = Param(("d", "t"),
+    p_timestep_weight = Param(("d", "t"),
         dt.with_columns(value=pl.lit(1.0)))
     p_inflation_op = Param(("d",),
         pl.DataFrame({"d": ["d1"], "value": [1.0]}))
@@ -94,7 +94,7 @@ def toy_costs_only_1d2t() -> FlexData:
           .select("c", "d", "t", "value"))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step_duration, p_rp_cost_weight=p_rp_cost_weight,
+        dt=dt, p_step_duration=p_step_duration, p_timestep_weight=p_timestep_weight,
         p_inflation_op=p_inflation_op, p_period_share=p_period_share,
         nodeBalance=nodeBalance, nodeBalance_dt=nodeBalance_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,

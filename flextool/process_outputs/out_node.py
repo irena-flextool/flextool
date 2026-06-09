@@ -92,11 +92,11 @@ def node_summary(par, s, v, r, debug):
     energy_cols = node_dt.columns[node_dt.columns.get_level_values('category').isin(energy_categories)]
     inflow_cols = node_dt.columns[node_dt.columns.get_level_values('category') == 'Inflow']
 
-    # Weight each (d, t) by par.rp_cost_weight (=1.0 with no/uniform
+    # Weight each (d, t) by par.timestep_weight (=1.0 with no/uniform
     # timeset_weights → byte-identical) before the period sum, so reported
     # annual energy matches the cost-weighted objective.
-    node_d_energy = node_dt[energy_cols].mul(par.step_duration, axis=0).mul(par.rp_cost_weight, axis=0).groupby('period').sum()
-    node_d_inflow = node_dt[inflow_cols].mul(par.rp_cost_weight, axis=0).groupby('period').sum()
+    node_d_energy = node_dt[energy_cols].mul(par.step_duration, axis=0).mul(par.timestep_weight, axis=0).groupby('period').sum()
+    node_d_inflow = node_dt[inflow_cols].mul(par.timestep_weight, axis=0).groupby('period').sum()
     node_d = pd.concat([node_d_energy, node_d_inflow], axis=1).reindex(columns=node_dt.columns)
     node_d = node_d.div(par.complete_period_share_of_year, axis=0, level=1)
 
@@ -121,7 +121,7 @@ def node_additional_results(par, s, v, r, debug):
     results.append((upward_slack, 'node_slack_up_dt_e'))
     upward_slack_d = (
         upward_slack.mul(par.step_duration, axis=0)
-        .mul(par.rp_cost_weight, axis=0)
+        .mul(par.timestep_weight, axis=0)
         .groupby(level='period').sum()
         .div(par.complete_period_share_of_year, axis=0, level=1)
     )
@@ -132,7 +132,7 @@ def node_additional_results(par, s, v, r, debug):
     results.append((downward_slack, 'node_slack_down_dt_e'))
     downward_slack_d = (
         downward_slack.mul(par.step_duration, axis=0)
-        .mul(par.rp_cost_weight, axis=0)
+        .mul(par.timestep_weight, axis=0)
         .groupby(level='period').sum()
         .div(par.complete_period_share_of_year, axis=0, level=1)
     )

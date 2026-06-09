@@ -89,12 +89,12 @@ def _const_param(dims: tuple[str, ...], dt: pl.DataFrame, value: float,
 def _time_axes(periods: list[str], steps_per_period: int = 2):
     dt = _dt(periods, steps_per_period)
     p_step_duration = Param(("d", "t"), dt.with_columns(value=pl.lit(1.0)))
-    p_rp_cost_weight = Param(("d", "t"), dt.with_columns(value=pl.lit(1.0)))
+    p_timestep_weight = Param(("d", "t"), dt.with_columns(value=pl.lit(1.0)))
     p_inflation_op = Param(("d",),
         pl.DataFrame({"d": periods, "value": [1.0] * len(periods)}))
     p_period_share = Param(("d",),
         pl.DataFrame({"d": periods, "value": [1.0] * len(periods)}))
-    return dt, p_step_duration, p_rp_cost_weight, p_inflation_op, p_period_share
+    return dt, p_step_duration, p_timestep_weight, p_inflation_op, p_period_share
 
 
 def _node_axes(node: str, dt: pl.DataFrame,
@@ -146,7 +146,7 @@ def toy_1n1p_1d2t() -> FlexData:
           .select("c", "d", "t", "value"))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -215,7 +215,7 @@ def toy_storage_2t() -> FlexData:
     })
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -303,7 +303,7 @@ def toy_storage_blocks() -> FlexData:
     })
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -399,7 +399,7 @@ def toy_uc_3t() -> FlexData:
     pdt_downtime_set = pdt_uptime_set.clone()
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -490,7 +490,7 @@ def toy_invest_3d() -> FlexData:
         pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [0.0]*3}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -583,7 +583,7 @@ def toy_2branch_2d() -> FlexData:
         pl.DataFrame({"d": periods, "value": [1.0]*4}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -668,7 +668,7 @@ def toy_2node_chp() -> FlexData:
                       "value": [0.5, 1.0]}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,
@@ -773,7 +773,7 @@ def toy_group_reserve() -> FlexData:
                       "value": [1.0]}))
 
     return FlexData(
-        dt=dt, p_step_duration=p_step, p_rp_cost_weight=p_rp,
+        dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
         nodeBalance=nb, nodeBalance_dt=nb_dt,
         p_inflow=p_inflow, p_penalty_up=p_pen_up, p_penalty_down=p_pen_dn,

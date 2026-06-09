@@ -417,7 +417,7 @@ class FlexData:
     # ─── Time / weighting (always present) ────────────────────────────────
     dt: pl.DataFrame                         # set: (d, t)
     p_step_duration: Param                   # (d, t)
-    p_rp_cost_weight: Param                  # (d, t)
+    p_timestep_weight: Param                 # (d, t)
     p_inflation_op: Param                    # (d,)
     p_period_share: Param                    # (d,)
 
@@ -4419,7 +4419,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         flex_data = FlexData(
             dt = dt,
             p_step_duration = step_dur,
-            p_rp_cost_weight = rp_cw,
+            p_timestep_weight = rp_cw,
             p_inflation_op = infl,
             p_period_share = psh,
 

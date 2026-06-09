@@ -144,7 +144,7 @@ def compute_co2_rolling_accumulator(
         return _passthrough_prior(prior_cumulative_co2, co2_groups)
 
     p_rp_weight = _param_frame(
-        getattr(flex_data, "p_rp_cost_weight", None), "d", "t",
+        getattr(flex_data, "p_timestep_weight", None), "d", "t",
     ).select("d", "t", pl.col("value").alias("rpw"))
 
     realized = _set_frame(

@@ -590,7 +590,7 @@ def add_objective_terms(m, d, vars: dict, op_factor):
 
       + Σ vq_reserve · pdtReserve_reservation · penalty_reserve · op_factor
 
-    where ``op_factor = step_duration · rp_cost_weight · inflation_op /
+    where ``op_factor = step_duration · timestep_weight · inflation_op /
     period_share`` (the same factor used elsewhere in the objective).
 
     Returns ``None`` (zero contribution) if the reserve subsystem is not

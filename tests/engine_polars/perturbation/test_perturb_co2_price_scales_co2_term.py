@@ -57,7 +57,7 @@ def _co2_term(d, sol) -> float:
                   .rename({"value": "cprice"}).collect(),
               on=["g", "d", "t"])
         .join(d.p_step_duration.frame.rename({"value": "dur"}), on=["d", "t"])
-        .join(d.p_rp_cost_weight.frame.rename({"value": "rpcw"}),
+        .join(d.p_timestep_weight.frame.rename({"value": "rpcw"}),
               on=["d", "t"])
         .join(d.p_inflation_op.frame.rename({"value": "infl"}), on="d")
         .join(d.p_period_share.frame.rename({"value": "psh"}), on="d")

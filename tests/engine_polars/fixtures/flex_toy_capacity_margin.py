@@ -5,7 +5,7 @@ non-trivial ``pdGroup_capacity_margin`` floor.  The capacity-margin
 constraint cannot be met by any producer (there are none), so the
 ``vq_capacity_margin`` slack absorbs the entire shortfall and is priced
 at ``penalty_capacity_margin × group_capacity_for_scaling × inflation_op``
-(period-only, no step_duration / rp_cost_weight / period_share — see
+(period-only, no step_duration / timestep_weight / period_share — see
 ``audit/objective_audit.md`` §9.3 and ``flextool/_group_slack.py``
 ``add_objective_terms``).
 
@@ -35,7 +35,7 @@ Slack-penalty obj (capacity_margin term, period-only):
 Plus the ordinary node-balance slack (positive inflow has no consumer
 so vq_state_down absorbs it):
     obj_slack = Σ_{d,t}  vq_state_down · pen_down · op_factor
-              = 2 * 10 * 1.0  *  step_duration * rp_cost_weight
+              = 2 * 10 * 1.0  *  step_duration * timestep_weight
                                 * inflation_op / period_share
               = 20 (with step_dur=rp_cw=infl=psh=1.0)
 
@@ -60,7 +60,7 @@ def data() -> FlexData:
     dt = pl.DataFrame({"d": ["p2020", "p2020"], "t": ["t01", "t02"]})
     p_step_duration = Param(("d", "t"),
         pl.DataFrame({"d": ["p2020"]*2, "t": ["t01", "t02"], "value": [1.0, 1.0]}))
-    p_rp_cost_weight = Param(("d", "t"),
+    p_timestep_weight = Param(("d", "t"),
         pl.DataFrame({"d": ["p2020"]*2, "t": ["t01", "t02"], "value": [1.0, 1.0]}))
     p_inflation_op = Param(("d",),
         pl.DataFrame({"d": ["p2020"], "value": [1.0]}))
@@ -103,7 +103,7 @@ def data() -> FlexData:
     return FlexData(
         dt=dt,
         p_step_duration=p_step_duration,
-        p_rp_cost_weight=p_rp_cost_weight,
+        p_timestep_weight=p_timestep_weight,
         p_inflation_op=p_inflation_op,
         p_period_share=p_period_share,
         nodeBalance=nodeBalance,

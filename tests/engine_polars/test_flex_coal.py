@@ -72,7 +72,7 @@ def test_coal_huge_capacity_closed_form(coal_data):
         .filter(pl.col("n") == "west")
         .with_columns(neg=-pl.col("value"))
         .join(data.p_step_duration.frame.rename({"value": "dur"}),  on=["d","t"])
-        .join(data.p_rp_cost_weight.frame.rename({"value": "rpcw"}), on=["d","t"])
+        .join(data.p_timestep_weight.frame.rename({"value": "rpcw"}), on=["d","t"])
         .join(data.p_inflation_op.frame.rename({"value": "infl"}), on="d")
         .join(data.p_period_share.frame.rename({"value": "psh"}), on="d")
         .with_columns(weighted = pl.col("neg") * pl.col("dur")
