@@ -271,11 +271,94 @@ def ensure_results_db(db_url: str) -> None:
     valid ``import_data`` kwargs).  ``import_data`` of classes/params is
     idempotent, so re-running against an existing DB would be harmless, but
     we short-circuit on an existing sqlite file for speed.
+
+    Concurrency contract (the Toolbox re-create context launches parallel
+    scenario iterations into ONE shared ``results.sqlite``):
+
+    * **Creation serializes via a sidecar lock.**  For ``sqlite:///`` targets
+      the create-if-absent is guarded by an exclusive ``fcntl.flock`` on
+      ``<db>.lock`` (Linux is the target platform), so exactly ONE process
+      ever builds the schema.  Inside the lock we re-check for the target and,
+      if another process already created it, discard our temp build and NEVER
+      ``os.replace`` over it — so a late rename can never clobber a DB another
+      process has already begun importing into.  The schema is built into a
+      unique temp file in the target directory and ``os.replace``-d into place
+      (atomic on the same filesystem) only when the target is still absent.
+    * **Subsequent per-process IMPORTs append and serialize via the sqlite
+      busy-timeout.**  Each scenario writes its own alternative through
+      ``write_spinedb`` -> ``import_data``; concurrent appends to the shared
+      sqlite file are serialized by spinedb_api's connection busy-timeout —
+      ``DatabaseMapping.create_engine`` passes ``connect_args={"timeout":
+      sqlite_timeout}`` (default 1800 s), the pysqlite busy-timeout, so a
+      writer that finds the DB locked WAITS and retries rather than failing
+      with ``SQLITE_BUSY``.  We therefore do NOT hold the creation lock across
+      the import — appends are independent writers and only the cold-start
+      create must be single-writer.
+
+    Non-sqlite URLs (e.g. a shared server) fall back to the direct in-place
+    create (no atomic rename / file lock possible across a network DSN).
     """
     if db_url.startswith("sqlite:///"):
         path = db_url[len("sqlite:///"):]
+        # Fast path: a present DB is success without taking the lock.
         if os.path.exists(path):
             return
+        _ensure_results_db_atomic(db_url, path)
+        return
+    # Non-sqlite target: cannot atomically rename; create in place.
+    _import_schema(db_url)
+
+
+def _ensure_results_db_atomic(db_url: str, path: str) -> None:
+    """Create the schema DB at ``path`` if absent, safe under concurrent
+    cold-start callers writing the SAME shared results DB.
+
+    The create-if-absent is serialized by an exclusive ``fcntl.flock`` on a
+    sidecar ``<db>.lock`` file: only the winner of the lock builds the schema.
+    Both the cheap pre-check (in :func:`ensure_results_db`) and the re-check
+    UNDER the lock guard against ``os.replace`` clobbering a target another
+    process has already created (and may already be importing into) — the
+    rename happens only while the target is still absent."""
+    import fcntl
+    import uuid
+
+    target_dir = os.path.dirname(path) or "."
+    os.makedirs(target_dir, exist_ok=True)
+
+    lock_path = path + ".lock"
+    # The lock file persists (it is the rendez-vous point); only the flock is
+    # released.  Opened in append mode so concurrent opens never truncate it.
+    with open(lock_path, "a") as lock_fh:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        try:
+            # Re-check UNDER the lock: another process may have created the
+            # target between our pre-check and acquiring the lock.  If so we
+            # must NOT build/rename — clobbering it could corrupt an import
+            # already in progress in that process.
+            if os.path.exists(path):
+                return
+            tmp_path = os.path.join(
+                target_dir, f".results-{uuid.uuid4().hex}.sqlite.tmp")
+            tmp_url = "sqlite:///" + tmp_path
+            try:
+                _import_schema(tmp_url)
+                # Still absent (we hold the lock, so it cannot appear now) —
+                # commit the build atomically.
+                os.replace(tmp_path, path)
+            finally:
+                # Discard the temp on any error mid-build.
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+        finally:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+
+
+def _import_schema(db_url: str) -> None:
+    """Load the results schema JSON into the DB at ``db_url`` (created if
+    needed)."""
     with open(_SCHEMA_PATH, encoding="utf-8") as fh:
         schema = json.load(fh)
     with DatabaseMapping(db_url, create=True) as db:

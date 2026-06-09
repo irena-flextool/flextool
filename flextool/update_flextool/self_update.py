@@ -222,6 +222,30 @@ def update_flextool(skip_git):
             "solver_config/highs.opt",
         )
 
+    # Seed templates/project_folder.txt on first run.  Unlike the legacy
+    # anchor file, this file's CONTENTS are LOAD-BEARING: Spine Toolbox's
+    # FlexTool run Tool passes ``--project-folder-file <project>/templates/
+    # project_folder.txt`` and the CLI reads the first non-empty,
+    # non-comment line as the output project folder (absolute, or relative
+    # to the repo root).  The file is gitignored (user-local), so a user
+    # can redirect every output into a per-project folder with ZERO
+    # git-committed change.  Seeded with a commented template only; an
+    # empty/comment-only file means "use the FlexTool root" (the resolver
+    # falls through).  See the 5-tier resolver in
+    # flextool/cli/cmd_run_flextool.py.  Idempotent: never overwrites an
+    # existing file.
+    os.makedirs("templates", exist_ok=True)
+    if not os.path.exists("templates/project_folder.txt"):
+        with open("templates/project_folder.txt", "w", encoding="utf-8") as fh:
+            fh.write(
+                "# FlexTool output project folder (user-local; not tracked by git).\n"
+                "# Write ONE path below — absolute, or relative to the FlexTool root —\n"
+                "# to direct this workflow's outputs (output_parquet/, results.sqlite,\n"
+                "# plots, and the per-project plot_settings.yaml) into that project folder.\n"
+                "# Leave blank to use the FlexTool root.\n"
+                "# e.g.:  projects/Rivendell\n"
+            )
+
     # Migrate user-owned SQLites (canonical ones are already at current
     # version because they were just materialized from the canonical
     # JSONs, which migrate-all keeps at FLEXTOOL_DB_VERSION).

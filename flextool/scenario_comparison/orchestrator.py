@@ -94,6 +94,56 @@ def _seed_dispatch_colors_into_plot_settings(
         )
 
 
+def derive_project_root(scenario_folders: dict[str, str] | None) -> Path | None:
+    """Derive the common project root from the scenarios' ``output_location``s.
+
+    Each scenario's folder (the per-scenario ``output_location`` read from the
+    DB, or the parquet base dir in ``--parquet-base-dir`` mode) is, under the
+    project-rooted output layout, the project folder itself.  The comparison
+    run's project root is therefore the common ancestor of those folders.
+
+    "Sensible common project root" predicate
+    ----------------------------------------
+    A sensible project root must be one the scenarios genuinely *share*, never
+    a far-up directory like ``/`` or ``/home`` that merely happens to be a
+    common ancestor of folders in different projects.  The only such guaranteed
+    value is a folder that **all** scenarios report identically: under FlexTool's
+    project-rooted output layout every scenario of one project reports the same
+    ``output_location`` (the project folder), and the ``--parquet-base-dir``
+    mode maps every scenario to the same base dir
+    (see :func:`build_scenario_folders_from_dir`).  So:
+
+    * if every non-empty folder normalizes to the **same** absolute path, that
+      shared folder is the project root;
+    * otherwise the scenarios diverge (different projects, or a one-off
+      cross-project comparison) and there is **no** sensible common root —
+      taking ``commonpath`` here would pick a sibling-parent / ``/home`` / ``/``
+      ancestor that belongs to no single project, so we deliberately decline.
+
+    Returns the resolved project-root :class:`~pathlib.Path`, or ``None`` when
+    there is no sensible common root (empty/missing locations, or divergent
+    folders) — the caller then falls back to the CWD-relative default.  Pure
+    path logic; no filesystem access, deterministic.
+    """
+    if not scenario_folders:
+        return None
+    folders = [
+        os.path.normpath(os.path.abspath(str(f)))
+        for f in scenario_folders.values()
+        if f
+    ]
+    if not folders:
+        return None
+
+    unique = set(folders)
+    if len(unique) == 1:
+        return Path(next(iter(unique)))
+
+    # Divergent folders: no folder is shared by all scenarios, so any common
+    # ancestor would be a far-up directory belonging to no single project.
+    return None
+
+
 def _derive_comparison_settings(plots_flat: dict) -> dict:
     """Map each leaf config dict through ``derive_comparison_config``.
 
@@ -151,6 +201,7 @@ def run(
     only_first_file: bool = False,
     comparison_parquet_dir: str | None = None,
     debug: bool = False,
+    plot_dir_is_default: bool = False,
 ) -> None:
     """Run the full scenario-comparison pipeline.
 
@@ -159,6 +210,12 @@ def run(
 
     When *scenario_folders* is provided the database is not queried and
     *db_url* may be ``None``.
+
+    *plot_dir_is_default* is ``True`` when the caller did not explicitly set
+    ``--plot-dir`` (it carries the bare CWD-relative default).  In that case the
+    plot output dir is re-rooted at ``<project_root>/output_plot_comparisons``
+    when the participating scenarios share a sensible common project root (see
+    :func:`derive_project_root`).  An explicit ``--plot-dir`` always wins.
     """
     with open(output_config_path, 'r', encoding='utf-8') as f:
         settings = yaml.safe_load(f)
@@ -169,13 +226,28 @@ def run(
     )
     combined_dfs = results.to_dict()
 
+    # Derive the project root from the participating scenarios' output
+    # locations.  When sensible (see ``derive_project_root``) it roots both the
+    # ``plot_settings.yaml`` lookup and — when ``--plot-dir`` was left at its
+    # default — the comparison plot output dir, giving Toolbox/GUI parity with
+    # the per-project ``plot_settings.yaml``.  ``None`` means no sensible common
+    # root → fall back to the CWD-relative behaviour unchanged.
+    project_root = derive_project_root(scenario_folders)
+
+    # Re-root the default plot dir at ``<project_root>/output_plot_comparisons``
+    # only when the user did not pass an explicit ``--plot-dir`` and a sensible
+    # project root exists.  An explicit ``--plot-dir`` always wins.
+    if plot_dir_is_default and project_root is not None:
+        plot_dir = str(project_root / "output_plot_comparisons")
+
     os.makedirs(plot_dir, exist_ok=True)
 
     # The plot color template comes from the project's ``plot_settings.yaml``
-    # when present, else the bundled default.  ``plot_dir`` is always a
-    # per-project subdir (``<project>/output_plot_comparisons``), so its
-    # parent is the project root.
-    color_path = resolve_plot_settings_path(Path(plot_dir).parent)
+    # when present, else the bundled default.  Prefer the derived project root;
+    # only when there is no sensible common root do we fall back to the
+    # ``plot_dir`` parent (CWD-relative legacy behaviour).
+    settings_root = project_root if project_root is not None else Path(plot_dir).parent
+    color_path = resolve_plot_settings_path(settings_root)
 
     scenarios = list(scenario_folders.keys())
 
@@ -207,12 +279,12 @@ def run(
     # legacy ``config.yaml`` system has been removed.
     if dispatch_plots:
         _seed_dispatch_colors_into_plot_settings(
-            Path(plot_dir).parent, color_path, mappings, dispatch_scenarios
+            settings_root, color_path, mappings, dispatch_scenarios
         )
         # Seeding may have created the project ``plot_settings.yaml`` (when
         # only the bundled default existed); re-resolve so the renderers and
         # the viewer plan use the freshly-seeded project file.
-        color_path = resolve_plot_settings_path(Path(plot_dir).parent)
+        color_path = resolve_plot_settings_path(settings_root)
 
     # Flatten new-format entries to flat result_key mapping for downstream use.
     # Then derive comparison-mode configs from each leaf (single rules +
@@ -327,6 +399,7 @@ def run(
                 break_times=break_times,
                 plot_rows=plot_rows,
                 debug=debug,
+                settings_path=color_path,
             )
         else:
             print("Warning: Cannot generate dispatch plots - missing dispatch mappings")

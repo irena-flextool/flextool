@@ -401,6 +401,7 @@ def create_dispatch_plots(
     plot_rows: list[int] | tuple[int, int] | None = None,
     break_times: set[str] | None = None,
     debug: bool = False,
+    settings_path: str | Path | None = None,
 ) -> None:
     """Create dispatch plots for all nodeGroups (and, in debug, all nodes).
 
@@ -411,6 +412,11 @@ def create_dispatch_plots(
 
     *scenarios* is the run's scenario set (the data-derived dispatch tags),
     passed in by the caller; there is no longer a ``config.yaml`` fallback.
+
+    *settings_path* is the already-resolved ``plot_settings.yaml`` path (the
+    orchestrator resolves it against the derived project root).  When omitted
+    it is resolved from ``plot_dir.parent`` — the legacy assumption that the
+    comparison output dir lives directly under the project root.
     """
     plot_dir = Path(plot_dir)
 
@@ -418,8 +424,9 @@ def create_dispatch_plots(
     # ``plot_settings.yaml`` (``entities`` for per-entity flows, new
     # ``categories.dispatch`` block for the special tokens), resolved by
     # ``resolve_dispatch_colors_and_order``.  This replaces the legacy
-    # ``config['positive'|'negative']`` parsing.  The project path is the
-    # parent of *plot_dir* (the comparison output dir lives under it).
+    # ``config['positive'|'negative']`` parsing.  The template path is the
+    # caller-supplied *settings_path* (resolved against the derived project
+    # root) or, as a fallback, resolved from the parent of *plot_dir*.
     #
     # ``colors`` / ``config_order`` keep the same shape as before so the
     # downstream ``prepare_dispatch_data`` → ``_order_dispatch_columns`` →
@@ -434,7 +441,8 @@ def create_dispatch_plots(
         template_entity_names,
     )
 
-    settings_path = resolve_plot_settings_path(plot_dir.parent)
+    if settings_path is None:
+        settings_path = resolve_plot_settings_path(plot_dir.parent)
     template = load_color_template(settings_path)
 
     # ``config_order`` (entity stacking order) depends only on the template's

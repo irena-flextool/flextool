@@ -1,3 +1,62 @@
+## Unreleased — Spine Toolbox ↔ project interoperability
+
+The Spine Toolbox workflow becomes a first-class peer of the FlexTool GUI: a
+Toolbox run now roots **all** its outputs at a user-chosen **project folder**,
+the per-project `plot_settings.yaml` is honored, and a results SpineDB can be
+produced from the processed parquet without re-solving. **No forced migration**
+— existing workflows keep working unchanged.
+
+### Project-folder output rooting
+
+- A Toolbox run roots `output_parquet/`, `results.sqlite`, plots, and the
+  per-project `plot_settings.yaml` at a **project folder** instead of the repo
+  root. The folder is chosen by editing **one line** in the gitignored,
+  user-local file `templates/project_folder.txt` (seeded by `flextool-update`).
+  The path may be absolute or relative to the FlexTool root; **blank /
+  comment-only reproduces the old repo-root behavior**. Editing the file never
+  dirties git, so switching projects needs no committed change.
+- This **replaces** the old `flextool_location.txt` mechanism. The FlexTool run
+  Tool's command argument changed from
+  `--flextool-location templates/flextool_location.txt` to
+  `--project-folder-file templates/project_folder.txt`. The legacy
+  `--flextool-location` CLI argument still works as a fallback for old / forked
+  setups.
+
+### Results SpineDB from parquet replay
+
+- The **"Re-create results"** step now writes `<project>/results.sqlite` (each
+  scenario as a Spine *alternative*) by **replaying the processed parquet — no
+  re-solve** — when `output-spinedb=true` in the Output settings DB. The
+  parallel solve step deliberately does **not** write it (a settings-derived
+  `spinedb` method is stripped on the native solve to avoid races); an explicit
+  CLI `--write-methods spinedb`, as the FlexTool GUI uses, still works.
+- Caveats on the replay path: the two inflation/discount-factor params are
+  omitted (they need the live solve); for a *bidirectional* connection the
+  `(source, sink)` byname uses the parquet `(node_1, node_2)` geometry (1-way
+  connections are exact). Everything else matches a native-solve results DB.
+
+### Per-project plot_settings in Toolbox
+
+- A `plot_settings.yaml` placed in the project folder is now honored by both the
+  per-scenario plots and the comparison plots in the Toolbox track (previously
+  it silently used the bundled default).
+
+### GUI interoperability
+
+- Outputs under `projects/<Name>/output_parquet/<scenario>/` are picked up
+  automatically by the FlexTool GUI (the folder name is the result identity; a
+  Toolbox run shows under "source 0" — cosmetic). Conversely, the Toolbox can
+  run a GUI-made project by pointing "Input data" at the project's input DB and
+  setting `project_folder.txt` to that project.
+
+### Migration
+
+- Run `flextool-update` — it seeds `templates/project_folder.txt` and refreshes
+  the settings DBs (which already carry the `output-spinedb` option).
+- **Only if** you forked / customized `.spinetoolbox/project.json`: update the
+  FlexTool Tool's command argument from `--flextool-location …` to
+  `--project-folder-file <project>/templates/project_folder.txt`.
+
 ## Release 4.0.0b5 (8.6.2026) — multi-solve output union; plot colour/order system; timeslice-weight alignment; SpineDB output; Python 3.13
 
 Requires a **database migration to v57** (`FLEXTOOL_DB_VERSION` 56 → 57;

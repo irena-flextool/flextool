@@ -54,8 +54,11 @@ def main() -> None:
         '--alternatives', metavar='S', type=str, nargs='+',
         help='Add alternative names manually')
     parser.add_argument(
-        '--plot-dir', default='output_plot_comparisons',
-        help='Directory to plot scenario comparison plots'
+        '--plot-dir', default=None,
+        help='Directory to plot scenario comparison plots '
+             '(default: <project_root>/output_plot_comparisons when the '
+             'compared scenarios share a project, else the CWD-relative '
+             'output_plot_comparisons)'
     )
     parser.add_argument(
         '--dispatch-plots', action='store_true',
@@ -245,10 +248,18 @@ def main() -> None:
     # Resolve dispatch_plots flags
     do_dispatch = args.dispatch_plots
 
+    # ``--plot-dir`` left unset → the orchestrator re-roots the comparison
+    # output dir at ``<project_root>/output_plot_comparisons`` when the
+    # compared scenarios share a sensible project root (GUI/Toolbox parity).
+    # Carry the bare CWD-relative default so an explicit value still wins and
+    # the no-common-root fallback is byte-identical to the old behaviour.
+    plot_dir_is_default = args.plot_dir is None
+    plot_dir = 'output_plot_comparisons' if plot_dir_is_default else args.plot_dir
+
     orchestrator.run(
         db_url=db_url,
         parquet_subdir=parquet_subdir,
-        plot_dir=args.plot_dir,
+        plot_dir=plot_dir,
         output_config_path=output_config_path,
         active_configs=active_configs,
         plot_rows=plot_rows,
@@ -264,6 +275,7 @@ def main() -> None:
         only_first_file=args.only_first_file_per_plot,
         comparison_parquet_dir=args.comparison_parquet_dir,
         debug=args.debug != 'off',
+        plot_dir_is_default=plot_dir_is_default,
     )
 
 
