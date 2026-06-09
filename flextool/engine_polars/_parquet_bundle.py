@@ -629,6 +629,10 @@ def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
             full = raw_dir / entry
             if not full.is_file():
                 continue
+            # The manifest is the writer's OWN output, not a registered
+            # bundle file — never warn about it.
+            if entry == "manifest.json":
+                continue
             if _is_known(entry, registered):
                 continue
             # Per-roll realized-slice scratch (params/sets persisted by the

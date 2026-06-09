@@ -142,6 +142,10 @@ class TimeSeriesResults:
     dual_invest_effective_unit_d_e: pd.DataFrame | None = None
     dual_invest_effective_connection_d_e: pd.DataFrame | None = None
 
+    # --- Flow groups (v58) ---
+    flowGroup_gd_p: pd.DataFrame | None = None
+    flowGroup_gd_t: pd.DataFrame | None = None
+
     def to_dict(self) -> dict[str, pd.DataFrame]:
         """All non-None DataFrames as a dict, for plot_dict_of_dataframes()."""
         return {

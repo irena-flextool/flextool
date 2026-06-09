@@ -1172,11 +1172,18 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     # Idempotent (safe to call multiple times); rooted at the work
     # folder (parent of output_raw/).  Failure is non-fatal so it can't
     # block a successful cascade.
-    try:
-        from flextool.engine_polars._parquet_bundle import write_manifest
-        raw_dir = raw_output_dir or 'output_raw'
-        bundle_root = os.path.dirname(raw_dir) or '.'
-        write_manifest(bundle_root)
-        start = log_time('Wrote manifest.json', start, timing_recorder)
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("Manifest write failed (non-fatal): %s", exc)
+    #
+    # Skip on the parquet-replay path: the manifest documents the raw
+    # SOLVE bundle (output_raw/ LP-variable shards), which does not exist
+    # when re-creating outputs from processed parquet — running it there
+    # only emits a stray output_raw/ scaffold and warns about every
+    # (legitimately absent) raw shard.
+    if not read_parquet_dir:
+        try:
+            from flextool.engine_polars._parquet_bundle import write_manifest
+            raw_dir = raw_output_dir or 'output_raw'
+            bundle_root = os.path.dirname(raw_dir) or '.'
+            write_manifest(bundle_root)
+            start = log_time('Wrote manifest.json', start, timing_recorder)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("Manifest write failed (non-fatal): %s", exc)
