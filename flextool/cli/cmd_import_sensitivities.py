@@ -4,6 +4,7 @@ import argparse
 import logging
 import sys
 
+from flextool.cli._console import run_tool
 from flextool.process_inputs.read_old_flextool import (
     read_old_flextool,
     read_old_flextool_sensitivities,
@@ -71,4 +72,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_tool(main)

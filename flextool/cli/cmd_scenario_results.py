@@ -12,6 +12,7 @@ from spinedb_api import DatabaseMapping, from_database, Array
 from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
 
+from flextool.cli._console import run_tool
 from flextool.scenario_comparison import orchestrator
 from flextool.scenario_comparison.db_reader import build_scenario_folders_from_dir
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
@@ -280,4 +281,4 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    run_tool(main)

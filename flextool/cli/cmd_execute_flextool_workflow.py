@@ -17,6 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from flextool.cli._console import run_tool
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 
 
@@ -183,4 +184,4 @@ Examples:
 
 
 if __name__ == '__main__':
-    main()
+    run_tool(main)

@@ -37,6 +37,7 @@ except (AttributeError, ValueError, OSError):
     pass
 from flextool._mem_sampler import start_mem_sampler
 from flextool.process_outputs.write_outputs import write_outputs
+from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
 from flextool.common_utils.precision import resolve_precision_digits
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
@@ -1064,4 +1065,4 @@ def main():
 DEBUG = False  # Set via environment variable or config
 
 if __name__ == '__main__':
-    main()
+    run_tool(main)

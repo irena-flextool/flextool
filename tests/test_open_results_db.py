@@ -81,6 +81,14 @@ def test_launch_db_editor_builds_detached_argv():
     ]
     # Detached: must request a new session so the GUI outlives the Tool.
     assert captured["kwargs"].get("start_new_session") is True
+    # Std streams must be detached to DEVNULL so the editor's import-time
+    # chatter (e.g. requests' RequestsDependencyWarning) cannot leak back into
+    # Spine Toolbox's Basic Console after this Tool has returned.
+    import subprocess
+
+    assert captured["kwargs"].get("stdin") == subprocess.DEVNULL
+    assert captured["kwargs"].get("stdout") == subprocess.DEVNULL
+    assert captured["kwargs"].get("stderr") == subprocess.DEVNULL
 
 
 def test_main_launches_when_results_db_exists(tmp_path, monkeypatch, capsys):

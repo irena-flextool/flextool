@@ -1,3 +1,4 @@
+from flextool.cli._console import run_tool
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api import DatabaseMapping
@@ -121,4 +122,4 @@ def main():
                 db_map.close()
 
 if __name__ == '__main__':
-    main()
+    run_tool(main)

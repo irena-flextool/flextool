@@ -14,6 +14,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from flextool.cli._console import run_tool
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -107,4 +109,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    run_tool(main)

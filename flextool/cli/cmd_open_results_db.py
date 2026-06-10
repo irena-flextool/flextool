@@ -31,6 +31,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from flextool.cli._console import run_tool
 from flextool.cli.cmd_run_flextool import resolve_output_path
 
 
@@ -120,7 +121,18 @@ def launch_db_editor(db_urls, _popen=subprocess.Popen):
     argv = _build_launch_argv(db_urls)
     # start_new_session detaches the child into its own process group so it
     # outlives this Tool process.  No ``.wait()`` — the Tool returns at once.
-    return _popen(argv, start_new_session=True)
+    # Redirect the child's std streams to DEVNULL so the detached editor does
+    # NOT inherit (and write to) Spine Toolbox's Basic Console pipes: otherwise
+    # the editor's import-time chatter — e.g. requests' RequestsDependencyWarning
+    # from the venv — leaks back into the Tool console long after this Tool has
+    # returned.  A GUI app has its own window; it needs no console streams.
+    return _popen(
+        argv,
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _open_from_output_info(output_info_db_url):
@@ -254,4 +266,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    run_tool(main)
