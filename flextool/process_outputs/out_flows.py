@@ -285,11 +285,9 @@ def unit_online_and_startup(par, s, v, r, debug):
     # timesteps; weight each by p_timestep_weight and divide by the period share
     # of a year so the value is an annual count (same convention as flows).
     units_online = s.process_unit.intersection(s.process_online)
-    startup_weighted = r.process_startup_dt[units_online].mul(par.timestep_weight, axis=0)
-    startup_units_d = (
-        startup_weighted.groupby('period').sum()
-        .div(par.complete_period_share_of_year, axis=0)
-    )
+    startup_units_d = annualize_dt_to_d(
+        r.process_startup_dt[units_online], par.timestep_weight,
+        par.complete_period_share_of_year)
     results.append((startup_units_d, 'unit_startup_d_e'))
 
     return results

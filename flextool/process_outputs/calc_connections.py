@@ -1,5 +1,7 @@
 import pandas as pd
 
+from flextool.process_outputs._annualize import annualize_dt_to_d
+
 
 def compute_connection_flows(par, s, v, r) -> None:
     """Compute connection flow quantities and expose from_conn/to_conn for group aggregations."""
@@ -68,17 +70,13 @@ def compute_connection_flows(par, s, v, r) -> None:
     # v_flow is MW — multiply by step_duration for MWh, then weight each
     # (d, t) by par.timestep_weight (=1.0 with no/uniform timeset_weights →
     # byte-identical) before the period sum and annualisation.
-    r.connection_to_left_node__d = (
-        r.connection_to_left_node__dt.mul(step_duration, axis=0)
-        .mul(par.timestep_weight, axis=0)
-        .groupby('period').sum()
-        .div(par.complete_period_share_of_year, axis=0)
+    r.connection_to_left_node__d = annualize_dt_to_d(
+        r.connection_to_left_node__dt, par.timestep_weight,
+        par.complete_period_share_of_year, step_duration,
     )
-    r.connection_to_right_node__d = (
-        r.connection_to_right_node__dt.mul(step_duration, axis=0)
-        .mul(par.timestep_weight, axis=0)
-        .groupby('period').sum()
-        .div(par.complete_period_share_of_year, axis=0)
+    r.connection_to_right_node__d = annualize_dt_to_d(
+        r.connection_to_right_node__dt, par.timestep_weight,
+        par.complete_period_share_of_year, step_duration,
     )
 
     # Expose combined directional flows for use by calc_group_flows

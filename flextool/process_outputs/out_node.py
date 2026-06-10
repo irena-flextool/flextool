@@ -1,5 +1,7 @@
 import pandas as pd
 
+from flextool.process_outputs._annualize import annualize_dt_to_d
+
 
 def node_summary(par, s, v, r, debug):
     """Node balance summaries for periods and timesteps"""
@@ -95,10 +97,13 @@ def node_summary(par, s, v, r, debug):
     # Weight each (d, t) by par.timestep_weight (=1.0 with no/uniform
     # timeset_weights → byte-identical) before the period sum, so reported
     # annual energy matches the cost-weighted objective.
-    node_d_energy = node_dt[energy_cols].mul(par.step_duration, axis=0).mul(par.timestep_weight, axis=0).groupby('period').sum()
-    node_d_inflow = node_dt[inflow_cols].mul(par.timestep_weight, axis=0).groupby('period').sum()
+    node_d_energy = annualize_dt_to_d(
+        node_dt[energy_cols], par.timestep_weight,
+        par.complete_period_share_of_year, par.step_duration, div_level=1)
+    node_d_inflow = annualize_dt_to_d(
+        node_dt[inflow_cols], par.timestep_weight,
+        par.complete_period_share_of_year, div_level=1)
     node_d = pd.concat([node_d_energy, node_d_inflow], axis=1).reindex(columns=node_dt.columns)
-    node_d = node_d.div(par.complete_period_share_of_year, axis=0, level=1)
 
     results.append((node_d, 'node_d_ep'))
 
@@ -119,23 +124,17 @@ def node_additional_results(par, s, v, r, debug):
     # 3. Node upward slack (MW at timestep; multiply by step_duration for MWh period)
     upward_slack = v.q_state_up.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level=0).clip(lower=0)
     results.append((upward_slack, 'node_slack_up_dt_e'))
-    upward_slack_d = (
-        upward_slack.mul(par.step_duration, axis=0)
-        .mul(par.timestep_weight, axis=0)
-        .groupby(level='period').sum()
-        .div(par.complete_period_share_of_year, axis=0, level=1)
-    )
+    upward_slack_d = annualize_dt_to_d(
+        upward_slack, par.timestep_weight, par.complete_period_share_of_year,
+        par.step_duration, div_level=1)
     results.append((upward_slack_d, 'node_slack_up_d_e'))
 
     # 4. Node downward slack (MW at timestep; multiply by step_duration for MWh period)
     downward_slack = v.q_state_down.mul(par.node_capacity_for_scaling[s.node_balance.union(s.node_balance_period)], level=0).clip(lower=0)
     results.append((downward_slack, 'node_slack_down_dt_e'))
-    downward_slack_d = (
-        downward_slack.mul(par.step_duration, axis=0)
-        .mul(par.timestep_weight, axis=0)
-        .groupby(level='period').sum()
-        .div(par.complete_period_share_of_year, axis=0, level=1)
-    )
+    downward_slack_d = annualize_dt_to_d(
+        downward_slack, par.timestep_weight, par.complete_period_share_of_year,
+        par.step_duration, div_level=1)
     results.append((downward_slack_d, 'node_slack_down_d_e'))
 
     return results

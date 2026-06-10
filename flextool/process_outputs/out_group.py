@@ -1,6 +1,8 @@
 """Output functions for node group results."""
 import pandas as pd
 
+from flextool.process_outputs._annualize import annualize_dt_to_d
+
 
 def _get_group_nodes_with_inflow(s, g: str) -> list[str]:
     """Return nodes in group g that have an inflow method (not 'no_inflow')."""
@@ -287,8 +289,7 @@ def nodeGroup_total_inflow(par, s, v, r, debug):
     # (=1.0 with no/uniform timeset_weights → byte-identical) before the
     # period sum.  result_multi_dt is group inflow (already MWh/step), so no
     # step_duration.
-    result_multi_d = result_multi_dt.mul(par.timestep_weight, axis=0).groupby(level='period').sum()
-    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+    result_multi_d = annualize_dt_to_d(result_multi_dt, par.timestep_weight, par.complete_period_share_of_year)
     result_multi_d.columns.name = 'group'
     results.append((result_multi_d, 'nodeGroup_flows_d_g'))
 
@@ -466,8 +467,7 @@ def nodeGroup_flows(par, s, v, r, debug):
     # result_multi_dt is already energy (MWh/step); weight each (d, t) by
     # par.timestep_weight (=1.0 with no/uniform timeset_weights →
     # byte-identical) before the period sum.
-    result_multi_d = result_multi_dt.mul(par.timestep_weight, axis=0).groupby(level='period').sum()
-    result_multi_d = result_multi_d.div(par.complete_period_share_of_year, axis=0)
+    result_multi_d = annualize_dt_to_d(result_multi_dt, par.timestep_weight, par.complete_period_share_of_year)
 
     # Return period results
     results.append((result_multi_d, 'nodeGroup_flows_d_gpe'))

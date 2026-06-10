@@ -1,5 +1,7 @@
 import pandas as pd
 
+from flextool.process_outputs._annualize import annualize_dt_to_d
+
 
 def _agg_period_or_empty(df: pd.DataFrame, realized_periods, period_level: str = 'period') -> pd.DataFrame:
     """Group-by period sum, or an all-zeros frame when df is empty."""
@@ -94,8 +96,7 @@ def compute_costs(par, s, v, r) -> None:
     # no/uniform timeset_weights → byte-identical) before the period sum.
     # process_emissions_co2_dt carries step_duration but NOT timestep_weight
     # (see net_flow_with_duration above), so this is the only weight applied.
-    r.process_emissions_co2_d = r.process_emissions_co2_dt.mul(par.timestep_weight, axis=0).groupby(level='period').sum()
-    r.process_emissions_co2_d = r.process_emissions_co2_d.div(par.complete_period_share_of_year, axis=0)
+    r.process_emissions_co2_d = annualize_dt_to_d(r.process_emissions_co2_dt, par.timestep_weight, par.complete_period_share_of_year)
 
     r.emissions_co2_d = r.process_emissions_co2_d.sum(axis=1)
     r.emissions_co2_dt = r.process_emissions_co2_dt.sum(axis=1)
@@ -112,7 +113,7 @@ def compute_costs(par, s, v, r) -> None:
     # byte-identical) before the period sum so it matches the CO2 cap/cost.
     # group_co2_dt derives from process_emissions_co2_dt (step_duration only,
     # no timestep_weight), so this is the only weight applied.
-    r.group_co2_d = r.group_co2_dt.mul(par.timestep_weight, axis=0).groupby('period').sum().div(par.complete_period_share_of_year, axis=0)
+    r.group_co2_d = annualize_dt_to_d(r.group_co2_dt, par.timestep_weight, par.complete_period_share_of_year)
     # Monetary CO2 cost = emissions × price.  Emissions already carry
     # step_duration; add timestep_weight to match the objective's CO2-price
     # term (flextool.mod ~line 2312-2336 where it has
