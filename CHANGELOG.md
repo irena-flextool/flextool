@@ -1,11 +1,14 @@
 ## Release 4.0.0b6 (10.6.2026) — period energy balance; flowGroup carve-out; Spine Toolbox ↔ project interoperability
 
 Requires a **database migration to v58** (`FLEXTOOL_DB_VERSION` 57 → 58; carves
-`flowGroup` out of the `group` class — see below). Dependency floors are
-unchanged (`polars>=1.40`, `polar-high>=2.4.0`, `highspy<=1.14.0`). The release
-is LP-neutral / byte-identical to b5 on all existing fixtures; the sole results
-change is the `balance_within_period` correctness fix, which only moves numbers
-for nodes that actually carry that method under non-uniform timeslice weights.
+`flowGroup` out of the `group` class — see below). Raises the solver-backend
+floor to **`polar-high>=2.5.0`** (it routes the HiGHS log through Python's
+`sys.stdout`, so the solver log is visible under the Spine-Toolbox Basic Console
+on Windows — see the Toolbox section); other dependency floors unchanged
+(`polars>=1.40`, `highspy<=1.14.0`). The release is LP-neutral / byte-identical
+to b5 on all existing fixtures; the sole results change is the
+`balance_within_period` correctness fix, which only moves numbers for nodes that
+actually carry that method under non-uniform timeslice weights.
 
 ### Period energy balance — `balance_within_period` nodes
 
@@ -91,6 +94,13 @@ produced from the processed parquet without re-solving. **No forced migration**
   are omitted (they need the live solve); for a *bidirectional* connection the
   `(source, sink)` byname uses the parquet `(node_1, node_2)` geometry (1-way
   connections are exact). The native run path writes the full set.
+- `output-spinedb` now **defaults to `true`** in the Toolbox output-settings
+  template, so a fresh project gets `results.sqlite` without flipping the option.
+- The cold-start results-DB build is **cross-platform**: the create-from-JSON is
+  serialized by an exclusive sidecar lock (`fcntl.flock` on POSIX,
+  `msvcrt.locking` on Windows) and the atomic publish retries the transient
+  Windows "file still in use" (`WinError 32`) `os.replace`, so parallel scenario
+  writers into one shared `results.sqlite` no longer race or fail on Windows.
 
 #### Per-project plot_settings in Toolbox
 
@@ -105,6 +115,10 @@ produced from the processed parquet without re-solving. **No forced migration**
   Toolbox run shows under "source 0" — cosmetic). Conversely, the Toolbox can
   run a GUI-made project by pointing "Input data" at the project's input DB and
   setting `project_folder.txt` to that project.
+- **Spine-Toolbox Basic Console (Windows):** the run survives the Console's
+  `python -i` REPL, and the full HiGHS solver log is now visible there — the
+  latter via `polar-high>=2.5.0`, which re-emits the log through `sys.stdout`
+  (the Console only captures the Python stream, not the native fd-1 write).
 
 #### Migration
 

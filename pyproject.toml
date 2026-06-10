@@ -40,7 +40,10 @@ classifiers = [
 ]
 dependencies = [
     # Solver backend — pure-Python; replaces the retired glpsol pipeline.
-    "polar-high>=2.4.0",
+    # 2.5.0 routes the HiGHS solver log through Python's sys.stdout so it is
+    # visible under the Spine-Toolbox Basic Console on Windows (the b6 Toolbox
+    # track relies on this); older releases lose the log there.
+    "polar-high>=2.5.0",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.
