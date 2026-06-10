@@ -39,6 +39,8 @@ class Semantics(str, Enum):
     AVERAGE = "average"              # time-average over the period (÷ period_hours).
     RATIO = "ratio"                  # dimensionless (share, capacity factor).
     COUNT = "count"                  # event count (e.g. start-ups), annualized.
+    LEVEL = "level"                  # a stock/snapshot (capacity, storage state) — not summed.
+    PRICE = "price"                  # marginal value / shadow price (dual).
     DIMENSION = "dimension"          # index/key column, not a measure.
 
 
@@ -123,6 +125,57 @@ RATIO = Transform(
     "", Semantics.RATIO,
     "Dimensionless ratio (share / capacity factor).",
 )
+ENERGY_PERSTEP = Transform(
+    "MWh", Semantics.PER_STEP,
+    "Energy within the timestep (already per-step MWh, not a rate).",
+)
+RAMP = Transform(
+    "MW", Semantics.INSTANTANEOUS,
+    "Change in flow between consecutive timesteps (a ramp).",
+    algebra="flow[t] − flow[t-1]",
+)
+CAPACITY_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Installed/usable capacity (a stock that holds over the period, not a flow).",
+    algebra="existing + invested − divested",
+)
+CAPACITY_MWH = Transform(
+    "MWh", Semantics.LEVEL,
+    "Storage energy capacity (a stock).",
+    algebra="existing + invested − divested",
+)
+STORAGE_STATE = Transform(
+    "MWh", Semantics.LEVEL,
+    "Stored energy at the timestep (state of charge).",
+    algebra="v_state · unitsize",
+)
+PRICE_ENERGY = Transform(
+    "CUR/MWh", Semantics.PRICE,
+    "Nodal energy price (shadow price of the node balance constraint).",
+    algebra="dual(node_balance)",
+)
+EMISSION_MT = Transform(
+    "Mt/a", Semantics.ANNUALIZED,
+    "System CO2 emissions, full-year equivalent (×years_represented).",
+    algebra="t · years_represented / 1e6",
+)
+FACTOR = Transform(
+    "", Semantics.RATIO,
+    "Dimensionless discount / inflation factor.",
+)
+ANNUITY = Transform(
+    "1/a", Semantics.RATIO,
+    "Annuity factor — annual cost per unit of overnight investment.",
+)
+YEARS = Transform(
+    "a", Semantics.COUNT,
+    "Calendar years the period represents (annualisation weight).",
+)
+# Sentinel: an output that is a pure membership/index set (no measures).
+DIMENSION_TABLE = Transform(
+    "", Semantics.DIMENSION,
+    "Membership / index set — no measure columns.",
+)
 
 
 @dataclass(frozen=True)
@@ -163,15 +216,68 @@ OUTPUT_TRANSFORM: dict[str, Transform] = {
     "unit_inputNode_d_ee": ENERGY_ANNUAL,
     "connection_dt_eee": RATE,
     "connection_d_eee": ENERGY_ANNUAL,
+    "connection_leftward_dt_eee": RATE,
+    "connection_rightward_dt_eee": RATE,
+    "connection_losses_dt_eee": RATE,
+    "connection_leftward_d_eee": ENERGY_ANNUAL,
+    "connection_rightward_d_eee": ENERGY_ANNUAL,
+    "connection_losses_d_eee": ENERGY_ANNUAL,
     # CO2
     "CO2_d_g": EMISSION_ANNUAL,
     "process_co2_d_eee": EMISSION_ANNUAL,
+    "CO2__": EMISSION_MT,
     # Node / group flows
-    # (node_d_ep is a mixed flows+inflow table — needs per-column transforms,
-    #  deferred; it stays in the coverage allowlist for now.)
+    # (node_d_ep / node_dt_ep / nodeGroup_gd_p / nodeGroup_gdt_p are MIXED
+    #  flows+inflow+share tables — they need per-column transforms, deferred;
+    #  they stay in the coverage allowlist for now.)
     "nodeGroup_flows_d_g": PREENERGY_ANNUAL,
+    "nodeGroup_flows_d_gpe": PREENERGY_ANNUAL,
+    "nodeGroup_flows_dt_g": ENERGY_PERSTEP,
+    "nodeGroup_flows_dt_gpe": ENERGY_PERSTEP,
+    "node_inflow__dt": ENERGY_PERSTEP,
+    "node_state_dt_e": STORAGE_STATE,
+    "node_prices_dt_e": PRICE_ENERGY,
+    # VRE shares + curtailment/potential.  NOTE: the *_d_ee curtailment and
+    # potential are SUM-ONLY over the sample (per_period), NOT annualized —
+    # unlike unit_outputNode_d_ee (see Task #4 / Stage-1 finding).
+    "nodeGroup_VRE_share_d_g": RATIO,
+    "nodeGroup_VRE_share_dt_g": RATIO,
+    "unit_VRE_potential_outputNode_dt_ee": RATE,
+    "unit_curtailment_outputNode_dt_ee": RATE,
+    "unit_VRE_potential_outputNode_d_ee": ENERGY_PERIOD,
+    "unit_curtailment_outputNode_d_ee": ENERGY_PERIOD,
+    "unit_curtailment_share_outputNode_dt_ee": RATIO,
+    "unit_curtailment_share_outputNode_d_ee": RATIO,
+    # Ramps
+    "unit_ramp_inputs_dt_ee": RAMP,
+    "unit_ramp_outputs_dt_ee": RAMP,
+    # Node slacks (dt = MW at the timestep; d = annualized MWh/a — out_node:120-126)
+    "node_slack_up_dt_e": RATE,
+    "node_slack_down_dt_e": RATE,
+    "node_slack_up_d_e": ENERGY_ANNUAL,
+    "node_slack_down_d_e": ENERGY_ANNUAL,
+    "nodeGroup_slack_nonsync_dt_g": RATE,
+    "nodeGroup_slack_nonsync_d_g": ENERGY_ANNUAL,
+    # Capacity (a stock, not a flow)
+    "unit_capacity_ed_p": CAPACITY_MW,
+    "connection_capacity_ed_p": CAPACITY_MW,
+    "node_capacity_ed_p": CAPACITY_MWH,
+    # Costs / factors
+    "costs_discounted_p_": MONEY_DISCOUNTED,
+    "discountFactors_d_p": FACTOR,
+    "entity_annuity_d_p": ANNUITY,
+    "years_represented__d": YEARS,
     # Start-ups
     "unit_startup_d_e": COUNT_ANNUAL,
+    # Pure membership / index sets (no measure columns)
+    "group_node": DIMENSION_TABLE,
+    "group_process": DIMENSION_TABLE,
+    "group_process_node": DIMENSION_TABLE,
+    "nodeGroupDispatch": DIMENSION_TABLE,
+    "nodeGroupIndicators": DIMENSION_TABLE,
+    "flowGroupIndicators": DIMENSION_TABLE,
+    "connection_dc_power_flow": DIMENSION_TABLE,
+    "node_dc_power_flow": DIMENSION_TABLE,
 }
 
 # Per-(output, column) formula overrides — only where a bespoke derivation
@@ -210,7 +316,8 @@ def derive_column_meta(
     out: dict[str, ColumnMeta] = {}
     for col in columns:
         name = str(col)
-        if is_dimension(name):
+        # A pure membership/index set: every column is a dimension.
+        if transform.semantics is Semantics.DIMENSION or is_dimension(name):
             out[name] = ColumnMeta(name, "", Semantics.DIMENSION,
                                    "Index / key dimension.")
             continue

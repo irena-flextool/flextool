@@ -24,36 +24,21 @@ from flextool.process_outputs._output_meta import (
 # ``test_allowlist_has_no_stale_entries``), and a new undeclared output trips
 # ``test_no_new_undeclared_processed_outputs``.
 UNDECLARED_ALLOWLIST = {
-    'CO2__', 'co2_price_period_d_g', 'co2_price_total_d_g',
-    'connection_capacity_ed_p', 'connection_dc_power_flow',
-    'connection_leftward_d_eee', 'connection_leftward_dt_eee',
-    'connection_losses_d_eee', 'connection_losses_dt_eee',
-    'connection_rightward_d_eee', 'connection_rightward_dt_eee',
-    'costs_discounted_p_', 'dc_angle_diff_dt_e', 'dc_angle_dt_e',
-    'discountFactors_d_p', 'dual_invest_effective_connection_d_e',
-    'dual_invest_effective_node_d_e', 'dual_invest_effective_unit_d_e',
-    'entity_annuity_d_p', 'flowGroupIndicators', 'flowGroup_gd_p',
-    'flowGroup_gd_t', 'group_node', 'group_process', 'group_process_node',
-    'nodeGroupDispatch', 'nodeGroupIndicators', 'nodeGroup_VRE_share_d_g',
-    'nodeGroup_VRE_share_dt_g', 'nodeGroup_flows_d_gpe', 'nodeGroup_flows_dt_g',
-    'nodeGroup_flows_dt_gpe', 'nodeGroup_gd_p', 'nodeGroup_gdt_p',
+    # Ambiguous units — awaiting domain confirmation (duals, prices, inertia,
+    # reserves, online count-vs-fraction, DC angle rad-vs-deg).
+    'co2_price_period_d_g', 'co2_price_total_d_g',
+    'dual_invest_effective_connection_d_e', 'dual_invest_effective_node_d_e',
+    'dual_invest_effective_unit_d_e', 'reserve_prices_dt_ppg',
+    'process_reserve_average_d_eppe', 'process_reserve_upDown_node_dt_eppe',
     'nodeGroup_inertia_dt_g', 'nodeGroup_inertia_largest_flow_dt_g',
-    'nodeGroup_slack_capacity_margin_d_g', 'nodeGroup_slack_inertia_d_g',
-    'nodeGroup_slack_inertia_dt_g', 'nodeGroup_slack_nonsync_d_g',
-    'nodeGroup_slack_nonsync_dt_g', 'nodeGroup_slack_reserve_d_eeg',
-    'nodeGroup_slack_reserve_dt_eeg', 'nodeGroup_total_inflow',
-    'nodeGroup_unit_node_inertia_dt_gee', 'node_capacity_ed_p', 'node_d_ep',
-    'node_dc_power_flow', 'node_dt_ep', 'node_inflow__dt', 'node_prices_dt_e',
-    'node_slack_down_d_e', 'node_slack_down_dt_e', 'node_slack_up_d_e',
-    'node_slack_up_dt_e', 'node_state_dt_e', 'process_reserve_average_d_eppe',
-    'process_reserve_upDown_node_dt_eppe', 'reserve_prices_dt_ppg',
-    'unit_VRE_potential_outputNode_d_ee', 'unit_VRE_potential_outputNode_dt_ee',
-    'unit_capacity_ed_p', 'unit_curtailment_outputNode_d_ee',
-    'unit_curtailment_outputNode_dt_ee',
-    'unit_curtailment_share_outputNode_d_ee',
-    'unit_curtailment_share_outputNode_dt_ee', 'unit_online_average_d_e',
-    'unit_online_dt_e', 'unit_ramp_inputs_dt_ee', 'unit_ramp_outputs_dt_ee',
-    'years_represented__d',
+    'nodeGroup_unit_node_inertia_dt_gee', 'nodeGroup_slack_inertia_d_g',
+    'nodeGroup_slack_inertia_dt_g', 'nodeGroup_slack_reserve_d_eeg',
+    'nodeGroup_slack_reserve_dt_eeg', 'nodeGroup_slack_capacity_margin_d_g',
+    'dc_angle_diff_dt_e', 'dc_angle_dt_e', 'unit_online_average_d_e',
+    'unit_online_dt_e', 'flowGroup_gd_p', 'flowGroup_gd_t',
+    'nodeGroup_total_inflow',
+    # Mixed-unit tables — need per-column transforms (deferred).
+    'node_d_ep', 'node_dt_ep', 'nodeGroup_gd_p', 'nodeGroup_gdt_p',
 }
 
 
@@ -67,8 +52,10 @@ def test_declarations_are_valid():
         assert isinstance(tf, Transform), f"{key}: not a Transform"
         assert isinstance(tf.semantics, Semantics), f"{key}: bad semantics"
         assert tf.tooltip, f"{key}: empty tooltip"
-        # Measures must carry a unit unless they are dimensionless ratios.
-        assert tf.unit or tf.semantics is Semantics.RATIO, f"{key}: missing unit"
+        # Measures must carry a unit unless dimensionless (ratio) or a pure
+        # dimension/membership table.
+        assert tf.unit or tf.semantics in (
+            Semantics.RATIO, Semantics.DIMENSION), f"{key}: missing unit"
 
 
 def test_overrides_reference_declared_outputs():
