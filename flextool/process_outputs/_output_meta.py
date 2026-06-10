@@ -410,6 +410,33 @@ def is_dimension(column: str) -> bool:
     return column in DIMENSION_COLUMNS
 
 
+def result_key_summary(result_key: str) -> "tuple[str, str, str] | None":
+    """Output-level ``(unit, semantics, tooltip)`` for a result key.
+
+    For a uniform output this is its transform's fields; for a mixed-unit
+    table the unit lists the distinct measure units and semantics is
+    ``"mixed"``.  Returns ``None`` for an undeclared output or a pure
+    membership/index set (nothing to annotate).  Intended for UI hovers
+    (e.g. the result viewer's plot-tree tooltip), where ``result_key`` is the
+    plot variant's key.
+    """
+    spec = OUTPUT_TRANSFORM.get(result_key)
+    if spec is None:
+        return None
+    if isinstance(spec, dict):
+        units = sorted({t.unit for t in spec.values() if t.unit})
+        sems = sorted({t.semantics.value for t in spec.values()
+                       if t.semantics is not Semantics.DIMENSION})
+        if not sems:
+            return None
+        return ("; ".join(units) if units else "ratio",
+                "mixed" if len(sems) > 1 else sems[0],
+                "Mixed-unit table — units vary by column.")
+    if spec.semantics is Semantics.DIMENSION:
+        return None
+    return (spec.unit or "ratio", spec.semantics.value, spec.tooltip)
+
+
 def derive_column_meta(
     output_key: str, columns,
 ) -> dict[str, ColumnMeta] | None:
