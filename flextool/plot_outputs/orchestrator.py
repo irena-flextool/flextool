@@ -26,7 +26,7 @@ from flextool.plot_outputs.format_helpers import (
     generate_split_filename, split_into_chunks, _chunk_average_df,
     insert_timeline_breaks,
 )
-from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, flatten_new_format
+from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, default_ylabel_for, flatten_new_format
 from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
 from flextool.plot_outputs.plot_bars import build_bar_figures
 from flextool.plot_outputs.plot_lines import build_line_figures, build_stack_figures
@@ -969,6 +969,11 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 del filtered['axis_scale_min_max']
             variant = filtered.pop('variant', None)
             cfg = PlotConfig(**filtered)
+
+            # Default the y-axis label to the output's unit (single source:
+            # the metadata catalog) when the user has not set one explicitly.
+            if cfg.ylabel is None:
+                cfg.ylabel = default_ylabel_for(key)
 
             # Plot title: explicit plot_name > entry name > result key
             plot_name = cfg.plot_name or entry_name or key

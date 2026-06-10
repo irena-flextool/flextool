@@ -83,6 +83,29 @@ class PlotConfig:
     comparison_overrides: dict | None = None
 
 
+def default_ylabel_for(result_key: str) -> str | None:
+    """Derive a default y-axis label (the displayed unit) for a plot.
+
+    Single source: the output-metadata catalog
+    (:func:`flextool.process_outputs._output_meta.result_key_summary`).
+    Returns the unit string when one is declared and non-trivial, else
+    ``None`` so callers leave an explicit ylabel untouched.  Imported lazily
+    to keep ``plot_outputs`` free of a ``process_outputs`` import at module
+    load.
+    """
+    try:
+        from flextool.process_outputs._output_meta import result_key_summary
+        summary = result_key_summary(result_key)
+    except Exception:
+        return None
+    if not summary:
+        return None
+    unit = summary[0]
+    if not unit or unit == 'ratio':
+        return None
+    return unit
+
+
 def _is_single_config(d: dict) -> bool:
     """Return True if *d* is a single-plot config (has known field names), not a named-config dict."""
     return any(k in PLOT_FIELD_NAMES for k in d)

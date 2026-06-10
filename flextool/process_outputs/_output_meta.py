@@ -23,7 +23,7 @@ new processed outputs may not land undocumented.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -435,6 +435,94 @@ def result_key_summary(result_key: str) -> "tuple[str, str, str] | None":
     if spec.semantics is Semantics.DIMENSION:
         return None
     return (spec.unit or "ratio", spec.semantics.value, spec.tooltip)
+
+
+def output_metadata_rows(output_key: str, columns) -> list[dict[str, str]]:
+    """Flat ``[{output, column, unit, semantics, tooltip, formula}, …]`` rows
+    for the *measure* columns of one output (dimension columns dropped).
+
+    Single source for the tabular renderers that list metadata in a side
+    table (the Excel ``_output_metadata`` sheet).  Returns ``[]`` for an
+    undeclared output or a pure membership/index set.
+    """
+    meta = derive_column_meta(output_key, columns)
+    if not meta:
+        return []
+    rows: list[dict[str, str]] = []
+    for col in columns:
+        cm = meta.get(str(col))
+        if cm is None or cm.semantics is Semantics.DIMENSION:
+            continue
+        rows.append({
+            "output": output_key,
+            "column": cm.name,
+            "unit": cm.unit,
+            "semantics": cm.semantics.value,
+            "tooltip": cm.tooltip,
+            "formula": cm.formula,
+        })
+    return rows
+
+
+def datapackage_resource(
+    output_key: str, path: str, index_names, measure_columns,
+) -> dict:
+    """A Frictionless ``tabular-data-resource`` describing one written CSV.
+
+    ``index_names`` are the (reset-to-column) dimension levels and
+    ``measure_columns`` the value columns — together the CSV's header.  Each
+    field carries its ``type`` and, for measures, the derived ``unit`` /
+    semantics / description / formula (under ``flextool:`` keys so the
+    descriptor stays valid Frictionless).  Always returns a resource (an
+    undeclared output simply yields string/dimension fields), so the sidecar
+    documents the full ``output_csv/`` tree, declared or not.
+    """
+    meta = derive_column_meta(output_key, measure_columns) or {}
+    fields: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _dimension_field(name: str) -> dict[str, str]:
+        return {"name": name, "type": "string", "flextool:semantics": "dimension"}
+
+    for name in index_names:
+        if name is None:
+            continue
+        key = str(name)
+        if key in seen:
+            continue
+        seen.add(key)
+        fields.append(_dimension_field(key))
+
+    for col in measure_columns:
+        name = str(col)
+        if name in seen:
+            continue
+        seen.add(name)
+        cm = meta.get(name)
+        if cm is None or cm.semantics is Semantics.DIMENSION:
+            fields.append(_dimension_field(name))
+            continue
+        spec: dict[str, str] = {
+            "name": name,
+            "type": "number",
+            "flextool:semantics": cm.semantics.value,
+        }
+        if cm.unit:
+            spec["unit"] = cm.unit
+        if cm.tooltip:
+            spec["description"] = cm.tooltip
+        if cm.formula:
+            spec["flextool:formula"] = cm.formula
+        if cm.docs:
+            spec["flextool:docs"] = cm.docs
+        fields.append(spec)
+
+    return {
+        "name": output_key.replace("_", "-").strip("-").lower() or "resource",
+        "path": path,
+        "profile": "tabular-data-resource",
+        "schema": {"fields": fields},
+    }
 
 
 def derive_column_meta(

@@ -38,11 +38,14 @@ import json
 import logging
 import math
 import os
+import re
 from typing import Any
 
 import pandas as pd
 from spinedb_api import DatabaseMapping, import_data
 from spinedb_api.parameter_value import Map
+
+from flextool.process_outputs._output_meta import FACTOR, result_key_summary
 
 logger = logging.getLogger(__name__)
 
@@ -421,6 +424,91 @@ def _ensure_results_db_atomic(db_url: str, path: str) -> None:
             _unlock(lock_fh)
 
 
+# ---------------------------------------------------------------------------
+# Derived parameter-definition descriptions (single source = _output_meta).
+#
+# The checked-in results schema already carries rich, hand-written
+# descriptions (per-category breakdowns); those are NOT clobbered.  At runtime
+# we only FILL any empty description from the derived unit + semantics.
+#
+# Drift between an existing ``[unit]`` prefix and the unit ``_output_meta``
+# derives is NOT warned at runtime (it would spam every Spine write with
+# notation-only noise, e.g. ``MWs`` vs ``MW·s``).  It is instead surfaced once,
+# in CI, by ``tests/test_output_column_metadata.py`` (a ratchet with an
+# allowlist of the known intentional differences — annualization ``/a`` suffix,
+# the CUR/kW invest-cost convention, etc.).  :func:`derived_param_unit_map` is
+# the shared entry point that test uses.
+# ---------------------------------------------------------------------------
+
+def _derived_param_units() -> tuple[dict[tuple[str, str], tuple[str, str]],
+                                    dict[str, tuple[str, str]]]:
+    """Build derived ``(unit, description)`` keyed by ``(ec, param)`` and an
+    unambiguous-by-param fallback.
+
+    The ``(ec, param)`` map drives filling/drift for the exact class; the
+    param-only fallback fills empties for classes absent from
+    :data:`SPINEDB_OUTPUT_SPEC` that nonetheless share a param name with a
+    documented one (e.g. the ``connection__reserve__*`` reservation params),
+    but only when that param has a single distinct unit across all classes.
+    """
+    by_ecp: dict[tuple[str, str], tuple[str, str]] = {}
+    units_by_param: dict[str, set[str]] = {}
+    desc_by_param: dict[str, tuple[str, str]] = {}
+    for table_name, spec in SPINEDB_OUTPUT_SPEC.items():
+        param = spec.get("param")
+        summary = result_key_summary(table_name)
+        if not param or summary is None:
+            continue
+        unit, _sem, tooltip = summary
+        desc = f"[{unit}] {tooltip}"
+        key = (spec.get("ec"), param)
+        if key not in by_ecp:
+            by_ecp[key] = (unit, desc)
+        units_by_param.setdefault(param, set()).add(unit)
+        desc_by_param.setdefault(param, (unit, desc))
+    # Params sourced from ``par`` (not a results table): the two discount
+    # factors are dimensionless (FACTOR).
+    factor_desc = f"[{FACTOR.unit or 'per unit'}] {FACTOR.tooltip}"
+    for p in ("investments discount factor", "operations discount factor"):
+        units_by_param.setdefault(p, {FACTOR.unit})
+        desc_by_param.setdefault(p, (FACTOR.unit, factor_desc))
+    unambiguous = {p: desc_by_param[p]
+                   for p, us in units_by_param.items() if len(us) == 1}
+    return by_ecp, unambiguous
+
+
+def leading_unit(description: str | None) -> str | None:
+    """Return the ``[unit]`` prefix of a description, or None."""
+    m = re.match(r"\s*\[([^\]]*)\]", description or "")
+    return m.group(1).strip() if m else None
+
+
+def derived_param_unit_map() -> dict[tuple[str, str], str]:
+    """``{(entity_class, param): derived_unit}`` for params with a known
+    transform — the data the CI drift ratchet compares against the schema's
+    hand-written descriptions."""
+    by_ecp, _unambiguous = _derived_param_units()
+    return {key: unit for key, (unit, _desc) in by_ecp.items()}
+
+
+def _apply_derived_descriptions(schema: dict) -> None:
+    """Fill empty ``parameter_definition`` descriptions from derived metadata.
+
+    Mutates ``schema['parameter_definitions']`` in place: an entry is
+    ``[entity_class, param, default, value_list, description, type]``.
+    Existing (non-empty) descriptions are left untouched — drift between them
+    and the derived units is a CI concern, not a runtime one (see the module
+    note above)."""
+    by_ecp, unambiguous = _derived_param_units()
+    for entry in schema.get("parameter_definitions", []):
+        ec, param, existing = entry[0], entry[1], entry[4]
+        if existing:
+            continue
+        derived = by_ecp.get((ec, param)) or unambiguous.get(param)
+        if derived:
+            entry[4] = derived[1]
+
+
 def _import_schema(db_url: str) -> None:
     """Load the results schema JSON into the DB at ``db_url`` (created if
     needed).
@@ -433,6 +521,7 @@ def _import_schema(db_url: str) -> None:
     such restriction)."""
     with open(_SCHEMA_PATH, encoding="utf-8") as fh:
         schema = json.load(fh)
+    _apply_derived_descriptions(schema)
     db = DatabaseMapping(db_url, create=True)
     try:
         count, errors = import_data(db, **schema)
