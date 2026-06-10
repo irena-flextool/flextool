@@ -27,6 +27,7 @@ import pyarrow.parquet as pq
 
 def write_lean_parquet(
     df: pd.DataFrame, path: str | Path, *, index: bool = True,
+    column_metadata: "dict | None" = None,
 ) -> None:
     """Write *df* to parquet with minimal metadata.
 
@@ -39,6 +40,12 @@ def write_lean_parquet(
     index : bool
         If ``True`` (default), preserve the row index.  Pass ``False`` for
         flat tables where the index is meaningless (e.g. timeline_breaks).
+    column_metadata : dict, optional
+        ``{leaf_column_name: {"unit", "semantics", "tooltip", "formula",
+        "docs"}}`` describing each logical column.  Stored as a file-level
+        ``flextool_columns`` JSON blob (keyed by *leaf* name, robust to the
+        MultiIndex/scenario flattening that arrow applies to field names).
+        Read it back with :func:`read_lean_parquet_column_meta`.
     """
     # Don't preserve RangeIndex as a physical column — it carries no data
     # and would create a stray ``__index_level_0__`` column without the
@@ -68,9 +75,22 @@ def write_lean_parquet(
     meta = dict(table.schema.metadata or {})
     meta.pop(b"pandas", None)
     meta[b"flextool"] = json.dumps(info).encode()
+    if column_metadata:
+        meta[b"flextool_columns"] = json.dumps(column_metadata).encode()
     table = table.replace_schema_metadata(meta)
 
     pq.write_table(table, str(path))
+
+
+def read_lean_parquet_column_meta(path: str | Path) -> dict | None:
+    """Return the per-column metadata blob written by :func:`write_lean_parquet`.
+
+    Reads only the file footer (cheap).  Returns ``{leaf_column: {...}}`` or
+    ``None`` when the file carries no ``flextool_columns`` metadata.
+    """
+    file_meta = pq.ParquetFile(str(path)).schema_arrow.metadata or {}
+    blob = file_meta.get(b"flextool_columns")
+    return json.loads(blob) if blob else None
 
 
 def read_lean_parquet(path: str | Path) -> pd.DataFrame:

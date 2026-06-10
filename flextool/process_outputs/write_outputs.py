@@ -13,6 +13,7 @@ import yaml
 from spinedb_api import DatabaseMapping, from_database, Array
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+from flextool.process_outputs._output_meta import derive_column_meta
 from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
 from flextool.plot_outputs.color_template import resolve_plot_settings_path
 from flextool.process_outputs.out_ancillary import (
@@ -882,13 +883,23 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         if not os.path.exists(parquet_dir):
             os.makedirs(parquet_dir)
         for name, df in results.items():
+            col_meta = None
             if isinstance(df, (pd.MultiIndex, pd.Index)):
                 df = df.to_frame(index=False)
                 df.insert(0, 'scenario', scenario_name)
                 df.set_index(list(df.columns)).index
             else:
+                # Derive per-column unit/semantics from the leaf columns
+                # (before the scenario level is prepended) so the keys match
+                # the logical column names, not arrow's flattened tuples.
+                # Series-valued outputs have no columns — skip them for now.
+                if isinstance(df, pd.DataFrame):
+                    derived = derive_column_meta(name, df.columns)
+                    if derived:
+                        col_meta = {k: v.as_dict() for k, v in derived.items()}
                 df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
-            write_lean_parquet(df, f'{parquet_dir}/{name}.parquet')
+            write_lean_parquet(df, f'{parquet_dir}/{name}.parquet',
+                               column_metadata=col_meta)
 
         # Copy timeline_breaks from solve_data to parquet dir.
         raw_dir = raw_output_dir or 'output_raw'
