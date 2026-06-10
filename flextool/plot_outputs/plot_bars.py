@@ -46,10 +46,11 @@ SOLO_BAR_THICKNESS = REFERENCE_BAR_THICKNESS * SOLO_BAR_THICKNESS_MULT  # ≈ 0.
 # VALUE_LABEL_SLOT_FLOOR); fattening the lone bar would just bloat it.
 VALUE_LABEL_BAR_THICKNESS_MULT = 2.5
 # Minimum slot height when value labels are drawn, so a single bar's label
-# (placed at the bar tip) clears its neighbours' labels. ~1.3x the value-label
-# font line height (~0.167" at 10pt) for a comfortable gap. The bar itself
-# stays thin; only the slot grows.
-VALUE_LABEL_SLOT_FLOOR = 0.22
+# (placed at the bar tip) just clears its neighbours' labels. Sits a hair above
+# one value-label font line (~0.167" at 10pt) — only ~0.01" more than the
+# unlabelled horizontal floor (0.70*BAR_HEIGHT=0.168"), so labelled bars space
+# almost like unlabelled ones. The bar itself stays thin; only the slot grows.
+VALUE_LABEL_SLOT_FLOOR = 0.18
 # Per-category slot floor as a fraction of BAR_HEIGHT, by orientation. The
 # 0.24" baseline reserves room for a *horizontal* tick label beside each bar,
 # so for horizontal bars most of it is needed. Vertical bars rotate their tick
