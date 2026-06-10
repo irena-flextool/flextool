@@ -176,6 +176,12 @@ def unit_cf_outputNode(par, s, v, r, debug):
     unit_capacity = r.entity_all_capacity[unit_cols.droplevel(1).unique()].rename_axis('process', axis=1)
     unit_capacity.columns = unit_capacity.columns.get_level_values(0)
     results = r.process_sink_flow_d[unit_cols].div(unit_capacity, level=0).div(complete_hours, axis=0)
+    # Capacity factor is undefined for units with no capacity (e.g. an un-built
+    # investment candidate, capacity == 0).  Dividing a tiny LP residual flow by
+    # zero capacity yields +/-inf; collapse those to NaN so downstream reductions
+    # (plot sums/means) skip them instead of summing +inf and -inf into a
+    # spurious NaN (RuntimeWarning: invalid value encountered in reduce).
+    results = results.replace([float('inf'), float('-inf')], float('nan'))
     results.columns.names = ['unit', 'sink']
     return results, 'unit_outputs_cf_d_ee'
 
@@ -188,6 +194,8 @@ def unit_cf_inputNode(par, s, v, r, debug):
     unit_capacity = r.entity_all_capacity[unit_source.droplevel(1).unique()].rename_axis('process', axis=1)
     unit_capacity.columns = unit_capacity.columns.get_level_values(0)
     results = r.process_source_flow_d[unit_source].div(unit_capacity, level=0).div(complete_hours, axis=0)
+    # CF undefined for zero-capacity units -> NaN (see unit_cf_outputNode).
+    results = results.replace([float('inf'), float('-inf')], float('nan'))
     results.columns.names = ['unit', 'source']
     return results, 'unit_inputs_cf_d_ee'
 

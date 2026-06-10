@@ -53,6 +53,8 @@ def connection_cf(par, s, v, r, debug):
         .div(connection_capacity, level=0)
         .div(complete_hours, axis=0)
     )
+    # CF undefined for zero-capacity connections -> NaN (see unit_cf_outputNode).
+    results = results.replace([float('inf'), float('-inf')], float('nan'))
     results.columns.names = ['connection']
     return results, 'connection_cf_d_e'
 
