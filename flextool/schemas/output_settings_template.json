@@ -75,7 +75,7 @@
         [
             "settings",
             "output-spinedb",
-            false,
+            true,
             null,
             null
         ],
@@ -215,7 +215,7 @@
             "settings",
             "default",
             "output-spinedb",
-            false,
+            true,
             "default"
         ],
         [
