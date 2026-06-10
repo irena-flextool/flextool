@@ -36,13 +36,20 @@ SOLO_BAR_THICKNESS_MULT = 2.0      # one-bar-per-row case (no grouping → no le
 _REF_DENOM = REFERENCE_BARS_PER_ROW + (REFERENCE_BARS_PER_ROW - 1) * BAR_GAP_FRACTION
 REFERENCE_BAR_THICKNESS = BAR_HEIGHT / _REF_DENOM   # ≈ 0.0558 in
 SOLO_BAR_THICKNESS = REFERENCE_BAR_THICKNESS * SOLO_BAR_THICKNESS_MULT  # ≈ 0.1116 in
-# When value labels are drawn on bars, the regular bar thickness leaves the
-# numeric labels too close together (the center-to-center bar pitch is only
-# ~0.44x the label font line height, so labels overlap). Thicken bars — and
-# correspondingly grow each bar's slot height so the thicker bars still fit —
-# by this factor whenever value labels are enabled. 2.5x raises the pitch to
-# slightly above one font line height (~0.139" at 10pt), separating labels.
+# When value labels are drawn on GROUPED bars (several bars — and several
+# labels — share one slot), the thin reference bar thickness leaves the
+# numeric labels too close together (center-to-center pitch ~0.44x the label
+# font line height, so labels overlap). Thicken the grouped bars — and grow
+# their slot to match — by this factor so each bar's label gains a font line
+# of pitch. Single-bar-per-label plots do NOT need this: there is one label
+# per slot, so the slot height alone separates the labels (see
+# VALUE_LABEL_SLOT_FLOOR); fattening the lone bar would just bloat it.
 VALUE_LABEL_BAR_THICKNESS_MULT = 2.5
+# Minimum slot height when value labels are drawn, so a single bar's label
+# (placed at the bar tip) clears its neighbours' labels. ~1.3x the value-label
+# font line height (~0.167" at 10pt) for a comfortable gap. The bar itself
+# stays thin; only the slot grows.
+VALUE_LABEL_SLOT_FLOOR = 0.22
 # Per-category slot floor as a fraction of BAR_HEIGHT, by orientation. The
 # 0.24" baseline reserves room for a *horizontal* tick label beside each bar,
 # so for horizontal bars most of it is needed. Vertical bars rotate their tick
@@ -374,12 +381,14 @@ def _build_bar_figure(
     n_subs = len(effective_plots)
     n_rows, n_cols = _calculate_grid_layout(n_subs, subplots_per_row)
 
-    # When value labels are on, thicken bars and grow each slot by the same
-    # factor so the labels (which sit at bar centers) gain vertical
-    # separation. thickness_mult is captured by the closures below and
-    # passed to the draw functions, so the estimation and render passes stay
-    # consistent. value_fmt is in scope here (it is also used to draw the
-    # labels further down).
+    # When value labels are on, thicken GROUPED bars (and grow their slot to
+    # match) so each bar's label gains separation — only grouped bars pack
+    # several labels into one slot. Single bars per label keep the thin
+    # thickness and get their label room from VALUE_LABEL_SLOT_FLOOR instead
+    # (fattening a lone bar would just bloat it). thickness_mult is captured by
+    # the closures below and passed to the draw functions, so the estimation
+    # and render passes stay consistent. value_fmt is in scope here (it is also
+    # used to draw the labels further down).
     thickness_mult = VALUE_LABEL_BAR_THICKNESS_MULT if value_fmt else 1.0
 
     # Per-position bar height: when grouped bars exceed 3, scale up the slot
@@ -392,19 +401,26 @@ def _build_bar_figure(
         VERTICAL_SLOT_FLOOR_MULT if bar_orientation == 'vertical'
         else HORIZONTAL_SLOT_FLOOR_MULT
     )
-    # The floor sets the inter-bar gap for normal bars. When value labels
-    # thicken the bars (thickness_mult > 1), scale the floor by the same
-    # factor so the gap grows in proportion. Otherwise the thickened bar fills
-    # the fixed floor exactly (max(floor, needed) == needed) and adjacent bars
-    # touch with no spacing — and the orientation tightening is lost.
-    slot_floor *= thickness_mult
+    # Value labels sit at the bar tip; with one bar per label they are
+    # separated from their neighbours by the slot height, not by bar thickness.
+    # Raise the floor to fit one label line so the labels clear each other,
+    # while the bar stays thin (see _slot_height_for_n_grouped's n==1 branch
+    # and _plot_simple_bars). Grouped bars (many labels per slot) instead rely
+    # on thickness_mult, applied to their bar thickness below.
+    if value_fmt:
+        slot_floor = max(slot_floor, VALUE_LABEL_SLOT_FLOOR)
 
     def _slot_height_for_n_grouped(n: int) -> float:
         """Bar slot height for n grouped bars at one label."""
         if n <= 0:
             return slot_floor
-        bar_t = (SOLO_BAR_THICKNESS if n == 1 else REFERENCE_BAR_THICKNESS) * thickness_mult
-        needed = n * bar_t + max(0, n - 1) * BAR_GAP_FRACTION * bar_t
+        if n == 1:
+            # One bar per label: keep the bar thin even when value labels are
+            # on. Their room comes from the (value-label-aware) slot_floor, not
+            # from fattening the bar.
+            return max(slot_floor, SOLO_BAR_THICKNESS)
+        bar_t = REFERENCE_BAR_THICKNESS * thickness_mult
+        needed = n * bar_t + (n - 1) * BAR_GAP_FRACTION * bar_t
         return max(slot_floor, needed)
 
     def _count_grouped(df_check: pd.DataFrame) -> int:

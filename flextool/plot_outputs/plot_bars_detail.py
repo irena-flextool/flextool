@@ -655,9 +655,11 @@ def _plot_simple_bars(
             if isinstance(bar_color, list) else bar_color
         )
 
-    # Single vectorised draw call replacing the per-bar loop.
+    # Single vectorised draw call replacing the per-bar loop. Simple bars are
+    # one-per-label, so they keep the thin thickness even with value labels —
+    # the label room comes from the slot height (VALUE_LABEL_SLOT_FLOOR), not
+    # from fattening the bar. thickness_mult only fattens grouped bars.
     bar_h = SOLO_BAR_THICKNESS
-    bar_h *= thickness_mult
     if horizontal:
         container = ax.barh(draw_y, draw_v, height=bar_h, color=draw_color)
     else:  # vertical
