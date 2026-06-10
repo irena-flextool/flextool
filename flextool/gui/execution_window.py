@@ -138,11 +138,14 @@ class ExecutionWindow(tk.Toplevel):
         taskbar_margin = self._line_height * 4 if hasattr(self, '_line_height') else 80
         usable_h = screen_h - taskbar_margin
 
-        if screen_w < 1920:
-            # Small screen: full screen, overlap main window
-            self.geometry(f"{screen_w}x{usable_h}+0+0")
+        if screen_w <= 2400:
+            # Narrow screen: overlap the main window but leave the leftmost
+            # ~10% uncovered so the main menu stays reachable for switching.
+            left_gap = int(screen_w * 0.10)
+            exec_w = screen_w - left_gap
+            self.geometry(f"{exec_w}x{usable_h}+{left_gap}+0")
         else:
-            # Large screen: right of main window, touching but not overlapping
+            # Wide screen: right of main window, touching but not overlapping
             exec_x = main_x + main_w
             exec_w = max(screen_w - exec_x, 400)  # minimum 400px wide
             self.geometry(f"{exec_w}x{usable_h}+{exec_x}+0")

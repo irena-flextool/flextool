@@ -116,6 +116,27 @@ def open_spine_db_editor(db_url: str) -> subprocess.Popen | None:
         return None
 
 
+def set_process_dpi_awareness() -> None:
+    """Mark the process DPI-aware on Windows.
+
+    MUST be called **before** the first Tk window (HWND) exists — Windows
+    only honours ``SetProcessDpiAwareness`` while the process has no
+    windows. Called after ``tk.Tk()`` it is a silent no-op, leaving the
+    process DPI-*unaware*; the OS then hands Tk a virtualized, scaled-down
+    screen, so ``winfo_screenwidth()`` and natural-size queries come back
+    wrong on any scaled display. No-op off Windows (macOS handles Retina
+    internally; Linux scaling is applied via ``tk scaling`` instead).
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        # 1 = PROCESS_SYSTEM_DPI_AWARE.
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
 def apply_dpi_scaling(root: tk.Tk) -> float:
     """Detect the OS display scale factor and apply it to tkinter.
 
@@ -127,7 +148,9 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
 
     1. ``FLEXTOOL_DPI`` environment variable — explicit user override
        (e.g. ``FLEXTOOL_DPI=144``) for setups where auto-detection fails.
-    2. On Windows, ``ctypes`` queries the system DPI directly.
+    2. On Windows, ``ctypes`` queries the system DPI directly. Process
+       DPI-awareness must already have been set via
+       :func:`set_process_dpi_awareness` before the Tk root was created.
     3. On Linux/X11, ``Xft.dpi`` (set by GNOME/KDE/Xfce) is the most
        reliable hint, followed by ``GDK_SCALE`` and finally an
        ``xrandr``-derived DPI.  The xrandr fallback uses the monitor
@@ -165,9 +188,10 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
             pass
 
     if dpi is None and sys.platform == "win32":
+        # Awareness is set earlier (set_process_dpi_awareness, before the Tk
+        # root existed); here we only read the now-truthful system DPI.
         try:
             import ctypes
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # type: ignore[attr-defined]
             dpi = ctypes.windll.user32.GetDpiForSystem()  # type: ignore[attr-defined]
         except Exception:
             pass

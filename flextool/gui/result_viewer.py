@@ -253,8 +253,12 @@ class ResultViewer(tk.Toplevel):
         taskbar_margin = lh * 4
         usable_h = screen_h - taskbar_margin
 
-        if screen_w < 1920:
-            self.geometry(f"{screen_w}x{usable_h}+0+0")
+        if screen_w <= 2400:
+            # Narrow screen: overlap the main window but leave the leftmost
+            # ~10% uncovered so the main menu stays reachable for switching.
+            left_gap = int(screen_w * 0.10)
+            viewer_w = screen_w - left_gap
+            self.geometry(f"{viewer_w}x{usable_h}+{left_gap}+0")
         else:
             viewer_x = main_x + main_w
             viewer_w = max(screen_w - viewer_x, cw * 80)
@@ -1176,7 +1180,7 @@ class ResultViewer(tk.Toplevel):
             if entry is None:
                 self._hide_tooltip()
                 return
-            full_text = f"{entry.number} {entry.full_name}"
+            full_text = self._entry_tooltip_text(entry)
         if self._tooltip is not None:
             try:
                 self._tooltip_label.configure(text=full_text)
@@ -1198,8 +1202,30 @@ class ResultViewer(tk.Toplevel):
             background="#333333", foreground="#ffffff",
             relief="solid", borderwidth=1,
             padx=4, pady=2,
+            justify="left", anchor="w",
         )
         self._tooltip_label.pack()
+
+    def _entry_tooltip_text(self, entry: PlotEntry) -> str:
+        """Entry label plus, per temporal variant, the output's unit and
+        semantics from the derived metadata catalog.  Makes the
+        rate-vs-annualized distinction (e.g. ``[t] MW · instantaneous`` vs
+        ``[d] MWh/a · annualized``) visible on hover without opening the file.
+        """
+        from flextool.process_outputs._output_meta import result_key_summary
+
+        lines = [f"{entry.number} {entry.full_name}"]
+        seen: set[str] = set()
+        for variant in entry.variants:
+            if variant.result_key in seen:
+                continue
+            seen.add(variant.result_key)
+            summary = result_key_summary(variant.result_key)
+            if summary is None:
+                continue
+            unit, semantics, _desc = summary
+            lines.append(f"   [{variant.letter}] {unit or 'ratio'} · {semantics}")
+        return "\n".join(lines)
 
     def _hide_tooltip(self, _event: tk.Event | None = None) -> None:
         """Destroy the tooltip if it exists."""
