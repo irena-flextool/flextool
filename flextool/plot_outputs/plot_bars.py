@@ -43,6 +43,15 @@ SOLO_BAR_THICKNESS = REFERENCE_BAR_THICKNESS * SOLO_BAR_THICKNESS_MULT  # ≈ 0.
 # by this factor whenever value labels are enabled. 2.5x raises the pitch to
 # slightly above one font line height (~0.139" at 10pt), separating labels.
 VALUE_LABEL_BAR_THICKNESS_MULT = 2.5
+# Per-category slot floor as a fraction of BAR_HEIGHT, by orientation. The
+# 0.24" baseline reserves room for a *horizontal* tick label beside each bar,
+# so for horizontal bars most of it is needed. Vertical bars rotate their tick
+# labels 90° and need far less lateral room, so their floor drops close to the
+# bar thickness itself — max(floor, needed) then falls back to the bar
+# thickness and pulls the bars tightly together (gap shrinks ~70%). Horizontal
+# bars trim ~30% of the baseline, the most their labels can spare.
+VERTICAL_SLOT_FLOOR_MULT = 0.625    # vertical bars: slot ≈ bar thickness + thin gap
+HORIZONTAL_SLOT_FLOOR_MULT = 0.70   # horizontal bars: ~30% tighter than baseline
 SUBPLOT_VPAD = 0.3          # Space above axes for subplot title
 INTER_COL_GAP = 0.4         # Horizontal gap between subplot columns
 INTER_ROW_GAP = 0.6         # Vertical gap between subplot rows
@@ -379,13 +388,24 @@ def _build_bar_figure(
     # thickness (REFERENCE_BAR_THICKNESS for n>1, SOLO_BAR_THICKNESS for
     # n==1). Slot stays at the BAR_HEIGHT baseline whenever the bars +
     # gaps fit; grows once they don't.
+    slot_floor = BAR_HEIGHT * (
+        VERTICAL_SLOT_FLOOR_MULT if bar_orientation == 'vertical'
+        else HORIZONTAL_SLOT_FLOOR_MULT
+    )
+    # The floor sets the inter-bar gap for normal bars. When value labels
+    # thicken the bars (thickness_mult > 1), scale the floor by the same
+    # factor so the gap grows in proportion. Otherwise the thickened bar fills
+    # the fixed floor exactly (max(floor, needed) == needed) and adjacent bars
+    # touch with no spacing — and the orientation tightening is lost.
+    slot_floor *= thickness_mult
+
     def _slot_height_for_n_grouped(n: int) -> float:
         """Bar slot height for n grouped bars at one label."""
         if n <= 0:
-            return BAR_HEIGHT
+            return slot_floor
         bar_t = (SOLO_BAR_THICKNESS if n == 1 else REFERENCE_BAR_THICKNESS) * thickness_mult
         needed = n * bar_t + max(0, n - 1) * BAR_GAP_FRACTION * bar_t
-        return max(BAR_HEIGHT, needed)
+        return max(slot_floor, needed)
 
     def _count_grouped(df_check: pd.DataFrame) -> int:
         """Count grouped bar members in a DataFrame."""
