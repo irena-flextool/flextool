@@ -158,7 +158,7 @@ exclude = ["flextool*.__pycache__"]
 #   * schemas/*.json                    — schema templates (spinedb_schema.json, axis
 #                                         contract, output/comparison-settings seeds)
 #   * schemas/*.md                      — schema docs (AXIS_CONTRACT.md)
-#   * schemas/*.yaml, schemas/*.txt     — YAML configs (default plots/colors) + flextool_location.txt
+#   * schemas/*.yaml                    — YAML configs (default plots/colors)
 #   * schemas/canonical_databases/*.json — canonical example/template DB sources
 #   * schemas/pre_v26/*.json            — pre-v26 migration-step template snapshots
 #   * solver_config/highs.opt.template — HiGHS options template (seeded into solver_config/highs.opt on first run)
@@ -167,7 +167,6 @@ flextool = [
     "schemas/*.json",
     "schemas/*.md",
     "schemas/*.yaml",
-    "schemas/*.txt",
     "schemas/canonical_databases/*.json",
     "schemas/pre_v26/*.json",
     "solver_config/highs.opt.template",

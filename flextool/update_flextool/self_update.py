@@ -291,6 +291,9 @@ def update_flextool(skip_git):
                 "# to direct this workflow's outputs (output_parquet/, results.sqlite,\n"
                 "# plots, and the per-project plot_settings.yaml) into that project folder.\n"
                 "# Leave blank to use the FlexTool root.\n"
+                "# Use projects sub-folders to allow access by FlexTool GUI as well.\n"
+                "# Using the project specific input_sources folder for the input data db\n"
+                "# makes it visible in the GUI too.\n"
                 "# e.g.:  projects/Rivendell\n"
             )
 
