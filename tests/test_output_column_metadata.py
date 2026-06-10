@@ -23,17 +23,9 @@ from flextool.process_outputs._output_meta import (
 # SHRINK: declaring one of these requires removing it here (enforced by
 # ``test_allowlist_has_no_stale_entries``), and a new undeclared output trips
 # ``test_no_new_undeclared_processed_outputs``.
-UNDECLARED_ALLOWLIST = {
-    # Still ambiguous from code alone (deferred):
-    #  - reserve / capacity-margin slacks: MW-vs-MWh and annualized-vs-period
-    #    semantics need confirmation against the slack penalty terms.
-    #  - flowGroup_gd_p / nodeGroup_total_inflow: structure not yet verified.
-    'nodeGroup_slack_reserve_d_eeg', 'nodeGroup_slack_reserve_dt_eeg',
-    'nodeGroup_slack_capacity_margin_d_g', 'nodeGroup_total_inflow',
-    'flowGroup_gd_p',
-    # Mixed-unit tables — need per-column transforms (deferred).
-    'node_d_ep', 'node_dt_ep', 'nodeGroup_gd_p', 'nodeGroup_gdt_p',
-}
+# All processed outputs are now declared (84/84).  Any new processed output
+# must be added to OUTPUT_TRANSFORM (or, exceptionally, allowlisted here).
+UNDECLARED_ALLOWLIST: set[str] = set()
 
 
 def _processed_keys() -> set[str]:
@@ -41,15 +33,18 @@ def _processed_keys() -> set[str]:
 
 
 def test_declarations_are_valid():
-    """Every OUTPUT_TRANSFORM value is a Transform with a valid Semantics."""
-    for key, tf in OUTPUT_TRANSFORM.items():
-        assert isinstance(tf, Transform), f"{key}: not a Transform"
-        assert isinstance(tf.semantics, Semantics), f"{key}: bad semantics"
-        assert tf.tooltip, f"{key}: empty tooltip"
-        # Measures must carry a unit unless dimensionless (ratio) or a pure
-        # dimension/membership table.
-        assert tf.unit or tf.semantics in (
-            Semantics.RATIO, Semantics.DIMENSION), f"{key}: missing unit"
+    """Every declared transform (single or per-column map) is valid."""
+    for key, spec in OUTPUT_TRANSFORM.items():
+        # A declaration is either a single Transform or a {column: Transform} map.
+        entries = spec.values() if isinstance(spec, dict) else [spec]
+        for tf in entries:
+            assert isinstance(tf, Transform), f"{key}: not a Transform"
+            assert isinstance(tf.semantics, Semantics), f"{key}: bad semantics"
+            assert tf.tooltip, f"{key}: empty tooltip"
+            # Measures must carry a unit unless dimensionless (ratio) or a pure
+            # dimension/membership table.
+            assert tf.unit or tf.semantics in (
+                Semantics.RATIO, Semantics.DIMENSION), f"{key}: missing unit"
 
 
 def test_overrides_reference_declared_outputs():

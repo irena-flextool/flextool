@@ -221,6 +221,10 @@ ANGLE = Transform(
     "DC voltage angle (Bθ formulation; reference node pinned to 0). Radians — "
     "flow = susceptance · Δangle with susceptance = base_MVA / reactance.",
 )
+SLACK_CAP_MARGIN = Transform(
+    "MW", Semantics.LEVEL,
+    "Capacity-margin slack — per-period MW shortfall (not annualized).",
+)
 # Sentinel: an output that is a pure membership/index set (no measures).
 DIMENSION_TABLE = Transform(
     "", Semantics.DIMENSION,
@@ -249,12 +253,41 @@ class ColumnMeta:
         }
 
 
+# ── Per-column transform maps (for mixed-unit tables) ───────────────────────
+# Some outputs hold columns of different units in one frame.  Their
+# OUTPUT_TRANSFORM value is a {column_label: Transform} map instead of a single
+# Transform; derive_column_meta applies the per-column entry (columns absent
+# from the map fall back to a '*' default if present, else dimension).
+_NODEGROUP_GDT_P = {
+    '1. Loss of load': ENERGY_PERSTEP,
+    '2. VRE generation': ENERGY_PERSTEP,
+    '3. Excess load': ENERGY_PERSTEP,
+    '4. Curtailed VRE': ENERGY_PERSTEP,
+    '5. Timestep inflow': ENERGY_PERSTEP,
+    '6. Curtailed VRE of potential VRE': RATIO,
+    '7. Annualized inflow': PREENERGY_ANNUAL,
+    '8. VRE share of demand': RATIO,
+}
+_NODEGROUP_GD_P = {
+    '1. Loss of load share': RATIO,
+    '2. VRE share of demand': RATIO,
+    '3. Excess load share': RATIO,
+    '4. Curtailed VRE of demand': RATIO,
+    '5. Annualized inflow': PREENERGY_ANNUAL,
+    '6. Curtailed VRE of potential VRE': RATIO,
+}
+_FLOWGROUP_GD_P = {
+    'cumulative_flow': ENERGY_PERIOD,   # MWh summed over the sample (not annualized)
+    'average_flow': AVERAGE_MW,         # MW time-average
+}
+
+
 # ── Per-output declaration ──────────────────────────────────────────────────
 # Map each output key to the transform its measure columns underwent.  One line
 # per output; the per-column expansion + tooltips are generated.  Seeded with
 # the high-traffic outputs; extend as coverage grows (the CI ratchet enforces
 # that no NEW output lands here undocumented).
-OUTPUT_TRANSFORM: dict[str, Transform] = {
+OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # Costs
     "costs_dt_p": MONEY_PERSTEP,
     "annualized_costs_d_p": MONEY_ANNUAL,
@@ -277,9 +310,6 @@ OUTPUT_TRANSFORM: dict[str, Transform] = {
     "process_co2_d_eee": EMISSION_ANNUAL,
     "CO2__": EMISSION_MT,
     # Node / group flows
-    # (node_d_ep / node_dt_ep / nodeGroup_gd_p / nodeGroup_gdt_p are MIXED
-    #  flows+inflow+share tables — they need per-column transforms, deferred;
-    #  they stay in the coverage allowlist for now.)
     "nodeGroup_flows_d_g": PREENERGY_ANNUAL,
     "nodeGroup_flows_d_gpe": PREENERGY_ANNUAL,
     "nodeGroup_flows_dt_g": ENERGY_PERSTEP,
@@ -339,6 +369,18 @@ OUTPUT_TRANSFORM: dict[str, Transform] = {
     "unit_online_dt_e": ONLINE_COUNT,
     "unit_online_average_d_e": ONLINE_AVG,
     "flowGroup_gd_t": RATE,
+    "nodeGroup_slack_reserve_dt_eeg": RATE,
+    "nodeGroup_slack_reserve_d_eeg": ENERGY_ANNUAL,
+    "nodeGroup_slack_capacity_margin_d_g": SLACK_CAP_MARGIN,
+    "nodeGroup_total_inflow": PREENERGY_ANNUAL,
+    # Node balance tables — uniform energy (all categories MWh):
+    #   _dt_ep = MWh/step, _d_ep = annualized MWh/a.
+    "node_dt_ep": ENERGY_PERSTEP,
+    "node_d_ep": ENERGY_ANNUAL,
+    # Mixed-unit tables — per-column transform maps.
+    "nodeGroup_gdt_p": _NODEGROUP_GDT_P,
+    "nodeGroup_gd_p": _NODEGROUP_GD_P,
+    "flowGroup_gd_p": _FLOWGROUP_GD_P,
     # Pure membership / index sets (no measure columns)
     "group_node": DIMENSION_TABLE,
     "group_process": DIMENSION_TABLE,
@@ -376,26 +418,31 @@ def derive_column_meta(
     ``columns`` is the iterable of *leaf* column names (e.g. cost categories),
     typically ``df.columns`` before any scenario-level wrapping.  Dimension
     columns get ``Semantics.DIMENSION``; measure columns get the output's
-    declared transform.  Returns ``None`` when the output is not (yet) declared
-    in :data:`OUTPUT_TRANSFORM`, so callers can treat absence as "no metadata".
+    declared transform.  The declared value may be a single ``Transform``
+    (uniform) or a ``{column_label: Transform}`` map (mixed-unit tables, with
+    an optional ``'*'`` default).  Returns ``None`` when the output is not (yet)
+    declared in :data:`OUTPUT_TRANSFORM`, so callers can treat absence as
+    "no metadata".
     """
-    transform = OUTPUT_TRANSFORM.get(output_key)
-    if transform is None:
+    spec = OUTPUT_TRANSFORM.get(output_key)
+    if spec is None:
         return None
     docs = DOCS_ANCHOR.get(output_key, "")
     out: dict[str, ColumnMeta] = {}
     for col in columns:
         name = str(col)
-        # A pure membership/index set: every column is a dimension.
-        if transform.semantics is Semantics.DIMENSION or is_dimension(name):
+        tf = spec.get(name, spec.get('*')) if isinstance(spec, dict) else spec
+        # Index/key dimension, a pure membership set, or a column absent from a
+        # mixed-table map → dimension.
+        if tf is None or tf.semantics is Semantics.DIMENSION or is_dimension(name):
             out[name] = ColumnMeta(name, "", Semantics.DIMENSION,
                                    "Index / key dimension.")
             continue
         out[name] = ColumnMeta(
             name=name,
-            unit=transform.unit,
-            semantics=transform.semantics,
-            tooltip=transform.tooltip,
+            unit=tf.unit,
+            semantics=tf.semantics,
+            tooltip=tf.tooltip,
             formula=FORMULA_OVERRIDE.get((output_key, name), ""),
             docs=docs,
         )
