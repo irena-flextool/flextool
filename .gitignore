@@ -1,6 +1,10 @@
 *.csv
 !tests/expected/**/*.csv
 *.sqlite
+# Results-DB sidecars: atomic-build temp shards and the cold-start lock file.
+*.sqlite.tmp
+.results-*.sqlite.tmp
+*.sqlite.lock
 files_comp_results.txt
 paramNotWritten.dat
 .spinetoolbox/local/
