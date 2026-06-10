@@ -128,17 +128,21 @@ data** Data Store at that project's input database).
 ### Producing the results SpineDB
 
 To get a results SpineDB at `<project>/results.sqlite`, set
-`output-spinedb = true` in the **Output settings** database. The **Re-create
-results** step then writes it, with **each scenario as a Spine *alternative***,
-by replaying the processed parquet — **no re-solve**. (The parallel solve step
-deliberately does *not* write it, to avoid work-directory races; it is produced
-once by Re-create.) Whatever else you tick in Output settings
-(`output-plot` / `output-excel` / `output-csv`) Re-create also produces.
+`output-spinedb = true` in the **Output settings** database. Both steps honor it,
+with **each scenario as a Spine *alternative***:
 
-Two caveats on this parquet-replay path:
+- The **FlexTool run** writes it directly from the live solve (the usual case —
+  the full results land in the DB as the scenarios run).
+- The **Re-create results** step (re)builds or augments it by **replaying the
+  processed parquet — no re-solve**. Use this to add the SpineDB *afterwards*
+  without re-running, or to reduce the scenario set via its alternative filter.
+  Whatever else you tick in Output settings (`output-plot` / `output-excel` /
+  `output-csv`) Re-create also (re)produces.
+
+Two caveats apply to the **replay** path only:
 
 - The two inflation / discount-factor parameters are omitted (they need the live
-  solve). Everything else matches a native-solve results DB.
+  solve); the native run path writes the full set.
 - For a *bidirectional* connection the `(source, sink)` byname uses the parquet
   `(node_1, node_2)` geometry; one-directional connections are exact.
 

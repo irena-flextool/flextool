@@ -595,21 +595,13 @@ ALL_OUTPUTS = [
 
 def _resolve_settings(write_methods, output_config_path, active_configs, plot_rows,
                       output_location, plot_file_format, settings_db_url,
-                      fallback_output_location, results_db_url=None,
-                      read_parquet_dir=False):
+                      fallback_output_location, results_db_url=None):
     """Resolve output settings: explicit args > settings DB > hardcoded defaults.
 
-    ``read_parquet_dir`` distinguishes the parquet-REPLAY path (True) from
-    the NATIVE solve path (False).  It only matters for the ``spinedb``
-    write-method: when the effective ``write_methods`` is DERIVED FROM
-    SETTINGS (i.e. the CLI did not supply an explicit list) AND this is the
-    native solve path, ``spinedb`` is EXCLUDED from the derived list —
-    producing the results SpineDB is the job of the re-create / replay step,
-    not the solve (avoids a work-dir race and keeps it decoupled from
-    solving).  On the replay path the settings-derived list KEEPS
-    ``spinedb`` (that path is exactly where it runs).  An EXPLICIT
-    caller-supplied ``write_methods`` is never filtered — pass
-    ``--write-methods … spinedb`` to force it on the native path.
+    ``output-spinedb`` from the settings DB is honored on BOTH the native
+    solve path and the parquet-replay path: a True flag writes the results
+    SpineDB either way (the run produces it from the live solve; re-create
+    rebuilds/augments it from parquet without re-solving).
     """
     db_reachable = False
     if settings_db_url:
@@ -633,21 +625,6 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
                     if any(k in settings_params for k in method_keys):
                         write_methods = [m for m in ['plot', 'parquet', 'csv', 'excel', 'spinedb']
                                          if settings_params.get(f'output-{m}', False)]
-                        # ``spinedb`` from settings is a REPLAY-only output:
-                        # the results SpineDB is produced by the re-create /
-                        # replay step (read_parquet_dir=True), NOT the native
-                        # solve.  Strip it from the settings-DERIVED list on
-                        # the native path only.  An EXPLICIT caller-supplied
-                        # write_methods is never filtered (handled above:
-                        # this branch only runs when write_methods is None).
-                        if (not read_parquet_dir
-                                and 'spinedb' in write_methods):
-                            write_methods = [m for m in write_methods
-                                             if m != 'spinedb']
-                            logging.info(
-                                "output-spinedb is produced by the "
-                                "re-create/replay step; skipped on the solve."
-                            )
 
                 # CLI-supplied results_db_url wins; otherwise honor the
                 # optional settings value (mirrors the write_methods
@@ -770,21 +747,17 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             write-method.  When omitted, defaults to a ``results.sqlite``
             file next to the other outputs (``output_location``).  Ignored
             unless ``'spinedb'`` is in ``write_methods``.  The ``spinedb``
-            write-method runs on BOTH paths: on the native solve path it
-            uses the live ``s`` / ``par`` namespaces, while on the
+            write-method runs on BOTH paths and ``output-spinedb`` from the
+            settings DB is honored on both: on the native solve path it uses
+            the live ``s`` / ``par`` namespaces, while on the
             ``read_parquet_dir`` REPLAY path it rebuilds the ``s`` shim from
             the processed parquet (``build_replay_s``, with ``par=None`` —
-            the two discount/inflation params are dropped).  In fact the
-            replay path is the INTENDED home for this output: a
-            settings-DERIVED ``spinedb`` is stripped from ``write_methods``
-            on the native solve path (it is produced by the re-create /
-            replay step instead); an explicit caller-supplied
-            ``write_methods`` is honoured on both paths.
+            the two discount/inflation params are dropped on the replay path).
     """
     write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format, results_db_url = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
         output_location, plot_file_format, settings_db_url, fallback_output_location,
-        results_db_url, read_parquet_dir=read_parquet_dir,
+        results_db_url,
     )
 
     logging.debug(

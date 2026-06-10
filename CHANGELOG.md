@@ -81,16 +81,16 @@ produced from the processed parquet without re-solving. **No forced migration**
 
 #### Results SpineDB from parquet replay
 
-- The **"Re-create results"** step now writes `<project>/results.sqlite` (each
-  scenario as a Spine *alternative*) by **replaying the processed parquet — no
-  re-solve** — when `output-spinedb=true` in the Output settings DB. The
-  parallel solve step deliberately does **not** write it (a settings-derived
-  `spinedb` method is stripped on the native solve to avoid races); an explicit
-  CLI `--write-methods spinedb`, as the FlexTool GUI uses, still works.
-- Caveats on the replay path: the two inflation/discount-factor params are
-  omitted (they need the live solve); for a *bidirectional* connection the
+- `output-spinedb=true` in the Output settings DB writes
+  `<project>/results.sqlite` (each scenario as a Spine *alternative*) from
+  **both** workflow steps: the **FlexTool run** produces it from the live solve
+  (with all params), and the **"Re-create results"** step (re)builds/augments it
+  by **replaying the processed parquet — no re-solve** (e.g. to add the SpineDB
+  afterwards without re-running, or to reduce the scenario set via its filter).
+- Caveats on the **replay** path only: the two inflation/discount-factor params
+  are omitted (they need the live solve); for a *bidirectional* connection the
   `(source, sink)` byname uses the parquet `(node_1, node_2)` geometry (1-way
-  connections are exact). Everything else matches a native-solve results DB.
+  connections are exact). The native run path writes the full set.
 
 #### Per-project plot_settings in Toolbox
 
