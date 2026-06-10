@@ -151,3 +151,120 @@ def test_main_explicit_results_db_url_missing(tmp_path, monkeypatch, capsys):
 
     assert rc == 1
     assert "results.sqlite not found" in capsys.readouterr().err
+
+
+# --- Output-info resolution (preferred path: read locations from the DB) ---
+
+def _make_output_info_db(path, scenario_to_location):
+    """Build a minimal Output-info sqlite DB: a 'scenario' class with one
+    'output_location' value per scenario (stored under the scenario's own
+    alternative, exactly as cmd_run_flextool writes it)."""
+    from spinedb_api import DatabaseMapping, import_data
+
+    url = "sqlite:///" + str(path)
+    with DatabaseMapping(url, create=True) as db:
+        import_data(
+            db,
+            entity_classes=[("scenario", ())],
+            parameter_definitions=[("scenario", "output_location")],
+            alternatives=list(scenario_to_location),
+            entities=[("scenario", s) for s in scenario_to_location],
+            parameter_values=[
+                ("scenario", s, "output_location", str(loc), s)
+                for s, loc in scenario_to_location.items()
+            ],
+        )
+        db.commit_session("test output info")
+    return url
+
+
+def test_output_locations_from_db_distinct_first_seen(tmp_path):
+    a = tmp_path / "projA"
+    b = tmp_path / "projB"
+    # s1,s3 share projA; s2 uses projB -> distinct, first-seen order.
+    url = _make_output_info_db(
+        tmp_path / "output_info.sqlite",
+        {"s1": a, "s2": b, "s3": a},
+    )
+    assert mod.output_locations_from_db(url) == [str(a), str(b)]
+
+
+def test_main_output_info_opens_all_existing_as_tabs(tmp_path, monkeypatch, capsys):
+    a = tmp_path / "projA"
+    b = tmp_path / "projB"
+    a.mkdir()
+    b.mkdir()
+    (a / "results.sqlite").write_text("", encoding="utf-8")
+    (b / "results.sqlite").write_text("", encoding="utf-8")
+    url = _make_output_info_db(tmp_path / "output_info.sqlite", {"s1": a, "s2": b})
+
+    launched = {}
+    monkeypatch.setattr(
+        mod, "launch_db_editor", lambda urls: launched.setdefault("urls", urls)
+    )
+
+    rc = mod.main(["--output-locations-db-url", url])
+
+    assert rc == 0
+    assert launched["urls"] == [
+        mod._to_sqlite_url(a / "results.sqlite"),
+        mod._to_sqlite_url(b / "results.sqlite"),
+    ]
+    assert "2 results database(s)" in capsys.readouterr().out
+
+
+def test_main_output_info_shared_location_one_db(tmp_path, monkeypatch):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "results.sqlite").write_text("", encoding="utf-8")
+    url = _make_output_info_db(
+        tmp_path / "output_info.sqlite", {"s1": proj, "s2": proj}
+    )
+
+    launched = {}
+    monkeypatch.setattr(
+        mod, "launch_db_editor", lambda urls: launched.setdefault("urls", urls)
+    )
+
+    rc = mod.main(["--output-locations-db-url", url])
+
+    assert rc == 0
+    assert launched["urls"] == [mod._to_sqlite_url(proj / "results.sqlite")]
+
+
+def test_main_output_info_skips_missing(tmp_path, monkeypatch, capsys):
+    a = tmp_path / "projA"
+    b = tmp_path / "projB"
+    a.mkdir()
+    b.mkdir()
+    (a / "results.sqlite").write_text("", encoding="utf-8")  # b has none
+    url = _make_output_info_db(tmp_path / "output_info.sqlite", {"s1": a, "s2": b})
+
+    launched = {}
+    monkeypatch.setattr(
+        mod, "launch_db_editor", lambda urls: launched.setdefault("urls", urls)
+    )
+
+    rc = mod.main(["--output-locations-db-url", url])
+
+    assert rc == 0
+    assert launched["urls"] == [mod._to_sqlite_url(a / "results.sqlite")]
+    assert str(b / "results.sqlite") in capsys.readouterr().err  # reported missing
+
+
+def test_main_output_info_none_exist_reports_and_no_launch(
+    tmp_path, monkeypatch, capsys
+):
+    a = tmp_path / "projA"
+    a.mkdir()  # no results.sqlite anywhere
+    url = _make_output_info_db(tmp_path / "output_info.sqlite", {"s1": a})
+
+    def fail_launch(_urls):  # pragma: no cover
+        pytest.fail("must not launch when no results.sqlite exists")
+
+    monkeypatch.setattr(mod, "launch_db_editor", fail_launch)
+
+    rc = mod.main(["--output-locations-db-url", url])
+
+    assert rc == 1
+    assert "No results.sqlite found" in capsys.readouterr().err
