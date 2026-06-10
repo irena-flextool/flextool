@@ -24,19 +24,15 @@ from flextool.process_outputs._output_meta import (
 # ``test_allowlist_has_no_stale_entries``), and a new undeclared output trips
 # ``test_no_new_undeclared_processed_outputs``.
 UNDECLARED_ALLOWLIST = {
-    # Ambiguous units — awaiting domain confirmation (duals, prices, inertia,
-    # reserves, online count-vs-fraction, DC angle rad-vs-deg).
-    'co2_price_period_d_g', 'co2_price_total_d_g',
-    'dual_invest_effective_connection_d_e', 'dual_invest_effective_node_d_e',
-    'dual_invest_effective_unit_d_e', 'reserve_prices_dt_ppg',
-    'process_reserve_average_d_eppe', 'process_reserve_upDown_node_dt_eppe',
-    'nodeGroup_inertia_dt_g', 'nodeGroup_inertia_largest_flow_dt_g',
-    'nodeGroup_unit_node_inertia_dt_gee', 'nodeGroup_slack_inertia_d_g',
-    'nodeGroup_slack_inertia_dt_g', 'nodeGroup_slack_reserve_d_eeg',
-    'nodeGroup_slack_reserve_dt_eeg', 'nodeGroup_slack_capacity_margin_d_g',
-    'dc_angle_diff_dt_e', 'dc_angle_dt_e', 'unit_online_average_d_e',
-    'unit_online_dt_e', 'flowGroup_gd_p', 'flowGroup_gd_t',
-    'nodeGroup_total_inflow',
+    # Still ambiguous from code alone (deferred):
+    #  - DC voltage angle: radians vs degrees not determinable from code.
+    #  - reserve / capacity-margin slacks: MW-vs-MWh and annualized-vs-period
+    #    semantics need confirmation against the slack penalty terms.
+    #  - flowGroup_gd_p / nodeGroup_total_inflow: structure not yet verified.
+    'dc_angle_diff_dt_e', 'dc_angle_dt_e',
+    'nodeGroup_slack_reserve_d_eeg', 'nodeGroup_slack_reserve_dt_eeg',
+    'nodeGroup_slack_capacity_margin_d_g', 'nodeGroup_total_inflow',
+    'flowGroup_gd_p',
     # Mixed-unit tables — need per-column transforms (deferred).
     'node_d_ep', 'node_dt_ep', 'nodeGroup_gd_p', 'nodeGroup_gdt_p',
 }

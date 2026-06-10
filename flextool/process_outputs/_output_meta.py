@@ -171,6 +171,51 @@ YEARS = Transform(
     "a", Semantics.COUNT,
     "Calendar years the period represents (annualisation weight).",
 )
+PRICE_RESERVE = Transform(
+    "CUR/MW", Semantics.PRICE,
+    "Reserve price (dual of the reserve balance) — CUR per MW of reserve held "
+    "(= CUR/MWh held for one hour).",
+    algebra="dual(reserve_balance)",
+)
+PRICE_CO2 = Transform(
+    "CUR/t", Semantics.PRICE,
+    "CO2 price (shadow price of the CO2 cap).",
+    algebra="dual(co2_cap) / 1000",
+)
+# Investment duals carry the same convention as invest_cost: CUR/kW for
+# units & connections (CUR/kWh for storage nodes).
+DUAL_INVEST_KW = Transform(
+    "CUR/kW", Semantics.PRICE,
+    "Effective marginal system value of +1 unit of capacity "
+    "(same convention as invest_cost).",
+    algebra="dual(invest constraint) / entity_unitsize",
+)
+DUAL_INVEST_KWH = Transform(
+    "CUR/kWh", Semantics.PRICE,
+    "Effective marginal system value of +1 unit of storage capacity "
+    "(same convention as invest_cost).",
+)
+INERTIA = Transform(
+    "MW·s", Semantics.LEVEL,
+    "Inertia provided (rotational energy) at the timestep.",
+    algebra="online · unitsize · inertia_constant",
+)
+INERTIA_ANNUAL = Transform(
+    "MW·s/a", Semantics.ANNUALIZED,
+    "Inertia-constraint slack, scaled to a full-year equivalent.",
+)
+ONLINE_COUNT = Transform(
+    "units", Semantics.LEVEL,
+    "Number of online units at the timestep.",
+)
+ONLINE_AVG = Transform(
+    "units", Semantics.AVERAGE,
+    "Average number of online units over the period.",
+)
+RESERVE_AVG = Transform(
+    "MW", Semantics.AVERAGE,
+    "Average reserve held over the period.",
+)
 # Sentinel: an output that is a pure membership/index set (no measures).
 DIMENSION_TABLE = Transform(
     "", Semantics.DIMENSION,
@@ -236,7 +281,6 @@ OUTPUT_TRANSFORM: dict[str, Transform] = {
     "nodeGroup_flows_dt_gpe": ENERGY_PERSTEP,
     "node_inflow__dt": ENERGY_PERSTEP,
     "node_state_dt_e": STORAGE_STATE,
-    "node_prices_dt_e": PRICE_ENERGY,
     # VRE shares + curtailment/potential.  NOTE: the *_d_ee curtailment and
     # potential are SUM-ONLY over the sample (per_period), NOT annualized —
     # unlike unit_outputNode_d_ee (see Task #4 / Stage-1 finding).
@@ -269,6 +313,25 @@ OUTPUT_TRANSFORM: dict[str, Transform] = {
     "years_represented__d": YEARS,
     # Start-ups
     "unit_startup_d_e": COUNT_ANNUAL,
+    # Prices / duals
+    "node_prices_dt_e": PRICE_ENERGY,
+    "reserve_prices_dt_ppg": PRICE_RESERVE,
+    "co2_price_period_d_g": PRICE_CO2,
+    "co2_price_total_d_g": PRICE_CO2,
+    "dual_invest_effective_unit_d_e": DUAL_INVEST_KW,
+    "dual_invest_effective_connection_d_e": DUAL_INVEST_KW,
+    "dual_invest_effective_node_d_e": DUAL_INVEST_KWH,
+    # Inertia (MW·s) + reserve provision + online counts
+    "nodeGroup_inertia_dt_g": INERTIA,
+    "nodeGroup_unit_node_inertia_dt_gee": INERTIA,
+    "nodeGroup_inertia_largest_flow_dt_g": RATE,
+    "nodeGroup_slack_inertia_dt_g": INERTIA,
+    "nodeGroup_slack_inertia_d_g": INERTIA_ANNUAL,
+    "process_reserve_upDown_node_dt_eppe": RATE,
+    "process_reserve_average_d_eppe": RESERVE_AVG,
+    "unit_online_dt_e": ONLINE_COUNT,
+    "unit_online_average_d_e": ONLINE_AVG,
+    "flowGroup_gd_t": RATE,
     # Pure membership / index sets (no measure columns)
     "group_node": DIMENSION_TABLE,
     "group_process": DIMENSION_TABLE,
