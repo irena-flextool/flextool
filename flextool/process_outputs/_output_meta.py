@@ -216,6 +216,11 @@ RESERVE_AVG = Transform(
     "MW", Semantics.AVERAGE,
     "Average reserve held over the period.",
 )
+ANGLE = Transform(
+    "rad", Semantics.LEVEL,
+    "DC voltage angle (Bθ formulation; reference node pinned to 0). Radians — "
+    "flow = susceptance · Δangle with susceptance = base_MVA / reactance.",
+)
 # Sentinel: an output that is a pure membership/index set (no measures).
 DIMENSION_TABLE = Transform(
     "", Semantics.DIMENSION,
@@ -329,6 +334,8 @@ OUTPUT_TRANSFORM: dict[str, Transform] = {
     "nodeGroup_slack_inertia_d_g": INERTIA_ANNUAL,
     "process_reserve_upDown_node_dt_eppe": RATE,
     "process_reserve_average_d_eppe": RESERVE_AVG,
+    "dc_angle_dt_e": ANGLE,
+    "dc_angle_diff_dt_e": ANGLE,
     "unit_online_dt_e": ONLINE_COUNT,
     "unit_online_average_d_e": ONLINE_AVG,
     "flowGroup_gd_t": RATE,

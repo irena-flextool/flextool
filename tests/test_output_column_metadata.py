@@ -25,11 +25,9 @@ from flextool.process_outputs._output_meta import (
 # ``test_no_new_undeclared_processed_outputs``.
 UNDECLARED_ALLOWLIST = {
     # Still ambiguous from code alone (deferred):
-    #  - DC voltage angle: radians vs degrees not determinable from code.
     #  - reserve / capacity-margin slacks: MW-vs-MWh and annualized-vs-period
     #    semantics need confirmation against the slack penalty terms.
     #  - flowGroup_gd_p / nodeGroup_total_inflow: structure not yet verified.
-    'dc_angle_diff_dt_e', 'dc_angle_dt_e',
     'nodeGroup_slack_reserve_d_eeg', 'nodeGroup_slack_reserve_dt_eeg',
     'nodeGroup_slack_capacity_margin_d_g', 'nodeGroup_total_inflow',
     'flowGroup_gd_p',
