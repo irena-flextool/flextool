@@ -638,7 +638,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": "projects/Rivendell/input_sources/rivendell.sqlite"
+                    "path": "input_data.sqlite"
                 },
                 "schema": ""
             }

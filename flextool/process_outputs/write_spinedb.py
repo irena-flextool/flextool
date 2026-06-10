@@ -276,8 +276,9 @@ def ensure_results_db(db_url: str) -> None:
     scenario iterations into ONE shared ``results.sqlite``):
 
     * **Creation serializes via a sidecar lock.**  For ``sqlite:///`` targets
-      the create-if-absent is guarded by an exclusive ``fcntl.flock`` on
-      ``<db>.lock`` (Linux is the target platform), so exactly ONE process
+      the create-if-absent is guarded by an exclusive sidecar lock on
+      ``<db>.lock`` (``fcntl.flock`` on POSIX, ``msvcrt.locking`` on
+      Windows), so exactly ONE process
       ever builds the schema.  Inside the lock we re-check for the target and,
       if another process already created it, discard our temp build and NEVER
       ``os.replace`` over it — so a late rename can never clobber a DB another
@@ -309,27 +310,88 @@ def ensure_results_db(db_url: str) -> None:
     _import_schema(db_url)
 
 
+def _lock_exclusive(lock_fh) -> None:
+    """Acquire a blocking exclusive lock on an open file handle.
+
+    Portable across POSIX (``fcntl.flock``) and Windows (``msvcrt.locking``);
+    ``fcntl`` does not exist on Windows, so dispatch on what imports."""
+    try:
+        import fcntl
+    except ImportError:
+        import msvcrt
+        import time
+
+        # ``msvcrt.locking`` locks ``nbytes`` from the current file position;
+        # lock a single byte at offset 0.  Use the non-blocking variant in a
+        # retry loop so we block indefinitely rather than giving up after the
+        # ~10s LK_LOCK ceiling.
+        lock_fh.seek(0)
+        while True:
+            try:
+                msvcrt.locking(lock_fh.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                time.sleep(0.05)
+    else:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock(lock_fh) -> None:
+    """Release a lock taken by :func:`_lock_exclusive` (portable)."""
+    try:
+        import fcntl
+    except ImportError:
+        import msvcrt
+
+        lock_fh.seek(0)
+        try:
+            msvcrt.locking(lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+
+
+def _replace_with_retry(src: str, dst: str, *, attempts: int = 20,
+                        delay: float = 0.05) -> None:
+    """``os.replace(src, dst)`` retrying transient Windows sharing errors.
+
+    On Windows a file that was just closed can stay briefly locked, so the
+    rename raises ``PermissionError`` (WinError 32).  POSIX never hits this,
+    so the first attempt always succeeds there."""
+    import time
+
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
 def _ensure_results_db_atomic(db_url: str, path: str) -> None:
     """Create the schema DB at ``path`` if absent, safe under concurrent
     cold-start callers writing the SAME shared results DB.
 
-    The create-if-absent is serialized by an exclusive ``fcntl.flock`` on a
-    sidecar ``<db>.lock`` file: only the winner of the lock builds the schema.
-    Both the cheap pre-check (in :func:`ensure_results_db`) and the re-check
-    UNDER the lock guard against ``os.replace`` clobbering a target another
-    process has already created (and may already be importing into) — the
-    rename happens only while the target is still absent."""
-    import fcntl
+    The create-if-absent is serialized by an exclusive lock on a sidecar
+    ``<db>.lock`` file (``fcntl.flock`` on POSIX, ``msvcrt.locking`` on
+    Windows): only the winner of the lock builds the schema.  Both the cheap
+    pre-check (in :func:`ensure_results_db`) and the re-check UNDER the lock
+    guard against ``os.replace`` clobbering a target another process has
+    already created (and may already be importing into) — the rename happens
+    only while the target is still absent."""
     import uuid
 
     target_dir = os.path.dirname(path) or "."
     os.makedirs(target_dir, exist_ok=True)
 
     lock_path = path + ".lock"
-    # The lock file persists (it is the rendez-vous point); only the flock is
+    # The lock file persists (it is the rendez-vous point); only the lock is
     # released.  Opened in append mode so concurrent opens never truncate it.
     with open(lock_path, "a") as lock_fh:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        _lock_exclusive(lock_fh)
         try:
             # Re-check UNDER the lock: another process may have created the
             # target between our pre-check and acquiring the lock.  If so we
@@ -343,8 +405,11 @@ def _ensure_results_db_atomic(db_url: str, path: str) -> None:
             try:
                 _import_schema(tmp_url)
                 # Still absent (we hold the lock, so it cannot appear now) —
-                # commit the build atomically.
-                os.replace(tmp_path, path)
+                # commit the build atomically.  Retry the rename briefly: on
+                # Windows a just-closed SQLite handle can linger a moment and
+                # ``os.replace`` raises ``PermissionError`` (WinError 32) until
+                # it is fully released.
+                _replace_with_retry(tmp_path, path)
             finally:
                 # Discard the temp on any error mid-build.
                 if os.path.exists(tmp_path):
@@ -353,15 +418,23 @@ def _ensure_results_db_atomic(db_url: str, path: str) -> None:
                     except OSError:
                         pass
         finally:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+            _unlock(lock_fh)
 
 
 def _import_schema(db_url: str) -> None:
     """Load the results schema JSON into the DB at ``db_url`` (created if
-    needed)."""
+    needed).
+
+    Uses an explicit ``db.close()`` rather than the ``with DatabaseMapping``
+    context manager: ``__exit__`` only closes the *session*, leaving the
+    engine's connection pool holding the SQLite file open.  ``close()``
+    disposes the engine, releasing the handle.  This matters on Windows,
+    which refuses to ``os.replace`` a file with an open handle (POSIX has no
+    such restriction)."""
     with open(_SCHEMA_PATH, encoding="utf-8") as fh:
         schema = json.load(fh)
-    with DatabaseMapping(db_url, create=True) as db:
+    db = DatabaseMapping(db_url, create=True)
+    try:
         count, errors = import_data(db, **schema)
         if errors:
             raise RuntimeError(
@@ -370,6 +443,8 @@ def _import_schema(db_url: str) -> None:
             )
         db.commit_session("Initialized results schema")
         logger.debug("Initialized results DB schema (%d items)", count)
+    finally:
+        db.close()
 
 
 def write_spinedb(results, s, db_url, scenario_name, solve_name,
