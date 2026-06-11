@@ -303,19 +303,38 @@ def _reconcile_cross_kind(out: dict, system: pd.DataFrame, flavour: str):
 # Scenarios.
 # ---------------------------------------------------------------------------
 
-# Three complementary fixtures give full, non-vacuous category coverage:
+# Three complementary fixtures drive the broad per-scenario reconciliation
+# (every category reconciles; periods/levels lock):
 #   * wind_battery_invest — unit investment (wind) + storage investment
 #     (battery state); exercises the 'investment' / 'storage investment'
-#     and 'fixed cost invested' columns with non-zero values.
+#     columns with non-zero values.
 #   * coal_retire — commodity (coal) + retirement (divest 0.5 coal_plant)
 #     + 'fixed cost reduction of divestments' + 'fixed cost pre-existing'.
 #   * coal_co2_price — commodity + CO2 price + (online) startup, plus
 #     node-state slack penalties.
+#
+# Three categories were structurally exercised but value-ZERO in all three
+# above ('starts', 'commodity_sales', 'fixed cost invested').  They get a
+# dedicated non-zero VALUE reconciliation in
+# ``test_target_categories_value_reconciled`` from the fixtures that author the
+# relevant data (see TARGET_NONZERO_DRIVERS) — kept out of SCENARIOS to avoid
+# re-solving the same heavier scenarios twice.
 SCENARIOS = [
     "wind_battery_invest",
     "coal_retire",
     "coal_co2_price",
 ]
+
+# The three categories that were structurally exercised but value-zero in the
+# original three fixtures.  Each must be reconciled (entity-sum == system) with
+# a NON-ZERO magnitude in the fixture that drives it — see
+# ``test_target_categories_value_reconciled``.  Maps category → the fixture
+# scenario expected to author non-zero data for it.
+TARGET_NONZERO_DRIVERS = {
+    "starts": "test_a_lot",
+    "commodity_sales": "test_a_lot",
+    "fixed cost invested": "network_coal_wind_capacity_margin",
+}
 
 
 @pytest.fixture(scope="module", params=SCENARIOS)
@@ -414,6 +433,72 @@ def test_reconciliation_discounted(namespaces):
         f"[{scenario}] discounted: non-zero system categories left "
         f"un-reconciled (no entity home found): {sorted(missing)}"
     )
+
+
+def _cross_kind_total(out: dict, system: pd.DataFrame, flavour: str, cat: str):
+    """Cross-kind per-period entity-sum for a single direct ``cat`` →
+    (entity_total_series, system_series) reindexed onto the system index."""
+    collapsed = _collapsed_by_kind(out, flavour)
+    total = pd.Series(0.0, index=system.index)
+    for frame in collapsed.values():
+        if cat in frame.columns:
+            total = total.add(frame[cat].astype(float), fill_value=0.0)
+    total = total.reindex(system.index).fillna(0.0)
+    rhs = _system_category_series(system, cat).fillna(0.0)
+    return total, rhs
+
+
+@pytest.mark.parametrize(
+    "category, scenario",
+    sorted(TARGET_NONZERO_DRIVERS.items()),
+    ids=lambda x: x.replace(" ", "_") if isinstance(x, str) else x,
+)
+def test_target_categories_value_reconciled(
+    category, scenario, test_db_url, tmp_path_factory
+):
+    """The three categories that were value-zero in the original three
+    fixtures ('starts', 'commodity_sales', 'fixed cost invested') must now
+    each be VALUE-reconciled: in the fixture that authors the relevant data,
+    the cross-kind entity-sum equals the system summary column AND that column
+    carries a NON-ZERO magnitude (in both annualized and discounted flavours).
+
+    Self-contained (re-solves the driving scenario) so it is independent of
+    test ordering and xdist worker assignment — the per-fixture
+    ``test_reconciliation_*`` already prove generic equality; this one pins the
+    non-zero VALUE coverage for these specific categories.
+    """
+    workdir = tmp_path_factory.mktemp(
+        f"cbe_val_{scenario}_{category}".replace(" ", "_")
+    )
+    par, s, v, r = _build_namespaces(scenario, test_db_url, workdir)
+    out = _outputs_dict(par, s, v, r)
+
+    for flavour, sys_key in (
+        ("annualized", "annualized_costs_d_p"),
+        ("discounted", "costs_discounted_d_p"),
+    ):
+        system = out[sys_key]
+        assert category in system.columns, (
+            f"[{scenario}] {flavour}: system summary lacks the {category!r} "
+            f"column — the driving fixture no longer authors this category."
+        )
+        total, rhs = _cross_kind_total(out, system, flavour, category)
+        mag = float(rhs.abs().sum())
+        assert mag > ATOL, (
+            f"[{scenario}] {flavour}: {category!r} is value-ZERO "
+            f"({mag:.6g}); this fixture must drive it non-zero so the "
+            f"reconciliation is a real VALUE check, not a structural pass on "
+            f"an all-zero column."
+        )
+        np.testing.assert_allclose(
+            total.to_numpy(), rhs.to_numpy(), rtol=RTOL, atol=ATOL,
+            err_msg=(
+                f"[{scenario}] {flavour}: cross-kind entity-sum for "
+                f"{category!r} ({total.sum():.6f}) does not reconcile against "
+                f"the non-zero system column ({rhs.sum():.6f}).\n"
+                f"lhs=\n{total}\nrhs=\n{rhs}"
+            ),
+        )
 
 
 def test_output_shape_and_levels(namespaces):
