@@ -1212,15 +1212,16 @@ class ResultViewer(tk.Toplevel):
         rate-vs-annualized distinction (e.g. ``[t] MW · instantaneous`` vs
         ``[d] MWh/a · annualized``) visible on hover without opening the file.
         """
-        from flextool.process_outputs._output_meta import result_key_summary
+        from flextool.process_outputs._output_meta import result_variant_summary
 
         lines = [f"{entry.number} {entry.full_name}"]
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         for variant in entry.variants:
-            if variant.result_key in seen:
+            key = (variant.letter, variant.result_key)
+            if key in seen:
                 continue
-            seen.add(variant.result_key)
-            summary = result_key_summary(variant.result_key)
+            seen.add(key)
+            summary = result_variant_summary(variant.result_key, variant.letter)
             if summary is None:
                 continue
             unit, semantics, _desc = summary

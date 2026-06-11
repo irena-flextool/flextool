@@ -491,6 +491,45 @@ def result_key_summary(result_key: str) -> "tuple[str, str, str] | None":
     return (spec.unit or "ratio", spec.semantics.value, spec.tooltip)
 
 
+def result_variant_summary(
+    result_key: str, variant_letter: str
+) -> "tuple[str, str, str] | None":
+    """Variant-adjusted ``(unit, semantics, tooltip)`` for a plot variant.
+
+    The ``a`` (sum-over-periods → total) and ``w`` (weekly chunk
+    aggregation) plot variants are *on-the-fly* aggregations layered on the
+    same base ``result_key`` as the ``p``/``h`` variants — they have no
+    output of their own in :data:`OUTPUT_TRANSFORM`.  So their unit and
+    semantics differ from the base summary and must be derived here:
+
+    * ``'a'`` — the variant totals the base over the whole horizon.  An
+      annual-rate base unit (suffix ``/a``, e.g. ``M CUR/a``, ``MWh/a``)
+      becomes the absolute total (``M CUR``, ``MWh``); a base unit without
+      ``/a`` (e.g. a discounted ``M CUR``) is already absolute and stays as
+      is.  Semantics become ``"total"`` (a horizon total, *not* annual).
+    * ``'w'`` — weekly chunk aggregation keeps the base/``h`` unit unchanged;
+      semantics become ``"weekly"``.
+    * any other letter (``'p'``, ``'h'``, …) — the base summary unchanged.
+
+    Returns ``None`` when the base output is undeclared or a pure
+    membership/index set (i.e. when :func:`result_key_summary` returns
+    ``None``), so callers can skip it exactly as they do for the base.
+    Pure and GUI-free; the single source for variant-aware UI hovers and
+    plot value-axis units.
+    """
+    base = result_key_summary(result_key)
+    if base is None:
+        return None
+    unit, semantics, desc = base
+    if variant_letter == 'a':
+        if unit and unit.endswith('/a'):
+            unit = unit[:-2]
+        return (unit, "total", desc)
+    if variant_letter == 'w':
+        return (unit, "weekly", desc)
+    return base
+
+
 def output_metadata_rows(output_key: str, columns) -> list[dict[str, str]]:
     """Flat ``[{output, column, unit, semantics, tooltip, formula}, …]`` rows
     for the *measure* columns of one output (dimension columns dropped).

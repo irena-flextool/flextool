@@ -83,7 +83,9 @@ class PlotConfig:
     comparison_overrides: dict | None = None
 
 
-def default_ylabel_for(result_key: str) -> str | None:
+def default_ylabel_for(
+    result_key: str, variant_letter: str | None = None
+) -> str | None:
     """Derive a default y-axis label (the displayed unit) for a plot.
 
     Single source: the output-metadata catalog
@@ -92,10 +94,22 @@ def default_ylabel_for(result_key: str) -> str | None:
     ``None`` so callers leave an explicit ylabel untouched.  Imported lazily
     to keep ``plot_outputs`` free of a ``process_outputs`` import at module
     load.
+
+    When *variant_letter* is given, the variant-adjusted unit is used
+    (:func:`~flextool.process_outputs._output_meta.result_variant_summary`)
+    so the ``a`` (total → ``/a`` stripped) and ``w`` (weekly, unchanged)
+    plot variants get the correct value-axis unit; otherwise the base
+    output unit is used unchanged.
     """
     try:
-        from flextool.process_outputs._output_meta import result_key_summary
-        summary = result_key_summary(result_key)
+        if variant_letter is None:
+            from flextool.process_outputs._output_meta import result_key_summary
+            summary = result_key_summary(result_key)
+        else:
+            from flextool.process_outputs._output_meta import (
+                result_variant_summary,
+            )
+            summary = result_variant_summary(result_key, variant_letter)
     except Exception:
         return None
     if not summary:

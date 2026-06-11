@@ -18,6 +18,7 @@ from flextool.process_outputs._output_meta import (
     datapackage_resource,
     output_metadata_rows,
     result_key_summary,
+    result_variant_summary,
 )
 from flextool.process_outputs.write_outputs import write_excel_with_metadata
 
@@ -169,6 +170,57 @@ def test_default_ylabel_none_for_ratio_and_unknown():
     assert result_key_summary("nodeGroup_VRE_share_d_g")[0] == "ratio"
     assert default_ylabel_for("nodeGroup_VRE_share_d_g") is None
     assert default_ylabel_for("not_an_output") is None
+
+
+def test_default_ylabel_variant_aware():
+    # 'a' (total) strips the /a annual-rate suffix on the value axis
+    assert default_ylabel_for("annualized_costs_d_p", "a") == "M CUR"
+    # 'w' (weekly) keeps the base unit
+    assert default_ylabel_for("annualized_costs_d_p", "w") == "M CUR/a"
+    # explicit None / base letters -> base behaviour unchanged
+    assert default_ylabel_for("annualized_costs_d_p", "p") == "M CUR/a"
+    assert default_ylabel_for("annualized_costs_d_p") == "M CUR/a"
+
+
+# ── Variant-aware summary (a → total, w → weekly) ───────────────────────────
+
+def test_result_variant_summary_sum_periods_strips_annual_suffix():
+    # 'a' sums over the horizon: /a annual-rate suffix dropped, semantics=total
+    base = result_key_summary("annualized_costs_d_p")
+    assert base[0] == "M CUR/a" and base[1] == "annualized"
+    unit, semantics, desc = result_variant_summary("annualized_costs_d_p", "a")
+    assert unit == "M CUR"           # /a stripped
+    assert semantics == "total"      # horizon total, NOT annual
+    assert desc == base[2]           # description carried
+
+
+def test_result_variant_summary_chunks_keeps_unit_weekly():
+    base = result_key_summary("unit_outputNode_dt_ee")
+    assert base[0] == "MW"
+    unit, semantics, _ = result_variant_summary("unit_outputNode_dt_ee", "w")
+    assert unit == "MW"              # unchanged
+    assert semantics == "weekly"
+
+
+def test_result_variant_summary_base_letters_unchanged():
+    base = result_key_summary("annualized_costs_d_p")
+    assert result_variant_summary("annualized_costs_d_p", "p") == base
+    assert result_variant_summary("unit_outputNode_dt_ee", "h") == \
+        result_key_summary("unit_outputNode_dt_ee")
+
+
+def test_result_variant_summary_a_keeps_unit_without_annual_suffix():
+    # a base unit that is already absolute (no /a) is untouched by 'a'
+    base = result_key_summary("unit_outputNode_dt_ee")  # MW, no /a
+    unit, semantics, _ = result_variant_summary("unit_outputNode_dt_ee", "a")
+    assert unit == base[0]           # MW kept as-is
+    assert semantics == "total"
+
+
+def test_result_variant_summary_none_base_returns_none():
+    # undeclared output / pure membership set -> None for every variant
+    assert result_variant_summary("not_an_output", "a") is None
+    assert result_variant_summary("nodeGroupDispatch", "w") is None
 
 
 # ── Corrected units + two-layer description ─────────────────────────────────

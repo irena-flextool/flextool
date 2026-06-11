@@ -945,13 +945,13 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         entry = plot_settings[key]
         if _is_single_config(entry):
             if 'default' in active_settings:
-                chosen_settings.append(entry)
+                chosen_settings.append(('default', entry))
         else:
             for setting_name, setting in entry.items():
                 if setting_name in active_settings:
-                    chosen_settings.append(setting)
+                    chosen_settings.append((setting_name, setting))
 
-        for setting in chosen_settings:
+        for setting_name, setting in chosen_settings:
             # Parse raw dict into typed PlotConfig; warn about unknown keys
             # Backward compat: map old 'axis_scale_min_max' key to 'axis_bounds'
             # _entry_name is injected by flatten_new_format, not a PlotConfig field
@@ -970,10 +970,20 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             variant = filtered.pop('variant', None)
             cfg = PlotConfig(**filtered)
 
+            # Variant letter for the value-axis unit: an explicit ``variant``
+            # override wins, else derive from the sub-config name so the ``a``
+            # (sum_periods → total, ``/a`` stripped) and ``w`` (chunks →
+            # weekly) variants get the adjusted unit rather than the base.
+            variant_letter = variant
+            if variant_letter is None:
+                variant_letter = {
+                    'chunks': 'w', 'sum_periods': 'a',
+                }.get(setting_name)
+
             # Default the y-axis label to the output's unit (single source:
             # the metadata catalog) when the user has not set one explicitly.
             if cfg.ylabel is None:
-                cfg.ylabel = default_ylabel_for(key)
+                cfg.ylabel = default_ylabel_for(key, variant_letter)
 
             # Plot title: explicit plot_name > entry name > result key
             plot_name = cfg.plot_name or entry_name or key
