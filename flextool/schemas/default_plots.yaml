@@ -1089,6 +1089,127 @@ plots:
           base_length: 10
           legend: shared
 
+  # Per-entity cost break-downs (period level).  Index = (period, entity)
+  # with the entity level named 'unit'/'connection'/'node'; columns = single
+  # level named 'category'.  Modelled on costs_discounted_d_p ([d_p, b_s] —
+  # period bars, categories stacked) with the extra entity level sub-plotted
+  # ('u'), so each panel is one entity and bars are periods with cost
+  # categories stacked.  index_types: d=period, e=entity, p=category-column.
+  'Cost by unit':
+    group: 3
+    order: 3
+    cost_unit_annualized_d_ec:
+      default:
+        variant: p
+        bar_orientation: vertical
+        base_length: 6
+        map_dimensions_for_plots: [de_p, bu_s]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        ylabel: M CUR/a
+        skip_data_with_only_zeroes: true
+        color_category: costs
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          max_subplots_per_file: 2
+          base_length: 8
+    cost_unit_discounted_d_ec:
+      default:
+        plot_name: 'Cost by unit discounted'
+        variant: p
+        bar_orientation: vertical
+        base_length: 6
+        map_dimensions_for_plots: [de_p, bu_s]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        ylabel: M CUR
+        skip_data_with_only_zeroes: true
+        color_category: costs
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          max_subplots_per_file: 2
+          base_length: 8
+  'Cost by connection':
+    group: 3
+    order: 4
+    cost_connection_annualized_d_ec:
+      default:
+        variant: p
+        bar_orientation: vertical
+        base_length: 6
+        map_dimensions_for_plots: [de_p, bu_s]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        ylabel: M CUR/a
+        skip_data_with_only_zeroes: true
+        color_category: costs
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          max_subplots_per_file: 2
+          base_length: 8
+    cost_connection_discounted_d_ec:
+      default:
+        plot_name: 'Cost by connection discounted'
+        variant: p
+        bar_orientation: vertical
+        base_length: 6
+        map_dimensions_for_plots: [de_p, bu_s]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        ylabel: M CUR
+        skip_data_with_only_zeroes: true
+        color_category: costs
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          max_subplots_per_file: 2
+          base_length: 8
+  'Cost by node':
+    group: 3
+    order: 5
+    cost_node_annualized_d_ec:
+      default:
+        variant: p
+        bar_orientation: vertical
+        base_length: 6
+        map_dimensions_for_plots: [de_p, bu_s]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        ylabel: M CUR/a
+        skip_data_with_only_zeroes: true
+        color_category: costs
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          max_subplots_per_file: 2
+          base_length: 8
+    cost_node_discounted_d_ec:
+      default:
+        plot_name: 'Cost by node discounted'
+        variant: p
+        bar_orientation: vertical
+        base_length: 6
+        map_dimensions_for_plots: [de_p, bu_s]
+        subplots_per_row: 2
+        max_items_per_plot: 40
+        max_subplots_per_file: 8
+        ylabel: M CUR
+        skip_data_with_only_zeroes: true
+        color_category: costs
+        scenario_rule: g
+        comparison_overrides:
+          legend: shared
+          max_subplots_per_file: 2
+          base_length: 8
+
   # Capacities for units, nodes and connections
   'Capacity nodes':
     group: 4
@@ -2135,6 +2256,12 @@ rename:
   costs_dt_p: [costs__dt, true]
   costs_discounted_d_p: [costs_discounted, true]
   costs_discounted_p_: [costs_discounted, true]
+  cost_unit_annualized_d_ec: [cost_unit_annualized__d, true]
+  cost_connection_annualized_d_ec: [cost_connection_annualized__d, true]
+  cost_node_annualized_d_ec: [cost_node_annualized__d, true]
+  cost_unit_discounted_d_ec: [cost_unit_discounted__d, true]
+  cost_connection_discounted_d_ec: [cost_connection_discounted__d, true]
+  cost_node_discounted_d_ec: [cost_node_discounted__d, true]
   discountFactors_d_p: [discount_factors__d, true]
   dual_invest_effective_connection_d_e: [connection_invest_marginal__d, true]
   dual_invest_effective_node_d_e: [node_invest_marginal__d, true]
