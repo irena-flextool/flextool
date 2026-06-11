@@ -94,7 +94,7 @@ def test_excel_writer_embeds_metadata_sheet_and_comments(tmp_path):
     meta = wb["_output_metadata"]
     header = [c.value for c in next(meta.iter_rows(max_row=1))]
     assert header == ["sheet", "output", "column", "unit",
-                      "semantics", "tooltip", "formula"]
+                      "semantics", "tooltip", "long", "formula"]
     body = [c.value for c in next(meta.iter_rows(min_row=2, max_row=2))]
     assert body[2] == "commodity_cost" and body[3] == "M CUR/a"
 
@@ -105,78 +105,56 @@ def test_excel_writer_embeds_metadata_sheet_and_comments(tmp_path):
     assert "M CUR/a" in comment.text and "annualized" in comment.text
 
 
-# ── Spine: fill empties + drift ratchet ─────────────────────────────────────
+# ── Spine: merge units at DB-create (prose kept, units from _output_meta) ────
 
 def _load_schema():
     with open(write_spinedb._SCHEMA_PATH, encoding="utf-8") as fh:
         return json.load(fh)
 
 
-def test_spine_fills_all_empty_descriptions_idempotently():
+def test_spine_merge_fills_and_is_idempotent():
     schema = _load_schema()
     assert any(not e[4] for e in schema["parameter_definitions"])
     write_spinedb._apply_derived_descriptions(schema)
+    # every description is now non-empty (empties filled, others unit-merged)
     assert all(e[4] for e in schema["parameter_definitions"])
-    # re-applying changes nothing (non-empty descriptions are never clobbered)
+    # re-applying is a fixed point (strip-and-reprepend the same unit token)
     snapshot = [list(e) for e in schema["parameter_definitions"]]
     write_spinedb._apply_derived_descriptions(schema)
     assert [list(e) for e in schema["parameter_definitions"]] == snapshot
 
 
-# Known, intentional schema-vs-derived unit differences (notation folded out
-# by ``_norm`` below).  Each is a documented convention gap, NOT a bug:
-#   * the schema omits the annualized ``/a`` suffix (MWh vs MWh/a, t vs t/a);
-#   * CO2 totals are in Mt while per-entity emissions derive in t;
-#   * invest duals follow the CUR/kW(h) invest-cost convention (handoff §4),
-#     the schema text says CUR/MW(h);
-#   * ``_dt`` energy is rate (MW) in the schema, per-step energy (MWh) in the
-#     metadata;
-#   * startup is an annualized count (1/a) vs the schema's bare "count".
-# A NEW disagreement (or a stale entry here) fails the ratchet, forcing a
-# reconciliation decision rather than silent drift.
-KNOWN_SPINE_UNIT_DIFFERENCES = {
-    ("connection", "invest_marginal"),
-    ("connection__node__node", "flow_annualized"),
-    ("connection__node__node", "flow_to_first_node_annualized"),
-    ("connection__node__node", "flow_to_second_node_annualized"),
-    ("group", "CO2_annualized"),
-    ("group", "flow_annualized"),
-    ("group", "flow_t"),
-    ("group", "inertia_largest_flow_t"),
-    ("group", "slack_capacity_margin"),
-    ("group", "slack_nonsync_t"),
-    ("group", "sum_flow_annualized"),
-    ("node", "balance"),
-    ("node", "balance_t"),
-    ("node", "invest_marginal"),
-    ("unit", "CO2_annualized"),
-    ("unit", "invest_marginal"),
-    ("unit", "startup_cumulative"),
-    ("unit__node", "flow_annualized"),
-}
-
-
-def _norm(unit: str | None) -> str:
-    u = (unit or "").lower().replace(" ", "").replace("·", "")
-    u = u.replace("co2", "").replace("units", "count")
-    for z in ("perunit", "ratio"):
-        u = u.replace(z, "")
-    return u
-
-
-def test_spine_description_unit_drift_ratchet():
+def test_spine_merge_injects_authoritative_units():
+    """Units come from `_output_meta`; the hand-written prose is preserved."""
     schema = _load_schema()
+    write_spinedb._apply_derived_descriptions(schema)
     desc = {(e[0], e[1]): e[4] for e in schema["parameter_definitions"]}
-    derived = write_spinedb.derived_param_unit_map()
-    live = set()
-    for key, du in derived.items():
-        eu = write_spinedb.leading_unit(desc.get(key))
-        if eu is not None and _norm(eu) != _norm(du):
-            live.add(key)
-    new = live - KNOWN_SPINE_UNIT_DIFFERENCES
-    stale = KNOWN_SPINE_UNIT_DIFFERENCES - live
-    assert not new, f"new Spine unit drift (reconcile or allowlist): {new}"
-    assert not stale, f"stale allowlist entries (now consistent): {stale}"
+    # corrected units now lead each description
+    assert desc[("group", "flow_t")].startswith("[MW] ")          # rate, not MWh
+    assert desc[("node", "balance_t")].startswith("[MW] ")
+    assert desc[("unit", "CO2_annualized")].startswith("[t/a] ")   # was [MtCO2]
+    assert desc[("group", "CO2_annualized")].startswith("[t/a] ")  # was [Mt]
+    assert desc[("unit", "invest_marginal")].startswith("[CUR/kW] ")
+    assert desc[("node", "invest_marginal")].startswith("[CUR/kWh] ")
+    assert desc[("unit", "startup_cumulative")].startswith("[units/a] ")
+    assert desc[("model", "cost_annualized")].startswith("[M CUR/a] ")
+    # prose preserved (capacity categories, cost breakdown)
+    assert "existing" in desc[("node", "capacity")]
+    assert "categor" in desc[("model", "cost_annualized")].lower() \
+        or "investment" in desc[("model", "cost_annualized")].lower()
+    # params with no mapped transform keep their hand-written description
+    assert desc[("connection__node__node", "cf")].lstrip().startswith("[per unit]")
+
+
+def test_spine_merge_units_match_output_meta():
+    """The leading unit token equals the unit `_output_meta` derives."""
+    schema = _load_schema()
+    write_spinedb._apply_derived_descriptions(schema)
+    desc = {(e[0], e[1]): e[4] for e in schema["parameter_definitions"]}
+    for key, unit in write_spinedb.derived_param_unit_map().items():
+        tag = f"[{unit}]" if unit else "[per unit]"
+        assert desc[key].startswith(tag + " ") or desc[key] == tag, \
+            f"{key}: expected leading {tag!r}, got {desc[key][:40]!r}"
 
 
 # ── Plot: default y-axis label ──────────────────────────────────────────────
@@ -191,3 +169,32 @@ def test_default_ylabel_none_for_ratio_and_unknown():
     assert result_key_summary("nodeGroup_VRE_share_d_g")[0] == "ratio"
     assert default_ylabel_for("nodeGroup_VRE_share_d_g") is None
     assert default_ylabel_for("not_an_output") is None
+
+
+# ── Corrected units + two-layer description ─────────────────────────────────
+
+def test_dt_group_and_node_flows_are_rate_mw():
+    # un-integrated dt flows/balances are MW levels, not per-step MWh
+    assert result_key_summary("nodeGroup_flows_dt_g") == \
+        ("MW",) + result_key_summary("nodeGroup_flows_dt_g")[1:]
+    assert output_metadata_rows("node_dt_ep", ["from_units"])[0]["unit"] == "MW"
+    assert output_metadata_rows("node_inflow__dt", ["x"])[0]["unit"] == "MW"
+
+
+def test_co2_system_total_is_megatonnes_horizon():
+    unit, semantics, _ = result_key_summary("CO2__")
+    assert unit == "Mt"
+    assert semantics == "horizon"          # NOT annualized (×years_represented)
+
+
+def test_startup_is_units_per_year():
+    assert output_metadata_rows("unit_startup_d_e", ["x"])[0]["unit"] == "units/a"
+
+
+def test_datapackage_uses_long_description_when_present():
+    # CO2__ (EMISSION_MT) declares a longer `description`; the datapackage
+    # field should carry it, not the short tooltip.
+    res = datapackage_resource("CO2__", "CO2.csv", ["model"], ["CO2"])
+    field = {f["name"]: f for f in res["schema"]["fields"]}["CO2"]
+    assert field["unit"] == "Mt"
+    assert "undiscounted horizon total" in field["description"]

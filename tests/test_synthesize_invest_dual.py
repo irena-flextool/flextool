@@ -1,8 +1,12 @@
 """Unit tests for ``_synthesize_invest_dual`` (out_ancillary).
 
 The synthesized ``dual_invest_effective_*`` output is the COMPLETE, SIGNED
-marginal value (objective per MW) of one more MW of investment capacity per
-(entity, period).  Sign convention (user-confirmed):
+marginal value of one more unit of investment capacity per (entity, period).
+The raw synthesis is per-MW(h); a final ÷1000 (in ``_synthesize_invest_dual``)
+converts it to the reported per-**kW**(h) — matching the input ``invest_cost``
+convention (CUR/kW for units & connections, CUR/kWh for storage nodes).  The
+expected values below therefore carry the ``/ 1000``.  Sign convention
+(user-confirmed):
 
     POSITIVE = more investment in this entity would IMPROVE (lower) the
     objective.
@@ -93,7 +97,7 @@ def test_upper_cap_binding_is_positive():
     par = _par({'wind': 100.0})
 
     out = _synthesize_invest_dual(v, par)
-    assert out.loc['p1', 'wind'] == 30.0  # negate(-30) = +30, POSITIVE
+    assert out.loc['p1', 'wind'] == 30.0 / 1000  # negate(-30) = +30, /1000 → 0.03
     assert out.loc['p2', 'wind'] == 0.0
 
 
@@ -120,8 +124,8 @@ def test_max_total_broadcast_vs_min_total_per_period():
 
     out = _synthesize_invest_dual(v, par)
     # max-total broadcast: +5 in BOTH periods.  min-total per-period: -7 in p1.
-    assert out.loc['p1', 'wind'] == 5.0 - 7.0  # = -2.0
-    assert out.loc['p2', 'wind'] == 5.0
+    assert out.loc['p1', 'wind'] == (5.0 - 7.0) / 1000  # = -0.002
+    assert out.loc['p2', 'wind'] == 5.0 / 1000
 
 
 def test_max_total_broadcasts_via_regime_a_period_ref():
@@ -149,8 +153,8 @@ def test_max_total_broadcasts_via_regime_a_period_ref():
     out = _synthesize_invest_dual(v, par)
     # Without the regime-(a) fallback, period_ref is None and max-total is
     # dropped -> out is 0.  With the fix it broadcasts negate(-9) = +9.
-    assert out.loc['p1', 'wind'] == 9.0
-    assert out.loc['p2', 'wind'] == 9.0
+    assert out.loc['p1', 'wind'] == 9.0 / 1000
+    assert out.loc['p2', 'wind'] == 9.0 / 1000
 
 
 def test_max_total_broadcasts_via_ed_invest_when_all_dual_frames_empty():
@@ -186,8 +190,8 @@ def test_max_total_broadcasts_via_ed_invest_when_all_dual_frames_empty():
     # dropped -> out is empty.  With the fix it broadcasts negate(-9) = +9
     # across BOTH of wind's invest periods.
     assert not out.empty
-    assert out.loc['p1', 'wind'] == 9.0
-    assert out.loc['p2', 'wind'] == 9.0
+    assert out.loc['p1', 'wind'] == 9.0 / 1000
+    assert out.loc['p2', 'wind'] == 9.0 / 1000
 
 
 def test_max_total_ed_invest_fallback_restricts_to_entity_invest_periods():
@@ -209,10 +213,10 @@ def test_max_total_ed_invest_fallback_restricts_to_entity_invest_periods():
     s = SimpleNamespace(ed_invest=ed_invest)
 
     out = _synthesize_invest_dual(v, par, s)
-    assert out.loc['p1', 'wind'] == 9.0
-    assert out.loc['p2', 'wind'] == 9.0
+    assert out.loc['p1', 'wind'] == 9.0 / 1000
+    assert out.loc['p2', 'wind'] == 9.0 / 1000
     # solar is NOT investable in p2 -> its broadcast must not reach p2.
-    assert out.loc['p1', 'solar'] == 4.0
+    assert out.loc['p1', 'solar'] == 4.0 / 1000
     assert pd.isna(out.loc['p2', 'solar']) or out.loc['p2', 'solar'] == 0.0
 
 
@@ -233,8 +237,8 @@ def test_floor_binding_is_negative():
     par = _par({'battery': 50.0})
 
     out = _synthesize_invest_dual(v, par)
-    assert out.loc['p1', 'battery'] == -12.0  # negate(+12) = -12, NEGATIVE
-    assert out.loc['p2', 'battery'] == -4.0
+    assert out.loc['p1', 'battery'] == -12.0 / 1000  # negate(+12) = -12, /1000
+    assert out.loc['p2', 'battery'] == -4.0 / 1000
 
 
 def test_not_built_is_negative():
@@ -250,8 +254,8 @@ def test_not_built_is_negative():
     par = _par({'solar': 200.0})
 
     out = _synthesize_invest_dual(v, par)
-    # 2000 / 200 = 10 obj/MW reduced cost; negate → -10.
-    assert out.loc['p1', 'solar'] == -10.0
+    # 2000 / 200 = 10 obj/MW reduced cost; negate → -10; /1000 → -0.01 (per kW).
+    assert out.loc['p1', 'solar'] == -10.0 / 1000
 
 
 def test_interior_is_zero():
@@ -292,9 +296,9 @@ def test_group_caps_and_floors_expand_and_sign():
     par = _par({'wind': 100.0, 'solar': 200.0})
 
     out = _synthesize_invest_dual(v, par)
-    # Each member gets negate(-8) + negate(+3) = +8 - 3 = +5.
-    assert out.loc['p1', 'wind'] == 5.0
-    assert out.loc['p1', 'solar'] == 5.0
+    # Each member gets negate(-8) + negate(+3) = +8 - 3 = +5; /1000 → 0.005.
+    assert out.loc['p1', 'wind'] == 5.0 / 1000
+    assert out.loc['p1', 'solar'] == 5.0 / 1000
 
 
 def test_all_regimes_combined_one_entity_per_regime():
@@ -315,9 +319,9 @@ def test_all_regimes_combined_one_entity_per_regime():
     par = _par({'capped': 100.0, 'floored': 100.0, 'notbuilt': 100.0})
 
     out = _synthesize_invest_dual(v, par)
-    assert out.loc['p1', 'capped'] == 20.0    # POSITIVE
-    assert out.loc['p1', 'floored'] == -15.0  # NEGATIVE
-    assert out.loc['p1', 'notbuilt'] == -10.0  # 1000/100 = 10, negate -> -10
+    assert out.loc['p1', 'capped'] == 20.0 / 1000    # POSITIVE
+    assert out.loc['p1', 'floored'] == -15.0 / 1000  # NEGATIVE
+    assert out.loc['p1', 'notbuilt'] == -10.0 / 1000  # 1000/100=10, negate, /1000
 
 
 def test_no_duals_returns_empty():

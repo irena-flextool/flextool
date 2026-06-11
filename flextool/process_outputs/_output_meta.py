@@ -35,6 +35,7 @@ class Semantics(str, Enum):
     PER_STEP = "per_step"            # already integrated over the step's duration (cost_dt).
     PER_PERIOD = "per_period"        # summed over the period, as-sampled (NOT scaled to a year).
     ANNUALIZED = "annualized"        # scaled to a full-year equivalent (÷ period_share_of_year).
+    HORIZON = "horizon"              # undiscounted total over the represented horizon (×years_represented).
     DISCOUNTED = "discounted"        # NPV over the horizon (inflation + years_represented).
     AVERAGE = "average"              # time-average over the period (÷ period_hours).
     RATIO = "ratio"                  # dimensionless (share, capacity factor).
@@ -65,7 +66,8 @@ class Transform:
 
     unit: str
     semantics: Semantics
-    tooltip: str
+    tooltip: str               # short, one-line (plot/CSV/hover).
+    description: str = ""       # optional longer form (docs/datapackage); falls back to tooltip.
     algebra: str = ""
 
 
@@ -112,7 +114,7 @@ EMISSION_ANNUAL = Transform(
     algebra="t_step · timestep_weight / period_share",
 )
 COUNT_ANNUAL = Transform(
-    "1/a", Semantics.COUNT,
+    "units/a", Semantics.COUNT,
     "Event count (e.g. start-ups), scaled to a full-year equivalent.",
     algebra="count_step · timestep_weight / period_share",
 )
@@ -155,9 +157,12 @@ PRICE_ENERGY = Transform(
     algebra="dual(node_balance)",
 )
 EMISSION_MT = Transform(
-    "Mt/a", Semantics.ANNUALIZED,
-    "System CO2 emissions, full-year equivalent (×years_represented).",
-    algebra="t · years_represented / 1e6",
+    "Mt", Semantics.HORIZON,
+    "System CO2 emissions, total over the represented horizon (NOT per year).",
+    description="System CO2 emissions summed across all periods, each scaled "
+                "by its years_represented and converted tonnes→megatonnes — an "
+                "undiscounted horizon total, not an annual rate.",
+    algebra="Σ_periods(t/a · years_represented) / 1e6",
 )
 FACTOR = Transform(
     "", Semantics.RATIO,
@@ -239,7 +244,8 @@ class ColumnMeta:
     name: str
     unit: str
     semantics: Semantics
-    tooltip: str
+    tooltip: str               # short, one-line.
+    long: str = ""             # optional longer description (falls back to tooltip).
     formula: str = ""
     docs: str = ""
 
@@ -248,6 +254,7 @@ class ColumnMeta:
             "unit": self.unit,
             "semantics": self.semantics.value,
             "tooltip": self.tooltip,
+            "long": self.long,
             "formula": self.formula,
             "docs": self.docs,
         }
@@ -263,7 +270,10 @@ _NODEGROUP_GDT_P = {
     '2. VRE generation': ENERGY_PERSTEP,
     '3. Excess load': ENERGY_PERSTEP,
     '4. Curtailed VRE': ENERGY_PERSTEP,
-    '5. Timestep inflow': ENERGY_PERSTEP,
+    # Raw inflow level at the timestep — no step_duration applied (an MW
+    # level, like nodeGroup/node dt flows), unlike the slack/VRE columns
+    # above which are integrated to MWh/step.
+    '5. Timestep inflow': RATE,
     '6. Curtailed VRE of potential VRE': RATIO,
     '7. Annualized inflow': PREENERGY_ANNUAL,
     '8. VRE share of demand': RATIO,
@@ -312,9 +322,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # Node / group flows
     "nodeGroup_flows_d_g": PREENERGY_ANNUAL,
     "nodeGroup_flows_d_gpe": PREENERGY_ANNUAL,
-    "nodeGroup_flows_dt_g": ENERGY_PERSTEP,
+    # dt group/node flows show the un-integrated MW level (no step_duration —
+    # relatable to installed capacity), per maintainer convention.  Only
+    # sum_flow_t (gpe) integrates the flow columns to MWh/step.
+    "nodeGroup_flows_dt_g": RATE,
     "nodeGroup_flows_dt_gpe": ENERGY_PERSTEP,
-    "node_inflow__dt": ENERGY_PERSTEP,
+    "node_inflow__dt": RATE,
     "node_state_dt_e": STORAGE_STATE,
     # VRE shares + curtailment/potential.  NOTE: the *_d_ee curtailment and
     # potential are SUM-ONLY over the sample (per_period), NOT annualized —
@@ -373,9 +386,10 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "nodeGroup_slack_reserve_d_eeg": ENERGY_ANNUAL,
     "nodeGroup_slack_capacity_margin_d_g": SLACK_CAP_MARGIN,
     "nodeGroup_total_inflow": PREENERGY_ANNUAL,
-    # Node balance tables — uniform energy (all categories MWh):
-    #   _dt_ep = MWh/step, _d_ep = annualized MWh/a.
-    "node_dt_ep": ENERGY_PERSTEP,
+    # Node balance tables.  _dt_ep is the un-integrated MW level (assembled
+    # from raw flow_dt / inflow / slacks with no step_duration, like the dt
+    # group flows); _d_ep integrates + annualizes to MWh/a.
+    "node_dt_ep": RATE,
     "node_d_ep": ENERGY_ANNUAL,
     # Mixed-unit tables — per-column transform maps.
     "nodeGroup_gdt_p": _NODEGROUP_GDT_P,
@@ -459,6 +473,7 @@ def output_metadata_rows(output_key: str, columns) -> list[dict[str, str]]:
             "unit": cm.unit,
             "semantics": cm.semantics.value,
             "tooltip": cm.tooltip,
+            "long": cm.long,
             "formula": cm.formula,
         })
     return rows
@@ -509,8 +524,9 @@ def datapackage_resource(
         }
         if cm.unit:
             spec["unit"] = cm.unit
-        if cm.tooltip:
-            spec["description"] = cm.tooltip
+        # Frictionless `description` carries the longer form when present.
+        if cm.long or cm.tooltip:
+            spec["description"] = cm.long or cm.tooltip
         if cm.formula:
             spec["flextool:formula"] = cm.formula
         if cm.docs:
@@ -558,6 +574,7 @@ def derive_column_meta(
             unit=tf.unit,
             semantics=tf.semantics,
             tooltip=tf.tooltip,
+            long=tf.description,
             formula=FORMULA_OVERRIDE.get((output_key, name), ""),
             docs=docs,
         )

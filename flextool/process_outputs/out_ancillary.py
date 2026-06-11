@@ -280,21 +280,33 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
         combined = combined.add(df, fill_value=0.0)
     combined = combined.fillna(0.0)
 
-    return combined
+    # The synthesized dual is naturally in CUR/MW (units & connections) and
+    # CUR/MWh (storage nodes): the LP capacity is in MW(h) and the objective
+    # coefficient was lifted ×1000 from the per-kW input invest_cost
+    # (_derived_npv.py annuity).  Divide by 1000 so the REPORTED marginal
+    # matches the input convention the user types — CUR/kW (units &
+    # connections) and CUR/kWh (storage nodes).  Single choke point: every
+    # regime flows through `combined`, and the node-vs-process split happens
+    # downstream by column membership, so one divide is correct for all.
+    return combined.div(1000.0)
 
 
 def co2_duals(par, s, v, r, debug):
     """CO2 emission-cap shadow prices in Currency / tCO2 (positive = cost).
 
-    Both sides of co2_max_period and co2_max_total in the mod are divided
-    by 1000 (Mt instead of t).  The raw dual is therefore
-    Δobj / Δ(scaled-RHS in Mt); to get per-tCO2 we DIVIDE by 1000 (since
-    Δ(scaled) = Δ(raw)/1000).  The dual is also in NPV currency because
-    the objective discounts operational costs; for the per-period cap we
-    divide by inflation_factor_operations_yearly[d] to recover nominal
-    Currency/tCO2 at period d (mirroring v_dual_node_balance).  Sign is
-    always flipped so binding caps show as positive costs — negatives
-    should ring alarm bells.
+    Units: the polars ``co2_max_period`` / ``co2_max_total`` constraints
+    (``model.py``) carry the cap RHS in **raw tonnes** (input
+    ``co2_max_period`` is ``[tCO2]``) against a tonnes LHS
+    (``v_flow·unitsize·p_co2_content``), so the raw dual is already
+    **Δobj / Δ(tonnes) = Currency/tCO2** — there is NO ÷1000.  (The legacy
+    ``.mod`` divided both sides by 1000 and the dual needed a ÷1000 to undo
+    it; the polars port does not, so applying ÷1000 here would under-report
+    the price 1000× — see the CO2-units investigation.)  The dual is in NPV
+    currency because the objective discounts operational costs; for the
+    per-period cap we divide by inflation_factor_operations_yearly[d] to
+    recover nominal Currency/tCO2 at period d (mirroring
+    v_dual_node_balance).  Sign is always flipped so binding caps show as
+    positive costs — negatives should ring alarm bells.
 
     The cumulative (total) cap has no single period to un-discount against
     (it spans all periods in the sum), so it is reported in NPV currency
@@ -315,7 +327,7 @@ def co2_duals(par, s, v, r, debug):
 
     # Period-limited shadow price: (period × group) in nominal Currency/tCO2
     if not v.dual_co2_max_period.empty:
-        co2_period_price = (-v.dual_co2_max_period / 1000).astype(float)
+        co2_period_price = (-v.dual_co2_max_period).astype(float)
         co2_period_price = co2_period_price.div(
             par.inflation_factor_operations_yearly, axis=0
         )
@@ -327,7 +339,7 @@ def co2_duals(par, s, v, r, debug):
     # Kept in NPV currency (no single period to un-discount against).
     if not v.dual_co2_max_total.empty:
         total_row = v.dual_co2_max_total.iloc[0]  # Series indexed by group
-        total_price = (-total_row / 1000).astype(float)
+        total_price = (-total_row).astype(float)
         co2_total_price = pd.DataFrame(
             {g: [total_price[g]] * len(periods) for g in total_price.index},
             index=pd.Index(periods, name='period'),

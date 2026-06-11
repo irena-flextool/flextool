@@ -129,7 +129,7 @@ def write_excel_with_metadata(excel_path, sheets) -> None:
             meta_df = pd.DataFrame(
                 meta_rows,
                 columns=["sheet", "output", "column", "unit",
-                         "semantics", "tooltip", "formula"],
+                         "semantics", "tooltip", "long", "formula"],
             )
             meta_df.to_excel(writer, sheet_name="_output_metadata", index=False)
 

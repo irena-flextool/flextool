@@ -425,88 +425,86 @@ def _ensure_results_db_atomic(db_url: str, path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Derived parameter-definition descriptions (single source = _output_meta).
+# Parameter-definition descriptions: prose from the schema, UNITS from code.
 #
-# The checked-in results schema already carries rich, hand-written
-# descriptions (per-category breakdowns); those are NOT clobbered.  At runtime
-# we only FILL any empty description from the derived unit + semantics.
-#
-# Drift between an existing ``[unit]`` prefix and the unit ``_output_meta``
-# derives is NOT warned at runtime (it would spam every Spine write with
-# notation-only noise, e.g. ``MWs`` vs ``MW·s``).  It is instead surfaced once,
-# in CI, by ``tests/test_output_column_metadata.py`` (a ratchet with an
-# allowlist of the known intentional differences — annualization ``/a`` suffix,
-# the CUR/kW invest-cost convention, etc.).  :func:`derived_param_unit_map` is
-# the shared entry point that test uses.
+# The checked-in results schema carries rich, hand-written prose (per-category
+# breakdowns).  We keep that prose but make the **unit** authoritative from the
+# single source (``_output_meta``): at DB-create, for every param that maps to
+# a known transform, we replace the description's leading ``[unit]`` token with
+# the derived one and prepend it where missing.  Empty descriptions are filled
+# wholesale.  Params with no mapped transform (e.g. ``cf``) keep their
+# hand-written description untouched.  This makes unit drift structurally
+# impossible — the units are GENERATED into the schema, never compared against
+# it — so the old CI drift ratchet is retired.
 # ---------------------------------------------------------------------------
 
-def _derived_param_units() -> tuple[dict[tuple[str, str], tuple[str, str]],
-                                    dict[str, tuple[str, str]]]:
-    """Build derived ``(unit, description)`` keyed by ``(ec, param)`` and an
+# Leading unit token: ``[MW]``, ``[per unit]``, or the cost tables' ``M[CUR]``.
+_LEADING_UNIT_RE = re.compile(r"^\s*(?:M\s*\[[^\]]*\]|\[[^\]]*\])\s*")
+
+
+def _derived_param_meta() -> tuple[dict[tuple[str, str], tuple[str, str]],
+                                   dict[str, tuple[str, str]]]:
+    """Build derived ``(unit, short_text)`` keyed by ``(ec, param)`` and an
     unambiguous-by-param fallback.
 
-    The ``(ec, param)`` map drives filling/drift for the exact class; the
-    param-only fallback fills empties for classes absent from
-    :data:`SPINEDB_OUTPUT_SPEC` that nonetheless share a param name with a
-    documented one (e.g. the ``connection__reserve__*`` reservation params),
+    The ``(ec, param)`` map drives the exact class; the param-only fallback
+    covers classes absent from :data:`SPINEDB_OUTPUT_SPEC` that share a param
+    name with a documented one (e.g. the ``connection__reserve__*`` params),
     but only when that param has a single distinct unit across all classes.
     """
     by_ecp: dict[tuple[str, str], tuple[str, str]] = {}
     units_by_param: dict[str, set[str]] = {}
-    desc_by_param: dict[str, tuple[str, str]] = {}
+    text_by_param: dict[str, tuple[str, str]] = {}
     for table_name, spec in SPINEDB_OUTPUT_SPEC.items():
         param = spec.get("param")
         summary = result_key_summary(table_name)
         if not param or summary is None:
             continue
         unit, _sem, tooltip = summary
-        desc = f"[{unit}] {tooltip}"
-        key = (spec.get("ec"), param)
-        if key not in by_ecp:
-            by_ecp[key] = (unit, desc)
+        if unit == "ratio":          # result_key_summary's unitless sentinel
+            unit = ""                # → renders as "[per unit]" via _unit_tag
+        by_ecp.setdefault((spec.get("ec"), param), (unit, tooltip))
         units_by_param.setdefault(param, set()).add(unit)
-        desc_by_param.setdefault(param, (unit, desc))
+        text_by_param.setdefault(param, (unit, tooltip))
     # Params sourced from ``par`` (not a results table): the two discount
     # factors are dimensionless (FACTOR).
-    factor_desc = f"[{FACTOR.unit or 'per unit'}] {FACTOR.tooltip}"
     for p in ("investments discount factor", "operations discount factor"):
         units_by_param.setdefault(p, {FACTOR.unit})
-        desc_by_param.setdefault(p, (FACTOR.unit, factor_desc))
-    unambiguous = {p: desc_by_param[p]
+        text_by_param.setdefault(p, (FACTOR.unit, FACTOR.tooltip))
+    unambiguous = {p: text_by_param[p]
                    for p, us in units_by_param.items() if len(us) == 1}
     return by_ecp, unambiguous
 
 
-def leading_unit(description: str | None) -> str | None:
-    """Return the ``[unit]`` prefix of a description, or None."""
-    m = re.match(r"\s*\[([^\]]*)\]", description or "")
-    return m.group(1).strip() if m else None
+def _unit_tag(unit: str) -> str:
+    """The bracketed unit token; unitless quantities render as ``[per unit]``."""
+    return f"[{unit}]" if unit else "[per unit]"
 
 
 def derived_param_unit_map() -> dict[tuple[str, str], str]:
     """``{(entity_class, param): derived_unit}`` for params with a known
-    transform — the data the CI drift ratchet compares against the schema's
-    hand-written descriptions."""
-    by_ecp, _unambiguous = _derived_param_units()
-    return {key: unit for key, (unit, _desc) in by_ecp.items()}
+    transform — the authoritative units merged into the schema."""
+    by_ecp, _unambiguous = _derived_param_meta()
+    return {key: unit for key, (unit, _text) in by_ecp.items()}
 
 
 def _apply_derived_descriptions(schema: dict) -> None:
-    """Fill empty ``parameter_definition`` descriptions from derived metadata.
+    """Merge derived units into ``parameter_definition`` descriptions.
 
     Mutates ``schema['parameter_definitions']`` in place: an entry is
-    ``[entity_class, param, default, value_list, description, type]``.
-    Existing (non-empty) descriptions are left untouched — drift between them
-    and the derived units is a CI concern, not a runtime one (see the module
-    note above)."""
-    by_ecp, unambiguous = _derived_param_units()
+    ``[entity_class, param, default, value_list, description, type]``.  For
+    every param with a derived unit, the leading unit token is replaced with
+    the derived one (prose preserved); empty descriptions are filled from the
+    derived short text.  Params without a derived unit are left untouched."""
+    by_ecp, unambiguous = _derived_param_meta()
     for entry in schema.get("parameter_definitions", []):
         ec, param, existing = entry[0], entry[1], entry[4]
-        if existing:
-            continue
         derived = by_ecp.get((ec, param)) or unambiguous.get(param)
-        if derived:
-            entry[4] = derived[1]
+        if not derived:
+            continue
+        unit, short_text = derived
+        prose = _LEADING_UNIT_RE.sub("", existing) if existing else short_text
+        entry[4] = f"{_unit_tag(unit)} {prose}".strip()
 
 
 def _import_schema(db_url: str) -> None:
