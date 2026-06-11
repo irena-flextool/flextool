@@ -195,8 +195,9 @@ FACTOR = Transform(
     "Dimensionless discount / inflation factor.",
 )
 ANNUITY = Transform(
-    "1/a", Semantics.RATIO,
-    "Annuity factor — annual cost per unit of overnight investment.",
+    "CUR/MW/a", Semantics.ANNUALIZED,
+    "Annualised investment cost per MW of capacity — the cost charged for "
+    "each year of the entity's economic lifetime.",
 )
 YEARS = Transform(
     "a", Semantics.COUNT,

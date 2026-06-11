@@ -2215,7 +2215,7 @@ plots:
         variant: p
         map_dimensions_for_plots: [d_p, b_e]
         max_items_per_plot: 40
-        xlabel: Currency/year
+        xlabel: CUR/MW/a
         scenario_rule: g
 
 rename:
