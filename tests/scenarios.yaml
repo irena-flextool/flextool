@@ -361,6 +361,10 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   # Bumped from 4.0 → 7.0 (~1.5× observed 4.7s) after adding the per-step
   # lifetime-fixed-cost pre-filter in ``read_parameters_multi`` (which
   # iterates per-step ``realized_dispatch`` for each rolling cascade roll).
@@ -373,6 +377,10 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   time_budget_seconds: 10.0
 
 - scenario: multi_year_one_solve_battery
@@ -382,6 +390,12 @@
     - node_state__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_connection_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_connection_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   time_budget_seconds: 10.0
 
 - scenario: multi_year_one_solve_co2_limit
@@ -391,6 +405,10 @@
     - co2.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   time_budget_seconds: 10.0
 
 - scenario: multi_fullYear_battery
@@ -399,6 +417,12 @@
     - node_state__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_connection_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_connection_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   time_budget_seconds: 10.0
 
 - scenario: multi_fullYear_battery_nested_24h_invest_one_solve
@@ -408,6 +432,12 @@
     - node_state__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_connection_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_connection_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
 
 - scenario: multi_fullYear_battery_nested_multi_invest
   csvs:
@@ -416,6 +446,12 @@
     - node_state__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_connection_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_connection_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
 
 - scenario: multi_fullYear_battery_nested_sample_invest_one_solve
   csvs:
@@ -424,6 +460,12 @@
     - node_state__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_connection_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_connection_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
 
 - scenario: y2020_2029_1x10y
   csvs:
@@ -431,6 +473,10 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   # 1x10y multi-period investment with discounting. Optimal investment
   # in wind_plant: 0.3132 MW at p2020. Locked to observed full-horizon
   # total cost — operational + invest + divest + fixed (pre-existing,
@@ -448,6 +494,10 @@
     - unit_capacity__d.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   # 2x5y split of the same 10-year horizon as y2020_2029_1x10y; same
   # full-horizon objective since the underlying economics are identical.
   expected_objective: 447.954518702
@@ -515,6 +565,12 @@
     - connection__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_connection_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_connection_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   time_budget_seconds: 10.0
 
 - scenario: test_a_lot_but_not_multi_year
@@ -603,6 +659,10 @@
     - unit__outputNode__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   # Hand-derivation:
   #   sum(costs__dt.csv numeric columns) = 6,268,700 CUR
   #   annualization (years_represented=0.5, 24h block) = 365/4
@@ -620,6 +680,10 @@
     - unit__outputNode__dt.csv
     - costs__dt.csv
     - costs_discounted.csv
+    - cost_unit_annualized_d_ec.csv
+    - cost_node_annualized_d_ec.csv
+    - cost_unit_discounted_d_ec.csv
+    - cost_node_discounted_d_ec.csv
   # Same dispatch as years_represented_half but years_represented=2.5
   # (5x larger). Objective therefore 5x: 572.018875 * 5 = 2860.094375.
   expected_objective: 2860.094375

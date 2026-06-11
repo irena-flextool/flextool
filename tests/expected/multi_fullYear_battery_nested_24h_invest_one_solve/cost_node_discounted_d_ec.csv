@@ -1,0 +1,9 @@
+solve,period,node,upward slack penalty,downward slack penalty,storage investment,storage retirement,fixed cost pre-existing,fixed cost invested
+dispatch_fullYear_roll_roll_17,p2020,battery,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_17,p2020,west,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_35,p2025,battery,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_35,p2025,west,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_53,p2030,battery,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_53,p2030,west,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_71,p2035,battery,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_71,p2035,west,0.8122,0.0,0.0,0.0,0.0,0.0

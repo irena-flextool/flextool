@@ -1,0 +1,9 @@
+solve,period,node,upward slack penalty,downward slack penalty,storage investment,storage retirement,fixed cost pre-existing,fixed cost invested
+invest_4Year_5weeks,p2020,battery,0.0,0.0,0.0,0.0,0.0,0.0
+invest_4Year_5weeks,p2020,west,0.0,0.0,0.0,0.0,0.0,0.0
+invest_4Year_5weeks,p2025,battery,0.0,0.0,0.0,0.0,0.0,0.0
+invest_4Year_5weeks,p2025,west,0.0,0.0,0.0,0.0,0.0,0.0
+invest_4Year_5weeks,p2030,battery,0.0,0.0,0.0,0.0,0.0,0.0
+invest_4Year_5weeks,p2030,west,0.0,0.0,0.0,0.0,0.0,0.0
+invest_4Year_5weeks,p2035,battery,0.0,0.0,0.0,0.0,0.0,0.0
+invest_4Year_5weeks,p2035,west,0.0,0.0,0.0,0.0,0.0,0.0
