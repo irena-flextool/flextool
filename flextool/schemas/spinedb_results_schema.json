@@ -112,7 +112,7 @@
       "capacity",
       null,
       null,
-      "[MW] 'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
       null
     ],
     [
@@ -120,7 +120,7 @@
       "invest_marginal",
       null,
       null,
-      "[CUR/MW] Marginal cost to invest in one more MW of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW; positive value means the cost is higher than the benefit by the stated amount per MW).",
+      "Marginal cost to invest in one more kW of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per kW; positive value means the cost is higher than the benefit by the stated amount per kW).",
       null
     ],
     [
@@ -136,7 +136,7 @@
       "flow_annualized",
       null,
       null,
-      "[MWh] annualized cumulative flow through the connection (left to right is positive).",
+      "annualized cumulative flow through the connection (left to right is positive).",
       null
     ],
     [
@@ -144,7 +144,7 @@
       "flow_t",
       null,
       null,
-      "[MW] flow through the connection (left to right is positive).",
+      "flow through the connection (left to right is positive).",
       null
     ],
     [
@@ -152,7 +152,7 @@
       "flow_to_first_node_annualized",
       null,
       null,
-      "[MWh] annualized cumulative flow through the connection only to the left (first) node.",
+      "annualized cumulative flow through the connection only to the left (first) node.",
       null
     ],
     [
@@ -160,7 +160,7 @@
       "flow_to_first_node_t",
       null,
       null,
-      "[MW] flow through the connection to the left (first) node.",
+      "flow through the connection to the left (first) node.",
       null
     ],
     [
@@ -168,7 +168,7 @@
       "flow_to_second_node_annualized",
       null,
       null,
-      "[MWh] annualized cumulative flow through the connection only to the right (second) node.",
+      "annualized cumulative flow through the connection only to the right (second) node.",
       null
     ],
     [
@@ -176,7 +176,7 @@
       "flow_to_second_node_t",
       null,
       null,
-      "[MW] flow through the connection to the right (second) node.",
+      "flow through the connection to the right (second) node.",
       null
     ],
     [
@@ -184,7 +184,7 @@
       "reservation_average",
       null,
       null,
-      null,
+      "",
       null
     ],
     [
@@ -192,7 +192,7 @@
       "reservation_t",
       null,
       null,
-      null,
+      "",
       null
     ],
     [
@@ -200,7 +200,7 @@
       "CO2_annualized",
       null,
       null,
-      "[Mt] how many million tons of CO2 annualized the units and connections in this group have generated (by using commodity with CO2 content) or removed.",
+      "how many tonnes of CO2 annualized the units and connections in this group have generated (by using commodity with CO2 content) or removed.",
       null
     ],
     [
@@ -216,7 +216,7 @@
       "flow_annualized",
       null,
       null,
-      "[MWh] produces grouped and annualized flow results of the `node` members of the `group`",
+      "produces grouped and annualized flow results of the `node` members of the `group`",
       null
     ],
     [
@@ -224,7 +224,7 @@
       "flow_t",
       null,
       null,
-      "[MW] produces grouped flow results to the `node` members of the `group`",
+      "produces grouped flow results to the `node` members of the `group`",
       null
     ],
     [
@@ -240,7 +240,7 @@
       "inertia_largest_flow_t",
       null,
       null,
-      "[MWh/h] Largest individual flow coming into a group of nodes that are part of the same inertia group.",
+      "Largest individual flow coming into a group of nodes that are part of the same inertia group.",
       null
     ],
     [
@@ -248,7 +248,7 @@
       "inertia_t",
       null,
       null,
-      "[MWs] the amount of inertia (MWs) in the group of nodes in each timestep.",
+      "the amount of inertia (MWs) in the group of nodes in each timestep.",
       null
     ],
     [
@@ -256,7 +256,7 @@
       "inertia_unit_node_t",
       null,
       null,
-      "[MWs] the amount of inertia in the flows between the units and the nodes in the group.",
+      "the amount of inertia in the flows between the units and the nodes in the group.",
       null
     ],
     [
@@ -264,7 +264,7 @@
       "slack_capacity_margin",
       null,
       null,
-      "[MW or MWh] use of slack variable and the associated penalty cost to meet the capacity margin requirement in the period.",
+      "use of slack variable and the associated penalty cost to meet the capacity margin requirement in the period.",
       null
     ],
     [
@@ -272,7 +272,7 @@
       "slack_inertia_t",
       null,
       null,
-      "[MWs] use of slack variable and the associated penalty cost to fulfill the inertia requirement in each timestep.",
+      "use of slack variable and the associated penalty cost to fulfill the inertia requirement in each timestep.",
       null
     ],
     [
@@ -280,7 +280,7 @@
       "slack_nonsync_t",
       null,
       null,
-      "[MWh] use of slack variable and the associated penalty cost to fulfill the non-synchronous share maximum share constraint in each timestep.",
+      "use of slack variable and the associated penalty cost to fulfill the non-synchronous share maximum share constraint in each timestep.",
       null
     ],
     [
@@ -288,7 +288,7 @@
       "sum_flow_annualized",
       null,
       null,
-      "[MWh] Annualized sum of flows in the group (members from group__connection__node and group__unit__node). Annualization scales the sum to correspond with full year time series.",
+      "Annualized sum of flows in the group (members from group__connection__node and group__unit__node). Annualization scales the sum to correspond with full year time series.",
       null
     ],
     [
@@ -296,7 +296,7 @@
       "sum_flow_t",
       null,
       null,
-      "[MWh] Sum of flows in the group (members from group__connection__node and group__unit__node).",
+      "Sum of flows in the group (members from group__connection__node and group__unit__node).",
       null
     ],
     [
@@ -304,7 +304,7 @@
       "slack_reserve_t",
       null,
       null,
-      "[MW] use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep.",
+      "use of slack variable and the associated penalty cost to fulfill the upward or downward reserve requirement in each timestep.",
       null
     ],
     [
@@ -312,7 +312,7 @@
       "cost_annualized",
       null,
       null,
-      "M[CUR] Annualized (scaled to one year) and undiscounted cost for each period. The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
+      "Annualized (scaled to one year) and undiscounted cost for each period. The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
       null
     ],
     [
@@ -320,7 +320,7 @@
       "cost_discounted_solve",
       null,
       null,
-      "M[CUR] Costs for the solve considering discounting and years presented (scaled to all years presented). The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
+      "Costs for the solve considering discounting and years presented (scaled to all years presented). The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
       null
     ],
     [
@@ -328,7 +328,7 @@
       "cost_discounted_total",
       null,
       null,
-      "M[CUR] Total costs for all the solves considering discounting and years presented (scaled to all years presented). The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
+      "Total costs for all the solves considering discounting and years presented (scaled to all years presented). The costs are divided into the following categories: 'unit investment/retirement' - [CUR] cost of investing in unit capacity or benefits from salvaging unit capacity. 'connection investment/retirement' - [CUR] cost of investing in connection capacity or benefits from salvaging connection capacity. 'storage investment/retirement' - [CUR] cost of investing in storage capacity or benefits from salvaging storage capacity. 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'capacity margin penalty' - [CUR] cost of not meeting the capacity margin constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
       null
     ],
     [
@@ -336,7 +336,7 @@
       "cost_t",
       null,
       null,
-      "M[CUR] Costs for each timestep divided into following categories: 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
+      "Costs for each timestep divided into following categories: 'commodity' - [CUR] cost of unit using commodity inputs or benefit of selling commodities (negative value). 'CO2' - [CUR] cost of CO2 emissions caused by unit using commodities with CO2 content. 'variable cost' - [CUR] other variable operation and maintenance costs. 'starts' - [CUR] start up costs. 'upward penalty' - [CUR] cost of involuntary demand reduction. 'downward penalty' - [CUR] cost of involuntary demand increase- 'inertia penalty' - [CUR] cost of not meeting the inertia constraint. 'non-synchronous penalty' - [CUR] cost of not meeting the non-synchronous constraint. 'upward reserve penalty' - [CUR] cost of not meeting the upward reserve constraint. 'downward reserve penalty' - [CUR] cost of not meeting the downward reserve constraint.",
       null
     ],
     [
@@ -344,7 +344,7 @@
       "investments discount factor",
       null,
       null,
-      null,
+      "",
       null
     ],
     [
@@ -352,7 +352,7 @@
       "operations discount factor",
       null,
       null,
-      null,
+      "",
       null
     ],
     [
@@ -360,7 +360,7 @@
       "balance",
       null,
       null,
-      "[MWh] cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (from_units, from_connection, to_units, to_connections, state change over the period, self discharge during the period, upward slack for involuntary demand reduction and downward slack for involuntary demand increase).",
+      "cumulative inputs (positive) and outputs (negative) to the node from all the possible sources (from_units, from_connection, to_units, to_connections, state change over the period, self discharge during the period, upward slack for involuntary demand reduction and downward slack for involuntary demand increase).",
       null
     ],
     [
@@ -368,7 +368,7 @@
       "balance_t",
       null,
       null,
-      "[MW] timestep inputs (positive) and outputs (negative) to the node from all the possible sources (from_units, from_connection, to_units, to_connections, state change over the period, self discharge during the period, upward slack for involuntary demand reduction and downward slack for involuntary demand increase)",
+      "timestep inputs (positive) and outputs (negative) to the node from all the possible sources (from_units, from_connection, to_units, to_connections, state change over the period, self discharge during the period, upward slack for involuntary demand reduction and downward slack for involuntary demand increase)",
       null
     ],
     [
@@ -384,7 +384,7 @@
       "invest_marginal",
       null,
       null,
-      "[CUR/MW or MWh] marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh).",
+      "marginal cost to invest in one more kWh of storage capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per kWh; positive value means the cost is higher than the benefit by the stated amount per kWh).",
       null
     ],
     [
@@ -392,7 +392,7 @@
       "price_t",
       null,
       null,
-      "[CUR/MWh] each node that maintains an energy balance provides a price time series based on the marginal value of the balance constraint.",
+      "each node that maintains an energy balance provides a price time series based on the marginal value of the balance constraint.",
       null
     ],
     [
@@ -408,7 +408,7 @@
       "state_t",
       null,
       null,
-      "[MWh] storage state of the node in each timestep.",
+      "storage state of the node in each timestep.",
       null
     ],
     [
@@ -416,7 +416,7 @@
       "CO2_annualized",
       null,
       null,
-      "[MtCO2] how many million tons of CO2 the unit has generated (by using commodity with CO2 content) or removed.",
+      "how many tonnes of CO2 the unit has generated (by using commodity with CO2 content) or removed.",
       null
     ],
     [
@@ -432,7 +432,7 @@
       "invest_marginal",
       null,
       null,
-      "[CUR/MW or MWh] marginal cost to invest in one more MW or MWh of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per MW or MWh; positive value means the cost is higher than the benefit by the stated amount per MW or MWh).",
+      "marginal cost to invest in one more kW of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per kW; positive value means the cost is higher than the benefit by the stated amount per kW).",
       null
     ],
     [
@@ -440,7 +440,7 @@
       "online_average",
       null,
       null,
-      "[count] average online status of the unit (average number of units online during the period).",
+      "average online status of the unit (average number of units online during the period).",
       null
     ],
     [
@@ -448,7 +448,7 @@
       "online_t",
       null,
       null,
-      "[count] online status of the unit (number of units online in each timestep).",
+      "online status of the unit (number of units online in each timestep).",
       null
     ],
     [
@@ -456,7 +456,7 @@
       "startup_cumulative",
       null,
       null,
-      "[count] cumulative number of unit startups during the period.",
+      "cumulative number of unit startups during the period.",
       null
     ],
     [
@@ -480,7 +480,7 @@
       "curtailment_t",
       null,
       null,
-      "[MW] curtailed flow to the node",
+      "curtailed flow to the node",
       null
     ],
     [
@@ -488,7 +488,7 @@
       "flow_annualized",
       null,
       null,
-      "[MWh] cumulative flow from the node (if node is input) or to the node (if node is output).",
+      "cumulative flow from the node (if node is input) or to the node (if node is output).",
       null
     ],
     [
@@ -496,7 +496,7 @@
       "flow_t",
       null,
       null,
-      "[MW] flow from the node (if node is input) or to the node (if node is output).",
+      "flow from the node (if node is input) or to the node (if node is output).",
       null
     ],
     [
@@ -504,7 +504,7 @@
       "ramp_t",
       null,
       null,
-      "[MW] shows ramping of particular input or output flow between a unit and a node for each time step.",
+      "shows ramping of particular input or output flow between a unit and a node for each time step.",
       null
     ],
     [
@@ -512,7 +512,7 @@
       "reservation_average",
       null,
       null,
-      "[MW] how much upward or downward reserve particular unit was providing to a particular node in average during the period.",
+      "how much upward or downward reserve particular unit was providing to a particular node in average during the period.",
       null
     ],
     [
@@ -520,7 +520,7 @@
       "reservation_t",
       null,
       null,
-      "[MW] how much upward or downward reserve particular unit was providing to a particular node in given timestep.",
+      "how much upward or downward reserve particular unit was providing to a particular node in given timestep.",
       null
     ]
   ],
