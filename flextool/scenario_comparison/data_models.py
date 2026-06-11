@@ -122,6 +122,14 @@ class TimeSeriesResults:
     costs_discounted_p_: pd.DataFrame | None = None
     annualized_costs_d_p: pd.DataFrame | None = None
 
+    # --- Per-entity cost break-down (unit/connection/node, period level) ---
+    cost_unit_annualized_d_ec: pd.DataFrame | None = None
+    cost_connection_annualized_d_ec: pd.DataFrame | None = None
+    cost_node_annualized_d_ec: pd.DataFrame | None = None
+    cost_unit_discounted_d_ec: pd.DataFrame | None = None
+    cost_connection_discounted_d_ec: pd.DataFrame | None = None
+    cost_node_discounted_d_ec: pd.DataFrame | None = None
+
     # --- CO2 and process outputs ---
     CO2__: pd.DataFrame | None = None
     CO2_d_g: pd.DataFrame | None = None
