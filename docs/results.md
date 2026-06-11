@@ -19,6 +19,7 @@ All annualized numbers are scaled to **a full year of operation** by dividing th
 For stochastic models the parquets carry only the **realised branch** of each solve by default. Setting the `model` parameter `output_horizon = yes` adds the forecast-branch rows to the time-series tables (`*_t`, `*_dt`) so the unrealised futures are visible for debugging — note that cost aggregates in that mode mix realised + unrealised contributions and should not be used as final results (see also [How to use stochastics](how_to.md#how-to-use-stochastics-representing-uncertainty)).
 
 - [Costs](#costs)
+- [Cost by entity](#cost-by-entity)
 - [Prices](#prices)
 - [Energy flows](#energy-flows)
 - [Capacity factors](#capacity-factors)
@@ -56,6 +57,38 @@ For stochastic models the parquets carry only the **realised branch** of each so
 - `model` entity `cost_t` parameter — M[CUR] same categories as above but per timestep (no investment / fixed terms)
 - `model` entity `cost_discounted_solve` parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
 - `model` entity `cost_discounted_total` parameter — M[CUR] same, totalled over all realised periods
+
+## Cost by entity
+
+The system [Costs](#costs) above are also broken down **per entity at the period level**, so you can see which unit, connection or node drives each cost category. Six result tables are produced — one for each entity type (`unit`, `connection`, `node`) in each of two flavours:
+
+- *annualized* — M[CUR/a], scaled to a full year of operation (the same basis as `cost_annualized`)
+- *discounted* — M[CUR], net present value over the horizon (the same basis as `cost_discounted_total`)
+
+Each table is indexed by `(period, entity)` — the entity level is named after its type (`unit`, `connection` or `node`) — and carries one column per cost `category`:
+
+- `unit` entity `cost_annualized` / `cost_discounted` parameters — per-unit cost break-down
+- `connection` entity `cost_annualized` / `cost_discounted` parameters — per-connection cost break-down
+- `node` entity `cost_annualized` / `cost_discounted` parameters — per-node cost break-down
+
+The categories mirror the system [Costs](#costs) decomposition, restricted to those that apply to the entity type:
+
+- *commodity cost* / *commodity sales* — M[CUR] cost of buying / revenue from selling commodities
+- *co2* — M[CUR] cost of CO2 emissions caused by the entity's flows
+- *other operational* — M[CUR] other variable O&M costs
+- *starts* — M[CUR] start-up costs (units)
+- *investment* / *retirement* — M[CUR] cost of investing in unit / connection capacity or salvage from retiring it (named *storage investment* / *storage retirement* in the `node` table, where the capacity is node-state storage energy)
+- *fixed cost pre-existing* / *fixed cost invested* / *fixed cost reduction of divestments* — M[CUR] fixed O&M for pre-existing, newly invested and divested capacity
+- *upward slack penalty* / *downward slack penalty* (`node` table only) — M[CUR] cost of involuntary demand reduction / increase at the node
+
+Attribution rules (matching the LP objective):
+
+- **Fuel / commodity cost** is attributed to the **consuming process** — the unit or connection that draws the commodity — not to the source node.
+- **CO2 cost** for a process is the **sum over every priced group the process touches**, so a flow that contributes emissions to several priced groups carries the full cost of each.
+
+By construction these tables are purely additive collapses of the same per-entity intermediates the system summary uses, so **summing any category over all entities reproduces the system summary**: the `unit` + `connection` + `node` contributions for a given category and period add up to the matching `cost_annualized` / `cost_discounted_total` category value (`annualized_costs_d_p` / `costs_discounted_d_p` in the parquet store).
+
+These are period-level tables only — there are no per-timestep per-entity cost tables.
 
 ## Prices
 

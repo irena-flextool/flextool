@@ -108,6 +108,32 @@ MONEY_DISCOUNTED = Transform(
     "Net present cost over the horizon (inflation × years_represented applied).",
     algebra="annual_cost · inflation_factor · years_represented",
 )
+COST_ENTITY_ANNUAL = Transform(
+    "M CUR/a", Semantics.ANNUALIZED,
+    "Per-entity annualized cost for this category (full-year equivalent).",
+    description="Annualized cost of one (entity, period) cell for this "
+                "category — the system annualized cost collapsed per entity "
+                "rather than summed system-wide. Fuel/commodity cost is "
+                "attributed to the consuming process (the unit/connection that "
+                "draws the commodity, not the source node); CO2 cost is summed "
+                "over every priced group the process touches. Summing a "
+                "category over all entities reproduces the system summary "
+                "(annualized_costs_d_p).",
+    algebra="Σ entity_cost_dt / period_share / 1e6",
+)
+COST_ENTITY_DISCOUNTED = Transform(
+    "M CUR", Semantics.DISCOUNTED,
+    "Per-entity net present cost for this category over the horizon.",
+    description="Net present (discounted) cost of one (entity, period) cell "
+                "for this category — the system discounted cost collapsed per "
+                "entity rather than summed system-wide. Fuel/commodity cost is "
+                "attributed to the consuming process (the unit/connection that "
+                "draws the commodity, not the source node); CO2 cost is summed "
+                "over every priced group the process touches. Summing a "
+                "category over all entities reproduces the system summary "
+                "(costs_discounted_d_p).",
+    algebra="annual_entity_cost · inflation_factor · years_represented",
+)
 EMISSION_ANNUAL = Transform(
     "t/a", Semantics.ANNUALIZED,
     "Emissions, scaled from the sampled timeline to a full-year equivalent.",
@@ -304,12 +330,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "costs_discounted_d_p": MONEY_DISCOUNTED,
     # Per-entity cost break-down (period level).  Category column VALUES are
     # the measures; the entity/period index levels auto-resolve to dimension.
-    "cost_unit_annualized_d_ec": MONEY_ANNUAL,
-    "cost_connection_annualized_d_ec": MONEY_ANNUAL,
-    "cost_node_annualized_d_ec": MONEY_ANNUAL,
-    "cost_unit_discounted_d_ec": MONEY_DISCOUNTED,
-    "cost_connection_discounted_d_ec": MONEY_DISCOUNTED,
-    "cost_node_discounted_d_ec": MONEY_DISCOUNTED,
+    "cost_unit_annualized_d_ec": COST_ENTITY_ANNUAL,
+    "cost_connection_annualized_d_ec": COST_ENTITY_ANNUAL,
+    "cost_node_annualized_d_ec": COST_ENTITY_ANNUAL,
+    "cost_unit_discounted_d_ec": COST_ENTITY_DISCOUNTED,
+    "cost_connection_discounted_d_ec": COST_ENTITY_DISCOUNTED,
+    "cost_node_discounted_d_ec": COST_ENTITY_DISCOUNTED,
     # Unit / connection flows
     "unit_outputNode_dt_ee": RATE,
     "unit_inputNode_dt_ee": RATE,
