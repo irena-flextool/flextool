@@ -151,6 +151,169 @@ def cost_summaries(par, s, v, r, debug):
     return results
 
 
+def cost_breakdown_by_entity(par, s, v, r, debug):
+    """Per-entity cost break-down at the PERIOD level (unit / connection / node).
+
+    Purely additive over the existing per-entity intermediates in
+    ``calc_costs.py``.  Each table mirrors ``cost_summaries`` arithmetic
+    EXACTLY, only collapsed per-entity instead of system-wide, so summing a
+    per-entity table over its entities reconciles against the system summary
+    (``annualized_costs_d_p`` / ``costs_discounted_d_p``).  Six tables: unit,
+    connection, node — in annualized (M CUR/a) and discounted (M CUR) flavours.
+
+    Index = (period, entity) MultiIndex with the entity level named
+    'unit'/'connection'/'node'; columns = single level named 'category'.
+    PERIOD-LEVEL ONLY — no per-timestep tables (this deliberately avoids the
+    CSV writer's positional solve-injection on dt-indexed frames).
+
+    Fuel/commodity cost is attributed to the consuming process; multi-group
+    CO2 cost is the sum over every priced group a process touches (matching the
+    LP objective).
+    """
+    results = []
+
+    discount_ops = par.inflation_factor_operations_yearly
+    discount_invs = par.inflation_factor_investment_yearly
+    period_share = par.complete_period_share_of_year
+    to_millions = 1000000
+
+    # Entity sets for the three entity types.  Operational/startup/fuel/co2
+    # process frames are sliced to the processes of the relevant type; the
+    # invest/fixed frames (already per-entity) are sliced the same way.
+    entity_specs = (
+        ('unit', list(s.process_unit), 'unit'),
+        ('connection', list(s.process_connection), 'connection'),
+        ('node', list(s.node_state), 'node'),
+    )
+
+    def _slice_cols(frame, entities):
+        """Columns of ``frame`` restricted to ``entities`` (present only)."""
+        return [e for e in entities if e in frame.columns]
+
+    def _op_annualized(frame, entities):
+        """Operational dt frame → per-(period, entity) annualized Series
+        (M CUR/a).  Matches dispatch_costs_annualized_period."""
+        cols = _slice_cols(frame, entities)
+        if not cols:
+            return None
+        per_d = frame[cols].groupby('period').sum().div(period_share, axis=0) / to_millions
+        return per_d.stack(future_stack=True)
+
+    def _op_discounted(frame, entities):
+        """Operational dt frame → per-(period, entity) discounted Series
+        (M CUR).  Matches dispatch_costs_inflation_adjusted."""
+        cols = _slice_cols(frame, entities)
+        if not cols:
+            return None
+        per_d = (
+            frame[cols].groupby('period').sum()
+            .div(period_share, axis=0)
+            .mul(discount_ops, axis=0)
+            / to_millions
+        )
+        return per_d.stack(future_stack=True)
+
+    def _inv_discounted(frame, entities):
+        """Already-discounted M-path per-entity frame → per-(period, entity)
+        Series (M CUR).  Matches investment_costs (/1e6 only)."""
+        cols = _slice_cols(frame, entities)
+        if not cols:
+            return None
+        return (frame[cols] / to_millions).stack(future_stack=True)
+
+    def _inv_annualized(frame, entities, *, discount):
+        """Already-discounted M-path per-entity frame → per-(period, entity)
+        annualized Series (M CUR/a): remove the supplied discount factor.
+        Matches annual_invest_costs."""
+        cols = _slice_cols(frame, entities)
+        if not cols:
+            return None
+        return (frame[cols].div(discount, axis=0) / to_millions).stack(future_stack=True)
+
+    for kind, entities, level_name in entity_specs:
+        # Build (annualized_pieces, discounted_pieces) dicts keyed by category.
+        ann_pieces: dict = {}
+        dis_pieces: dict = {}
+
+        # --- Operational (process / node-state) ---
+        # commodity_sales is NEGATED to match out_costs.py:40 sign convention.
+        op_specs = [
+            ('commodity_cost', r.cost_commodity_process_dt, 1.0),
+            ('commodity_sales', r.sales_commodity_process_dt, -1.0),
+            ('co2', r.cost_process_co2_dt, 1.0),
+            ('other operational', r.cost_process_other_operational_cost_dt, 1.0),
+            ('starts', r.cost_startup_dt, 1.0),
+        ]
+        for cat, frame, sign in op_specs:
+            src = frame if sign == 1.0 else frame.mul(sign)
+            a = _op_annualized(src, entities)
+            d = _op_discounted(src, entities)
+            if a is not None:
+                ann_pieces[cat] = a
+            if d is not None:
+                dis_pieces[cat] = d
+
+        # --- Node-state slack penalties (node table only) ---
+        # Same operational annualized/discounted treatment (they flow through
+        # costs_dt_p → annualized/discounted in the system path,
+        # out_costs.py:44-45).  The slack penalty applies to every balance
+        # node carrying a state-slack variable (the frame's own columns) —
+        # which is a SUPERSET of s.node_state (storage-state nodes).  Slicing
+        # to s.node_state here would drop the penalties of balance-only nodes
+        # and break the system reconciliation, so use the frame's own node
+        # columns as the entity set instead of ``entities``.
+        if kind == 'node':
+            slack = r.costPenalty_node_state_upDown_dt
+            for cat, ud in (('upward slack penalty', 'up'),
+                            ('downward slack penalty', 'down')):
+                try:
+                    sub = slack.xs(ud, level='upDown', axis=1)
+                except KeyError:
+                    continue
+                slack_nodes = list(sub.columns)
+                a = _op_annualized(sub, slack_nodes)
+                d = _op_discounted(sub, slack_nodes)
+                if a is not None:
+                    ann_pieces[cat] = a
+                if d is not None:
+                    dis_pieces[cat] = d
+
+        # --- Investment / fixed (already discounted M-path) ---
+        # Skip categories whose sliced frame is empty (dispatch-only models
+        # have empty v.invest / v.divest).
+        invest_label = 'storage investment' if kind == 'node' else 'investment'
+        divest_label = 'storage retirement' if kind == 'node' else 'retirement'
+        inv_specs = [
+            (invest_label, r.cost_entity_invest_d, discount_invs),
+            (divest_label, r.cost_entity_divest_d, discount_invs),
+            ('fixed cost pre-existing', r.cost_entity_fixed_pre_existing, discount_ops),
+            ('fixed cost invested', r.cost_entity_fixed_invested, discount_ops),
+            ('fixed cost reduction of divestments', r.cost_entity_fixed_divested, discount_ops),
+        ]
+        for cat, frame, discount in inv_specs:
+            d = _inv_discounted(frame, entities)
+            a = _inv_annualized(frame, entities, discount=discount)
+            if a is not None:
+                ann_pieces[cat] = a
+            if d is not None:
+                dis_pieces[cat] = d
+
+        for pieces, flavour in ((ann_pieces, 'annualized'), (dis_pieces, 'discounted')):
+            if not pieces:
+                # Empty guard: no category pieces — skip the append.
+                continue
+            df = pd.concat(pieces, axis=1)
+            df.columns.name = 'category'
+            # After future_stack the entity level is the last index level;
+            # name the (period, entity) levels explicitly.
+            df.index = df.index.set_names(['period', level_name])
+            df = df.fillna(0.0).sort_index()
+            key = f'cost_{kind}_{flavour}_d_ec'
+            results.append((df, key))
+
+    return results
+
+
 def CO2(par, s, v, r, debug):
     """Annualized CO2 Mt for groups by period"""
     results = []

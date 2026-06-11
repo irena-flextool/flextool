@@ -28,7 +28,9 @@ from flextool.process_outputs.out_ancillary import (
     co2_duals,
 )
 from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
-from flextool.process_outputs.out_costs import generic, cost_summaries, CO2
+from flextool.process_outputs.out_costs import (
+    generic, cost_summaries, cost_breakdown_by_entity, CO2,
+)
 from flextool.process_outputs.out_flowgroup import flowGroup_indicators
 from flextool.process_outputs.out_flows import (
     unit_outputNode, unit_inputNode,
@@ -633,6 +635,7 @@ ALL_OUTPUTS = [
     input_sets,
     generic,
     cost_summaries,
+    cost_breakdown_by_entity,
     reserves,
     unit_online_and_startup,
     node_summary,

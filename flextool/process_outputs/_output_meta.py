@@ -302,6 +302,14 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "costs_dt_p": MONEY_PERSTEP,
     "annualized_costs_d_p": MONEY_ANNUAL,
     "costs_discounted_d_p": MONEY_DISCOUNTED,
+    # Per-entity cost break-down (period level).  Category column VALUES are
+    # the measures; the entity/period index levels auto-resolve to dimension.
+    "cost_unit_annualized_d_ec": MONEY_ANNUAL,
+    "cost_connection_annualized_d_ec": MONEY_ANNUAL,
+    "cost_node_annualized_d_ec": MONEY_ANNUAL,
+    "cost_unit_discounted_d_ec": MONEY_DISCOUNTED,
+    "cost_connection_discounted_d_ec": MONEY_DISCOUNTED,
+    "cost_node_discounted_d_ec": MONEY_DISCOUNTED,
     # Unit / connection flows
     "unit_outputNode_dt_ee": RATE,
     "unit_inputNode_dt_ee": RATE,
@@ -416,6 +424,12 @@ FORMULA_OVERRIDE: dict[tuple[str, str], str] = {
 DOCS_ANCHOR: dict[str, str] = {
     "annualized_costs_d_p": "outputs.html#annualized-costs",
     "costs_dt_p": "outputs.html#per-timestep-costs",
+    "cost_unit_annualized_d_ec": "outputs.html#cost-by-entity",
+    "cost_connection_annualized_d_ec": "outputs.html#cost-by-entity",
+    "cost_node_annualized_d_ec": "outputs.html#cost-by-entity",
+    "cost_unit_discounted_d_ec": "outputs.html#cost-by-entity",
+    "cost_connection_discounted_d_ec": "outputs.html#cost-by-entity",
+    "cost_node_discounted_d_ec": "outputs.html#cost-by-entity",
 }
 
 
