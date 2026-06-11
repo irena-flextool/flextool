@@ -1010,9 +1010,13 @@ def _ensure_solve_level(df, s, has_time):
             spt = spt[~spt.droplevel("solve").duplicated(keep="last")]
         pt_to_solve = dict(
             zip(spt.droplevel("solve"), spt.get_level_values("solve")))
-        solve_vals = df.index.map(
-            lambda x: pt_to_solve.get((x[0], x[1]) if isinstance(x, tuple)
-                                      else x, ""))
+        # Key off the named 'period'/'time' levels, not positional index
+        # slots — entity-first indexes (e.g. (unit, period, time)) otherwise
+        # read the wrong levels and miss every lookup.
+        period_level = df.index.get_level_values("period")
+        time_level = df.index.get_level_values("time")
+        solve_vals = [pt_to_solve.get((p, t), "")
+                      for p, t in zip(period_level, time_level)]
         df.index = pd.MultiIndex.from_arrays(
             [solve_vals] + [df.index.get_level_values(n) for n in df.index.names],
             names=["solve"] + list(df.index.names),

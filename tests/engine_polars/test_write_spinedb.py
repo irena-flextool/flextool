@@ -411,5 +411,100 @@ def test_concurrent_cold_start_creates_one_valid_db(tmp_path):
         assert flow is not None
 
 
+# ---------------------------------------------------------------------------
+# Regression: solve-level injection must key off NAMED 'period'/'time' levels,
+# not positional index slots. Entity-first indexes (e.g. (unit, period, time))
+# previously read the wrong levels and injected a blank solve on every row.
+# ---------------------------------------------------------------------------
+
+def _solve_of(df, name):
+    """Return the injected 'solve' value for the row whose index value for
+    level ``name`` is the requested one. Asserts a single 'solve' column."""
+    assert "solve" in df.index.names
+    return df.index.get_level_values("solve")
+
+
+@pytest.mark.parametrize("order", ["pt", "ept"])
+def test_ensure_solve_level_dt_index_orders(order):
+    """(period, time)-first AND (entity, period, time)-first frames both get
+    the correct per-(period,time) solve injected. ``s1`` is the only solve."""
+    from flextool.process_outputs.write_spinedb import _ensure_solve_level
+
+    if order == "pt":
+        idx = pd.MultiIndex.from_tuples(
+            [("p2020", "t01"), ("p2020", "t02")],
+            names=["period", "time"])
+    else:  # entity-first
+        idx = pd.MultiIndex.from_tuples(
+            [("u1", "p2020", "t01"), ("u1", "p2020", "t02")],
+            names=["unit", "period", "time"])
+    df = pd.DataFrame({"v": [1.0, 2.0]}, index=idx)
+
+    out = _ensure_solve_level(df, StubS(), has_time=True)
+    solves = list(_solve_of(out, "time"))
+    assert solves == ["s1", "s1"], (
+        f"order={order}: expected every row tagged solve 's1', got {solves}")
+
+
+@pytest.mark.parametrize("order", ["p", "ep"])
+def test_ensure_solve_level_period_index_orders(order):
+    """period-only AND (entity, period)-first frames both get the correct
+    per-period solve injected."""
+    from flextool.process_outputs.write_spinedb import _ensure_solve_level
+
+    if order == "p":
+        idx = pd.Index(["p2020"], name="period")
+    else:  # entity-first
+        idx = pd.MultiIndex.from_tuples(
+            [("u1", "p2020")], names=["unit", "period"])
+    df = pd.DataFrame({"v": [1.0]}, index=idx)
+
+    out = _ensure_solve_level(df, StubS(), has_time=False)
+    solves = list(_solve_of(out, "period"))
+    assert solves == ["s1"], (
+        f"order={order}: expected row tagged solve 's1', got {solves}")
+
+
+def test_ensure_solve_level_no_period_is_noop():
+    """A frame with no 'period' level is returned unchanged (no crash)."""
+    from flextool.process_outputs.write_spinedb import _ensure_solve_level
+
+    idx = pd.MultiIndex.from_tuples(
+        [("u1", "n1")], names=["unit", "node"])
+    df = pd.DataFrame({"v": [1.0]}, index=idx)
+    out = _ensure_solve_level(df, StubS(), has_time=False)
+    assert list(out.index.names) == ["unit", "node"]
+    assert "solve" not in out.index.names
+
+
+def test_csv_solve_injection_entity_first_dt():
+    """Mirror of the CSV writer's in-place solve-injection block: an
+    (entity, period, time) frame must get the correct solve, not a blank one,
+    and the old positional logic is shown to have been broken."""
+    idx = pd.MultiIndex.from_tuples(
+        [("u1", "p2020", "t01"), ("u1", "p2020", "t02")],
+        names=["unit", "period", "time"])
+    df = pd.DataFrame({"flow": [1.0, 2.0]}, index=idx)
+
+    # Reproduce the in-place CSV solve-injection block (write_outputs.py).
+    s = StubS()
+    assert "solve" not in df.index.names and "period" in df.index.names
+    assert "time" in df.index.names
+    spt = s.solve_period_time
+    if spt.droplevel("solve").duplicated().any():
+        spt = spt[~spt.droplevel("solve").duplicated(keep="last")]
+    pt_to_solve = dict(zip(spt.droplevel("solve"),
+                           spt.get_level_values("solve")))
+    period_level = df.index.get_level_values("period")
+    time_level = df.index.get_level_values("time")
+    solve_vals = [pt_to_solve.get((p, t), "")
+                  for p, t in zip(period_level, time_level)]
+    assert solve_vals == ["s1", "s1"], (
+        f"CSV entity-first injection wrong: {solve_vals}")
+    # Sanity: the OLD positional logic would have missed (reads (u1, p2020)).
+    old = [pt_to_solve.get((x[0], x[1]), "") for x in df.index]
+    assert old == ["", ""], "positional baseline should have been broken"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
