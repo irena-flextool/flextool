@@ -1,0 +1,9 @@
+solve,period,unit,commodity_cost,other operational,investment,retirement,fixed cost pre-existing,fixed cost invested
+y2020_2035_5week,p2020,coal_plant,75.6692,0.0,0.0,0.0,226.9993,0.0
+y2020_2035_5week,p2020,wind_plant,0.0,0.0,347.8878,0.0,0.0,0.0
+y2020_2035_5week,p2025,coal_plant,70.9387,0.0,0.0,0.0,186.5769,0.0
+y2020_2035_5week,p2025,wind_plant,0.0,0.0,121.3062,0.0,0.0,0.0
+y2020_2035_5week,p2030,coal_plant,65.4935,0.0,0.0,0.0,153.3526,0.0
+y2020_2035_5week,p2030,wind_plant,0.0,0.0,72.7349,0.0,0.0,0.0
+y2020_2035_5week,p2035,coal_plant,59.7382,0.0,0.0,0.0,126.0446,0.0
+y2020_2035_5week,p2035,wind_plant,0.0,0.0,32.813,0.0,0.0,0.0

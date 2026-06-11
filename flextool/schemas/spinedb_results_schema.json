@@ -117,6 +117,22 @@
     ],
     [
       "connection",
+      "cost_annualized",
+      null,
+      null,
+      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, investment / retirement, fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
+      null
+    ],
+    [
+      "connection",
+      "cost_discounted",
+      null,
+      null,
+      "per-entity net present (discounted) cost over the horizon, same category break-down as cost_annualized. Summing a category over all entities reproduces the system-wide cost_discounted_total.",
+      null
+    ],
+    [
+      "connection",
       "invest_marginal",
       null,
       null,
@@ -381,6 +397,22 @@
     ],
     [
       "node",
+      "cost_annualized",
+      null,
+      null,
+      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, investment / retirement, fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
+      null
+    ],
+    [
+      "node",
+      "cost_discounted",
+      null,
+      null,
+      "per-entity net present (discounted) cost over the horizon, same category break-down as cost_annualized. Summing a category over all entities reproduces the system-wide cost_discounted_total.",
+      null
+    ],
+    [
+      "node",
       "invest_marginal",
       null,
       null,
@@ -425,6 +457,22 @@
       null,
       null,
       "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      null
+    ],
+    [
+      "unit",
+      "cost_annualized",
+      null,
+      null,
+      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, investment / retirement, fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
+      null
+    ],
+    [
+      "unit",
+      "cost_discounted",
+      null,
+      null,
+      "per-entity net present (discounted) cost over the horizon, same category break-down as cost_annualized. Summing a category over all entities reproduces the system-wide cost_discounted_total.",
       null
     ],
     [

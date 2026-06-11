@@ -1,0 +1,5 @@
+solve,period,unit,commodity_cost,other operational,investment,retirement,fixed cost pre-existing,fixed cost invested
+y2020_2029_2x5y,p2020,coal_plant,23.0027,0.0,20.949,0.0,50.0,80.5094
+y2020_2029_2x5y,p2020,wind_plant,0.0,0.0,200.4903,0.0,0.0,0.0
+y2020_2029_2x5y,p2025,coal_plant,23.0027,0.0,0.0,0.0,50.0,0.0
+y2020_2029_2x5y,p2025,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0

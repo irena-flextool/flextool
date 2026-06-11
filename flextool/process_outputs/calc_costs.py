@@ -53,6 +53,27 @@ def compute_costs(par, s, v, r) -> None:
     r.cost_commodity_d = r.cost_commodity_dt.groupby('period').sum()
     r.sales_commodity_d = r.sales_commodity_dt.groupby('period').sum()
 
+    # --- Per-process commodity (fuel) buy & sales (additive output layer) ---
+    # Attribute fuel cost to the consuming process.  Same dt-price, step_x_rp
+    # scaling and sign convention as the per-commodity totals above; only the
+    # collapse axis differs (process, not commodity).  Build a price frame
+    # whose columns mirror the flow's full column MultiIndex (price selected
+    # by each column's commodity level), then a plain element-wise mul — a
+    # level= broadcast raises NotImplementedError on the non-unique commodity
+    # key.  Summing these over 'process' reproduces r.cost_commodity_dt /
+    # r.sales_commodity_dt exactly (reconciliation invariant).
+    _price_by_commodity = commodity_price.droplevel('node', axis=1)
+    _price_by_commodity = _price_by_commodity.loc[:, ~_price_by_commodity.columns.duplicated()]
+
+    def _per_process_commodity_cost(flow_frame):
+        pf = _price_by_commodity.reindex(
+            columns=flow_frame.columns.get_level_values('commodity'))
+        pf.columns = flow_frame.columns
+        return flow_frame.mul(step_x_rp, axis=0).mul(pf).T.groupby('process').sum().T
+
+    r.cost_commodity_process_dt = _per_process_commodity_cost(flow_from_commodity_node)
+    r.sales_commodity_process_dt = _per_process_commodity_cost(flow_to_commodity_node)
+
     # --- CO2 emissions ---
     flow_outof_cols = r.flow_dt.columns.copy()
     flow_outof_cols.names = ['process', 'node', 'sink']
@@ -125,6 +146,23 @@ def compute_costs(par, s, v, r) -> None:
     r.group_cost_co2_d = r.group_cost_co2_dt.groupby('period').sum()
     r.cost_co2_dt = r.group_cost_co2_dt.sum(axis=1)
     r.cost_co2_d = r.group_cost_co2_d.sum(axis=1)
+
+    # --- Per-process CO2 cost (additive output layer) ---
+    # group_process_emissions_co2_dt replicates per-process emissions once per
+    # priced group the process's node belongs to.  Multiply by the dt group
+    # price (column-aligned to the 'group' level) and timestep_weight, then
+    # groupby('process').sum() — this SUMS the per-group charges over every
+    # priced group the process touches, matching the LP objective and
+    # calc_costs.py:104-127.  Summing over 'process' reproduces r.cost_co2_dt.
+    _co2_cols = r.group_process_emissions_co2_dt.columns
+    _co2_price = par.group_co2_price.reindex(columns=_co2_cols.get_level_values('group'))
+    _co2_price.columns = _co2_cols
+    r.cost_process_co2_dt = (
+        r.group_process_emissions_co2_dt
+        .mul(_co2_price)
+        .mul(par.timestep_weight, axis=0)
+        .T.groupby('process').sum().T
+    )
 
     # --- Operational costs ---
     # Mod objective (~line 2347-2376): flow × unitsize × varCost ×

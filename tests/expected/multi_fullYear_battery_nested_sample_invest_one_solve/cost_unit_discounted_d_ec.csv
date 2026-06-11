@@ -1,0 +1,9 @@
+solve,period,unit,commodity_cost,other operational,investment,retirement,fixed cost pre-existing,fixed cost invested
+dispatch_fullYear_roll_roll_17,p2020,coal_plant,64.9584,0.0,0.0,0.0,226.9993,0.0
+dispatch_fullYear_roll_roll_17,p2020,wind_plant,0.0,0.0,346.7526,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_35,p2025,coal_plant,60.9259,0.0,0.0,0.0,186.5769,0.0
+dispatch_fullYear_roll_roll_35,p2025,wind_plant,0.0,0.0,121.3062,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_53,p2030,coal_plant,56.1811,0.0,0.0,0.0,153.3526,0.0
+dispatch_fullYear_roll_roll_53,p2030,wind_plant,0.0,0.0,72.7349,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_71,p2035,coal_plant,51.1951,0.0,0.0,0.0,126.0446,0.0
+dispatch_fullYear_roll_roll_71,p2035,wind_plant,0.0,0.0,32.813,0.0,0.0,0.0
