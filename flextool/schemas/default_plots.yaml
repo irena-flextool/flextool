@@ -978,7 +978,7 @@ plots:
         max_items_per_plot: 15
         skip_data_with_only_zeroes: true
         map_dimensions_for_plots: [dt_p, tt_s]
-        ylabel: Currency/h
+        ylabel: Currency
         color_category: costs
         scenario_rule: u
         comparison_overrides:
@@ -1645,7 +1645,7 @@ plots:
         subplots_per_row: 2
         max_items_per_plot: 10
         max_subplots_per_file: 4
-        ylabel: MWs
+        ylabel: MW
         scenario_rule: l
       chunks:
         plot_name: 'NodeGroup inertia of largest flow weekly avg'
@@ -1655,7 +1655,7 @@ plots:
         subplots_per_row: 2
         max_items_per_plot: 10
         max_subplots_per_file: 4
-        ylabel: MWs
+        ylabel: MW
         scenario_rule: l
   'NodeGroup inertia of unit flows':
     group: 6
