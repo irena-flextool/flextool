@@ -2945,18 +2945,31 @@ class MainWindow(tk.Tk):
             db_url = f"sqlite:///{filepath}"
             proc = self.db_editor_mgr.open_database(db_url, source_name)
             if proc is None:
-                if messagebox.askyesno(
+                # spine-db-editor not found: point at 'Update FlexTool' and
+                # offer the system default .sqlite app as a fallback.
+                # askyesnocancel: Yes=Update, No=default app, Cancel=nothing.
+                choice = messagebox.askyesnocancel(
                     "Spine DB Editor not available",
                     "The 'spine-db-editor' command was not found, so .sqlite "
-                    "input sources cannot be opened.\n\n"
+                    "input sources cannot be opened in the Spine DB Editor.\n\n"
                     "It is part of Spine Toolbox. You can install it via "
                     "'Update FlexTool' (tick 'Install Spine Toolbox'), or "
                     'manually from the flextool directory:\n\n'
                     '  pip install -e ".[toolbox]"\n\n'
-                    "Open 'Update FlexTool' now?",
+                    "Open 'Update FlexTool' now?\n\n"
+                    "Choose 'No' to open the file with your system's default "
+                    "application for .sqlite files instead.",
                     parent=self,
-                ):
+                )
+                if choice is True:
                     self._on_update_flextool(preselect_toolbox=True)
+                elif choice is False:
+                    try:
+                        open_file_in_default_app(filepath)
+                    except OSError as exc:
+                        messagebox.showerror(
+                            "Error", f"Could not open file:\n{exc}"
+                        )
                 return
             # spine-db-editor was found and launched, but an incomplete Spine
             # Toolbox install can still crash it on startup. Check shortly after
@@ -5482,7 +5495,14 @@ class MainWindow(tk.Tk):
 
     @safe_callback
     def _on_show_comp_spinedb(self) -> None:
-        """Open the project-wide results.sqlite SpineDB in the default app."""
+        """Open the project-wide results.sqlite SpineDB.
+
+        Prefer the Spine DB Editor when ``spine-db-editor`` is available on
+        PATH (i.e. Spine Toolbox is installed in the venv). If it is not,
+        explain that Spine Toolbox can be added via 'Update FlexTool' and
+        offer to open the file with the system's default .sqlite application
+        instead.
+        """
         if not self.current_project:
             return
         project_path = get_projects_dir() / self.current_project
@@ -5494,10 +5514,47 @@ class MainWindow(tk.Tk):
                 "and (re-)run the scenarios to produce it.",
             )
             return
-        try:
-            open_file_in_default_app(results_db)
-        except OSError as exc:
-            logger.warning("Could not open results SpineDB: %s", exc)
+
+        source_name = "results.sqlite"
+        if self.db_editor_mgr.is_editor_running(source_name):
+            # Already open in a Spine DB Editor we launched — don't spawn a
+            # duplicate window (there is no row button here to flash).
+            messagebox.showinfo(
+                "Comparison SpineDB",
+                "results.sqlite is already open in the Spine DB Editor.",
+            )
+            return
+        db_url = f"sqlite:///{results_db}"
+        proc = self.db_editor_mgr.open_database(db_url, source_name)
+        if proc is None:
+            # spine-db-editor not found: inform the user, point at
+            # 'Update FlexTool', and offer the system default .sqlite app
+            # as a fallback. askyesnocancel: Yes=Update, No=default app,
+            # Cancel=do nothing.
+            choice = messagebox.askyesnocancel(
+                "Spine DB Editor not available",
+                "The 'spine-db-editor' command was not found, so the "
+                "comparison results.sqlite cannot be opened in the Spine DB "
+                "Editor.\n\n"
+                "It is part of Spine Toolbox, which can be added via "
+                "'Update FlexTool' (tick 'Install Spine Toolbox').\n\n"
+                "Open 'Update FlexTool' now?\n\n"
+                "Choose 'No' to open results.sqlite with your system's "
+                "default application for .sqlite files instead.",
+                parent=self,
+            )
+            if choice is True:
+                self._on_update_flextool(preselect_toolbox=True)
+            elif choice is False:
+                try:
+                    open_file_in_default_app(results_db)
+                except OSError as exc:
+                    logger.warning("Could not open results SpineDB: %s", exc)
+            return
+        # spine-db-editor was found and launched, but an incomplete Spine
+        # Toolbox install can still crash it on startup. Check shortly after
+        # launch and explain the failure instead of leaving a silent no-op.
+        self.after(2000, self._check_db_editor_launch, proc, source_name)
 
     # ── View scenario plots (from executed_tree view column) ──────
 
