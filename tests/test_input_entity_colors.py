@@ -41,16 +41,15 @@ def _build_input_db(
     """Build a minimal FlexTool-shaped Spine DB and return its sqlite URL.
 
     *entities* maps entity_class_name -> list of entity names.  *memberships*
-    maps a group-membership relationship class (e.g. ``group__node`` or
-    ``group__unit__node``) -> list of ``entity_byname`` tuples; the member
-    entities they reference must already appear in *entities*.  Group
-    classification (nodeGroup vs flowGroup) is derived from these.  An extra
-    irrelevant class is always present to prove filtering.
+    maps a membership relationship class (e.g. ``group__node``) -> list of
+    ``entity_byname`` tuples; the member entities they reference must already
+    appear in *entities*.  An extra irrelevant class is always present to prove
+    filtering.
 
-    Classification is membership-driven: pass ``group__node`` membership to
-    make a group a nodeGroup, or a ``group__unit*`` / ``group__connection*``
-    membership to make it a flowGroup.  A group with NO membership belongs to
-    neither bucket and is dropped.
+    Classification (v58): ``flowGroup`` is its own top-level SpineDB class —
+    pass ``"flowGroup": [...]`` in *entities* to create flowGroups directly.  A
+    ``group`` with ``group__node`` membership is a nodeGroup; a ``group`` with
+    no ``group__node`` membership has no nodes to colour and is dropped.
     """
     memberships = memberships or {}
     url = "sqlite:///" + str(path)
@@ -112,16 +111,13 @@ def test_fetch_groups_by_relevant_class_and_filters(tmp_path):
             "unit": ["coal_plant", "battery"],
             "connection": ["AC_link"],
             "node": ["elec_A", "elec_B"],
-            "group": ["solar", "wind", "elec"],
+            # solar/wind are flowGroups (their own top-level class); elec is a
+            # group that collects nodes → nodeGroup.
+            "flowGroup": ["solar", "wind"],
+            "group": ["elec"],
             "commodity": ["coal", "gas"],  # irrelevant class — must be dropped
         },
         memberships={
-            # solar/wind aggregate flows → flowGroup; elec collects nodes →
-            # nodeGroup.
-            "group__unit__node": [
-                ("solar", "coal_plant", "elec_A"),
-                ("wind", "battery", "elec_A"),
-            ],
             "group__node": [("elec", "elec_A")],
         },
     )
@@ -200,9 +196,8 @@ def test_seed_adds_entities_additively(tmp_path):
             "unit": ["coal_plant", "battery"],
             "connection": ["AC_link"],
             "node": ["elec_A"],
-            "group": ["solar", "wind"],  # solar already present (flowGroup)
+            "flowGroup": ["solar", "wind"],  # solar already present (flowGroup)
         },
-        memberships={"group__unit": [("solar", "coal_plant"), ("wind", "battery")]},
     )
     project = _project_with_settings(tmp_path)
     before = (project / "plot_settings.yaml").read_text(encoding="utf-8")
@@ -237,8 +232,7 @@ def test_seed_prunes_entities_no_longer_in_db(tmp_path):
 
     url = _build_input_db(
         tmp_path / "in.sqlite",
-        {"group": ["solar", "wind"], "unit": ["coal_plant"]},
-        memberships={"group__unit": [("solar", "coal_plant"), ("wind", "coal_plant")]},
+        {"flowGroup": ["solar", "wind"], "unit": ["coal_plant"]},
     )
     changed = seed_input_entity_colors(project, [url])
     assert changed is True
@@ -255,8 +249,7 @@ def test_seed_prunes_entities_no_longer_in_db(tmp_path):
 def test_seed_is_idempotent(tmp_path):
     url = _build_input_db(
         tmp_path / "in.sqlite",
-        {"unit": ["coal_plant"], "node": ["elec_A"], "group": ["wind"]},
-        memberships={"group__unit": [("wind", "coal_plant")]},
+        {"unit": ["coal_plant"], "node": ["elec_A"], "flowGroup": ["wind"]},
     )
     project = _project_with_settings(tmp_path)
 
