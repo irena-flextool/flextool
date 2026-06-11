@@ -1286,7 +1286,7 @@ plots:
         max_subplots_per_file: 8
         base_length: 4
         skip_data_with_only_zeroes: false
-        xlabel: Currency / MWh  (+ = more investment here would lower total cost)
+        xlabel: CUR/kWh  (+ = more investment here would lower total cost)
         scenario_rule: g
         comparison_overrides:
           max_subplots_per_file: 2
@@ -1303,7 +1303,7 @@ plots:
         max_subplots_per_file: 8
         base_length: 4
         skip_data_with_only_zeroes: false
-        xlabel: Currency / MW  (+ = more investment here would lower total cost)
+        xlabel: CUR/kW  (+ = more investment here would lower total cost)
         scenario_rule: g
         comparison_overrides:
           max_subplots_per_file: 2
@@ -1320,7 +1320,7 @@ plots:
         max_subplots_per_file: 8
         base_length: 4
         skip_data_with_only_zeroes: false
-        xlabel: Currency / MW  (+ = more investment here would lower total cost)
+        xlabel: CUR/kW  (+ = more investment here would lower total cost)
 
   # Emissions
         scenario_rule: g
@@ -1465,7 +1465,7 @@ plots:
         max_items_per_plot: 30
         legend: all
         map_dimensions_for_plots: [dt_gpe, tt_uss]
-        ylabel: MWh/h
+        ylabel: MWh
         skip_data_with_only_zeroes: true
         color_category: nodegroup_flows
         comparison_overrides:
@@ -1482,7 +1482,7 @@ plots:
         legend: all
         map_dimensions_for_plots: [dt_gpe, ti_uss]
         time_average_duration: 168
-        ylabel: MWh/h
+        ylabel: MWh
         skip_data_with_only_zeroes: true
         color_category: nodegroup_flows
         comparison_overrides:
