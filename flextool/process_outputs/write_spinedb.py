@@ -180,6 +180,32 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                                                  param="invest_marginal",
                                                  entity_dims=1, has_time=False,
                                                  category=None),
+    # --- per-entity cost break-down (period level, category in columns) ---
+    # Entity is an INDEX level (named unit/connection/node) and columns are
+    # cost categories — same shape as the capacity tables, so they route
+    # through the entity_index serializer.
+    "cost_unit_annualized_d_ec": dict(ec="unit", param="cost_annualized",
+                                      entity_dims=1, has_time=False,
+                                      category="header", entity_index="unit"),
+    "cost_unit_discounted_d_ec": dict(ec="unit", param="cost_discounted",
+                                      entity_dims=1, has_time=False,
+                                      category="header", entity_index="unit"),
+    "cost_connection_annualized_d_ec": dict(ec="connection",
+                                            param="cost_annualized",
+                                            entity_dims=1, has_time=False,
+                                            category="header",
+                                            entity_index="connection"),
+    "cost_connection_discounted_d_ec": dict(ec="connection",
+                                            param="cost_discounted",
+                                            entity_dims=1, has_time=False,
+                                            category="header",
+                                            entity_index="connection"),
+    "cost_node_annualized_d_ec": dict(ec="node", param="cost_annualized",
+                                      entity_dims=1, has_time=False,
+                                      category="header", entity_index="node"),
+    "cost_node_discounted_d_ec": dict(ec="node", param="cost_discounted",
+                                      entity_dims=1, has_time=False,
+                                      category="header", entity_index="node"),
     # --- model (cost) -----------------------------------------------------
     "costs_dt_p": dict(ec="model", param="cost_t", entity_dims=0,
                        fixed_entity=("cost",), has_time=True,

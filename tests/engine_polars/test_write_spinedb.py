@@ -83,6 +83,30 @@ def _capacity_df():
     return df
 
 
+def _cost_by_entity_df(level_name="unit"):
+    """cost_<kind>_<flavour>_d_ec: (period, entity) index, category cols.
+
+    Mirrors out_costs.cost_breakdown_by_entity: the entity is the SECOND
+    index level (period first), unlike the capacity frames whose entity is
+    first — the entity_index serializer groups by level NAME, so order is
+    irrelevant.
+    """
+    entity = "u1" if level_name == "unit" else (
+        "c1" if level_name == "connection" else "n1")
+    idx = pd.MultiIndex.from_tuples(
+        [("p2020", entity)], names=["period", level_name])
+    df = pd.DataFrame(
+        {
+            "commodity_cost": [3.5],
+            "co2": [1.25],
+            "starts": [float("nan")],  # all-NaN category dropped
+        },
+        index=idx,
+    )
+    df.columns.name = "category"
+    return df
+
+
 def _read_value(db, ec, byname, param, alternative):
     pvs = db.get_parameter_value_items(
         entity_class_name=ec, alternative_name=alternative,
@@ -102,7 +126,7 @@ def test_ensure_results_db_creates_schema(tmp_path):
     ensure_results_db(url)
     with DatabaseMapping(url) as db:
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 52
+        assert len(db.get_parameter_definition_items()) == 58
         assert [a["name"] for a in db.get_alternative_items()] == ["Base"]
     # idempotent: second call is a no-op and does not raise
     ensure_results_db(url)
@@ -149,6 +173,43 @@ def test_round_trip_scalar_and_map(tmp_path):
         assert "existing" in cap_cats
         assert "invested" not in cap_cats  # all-NaN dropped
         assert cap.get_value("total").get_value("s1").get_value("p2020") == 90.0
+
+
+def test_cost_breakdown_by_entity_round_trips(tmp_path):
+    """The six per-entity cost break-down tables emit as
+    Map(category -> solve -> period -> value) on unit/connection/node."""
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    s = StubS()
+    results = {
+        "cost_unit_annualized_d_ec": _cost_by_entity_df("unit"),
+        "cost_unit_discounted_d_ec": _cost_by_entity_df("unit"),
+        "cost_connection_annualized_d_ec": _cost_by_entity_df("connection"),
+        "cost_connection_discounted_d_ec": _cost_by_entity_df("connection"),
+        "cost_node_annualized_d_ec": _cost_by_entity_df("node"),
+        "cost_node_discounted_d_ec": _cost_by_entity_df("node"),
+    }
+    count = write_spinedb(results, s, url, "scenC", "s1")
+    assert count > 0
+
+    with DatabaseMapping(url) as db:
+        for ec, byname, param in (
+            ("unit", ("u1",), "cost_annualized"),
+            ("unit", ("u1",), "cost_discounted"),
+            ("connection", ("c1",), "cost_annualized"),
+            ("connection", ("c1",), "cost_discounted"),
+            ("node", ("n1",), "cost_annualized"),
+            ("node", ("n1",), "cost_discounted"),
+        ):
+            val = _read_value(db, ec, byname, param, "scenC")
+            assert val is not None, f"missing {ec}/{param}"
+            cats = set(val.indexes)
+            assert "commodity_cost" in cats
+            assert "co2" in cats
+            assert "starts" not in cats  # all-NaN category dropped
+            assert (val.get_value("commodity_cost")
+                    .get_value("s1").get_value("p2020") == 3.5)
+            assert (val.get_value("co2")
+                    .get_value("s1").get_value("p2020") == 1.25)
 
 
 def test_two_runs_two_alternatives(tmp_path):
@@ -340,7 +401,7 @@ def test_concurrent_cold_start_creates_one_valid_db(tmp_path):
     assert not leftovers, f"leftover temp DBs: {leftovers}"
     with DatabaseMapping(url) as db:
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 52
+        assert len(db.get_parameter_definition_items()) == 58
 
     # The DB stays usable for an append after the concurrent create.
     write_spinedb({"unit_outputNode_dt_ee": _flow_df()}, StubS(), url,
