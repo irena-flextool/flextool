@@ -1,3 +1,89 @@
+## Release 4.0.0b7 (11.6.2026) — self-documenting output metadata; per-entity cost break-down; unit corrections
+
+**No database migration** — the input schema stays at **v58**
+(`FLEXTOOL_DB_VERSION` unchanged). The *results* SpineDB schema grows (six new
+per-entity cost parameters + back-filled metadata descriptions; pinned
+parameter-definition count 52 → 58), but results DBs are write-only outputs, so
+there is nothing to migrate. Dependency floors unchanged (`polar-high>=2.5.0`,
+`polars>=1.40`, `highspy<=1.14.0`). LP-neutral: the solve and every system-level
+total are byte-identical to b6 — the changes are output presentation,
+self-documenting metadata, **additive** per-entity outputs, and reported-unit
+corrections. One entity-first `dt` golden (`group_flow__dt.csv`) is regenerated
+for a fixed solve-column, and a handful of reported values are corrected to
+ground-truth units (CO₂, invest-marginal — labelling, not LP changes).
+
+### Self-documenting output metadata
+
+Output values now carry their own unit + semantics, derived once from the
+output-stage transform and surfaced everywhere — so the meaning of a column
+can't drift from the code.
+
+- A single-source `_output_meta` derives per-column `(unit, semantics)` from the
+  transform each output applies; **84/84 processed outputs** are declared, with
+  per-column maps for mixed-unit tables. The ~22 inlined `dt→d` period-
+  annualization expressions are centralized onto one `annualize_dt_to_d` helper
+  (behaviour-preserving, golden-byte-identical including `timestep_weight≠1`).
+- Metadata is embedded in the **parquet** footer and surfaced in every renderer:
+  a **CSV** `datapackage.json` sidecar (the CSVs themselves stay byte-identical),
+  an **Excel** metadata sheet + header-cell hover comments, **Spine** fills the
+  empty `parameter_definition` descriptions at import (rich hand-written ones are
+  never clobbered), and **plots / the result viewer** label the value axis and
+  show a hover tooltip — including the on-the-fly `a` (total) and `w` (weekly)
+  variants. `result_key_summary()` / `result_variant_summary()` back the hovers.
+- **Reported-unit corrections to ground truth:** `invest_marginal` → CUR/kW(h)
+  (a single ÷1000 at the dual-synthesis choke point); per-entity CO₂ is t/a (the
+  schema's Mt was 1e6 too large) and the system total is Mt-over-horizon;
+  `dt` group/node flows and raw inflow are the un-integrated MW level (not
+  per-step MWh); `startup_cumulative` is units/a; and `default_plots.yaml`
+  value-axis units are corrected (nodeGroup energy, marginal investment,
+  `entity_annuity` = CUR/MW/a). Schema-vs-`_output_meta` drift is guarded by a CI
+  ratchet rather than per-run log spam.
+
+### Per-entity cost break-down
+
+Six **additive**, period-level outputs collapse every cost category **per
+entity** instead of system-wide:
+`cost_{unit,connection,node}_{annualized,discounted}_d_ec` (annualized M CUR/a +
+discounted M CUR). No existing system total changes.
+
+- Fuel cost is attributed to the **consuming process**; CO₂ cost is summed over
+  **every priced group** a process touches. Built by vectorized slice+scale
+  (no per-entity / per-period loops).
+- Emitted to **CSV**, the **results SpineDB** (`Map(category → solve → period →
+  value)` on the unit/connection/node classes; six new schema params, count
+  52 → 58), and **plots** ("Cost by unit/connection/node" — stacked categories
+  on period bars, one subplot per entity, annualized + discounted, comparison
+  grouped by scenario). Registered in scenario-comparison loading.
+- Reconciliation tests: the cross-kind per-entity sum equals the system summary
+  per category and period (rtol 1e-9), with explicit non-zero value checks for
+  `starts` / `commodity_sales` / `fixed cost invested`; 13-scenario goldens.
+
+### Plot & output fixes
+
+- **Solve-column injection** is keyed off the named `period` / `time` index
+  levels instead of positional slots, so an entity-first `dt` output (e.g.
+  `group_flow__dt` with a `(group, period, time)` index) no longer emits a blank
+  solve column. Behaviour-preserving for all period/time-first indexes; one
+  affected golden regenerated (other values byte-identical).
+- Bar value-label geometry: orientation-aware slot floor, thin single bars under
+  labels, slot room scaled with label thickness; variant-aware units for the
+  `a` / `w` plot variants.
+
+### Desktop GUI
+
+- Open `.sqlite` results DBs in the **Spine DB Editor** (with a fallback popup
+  when it is unavailable); DPI-aware sizing fixes; output-metadata hover in the
+  result viewer.
+
+### Fixes & tests
+
+- NaN-guard the capacity factor when capacity is zero.
+- Migrate the `input_entity_colors` test fixtures to the v58 top-level
+  `flowGroup` class, and regenerate the `base_weighted` `node__d.csv` golden for
+  the timeslice-weight-aligned `dt→d` aggregation.
+
+---
+
 ## Release 4.0.0b6 (10.6.2026) — period energy balance; flowGroup carve-out; Spine Toolbox ↔ project interoperability
 
 Requires a **database migration to v58** (`FLEXTOOL_DB_VERSION` 57 → 58; carves
