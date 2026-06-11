@@ -448,14 +448,14 @@ FORMULA_OVERRIDE: dict[tuple[str, str], str] = {
 }
 
 DOCS_ANCHOR: dict[str, str] = {
-    "annualized_costs_d_p": "outputs.html#annualized-costs",
-    "costs_dt_p": "outputs.html#per-timestep-costs",
-    "cost_unit_annualized_d_ec": "outputs.html#cost-by-entity",
-    "cost_connection_annualized_d_ec": "outputs.html#cost-by-entity",
-    "cost_node_annualized_d_ec": "outputs.html#cost-by-entity",
-    "cost_unit_discounted_d_ec": "outputs.html#cost-by-entity",
-    "cost_connection_discounted_d_ec": "outputs.html#cost-by-entity",
-    "cost_node_discounted_d_ec": "outputs.html#cost-by-entity",
+    "annualized_costs_d_p": "results.html#costs",
+    "costs_dt_p": "results.html#costs",
+    "cost_unit_annualized_d_ec": "results.html#cost-by-entity",
+    "cost_connection_annualized_d_ec": "results.html#cost-by-entity",
+    "cost_node_annualized_d_ec": "results.html#cost-by-entity",
+    "cost_unit_discounted_d_ec": "results.html#cost-by-entity",
+    "cost_connection_discounted_d_ec": "results.html#cost-by-entity",
+    "cost_node_discounted_d_ec": "results.html#cost-by-entity",
 }
 
 
