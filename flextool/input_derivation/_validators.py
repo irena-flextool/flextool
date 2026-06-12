@@ -274,9 +274,9 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
     for (process, node), flowgroups in pn_to_aggregators.items():
         if len(flowgroups) >= 2:
             logger.warning(
-                "Flow arc (%s, %s) belongs to multiple dispatch-bound "
-                "flowGroups (%s) — it will be double-counted in the nodeGroup "
-                "dispatch table.",
+                "Flow (%s, %s) belongs to multiple flowGroups (%s) in effect "
+                "double counting the flow in dispatch plots. Check "
+                "flow_aggregator parameter.",
                 process, node, ", ".join(sorted(flowgroups)),
             )
 
