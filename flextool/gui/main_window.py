@@ -995,11 +995,20 @@ class MainWindow(tk.Tk):
         self.update_idletasks()
         nat_width = self.winfo_reqwidth()
         nat_height = self.winfo_reqheight()
+        screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        # Use natural width; for height, fill the screen minus taskbar space
+        # Width: the natural layout width, but never wider than the screen.
+        # Without this clamp a DPI-aware layout whose natural width exceeds a
+        # small (e.g. laptop) display runs off-screen, and the weight=1 spacer
+        # columns stretch the content apart instead of staying compact.
+        # Height: fill the screen minus taskbar space so the tree lists show
+        # as many rows as fit — extra height becomes more rows, not whitespace.
+        win_width = min(nat_width, screen_w)
         win_height = max(nat_height, screen_h - lh * 4)
-        self.geometry(f"{nat_width}x{win_height}+0+0")
-        self.minsize(nat_width, nat_height)
+        self.geometry(f"{win_width}x{win_height}+0+0")
+        # minsize must also stay within the screen, or the window can't be
+        # shrunk to fit and the WM may re-inflate it past the display edge.
+        self.minsize(min(nat_width, screen_w), min(nat_height, screen_h))
 
         # ── Startup logic ────────────────────────────────────────────
         self._startup()
