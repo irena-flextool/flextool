@@ -830,6 +830,11 @@ _PARAMETER_SPECS: list[dict] = [
         "header": "model,p_max_flow_for_unconstrained_variables",
         "filename": "input/p_max_flow_for_unconstrained_variables.csv",
     },
+    {
+        "cl_pars": [("model", "small_number_threshold")],
+        "header": "model,p_small_number_threshold",
+        "filename": "input/p_small_number_threshold.csv",
+    },
     # --- pdt_group (time maps) ---
     {
         "cl_pars": [("group", "co2_max_period"),

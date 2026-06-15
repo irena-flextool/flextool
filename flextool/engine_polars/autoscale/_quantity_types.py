@@ -489,6 +489,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Boolean-style toggle ('yes'/'no') enabling experimental automatic row scaling. Flag, no physical unit.
     ('solves', 'model'): QuantityType.DIMENSIONLESS,
     # Sequence of solves in the model. Array.
+    ('small_number_threshold', 'model'): QuantityType.DIMENSIONLESS,
+    # Config scalar: LP coefficients/RHS below this magnitude are floored to 0. Not an LP coefficient itself.
     ('startup_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.
     ('startup_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,

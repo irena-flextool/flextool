@@ -436,6 +436,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # to the polars path). Requires polar-high>=2.4.0 (pinned in pyproject).
     m.declare_dense_axes(("d", "t"))
 
+    # Model-wide small-coefficient cutoff.  polar_high floors any LP
+    # constraint-matrix coefficient / RHS term with ``abs(value) <
+    # threshold`` to 0.0 at LP-assembly time (the single chokepoint every
+    # coefficient passes through), independent of whether the autoscaler
+    # is active.  ``d.small_number_threshold`` carries
+    # ``model.small_number_threshold`` (schema default 0.0001); 0.0 = OFF.
+    m.coef_zero_threshold = float(getattr(d, "small_number_threshold", 0.0001))
+
     # Always required.
     _check(d, ALWAYS, "always")
 

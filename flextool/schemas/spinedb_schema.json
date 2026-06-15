@@ -1526,6 +1526,14 @@
     ],
     [
       "model",
+      "small_number_threshold",
+      0.0001,
+      null,
+      "Coefficients and right-hand-side terms whose absolute value is below this are treated as 0 when building the optimisation problem. Reduces the numerical range (conditioning) of the LP. Default 0.0001.",
+      null
+    ],
+    [
+      "model",
       "solves",
       null,
       null,
@@ -1535,7 +1543,7 @@
     [
       "model",
       "version",
-      58.0,
+      59.0,
       null,
       "Contains database version information.",
       "model"
@@ -3289,6 +3297,12 @@
       "periods_available",
       "array",
       1
+    ],
+    [
+      "model",
+      "small_number_threshold",
+      "float",
+      0
     ],
     [
       "model",

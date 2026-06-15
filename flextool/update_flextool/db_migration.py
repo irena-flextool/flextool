@@ -1682,6 +1682,19 @@ def migrate_database(
                 db.commit_session("Clarify inflow_method/timeset_duration/timeset_weights descriptions for timeslice weighting")
             elif next_version == 58:
                 _migrate_v58_carve_flowgroup_out_of_group(db)
+            elif next_version == 59:
+                default_val, default_type = to_database(0.0001)
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="model", name="small_number_threshold",
+                    default_value=default_val, default_type=default_type,
+                    parameter_type_list=("float",),
+                    description="Coefficients and right-hand-side terms whose "
+                    "absolute value is below this are treated as 0 when "
+                    "building the optimisation problem. Reduces the numerical "
+                    "range (conditioning) of the LP. Default 0.0001.",
+                )
+                db.commit_session("Added model.small_number_threshold parameter")
             else:
                 print("Version invalid")
             last_completed_version = next_version

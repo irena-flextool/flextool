@@ -436,6 +436,15 @@ class FlexData:
     # FlexData(...) constructors that omit it stay valid and unchanged.
     nodeBalancePeriod: pl.DataFrame | None = None  # set: (n,)
 
+    # Model-wide small-coefficient cutoff (``model.small_number_threshold``).
+    # Any LP constraint-matrix coefficient or RHS term with
+    # ``abs(value) < threshold`` is floored to 0.0 inside polar_high at LP
+    # assembly time (set on ``Problem.coef_zero_threshold`` by
+    # ``build_flextool``).  Default ``0.0001`` mirrors the schema default;
+    # ``load_flextool`` overrides it from ``p_small_number_threshold.csv``
+    # when present.  A value of ``0.0`` disables the cutoff.
+    small_number_threshold: float = 0.0001
+
     # Per-period years-represented R (e.g. 5.0 for a 5-year invest period).
     # Built from ``solve.years_represented`` via
     # ``p_years_represented_d_from_source``.  None when the source
@@ -4415,8 +4424,31 @@ def load_flextool(source: "Path | str | FlexInputSource",
         _load_mem("load_stochastics_end",
                   "load_flextool: stochastics + remaining CSV loaders done")
 
+        # Model-wide small-coefficient cutoff (model.small_number_threshold).
+        # Exported as a one-row-per-model CSV by the input_derivation spec
+        # ``p_small_number_threshold``.  Take the max over models (mirrors
+        # ``p_max_flow_for_unconstrained_variables``); fall back to the
+        # schema default 0.0001 when the file is absent / empty.
+        small_number_threshold = 0.0001
+        if _provider_has(
+            provider, "input/p_small_number_threshold",
+            inp / "p_small_number_threshold.csv",
+        ):
+            _snt_df = _provider_read(
+                provider, "input/p_small_number_threshold",
+                inp / "p_small_number_threshold.csv",
+            )
+            _snt_vals = [
+                float(r[1]) for r in _snt_df.iter_rows()
+                if len(r) >= 2 and r[0] not in (None, "")
+                and str(r[1]).strip() not in ("", "None")
+            ]
+            if _snt_vals:
+                small_number_threshold = max(_snt_vals)
+
         _loadflex_prof("before_flexdata_ctor")
         flex_data = FlexData(
+            small_number_threshold = small_number_threshold,
             dt = dt,
             p_step_duration = step_dur,
             p_timestep_weight = tsw,
