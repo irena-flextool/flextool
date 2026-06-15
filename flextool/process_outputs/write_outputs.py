@@ -954,6 +954,23 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         os.makedirs(parquet_dir, exist_ok=True)
         if not os.path.exists(parquet_dir):
             os.makedirs(parquet_dir)
+
+        # Empty the scenario's parquet dir before writing so retired/renamed
+        # outputs don't linger (a stale file would be re-read by the
+        # scenario-comparison combine and trip the "not registered in
+        # TimeSeriesResults" warning).  Done here — as late as possible, after
+        # the solve and post-processing have produced ``results`` — so a
+        # failed solve/post-process leaves the previous run's outputs intact.
+        # Removes top-level files only; the ``plot_plans/`` subdir and the
+        # regenerated ``_dispatch_metadata.json`` are rewritten later in this
+        # same call.  Mirrors the csv-dir cleanup below, including the
+        # single-result guard (partial runs must not wipe sibling outputs).
+        if not single_result:
+            for filename in os.listdir(parquet_dir):
+                file_path = os.path.join(parquet_dir, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+
         for name, df in results.items():
             col_meta = None
             if isinstance(df, (pd.MultiIndex, pd.Index)):
