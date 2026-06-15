@@ -137,6 +137,24 @@ def _commodity_node_from_flex(
     return pd.MultiIndex.from_frame(df, names=["commodity", "node"])
 
 
+# Emitting-flow frames that contribute to the CO2 emissions set, as
+# ``(field_name, node_column)`` pairs.  The union covers CO2-priced,
+# period-capped and multi-period-total-capped flows.  A process that sits in
+# several CO2 groups appears in several of these frames; the union is
+# deduplicated on ``(process, commodity, node)`` so the per-process system
+# total (``calc_costs.emissions_co2_d``) counts each emitting flow exactly
+# once.  Omitting the ``*_total`` pair made ``co2_method = total`` models
+# report 0 CO2.
+_CO2_EMISSION_FLOW_ATTRS: tuple[tuple[str, str], ...] = (
+    ("flow_from_co2_priced", "source"),
+    ("flow_from_co2_priced_noEff", "source"),
+    ("flow_from_co2_capped", "source"),
+    ("flow_from_co2_capped_noEff", "source"),
+    ("flow_from_co2_capped_total", "source"),
+    ("flow_from_co2_capped_total_noEff", "source"),
+)
+
+
 def _process_commodity_node_from_flex(
     flex_data: "FlexData",
     *,
@@ -867,13 +885,7 @@ def read_sets(
         ),
     )
     s.process__commodity__node_co2 = _process_commodity_node_from_flex(
-        flex_data,
-        attrs=(
-            ("flow_from_co2_priced", "source"),
-            ("flow_from_co2_priced_noEff", "source"),
-            ("flow_from_co2_capped", "source"),
-            ("flow_from_co2_capped_noEff", "source"),
-        ),
+        flex_data, attrs=_CO2_EMISSION_FLOW_ATTRS,
     )
     s.group_co2_price = pd.Index([], name="group", dtype="object")
     s.group_co2_limit = pd.Index([], name="group", dtype="object")
@@ -884,14 +896,19 @@ def read_sets(
                 .to_pandas()["g"].tolist(),
             name="group",
         )
-    if (flex_data.group_co2_max_period is not None
-            and flex_data.group_co2_max_period.height > 0):
-        gcol = flex_data.group_co2_max_period.columns[0]
+    # Groups limited by either the per-period cap (``co2_max_period``) or the
+    # multi-period total cap (``co2_max_total``).  Both feed the group-level
+    # CO2 attribution; omitting the total cap dropped ``co2_method = total``
+    # groups from the group CO2 reports.
+    _limit_groups: list = []
+    for _cap in (flex_data.group_co2_max_period, flex_data.group_co2_max_total):
+        if _cap is not None and _cap.height > 0:
+            _gcol = _cap.columns[0]
+            _limit_groups += (_cap.select(_gcol).unique()
+                              .to_pandas()[_gcol].tolist())
+    if _limit_groups:
         s.group_co2_limit = pd.Index(
-            flex_data.group_co2_max_period.select(gcol).unique()
-                .to_pandas()[gcol].tolist(),
-            name="group",
-        )
+            list(dict.fromkeys(_limit_groups)), name="group")
 
     # ─── Group-related sets ───────────────────────────────────────────────
     s.groupInertia = _index_or_empty(flex_data.groupInertia, dim="g", name="group")
