@@ -1038,17 +1038,31 @@ def _profile_method_arc(source: "InputSource", method: str) -> pl.DataFrame:
                            alias_to_axis("unit", "sink"),
                            "f",
                        ))
-        # Output side (source=unit, sink=node).
+        # Output side (sink=node).  The ``source`` slot is the unit's REAL
+        # input-node, NOT the unit name: a DIRECT (constant_efficiency)
+        # unit with an input node carries its output flow on the arc
+        # ``v_flow[unit, input_node, output_node]`` (the preprocessing
+        # ``process_source_sink`` collapses the (input × output) cross-
+        # product to a single ``(p, source, sink)`` arc).  Aliasing
+        # ``source = unit`` here keyed the profile_flow constraint on a
+        # non-existent ``(unit, unit, node)`` arc → empty LHS → infeasible
+        # ``0 == rhs`` row.  We recover the real source by joining the
+        # ``(unit, output_node)`` rows back to the collapsed arc table on
+        # ``(p, sink)``.  For a source-less generator
+        # (``conversion_method = none``, no input node) the collapsed arc
+        # IS ``(p, p, sink)`` so the recovered ``source`` equals the unit
+        # name — this branch is then a byte-exact no-op for VRE units.
         uout = _try_entities(source, "unit__outputNode")
         if uout is not None:
+            collapsed = process_source_sink_collapsed(source)
+            out_pf = (unp_lz
+                      .join(uout.lazy(), on=["unit", "node"], how="inner")
+                      .select(alias_to_axis("unit", "p"),
+                               alias_to_axis("node", "sink"),
+                               "f"))
             parts.append(
-                unp_lz.join(uout.lazy(), on=["unit", "node"], how="inner")
-                       .select(
-                           alias_to_axis("unit", "p"),
-                           alias_to_axis("unit", "source"),
-                           alias_to_axis("node", "sink"),
-                           "f",
-                       ))
+                out_pf.join(collapsed.lazy(), on=["p", "sink"], how="inner")
+                      .select("p", "source", "sink", "f"))
 
     # Connection profile rows (rare in current fixtures but covered for
     # completeness).  connection__node__profile: (connection, node, profile).
