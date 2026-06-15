@@ -15,9 +15,18 @@ __all__ = [
     'TabularReader', 'write_to_flextool_input_db',
     'ExcelFormat', 'ExcelFormatInfo', 'detect_excel_format',
     'CURRENT_FLEXTOOL_DB_VERSION',
+    'MIN_SUPPORTED_SPECIFICATION_VERSION',
+    'read_specification_changelog_version',
+    'unsupported_specification_message',
 ]
 
 logger = logging.getLogger(__name__)
+
+# Oldest specification-format Excel *template changelog* version the importer
+# can read.  Below this the sheet/parameter layout diverges too much (the
+# changelog-v11 source/sink -> input/output rename and earlier) to bridge with
+# the parameter/sheet remaps in read_tabular_with_specification.py.
+MIN_SUPPORTED_SPECIFICATION_VERSION = 12
 
 
 class ExcelFormat(Enum):
@@ -125,3 +134,55 @@ def detect_excel_format(file_path: str | Path) -> ExcelFormatInfo:
 
     finally:
         wb.close()
+
+
+def read_specification_changelog_version(file_path: str | Path) -> int | None:
+    """Return the template version of a specification-format Excel.
+
+    Specification (3.x) Excels carry a ``version`` sheet whose changelog table
+    lists template versions in the first column (``Version number, Date,
+    Author, Description`` header on row 3).  The file's version is the highest
+    integer in that column.  Used to gate import support and to message the
+    user when a file's layout predates the importer.
+
+    Returns ``None`` when the file has no such changelog (e.g. a
+    self-describing Excel, a CSV directory, or an unreadable file), so callers
+    can safely skip the check for non-specification inputs.
+    """
+    import openpyxl
+
+    try:
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    except Exception:
+        return None
+    try:
+        sheet_names_lower = {s.lower(): s for s in wb.sheetnames}
+        if "version" not in sheet_names_lower:
+            return None
+        ws = wb[sheet_names_lower["version"]]
+        best: int | None = None
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            if i < 3 or not row:  # skip the intro text + the header row (idx 2)
+                continue
+            cell = row[0]
+            if cell is None:
+                continue
+            m = re.match(r"\s*(\d+)", str(cell))
+            if m:
+                value = int(m.group(1))
+                best = value if best is None else max(best, value)
+        return best
+    finally:
+        wb.close()
+
+
+def unsupported_specification_message(version: int | None) -> str:
+    """User-facing message for specification Excels older than support."""
+    shown = f"v{version}" if version is not None else "an unsupported version"
+    return (
+        f"The layout of the input file corresponds to {shown}. This is not "
+        f"supported by the current importer, which supports imports from "
+        f"v{MIN_SUPPORTED_SPECIFICATION_VERSION} onward. You can get it "
+        f"imported by using legacy FlexTool (checkout branch 'master') with "
+        f"Spine Toolbox. Alternatively, convert it manually."
+    )

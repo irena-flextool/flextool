@@ -94,18 +94,24 @@ class AddDialog(tk.Toplevel):
     def __init__(
         self, parent: tk.Misc, project_path: Path,
         execution_mgr=None, input_source_mgr=None,
+        convert_callback=None, update_xlsx_callback=None,
     ) -> None:
         super().__init__(parent)
         self.title("Add input sources")
         self.result: bool = False
         self.old_convert_started: bool = False  # True if old FlexTool conversion was started
-        self.files_to_convert: list[str] = []  # Excel files to convert to sqlite
-        self.files_to_update_xlsx: list[str] = []  # Excel files to round-trip (migrate and keep as xlsx)
+        self.files_to_convert: list[str] = []  # Excel files converted to sqlite (for the "Done" notice)
+        self.files_to_update_xlsx: list[str] = []  # Excel files round-tripped in place (for the "Done" notice)
         self._project_path = project_path
         self._input_dir = project_path / "input_sources"
         self._input_dir.mkdir(parents=True, exist_ok=True)
         self._execution_mgr = execution_mgr
         self._input_source_mgr = input_source_mgr
+        # Callbacks that start a migration job immediately (streamed to the
+        # Execution window) as soon as the user picks how to handle a file,
+        # instead of deferring until the dialog is closed.
+        self._convert_callback = convert_callback
+        self._update_xlsx_callback = update_xlsx_callback
 
         # Root directories for templates
         self._flextool_root = get_projects_dir().parent
@@ -381,10 +387,14 @@ class AddDialog(tk.Toplevel):
                 logger.error("Failed to copy %s: %s", fp, exc)
                 continue
 
+            # Start the migration job immediately so the user does not have to
+            # close the dialog first; progress streams to the Execution window.
             if migration_choice == "sqlite":
                 self.files_to_convert.append(fp.name)
+                self._run_migration_callback(self._convert_callback, fp.name)
             elif migration_choice == "excel":
                 self.files_to_update_xlsx.append(fp.name)
+                self._run_migration_callback(self._update_xlsx_callback, fp.name)
 
         if errors:
             messagebox.showerror(
@@ -393,9 +403,9 @@ class AddDialog(tk.Toplevel):
                 parent=self,
             )
 
-        # Copied sqlite databases are migrated by the main window's input-source
-        # refresh (which runs right after this dialog closes), so their progress
-        # streams to the Execution window instead of blocking here silently.
+        # When no migration callbacks are wired (e.g. in tests), the queued
+        # files are migrated by the main window's input-source refresh right
+        # after this dialog closes instead.
 
         # Files undergoing conversion are excluded from the "Done"
         # notification — they will appear after conversion finishes.
@@ -414,6 +424,26 @@ class AddDialog(tk.Toplevel):
                 done_text,
                 parent=self,
             )
+
+    def _run_migration_callback(self, callback, name: str) -> None:
+        """Invoke a migration-start callback with the modal grab released.
+
+        The callback (``_convert_xlsx_to_sqlite`` / ``_update_xlsx_version``)
+        starts a background job and may raise its own message boxes or the
+        Execution window.  Releasing this dialog's grab first keeps those
+        windows reachable; the callback returns promptly (it only kicks off a
+        worker thread), after which the dialog re-grabs and stays modal.
+        """
+        if callback is None:
+            return
+        had_grab = self.grab_current() is self
+        if had_grab:
+            self.grab_release()
+        try:
+            callback(name)
+        finally:
+            if had_grab and self.winfo_exists():
+                self.grab_set()
 
     def _on_choose_external(self) -> None:
         """Register external files as input source references (no copy)."""

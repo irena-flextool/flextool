@@ -11,9 +11,59 @@ from spinedb_api import to_database, Map, Array
 _VALUE_REMAP: dict[str, str] = {
 }
 
+# Backward-compatible remapping for parameter *names* that older
+# specification-format Excel sheets still carry in their header row but that
+# later schema versions renamed.  The import always targets a v25-or-later
+# schema, so these legacy names would otherwise fail to match a parameter
+# definition and the values would be silently dropped.
+# Legacy parameter names from older specification-format Excel headers that
+# later versions renamed.  Each old name below no longer exists in any
+# supported schema, so the mapping is unambiguous and only ever affects old
+# files.  The schema-v25 ``update_timestructure`` rename:
+#   period_timeblockSet -> period_timeset    (solve)
+#   block_duration      -> timeset_duration  (timeset)
+# Earlier Excel-template renames (changelog v16 / v19), required to import
+# down to changelog v12:
+#   has_state     -> has_storage            (node, Excel changelog v16)
+#   variable_cost -> other_operational_cost (unit/connection flows, v19)
+# ``can_provide`` (Excel changelog v14) was renamed to ``is_active``, which is
+# NOT a stored parameter in the modern schema — spinedb_api collapses
+# ``is_active`` into ``entity_alternative.active``.  We remap can_provide ->
+# is_active here, and ``_add_parameters`` intercepts ``is_active`` and writes
+# an ``entity_alternative`` row directly (the import schema has no is_active
+# definition, so it can't be stored as a parameter).
+_PARAMETER_NAME_REMAP: dict[str, str] = {
+    "period_timeblockSet": "period_timeset",
+    "block_duration": "timeset_duration",
+    "has_state": "has_storage",
+    "variable_cost": "other_operational_cost",
+    "can_provide": "is_active",
+}
+
+# Older specification-format Excels name the time-structure sheets with the
+# pre-v25 "timeblockSet" convention, while the import spec tables use the
+# post-v25 "timeset" names.  For these two the sheet layouts are identical
+# (the spec mappings hardcode the new entity classes / parameter names), so
+# when the expected sheet is missing we fall back to the legacy sheet name.
+# Without this the timeline/timeset structure is silently dropped and the
+# solve fails with "Failed to map timeset to timeline".
+#
+# The third legacy sheet, ``timeblockSet_timeline`` (the timeset->timeline
+# link), has a *different* layout from the modern ``timeset_timeline`` sheet,
+# so it is handled separately by ``_import_legacy_timeset_timeline`` in
+# write_to_input_db.py rather than aliased here.
+_SHEET_NAME_ALIASES: dict[str, list[str]] = {
+    "timeset_blocks": ["timeblockSet"],
+    "timeline": ["timeline_t"],
+}
+
 
 def _remap_value(value: Any) -> Any:
     """Return the remapped value if it is a known old name, else unchanged."""
+    # numpy scalars (e.g. int64 from pandas-pivoted integer cells) are not
+    # JSON-serializable; coerce to a native Python scalar before to_database.
+    if isinstance(value, np.generic):
+        value = value.item()
     if isinstance(value, str):
         return _VALUE_REMAP.get(value, value)
     return value
@@ -219,6 +269,13 @@ class TabularReader:
         data_df.columns = data_df.columns.reorder_levels(['EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'])
         data_df.columns.names = ['entity_class_name', 'parameter_definition_name', 'alternative_name', 'entity_byname']
 
+        # Translate legacy parameter names (renamed by later migrations) so the
+        # values match a parameter definition instead of being silently dropped.
+        if _PARAMETER_NAME_REMAP:
+            data_df = data_df.rename(
+                columns=_PARAMETER_NAME_REMAP, level='parameter_definition_name'
+            )
+
         if isinstance(data_df.index, pd.MultiIndex):
             data_df.index = data_df.index.get_level_values(0)
 
@@ -237,6 +294,25 @@ class TabularReader:
                 if self._is_nan(raw_value):
                     continue
                 raw_value = _remap_value(raw_value)
+
+                # ``is_active`` (and the legacy ``can_provide`` that remaps to
+                # it) is not a stored parameter in the modern schema: spinedb
+                # collapses it into ``entity_alternative.active``.  The import
+                # target has no ``is_active`` definition, so route it straight
+                # to an entity_alternative row (active=yes/true -> True).
+                if col_name[1] == 'is_active':
+                    active = str(raw_value).strip().lower() in ('yes', 'true', '1')
+                    try:
+                        db_map.add_or_update_entity_alternative(
+                            entity_class_name=col_name[0],
+                            entity_byname=col_name[3],
+                            alternative_name=col_name[2],
+                            active=active,
+                        )
+                    except Exception as e:
+                        errors.append(f"Failed to set is_active (entity_alternative) for (class, alternative, entity): {col_name[0]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.\n    {e}")
+                    continue
+
                 value, type_ = to_database(raw_value)
 
                 # Add parameter value
@@ -345,17 +421,27 @@ class TabularReader:
         except Exception:
             available_sheets = []
 
-        if sheet_name not in available_sheets:
-            return None, {}
+        # Resolve the physical sheet to read.  The spec table name and the
+        # sheet name are normally identical, but legacy Excels name the
+        # time-structure sheets differently — fall back to a known alias.
+        physical_sheet = sheet_name
+        if physical_sheet not in available_sheets:
+            physical_sheet = next(
+                (a for a in _SHEET_NAME_ALIASES.get(sheet_name, [])
+                 if a in available_sheets),
+                None,
+            )
+            if physical_sheet is None:
+                return None, {}
 
         try:
-            raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='calamine', header=None, na_filter=True)
+            raw_df = pd.read_excel(excel_file_path, sheet_name=physical_sheet, engine='calamine', header=None, na_filter=True)
         except Exception:
             try:
-                self.logger.info(f"Calamine engine could not read sheet '{sheet_name}', trying openpyxl.")
-                raw_df = pd.read_excel(excel_file_path, sheet_name=sheet_name, engine='openpyxl', header=None, na_filter=True)
+                self.logger.info(f"Calamine engine could not read sheet '{physical_sheet}', trying openpyxl.")
+                raw_df = pd.read_excel(excel_file_path, sheet_name=physical_sheet, engine='openpyxl', header=None, na_filter=True)
             except Exception as e2:
-                raise ValueError(f"Both calamine and openpyxl engines failed for sheet '{sheet_name}'") from e2
+                raise ValueError(f"Both calamine and openpyxl engines failed for sheet '{physical_sheet}'") from e2
 
         # Note: Column type conversions are applied after dataframe processing
         # in the extraction methods, not here on the raw dataframe
@@ -438,6 +524,32 @@ class TabularReader:
                 parsed['rules'][map_type] = config
             
         return parsed
+
+    @staticmethod
+    def _empty_unstack(df_work: pd.DataFrame, levels_to_unstack: list) -> pd.DataFrame:
+        """Return the empty-frame equivalent of ``df_work.unstack(levels)``.
+
+        Used when a mapping has no data rows: pandas cannot unstack an
+        all-empty frame (it raises ``need at least one array to concatenate``).
+        This reproduces the resulting layout — the unstacked index levels move
+        onto the column axis (existing column levels first, matching pandas),
+        while any remaining index levels stay on the row axis — with every
+        axis empty.
+        """
+        remaining = [n for n in df_work.index.names if n not in levels_to_unstack]
+        col_names = list(df_work.columns.names) + list(levels_to_unstack)
+        empty_cols = pd.MultiIndex.from_arrays(
+            [[] for _ in col_names], names=col_names
+        )
+        if not remaining:
+            empty_index = pd.RangeIndex(0)
+        elif len(remaining) == 1:
+            empty_index = pd.Index([], name=remaining[0])
+        else:
+            empty_index = pd.MultiIndex.from_arrays(
+                [[] for _ in remaining], names=remaining
+            )
+        return pd.DataFrame(index=empty_index, columns=empty_cols)
 
     def _extract_data(self, df: pd.DataFrame, mapping_info: Dict, table_options: Dict,
                         table_column_types: Dict = None,
@@ -817,12 +929,21 @@ class TabularReader:
             levels_to_unstack = [name for name in list(df_work.index.names)
                                 if name and name.startswith(('EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'))]
             if levels_to_unstack:
-                if df_work.index.duplicated().any():
-                    df_work = df_work.set_index(pd.Index(data=range(len(df_work))), append=True)
-                df_work = df_work.unstack(levels_to_unstack)
-                # Ensure result is a DataFrame (unstack can return Series with single row)
-                if isinstance(df_work, pd.Series):
-                    df_work = df_work.to_frame().replace('', np.nan).dropna().T
+                if df_work.empty:
+                    # No data rows — e.g. a parameter sheet where only the two
+                    # header rows are filled in and no values were entered.
+                    # pandas' unstack raises a cryptic "need at least one array
+                    # to concatenate" on an all-empty frame, so build the
+                    # equivalent empty result by hand.  The caller then marks
+                    # the mapping as "no data" (*) and skips it cleanly.
+                    df_work = self._empty_unstack(df_work, levels_to_unstack)
+                else:
+                    if df_work.index.duplicated().any():
+                        df_work = df_work.set_index(pd.Index(data=range(len(df_work))), append=True)
+                    df_work = df_work.unstack(levels_to_unstack)
+                    # Ensure result is a DataFrame (unstack can return Series with single row)
+                    if isinstance(df_work, pd.Series):
+                        df_work = df_work.to_frame().replace('', np.nan).dropna().T
 
         # Step 10: Add index names
         if rulez.get('IndexName') and not isinstance(rulez['IndexName'][0]['position'], int):

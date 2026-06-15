@@ -1,9 +1,87 @@
 import os
-from spinedb_api import DatabaseMapping, from_database, SpineDBAPIError, Asterisk
+from spinedb_api import DatabaseMapping, from_database, to_database, SpineDBAPIError, Asterisk
 from spinedb_api.exception import NothingToCommit
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
 flextool_db_version = FLEXTOOL_DB_VERSION
+
+
+def _import_legacy_timeset_timeline(db, input_path: str) -> None:
+    """Set the ``timeset.timeline`` parameter from a legacy Excel sheet.
+
+    Pre-v25 specification-format Excels store the timeset->timeline link as a
+    two-column ``timeblockSet_timeline`` sheet (column 0 = timeset name,
+    column 1 = timeline name; a header row, no alternative column).  The
+    modern ``timeset_timeline`` sheet has a different layout, so this link is
+    not picked up by the generic spec mappings.
+
+    The v25 migration (``update_timestructure``) normally collapses the old
+    ``timeblockSet__timeline`` relationship into the ``timeset.timeline``
+    parameter, attaching each value to the alternative of that timeset's
+    duration.  Mirror that here so a pre-v25 Excel imports directly into the
+    v25+ schema: for every ``(timeset, alternative)`` that has a
+    ``timeset_duration`` value, set ``timeline`` in the same alternative.
+    Without it the solve fails with "Failed to map timeset to timeline".
+    """
+    import openpyxl
+
+    try:
+        wb = openpyxl.load_workbook(input_path, read_only=True, data_only=True)
+    except Exception:
+        return
+    try:
+        if "timeblockSet_timeline" not in wb.sheetnames:
+            return
+        timeset_to_timeline: dict[str, str] = {}
+        for i, row in enumerate(wb["timeblockSet_timeline"].iter_rows(values_only=True)):
+            if i == 0:  # header row: (timeblockSet, timeline)
+                continue
+            if not row or row[0] is None or row[1] is None:
+                continue
+            timeset_to_timeline[str(row[0])] = str(row[1])
+    finally:
+        wb.close()
+
+    if not timeset_to_timeline:
+        return
+
+    # Already-present (entity, alternative) pairs — stay idempotent.
+    existing = {
+        (pv["entity_byname"], pv["alternative_name"])
+        for pv in db.find_parameter_values(
+            entity_class_name="timeset", parameter_definition_name="timeline"
+        )
+    }
+    added = 0
+    for pv in db.find_parameter_values(
+        entity_class_name="timeset", parameter_definition_name="timeset_duration"
+    ):
+        byname = pv["entity_byname"]
+        timeline_name = timeset_to_timeline.get(byname[0])
+        if timeline_name is None:
+            continue
+        key = (byname, pv["alternative_name"])
+        if key in existing:
+            continue
+        value, type_ = to_database(timeline_name)
+        try:
+            db.add_parameter_value(
+                entity_class_name="timeset",
+                parameter_definition_name="timeline",
+                entity_byname=byname,
+                alternative_name=pv["alternative_name"],
+                value=value,
+                type=type_,
+            )
+            existing.add(key)
+            added += 1
+        except Exception as e:
+            print(f"  Could not set timeset.timeline for {byname[0]}: {e}")
+    if added:
+        print(
+            f"\nImported legacy timeset->timeline links "
+            f"({added} (timeset, alternative) pairs) from 'timeblockSet_timeline'."
+        )
 
 def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_type='excel',
                                migration_follows: bool = False):
@@ -19,6 +97,22 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
 
     This function reads sheets/files one at a time to minimize memory usage.
     """
+    # Refuse specification-format Excels whose template layout predates the
+    # importer.  Deferred import avoids a circular dependency with the package.
+    if input_type == 'excel':
+        from flextool.process_inputs import (
+            MIN_SUPPORTED_SPECIFICATION_VERSION,
+            read_specification_changelog_version,
+            unsupported_specification_message,
+        )
+        changelog_version = read_specification_changelog_version(input_path)
+        if (
+            changelog_version is not None
+            and changelog_version < MIN_SUPPORTED_SPECIFICATION_VERSION
+        ):
+            print(unsupported_specification_message(changelog_version))
+            exit(1)
+
     if target_db_url.startswith('sqlite://') or target_db_url.startswith('http://'):
         db_url = target_db_url
     elif os.path.exists(target_db_url) and target_db_url.endswith(".sqlite"):
@@ -39,7 +133,8 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
             if version == flextool_db_version:
                 print(f"Valid FlexTool input database with correct version: {flextool_db_version}")
             elif migration_follows:
-                print(f"FlexTool input database version: {version} (will be migrated to {flextool_db_version})")
+                print(f"Importing into a fresh FlexTool schema-v{int(version)} database "
+                      "(a migration to the current version follows this import).")
             else:
                 print(f"Wrong FlexTool input database version: {version}. Should be: {flextool_db_version}")
                 exit(-1)
@@ -112,7 +207,10 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
                 try:
                     (data_df, ent_zip_list, ent_act_zip, scen_array, scen_alt_df) = tabular_reader._extract_data(raw_df, mapping_info, table_options, column_types, table_name, mapping_name)
                 except Exception as e:
-                    print(f"\n  Error processing mapping '{mapping_name}': {e}")
+                    print(
+                        f"\n  Error processing sheet '{table_name}', mapping "
+                        f"'{mapping_name}': {type(e).__name__}: {e}"
+                    )
                     continue  # Continue to next mapping on processing error
 
                 if ent_zip_list:
@@ -153,6 +251,11 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
                 # Add scenario_alternatives to the database
                 if scen_alt_df is not None:
                     tabular_reader._add_scenario_alternatives(scen_alt_df, db, table_name, mapping_name)
+
+        # Backfill the timeset->timeline link from the legacy two-column sheet
+        # if present (pre-v25 Excels); modern files set it via the spec.
+        if input_type == 'excel':
+            _import_legacy_timeset_timeline(db, input_path)
 
         # Commit the changes
         try:

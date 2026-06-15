@@ -2321,18 +2321,19 @@ class MainWindow(tk.Tk):
             self, project_path,
             execution_mgr=self.execution_mgr,
             input_source_mgr=self.input_source_mgr,
+            # Files the user chooses to migrate start converting immediately
+            # (while the dialog is still open); their conversion callbacks
+            # refresh the input sources again when finished.
+            convert_callback=lambda name: self._convert_xlsx_to_sqlite(
+                name, confirm=False, copied_to_input_sources=True
+            ),
+            update_xlsx_callback=self._update_xlsx_version,
         )
         if dlg.result:
             self._refresh_input_sources()
             self._autocheck_new_sources(old_sources)
         if dlg.old_convert_started:
             self._open_or_raise_execution_window()
-        # Handle files the user chose to migrate.  The conversion
-        # callbacks refresh the input sources again when finished.
-        for name in dlg.files_to_convert:
-            self._convert_xlsx_to_sqlite(name, confirm=False)
-        for name in dlg.files_to_update_xlsx:
-            self._update_xlsx_version(name)
 
     def _autocheck_new_sources(self, old_sources: set[str]) -> None:
         """Check (tick) newly added input sources and their available scenarios."""
@@ -3173,7 +3174,10 @@ class MainWindow(tk.Tk):
 
     # ── Conversion: xlsx → sqlite ────────────────────────────────
 
-    def _convert_xlsx_to_sqlite(self, source_name: str, confirm: bool = True) -> None:
+    def _convert_xlsx_to_sqlite(
+        self, source_name: str, confirm: bool = True,
+        copied_to_input_sources: bool = False,
+    ) -> None:
         """Convert an xlsx input source to sqlite format via subprocess.
 
         Args:
@@ -3181,6 +3185,9 @@ class MainWindow(tk.Tk):
             confirm: If True (default), ask the user to confirm before
                 converting.  Set to False when the caller has already
                 obtained confirmation (e.g. from the add-dialog).
+            copied_to_input_sources: True when the file was just copied into
+                ``input_sources/`` (the add-dialog copy option), so the log
+                opens by stating that.
         """
         project_path = get_projects_dir() / self.current_project
         input_dir = project_path / "input_sources"
@@ -3206,15 +3213,44 @@ class MainWindow(tk.Tk):
             if not answer:
                 return
 
-        target_db_url = f"sqlite:///{target_sqlite}"
+        # Convert into a working file that lives OUTSIDE input_sources/ (the
+        # only directory the input-source scan reads), then publish it to the
+        # real name with an atomic rename once it is fully imported and
+        # migrated.  Until then a refresh can never see — and therefore never
+        # open — a half-written database underneath the migration.  Same
+        # filesystem (both under the project) keeps the rename atomic.
+        work_dir = project_path / "intermediate"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        work_sqlite = work_dir / f"{stem}.convert.sqlite"
+        work_sqlite.unlink(missing_ok=True)  # clear any leftover from a crash
+        target_db_url = f"sqlite:///{work_sqlite}"
 
         # Detect Excel format / version and initialize DB with the right template
         from flextool.process_inputs import (
             detect_excel_format, ExcelFormat, CURRENT_FLEXTOOL_DB_VERSION,
+            MIN_SUPPORTED_SPECIFICATION_VERSION,
+            read_specification_changelog_version,
+            unsupported_specification_message,
         )
         from flextool.update_flextool.initialize_database import initialize_database
         from flextool.update_flextool.db_migration import migrate_database
         info = detect_excel_format(xlsx_path)
+
+        # Reject specification Excels whose template layout predates the
+        # importer before doing any work (clean message instead of a buried
+        # subprocess failure).
+        changelog_version: int | None = None
+        if info.format == ExcelFormat.SPECIFICATION:
+            changelog_version = read_specification_changelog_version(xlsx_path)
+            if (
+                changelog_version is not None
+                and changelog_version < MIN_SUPPORTED_SPECIFICATION_VERSION
+            ):
+                messagebox.showerror(
+                    "Unsupported input version",
+                    unsupported_specification_message(changelog_version),
+                )
+                return
 
         Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
         needs_migration = False
@@ -3245,13 +3281,47 @@ class MainWindow(tk.Tk):
         if not template.exists():
             messagebox.showerror("Template missing", f"Cannot find template:\n{template}")
             return
-        initialize_database(str(template), str(target_sqlite))
+
+        # Narrate the plan so the log explains what is happening.
+        plan_lines: list[str] = []
+        if copied_to_input_sources:
+            plan_lines.append(
+                f"'{source_name}' copied to the input_sources folder."
+            )
+        if info.format == ExcelFormat.SPECIFICATION:
+            detected = f"v{changelog_version}" if changelog_version is not None else "an older version"
+            plan_lines += [
+                f"Detected FlexTool specification (3.x) input, layout {detected}.",
+                "Step 1: import to SQLite using the legacy (pre-v25) importer.",
+                f"Step 2: migrate the database to the current version "
+                f"({CURRENT_FLEXTOOL_DB_VERSION}).",
+            ]
+        elif info.format == ExcelFormat.OLD_V2:
+            plan_lines += [
+                "Detected FlexTool 2.x (.xlsm) input.",
+                "Step 1: import to SQLite using the FlexTool 2.x importer.",
+                f"Step 2: migrate the database to the current version "
+                f"({CURRENT_FLEXTOOL_DB_VERSION}).",
+            ]
+        elif needs_migration:
+            ver = f"v{info.version}" if info.version is not None else "an older version"
+            plan_lines += [
+                f"Detected self-describing input ({ver}).",
+                "Step 1: import to SQLite.",
+                f"Step 2: migrate the database to the current version "
+                f"({CURRENT_FLEXTOOL_DB_VERSION}).",
+            ]
+        else:
+            plan_lines += ["Detected current-version input; importing to SQLite."]
+        intro = "\n".join(plan_lines)
+
+        initialize_database(str(template), str(work_sqlite))
 
         if needs_migration and info.version is not None and info.version > 25:
             # Bring the empty schema up to the Excel's version so parameter
             # names match during import.  The final migration to current
             # happens after import via _run_conversion_subprocess.
-            migrate_database(str(target_sqlite), up_to=info.version)
+            migrate_database(str(work_sqlite), up_to=info.version)
 
         # Build the appropriate subprocess command
         if info.format == ExcelFormat.SELF_DESCRIBING:
@@ -3287,21 +3357,30 @@ class MainWindow(tk.Tk):
             )
             return
 
-        # Build version note for the log window
+        # Build version note for the log window.  For specification Excels the
+        # meaningful version is the changelog (layout) version, not info.version
+        # (which is the fixed v25 schema they import against).
         version_note: str | None = None
-        if info.version is not None and info.version < CURRENT_FLEXTOOL_DB_VERSION:
+        layout_version = (
+            changelog_version if info.format == ExcelFormat.SPECIFICATION
+            else info.version
+        )
+        if layout_version is not None and layout_version < CURRENT_FLEXTOOL_DB_VERSION:
             version_note = (
-                f"Note: Excel is version {info.version}, "
-                f"current FlexTool version is {CURRENT_FLEXTOOL_DB_VERSION}. "
-                f"The database has been migrated to version {CURRENT_FLEXTOOL_DB_VERSION}. "
-                f"You can convert back to xlsx to get an updated Excel."
+                f"Note: the source Excel '{source_name}' uses the older v{layout_version} "
+                f"input layout; it has been moved to the 'converted' folder. The "
+                f"imported database has been migrated to the current FlexTool version "
+                f"(v{CURRENT_FLEXTOOL_DB_VERSION}). To get an Excel in the current "
+                f"format, export this database back to xlsx."
             )
 
         self._run_conversion_subprocess(
-            cmd, source_name, xlsx_path, target_sqlite,
+            cmd, source_name, xlsx_path, work_sqlite,
             f"Convert: {source_name} \u2192 sqlite",
-            migrate_db_path=str(target_sqlite) if needs_migration else None,
+            migrate_db_path=str(work_sqlite) if needs_migration else None,
             version_note=version_note,
+            publish_path=target_sqlite,
+            intro=intro,
         )
 
     # ── Update xlsx version via round-trip ───────���──────────────
@@ -3542,6 +3621,8 @@ class MainWindow(tk.Tk):
         description: str,
         migrate_db_path: str | None = None,
         version_note: str | None = None,
+        publish_path: Path | None = None,
+        intro: str | None = None,
     ) -> None:
         """Run a conversion command as an auxiliary job in the execution window.
 
@@ -3563,6 +3644,9 @@ class MainWindow(tk.Tk):
         flextool_root = get_projects_dir().parent
         cmd_str = " ".join(cmd)
         self.execution_mgr.append_stdout(job.job_id, f"Converting {description}\n")
+        if intro:
+            self.execution_mgr.append_stdout(job.job_id, intro)
+            self.execution_mgr.append_stdout(job.job_id, "")
         self.execution_mgr.append_stdout(job.job_id, cmd_str)
         self.execution_mgr.append_stdout(job.job_id, "")
 
@@ -3571,6 +3655,9 @@ class MainWindow(tk.Tk):
             self.execution_window.select_job(job.job_id)
 
         mgr = self.execution_mgr  # capture for thread
+        from flextool.update_flextool import (
+            FLEXTOOL_DB_VERSION as CURRENT_FLEXTOOL_DB_VERSION,
+        )
 
         def _worker() -> None:
             success = False
@@ -3588,32 +3675,84 @@ class MainWindow(tk.Tk):
 
                 proc.wait()
                 success = proc.returncode == 0
+                failed_stage = None if success else "import"
 
                 if success and migrate_db_path:
-                    mgr.append_stdout(job.job_id, "\nMigrating database to current version...")
+                    mgr.append_stdout(
+                        job.job_id,
+                        "\n=== Step 1 complete: data imported into the SQLite "
+                        "database. ===\n"
+                        "=== Step 2: migrating the database schema to the "
+                        "current version. ===",
+                    )
+
+                    def _mig_progress(curr: int, target: int, nxt: int) -> None:
+                        mgr.append_stdout(
+                            job.job_id,
+                            f"  schema migration: v{curr} → v{nxt} (target v{target})",
+                        )
+
                     try:
                         from flextool.update_flextool.db_migration import migrate_database
-                        migrate_database(migrate_db_path)
-                        mgr.append_stdout(job.job_id, "Database migration completed.")
-                    except Exception as mig_exc:
-                        mgr.append_stdout(job.job_id, f"Database migration failed: {mig_exc}")
+                        migrate_database(migrate_db_path, progress_callback=_mig_progress)
+                        mgr.append_stdout(
+                            job.job_id,
+                            f"Schema migration complete "
+                            f"(database is now at v{CURRENT_FLEXTOOL_DB_VERSION}).",
+                        )
+                    except Exception as exc:
                         success = False
+                        failed_stage = "migration"
+                        mgr.append_stdout(job.job_id, f"Schema migration failed: {exc}")
+
+                # Publish atomically: the fully-imported, fully-migrated
+                # working file takes its real name only now.  Readers (the
+                # input-source scan) therefore never observed a partial DB.
+                final_path = target_path
+                if success and publish_path is not None:
+                    try:
+                        os.replace(target_path, publish_path)
+                        final_path = publish_path
+                    except OSError as exc:
+                        success = False
+                        failed_stage = "publish"
+                        mgr.append_stdout(
+                            job.job_id,
+                            f"Could not publish the converted database: {exc}",
+                        )
 
                 if success:
-                    mgr.append_stdout(job.job_id, "\nConversion succeeded.")
+                    published_name = (
+                        publish_path.name if publish_path is not None
+                        else final_path.name
+                    )
+                    mgr.append_stdout(
+                        job.job_id,
+                        f"\nDone — '{source_name}' imported and migrated. "
+                        f"Input source '{published_name}' is ready.",
+                    )
                     if version_note:
                         mgr.append_stdout(job.job_id, f"\n{version_note}")
+                elif failed_stage in ("migration", "publish"):
+                    mgr.append_stdout(
+                        job.job_id,
+                        "\nConversion failed after import. If the database might "
+                        "be open elsewhere (a Spine DB editor or another FlexTool "
+                        "window), close it and convert again.",
+                    )
                 else:
                     mgr.append_stdout(
-                        job.job_id, f"\nConversion failed (exit code {proc.returncode})."
+                        job.job_id,
+                        f"\nConversion failed during import (exit code {proc.returncode}).",
                     )
             except Exception as exc:
                 logger.error("Conversion subprocess failed: %s", exc, exc_info=True)
                 mgr.append_stdout(job.job_id, f"\nError: {exc}")
+                final_path = target_path
 
             mgr.finish_job(job.job_id, success)
             self.post_to_main(self._conversion_finished,
-                              success, source_name, source_path, target_path)
+                              success, source_name, source_path, final_path)
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
