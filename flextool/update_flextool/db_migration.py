@@ -219,34 +219,45 @@ def migrate_database(
                     description="[CUR/MWs] Penalty for violating the inertia constraint. Cost scales with the duration of the violation. Constant or period.")
                 _commit_step(db,"Added minimum time method support and fixed penalty descriptions")
             elif next_version == 28:
-                parameter_definitions = db.mapped_table("parameter_definition")
-                # Rename entity-level interest_rate -> discount_rate on unit, connection, node
-                param = db.item(parameter_definitions, entity_class_name="unit", name="interest_rate")
-                if param:
-                    db.update_parameter_definition(id=param["id"], name="discount_rate",
-                        description="[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.")
-                param = db.item(parameter_definitions, entity_class_name="connection", name="interest_rate")
-                if param:
-                    db.update_parameter_definition(id=param["id"], name="discount_rate",
-                        description="[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.")
-                param = db.item(parameter_definitions, entity_class_name="node", name="interest_rate")
-                if param:
-                    db.update_parameter_definition(id=param["id"], name="discount_rate",
-                        description="[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.")
+                # Rename entity-level interest_rate -> discount_rate on unit,
+                # connection, node; and model-level discount_rate -> inflation_rate
+                # plus the two discount_offset_* -> inflation_offset_* renames.
+                #
+                # These renames must be collision-safe.  ``migrate_database``
+                # writes ``model.version`` only once, at the very end of the
+                # whole loop, so a migration interrupted/cancelled after a later
+                # step already created the *target* definition (the v28 rename
+                # itself, or the v48 ``add_update_item`` default-setter) but
+                # before the final version write leaves the DB with the target
+                # name present while ``model.version`` still reads its old,
+                # pre-28 value.  A subsequent re-application of the v25 template
+                # (re-init / GUI "apply template" / re-import) restores the
+                # *source* name, so on the next migration this step sees BOTH.
+                # A bare ``update_parameter_definition(name=target)`` would then
+                # hit spinedb_api's unique-name constraint and abort the whole
+                # migration ("there's already a parameter_definition ...").
+                # When the target already exists we drop the stale source
+                # definition instead of renaming onto it.
+                entity_rate_desc = ("[e.g. 0.05 equals 5%] Discount rate for investments (WACC). "
+                    "Reflects the financing cost and risk premium for this technology. When the "
+                    "model inflation_rate > 0, this should be a nominal rate. When inflation_rate "
+                    "= 0, this should be a real rate. Used to annualize investment costs over the "
+                    "lifetime. Constant or period.")
+                _rename_or_drop_parameter_definition(db, "unit", "interest_rate", "discount_rate", entity_rate_desc)
+                _rename_or_drop_parameter_definition(db, "connection", "interest_rate", "discount_rate", entity_rate_desc)
+                _rename_or_drop_parameter_definition(db, "node", "interest_rate", "discount_rate", entity_rate_desc)
                 # Rename model-level discount_rate -> inflation_rate
-                param = db.item(parameter_definitions, entity_class_name="model", name="discount_rate")
-                if param:
-                    db.update_parameter_definition(id=param["id"], name="inflation_rate",
-                        description="[e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0. When inputs are in nominal terms, set to expected inflation. Default: 0 (real inputs).")
+                _rename_or_drop_parameter_definition(db, "model", "discount_rate", "inflation_rate",
+                    "[e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When "
+                    "inputs are in real (constant-price) terms, set to 0. When inputs are in nominal "
+                    "terms, set to expected inflation. Default: 0 (real inputs).")
                 # Rename model-level offset parameters
-                param = db.item(parameter_definitions, entity_class_name="model", name="discount_offset_investment")
-                if param:
-                    db.update_parameter_definition(id=param["id"], name="inflation_offset_investment",
-                        description="[years] Offset for when investment costs occur within a year. Default 0 (beginning of year).")
-                param = db.item(parameter_definitions, entity_class_name="model", name="discount_offset_operations")
-                if param:
-                    db.update_parameter_definition(id=param["id"], name="inflation_offset_operations",
-                        description="[years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).")
+                _rename_or_drop_parameter_definition(db, "model", "discount_offset_investment",
+                    "inflation_offset_investment",
+                    "[years] Offset for when investment costs occur within a year. Default 0 (beginning of year).")
+                _rename_or_drop_parameter_definition(db, "model", "discount_offset_operations",
+                    "inflation_offset_operations",
+                    "[years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).")
                 _commit_step(db,"Renamed economic parameters: interest_rate->discount_rate, discount_rate->inflation_rate")
             elif next_version == 29:
                 add_value_list_manual(db, [
@@ -1683,6 +1694,42 @@ def migrate_database(
             _commit_step(db,"Updated Flextool data structure to version " + str(new_version))
         else:
             print(database_path+ " already up-to-date at version "+ str(version))
+
+def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_name, description=None):
+    """Collision-safe parameter_definition rename within an entity class.
+
+    Renames ``old_name`` -> ``new_name`` on ``entity_class_name`` via
+    ``update_parameter_definition``.  If ``new_name`` is *already present*
+    (an interrupted/re-run migration can leave the rename target in place
+    while the source name is re-introduced by a template re-apply), the
+    bare rename would hit spinedb_api's unique-name constraint and abort
+    the whole migration.  In that case the stale ``old_name`` definition
+    is removed instead, so the step converges to a single, correctly-named
+    definition.  A no-op when ``old_name`` is absent.
+    """
+    def _find(name):
+        # db.item raises SpineDBAPIError when there is no match; treat that
+        # as "absent" rather than propagating.
+        try:
+            return db.item(parameter_definitions, entity_class_name=entity_class_name, name=name)
+        except SpineDBAPIError:
+            return None
+
+    parameter_definitions = db.mapped_table("parameter_definition")
+    old = _find(old_name)
+    if not old:
+        return
+    new = _find(new_name)
+    if new:
+        # Target already exists (carried in by a prior partial migration);
+        # the rename would collide.  Drop the stale source definition.
+        db.remove_parameter_definition(id=old["id"])
+        return
+    kwargs = {"id": old["id"], "name": new_name}
+    if description is not None:
+        kwargs["description"] = description
+    db.update_parameter_definition(**kwargs)
+
 
 def add_version(db):
     # this function adds the version information to the database if there is none
