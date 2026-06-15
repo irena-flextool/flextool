@@ -6157,9 +6157,15 @@ def build_handoff_from_solution(
             us_param = (getattr(flex_data, "p_all_entity_unitsize", None)
                         or getattr(flex_data, "p_unitsize", None))
             if us_param is not None:
+                # ``p_all_entity_unitsize`` keys the per-process unitsize on
+                # the entity-union axis ``e``; ``p_unitsize`` keys it on the
+                # process axis ``p``.  Read whichever entity column the chosen
+                # carrier carries, then rename to ``p`` (cast to Utf8 to match
+                # the Utf8 join below).
+                _us_col = "e" if "e" in us_param.frame.columns else "p"
                 unitsize_frame = (us_param.frame
-                    .select("p", pl.col("value").alias("us"))
-                    .with_columns(pl.col("p").cast(pl.Utf8)))
+                    .select(pl.col(_us_col).cast(pl.Utf8).alias("p"),
+                            pl.col("value").alias("us")))
             else:
                 unitsize_frame = pl.DataFrame(
                     schema={"p": pl.Utf8, "us": pl.Float64})

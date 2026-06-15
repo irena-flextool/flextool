@@ -178,8 +178,22 @@ def compute_co2_rolling_accumulator(
 
     us_param = (getattr(flex_data, "p_all_entity_unitsize", None)
                 or getattr(flex_data, "p_unitsize", None))
-    unitsize = _param_frame(us_param, "p").select(
-        pl.col("p").alias("p_us"), pl.col("value").alias("us"))
+    # ``p_all_entity_unitsize`` is keyed on the entity-union axis ``e``
+    # (unit ∪ node ∪ connection); ``p_unitsize`` is keyed on the process
+    # axis ``p``.  Either carries the per-process unitsize we join against
+    # ``v_flow.p`` below, but under a different column name — read whichever
+    # entity column is present.  (``_param_frame``'s empty fallback uses the
+    # requested name, so default to ``p``.)
+    us_frame = _param_frame(us_param, "p")
+    us_entity_col = "e" if "e" in us_frame.columns else "p"
+    # Cast the unitsize entity column to ``v_flow.p``'s dtype so the
+    # ``left_on="p", right_on="p_us"`` join below never mixes Enum + Utf8
+    # (the entity-union ``e`` enum and the process ``p`` enum are distinct
+    # dtypes even when their values overlap).
+    _p_dtype = v_flow.schema.get("p", pl.Utf8)
+    unitsize = us_frame.select(
+        pl.col(us_entity_col).cast(_p_dtype, strict=False).alias("p_us"),
+        pl.col("value").alias("us"))
 
     slope = _param_frame(
         getattr(flex_data, "p_slope", None), "p", "d", "t",
