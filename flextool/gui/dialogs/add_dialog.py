@@ -120,14 +120,9 @@ class AddDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
-        # ── Font metrics for DPI-aware sizing ──────────────────────
-        from flextool.gui.ui_metrics import get_metrics
-        _metrics = get_metrics(self)
-        self._cw: int = _metrics.cw
-        lh: int = _metrics.lh
-
-        # ── Dialog size ─────────────────────────────────────────────
-        self.geometry(f"{self._cw * 77}x{lh * 45}")
+        # No fixed size — the dialog takes only the space its widgets need.
+        # The old fixed cw*77 x lh*45 box left most of it empty and grew huge
+        # once cw/lh scaled up under DPI. resizable(False) keeps the fit.
         self.resizable(False, False)
 
         self._build_widgets()
@@ -135,17 +130,17 @@ class AddDialog(tk.Toplevel):
         # Close via window-manager "X"
         self.protocol("WM_DELETE_WINDOW", self._on_back)
 
-        # Centre on parent
+        # Size to natural content (clamped to the screen) and centre on parent.
         self.update_idletasks()
+        w = min(self.winfo_reqwidth(), self.winfo_screenwidth())
+        h = min(self.winfo_reqheight(), self.winfo_screenheight())
         px = parent.winfo_rootx()
         py = parent.winfo_rooty()
         pw = parent.winfo_width()
         ph = parent.winfo_height()
-        w = self.winfo_width()
-        h = self.winfo_height()
         x = px + (pw - w) // 2
         y = py + (ph - h) // 2
-        self.geometry(f"+{x}+{y}")
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
         # Block until closed
         parent.wait_window(self)
