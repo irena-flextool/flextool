@@ -1880,6 +1880,128 @@ def _drive_cascade(
             self._autoscale_shape_cache: (
                 "dict[tuple, _AutoscaleShapeCacheEntry]"
             ) = {}
+            # v60 per-solve decomposition — complete-solve names that ran
+            # under ``decomposition=lagrangian``.  Used by the consume-side
+            # guard in :meth:`run` to raise loudly if a downstream solve
+            # would try to consume a Lagrangian solve's (absent) handoff —
+            # cross-scheme handoff is a deferred follow-up.
+            self._lagrangian_solve_names: set[str] = set()
+
+        def _run_lagrangian_solve(
+            self,
+            complete_solve_name: str,
+            base_solve_name: str,
+            data,
+        ) -> int:
+            """Run *complete_solve_name* via the Lagrangian region driver.
+
+            Selected per solve from ``solve.decomposition = lagrangian``.
+            Decomposes over the groups whose
+            ``group.decomposition_method`` is ``lagrangian_region`` (the
+            ``decomp_<REG>`` groups the PLEXOS-to-FlexTool writer emits),
+            using the per-solve knobs resolved by
+            :meth:`SolveConfig.lagrangian_config_for`.
+
+            First-cut scope (per the decomposition spec): the solve runs
+            and reports convergence/objective, deposits an
+            :class:`OrchestrationStep`, and is recorded in
+            ``self._lagrangian_solve_names`` so the consume-side guard in
+            :meth:`run` can fire.  It does NOT deposit a ``SolveHandoff``
+            into ``state.handoffs`` — threading a Lagrangian solve's
+            results into a downstream monolithic solve is a deferred
+            follow-up, guarded loudly rather than silently dropped.
+            """
+            from flextool.engine_polars._lagrangian import solve_lagrangian
+            from flextool.decomposition.region_filter import (
+                discover_decomposition_regions_from_db,
+            )
+
+            # Regions are discovered from the DB (the same source the
+            # group-level decomposition_method lives in).  The DB-driven
+            # run path (run_chain_from_db) always supplies ``db_url``; a
+            # caller that bypasses it cannot resolve the region groups, so
+            # fail with an actionable message rather than guess.
+            if db_url is None:
+                raise FlexToolConfigError(
+                    f"Solve '{base_solve_name}' requests "
+                    f"decomposition=lagrangian but the run was started "
+                    f"without a database URL (db_url is None). Lagrangian "
+                    f"region decomposition is only available on the "
+                    f"DB-driven run path (run_chain_from_db)."
+                )
+            regions = discover_decomposition_regions_from_db(db_url)
+            if len(regions) < 2:
+                raise FlexToolConfigError(
+                    f"Solve '{base_solve_name}' requests "
+                    f"decomposition=lagrangian but the model declares "
+                    f"{len(regions)} group(s) with "
+                    f"decomposition_method='lagrangian_region' "
+                    f"({regions or '(none)'}); at least two region groups "
+                    f"are required."
+                )
+
+            alpha, max_iter, tol = state.solve.lagrangian_config_for(
+                base_solve_name
+            )
+            # Lagrangian decomposition is HiGHS-only; pass the solve's
+            # SolverConfig so the driver can raise an actionable error if
+            # the user selected a commercial solver.
+            solver_cfg = state.solve.solver_configs.get(
+                complete_solve_name
+            ) or state.solve.solver_configs.get(base_solve_name)
+
+            self.state.logger.warning(
+                "Solve '%s': decomposition=lagrangian over %d region "
+                "groups %s (alpha=%g, max_iter=%d, tol=%g).",
+                base_solve_name, len(regions), regions, alpha, max_iter, tol,
+            )
+            result = solve_lagrangian(
+                data,
+                work_dir=self.state.paths.work_folder,
+                regions=regions,
+                alpha=alpha,
+                max_iters=max_iter,
+                tol=tol,
+                solver_config=solver_cfg,
+            )
+            _conv_msg = (
+                "Solve '%s': Lagrangian decomposition %s after %d "
+                "iterations, total_objective=%.6g."
+            )
+            if result.converged:
+                self.state.logger.warning(
+                    _conv_msg, base_solve_name, "converged",
+                    result.iterations, result.total_objective,
+                )
+            else:
+                # Loud, not silent: non-convergence within max_iters is a
+                # result the operator must see, but we don't abort the
+                # chain over it (the decomposition still produced a point).
+                self.state.logger.error(
+                    _conv_msg, base_solve_name, "did NOT converge",
+                    result.iterations, result.total_objective,
+                )
+
+            # Record so the consume-side guard fires for any downstream
+            # solve, and deposit a slim OrchestrationStep (no Solution /
+            # SolveHandoff — the Lagrangian result is not yet threaded
+            # into the monolithic output / handoff pipeline).
+            self._lagrangian_solve_names.add(complete_solve_name)
+            self._all_steps[complete_solve_name] = OrchestrationStep(
+                solve_name=complete_solve_name,
+                solution=None,
+                handoff=None,
+                obj=result.total_objective,
+                optimal=result.converged,
+                warm_used=False,
+                flex_data=data,
+                flex_data_provider=getattr(
+                    self.state, "current_provider", None,
+                ),
+            )
+            self._prev_step_key = complete_solve_name
+            return 0
+
         def run(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
             # Cross-level eviction — release any EXHAUSTED prior solve-level's
@@ -2014,6 +2136,38 @@ def _drive_cascade(
             # the legacy 1e-6 when absent) and lets autoscale Layer 3
             # handle residual cost / bound magnitudes inside HiGHS.
             base_solve_name = re.sub(r"_roll_\d+$", "", complete_solve_name)
+
+            # v60 per-solve decomposition routing -----------------------
+            # Consume-side guard: if the immediately-preceding captured
+            # solve ran under decomposition=lagrangian and THIS solve is a
+            # different base solve, it would consume the (intentionally
+            # absent) Lagrangian handoff.  Cross-scheme handoff
+            # (Lagrangian → monolithic dispatch) is a deferred follow-up,
+            # so we fail loudly rather than silently load handoff=None.
+            _prev_captured = self.state.last_captured_solve
+            if (
+                _prev_captured is not None
+                and _prev_captured in self._lagrangian_solve_names
+                and base_solve_name
+                != re.sub(r"_roll_\d+$", "", _prev_captured)
+            ):
+                raise FlexToolConfigError(
+                    f"Solve '{base_solve_name}' follows '{_prev_captured}', "
+                    f"which ran under decomposition=lagrangian, and would "
+                    f"consume its results. Cross-scheme handoff "
+                    f"(Lagrangian solve feeding a downstream solve) is not "
+                    f"yet supported. Make the downstream solve lagrangian "
+                    f"too, or order the chain so the Lagrangian solve is "
+                    f"terminal."
+                )
+            # When this solve resolves to decomposition=lagrangian, run it
+            # through the Lagrangian region coordinator instead of building
+            # and solving a monolithic LP.
+            if state.solve.decomposition_for(base_solve_name) == "lagrangian":
+                return self._run_lagrangian_solve(
+                    complete_solve_name, base_solve_name, data,
+                )
+
             user_obj_scale = state.solve.scale_the_objective.get(complete_solve_name)
             effective_obj_scale = _resolve_effective_obj_scale(user_obj_scale)
             # ``user_bound_scale`` resolution priority:
