@@ -1,3 +1,74 @@
+## Release 4.0.0b8 (16.6.2026) — small-number coefficient cutoff (v59); legacy Excel import; solver-options GUI
+
+Requires a **database migration to v59** (`FLEXTOOL_DB_VERSION` 58 → 59; adds the
+`model.small_number_threshold` parameter). Raises the solver-backend floor to
+**`polar-high>=2.6.0`** (the cutoff sets its new `coef_zero_threshold`); other
+dependency floors unchanged (`polars>=1.40`, `highspy<=1.14.0`). LP-neutral by
+default — the cutoff is a no-op at its `0.0001` default unless a model carries
+coefficients below it, and the rest of the release is fixes and importer/GUI
+work.
+
+### Model-wide small-number coefficient cutoff (schema v59)
+
+- New `model.small_number_threshold` (float, default `0.0001`): LP matrix
+  coefficients and RHS terms whose absolute value is below it are floored to
+  `0.0` when building the problem, narrowing the LP's numerical range
+  (conditioning). The floor is a generic `polar_high` feature
+  (`Problem.coef_zero_threshold`) applied at every coefficient/RHS finalize
+  point; FlexTool reads the parameter (spec → provider → `FlexData`) and sets it
+  in `build_flextool`. Registered in autoscale `PARAMETER_TYPES`; v59 migration
+  adds the parameter; schema, canonical DBs and fixtures regenerated.
+
+### Legacy (pre-v25) specification-Excel import
+
+- The specification-format Excel importer now handles older template layouts
+  (changelog v12+): coerces numpy scalars to native Python before `to_database`
+  (fixes an int64 crash), builds an empty unstacked frame for header-only
+  parameter sheets (instead of a pandas "need at least one array" raise) while
+  still reporting genuine errors with the sheet name, remaps renamed legacy
+  parameters (`period_timeblockSet→period_timeset`, `block_duration→
+  timeset_duration`, `has_state→has_storage`, `variable_cost→
+  other_operational_cost`) and aliases the pre-v25 time-structure sheets. The
+  GUI conversion flow is hardened/clarified.
+
+### Desktop GUI — solver options
+
+- Fix the solver-options dialog never opening (it referenced a non-existent
+  `self.root`; `MainWindow` *is* the Tk root). Add a **MIP relative gap** control
+  (a checkbox gates emission — off defers to the `.opt` baseline / solver
+  default; default `0.001`, `0` valid) routed GUI → `--solver-mip-gap` →
+  `FLEXTOOL_HIGHS_MIP_GAP`, mirroring the time-limit knob. Presolve "choose" is
+  now actually forwarded (was silently dropped to the engine's pinned "on"). Add
+  runtime-file bootstrap. Clamp the main-window **width** to the screen (only
+  height was clamped) so a DPI-aware natural width can't run off a small display.
+
+### CO₂ total-cap & engine fixes
+
+- **Report CO₂ for `co2_max_total` (total-cap) models**: the emissions output set
+  wired only the period-cap and price flow sets; the multi-period total-cap port
+  (`flow_from_co2_capped_total`, `group_co2_max_total`) was never added, so a
+  `co2_method=total` model (e.g. SouthAfrica) reported `CO2 [Mt] = 0` despite a
+  correct engine cap.
+- Read the **CO₂-accumulator unitsize on its actual entity axis** — the
+  rolling-accumulator preferred the `e`-keyed `p_all_entity_unitsize` carrier but
+  unconditionally selected `p`, crashing the output stage on the first
+  `co2_method=total` model after an Optimal solve.
+- **Key the profile-flow source on the real input-node arc**: a direct
+  (constant-efficiency) unit carrying an output-node profile keyed the
+  constraint on `(unit, unit, sink)` instead of the real
+  `v_flow[unit, input_node, sink]` arc, matching nothing → empty row → HiGHS
+  presolve Infeasible (e.g. a nuclear unit with a `fixed` output profile).
+- Make the **v28 interest/discount rename collision-safe**: it now checks the
+  target name is free, so a DB that already carries both names (reachable via an
+  interrupted migration + template re-apply) no longer raises.
+
+### Output fixes
+
+- Empty the scenario `output_parquet/<scenario>/` dir before writing so retired/
+  renamed outputs don't linger and trip the scenario-comparison "not registered"
+  warning (done late, after `results` is built, so a failed run keeps prior
+  outputs).
+
 ## Release 4.0.0b7 (11.6.2026) — self-documenting output metadata; per-entity cost break-down; unit corrections
 
 **No database migration** — the input schema stays at **v58**
