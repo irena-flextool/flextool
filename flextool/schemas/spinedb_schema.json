@@ -334,6 +334,14 @@
       "lagrangian_region"
     ],
     [
+      "decomposition_schemes",
+      "none"
+    ],
+    [
+      "decomposition_schemes",
+      "lagrangian"
+    ],
+    [
       "flow_aggregator_methods",
       "none"
     ],
@@ -1543,7 +1551,7 @@
     [
       "model",
       "version",
-      59.0,
+      60.0,
       null,
       "Contains database version information.",
       "model"
@@ -2006,6 +2014,14 @@
     ],
     [
       "solve",
+      "decomposition",
+      "none",
+      "decomposition_schemes",
+      "Decomposition scheme for this solve. 'none' (default) solves monolithically. 'lagrangian' runs the solve through the Lagrangian region-decomposition driver over the groups whose group.decomposition_method is 'lagrangian_region' (requires at least two such region groups). The choice is per solve, so an investment solve can decompose while a later dispatch solve in the same chain stays monolithic.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "fix_storage_periods",
       null,
       null,
@@ -2019,6 +2035,30 @@
       null,
       "Array of periods where investments are allowed.",
       "solve_basics"
+    ],
+    [
+      "solve",
+      "lagrangian_alpha",
+      0.1,
+      null,
+      "Lagrangian decomposition: subgradient base step size for the multiplier update. Only used when decomposition = 'lagrangian'. Default 0.1.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "lagrangian_max_iter",
+      80.0,
+      null,
+      "Lagrangian decomposition: maximum number of outer (subgradient) iterations. Only used when decomposition = 'lagrangian'. Default 80.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "lagrangian_tolerance",
+      1.0,
+      null,
+      "Lagrangian decomposition: tail-averaged coupling-imbalance threshold for convergence of the outer loop. Only used when decomposition = 'lagrangian'. Default 1.0.",
+      "solve_advanced"
     ],
     [
       "solve",
@@ -3846,6 +3886,12 @@
     ],
     [
       "solve",
+      "decomposition",
+      "str",
+      0
+    ],
+    [
+      "solve",
       "fix_storage_periods",
       "array",
       1
@@ -3867,6 +3913,24 @@
       "invest_periods",
       "map",
       2
+    ],
+    [
+      "solve",
+      "lagrangian_alpha",
+      "float",
+      0
+    ],
+    [
+      "solve",
+      "lagrangian_max_iter",
+      "float",
+      0
+    ],
+    [
+      "solve",
+      "lagrangian_tolerance",
+      "float",
+      0
     ],
     [
       "solve",

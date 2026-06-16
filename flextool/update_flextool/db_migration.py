@@ -1695,6 +1695,8 @@ def migrate_database(
                     "range (conditioning) of the LP. Default 0.0001.",
                 )
                 db.commit_session("Added model.small_number_threshold parameter")
+            elif next_version == 60:
+                _migrate_v60_solve_decomposition(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -2856,6 +2858,151 @@ def _migrate_v51_group_block_resolution(db) -> None:
             "v51: added group.new_stepduration and "
             "group.decomposition_method (Agent 1.1 flex-temporal + "
             "decomposition foundation); no LP behaviour yet."
+        )
+    except SpineDBAPIError:
+        pass
+
+
+def _migrate_v60_solve_decomposition(db) -> None:
+    """Add per-solve decomposition scheme selection + Lagrangian knobs.
+
+    Rationale
+    ---------
+    Decomposition was previously an all-or-nothing CLI choice
+    (``--decomposition lagrangian``) that bypassed the normal
+    orchestrator.  This migration moves the choice into the database so
+    it can be made *per solve*: a single solve chain can run a
+    Lagrangian investment solve followed by a monolithic dispatch solve.
+
+    Parameters added to entity_class ``solve``:
+
+    * ``decomposition`` — enum string on the new ``decomposition_schemes``
+      value list (``none``, ``lagrangian``).  Default ``none`` preserves
+      existing behaviour.  When ``lagrangian`` the orchestrator runs that
+      solve through the Lagrangian driver over the group members whose
+      ``decomposition_method`` is ``lagrangian_region`` (the
+      ``decomp_<REG>`` groups).  Note this is *distinct* from the
+      group-level ``decomposition_methods`` value list (``none`` /
+      ``lagrangian_region``) added in v51: the group parameter declares
+      *which groups are regions*, the solve parameter declares *whether
+      this solve decomposes*.
+    * ``lagrangian_alpha`` — float, default 0.1.  Subgradient base step
+      size.
+    * ``lagrangian_max_iter`` — float, default 80.  Max outer iterations.
+    * ``lagrangian_tolerance`` — float, default 1.0.  Tail-averaged
+      coupling-imbalance convergence threshold.
+
+    These three replace the removed ``--lagrangian-*`` CLI flags, giving
+    the tuning knobs a per-solve home.
+
+    Idempotency
+    -----------
+    The PLEXOS-to-FlexTool writer self-defines and populates
+    ``solve.<name>.decomposition = lagrangian`` (under a ``lagrangian``
+    alternative) using the same value-list / value names.  ``import_data``
+    for value lists only adds what is missing and ``add_update_item``
+    updates an existing definition in place, so re-running against a DB
+    that already carries the writer's definition converges to the same
+    schema without duplicate value-list rows or definitions.
+    """
+
+    # --- Value list for solve.decomposition -----------------------------
+    add_value_list_manual(db, [
+        ["decomposition_schemes", "none"],
+        ["decomposition_schemes", "lagrangian"],
+    ])
+
+    # --- solve.decomposition --------------------------------------------
+    default_val, default_type = to_database("none")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="decomposition",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="decomposition_schemes",
+        parameter_type_list=("str",),
+        description=(
+            "Decomposition scheme for this solve. 'none' (default) "
+            "solves monolithically. 'lagrangian' runs the solve through "
+            "the Lagrangian region-decomposition driver over the groups "
+            "whose group.decomposition_method is 'lagrangian_region' "
+            "(requires at least two such region groups). The choice is "
+            "per solve, so an investment solve can decompose while a "
+            "later dispatch solve in the same chain stays monolithic."
+        ),
+    )
+
+    # --- solve.lagrangian_alpha -----------------------------------------
+    default_val, default_type = to_database(0.1)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="lagrangian_alpha",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Lagrangian decomposition: subgradient base step size for "
+            "the multiplier update. Only used when decomposition = "
+            "'lagrangian'. Default 0.1."
+        ),
+    )
+
+    # --- solve.lagrangian_max_iter --------------------------------------
+    default_val, default_type = to_database(80.0)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="lagrangian_max_iter",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Lagrangian decomposition: maximum number of outer "
+            "(subgradient) iterations. Only used when decomposition = "
+            "'lagrangian'. Default 80."
+        ),
+    )
+
+    # --- solve.lagrangian_tolerance -------------------------------------
+    default_val, default_type = to_database(1.0)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="lagrangian_tolerance",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Lagrangian decomposition: tail-averaged coupling-imbalance "
+            "threshold for convergence of the outer loop. Only used when "
+            "decomposition = 'lagrangian'. Default 1.0."
+        ),
+    )
+
+    # Attach all four to the solve_advanced parameter_group when it
+    # exists (v44+) — same heading as other experimental opt-in solve
+    # controls.
+    if db.item(db.mapped_table("parameter_group"), name="solve_advanced") is not None:
+        for _pname in (
+            "decomposition",
+            "lagrangian_alpha",
+            "lagrangian_max_iter",
+            "lagrangian_tolerance",
+        ):
+            db.add_update_item(
+                "parameter_definition",
+                entity_class_name="solve",
+                name=_pname,
+                parameter_group_name="solve_advanced",
+            )
+
+    try:
+        _commit_step(db,
+            "v60: added solve.decomposition (decomposition_schemes value "
+            "list) + solve.lagrangian_alpha/max_iter/tolerance for "
+            "per-solve Lagrangian decomposition."
         )
     except SpineDBAPIError:
         pass

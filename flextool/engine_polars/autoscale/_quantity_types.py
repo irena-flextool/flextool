@@ -149,6 +149,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
     ('cumulative_min_capacity', 'unit'): QuantityType.POWER,
     # [MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
+    ('decomposition', 'solve'): QuantityType.DIMENSIONLESS,
+    # Decomposition scheme for this solve: 'none' (monolithic, default) or 'lagrangian' (region decomposition). Solver-config choice, never an LP coefficient.
     ('decomposition_method', 'group'): QuantityType.DIMENSIONLESS,
     # Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solve...
     ('delay', 'connection'): QuantityType.DURATION,
@@ -281,6 +283,12 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Flag whether the reserve participation is enabled; disabled rows dropped.
     ('is_enabled', 'reserve__upDown__unit__node'): QuantityType.DIMENSIONLESS,
     # Flag whether the reserve participation is enabled; disabled rows dropped.
+    ('lagrangian_alpha', 'solve'): QuantityType.DIMENSIONLESS,
+    # Lagrangian subgradient base step size. Solver-algorithm knob, never an LP coefficient.
+    ('lagrangian_max_iter', 'solve'): QuantityType.DIMENSIONLESS,
+    # Lagrangian max outer iterations. Solver-algorithm knob, never an LP coefficient.
+    ('lagrangian_tolerance', 'solve'): QuantityType.DIMENSIONLESS,
+    # Lagrangian coupling-imbalance convergence threshold. Solver-algorithm knob, never an LP coefficient.
     ('large_failure_ratio', 'reserve__upDown__connection__node'): QuantityType.FRACTION,
     # [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of th...
     ('large_failure_ratio', 'reserve__upDown__unit__node'): QuantityType.FRACTION,
