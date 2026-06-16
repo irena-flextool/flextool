@@ -1116,14 +1116,26 @@ class ExecutionManager:
         _stl = getattr(settings, "solver_time_limit", 0)
         if isinstance(_stl, int) and _stl > 0:
             cmd.extend(["--solver-time-limit", str(_stl)])
+        # MIP gap is forwarded only when explicitly enabled (the dialog's
+        # "Set relative MIP gap here" checkbox).  When enabled, 0 is a
+        # valid value and IS sent; when disabled, no flag is emitted and
+        # the solver_config/<solver>.opt baseline governs.
+        if getattr(settings, "solver_mip_gap_set", False):
+            _smg = getattr(settings, "solver_mip_gap", 0.0)
+            if isinstance(_smg, (int, float)) and not isinstance(_smg, bool) and _smg >= 0:
+                cmd.extend(["--solver-mip-gap", repr(float(_smg))])
         _mff = getattr(settings, "matrix_file_format", "mps")
         if _mff != "mps":
             cmd.append(f"--matrix-file-format={_mff}")
         _scl = getattr(settings, "scaling", "full")
         if _scl != "full":
             cmd.append(f"--scaling={_scl}")
+        # Presolve is always forwarded (incl. the "choose" default): the
+        # engine's determinism pin lives on the in-process baseline used
+        # by the test gate, not this CLI path, so passing "choose" here
+        # genuinely lets HiGHS decide per-problem.
         _ps = getattr(settings, "presolve", "choose")
-        if _ps != "choose":
+        if _ps in ("on", "off", "choose"):
             cmd.append(f"--presolve={_ps}")
 
         return cmd

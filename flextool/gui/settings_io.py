@@ -78,6 +78,12 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     _stl = data.get("solver_time_limit", settings.solver_time_limit)
     if isinstance(_stl, int) and not isinstance(_stl, bool) and _stl >= 0:
         settings.solver_time_limit = _stl
+    _smg = data.get("solver_mip_gap", settings.solver_mip_gap)
+    if isinstance(_smg, (int, float)) and not isinstance(_smg, bool) and _smg >= 0:
+        settings.solver_mip_gap = float(_smg)
+    _smg_set = data.get("solver_mip_gap_set", settings.solver_mip_gap_set)
+    if isinstance(_smg_set, bool):
+        settings.solver_mip_gap_set = _smg_set
     _mff = data.get("matrix_file_format", settings.matrix_file_format)
     if _mff in ("mps", "lp"):
         settings.matrix_file_format = _mff

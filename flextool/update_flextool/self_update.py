@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 import shutil
@@ -159,6 +160,124 @@ def _sync_settings_param_defs(json_template, sqlite_path):
               f"{sqlite_path}: {exc}")
 
 
+_PROJECT_FOLDER_TEMPLATE = (
+    "# FlexTool output project folder (user-local; not tracked by git).\n"
+    "# Write ONE path below — absolute, or relative to the FlexTool root —\n"
+    "# to direct this workflow's outputs (output_parquet/, results.sqlite,\n"
+    "# plots, and the per-project plot_settings.yaml) into that project folder.\n"
+    "# Leave blank to use the FlexTool root.\n"
+    "# Use projects sub-folders to allow access by FlexTool GUI as well.\n"
+    "# Using the project specific input_sources folder for the input data db\n"
+    "# makes it visible in the GUI too.\n"
+    "# e.g.:  projects/Rivendell\n"
+)
+
+
+def ensure_runtime_files(verbose: bool = False) -> None:
+    """Idempotently materialize the per-installation runtime files that
+    FlexTool needs but does not track in git.
+
+    Every step is **create-if-missing**: an existing user-edited file is
+    never overwritten, so this is safe to call on every GUI launch *and*
+    as the seeding step of :func:`update_flextool`.  Each group is wrapped
+    so that one failure (e.g. a locked DB) logs a warning and the rest
+    still run — a seeding hiccup must never block GUI startup.
+
+    Paths are interpreted relative to the current working directory (the
+    FlexTool workspace root), matching :func:`update_flextool` and the
+    GUI's ``get_projects_dir`` convention.
+
+    Covers: the root input/settings SQLites and their ``templates/``
+    copies, the canonical example DBs + XLSX templates, the user-facing
+    ``example_input.xlsx``, the ``solver_config/<solver>.opt`` files,
+    ``templates/project_folder.txt``, and ``results.sqlite``.
+
+    It deliberately does NOT perform the update-only operations (git
+    restore/pull, reinstall, the unconditional template refresh that
+    keeps artifacts schema-current after a pull, parameter-definition
+    back-fill into existing DBs, or DB-version migration) — those remain
+    in :func:`update_flextool`.
+    """
+    master_json = str(package_data_path("schemas/spinedb_schema.json"))
+    output_settings_json = str(package_data_path("schemas/output_settings_template.json"))
+    output_info_json = str(package_data_path("schemas/output_info_template.json"))
+    comparison_settings_json = str(package_data_path("schemas/comparison_settings_template.json"))
+
+    os.makedirs("templates", exist_ok=True)
+    os.makedirs("solver_config", exist_ok=True)
+
+    # 1. Root input/settings DBs + their templates/ copies, from the
+    #    bundled package JSON.  Created once; user edits then survive.
+    try:
+        for sqlite_rel, json_src in (
+            ("input_data.sqlite", master_json),
+            ("templates/input_data_template.sqlite", master_json),
+            ("output_settings.sqlite", output_settings_json),
+            ("output_info.sqlite", output_info_json),
+            ("comparison_settings.sqlite", comparison_settings_json),
+            ("templates/output_settings.sqlite", output_settings_json),
+            ("templates/output_info.sqlite", output_info_json),
+            ("templates/comparison_settings.sqlite", comparison_settings_json),
+        ):
+            if not os.path.exists(sqlite_rel):
+                if verbose:
+                    print(f"Seeding {sqlite_rel}")
+                initialize_database(json_src, sqlite_rel)
+    except Exception as exc:
+        logging.warning("ensure_runtime_files: input/settings DB seeding failed: %s", exc)
+
+    # 2. Canonical example DBs, the XLSX templates derived from them, and
+    #    the user-facing example_input.xlsx — all create-if-missing.
+    try:
+        canonical_databases.materialize(overwrite=False)
+        from flextool.export_to_tabular import export_to_excel
+        for sqlite_rel, xlsx_rel in (
+            ("templates/examples.sqlite", "templates/example_input_template.xlsx"),
+            ("templates/input_data_template.sqlite", "templates/empty_input_template.xlsx"),
+        ):
+            if os.path.exists(sqlite_rel) and not os.path.exists(xlsx_rel):
+                export_to_excel(f"sqlite:///{sqlite_rel}", xlsx_rel)
+        if not os.path.exists("example_input.xlsx") and os.path.exists("templates/example_input_template.xlsx"):
+            shutil.copy("templates/example_input_template.xlsx", "example_input.xlsx")
+    except Exception as exc:
+        logging.warning("ensure_runtime_files: example/template seeding failed: %s", exc)
+
+    # 3. Live solver options — HiGHS + the four commercial solvers — each
+    #    seeded from its bundled <solver>.opt.template if missing.  The
+    #    runtime files are gitignored and user-editable (delete one to
+    #    reset it to the bundled default).
+    try:
+        for _solver in ("highs", "gurobi", "cplex", "xpress", "copt"):
+            _runtime = f"solver_config/{_solver}.opt"
+            if not os.path.exists(_runtime):
+                shutil.copy(
+                    str(package_data_path(f"solver_config/{_solver}.opt.template")),
+                    _runtime,
+                )
+    except Exception as exc:
+        logging.warning("ensure_runtime_files: solver_config seeding failed: %s", exc)
+
+    # 4. templates/project_folder.txt — a commented guide; its CONTENTS are
+    #    load-bearing for Spine Toolbox (the run Tool reads the first
+    #    non-comment line as the output project folder).  Gitignored.
+    try:
+        if not os.path.exists("templates/project_folder.txt"):
+            with open("templates/project_folder.txt", "w", encoding="utf-8") as fh:
+                fh.write(_PROJECT_FOLDER_TEMPLATE)
+    except Exception as exc:
+        logging.warning("ensure_runtime_files: project_folder.txt seeding failed: %s", exc)
+
+    # 5. results.sqlite (and its template), both create-if-missing.
+    try:
+        result_template_path = str(package_data_path("schemas/pre_v26/flextool_template_results_master.json"))
+        if not os.path.exists("templates/results_template.sqlite"):
+            initialize_result_database("templates/results_template.sqlite", result_template_path)
+        if not os.path.exists("results.sqlite") and os.path.exists("templates/results_template.sqlite"):
+            shutil.copy("templates/results_template.sqlite", "results.sqlite")
+    except Exception as exc:
+        logging.warning("ensure_runtime_files: results DB seeding failed: %s", exc)
+
+
 def update_flextool(skip_git):
 
     shutil.copy("./.spinetoolbox/project.json", "./.spinetoolbox/project_temp.json")
@@ -185,32 +304,27 @@ def update_flextool(skip_git):
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
     os.remove("./.spinetoolbox/project_temp.json")
 
-    # Locate bundled JSON templates from the installed flextool package.
-    master_json = str(package_data_path("schemas/spinedb_schema.json"))
+    # Idempotently materialize all per-installation runtime files
+    # (root/settings DBs + templates, canonical examples + XLSX,
+    # example_input.xlsx, solver_config/*.opt, project_folder.txt,
+    # results.sqlite).  Shared with the GUI startup path, so "an update
+    # brought a new file to copy" is handled by the same create-if-missing
+    # logic in both places — no duplication.
+    ensure_runtime_files()
+
+    # ----- Update-only refresh of EXISTING artifacts (after a git pull) ---
+    # These differ from the create-if-missing seeding above: they bring
+    # already-present files up to the current schema, so they must NOT run
+    # on every GUI launch (that is why they stay here, not in
+    # ensure_runtime_files).
     output_settings_json = str(package_data_path("schemas/output_settings_template.json"))
     output_info_json = str(package_data_path("schemas/output_info_template.json"))
     comparison_settings_json = str(package_data_path("schemas/comparison_settings_template.json"))
 
-    # Create input databases if they do not exist.
-    os.makedirs("templates", exist_ok=True)
-    if not os.path.exists("input_data.sqlite"):
-        initialize_database(master_json, "input_data.sqlite")
-    if not os.path.exists("templates/input_data_template.sqlite"):
-        initialize_database(master_json, "templates/input_data_template.sqlite")
-
-    # Create user copies of the auxiliary databases
-    if not os.path.exists("output_settings.sqlite"):
-        initialize_database(output_settings_json, "output_settings.sqlite")
-    if not os.path.exists("output_info.sqlite"):
-        initialize_database(output_info_json, "output_info.sqlite")
-    if not os.path.exists("comparison_settings.sqlite"):
-        initialize_database(comparison_settings_json, "comparison_settings.sqlite")
-
     # Back-fill parameter definitions added in newer versions into EXISTING
-    # user settings DBs.  The create-if-absent above only seeds them once, so
-    # options added later (e.g. output-spinedb) must be added to DBs made by
-    # older versions.  Only schema is synced; user parameter values are
-    # untouched.
+    # user settings DBs.  Options added later (e.g. output-spinedb) must be
+    # added to DBs made by older versions.  Only schema is synced; user
+    # parameter values are untouched.
     for sqlite_rel, json_src in (
         ("output_settings.sqlite", output_settings_json),
         ("output_info.sqlite", output_info_json),
@@ -219,7 +333,8 @@ def update_flextool(skip_git):
         if os.path.exists(sqlite_rel):
             _sync_settings_param_defs(json_src, sqlite_rel)
 
-    # Keep CWD-resident template SQLites up-to-date (Spine Toolbox refs).
+    # Keep CWD-resident template SQLites up-to-date (Spine Toolbox refs):
+    # unconditional regen so a git pull's schema change is reflected.
     for sqlite_rel, json_src in (
         ("templates/output_settings.sqlite", output_settings_json),
         ("templates/output_info.sqlite", output_info_json),
@@ -229,73 +344,19 @@ def update_flextool(skip_git):
             os.remove(sqlite_rel)
         initialize_database(json_src, sqlite_rel)
 
-    # Materialize canonical example/template SQLites from their JSON
-    # sources (``flextool/schemas/canonical_databases/*.json``).
-    # Skips files that already exist so user edits in the working tree
-    # survive.  The canonical JSONs are kept current by
-    # ``python -m flextool.update_flextool.canonical_databases migrate-all``
-    # which is part of the schema-migration workflow — see
-    # CONTRIBUTING.md.
-    canonical_databases.materialize(overwrite=False)
-
-    # Generate XLSX templates from the canonical SQLites:
-    #   - example_input_template.xlsx  → derived from examples.sqlite
-    #   - empty_input_template.xlsx    → derived from input_data_template.sqlite
-    # Regenerating each ``update_flextool()`` keeps them in sync with the
-    # current schema without us having to track the binary in git.
+    # Refresh XLSX templates from the canonical SQLites so they track the
+    # current schema (unconditional regen; the binaries are not in git).
     from flextool.export_to_tabular import export_to_excel
-    _xlsx_pairs = (
+    for sqlite_rel, xlsx_rel in (
         ("templates/examples.sqlite", "templates/example_input_template.xlsx"),
         ("templates/input_data_template.sqlite", "templates/empty_input_template.xlsx"),
-    )
-    for sqlite_rel, xlsx_rel in _xlsx_pairs:
+    ):
         if not os.path.exists(sqlite_rel):
             continue
         try:
             export_to_excel(f"sqlite:///{sqlite_rel}", xlsx_rel)
         except Exception as exc:
             print(f"Warning: failed to generate {xlsx_rel}: {exc}")
-
-    # Copy the user-facing example_input.xlsx on first run.  Done after
-    # the template regeneration so users get the freshly-built XLSX.
-    if not os.path.exists("example_input.xlsx") and os.path.exists("templates/example_input_template.xlsx"):
-        shutil.copy("templates/example_input_template.xlsx", "example_input.xlsx")
-
-    # Seed solver_config/highs.opt from the bundled template on first run.
-    # The runtime file is user-editable; the template ships in the package.
-    os.makedirs("solver_config", exist_ok=True)
-    if not os.path.exists("solver_config/highs.opt"):
-        shutil.copy(
-            str(package_data_path("solver_config/highs.opt.template")),
-            "solver_config/highs.opt",
-        )
-
-    # Seed templates/project_folder.txt on first run.  Unlike the legacy
-    # anchor file, this file's CONTENTS are LOAD-BEARING: Spine Toolbox's
-    # FlexTool run Tool passes ``--project-folder-file <project>/templates/
-    # project_folder.txt`` and the CLI reads the first non-empty,
-    # non-comment line as the output project folder (absolute, or relative
-    # to the repo root).  The file is gitignored (user-local), so a user
-    # can redirect every output into a per-project folder with ZERO
-    # git-committed change.  Seeded with a commented template only; an
-    # empty/comment-only file means "use the FlexTool root" (the resolver
-    # falls through).  See the 5-tier resolver in
-    # flextool/cli/cmd_run_flextool.py.  Idempotent: never overwrites an
-    # existing file.
-    os.makedirs("templates", exist_ok=True)
-    if not os.path.exists("templates/project_folder.txt"):
-        with open("templates/project_folder.txt", "w", encoding="utf-8") as fh:
-            fh.write(
-                "# FlexTool output project folder (user-local; not tracked by git).\n"
-                "# Write ONE path below — absolute, or relative to the FlexTool root —\n"
-                "# to direct this workflow's outputs (output_parquet/, results.sqlite,\n"
-                "# plots, and the per-project plot_settings.yaml) into that project folder.\n"
-                "# Leave blank to use the FlexTool root.\n"
-                "# Use projects sub-folders to allow access by FlexTool GUI as well.\n"
-                "# Using the project specific input_sources folder for the input data db\n"
-                "# makes it visible in the GUI too.\n"
-                "# e.g.:  projects/Rivendell\n"
-            )
 
     # Migrate user-owned SQLites (canonical ones are already at current
     # version because they were just materialized from the canonical
@@ -315,8 +376,10 @@ def update_flextool(skip_git):
     for i in db_to_update:
         migrate_database(i)
 
+    # Refresh the results template (unconditional) and ensure results.sqlite
+    # exists (ensure_runtime_files seeds it; this is a belt-and-braces copy
+    # for the case it was removed since).
     result_template_path = str(package_data_path("schemas/pre_v26/flextool_template_results_master.json"))
-    #replace the template sqlite
     if os.path.exists('templates/results_template.sqlite'):
         os.remove('templates/results_template.sqlite')
     initialize_result_database('templates/results_template.sqlite', result_template_path)

@@ -104,8 +104,13 @@ FlexTool surfaces as a `FlexToolUserError` with the vendor's text.
 
 ### Per-solver baseline `.opt` files
 
-Every solver gets a baseline parameter file shipped in the FlexTool repo
-under `solver_config/`:
+Every solver gets a baseline parameter file under `solver_config/`.  These
+are **user-local files, not committed to the repo**: each ships in the wheel
+as a `solver_config/<solver>.opt.template`, and FlexTool seeds the runtime
+`solver_config/<solver>.opt` from its template on first run (and re-seeds any
+that are missing).  The runtime files are gitignored, so you can edit them —
+or delete one to reset it to the bundled default — with zero git-committed
+change.
 
 | Solver  | Baseline file                | Native format                                       |
 |---------|------------------------------|-----------------------------------------------------|
@@ -115,7 +120,7 @@ under `solver_config/`:
 | Xpress  | `solver_config/xpress.opt`   | `CONTROL value` per line                            |
 | COPT    | `solver_config/copt.opt`     | `ParamName value` per line                          |
 
-These files are user-editable.  FlexTool reads each solver's baseline at
+FlexTool reads each solver's baseline at
 solve time, overlays the scenario's `solver_arguments` Map (plus the
 convenience-knob translations from the `--solver-time-limit` /
 `solver_mip_gap` / `--highs-threads` knobs) **line-by-line**, writes the

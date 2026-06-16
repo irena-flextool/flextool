@@ -2043,6 +2043,10 @@ def _drive_cascade(
             # block above).  Default: HiGHS does its own scaling.
             # Cap solve time via env var if the operator requested it.
             _diag_tlim = os.environ.get("FLEXTOOL_HIGHS_TIME_LIMIT")
+            # Allow operator to override HiGHS ``mip_rel_gap`` via
+            # ``--solver-mip-gap GAP`` CLI flag (env-var-plumbed).  Only
+            # bites MIP solves; pure-LP solves ignore it.
+            _cli_mip_gap = os.environ.get("FLEXTOOL_HIGHS_MIP_GAP")
             # Allow operator to override HiGHS ``presolve`` via
             # ``--presolve {on,off,choose}`` CLI flag (env-var-plumbed).
             _cli_presolve = os.environ.get("FLEXTOOL_HIGHS_PRESOLVE")
@@ -2071,6 +2075,11 @@ def _drive_cascade(
                 if _diag_tlim:
                     try:
                         cli["time_limit"] = float(_diag_tlim)
+                    except ValueError:
+                        pass
+                if _cli_mip_gap:
+                    try:
+                        cli["mip_rel_gap"] = float(_cli_mip_gap)
                     except ValueError:
                         pass
                 if _cli_presolve in ("on", "off", "choose"):

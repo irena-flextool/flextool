@@ -107,6 +107,17 @@ class ProjectSettings:
     # default).  Only appended when > 0.
     solver_time_limit: int = 0
 
+    # HiGHS MIP relative optimality gap (``--solver-mip-gap``), routed to
+    # HiGHS' ``mip_rel_gap`` option.  ``solver_mip_gap_set`` gates whether
+    # the value is sent at all: when True the gap is appended (and 0 is a
+    # valid value — solve to a proven exact optimum); when False no
+    # override is emitted and the solver_config/<solver>.opt baseline (or
+    # the solver's built-in default) governs.  Only affects MIP solves
+    # (integer investments, unit-commitment / online variables); pure-LP
+    # solves ignore it.
+    solver_mip_gap_set: bool = True
+    solver_mip_gap: float = 0.001
+
     # On-disk format used when the solver is dispatched via a matrix
     # file (``--matrix-file-format``).  One of ``"mps"`` | ``"lp"``.
     # Default "mps"; only appended when non-default.  The in-process
@@ -121,10 +132,11 @@ class ProjectSettings:
     scaling: str = "full"
 
     # HiGHS ``presolve`` override (``--presolve``).  One of
-    # ``"on"`` | ``"off"`` | ``"choose"``.  "choose" is the
-    # GUI-side default meaning "leave the CLI flag unset and keep the
-    # determinism-pinned default in the engine"; only "on" / "off" are
-    # appended to the engine command line.
+    # ``"on"`` | ``"off"`` | ``"choose"``.  All three are appended to
+    # the engine command line: "choose" is HiGHS' native default and
+    # lets the solver decide per-problem, overriding the engine's
+    # determinism-pinned "on" baseline (that pin only governs the test
+    # gate, which does not go through this CLI path).  Default "choose".
     presolve: str = "choose"
 
     # Plot settings

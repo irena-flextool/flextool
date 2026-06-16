@@ -552,6 +552,16 @@ def main():
                              'Batch C.8).  Routed through the '
                              'effective-options resolver as a CLI '
                              'override (highest precedence).')
+    parser.add_argument('--solver-mip-gap', type=float, default=None,
+                        metavar='GAP',
+                        help='HiGHS MIP relative optimality gap '
+                             '(``mip_rel_gap`` option).  Unset (default) '
+                             'keeps HiGHS\' built-in 1e-4.  Only affects '
+                             'MIP solves (integer investments, '
+                             'unit-commitment / online variables); '
+                             'pure-LP solves ignore it.  Routed through '
+                             'the effective-options resolver as a CLI '
+                             'override (highest precedence).')
     parser.add_argument('--matrix-file-format',
                         choices=['mps', 'lp'],
                         default=None,
@@ -604,6 +614,8 @@ def main():
         # name is a historical artefact from the diagnostic shim that
         # predated the resolver but the semantics are identical.
         os.environ['FLEXTOOL_HIGHS_TIME_LIMIT'] = str(args.solver_time_limit)
+    if args.solver_mip_gap is not None:
+        os.environ['FLEXTOOL_HIGHS_MIP_GAP'] = str(args.solver_mip_gap)
     if args.matrix_file_format is not None:
         os.environ['FLEXTOOL_MATRIX_FILE_FORMAT'] = args.matrix_file_format
     # ``--scaling`` (off/solver_only/basic/full) — CLI > env > default-full.

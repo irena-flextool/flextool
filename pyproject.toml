@@ -167,7 +167,9 @@ exclude = ["flextool*.__pycache__"]
 #   * schemas/*.yaml                    — YAML configs (default plots/colors)
 #   * schemas/canonical_databases/*.json — canonical example/template DB sources
 #   * schemas/pre_v26/*.json            — pre-v26 migration-step template snapshots
-#   * solver_config/highs.opt.template — HiGHS options template (seeded into solver_config/highs.opt on first run)
+#   * solver_config/*.opt.template      — solver options templates (HiGHS + the
+#                                         commercial solvers; seeded into
+#                                         solver_config/<solver>.opt on first run)
 #   * export_to_tabular/*.yaml          — export settings (sheet config etc.)
 flextool = [
     "schemas/*.json",
@@ -175,6 +177,6 @@ flextool = [
     "schemas/*.yaml",
     "schemas/canonical_databases/*.json",
     "schemas/pre_v26/*.json",
-    "solver_config/highs.opt.template",
+    "solver_config/*.opt.template",
     "export_to_tabular/*.yaml",
 ]

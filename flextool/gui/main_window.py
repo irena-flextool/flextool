@@ -372,12 +372,15 @@ class MainWindow(tk.Tk):
         # the side menu, above the Debug radio group).
         self.solver_log_level_var = tk.StringVar(value="normal")
         self.solver_time_limit_var = tk.IntVar(value=0)
+        self.solver_mip_gap_var = tk.DoubleVar(value=0.001)
+        self.solver_mip_gap_set_var = tk.BooleanVar(value=True)
         self.matrix_file_format_var = tk.StringVar(value="mps")
         self.scaling_var = tk.StringVar(value="full")
         self.presolve_var = tk.StringVar(value="choose")
 
         for _v in (
             self.solver_log_level_var, self.solver_time_limit_var,
+            self.solver_mip_gap_var, self.solver_mip_gap_set_var,
             self.matrix_file_format_var, self.scaling_var,
             self.presolve_var,
         ):
@@ -1045,6 +1048,19 @@ class MainWindow(tk.Tk):
         """Initialise project state on application start."""
         projects_dir = get_projects_dir()
         projects_dir.mkdir(parents=True, exist_ok=True)
+
+        # Idempotently materialize the per-installation runtime files
+        # (solver_config/*.opt, root/settings DBs, example_input.xlsx,
+        # project_folder.txt, results.sqlite).  Shares one create-if-missing
+        # implementation with `update_flextool`, so a fresh install — or an
+        # update that adds a new template — gets everything in place without
+        # the user having to run "Update FlexTool…" first.  Wrapped: a
+        # seeding hiccup must never block the GUI from launching.
+        try:
+            from flextool.update_flextool import ensure_runtime_files
+            ensure_runtime_files()
+        except Exception:
+            logger.warning("ensure_runtime_files failed at startup", exc_info=True)
 
         self.global_settings = load_global_settings(projects_dir)
         self._refresh_project_combo()
@@ -5087,6 +5103,8 @@ class MainWindow(tk.Tk):
             # Solver options.
             self.solver_log_level_var.set(s.solver_log_level)
             self.solver_time_limit_var.set(s.solver_time_limit)
+            self.solver_mip_gap_var.set(s.solver_mip_gap)
+            self.solver_mip_gap_set_var.set(s.solver_mip_gap_set)
             self.matrix_file_format_var.set(s.matrix_file_format)
             self.scaling_var.set(s.scaling)
             self.presolve_var.set(s.presolve)
@@ -5120,6 +5138,11 @@ class MainWindow(tk.Tk):
             self.project_settings.solver_time_limit = max(0, int(self.solver_time_limit_var.get()))
         except (TypeError, ValueError, tk.TclError):
             pass
+        try:
+            self.project_settings.solver_mip_gap = max(0.0, float(self.solver_mip_gap_var.get()))
+        except (TypeError, ValueError, tk.TclError):
+            pass
+        self.project_settings.solver_mip_gap_set = bool(self.solver_mip_gap_set_var.get())
         _mff = self.matrix_file_format_var.get()
         if _mff in ("mps", "lp"):
             self.project_settings.matrix_file_format = _mff
@@ -5148,15 +5171,17 @@ class MainWindow(tk.Tk):
         """
         from flextool.gui.hover_tooltip import attach_tooltip as _attach_tip
 
-        dlg = tk.Toplevel(self.root)
+        dlg = tk.Toplevel(self)
         dlg.title("Solver options")
-        dlg.transient(self.root)
+        dlg.transient(self)
         dlg.resizable(False, False)
 
         # Seed dialog-local vars from the main-window vars so Cancel
         # discards cleanly.
         d_sll = tk.StringVar(value=self.solver_log_level_var.get())
         d_stl = tk.IntVar(value=self.solver_time_limit_var.get())
+        d_mg = tk.DoubleVar(value=self.solver_mip_gap_var.get())
+        d_mg_set = tk.BooleanVar(value=self.solver_mip_gap_set_var.get())
         d_mff = tk.StringVar(value=self.matrix_file_format_var.get())
         d_scl = tk.StringVar(value=self.scaling_var.get())
         d_ps = tk.StringVar(value=self.presolve_var.get())
@@ -5185,21 +5210,85 @@ class MainWindow(tk.Tk):
         ))
         row += 1
 
+        # Shared input guard for the two free-text numeric fields below
+        # (time limit, MIP gap).  Plain Entry widgets — not Spinboxes:
+        # both span too wide a range (1 s … 10^9 s; 1e-5 … 1) for spin
+        # arrows to be useful.
+        def _validate_nonneg_number(proposed: str) -> bool:
+            # Allow empty / bare-dot mid-edit; otherwise require a
+            # parseable, non-negative number.  Rejects "-" and any
+            # negative value as you type, so the fields can never hold a
+            # negative value.
+            if proposed in ("", "."):
+                return True
+            try:
+                return float(proposed) >= 0.0
+            except ValueError:
+                return False
+
+        _vcmd = (dlg.register(_validate_nonneg_number), "%P")
+
         # Time limit
         ttk.Label(body, text="Time limit (s):").grid(
             row=row, column=0, sticky="w", padx=(0, 8), pady=4,
         )
-        tl_spin = ttk.Spinbox(
-            body, from_=0, to=10**9, width=12, textvariable=d_stl,
+        tl_entry = ttk.Entry(
+            body, width=14, textvariable=d_stl,
+            validate="key", validatecommand=_vcmd,
         )
-        tl_spin.grid(row=row, column=1, sticky="w", pady=4)
-        _attach_tip(tl_spin, (
+        tl_entry.grid(row=row, column=1, sticky="w", pady=4)
+        _attach_tip(tl_entry, (
             "HiGHS wall-clock time limit in whole seconds\n"
             "(--solver-time-limit SECONDS). 0 means no limit\n"
             "(the CLI's unset default). Routed through the\n"
             "effective-options resolver as a CLI override\n"
             "(highest precedence)."
         ))
+        row += 1
+
+        # MIP relative gap.  A checkbox decides whether the dialog value
+        # is sent at all: when off, no --solver-mip-gap flag is emitted
+        # and the solver_config/<solver>.opt baseline (or the solver's
+        # built-in default) governs.  When on, the value IS sent — and
+        # 0 is a valid value (solve to a proven exact optimum), so 0 is
+        # no longer overloaded as the "defer" sentinel.
+        mg_check = ttk.Checkbutton(
+            body, text="Set relative MIP gap here", variable=d_mg_set,
+        )
+        mg_check.grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+        mg_entry = ttk.Entry(
+            body, width=14, textvariable=d_mg,
+            validate="key", validatecommand=_vcmd,
+        )
+        mg_entry.grid(row=row, column=1, sticky="w", pady=4)
+
+        def _sync_mg_state(*_a) -> None:
+            mg_entry.configure(
+                state="normal" if d_mg_set.get() else "disabled",
+            )
+
+        mg_check.configure(command=_sync_mg_state)
+        _sync_mg_state()  # apply initial enabled/disabled state
+        _mg_tip = (
+            "HiGHS MIP relative optimality gap\n"
+            "(--solver-mip-gap, routed to HiGHS 'mip_rel_gap').\n"
+            "Only affects MIP solves (integer investments,\n"
+            "unit-commitment / online variables); pure-LP solves\n"
+            "ignore it.\n"
+            "  • Checked   — FlexTool sends this gap to the solver,\n"
+            "                overriding any value in the\n"
+            "                solver_config/<solver>.opt file. 0 is\n"
+            "                valid (solve to a proven exact optimum);\n"
+            "                a larger gap (e.g. 0.01 = 1%) stops the\n"
+            "                branch-and-bound search sooner, trading\n"
+            "                optimality for speed.\n"
+            "  • Unchecked — no override is sent; the value in\n"
+            "                solver_config/<solver>.opt applies. If\n"
+            "                that file sets no gap either, the solver's\n"
+            "                built-in default applies (HiGHS: 1e-4)."
+        )
+        _attach_tip(mg_check, _mg_tip)
+        _attach_tip(mg_entry, _mg_tip)
         row += 1
 
         # Matrix file format
@@ -5269,12 +5358,33 @@ class MainWindow(tk.Tk):
             ).pack(side="left", padx=(0, 6))
         _attach_tip(ps_row, (
             "HiGHS presolve override (--presolve).\n"
-            "  • on / off — explicit override.\n"
-            "  • choose   — leave the CLI flag unset; the engine keeps\n"
-            "                its determinism-pinned 'on' default.\n"
-            "Off disables presolve entirely (much slower but useful\n"
-            "for memory or numerical diagnostics)."
+            "  • on       — force presolve on.\n"
+            "  • off      — disable presolve entirely (much slower but\n"
+            "                useful for memory or numerical diagnostics).\n"
+            "  • choose   — let HiGHS decide per-problem (its native\n"
+            "                default; the recommended setting).\n"
+            "The engine's determinism gate pins presolve='on' internally\n"
+            "for byte-identical golden tests; that pin is independent of\n"
+            "this GUI/CLI knob, so 'choose' here is safe for normal runs."
         ))
+        row += 1
+
+        # Footnote: the full HiGHS/solver option set lives in .opt files.
+        ttk.Separator(body, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(10, 6),
+        )
+        row += 1
+        foot = ttk.Label(
+            body,
+            text=(
+                "These are the common knobs. The full set of solver "
+                "options can be set\nthrough the .opt files (e.g. "
+                "highs.opt) in the project's solver_config folder."
+            ),
+            justify="left",
+            foreground="#666666",
+        )
+        foot.grid(row=row, column=0, columnspan=2, sticky="w")
         row += 1
 
         # OK / Cancel buttons
@@ -5293,6 +5403,11 @@ class MainWindow(tk.Tk):
                 self.solver_log_level_var.set(_v_sll)
             try:
                 self.solver_time_limit_var.set(max(0, int(d_stl.get())))
+            except (TypeError, ValueError, tk.TclError):
+                pass
+            self.solver_mip_gap_set_var.set(bool(d_mg_set.get()))
+            try:
+                self.solver_mip_gap_var.set(max(0.0, float(d_mg.get())))
             except (TypeError, ValueError, tk.TclError):
                 pass
             _v_mff = d_mff.get()
@@ -5322,10 +5437,10 @@ class MainWindow(tk.Tk):
         dlg.update_idletasks()
         # Centre on the main window.
         try:
-            px = self.root.winfo_rootx()
-            py = self.root.winfo_rooty()
-            pw = self.root.winfo_width()
-            ph = self.root.winfo_height()
+            px = self.winfo_rootx()
+            py = self.winfo_rooty()
+            pw = self.winfo_width()
+            ph = self.winfo_height()
             dw = dlg.winfo_reqwidth()
             dh = dlg.winfo_reqheight()
             dlg.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")

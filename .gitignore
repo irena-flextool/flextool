@@ -16,8 +16,9 @@ results/
 *.log
 *.mps
 *.sol
-# Live HiGHS options — user-editable; seeded from the bundled template on first run
-solver_config/highs.opt
+# Live solver options (HiGHS + commercial solvers) — user-editable;
+# seeded from the bundled *.opt.template files on first run.
+solver_config/*.opt
 __pycache__
 # Python build artifacts — setuptools regenerates these on every
 # editable install / build / sdist; never repo assets.

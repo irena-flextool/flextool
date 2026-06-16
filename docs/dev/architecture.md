@@ -127,9 +127,11 @@ flextool/                          The installed Python package
 ├── helpers/                       Small standalone diagnostic utilities
 │                                    (file compare, LP coefficient inspector,
 │                                    schema converters).
-├── solver_config/                 HiGHS options template (shipped in the
-│                                    wheel; seeded into the project-root
-│                                    solver_config/ on first run).
+├── solver_config/                 Solver options templates (HiGHS + the
+│                                    commercial solvers; shipped in the
+│                                    wheel as *.opt.template, seeded into
+│                                    the project-root solver_config/ on
+│                                    first run).
 ├── schemas/                       Schema JSONs, YAML templates,
 │                                    canonical-database JSONs, pre-v26
 │                                    migration snapshots.
@@ -141,9 +143,10 @@ Root wrapper scripts (kept for Spine Toolbox workflow compatibility):
   migrate_database.py, read_tabular_input.py,
   execute_flextool_workflow.py, update_flextool.py
 
-solver_config/                     Project-root user-editable HiGHS options
-                                     (highs.opt — gitignored; seeded from the
-                                     bundled template on first run).
+solver_config/                     Project-root user-editable solver options
+                                     (highs.opt + gurobi/cplex/xpress/copt.opt
+                                     — all gitignored; each seeded from its
+                                     bundled *.opt.template on first run).
 
 templates/                         Example databases and project assets
                                      (examples.sqlite, input templates).
