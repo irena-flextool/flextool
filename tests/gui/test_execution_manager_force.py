@@ -2,8 +2,12 @@
 
 These exercise the scheduler's admission decision (`_pick_next_pending`)
 in isolation: the manager is constructed but never `.start()`ed, so no
-scheduler thread, watchdog, or subprocess runs. `_can_admit_memory` is
-monkeypatched to simulate a system that the reserve check considers full.
+scheduler thread, watchdog, or subprocess runs. `_memory_admits` is
+monkeypatched to simulate a system the live free-RAM check considers full.
+
+The fixture seeds `_running_count = 1` (one job already running) and a
+generous `max_workers` so the "always run at least one" rule and the
+thread-slot ceiling don't pre-empt the memory check under test.
 """
 
 from __future__ import annotations
@@ -39,8 +43,10 @@ def _pending_scenario(job_id: int, name: str) -> ExecutionJob:
 def mgr(tmp_path: Path) -> ExecutionManager:
     m = _make_manager(tmp_path)
     m._jobs = [_pending_scenario(1, "a"), _pending_scenario(2, "b")]
-    # Simulate a system the reserve check always rejects.
-    m._can_admit_memory = lambda est: False  # type: ignore[assignment]
+    m._max_workers = 5          # don't let the thread ceiling bind first
+    m._running_count = 1        # something already runs ⇒ skip "always run one"
+    # Simulate a system the live free-RAM check always rejects.
+    m._memory_admits = lambda candidate, source, est: False  # type: ignore[assignment]
     return m
 
 
@@ -50,15 +56,30 @@ class TestForceStartAdmission:
             chosen = mgr._pick_next_pending()
         assert chosen is None
         assert mgr._memory_limited is True
-        assert mgr._running_count == 0
+        assert mgr._running_count == 1
+
+    def test_first_job_always_admitted_when_nothing_runs(
+        self, mgr: ExecutionManager
+    ) -> None:
+        # With nothing running, the first scenario starts even though the
+        # memory check would reject it — a single oversized scenario gets its
+        # shot and a tight machine never deadlocks.
+        mgr._running_count = 0
+        with mgr._lock:
+            chosen = mgr._pick_next_pending()
+        assert chosen is not None and chosen.job_id == 1
+        assert chosen.status is JobStatus.RUNNING
+        assert mgr._memory_limited is False
+        assert mgr._running_count == 1
 
     def test_forced_job_bypasses_reserve_check(self, mgr: ExecutionManager) -> None:
         mgr.set_force_start(2, True)
         with mgr._lock:
             chosen = mgr._pick_next_pending()
         assert chosen is not None and chosen.job_id == 2
+        assert chosen.status is JobStatus.RUNNING
         assert mgr._memory_limited is False
-        assert mgr._running_count == 1
+        assert mgr._running_count == 2
 
     def test_forced_job_still_respects_thread_limit(self, mgr: ExecutionManager) -> None:
         mgr.set_force_start(2, True)
@@ -100,7 +121,7 @@ class TestMemoryGuardSwitch:
             chosen = mgr._pick_next_pending()
         assert chosen is None
         assert mgr._memory_limited is True
-        assert mgr._running_count == 0
+        assert mgr._running_count == 1
 
     def test_guard_off_force_still_admits(self, mgr: ExecutionManager) -> None:
         # Force start remains the deliberate way past the memory limit,

@@ -126,6 +126,48 @@ def _wrap_for_memory_cap(
     return cmd, {}, None
 
 
+# --- Solver "warmed" detection ---------------------------------------------
+# A scenario job is "warming" from dispatch until its solver has loaded the
+# matrix and begun reserving its working memory — the high-water point at
+# which its measured RSS is a reliable proxy for its real footprint. Until
+# then admission only has an *estimate* to go on (see ExecutionJob.footprint_
+# solid and ExecutionManager admission).
+#
+# These strings are matched case-insensitively as substrings of the job's
+# stdout. NONE is load-bearing on its own: the watchdog's RSS-plateau detector
+# (see MemoryWatchdog._loop) is the wording-proof, log-level-proof backstop, so
+# a HiGHS release that renames any of them — or a quiet ``--solver-log-level``
+# that suppresses the block entirely — degrades to a ~10s-later flip rather
+# than breaking. ``tests/gui/test_warm_markers.py`` pins them so silent drift
+# turns a test red.
+_SOLVER_WARM_MARKERS: tuple[str, ...] = (
+    "coefficient ranges",          # HiGHS load-time statistics block
+    "running highs",               # HiGHS startup banner
+    "presolving model",            # HiGHS presolve phase
+    "solving lp",                  # HiGHS LP solve phase
+    "solving mip",                 # HiGHS MIP solve phase
+    "matrix built by polar-high",  # our own engine phase checkpoint
+)
+
+
+def _is_solver_warm_marker(line: str) -> bool:
+    """True if *line* shows the solver has begun optimising (memory reserved)."""
+    low = line.lower()
+    return any(m in low for m in _SOLVER_WARM_MARKERS)
+
+
+# RSS-plateau backstop (used when no marker is seen — e.g. quiet solver log or
+# suppressed phase checkpoints on within-group rolling iters):
+#  * consider a job warmed once its RSS grows < WARM_PLATEAU_RATIO between two
+#    consecutive polls, for WARM_PLATEAU_POLLS polls in a row, and it has
+#    allocated at least WARM_MIN_RSS_MB (HiGHS has actually started);
+#  * WARM_TIMEOUT_S is the last-resort anti-deadlock cap.
+WARM_PLATEAU_RATIO = 1.03
+WARM_PLATEAU_POLLS = 2
+WARM_MIN_RSS_MB = 200.0
+WARM_TIMEOUT_S = 180.0
+
+
 class MemoryWatchdog:
     """Polls running scenario jobs every 5s; tracks peak RSS and enforces
     global memory/swap thresholds by killing the job most over its
@@ -156,6 +198,32 @@ class MemoryWatchdog:
     def stop(self) -> None:
         self._stop.set()
 
+    def _maybe_mark_warmed(self, job: "ExecutionJob", rss_mb: float) -> None:
+        """Backstop warmed-detection from measured RSS. Holds ``_manager._lock``.
+
+        Flips ``footprint_solid`` once the job's RSS has plateaued (grew less
+        than ``WARM_PLATEAU_RATIO`` for ``WARM_PLATEAU_POLLS`` consecutive
+        polls, having allocated at least ``WARM_MIN_RSS_MB``) or a hard
+        ``WARM_TIMEOUT_S`` has elapsed. The stdout warm-marker (see
+        ``_run_job``) usually flips it sooner; this covers quiet solver logs
+        and suppressed phase checkpoints so the auto-stagger never deadlocks.
+        """
+        if job.footprint_solid:
+            return
+        if job.start_time is not None:
+            elapsed = (datetime.now() - job.start_time).total_seconds()
+            if elapsed > WARM_TIMEOUT_S:
+                job.footprint_solid = True
+                return
+        prev = job._warm_last_rss_mb
+        if rss_mb >= WARM_MIN_RSS_MB and prev > 0 and rss_mb <= prev * WARM_PLATEAU_RATIO:
+            job._warm_stable_polls += 1
+        else:
+            job._warm_stable_polls = 0
+        job._warm_last_rss_mb = rss_mb
+        if job._warm_stable_polls >= WARM_PLATEAU_POLLS:
+            job.footprint_solid = True
+
     def _loop(self) -> None:
         while not self._stop.wait(self.POLL_INTERVAL_S):
             with self._manager._lock:
@@ -183,6 +251,7 @@ class MemoryWatchdog:
                 with self._manager._lock:
                     if rss_mb > job.peak_rss_mb:
                         job.peak_rss_mb = rss_mb
+                    self._maybe_mark_warmed(job, rss_mb)
                 est_bytes = int(est_gb * (1024 ** 3))
                 measured.append((job, rss, est_bytes))
 
@@ -299,8 +368,16 @@ class ExecutionJob:
     end_time: datetime | None = None
     process: subprocess.Popen | None = None
     finish_timestamp: str = ""  # DD.MM.YY hh:mm format
-    memory_cap_gb: float = 0.0       # snapshot of cap at dispatch (0 = uncapped)
+    memory_cap_gb: float = 0.0       # snapshot of estimate at dispatch (0 = none)
     peak_rss_mb: float = 0.0         # high-water mark, fed by MemoryWatchdog
+    # ``footprint_solid`` flips True once the solver has begun optimising — by a
+    # stdout warm-marker (fast path) or the watchdog's RSS-plateau/timeout
+    # backstop. Until then the job is "warming": admission only has its
+    # estimate (``memory_cap_gb``) to reserve against; afterwards its measured
+    # RSS (already reflected in ``vm.available``) is the truth. See admission.
+    footprint_solid: bool = False
+    _warm_stable_polls: int = 0      # consecutive flat-RSS watchdog polls
+    _warm_last_rss_mb: float = 0.0   # RSS at the previous watchdog poll
     killed_for_memory: bool = False  # set by watchdog just before SIGTERM
     kill_reason: str = ""  # populated by watchdog: "exceeded estimate" / "global memory pressure" / "global swap pressure"
     force_start: bool = False  # user override: admit despite the memory-reserve check (watchdog still applies)
@@ -399,51 +476,94 @@ class ExecutionManager:
         with self._lock:
             self._memory_guard_enabled = bool(value)
 
-    def _compute_memory_budget_for_job(self, job: ExecutionJob | None = None) -> float:
-        """Return per-job memory budget in GB. 0 means no budget set.
+    def _compute_memory_budget_for_job(
+        self, job: ExecutionJob | None = None
+    ) -> tuple[float, str]:
+        """Return ``(per_job_budget_gb, source)``. Budget 0 means none set.
 
-        Resolution order:
-          1. User-set value (``ExecutionLimits.memory_cap_per_job_gb``) when > 0.
-          2. Learned peak from ``ProjectSettings.scenario_resource_history``,
-             scaled by 1.5 for safety, when this job has a prior successful run.
-          3. Auto fallback: ``(system_total - reserve) / max_workers``.
+        Resolution order (``source`` in parentheses):
+          1. ``"explicit"`` — user-set ``ExecutionLimits.memory_cap_per_job_gb``
+             when > 0. A *soft* target, not a guarantee.
+          2. ``"history"`` — learned peak from a prior successful run in
+             ``ProjectSettings.scenario_resource_history``, ×1.05 for safety.
+          3. ``"auto"`` — fair-share fallback ``(system_total - reserve) /
+             max_workers``.
+
+        The ``source`` drives admission (see ``_memory_admits``): ``explicit``
+        and ``history`` are solid enough to admit a batch up front, whereas
+        ``auto`` is an unreliable guess that must be staggered one job at a
+        time until its real footprint is observed.
         """
         limits = self.execution_limits
         if limits.memory_cap_per_job_gb > 0:
-            return limits.memory_cap_per_job_gb
+            return limits.memory_cap_per_job_gb, "explicit"
         if job is not None and job.output_subdir:
             history = self.settings.scenario_resource_history.get(job.output_subdir)
             if history is not None and history.peak_rss_mb > 0:
-                return (history.peak_rss_mb / 1024.0) * 1.5
+                return (history.peak_rss_mb / 1024.0) * 1.05, "history"
         try:
             total_gb = psutil.virtual_memory().total / (1024 ** 3)
         except Exception:
-            return 0.0
+            return 0.0, "auto"
         available = max(0.0, total_gb - limits.system_reserve_gb)
         workers = max(1, self._max_workers)
-        return available / workers
+        return available / workers, "auto"
 
-    def _can_admit_memory(self, next_estimate_gb: float) -> bool:
-        """Return True if dispatching another job won't breach the memory reserve.
+    def _job_warming(self, job: ExecutionJob) -> bool:
+        """A RUNNING scenario job whose solver hasn't begun optimising yet —
+        its real memory footprint is still unknown. Holds ``self._lock``."""
+        return (
+            job.job_type == JobType.SCENARIO
+            and job.status == JobStatus.RUNNING
+            and not job.footprint_solid
+        )
 
-        Sums the budgets (``memory_cap_gb``) of currently-running scenario jobs and
-        checks whether ``running_budget + next_estimate <= total - reserve``.
+    def _predicted_available_gb(self, vm_available_gb: float) -> float:
+        """Free RAM debited by the *unrealised* growth of still-warming jobs.
 
-        Must be called while holding ``self._lock``.
+        ``vm.available`` already reflects every running job's RSS so far. A
+        warming job will keep growing toward its estimate, so we reserve the
+        shortfall ``max(0, estimate - measured_rss)``. Warmed jobs are fully
+        reflected in ``vm.available`` and reserve nothing — their measured RSS
+        is the truth, not the estimate. Holds ``self._lock``.
         """
-        if next_estimate_gb <= 0:
-            return True  # no estimate available; let the watchdog handle it
+        reserved = 0.0
+        for j in self._jobs:
+            if not self._job_warming(j) or j.memory_cap_gb <= 0:
+                continue
+            measured_gb = j.peak_rss_mb / 1024.0
+            reserved += max(0.0, j.memory_cap_gb - measured_gb)
+        return vm_available_gb - reserved
+
+    def _memory_admits(
+        self, candidate: ExecutionJob, source: str, estimate_gb: float
+    ) -> bool:
+        """Decide whether live free RAM allows admitting *candidate*.
+
+        Must hold ``self._lock``; ``_running_count`` is > 0 here (the first job
+        is admitted unconditionally upstream). Admission keys off actual
+        ``vm.available``, re-measured every tick, not a static reservation
+        against total RAM — so freed memory lets more jobs start.
+
+        * ``auto`` source (no cap, no history): the estimate is an unreliable
+          fair-share guess, so *stagger* — refuse while any job is still
+          warming, to observe one job's real footprint before starting the
+          next unknown.
+        * ``explicit`` / ``history`` source: the estimate is solid, so budget
+          directly against predicted-available RAM with no staggering; a burst
+          of pending jobs is admitted up to the point one no longer fits.
+        """
+        if estimate_gb <= 0:
+            return True  # no estimate; let the watchdog handle it
+        if source == "auto" and any(self._job_warming(j) for j in self._jobs):
+            return False
         try:
-            total_gb = psutil.virtual_memory().total / (1024 ** 3)
+            vm_available_gb = psutil.virtual_memory().available / (1024 ** 3)
         except Exception:
             return True
         limits = self.execution_limits
-        headroom = max(0.0, total_gb - limits.system_reserve_gb)
-        running_budget = sum(
-            j.memory_cap_gb for j in self._jobs
-            if j.status == JobStatus.RUNNING and j.memory_cap_gb > 0
-        )
-        return running_budget + next_estimate_gb <= headroom
+        predicted = self._predicted_available_gb(vm_available_gb)
+        return predicted - estimate_gb >= limits.system_reserve_gb
 
     def _record_scenario_peak(self, job: ExecutionJob, runtime_s: float) -> None:
         """Persist this job's peak RSS into the project settings history.
@@ -782,15 +902,25 @@ class ExecutionManager:
 
         Admission rules, in order:
           1. Thread slots (``max_workers``) always bind — a full pool sets
-             ``_thread_limited`` and nothing starts, even forced jobs.
-          2. A job flagged ``force_start`` bypasses the memory-reserve
-             check and is admitted ahead of the queue.
-          3. Otherwise the memory-reserve check (``_can_admit_memory``)
-             binds; failing it sets ``_memory_limited``.
+             ``_thread_limited`` and nothing starts, even forced jobs. This is
+             the upper limit on concurrency; live RAM decides how much of it is
+             actually used.
+          2. A job flagged ``force_start`` bypasses the memory check and is
+             admitted ahead of the queue.
+          3. With nothing running, the first scenario is admitted
+             unconditionally — even if its estimate says it might not fit — so
+             a single oversized scenario always gets its shot and a tight
+             machine never deadlocks.
+          4. Otherwise the live free-RAM check (``_memory_admits``) binds;
+             failing it sets ``_memory_limited``.
+
+        On a successful pick the job is marked RUNNING here, under the lock, so
+        the scheduler's immediate re-pick can't double-dispatch the same
+        still-PENDING job before its worker thread starts.
 
         The memory-guard switch does NOT enter here: it only governs the
-        watchdog's killing. How many runs start is always limited by the
-        reserve, and ``force_start`` is the deliberate per-job override.
+        watchdog's killing. How many runs start is always limited by RAM, and
+        ``force_start`` is the deliberate per-job override.
         """
         self._thread_limited = False
         self._memory_limited = False
@@ -816,14 +946,21 @@ class ExecutionManager:
 
         if forced is not None:
             chosen = forced
+        elif self._running_count == 0:
+            # Always give at least one scenario its shot, fit or not.
+            chosen = candidate
         else:
-            estimate_gb = self._compute_memory_budget_for_job(candidate)
-            if self._can_admit_memory(estimate_gb):
+            estimate_gb, source = self._compute_memory_budget_for_job(candidate)
+            if self._memory_admits(candidate, source, estimate_gb):
                 chosen = candidate
             else:
                 self._memory_limited = True
                 return None
 
+        # Mark RUNNING under the lock so the scheduler's immediate re-pick
+        # doesn't see this job as still-PENDING and dispatch it twice. The
+        # worker thread re-asserts this (idempotent) and sets start_time.
+        chosen.status = JobStatus.RUNNING
         self._running_count += 1
         return chosen
 
@@ -904,7 +1041,7 @@ class ExecutionManager:
 
             cmd = self._build_run_command(job, work_folder)
 
-            estimate_gb = self._compute_memory_budget_for_job(job)
+            estimate_gb, _src = self._compute_memory_budget_for_job(job)
             with self._lock:
                 job.memory_cap_gb = estimate_gb
 
@@ -951,6 +1088,12 @@ class ExecutionManager:
                 stripped = line.rstrip("\n")
                 with self._lock:
                     job.stdout_lines.append(stripped)
+                    # Fast-path warmed flip: the solver has loaded the matrix
+                    # and begun reserving memory, so this job's RSS is now a
+                    # reliable footprint. The watchdog's RSS-plateau backstop
+                    # covers quiet/suppressed logs where no marker appears.
+                    if not job.footprint_solid and _is_solver_warm_marker(stripped):
+                        job.footprint_solid = True
                 # Notify so the GUI can update the log view
                 self._notify_status_change(job)
 
@@ -1251,7 +1394,7 @@ class ExecutionManager:
 
         try:
             env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-            estimate_gb = self._compute_memory_budget_for_job(None)
+            estimate_gb, _src = self._compute_memory_budget_for_job(None)
             with self._lock:
                 job.memory_cap_gb = estimate_gb
             wrapped_cmd, popen_extras, post_spawn = _wrap_for_memory_cap(
@@ -1491,7 +1634,8 @@ class ExecutionManager:
             used_gb          float — system RAM in use (total - available)
             total_gb         float — system RAM total
             thread_limited   bool  — pending jobs are being held by max_workers
-            memory_limited   bool  — pending jobs are being held by memory reserve
+            memory_limited   bool  — pending jobs are being held by free RAM
+                                     (live ``vm.available`` admission check)
             memory_guard     bool  — whether the memory guard is active this session
         """
         with self._lock:
