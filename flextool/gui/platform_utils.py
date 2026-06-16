@@ -117,15 +117,16 @@ def open_spine_db_editor(db_url: str) -> subprocess.Popen | None:
 
 
 def set_process_dpi_awareness() -> None:
-    """Mark the process DPI-aware on Windows.
+    """Mark the process DPI-aware on Windows, before the first Tk window.
 
-    MUST be called **before** the first Tk window (HWND) exists — Windows
-    only honours ``SetProcessDpiAwareness`` while the process has no
-    windows. Called after ``tk.Tk()`` it is a silent no-op, leaving the
-    process DPI-*unaware*; the OS then hands Tk a virtualized, scaled-down
-    screen, so ``winfo_screenwidth()`` and natural-size queries come back
-    wrong on any scaled display. No-op off Windows (macOS handles Retina
-    internally; Linux scaling is applied via ``tk scaling`` instead).
+    MUST be called **before** the Tk root (HWND) exists — Windows only
+    honours ``SetProcessDpiAwareness`` while the process owns no windows.
+    Called afterwards it is a silent no-op, leaving the process DPI-
+    *unaware*: the OS then hands Tk a virtualized, bitmap-upscaled (blurry)
+    screen and lies about its size. Setting awareness here makes Tk render
+    at native pixels and report the true DPI, which ``apply_dpi_scaling``
+    then converts into the matching ``tk scaling``. No-op off Windows
+    (macOS handles Retina internally; Linux scales via ``tk scaling``).
     """
     if sys.platform != "win32":
         return
@@ -148,9 +149,10 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
 
     1. ``FLEXTOOL_DPI`` environment variable — explicit user override
        (e.g. ``FLEXTOOL_DPI=144``) for setups where auto-detection fails.
-    2. On Windows, ``ctypes`` queries the system DPI directly. Process
-       DPI-awareness must already have been set via
-       :func:`set_process_dpi_awareness` before the Tk root was created.
+    2. On Windows, ``ctypes`` queries the system DPI directly (the process
+       must already be DPI-aware via :func:`set_process_dpi_awareness`,
+       called before the Tk root existed) and sets ``tk scaling`` to
+       ``dpi / 72`` so fonts match the OS scale.
     3. On Linux/X11, ``Xft.dpi`` (set by GNOME/KDE/Xfce) is the most
        reliable hint, followed by ``GDK_SCALE`` and finally an
        ``xrandr``-derived DPI.  The xrandr fallback uses the monitor
@@ -226,24 +228,26 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
             dpi = _xrandr_dpi_for_window(cursor_x, cursor_y)
 
     if dpi is not None and dpi > 0:
-        # Tk documents ``tk scaling`` as pixels-per-point with 72 pt/inch,
-        # which would give ``scaling = dpi / 72``.  In practice Linux/X11
-        # desktop apps render at the Windows-style 96-DPI reference
-        # baseline (Plasma/GNOME both treat 96 DPI as "scale = 1.0"), so
-        # matching that convention is closer to "feels right next to
-        # other apps on the same screen".
-        #
-        # The 0.85 fudge factor pulls fonts ~15% smaller than the
-        # geometric DPI would otherwise produce.  Empirically, sv_ttk's
-        # font metrics + tk-rendered tree row layout end up looking
-        # heavier than equivalent Qt/GTK content at the same point size,
-        # and 0.85 is the value that matches the surrounding desktop
-        # without introducing a per-app config knob.  ``FLEXTOOL_DPI``
-        # remains the override for users who disagree.
-        new_scaling = (dpi / 96.0) * 0.85
         current_scaling = float(root.tk.call("tk", "scaling"))
-        # Only apply if the OS requests a higher scale than tk's default,
-        # to avoid shrinking fonts on systems where tk already got it right.
+        if sys.platform == "win32":
+            # Tk on Windows does NOT auto-scale ``tk scaling`` for the
+            # display DPI — it stays pinned at the 96-DPI baseline (~1.33)
+            # regardless of the real monitor. So point-sized fonts render
+            # tiny on a scaled screen and, conversely, the old ">current"
+            # guard made the result wildly machine-dependent (huge on one
+            # box, tiny on another). The process is DPI-aware (set early),
+            # so set scaling to the documented pixels-per-point UNCONDITION-
+            # ALLY: every point-sized font and the row height derived from
+            # it then track the OS scale factor together (no sparse rows /
+            # tiny text). ``FLEXTOOL_DPI`` overrides the detected DPI.
+            new_scaling = dpi / 72.0
+            root.tk.call("tk", "scaling", new_scaling)
+            return new_scaling / current_scaling
+        # Linux/X11: desktop apps treat 96 DPI as "scale = 1.0", and a
+        # 0.85 fudge keeps sv_ttk's heavier metrics in line with
+        # surrounding Qt/GTK content. Only raise scaling, never shrink it
+        # below tk's default on systems that already got it right.
+        new_scaling = (dpi / 96.0) * 0.85
         if new_scaling > current_scaling:
             root.tk.call("tk", "scaling", new_scaling)
             return new_scaling / current_scaling

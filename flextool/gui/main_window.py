@@ -128,9 +128,10 @@ class MainWindow(tk.Tk):
 
     def __init__(self, initial_theme: str = "dark") -> None:
         # Mark the process DPI-aware BEFORE the Tk root window is created.
-        # Windows ignores the request once an HWND exists; setting it here
-        # ensures winfo_screenwidth()/natural-size queries report the true,
-        # un-virtualized screen so windows are sized right from the start.
+        # Windows only honours this while the process has no HWND; doing it
+        # here makes Tk render at native pixels and report the true DPI, which
+        # apply_dpi_scaling converts into the matching tk scaling so fonts and
+        # row heights track the OS scale factor. No-op off Windows.
         from flextool.gui.platform_utils import set_process_dpi_awareness
         set_process_dpi_awareness()
 
