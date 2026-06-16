@@ -1,3 +1,30 @@
+## Release 4.0.0b9 (16.6.2026) — live free-RAM execution admission; deterministic Windows tk scaling
+
+GUI-only release — no database migration (input schema stays at **v59**;
+`FLEXTOOL_DB_VERSION` unchanged) and dependency floors unchanged
+(`polar-high>=2.6.0`, `polars>=1.40`, `highspy<=1.14.0`). The LP, engine, and
+all outputs are byte-identical to b8.
+
+### Desktop GUI
+
+- **Live free-RAM execution admission** (replaces the static per-job
+  reservation). Raising "max parallel executions" no longer fails to start new
+  scenarios while wrongly reporting "memory limited": the old admission summed
+  each running job's dispatch-time budget snapshot against total RAM minus a
+  reserve, so with N jobs running the snapshots already filled the headroom and
+  raising the worker count never freed room (a permanent false memory-limit).
+  Admission now keys off **actual live free RAM** (`vm.available`), re-measured
+  every scheduler tick, with a per-job estimate ladder (explicit cap > learned
+  history ×1.05 > auto fair-share) and a predicted-available figure that
+  subtracts only the unrealised growth of still-warming jobs.
+- **Deterministic Windows `tk scaling`** = `dpi/72`. Tk on Windows does not
+  auto-scale for display DPI (it stays pinned at the 96-DPI baseline), so
+  point-sized fonts rendered tiny on a scaled screen while the old
+  `(dpi/96)*0.85` fudge plus a raise-only guard made the result wildly
+  machine-dependent. With the process DPI-aware, `tk scaling` is now set to the
+  documented pixels-per-point `dpi/72` unconditionally on Windows (1.0 at 100 %,
+  1.5 at 150 %, …); Linux keeps its tuned 96-baseline raise-only behaviour.
+
 ## Release 4.0.0b8 (16.6.2026) — small-number coefficient cutoff (v59); legacy Excel import; solver-options GUI
 
 Requires a **database migration to v59** (`FLEXTOOL_DB_VERSION` 58 → 59; adds the
