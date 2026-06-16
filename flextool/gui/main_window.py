@@ -182,6 +182,15 @@ class MainWindow(tk.Tk):
         _code_pt = self.global_settings.code_font_size_pt or (_body_pt + 2)
         setup_fonts(self, body_pt=_body_pt, code_pt=_code_pt)
 
+        # One-line startup diagnostic (WARNING → flextool_gui.log): real DPI,
+        # process awareness, effective tk scaling, and which fonts actually
+        # scale. Lets us tune Windows sizing from ground truth, not guesses.
+        try:
+            from flextool.gui.platform_utils import log_dpi_diagnostics
+            log_dpi_diagnostics(self)
+        except Exception:
+            logger.warning("DPI diagnostics failed", exc_info=True)
+
         self.title("FlexTool")
 
         # ── Window icon (works on Windows, macOS, Linux) ──────────

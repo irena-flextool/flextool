@@ -254,6 +254,68 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
     return 1.0
 
 
+def log_dpi_diagnostics(root: tk.Tk) -> None:
+    """Log ground-truth DPI / font-scaling values for support diagnosis.
+
+    Call this once at startup AFTER the theme and fonts are configured (so
+    the theme's own fonts exist). Emitted at WARNING so the single line lands
+    in ``flextool_gui.log`` regardless of the configured level.
+
+    The point is to stop guessing: it reveals the real display DPI, whether
+    the process is genuinely DPI-aware, the effective ``tk scaling``, and —
+    crucially — that the sv_ttk theme paints widgets with PIXEL-sized fonts
+    (negative ``size``) that ``tk scaling`` cannot affect. That distinguishes
+    a 100%-scale no-op from a silent DPI-awareness failure in one run.
+    """
+    import tkinter.font as tkfont
+    parts: list[str] = []
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            try:
+                aw = ctypes.c_int(-1)
+                ctypes.windll.shcore.GetProcessDpiAwareness(  # type: ignore[attr-defined]
+                    None, ctypes.byref(aw),
+                )
+                awareness = aw.value  # 0=unaware 1=system 2=per-monitor
+            except Exception:
+                awareness = -1
+            try:
+                sysdpi: object = ctypes.windll.user32.GetDpiForSystem()  # type: ignore[attr-defined]
+            except Exception:
+                sysdpi = "err"
+            parts.append(f"awareness={awareness}(0=unaware,1=system,2=permon)")
+            parts.append(f"GetDpiForSystem={sysdpi}")
+        except Exception:
+            parts.append("win_dpi=err")
+
+    for label, getter in (
+        ("tk_scaling", lambda: f"{float(root.tk.call('tk', 'scaling')):.4f}"),
+        ("fpixels_1i", lambda: f"{float(root.winfo_fpixels('1i')):.1f}"),
+        ("screen", lambda: f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}"),
+    ):
+        try:
+            parts.append(f"{label}={getter()}")
+        except Exception:
+            pass
+
+    for name in ("TkDefaultFont", "TkHeadingFont", "TkFixedFont"):
+        try:
+            sz = tkfont.nametofont(name).cget("size")
+            parts.append(f"{name}={sz}{'pt' if sz > 0 else 'px'}")
+        except Exception:
+            pass
+    try:
+        sv = tkfont.Font(root=root, name="SunValleyBodyFont", exists=True)
+        parts.append(f"SunValleyBodyFont={sv.cget('size')}px(scaling-immune)")
+    except Exception:
+        parts.append("SunValleyBodyFont=absent")
+
+    parts.append(f"FLEXTOOL_DPI={os.environ.get('FLEXTOOL_DPI', '<auto>')}")
+    logger.warning("DPI-DIAG: %s", " ".join(parts))
+
+
 def _xrandr_monitors() -> list[dict]:
     """Parse all connected monitors from xrandr.
 
