@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -266,7 +265,7 @@ def test_backfill_group_indicator_sets_requires_provider(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# --decomposition lagrangian — CLI dispatch onto the native coordinator
+# decomposition=lagrangian — DB-driven, per-solve routing (v60)
 # ---------------------------------------------------------------------------
 
 
@@ -275,11 +274,11 @@ def lh2_three_region_db(tmp_path):
     """Materialise the committed LH2 three-region JSON fixture into a
     fresh SQLite and return ``(db_url, scenario_name)``.
 
-    The native ``solve_lagrangian`` coordinator and its DB schema piece
-    (``group.decomposition_method``) are exercised here through the CLI;
-    the JSON fixture pins three groups (``region_A/B/C``) at
-    ``lagrangian_region`` plus the cross-region pipes ``pipe_AB`` and
-    ``pipe_BC``.
+    The native ``solve_lagrangian`` coordinator and its DB schema pieces
+    (``group.decomposition_method`` + the v60 ``solve.decomposition``)
+    are exercised here; the JSON fixture pins three groups
+    (``region_A/B/C``) at ``lagrangian_region`` plus the cross-region
+    pipes ``pipe_AB`` and ``pipe_BC``.
     """
     if not LH2_FIXTURE_JSON.exists():
         pytest.skip(f"LH2 JSON fixture not present: {LH2_FIXTURE_JSON}")
@@ -292,80 +291,97 @@ def lh2_three_region_db(tmp_path):
     return db_url, "lh2_three_region"
 
 
+def _set_solve_decomposition(
+    db_url: str,
+    *,
+    solve: str = "lh2_week",
+    alternative: str = "lh2_three_region",
+    alpha: float = 10.0,
+    max_iter: float = 100.0,
+    tol: float = 0.5,
+) -> None:
+    """Author ``solve.decomposition = lagrangian`` plus the per-solve
+    Lagrangian knobs on *solve* under *alternative* in the DB.
+
+    Mirrors what the PLEXOS-to-FlexTool writer emits — the run path then
+    reads the scheme per solve with no CLI flag involved.  Tuning matches
+    the algorithm-level parity test in ``test_lagrangian.py`` (the
+    subgradient oscillates around a ~0.1 % gap on LH2, so we drive it the
+    same way).
+    """
+    with api.DatabaseMapping(db_url) as db:
+        for name, value in (
+            ("decomposition", "lagrangian"),
+            ("lagrangian_alpha", alpha),
+            ("lagrangian_max_iter", max_iter),
+            ("lagrangian_tolerance", tol),
+        ):
+            db_value, db_type = api.to_database(value)
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name="solve",
+                entity_byname=(solve,),
+                parameter_definition_name=name,
+                alternative_name=alternative,
+                value=db_value,
+                type=db_type,
+            )
+        db.commit_session("test: set solve.decomposition = lagrangian")
+
+
 @pytest.mark.solver
-def test_cli_decomposition_lagrangian(
+def test_decomposition_lagrangian_db_driven(
     lh2_three_region_db, tmp_path,
 ) -> None:
-    """``cmd_run_flextool --decomposition lagrangian`` drives the native
-    coordinator (``engine_polars._lagrangian.solve_lagrangian``) end-to-end
-    on the LH2 three-region fixture.
+    """Setting ``solve.decomposition = lagrangian`` in the DB routes that
+    solve through the native coordinator
+    (``engine_polars._lagrangian.solve_lagrangian``) from inside the
+    orchestrator — no CLI flag.
 
-    Acceptance bar (cf. ``specs/lagrangian_port_handoff.md``):
+    Acceptance bar (carried over from the retired CLI smoke):
 
-    1. Exit code 0 (converged) or 1 (max-iters hit) — the dual
-       subgradient on LH2 oscillates around a 0.1 % gap due to
-       bang-bang LP response on the pipeline flows, so non-convergence
-       to a tight ``tol`` is normal; the CLI maps that to exit 1 by
-       design.  We assert the dispatch ran to completion either way.
-    2. Stdout contains ``total_objective=`` with a value within 2 % of
-       the LH2 monolithic optimum pinned in ``golden_obj.json``.
-    3. λ output is present for both cross-region pipes (``pipe_AB`` and
-       ``pipe_BC``).
-
-    Coordinator tuning matches the algorithm-level parity test in
-    ``tests/engine_polars/test_lagrangian.py`` (``alpha=10``,
-    ``max_iters=100``, ``tol=0.5``) — the CLI defaults were chosen for
-    smaller, less-coupled scenarios and don't converge on LH2 within
-    the budget.
+    1. ``run_chain_from_db`` returns without error and the LH2 solve's
+       :class:`OrchestrationStep` carries the Lagrangian objective in
+       ``obj`` and a converged/non-converged flag in ``optimal`` (the
+       dual subgradient on LH2 oscillates around a ~0.1 % gap, so either
+       value of ``optimal`` is acceptable here).
+    2. That objective is within 2 % of the LH2 monolithic optimum pinned
+       in ``golden_obj.json`` — i.e. the decomposition actually solved
+       the right model, selected purely from the database value.
     """
     db_url, scenario = lh2_three_region_db
+    _set_solve_decomposition(db_url)
     work_folder = tmp_path / "work"
     work_folder.mkdir()
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "flextool.cli.cmd_run_flextool",
-            db_url,
-            "--scenario-name", scenario,
-            "--decomposition", "lagrangian",
-            "--lagrangian-alpha", "10.0",
-            "--lagrangian-max-iter", "100",
-            "--lagrangian-tolerance", "0.5",
-            "--work-folder", str(work_folder),
-        ],
-        capture_output=True,
-        text=True,
-        cwd=str(FLEXTOOL_ROOT),
-        timeout=600,
+    from flextool.engine_polars import run_chain_from_db
+
+    steps = run_chain_from_db(
+        db_url, scenario, work_folder=work_folder, keep_solutions=True,
+    )
+    assert steps, "run_chain_from_db produced no orchestration steps"
+
+    # Exactly one solve in this scenario (``lh2_week``); it must have been
+    # routed through the Lagrangian driver, so its step carries the
+    # decomposition objective and the convergence flag, and no monolithic
+    # Solution / handoff (deferred output integration).
+    step = next(reversed(list(steps.values())))
+    assert step.obj is not None, (
+        "Lagrangian solve step has no objective — routing did not fire"
+    )
+    assert step.optimal in (True, False), (
+        f"expected a bool convergence flag, got {step.optimal!r}"
+    )
+    assert step.solution is None and step.handoff is None, (
+        "Lagrangian step should carry no monolithic Solution/handoff "
+        "(cross-scheme integration is deferred)"
     )
 
-    assert result.returncode in (0, 1), (
-        f"CLI failed (rc={result.returncode}, expected 0 or 1):\n"
-        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
-    combined = result.stdout + result.stderr
-
-    # Total objective line is present and parseable.
-    match = re.search(r"total_objective=([0-9.eE+\-]+)", combined)
-    assert match, (
-        f"total_objective=... line missing from CLI stdout:\n{combined}"
-    )
-    reported = float(match.group(1))
-
-    # λ output for both cross-region pipes (4 couplings total: each
-    # pipe carries two directions, but it's enough to find each name).
-    assert "pipe_AB" in combined, f"λ for pipe_AB missing:\n{combined}"
-    assert "pipe_BC" in combined, f"λ for pipe_BC missing:\n{combined}"
-
-    # Within 2 % of monolithic optimum (cf. handoff acceptance bar).
     golden = json.loads(LH2_GOLDEN_OBJ.read_text())["obj"]
-    rel_gap = abs(reported - golden) / abs(golden)
+    rel_gap = abs(step.obj - golden) / abs(golden)
     assert rel_gap <= 0.02, (
-        f"reported total_objective={reported:.6e} vs monolithic "
-        f"golden={golden:.6e} → {rel_gap*100:.3f}% gap exceeds 2%.\n"
-        f"CLI output:\n{combined}"
+        f"Lagrangian total_objective={step.obj:.6e} vs monolithic "
+        f"golden={golden:.6e} → {rel_gap * 100:.3f}% gap exceeds 2%."
     )
 
 

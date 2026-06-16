@@ -192,13 +192,17 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 
 **Decomposition (Lagrangian):**
 
+Lagrangian decomposition is selected **per solve from the database**, not
+via a CLI flag: set `solve.decomposition = lagrangian` (plus the optional
+`solve.lagrangian_alpha` / `lagrangian_max_iter` / `lagrangian_tolerance`
+knobs) and declare at least two `group.decomposition_method =
+lagrangian_region` region groups. A single chain can mix schemes. See
+[decomposition.md](dev/decomposition.md). The one remaining CLI flag is
+the filter-only inspector:
+
 | Flag | Description |
 |---|---|
-| `--decomposition {none,lagrangian}` | Switch from the monolithic orchestrator to a decomposition scheme. `lagrangian` drives one HiGHS instance per decomposition-region and prices cross-region pipeline flows via a damped subgradient on λ. Requires at least two groups declared with `decomposition_method='lagrangian_region'`. See [decomposition.md](dev/decomposition.md) |
 | `--region GROUP_NAME` | Filter-only entry point: produce a per-region input directory `input_region_<GROUP>/` for Lagrangian decomposition and exit without solving. Cross-region processes are replaced with import/export half-flows; coupling variables are listed in `solve_data/region_coupling.csv` |
-| `--lagrangian-alpha FLOAT` | Base step size for the Lagrangian subgradient loop (default `0.1`). Per-iteration step is `α / √k` |
-| `--lagrangian-max-iter N` | Maximum outer-loop iterations for `--decomposition lagrangian` (default `80`) |
-| `--lagrangian-tolerance FLOAT` | Tail-averaged imbalance threshold (primal units) for declaring Lagrangian convergence (default `1.0`) |
 
 ### Example
 

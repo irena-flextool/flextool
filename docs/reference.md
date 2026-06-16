@@ -434,7 +434,8 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 
 ### Decomposition (spatial Lagrangian)
 
-- `decomposition_method` - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `lagrangian_region` (the group becomes a spatial region for `--decomposition lagrangian` — the `_region` suffix emphasises that this is the *geographic* flavour, distinct from any future temporal Lagrangian variant). See [dev/decomposition.md](dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
+- `decomposition_method` (on `group`) - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `lagrangian_region` (the group becomes a spatial region when a solve sets `decomposition = lagrangian` — the `_region` suffix emphasises that this is the *geographic* flavour, distinct from any future temporal Lagrangian variant). See [dev/decomposition.md](dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
+- `decomposition` (on `solve`) - Whether *this solve* decomposes. `none` (default) solves monolithically; `lagrangian` routes the solve through the spatial Lagrangian coordinator over the `lagrangian_region` groups. Chosen per solve, so one chain can mix schemes. The optional knobs `lagrangian_alpha` (default `0.1`), `lagrangian_max_iter` (default `80`) and `lagrangian_tolerance` (default `1.0`) tune the subgradient loop.
 
 ### Flex-temporal decomposition (per-group step duration)
 

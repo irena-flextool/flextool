@@ -1501,6 +1501,38 @@ def _validate_model_solve(state: RunnerState) -> list[str]:
     return solves
 
 
+def _lagrangian_consume_guard_message(
+    base_solve_name: str,
+    prev_captured: str | None,
+    lagrangian_solve_names: "set[str]",
+) -> str | None:
+    """Loud guard for the deferred cross-scheme handoff (v60).
+
+    Returns an actionable error message when *base_solve_name* would
+    consume the results of a predecessor solve that ran under
+    ``decomposition=lagrangian`` — that handoff is intentionally not
+    deposited (cross-scheme handoff is a follow-up), so consuming it
+    would silently load nothing.  Returns ``None`` when the situation is
+    safe:
+
+    * no predecessor, or the predecessor was not a Lagrangian solve;
+    * the predecessor is a roll of the *same* base solve (rolls of one
+      Lagrangian solve share its base name — not a cross-scheme consume).
+    """
+    if prev_captured is None or prev_captured not in lagrangian_solve_names:
+        return None
+    if base_solve_name == re.sub(r"_roll_\d+$", "", prev_captured):
+        return None
+    return (
+        f"Solve '{base_solve_name}' follows '{prev_captured}', which ran "
+        f"under decomposition=lagrangian, and would consume its results. "
+        f"Cross-scheme handoff (a Lagrangian solve feeding a downstream "
+        f"solve) is not yet supported. Make the downstream solve "
+        f"lagrangian too, or order the chain so the Lagrangian solve is "
+        f"terminal."
+    )
+
+
 def _bootstrap_dirs(work_folder: Path, logger: logging.Logger) -> None:
     """Create ``solve_data/``, ``output_raw/``, ``output_plots/`` under
     *work_folder* if they don't exist.
@@ -2144,22 +2176,13 @@ def _drive_cascade(
             # absent) Lagrangian handoff.  Cross-scheme handoff
             # (Lagrangian → monolithic dispatch) is a deferred follow-up,
             # so we fail loudly rather than silently load handoff=None.
-            _prev_captured = self.state.last_captured_solve
-            if (
-                _prev_captured is not None
-                and _prev_captured in self._lagrangian_solve_names
-                and base_solve_name
-                != re.sub(r"_roll_\d+$", "", _prev_captured)
-            ):
-                raise FlexToolConfigError(
-                    f"Solve '{base_solve_name}' follows '{_prev_captured}', "
-                    f"which ran under decomposition=lagrangian, and would "
-                    f"consume its results. Cross-scheme handoff "
-                    f"(Lagrangian solve feeding a downstream solve) is not "
-                    f"yet supported. Make the downstream solve lagrangian "
-                    f"too, or order the chain so the Lagrangian solve is "
-                    f"terminal."
-                )
+            _guard_msg = _lagrangian_consume_guard_message(
+                base_solve_name,
+                self.state.last_captured_solve,
+                self._lagrangian_solve_names,
+            )
+            if _guard_msg is not None:
+                raise FlexToolConfigError(_guard_msg)
             # When this solve resolves to decomposition=lagrangian, run it
             # through the Lagrangian region coordinator instead of building
             # and solving a monolithic LP.

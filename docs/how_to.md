@@ -1235,19 +1235,29 @@ Set up the regions in the database:
 
 See the `group.decomposition_method` parameter in [Reference](reference.md) and the algorithm write-up in [dev/decomposition.md](dev/decomposition.md).
 
-Then run the solve with `--decomposition lagrangian`:
+Then turn on Lagrangian decomposition **on the solve itself** — set the
+`solve` parameter `decomposition` to *lagrangian* on the solve(s) you want
+decomposed (optionally tuning `lagrangian_alpha`, `lagrangian_max_iter`,
+`lagrangian_tolerance`; they default to `0.1` / `80` / `1.0`). Then run
+normally:
 
 ```bash
 python -m flextool.cli.cmd_run_flextool \
     sqlite:///input_data.sqlite \
-    --scenario-name multi_region \
-    --decomposition lagrangian \
-    --lagrangian-alpha 0.1 \
-    --lagrangian-max-iter 80 \
-    --lagrangian-tolerance 1.0
+    --scenario-name multi_region
 ```
 
-The CLI surface is defined in `flextool/cli/cmd_run_flextool.py` and the coordinator in `flextool/engine_polars/_lagrangian.py`. `--lagrangian-alpha` is the base step size (per-iteration step is `α / √k`), `--lagrangian-max-iter` caps the outer loop, and `--lagrangian-tolerance` is the primal-units imbalance threshold for declaring convergence. Use this when the per-region solve is cheap but the monolithic solve is expensive; if the regions are tightly coupled (i.e. cross-region flows dominate the dispatch) the subgradient loop may need many iterations and a monolithic solve is usually better.
+The choice is per solve, so a single chain can mix schemes (e.g. a
+Lagrangian investment solve followed by a monolithic dispatch solve). The
+per-solve routing is in `flextool/engine_polars/_orchestration.py` and the
+coordinator in `flextool/engine_polars/_lagrangian.py`. `lagrangian_alpha`
+is the base step size (per-iteration step is `α / √k`),
+`lagrangian_max_iter` caps the outer loop, and `lagrangian_tolerance` is
+the primal-units imbalance threshold for declaring convergence. Use
+Lagrangian when the per-region solve is cheap but the monolithic solve is
+expensive; if the regions are tightly coupled (i.e. cross-region flows
+dominate the dispatch) the subgradient loop may need many iterations and a
+monolithic solve is usually better.
 
 ## How to use timeset weights (non-RP weighted timesteps)
 

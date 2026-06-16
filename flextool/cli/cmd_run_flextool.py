@@ -443,32 +443,13 @@ def main():
                              '``solve_data/region_coupling.csv``.  When this '
                              'flag is set, no solve runs — this is the '
                              'filter-only entry point used by the coordinator.')
-    parser.add_argument('--decomposition',
-                        metavar='SCHEME',
-                        choices=['none', 'lagrangian'],
-                        default='none',
-                        help='Run the full solve via a decomposition scheme '
-                             'instead of the monolithic orchestrator.  Only '
-                             '``lagrangian`` is currently supported: it drives '
-                             'one HiGHS instance per decomposition-region and '
-                             'prices the cross-region pipeline flows via a '
-                             'damped subgradient on lambda until the '
-                             'primal-average imbalance is below tolerance '
-                             '(Agent 3.2).  Requires at least two groups '
-                             'declared with ``decomposition_method='
-                             '"lagrangian_region"``.  See docs/decomposition'
-                             '.md for the full workflow.')
-    parser.add_argument('--lagrangian-alpha', type=float, default=0.1,
-                        help='Base step size for the Lagrangian subgradient '
-                             'loop (default 0.1).  The actual per-iteration '
-                             'step is ``alpha / sqrt(k)``.')
-    parser.add_argument('--lagrangian-max-iter', type=int, default=80,
-                        help='Maximum outer-loop iterations for '
-                             '``--decomposition lagrangian`` (default 80).')
-    parser.add_argument('--lagrangian-tolerance', type=float, default=1.0,
-                        help='Tail-averaged imbalance threshold (primal '
-                             'units) for declaring Lagrangian convergence '
-                             '(default 1.0).')
+    # Decomposition is DB-driven and per-solve (v60): set
+    # ``solve.decomposition = lagrangian`` plus the per-solve
+    # ``solve.lagrangian_alpha`` / ``lagrangian_max_iter`` /
+    # ``lagrangian_tolerance`` knobs in the database.  The old global
+    # ``--decomposition`` / ``--lagrangian-*`` CLI flags were removed —
+    # the orchestrator reads the scheme per solve so a single chain can
+    # mix monolithic and Lagrangian solves.  See docs/dev/decomposition.md.
     parser.add_argument('--highs-threads', type=int, default=1,
                         help='Number of HiGHS solver threads.  Default 1. '
                              'Values > 1 enable HiGHS parallel mode and trade '
@@ -767,106 +748,13 @@ def main():
         )
         sys.exit(0)
 
-    # --- Lagrangian decomposition mode ----------------------------------
-    # ``--decomposition lagrangian`` drives the spatial Lagrangian
-    # coordinator instead of the monolithic orchestrator.  Requires the
-    # scenario to declare ≥ 2 decomposition-region groups; we bail out
-    # with a clear error if that precondition is unmet.  The native
-    # coordinator lives in ``engine_polars._lagrangian`` (see
-    # specs/lagrangian_port_handoff.md for the Δ.22 rewiring history).
-    if args.decomposition == 'lagrangian':
-        from flextool.decomposition.region_filter import (
-            discover_decomposition_regions_from_db,
-        )
-        if not scenario_name:
-            with DatabaseMapping(input_db_url) as db_map:
-                _filters = db_map.get_filter_configs()
-                if _filters:
-                    scenario_name = name_from_dict(_filters[0])
-        if not scenario_name:
-            logging.error(
-                "--decomposition lagrangian requires --scenario-name (the "
-                "group filter needs to know which DB scenario to read)."
-            )
-            sys.exit(-1)
-        regions_detected = discover_decomposition_regions_from_db(input_db_url)
-        if len(regions_detected) < 2:
-            logging.error(
-                "--decomposition lagrangian needs at least two groups with "
-                "decomposition_method='lagrangian_region' in the scenario; "
-                "found %s.", regions_detected or '(none)',
-            )
-            sys.exit(-1)
-        try:
-            from flextool.engine_polars import run_chain_from_db
-            from flextool.engine_polars._lagrangian import solve_lagrangian
-            from flextool.engine_polars._solve_config import SolveConfig
-            # Drive the native cascade to materialise the whole-system
-            # ``FlexData`` for the Lagrangian coordinator.  The last
-            # ``OrchestrationStep`` always retains ``flex_data`` (the
-            # cascade's slim-step optimisation only clears earlier
-            # steps); no need to set ``keep_solutions=True``.
-            steps = run_chain_from_db(
-                input_db_url,
-                scenario_name,
-                work_folder=wf,
-            )
-            if not steps:
-                raise RuntimeError(
-                    "Native cascade produced no solve steps; cannot "
-                    "build FlexData for Lagrangian decomposition."
-                )
-            last_step = next(reversed(list(steps.values())))
-            flex_data = last_step.flex_data
-            if flex_data is None:
-                raise RuntimeError(
-                    "Last cascade step has no flex_data; cannot run "
-                    "Lagrangian decomposition."
-                )
-            # Phase 3 — Lagrangian decomposition is HiGHS-only.  Read the
-            # active solve's :class:`SolverConfig` and let
-            # ``solve_lagrangian`` raise ``FlexToolUserError`` with an
-            # actionable hint when the user picked a commercial solver.
-            try:
-                _sc = SolveConfig.load_from_db_url(
-                    input_db_url, scenario_name,
-                )
-                _active_solve = next(
-                    iter(_sc.model_solve.values()), None
-                )
-                _active_solve_name = (
-                    _active_solve[0]
-                    if _active_solve else scenario_name
-                )
-                _solver_cfg = _sc.solver_configs.get(_active_solve_name)
-            except Exception:  # noqa: BLE001
-                _solver_cfg = None
-            # ``run_chain_from_db`` runs the cascade in-memory and does
-            # NOT write workdir input CSVs (per its docstring).  The
-            # decomposition_method dict can't be loaded from disk, so
-            # pass the regions discovered from the DB directly.
-            result = solve_lagrangian(
-                flex_data,
-                work_dir=wf,
-                regions=regions_detected,
-                alpha=args.lagrangian_alpha,
-                max_iters=args.lagrangian_max_iter,
-                tol=args.lagrangian_tolerance,
-                solver_config=_solver_cfg,
-            )
-        except Exception as exc:
-            logging.error("Lagrangian coordinator failed: %s", exc, exc_info=True)
-            sys.exit(1)
-        print(
-            f"Lagrangian decomposition: converged={result.converged}, "
-            f"iterations={result.iterations}, "
-            f"total_objective={result.total_objective:.6g}"
-        )
-        for r, obj in result.region_objectives.items():
-            print(f"  region {r}: {obj:.6g}")
-        for pipe, lam in result.final_lambdas.items():
-            print(f"  lambda[{pipe}] = {lam:.6g}")
-        sys.exit(0 if result.converged else 1)
+    # Lagrangian decomposition is now DB-driven and per-solve: the
+    # orchestrator reads ``solve.decomposition`` for each solve and runs
+    # the Lagrangian region driver for the ones set to ``lagrangian``
+    # (see engine_polars._orchestration / docs/dev/decomposition.md).  The
+    # old global ``--decomposition lagrangian`` standalone path was
+    # removed; nothing special happens here — the normal run path below
+    # handles every scheme.
 
     # Resolve scenario_name when omitted: pull it from the DB's
     # active filter.  ``run_chain_from_db`` accepts a None scenario

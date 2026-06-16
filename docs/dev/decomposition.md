@@ -7,7 +7,8 @@ three independent flavours, all implemented natively in
 
 - **Spatial / Lagrangian** — partition the network into regions joined
   only by priced coupling flows; iterate dual prices until the regions
-  agree. CLI flag `--decomposition lagrangian`.
+  agree. Selected **per solve** from the database
+  (`solve.decomposition = lagrangian`); see [§2.8](#28-selecting-the-scheme-per-solve).
 - **Flex-temporal** — let different parts of the same solve run at
   different timestep resolutions (hourly power, daily hydrogen, …) in
   one LP. Configured per-entity via `group.new_stepduration`.
@@ -140,19 +141,21 @@ The outer loop is implemented in `polar_high.LagrangianProblem`; the
 FlexTool side just translates `Coupling` objects into `CouplingSpec`s
 and delegates. The relevant knobs:
 
-| Field on `solve_lagrangian` | CLI flag | Meaning |
+| Field on `solve_lagrangian` | DB parameter (`solve` entity) | Meaning |
 |---|---|---|
-| `alpha` (float, default `1e-3` in code; `0.1` from CLI) | `--lagrangian-alpha` | Base step size; per-iter step is ``α / √k`` |
-| `max_iters` (default `200` in code; `80` from CLI) | `--lagrangian-max-iter` | Outer-loop cap |
-| `tol` (default `1.0`) | `--lagrangian-tolerance` | Tail-averaged primal residual threshold |
+| `alpha` (float, default `1e-3` in code; `0.1` from DB) | `lagrangian_alpha` (default `0.1`) | Base step size; per-iter step is ``α / √k`` |
+| `max_iters` (default `200` in code; `80` from DB) | `lagrangian_max_iter` (default `80`) | Outer-loop cap |
+| `tol` (default `1.0`) | `lagrangian_tolerance` (default `1.0`) | Tail-averaged primal residual threshold |
 | `min_iters` | — | Force at least this many outer iterations |
 | `initial_lambda` | — | Warm-start λ value (default 0) |
 | `primal_tail` | — | How many iterations to tail-average for primal recovery (None = solver default) |
 
-The CLI defaults are deliberately wider than the function defaults —
-the CLI is tuned for typical multi-region runs (`α = 0.1`,
+The DB defaults are deliberately wider than the function defaults —
+they are tuned for typical multi-region runs (`α = 0.1`,
 `max_iters = 80`), while the function defaults are conservative for
-tests.
+tests. The three knobs are resolved per solve by
+`SolveConfig.lagrangian_config_for`; a solve that authors none of them
+falls back to these defaults.
 
 ### 2.5 Primal recovery
 
@@ -216,19 +219,41 @@ Look for:
   often means the cut placement is wrong (a major load centre ended
   up in a region with too little generation)
 
-### 2.8 CLI invocation
+### 2.8 Selecting the scheme per solve
 
-```bash
-python -m flextool.cli.cmd_run_flextool \
-    sqlite:///inputs.sqlite \
-    sqlite:///outputs.sqlite \
-    --scenario-name multi_region \
-    --decomposition lagrangian \
-    --lagrangian-alpha 0.1 \
-    --lagrangian-max-iter 80 \
-    --lagrangian-tolerance 1.0 \
-    --work-folder /tmp/lag_run
-```
+Decomposition is chosen **per solve, from the database** — there is no
+CLI flag. Set `solve.decomposition = lagrangian` on the solve(s) you
+want decomposed (the PLEXOS-to-FlexTool writer emits this automatically
+under its `lagrangian` alternative), optionally overriding the three
+`lagrangian_*` knobs:
+
+| `solve` parameter | Value list / type | Default | Effect |
+|---|---|---|---|
+| `decomposition` | `decomposition_schemes` = {`none`, `lagrangian`} | `none` | `lagrangian` routes this solve through `solve_lagrangian`; `none` solves it monolithically |
+| `lagrangian_alpha` | float | `0.1` | Subgradient base step size |
+| `lagrangian_max_iter` | float | `80` | Outer-loop cap |
+| `lagrangian_tolerance` | float | `1.0` | Tail-averaged residual threshold |
+
+Because the decision is per solve, a single chain can mix schemes — for
+example a Lagrangian investment solve followed by a monolithic
+full-resolution dispatch solve. The orchestrator
+(`engine_polars._orchestration`) reads each solve's resolved
+`decomposition` value as it iterates `model.solves`. This is distinct
+from the group-level `group.decomposition_method`
+(`none` / `lagrangian_region`), which declares *which groups are
+regions* (the `decomp_<REG>` groups); `solve.decomposition` declares
+*whether a given solve decomposes*. Lagrangian still requires at least
+two `lagrangian_region` groups.
+
+> **Deferred — cross-scheme handoff.** A Lagrangian solve currently runs
+> and reports its convergence/objective but does **not** thread its
+> results into a downstream solve's handoff. If a downstream solve would
+> consume a Lagrangian solve's results, the orchestrator raises
+> `FlexToolConfigError` rather than silently dropping them
+> (`_lagrangian_consume_guard_message`). For now, keep a Lagrangian
+> solve terminal in its chain, or make the downstream solve Lagrangian
+> too. Wiring the Lagrangian → monolithic handoff is a planned
+> follow-up.
 
 The `--region <GROUP_NAME>` flag is a separate, filter-only entry
 point that emits a per-region input directory and exits without
@@ -245,9 +270,10 @@ solving — useful for inspecting how the rewriter sees a given region.
 | `load_decomposition_method` (reads ``decomposition_method`` from solve_data) | same |
 | `LagrangianProblem`, `CouplingSpec`, `CouplingEntry` | `polar_high` (external) |
 
-The CLI surface is in `flextool/cli/cmd_run_flextool.py` (search for
-``--decomposition``). The Lagrangian path is also surfaced as a
-"Solve modes" entry in
+The per-solve routing lives in `flextool/engine_polars/_orchestration.py`
+(`_PolarHighCascadeSolver._run_lagrangian_solve`, driven by
+`SolveConfig.decomposition_for`). The Lagrangian path is also surfaced
+as a "Solve modes" entry in
 [engine_polars.md § Solve modes](engine_polars.md#solve-modes).
 
 ## 3. Flex-temporal decomposition
@@ -488,8 +514,15 @@ features. Quick map (full text in
   group-level `new_stepduration` + `decomposition_method`.
 - **3.30.0–3.32.0** — Block-aware emitters complete (then known as writer ports); output
   expansion stabilises.
-- **3.33.0** — `--decomposition lagrangian` rewired onto the polars
-  coordinator (`engine_polars._lagrangian`).
+- **3.33.0** — `--decomposition lagrangian` (CLI flag) rewired onto the
+  polars coordinator (`engine_polars._lagrangian`).
+- **4.0.0 (`v60` migration)** — decomposition becomes DB-driven and
+  per-solve: `solve.decomposition` (value list `decomposition_schemes` =
+  {`none`, `lagrangian`}) plus `solve.lagrangian_alpha` /
+  `lagrangian_max_iter` / `lagrangian_tolerance`. The global
+  `--decomposition` / `--lagrangian-*` CLI flags are removed; the
+  orchestrator routes each solve from its DB value. Cross-scheme handoff
+  (Lagrangian → downstream solve) is guarded loudly and deferred.
 
 ## 6. Where they compose
 
