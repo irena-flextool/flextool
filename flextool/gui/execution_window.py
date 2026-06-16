@@ -138,17 +138,22 @@ class ExecutionWindow(tk.Toplevel):
         taskbar_margin = self._line_height * 4 if hasattr(self, '_line_height') else 80
         usable_h = screen_h - taskbar_margin
 
-        if screen_w <= 2400:
-            # Narrow screen: overlap the main window but leave the leftmost
-            # ~10% uncovered so the main menu stays reachable for switching.
+        # Place to the right of the main window only when there is genuinely
+        # room there (and that room is on the primary screen, the only one
+        # winfo_screenwidth() can see). A maximized / screen-filling main
+        # window leaves no room, so we must NOT place this window at
+        # main_x + main_w — that lands it off the right edge where Windows
+        # shows it as an unrecoverable black box. Otherwise overlap the main
+        # window but leave the leftmost ~10% uncovered so the menu stays
+        # reachable; this position is always fully on-screen.
+        exec_x = main_x + main_w
+        right_room = screen_w - exec_x
+        if exec_x >= 0 and right_room >= cw * 70:
+            self.geometry(f"{right_room}x{usable_h}+{exec_x}+0")
+        else:
             left_gap = int(screen_w * 0.10)
             exec_w = screen_w - left_gap
             self.geometry(f"{exec_w}x{usable_h}+{left_gap}+0")
-        else:
-            # Wide screen: right of main window, touching but not overlapping
-            exec_x = main_x + main_w
-            exec_w = max(screen_w - exec_x, 400)  # minimum 400px wide
-            self.geometry(f"{exec_w}x{usable_h}+{exec_x}+0")
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)

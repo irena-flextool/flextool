@@ -253,16 +253,21 @@ class ResultViewer(tk.Toplevel):
         taskbar_margin = lh * 4
         usable_h = screen_h - taskbar_margin
 
-        if screen_w <= 2400:
-            # Narrow screen: overlap the main window but leave the leftmost
-            # ~10% uncovered so the main menu stays reachable for switching.
+        # Place to the right of the main window only when there is genuinely
+        # room there (and that room is on the primary screen, the only one
+        # winfo_screenwidth() can see). A maximized / screen-filling main
+        # window leaves no room, so placing this window at main_x + main_w
+        # would land it off the right edge where Windows shows it as an
+        # unrecoverable black box. Otherwise overlap the main window but leave
+        # the leftmost ~10% uncovered; that position is always fully on-screen.
+        viewer_x = main_x + main_w
+        right_room = screen_w - viewer_x
+        if viewer_x >= 0 and right_room >= cw * 80:
+            self.geometry(f"{right_room}x{usable_h}+{viewer_x}+0")
+        else:
             left_gap = int(screen_w * 0.10)
             viewer_w = screen_w - left_gap
             self.geometry(f"{viewer_w}x{usable_h}+{left_gap}+0")
-        else:
-            viewer_x = main_x + main_w
-            viewer_w = max(screen_w - viewer_x, cw * 80)
-            self.geometry(f"{viewer_w}x{usable_h}+{viewer_x}+0")
 
         # Restore saved geometry, clamped to the current screen so a
         # value saved at a different resolution does not run off-screen.
