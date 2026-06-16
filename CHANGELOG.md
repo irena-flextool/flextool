@@ -1,3 +1,22 @@
+## Release 4.0.0b10 (16.6.2026) — never open child windows off-screen
+
+GUI-only release — no database migration (schema stays at **v59**;
+`FLEXTOOL_DB_VERSION` unchanged) and dependency floors unchanged
+(`polar-high>=2.6.0`, `polars>=1.40`, `highspy<=1.14.0`). The LP, engine, and
+all outputs are byte-identical to b8.
+
+### Desktop GUI
+
+- **Never open the Execution-jobs / Results window off-screen.** Both placed
+  themselves to the right of the main window (`main_x + main_w`) whenever the
+  screen was wider than 2400 px; with b9's full-screen main-window sizing
+  (`main_w ≈ screen_w`) the child opened entirely off the right edge — which
+  Windows renders as a black, unrecoverable alt-tab thumbnail — and
+  `winfo_screenwidth()` only sees the primary monitor, compounding the bad
+  offset. Side-by-side placement is now gated on real free space to the right
+  (`exec_x >= 0` and enough room for the minimum width); otherwise it falls back
+  to the overlap layout that always stays fully on the primary screen.
+
 ## Release 4.0.0b9 (16.6.2026) — live free-RAM execution admission; deterministic Windows tk scaling
 
 GUI-only release — no database migration (input schema stays at **v59**;
