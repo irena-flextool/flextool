@@ -95,6 +95,7 @@ split_params:
       params: ["inflation_rate",
                "inflation_offset_investment", "inflation_offset_operations",
                "max_flow_for_unconstrained_variables",
+               "small_number_threshold",
                "output_horizon"]
     model_solve_sequence:
       params: ["solves"]

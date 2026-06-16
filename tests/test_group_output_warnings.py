@@ -223,7 +223,7 @@ def test_overlap_double_count_warning(
     records = _run_validation(url, caplog)
     msgs = [r.getMessage() for r in records]
     assert any("u1" in m and "nA" in m and "fgA" in m and "fgB" in m
-               and "double-counted" in m for m in msgs), msgs
+               and "double counting" in m for m in msgs), msgs
 
 
 def test_overlap_standalone_only_no_warning(
