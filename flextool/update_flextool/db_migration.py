@@ -1697,6 +1697,29 @@ def migrate_database(
                 db.commit_session("Added model.small_number_threshold parameter")
             elif next_version == 60:
                 _migrate_v60_solve_decomposition(db)
+            elif next_version == 61:
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="timeset",
+                    name="representative_period_weights",
+                    parameter_type_list=("2d_map",),
+                    parameter_group_name="solve_advanced",
+                    description=(
+                        "Representative-period weighting map (rank-2 nested "
+                        "Map: base period start timestep -> representative "
+                        "period start timestep -> weight).  Created by the "
+                        "representative-periods preprocess tool; declares how "
+                        "much each representative period stands in for each "
+                        "base period.  Its presence enables RP-aware "
+                        "storage-binding ('*_blended_weights'); its absence "
+                        "silently downgrades those methods to the non-RP "
+                        "behaviour.  Mutually exclusive with 'timeset_weights' "
+                        "on the same timeset."
+                    ),
+                )
+                db.commit_session(
+                    "Added timeset.representative_period_weights parameter"
+                )
             else:
                 print("Version invalid")
             last_completed_version = next_version

@@ -533,6 +533,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps
     ('timeset_weights', 'timeset'): QuantityType.FRACTION,
     # Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where t...
+    ('representative_period_weights', 'timeset'): QuantityType.FRACTION,
+    # Rank-2 nested Map (base period -> representative period -> weight); RP weighting, mutually exclusive with timeset_weights.
     ('timestep_duration', 'timeline'): QuantityType.DURATION,
     # Map of time steps in the timeline. Index: time step name, value: time step duration in hours.
     ('transfer_method', 'connection'): QuantityType.DIMENSIONLESS,

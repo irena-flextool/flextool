@@ -111,6 +111,12 @@ split_params:
       params: ["timeline"]
     timeset_t:
       params: ["timeset_duration", "timeset_weights"]
+    timeset_s:
+      # representative_period_weights is a rank-2 nested Map (schema type
+      # 2d_map) — route it to the multi-index stochastic writer so the Map
+      # value survives round-trip (the periodic writer would drop it).
+      layout: stochastic
+      params: ["representative_period_weights"]
 
 # Dimensions to drop from generated sheet names (always-present relationship dims).
 drop_dimensions: ["upDown"]
@@ -133,6 +139,7 @@ sheet_order:
   - timeline
   - timeset_c
   - timeset_t
+  - timeset_s
   - node_c
   - node_p
   - node_t
@@ -197,7 +204,7 @@ navigate_groups:
     color: "D9D9D9"
     rows:
       - [timeline]
-      - [timeset_c, timeset_t]
+      - [timeset_c, timeset_t, "", timeset_s]
   - name: "Core entities"
     color: "D5C2EE"
     rows:

@@ -1068,7 +1068,7 @@
       "model",
       "version",
       [
-        "60",
+        "61",
         "float"
       ],
       null,
@@ -1765,6 +1765,14 @@
       null,
       "Map of time steps in the timeline. Index: time step name, value: time step duration in hours.",
       "timeline"
+    ],
+    [
+      "timeset",
+      "representative_period_weights",
+      null,
+      null,
+      "Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how much each representative period stands in for each base period.  Its presence enables RP-aware storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset.",
+      "solve_advanced"
     ],
     [
       "timeset",
@@ -3655,6 +3663,12 @@
       "timestep_duration",
       "map",
       1
+    ],
+    [
+      "timeset",
+      "representative_period_weights",
+      "map",
+      2
     ],
     [
       "timeset",

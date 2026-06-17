@@ -407,6 +407,13 @@ def build_sheet_specs(
 
         for sub_name, sub_rule in sub_groups.items():
             sub_params = sub_rule["params"]
+            # An explicit ``layout:`` key in the sub-rule overrides type
+            # inference.  Used to route a nested-Map param that the schema
+            # declares as ``2d_map`` (which type inference would treat as
+            # periodic, where the Map value is dropped) onto the multi-index
+            # stochastic writer instead — e.g. timeset_s /
+            # representative_period_weights.
+            explicit_layout = sub_rule.get("layout")
             # Determine layout from param types in the sub-group
             has_periodic = False
             has_stochastic = False
@@ -419,7 +426,9 @@ def build_sheet_specs(
                     if type_list and ("3d_map" in type_list or "4d_map" in type_list):
                         has_stochastic = True
 
-            if has_stochastic:
+            if explicit_layout:
+                layout = explicit_layout
+            elif has_stochastic:
                 layout = "stochastic"
             elif has_periodic:
                 layout = "periodic"

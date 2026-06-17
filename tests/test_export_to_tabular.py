@@ -1299,3 +1299,121 @@ class TestGenericNestedMapRoundTrip:
                 if p["parameter_definition_name"] == "profile"
             )
         assert list(top.indexes) == ["1", "2", "10"]
+
+
+class TestRepresentativePeriodWeightsRoundTrip:
+    """``timeset.representative_period_weights`` is a rank-2 nested Map
+    (base period -> representative period -> weight).  The schema declares
+    it as ``2d_map``, which type inference would route to the periodic
+    writer (where the Map value is silently dropped).  ``export_settings``
+    pins its ``timeset_s`` sub-group to the stochastic layout so it lands
+    on the multi-index writer and survives a real workbook round-trip.
+    """
+
+    @staticmethod
+    def _weights_map() -> "object":
+        """Mirror the shape produced by
+        ``representative_periods.preprocess._build_weights_map``:
+        ``Map(base_start -> Map(rep_start -> weight))``, sparse, with the
+        base axis given out of timestep order to exercise key/order
+        preservation."""
+        from spinedb_api import Map
+
+        return Map(
+            indexes=["t0001", "t0169", "t0337"],
+            values=[
+                Map(indexes=["t0001"], values=[2.5],
+                    index_name="representative_period"),
+                Map(indexes=["t0001", "t0337"], values=[1.25, 3.75],
+                    index_name="representative_period"),
+                Map(indexes=["t0337"], values=[4.0],
+                    index_name="representative_period"),
+            ],
+            index_name="base_period",
+        )
+
+    @pytest.fixture(scope="class")
+    def round_tripped(self, tmp_path_factory: pytest.TempPathFactory) -> dict:
+        from spinedb_api import DatabaseMapping, from_database, to_database
+
+        from flextool.process_inputs.read_self_describing_excel import (
+            read_self_describing_excel,
+        )
+        from flextool.process_inputs.write_self_describing_to_db import (
+            write_sheet_data_to_db,
+        )
+
+        out = tmp_path_factory.mktemp("rpw_rt")
+        src = out / "src.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(src))
+        src_url = f"sqlite:///{src}"
+        with DatabaseMapping(src_url) as db:
+            db.add_alternative(name="Base")
+            db.add_entity(entity_class_name="timeset", entity_byname=("rp_set",))
+            value, type_ = to_database(self._weights_map())
+            db.add_parameter_value(
+                entity_class_name="timeset", entity_byname=("rp_set",),
+                parameter_definition_name="representative_period_weights",
+                alternative_name="Base", value=value, type=type_,
+            )
+            db.commit_session("setup")
+
+        xlsx = out / "out.xlsx"
+        export_to_excel(src_url, str(xlsx), include_advanced=True)
+
+        rt = out / "rt.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(rt))
+        rt_url = f"sqlite:///{rt}"
+        sheets = read_self_describing_excel(
+            str(xlsx), skip_sheets={"navigate", "version"}
+        )
+        write_sheet_data_to_db(sheets, rt_url, purge_first=True, keep_entities=True)
+
+        got = None
+        with DatabaseMapping(rt_url) as db:
+            for p in db.get_parameter_value_items():
+                if p["parameter_definition_name"] == "representative_period_weights":
+                    got = from_database(p["value"], p["type"])
+        return {"xlsx": xlsx, "value": got}
+
+    def test_routes_to_stochastic_sheet(
+        self, sheet_specs: list[SheetSpec],
+    ) -> None:
+        labels = {(s.sheet_name, s.layout) for s in sheet_specs}
+        assert ("timeset_s", "stochastic") in labels, (
+            f"Expected timeset_s sheet with layout=stochastic; got: "
+            f"{sorted(labels)}"
+        )
+
+    def test_exported_sheet_has_two_index_columns(
+        self, round_tripped: dict,
+    ) -> None:
+        ws = openpyxl.load_workbook(round_tripped["xlsx"])["timeset_s"]
+        idx_labels = [
+            c.value
+            for row in ws.iter_rows()
+            for c in row
+            if isinstance(c.value, str) and c.value.lower().startswith("index:")
+        ]
+        assert idx_labels == [
+            "index: base_period",
+            "index: representative_period",
+        ], idx_labels
+
+    def test_nested_map_survives_byte_identical(
+        self, round_tripped: dict,
+    ) -> None:
+        import json
+
+        from spinedb_api import to_database
+
+        got = round_tripped["value"]
+        assert got is not None, (
+            "representative_period_weights vanished on round-trip"
+        )
+        src_json = json.loads(to_database(self._weights_map())[0])
+        rt_json = json.loads(to_database(got)[0])
+        assert src_json == rt_json, (
+            f"representative_period_weights Map JSON differs on round-trip:\n"
+            f"src={json.dumps(src_json)}\nrt ={json.dumps(rt_json)}"
+        )
