@@ -33,6 +33,22 @@ _ENTITY_EXISTENCE = "entity existence"
 # ---------------------------------------------------------------------------
 
 
+def _natural_key(v: Any) -> tuple[int, Any]:
+    """Sort key that orders integer-like strings numerically.
+
+    Map/Array index values arrive as strings from the Excel reader.  A plain
+    string sort orders an integer axis (e.g. ladder tiers) lexically —
+    ``"1","10","11",…,"2"`` — silently reordering it versus the authored
+    ``"1","2",…,"10","11"``.  Returns ``(0, int)`` for integer-like values so
+    they sort numerically ahead of, and separately from, genuine strings
+    ``(1, str)`` — keeping the order total and deterministic for mixed axes.
+    """
+    try:
+        return (0, int(str(v)))
+    except (TypeError, ValueError):
+        return (1, str(v))
+
+
 def _is_multidimensional(sheet: SheetData) -> bool:
     """Return True if the sheet's entity class has more than one dimension."""
     for ec in sheet.metadata.entity_classes:
@@ -96,6 +112,7 @@ def _index_tuple(rec: dict[str, Any]) -> tuple[tuple[str, str], ...]:
 
 def _combine_facet_records(
     records: list[dict[str, Any]],
+    sheet_name: str = "",
 ) -> list[dict[str, Any]]:
     """Combine facet-leaf records emitted by the ladder reader into single
     nested-Map records per canonical parameter.
@@ -104,6 +121,13 @@ def _combine_facet_records(
     Excel columns as separate parameter records.  Spine encodes them as a
     single nested Map under a canonical name (e.g.
     ``commodity.price_ladder_cumulative``) — the registry tells us which.
+
+    Each ladder parameter lives on its own dedicated sheet whose title IS the
+    canonical parameter name, so ``sheet_name`` is the authoritative
+    disambiguator: when two canonical params share the same outer-axes shape
+    (e.g. both ``price_ladder_annual`` and ``price_ladder_cumulative`` allow a
+    2d ``(tier,)`` Map), matching on ``outer_axes`` alone would silently pick
+    whichever the registry happens to list first, relabelling the parameter.
 
     Records that don't match the registry's facet vocabulary pass through
     unchanged.
@@ -139,12 +163,21 @@ def _combine_facet_records(
         # Pick the registered (canonical_name, outer_axes, fkeys) entry
         # whose outer_axes matches our observed axes.  The facet axes
         # never appear in the index tuple (they're separate columns), so
-        # equality is exact.
+        # equality is exact.  When several canonical params share the same
+        # outer-axes shape, prefer the one whose name matches the source
+        # sheet (the dedicated ladder sheet is named after its parameter);
+        # fall back to the first outer-axes match only when the sheet name
+        # is unknown or doesn't correspond to a candidate.
         match: tuple[str, tuple[str, ...], frozenset[str]] | None = None
         for cand in targets:
-            if cand[1] == outer_axes:
+            if cand[1] == outer_axes and cand[0] == sheet_name:
                 match = cand
                 break
+        if match is None:
+            for cand in targets:
+                if cand[1] == outer_axes:
+                    match = cand
+                    break
         if match is None:
             # No registered shape matches; treat as a normal record.
             continue
@@ -208,7 +241,11 @@ def _combine_facet_records(
         outer_axes = tuple(axis for axis, _ in sample_pairs)
 
         # Sort entries deterministically by outer index tuple values.
-        entries.sort(key=lambda e: tuple(v for _, v in e[0]))
+        # Numeric-aware: a 1-based integer tier axis must order 1,2,…,10,11
+        # (numeric), not the lexical 1,10,11,…,2 a plain string sort yields —
+        # the latter silently reorders the ladder versus its authored form
+        # and breaks DB round-trip byte-parity.
+        entries.sort(key=lambda e: tuple(_natural_key(v) for _, v in e[0]))
 
         # Build the nested Map.  Inner-leaf Map: facet -> value (axis=
         # "price" per the DB encoding hack).
@@ -440,7 +477,7 @@ def _write_sheet(
     # (e.g. ``commodity.price_ladder_cumulative``).  Combination must
     # happen BEFORE the generic Map grouper so the resulting top-level
     # Map flows through the scalar branch as a single rec with type=map.
-    records = _combine_facet_records(sheet.records)
+    records = _combine_facet_records(sheet.records, sheet.sheet_name)
 
     # -- Split records into scalars and maps --------------------------------
     scalars, maps = _group_map_records(records)
