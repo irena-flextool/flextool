@@ -10,6 +10,7 @@ This module slices a whole-system :class:`flextool.input.FlexData` via
 from __future__ import annotations
 
 import inspect
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -31,6 +32,22 @@ from flextool.engine_polars._axis_enums import (
 
 
 __all__ = ["Coupling", "LagrangianResult", "solve_lagrangian"]
+
+_logger = logging.getLogger(__name__)
+
+# The four investment/divestment decision variables assembled into a
+# whole-system handoff.  Each is declared in ``model.py`` over a 2-tuple
+# of dims whose FIRST element is the entity axis ("p" for process /
+# connection vars, "n" for node vars) and whose second is the period
+# axis "d".  ``Var.dims`` is read at runtime to recover the exact entity
+# column name — we do not hard-code it here.
+_INVEST_VAR_NAMES = ("v_invest_p", "v_invest_n", "v_divest_p", "v_divest_n")
+
+# Absolute tolerance below which a non-owner region's invest value for an
+# entity is considered a numerically-collapsed zero (the expected case;
+# see spec §1c / Critique Claim 2b).  A non-owner value above this is a
+# violated assumption and triggers a (non-fatal) canary warning.
+_NONOWNER_NONZERO_ABS_TOL = 1e-6
 
 
 @dataclass
@@ -65,6 +82,15 @@ class LagrangianResult:
     # per-solve summary.  Defaults cover the no-coupling trivial path.
     best_dual_total: float = 0.0
     recovered_total: float = 0.0
+    # Whole-system, owner-de-duplicated invest/divest decision frames
+    # assembled from the per-region recovered primal.  Keys are a subset
+    # of ``_INVEST_VAR_NAMES``; each value is a long-form frame whose
+    # columns match ``polar_high.Solution.value(name)`` exactly
+    # (``(entity_col, "d", "value")``), so a downstream
+    # ``SnapshotSolution`` can expose them via ``.value(name)`` to
+    # ``build_handoff_from_solution``.  Empty dict when the model has no
+    # investment (the var is absent from every region's ``Problem``).
+    invest_solution_vars: dict[str, pl.DataFrame] = field(default_factory=dict)
 
 
 def _identify_coupling_cols(splits: list[RegionSplit],
@@ -135,6 +161,157 @@ def _build_coupling_specs(splits: list[RegionSplit], warm: list[WarmProblem],
             rhs=0.0, key=cpl.pipeline_key,
         ))
     return specs
+
+
+def _resolve_entity_owner(
+    region_membership: dict[str, dict[str, set[str]]],
+    regions: list[str],
+) -> dict[str, str]:
+    """Build an ``entity -> owning-region`` map from region membership.
+
+    Covers BOTH node entities (consumed by ``v_invest_n`` / ``v_divest_n``)
+    and process/connection entities (consumed by ``v_invest_p`` /
+    ``v_divest_p``).  A process is owned by the region that lists it in
+    its ``"processes"`` set (the splitter assigns a process to a region
+    via ``group_entity`` membership, i.e. the region containing its
+    node(s)).
+
+    *region_membership* is the EXCLUSIVE per-region membership returned by
+    :func:`_region_filter.load_region_membership` — a region's OWN
+    nodes/processes, NOT the shared set every region carries in
+    ``keep_nodes`` / ``keep_procs``.  Ownership is therefore unambiguous
+    for any entity claimed by exactly one region.
+
+    An entity claimed by MORE than one region (shared across regions —
+    no unique owner) is assigned a deterministic owner: the first region
+    in sorted region order that claims it.  This is an untested edge case
+    (shared invest-eligible entities are unusual), so a warning is
+    emitted.
+
+    Region iteration order is ``sorted(regions)`` so the deterministic
+    shared-owner tie-break is stable regardless of the caller's list
+    order.
+
+    Returns
+    -------
+    dict[str, str]
+        ``{entity_name: region_name}`` for every node and process that
+        appears in any region's membership.
+    """
+    owner: dict[str, str] = {}
+    claims: dict[str, list[str]] = {}
+    for region in sorted(regions):
+        m = region_membership.get(region, {})
+        for entity in m.get("nodes", set()) | m.get("processes", set()):
+            claims.setdefault(entity, []).append(region)
+    for entity, claiming in claims.items():
+        # ``claiming`` is already in sorted region order (we iterate
+        # ``sorted(regions)`` above), so ``claiming[0]`` is deterministic.
+        owner[entity] = claiming[0]
+        if len(claiming) > 1:
+            _logger.warning(
+                "Lagrangian invest assembly: entity %r is shared across "
+                "regions %r (no unique owner); assigning deterministic "
+                "owner %r (first in sorted region order).  Shared "
+                "invest-eligible entities are an untested edge case.",
+                entity, claiming, owner[entity],
+            )
+    return owner
+
+
+def _assemble_invest_vars(
+    subproblems: list[Problem],
+    subproblem_col_values: list[np.ndarray],
+    owner_of_entity: Callable[[int, str], bool],
+) -> dict[str, pl.DataFrame]:
+    """Assemble whole-system invest/divest frames from the per-region
+    recovered primal, keeping only owner-region rows.
+
+    Parameters
+    ----------
+    subproblems
+        Per-region :class:`polar_high.Problem` objects (region-index
+        aligned).  Their ``_vars[name].frame`` carries ``(*dims,
+        col_id)`` and ``_vars[name].dims`` gives the natural dim order
+        (``(entity_col, "d")`` for the invest/divest vars).
+    subproblem_col_values
+        Per-region recovered-primal ``col_value`` arrays from
+        :attr:`polar_high.LagrangianSolution.subproblem_col_values`,
+        region-index aligned with *subproblems*.  An empty / missing
+        entry (e.g. an older polar_high that did not retain the field)
+        causes that region to be skipped.
+    owner_of_entity
+        Predicate ``(region_idx, entity) -> bool`` — ``True`` iff region
+        ``region_idx`` OWNS ``entity``.  Only owned rows are kept, so the
+        concatenated per-var frame has disjoint entity keys by
+        construction.
+
+    Returns
+    -------
+    dict[str, pl.DataFrame]
+        ``{name: frame}`` for each invest/divest var present in at least
+        one region with ≥1 owned row.  Each frame's columns exactly match
+        ``polar_high.Solution.value(name)`` — ``(entity_col, "d",
+        "value")`` — so a ``SnapshotSolution`` can serve them via
+        ``.value(name)``.
+    """
+    out: dict[str, pl.DataFrame] = {}
+    n_regions = len(subproblems)
+    for name in _INVEST_VAR_NAMES:
+        per_region_kept: list[pl.DataFrame] = []
+        entity_col: str | None = None
+        for i in range(n_regions):
+            pb = subproblems[i]
+            var = pb._vars.get(name)
+            if var is None:
+                continue
+            if i >= len(subproblem_col_values):
+                continue
+            col_values = subproblem_col_values[i]
+            if col_values is None or len(col_values) == 0:
+                continue
+            # Materialize this region's long-form frame exactly as
+            # ``Solution.value(name)`` does: index the region's recovered
+            # ``col_value`` by the Var's ``col_id`` and attach as "value".
+            dims = tuple(var.dims)
+            ent_col = dims[0]
+            entity_col = ent_col
+            frame = var.frame
+            ids = frame["col_id"].to_numpy()
+            vals = np.asarray(col_values)[ids]
+            region_frame = frame.select(*dims).with_columns(
+                value=pl.Series("value", vals)
+            )
+            # Owner-select: keep only rows whose entity is owned by this
+            # region.  ``owner_of_entity`` is a Python predicate, so apply
+            # it on the (small) distinct entity list and filter.
+            entities = region_frame[ent_col].to_list()
+            owned_mask = [bool(owner_of_entity(i, e)) for e in entities]
+            # Canary: a NON-owner region carrying a materially non-zero
+            # value violates the owner-selection assumption (spec §1c /
+            # Critique 2b).  Warn but do not raise.
+            value_series = region_frame["value"].to_list()
+            for e, owned, v in zip(entities, owned_mask, value_series):
+                if (not owned) and v is not None and abs(v) > _NONOWNER_NONZERO_ABS_TOL:
+                    _logger.warning(
+                        "Lagrangian invest assembly: non-owner region "
+                        "index %d carries non-zero %s value %.6g for "
+                        "entity %r (expected ~0 for an out-of-region "
+                        "invest var); keeping only the owner's value.",
+                        i, name, v, e,
+                    )
+            kept = region_frame.filter(pl.Series("__owned", owned_mask))
+            if kept.height > 0:
+                per_region_kept.append(kept)
+        if per_region_kept:
+            frame = pl.concat(per_region_kept, how="vertical")
+            # Defensive ordering: stable sort by (entity, d) so the
+            # assembled frame is deterministic across region order.
+            sort_cols = [c for c in (entity_col, "d") if c in frame.columns]
+            if sort_cols:
+                frame = frame.sort(sort_cols, maintain_order=True)
+            out[name] = frame
+    return out
 
 
 def solve_lagrangian(
@@ -215,23 +392,42 @@ def solve_lagrangian(
         for s, pb in zip(splits, subproblems):
             build_problem(pb, s.data)
 
+        # Resolve an ``entity -> owning-region`` map for invest/divest
+        # assembly.  ``RegionSplit`` does not carry membership, so we
+        # recompute it (cheap) from the EXCLUSIVE per-region membership.
+        # The region order of ``splits`` matches ``regions`` (see
+        # ``_region_filter.split``), so a region INDEX maps to a region
+        # NAME via ``splits[i].region``.
+        _region_membership = _region_filter.load_region_membership(
+            data, regions)
+        _owner_by_entity = _resolve_entity_owner(_region_membership, regions)
+        _region_of_index = [s.region for s in splits]
+
+        def _owner_of_entity(region_idx: int, entity: str) -> bool:
+            return _owner_by_entity.get(entity) == _region_of_index[region_idx]
+
         warm_lookup = [WarmProblem(p) for p in subproblems]
         couplings = _identify_coupling_cols(splits, warm_lookup)
         if not couplings:
             region_objs: dict[str, float] = {}
+            _trivial_col_values: list[np.ndarray] = []
             for s, pb in zip(splits, subproblems):
                 sol = pb.solve()
                 if not sol.optimal:
                     raise RuntimeError(
                         f"Lagrangian trivial solve {s.region!r} not optimal")
                 region_objs[s.region] = sol.obj
+                _trivial_col_values.append(np.asarray(sol.col_value).copy())
             _trivial_total = sum(region_objs.values())
+            _trivial_invest = _assemble_invest_vars(
+                subproblems, _trivial_col_values, _owner_of_entity)
             return LagrangianResult(
                 converged=True, iterations=0,
                 total_objective=_trivial_total,
                 region_objectives=region_objs, final_lambdas={}, couplings=[],
                 best_dual_total=_trivial_total,
-                recovered_total=_trivial_total)
+                recovered_total=_trivial_total,
+                invest_solution_vars=_trivial_invest)
 
         specs = _build_coupling_specs(splits, warm_lookup, couplings)
         _solve = LagrangianProblem(subproblems, specs).solve
@@ -253,6 +449,18 @@ def solve_lagrangian(
     finally:
         if _enums_token is not None:
             reset_global_axis_enums(_enums_token)
+
+    # Assemble whole-system invest/divest frames from the per-region
+    # recovered primal.  ``subproblems`` (the per-region ``_vars``) and
+    # ``_owner_of_entity`` survive the ``finally`` (they are locals, not
+    # deleted).  ``subproblem_col_values`` is the additive polar_high
+    # retention field (>=2.8.0); an older polar_high leaves it empty and
+    # the helper returns ``{}`` (TIER 1 silently disabled).
+    _invest_vars = _assemble_invest_vars(
+        subproblems,
+        list(getattr(sol, "subproblem_col_values", []) or []),
+        _owner_of_entity,
+    )
 
     region_objs = {s.region: o for s, o in zip(splits, sol.subproblem_objectives)}
     final_lambdas: dict[tuple[str, str, str], float] = {}
@@ -283,4 +491,5 @@ def solve_lagrangian(
         couplings=couplings,
         best_dual_total=getattr(sol, "best_dual_total", sol.total_objective),
         recovered_total=getattr(sol, "recovered_total", sol.total_objective),
+        invest_solution_vars=_invest_vars,
     )
