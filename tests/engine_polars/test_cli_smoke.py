@@ -570,3 +570,83 @@ def test_cli_highs_threads_two(work_base_db_with_scenario, tmp_path) -> None:
         f"output_parquet/<scenario>/ missing or empty under "
         f"--highs-threads 2: {output_parquet}"
     )
+
+
+# ---------------------------------------------------------------------------
+# E. --lagrangian-workers — CLI flag surfaces as the
+#    FLEXTOOL_LAGRANGIAN_WORKERS env var (machine-local runtime override).
+#
+# Drives the real ``main()`` arg-parse + env-surfacing code against the
+# ``work_base`` DB fixture, but short-circuits the heavy solve by
+# stubbing ``_run_solve`` to capture the env state and raise SystemExit
+# (which propagates past main()'s ``except Exception``).
+# ---------------------------------------------------------------------------
+
+
+class _CapturedEnv(SystemExit):
+    """SystemExit subclass carrying the captured env snapshot."""
+    def __init__(self, env_value):
+        super().__init__(0)
+        self.lagrangian_workers_env = env_value
+
+
+def _drive_main_capture_env(monkeypatch, tmp_path, sqlite, scenario, extra_args):
+    """Run cmd_run_flextool.main() with the given extra CLI args, stubbing
+    the solve so we can read os.environ after the env-surfacing block.
+    Returns the captured FLEXTOOL_LAGRANGIAN_WORKERS value (or None)."""
+    import flextool.cli.cmd_run_flextool as cmd
+
+    # Isolate os.environ: ensure no inherited value leaks into the assert.
+    monkeypatch.delenv("FLEXTOOL_LAGRANGIAN_WORKERS", raising=False)
+
+    def _stub_run_solve(args, scenario_name, work_folder, timing_recorder):
+        raise _CapturedEnv(os.environ.get("FLEXTOOL_LAGRANGIAN_WORKERS"))
+
+    monkeypatch.setattr(cmd, "_run_solve", _stub_run_solve)
+
+    work_folder = tmp_path / "work"
+    work_folder.mkdir()
+    argv = [
+        "cmd_run_flextool",
+        f"sqlite:///{sqlite}",
+        "--scenario-name", scenario,
+        "--work-folder", str(work_folder),
+        "--output-location", str(tmp_path),
+        *extra_args,
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(_CapturedEnv) as excinfo:
+        cmd.main()
+    return excinfo.value.lagrangian_workers_env
+
+
+def test_cli_lagrangian_workers_sets_env(
+    work_base_db_with_scenario, tmp_path, monkeypatch,
+) -> None:
+    sqlite, scenario = work_base_db_with_scenario
+    captured = _drive_main_capture_env(
+        monkeypatch, tmp_path, sqlite, scenario,
+        ["--lagrangian-workers", "4"],
+    )
+    assert captured == "4"
+
+
+def test_cli_lagrangian_workers_zero_unset(
+    work_base_db_with_scenario, tmp_path, monkeypatch,
+) -> None:
+    sqlite, scenario = work_base_db_with_scenario
+    captured = _drive_main_capture_env(
+        monkeypatch, tmp_path, sqlite, scenario,
+        ["--lagrangian-workers", "0"],
+    )
+    assert captured is None
+
+
+def test_cli_lagrangian_workers_absent_unset(
+    work_base_db_with_scenario, tmp_path, monkeypatch,
+) -> None:
+    sqlite, scenario = work_base_db_with_scenario
+    captured = _drive_main_capture_env(
+        monkeypatch, tmp_path, sqlite, scenario, [],
+    )
+    assert captured is None

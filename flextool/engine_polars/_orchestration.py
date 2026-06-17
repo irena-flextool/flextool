@@ -50,6 +50,7 @@ import os
 import re
 import tempfile
 import textwrap
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -94,6 +95,30 @@ def _wrap_log_prose(text: str, width: int = 100, indent: str = "  ") -> str:
         text, width=width, subsequent_indent=indent,
         break_long_words=False, break_on_hyphens=False,
     )
+
+
+def _resolve_lagrangian_workers(setting: int, cpu: int) -> int:
+    """Resolve the effective parallel-worker count. setting<=0 => auto
+    (cpu-1); else min(setting, cpu); floored at 1."""
+    workers = (cpu - 1) if setting <= 0 else min(setting, cpu)
+    return max(1, workers)
+
+
+def _format_subsolve_line(entry: dict, regions: list, tag: str, max_iter: int) -> str | None:
+    """Render one discrete progress line from a polar-high subsolve
+    callback entry. Branches on entry['event'] (start|finish); uses
+    entry['phase'] only for context. Returns None for unknown events."""
+    idx = entry.get("subproblem")
+    name = regions[idx] if isinstance(idx, int) and 0 <= idx < len(regions) else idx
+    it = entry.get("iter")
+    ev = entry.get("event")
+    if ev == "start":
+        return f"{tag}     iter {it}/{max_iter} solving {name}"
+    if ev == "finish":
+        obj = entry.get("obj")
+        tail = f" obj={obj:.6g}" if isinstance(obj, (int, float)) else " (non-optimal)"
+        return f"{tag}     iter {it}/{max_iter} done {name}{tail}"
+    return None
 
 
 # Legacy ``scale_the_objective`` default — historically the
@@ -2004,6 +2029,16 @@ def _drive_cascade(
             alpha, max_iter, tol = state.solve.lagrangian_config_for(
                 base_solve_name
             )
+            # Resolve the parallel-worker count from the CLI-set env var
+            # (``--lagrangian-workers``; machine-local runtime override, not
+            # a DB/schema param).  Unset/0 => auto (cpu_count-1).
+            _cpu = os.cpu_count() or 2
+            _lw_env = os.environ.get("FLEXTOOL_LAGRANGIAN_WORKERS", "0")
+            try:
+                _lw_setting = int(_lw_env)
+            except (TypeError, ValueError):
+                _lw_setting = 0
+            _workers = _resolve_lagrangian_workers(_lw_setting, _cpu)
             # Lagrangian decomposition is HiGHS-only; pass the solve's
             # SolverConfig so the driver can raise an actionable error if
             # the user selected a commercial solver.
@@ -2017,16 +2052,22 @@ def _drive_cascade(
             # logger.info/.warning would be swallowed.
             _tag = f"[lagrangian {base_solve_name}]"
 
+            # ``_emit`` is called from BOTH the main thread (iteration /
+            # summary lines) and polar-high worker threads (subsolve lines);
+            # the lock keeps those lines from interleaving mid-string.
+            _emit_lock = threading.Lock()
+
             def _emit(line: str) -> None:
-                try:
-                    print(line, flush=True)
-                except OSError:
-                    pass
+                with _emit_lock:
+                    try:
+                        print(line, flush=True)
+                    except OSError:
+                        pass
 
             _emit(
                 f"{_tag} start: {len(regions)} regions "
                 f"{regions} (alpha={alpha:g}, max_iter={max_iter}, "
-                f"tol={tol:g})"
+                f"tol={tol:g}, workers={_workers})"
             )
 
             # Live per-iteration callback — one line as each outer
@@ -2042,6 +2083,15 @@ def _drive_cascade(
                     f"dual_obj={entry['total_obj']:.6g}"
                 )
 
+            # Live per-subsolve callback — fires from polar-high WORKER
+            # threads, so it must only touch ``_emit`` (lock-guarded) and
+            # read-only locals (``regions``, ``_tag``, ``max_iter``).  It
+            # branches on entry['event'] (start|finish), NOT on phase.
+            def _on_subsolve(entry: dict) -> None:
+                line = _format_subsolve_line(entry, regions, _tag, max_iter)
+                if line is not None:
+                    _emit(line)
+
             result = solve_lagrangian(
                 data,
                 work_dir=self.state.paths.work_folder,
@@ -2051,6 +2101,8 @@ def _drive_cascade(
                 tol=tol,
                 solver_config=solver_cfg,
                 progress_callback=_on_iteration,
+                workers=_workers,
+                subsolve_callback=_on_subsolve,
             )
 
             # Final summary — convergence + the dual/primal gap that shows

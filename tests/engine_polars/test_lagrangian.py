@@ -9,14 +9,22 @@ Exercises ``flextool._lagrangian.solve_lagrangian`` on:
 """
 from __future__ import annotations
 
+import inspect
+import threading
+
 import pytest
 
 from polar_high import Problem, WarmProblem
 
+import flextool.engine_polars._lagrangian as _lagr_mod
 from flextool.engine_polars import build_flextool, load_flextool
 from flextool.engine_polars._lagrangian import (
     solve_lagrangian,
     _identify_coupling_cols,
+)
+from flextool.engine_polars._orchestration import (
+    _format_subsolve_line,
+    _resolve_lagrangian_workers,
 )
 from flextool.engine_polars._region_filter import split as region_split
 
@@ -277,3 +285,235 @@ def test_lagrangian_smoke_lh2_subset(lh2_data) -> None:
     assert len(result.final_lambdas) == 2
     assert ("pipe_AB", "lh2_A", "lh2_B") in result.final_lambdas
     assert ("pipe_AB", "lh2_B", "lh2_A") in result.final_lambdas
+
+
+# ---------------------------------------------------------------------------
+# A. Parallel-worker resolution (pure helper)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLagrangianWorkers:
+    @pytest.mark.parametrize(
+        "setting, cpu, expected",
+        [
+            (0, 8, 7),     # auto => cpu-1
+            (0, 1, 1),     # auto on single core floored at 1
+            (4, 8, 4),     # explicit, under cap
+            (100, 8, 8),   # explicit, capped at cpu
+            (1, 1, 1),     # explicit single worker
+            (-5, 8, 7),    # negative => auto (cpu-1)
+        ],
+    )
+    def test_resolve(self, setting, cpu, expected) -> None:
+        assert _resolve_lagrangian_workers(setting, cpu) == expected
+
+
+# ---------------------------------------------------------------------------
+# B. Cross-repo subsolve callback contract (the ONLY guard against
+#    event/phase schema drift between FlexTool and polar-high).
+# ---------------------------------------------------------------------------
+
+
+class TestFormatSubsolveLine:
+    REGIONS = ["north", "south"]
+
+    def test_start_event(self) -> None:
+        line = _format_subsolve_line(
+            {"event": "start", "iter": 0, "subproblem": 0, "phase": "initial"},
+            self.REGIONS, "[lagrangian s]", 100,
+        )
+        assert line is not None
+        assert "solving north" in line
+
+    def test_finish_event_optimal(self) -> None:
+        line = _format_subsolve_line(
+            {"event": "finish", "iter": 3, "subproblem": 1,
+             "phase": "iterate", "obj": 1234.5},
+            self.REGIONS, "[lagrangian s]", 100,
+        )
+        assert line is not None
+        assert "done south" in line
+        assert "obj=1234.5" in line
+
+    def test_finish_event_non_optimal(self) -> None:
+        # recovery phase, finish event, no obj -> "(non-optimal)".
+        line = _format_subsolve_line(
+            {"event": "finish", "iter": -1, "subproblem": 0, "phase": "recovery"},
+            self.REGIONS, "[lagrangian s]", 100,
+        )
+        assert line is not None
+        assert "done north" in line
+        assert "(non-optimal)" in line
+
+    def test_unknown_event_returns_none(self) -> None:
+        assert _format_subsolve_line(
+            {"event": "bogus", "iter": 0, "subproblem": 0, "phase": "iterate"},
+            self.REGIONS, "[lagrangian s]", 100,
+        ) is None
+        # Missing event key entirely -> also None.
+        assert _format_subsolve_line(
+            {"iter": 0, "subproblem": 0},
+            self.REGIONS, "[lagrangian s]", 100,
+        ) is None
+
+
+# ---------------------------------------------------------------------------
+# C. Version-gated forwarding of workers->max_workers + subsolve_callback.
+# ---------------------------------------------------------------------------
+
+
+class _StubCoupling:
+    """A coupling sentinel exposing the attributes ``solve_lagrangian``
+    reads when assembling its result (``pipeline_key`` + ``lam_vec``)."""
+    def __init__(self, key):
+        self.pipeline_key = key
+        self.lam_vec = None
+        self.lam = 0.0
+
+
+def _make_recording_result(n_regions: int, n_couplings: int):
+    """A stand-in for polar-high's LagrangianResult exposing the fields
+    ``solve_lagrangian`` reads after the solve."""
+    import numpy as np
+
+    class _RecordingResult:
+        optimal = True
+        obj = 0.0
+        converged = True
+        iterations = 1
+        total_objective = 0.0
+        subproblem_objectives = [0.0] * n_regions
+        final_lambdas = [np.zeros(1) for _ in range(n_couplings)]
+        iteration_log: list = []
+        best_dual_total = 0.0
+        recovered_total = 0.0
+        subproblem_col_values: list = []
+    return _RecordingResult()
+
+
+def _install_stub_lagrangian(monkeypatch, *, accepts: bool, recorder: dict):
+    """Monkeypatch LagrangianProblem with a stub whose ``.solve`` either
+    DOES or DOES NOT accept ``max_workers`` / ``subsolve_callback``, and
+    records the kwargs it received.  Also stubs the coupling machinery so
+    the solve reaches the ``LagrangianProblem(...).solve(...)`` call with
+    a non-trivial coupling set.  Returns the coupling list used so callers
+    can size the result."""
+    couplings = [_StubCoupling(("pipe_AB", "lh2_A", "lh2_B"))]
+
+    if accepts:
+        def _solve(self, *, max_iters, tol, step, initial_lambda,
+                   min_iters, primal_tail, progress_callback=None,
+                   max_workers=None, subsolve_callback=None):
+            recorder["kwargs"] = {
+                "max_workers": max_workers,
+                "subsolve_callback": subsolve_callback,
+            }
+            return _make_recording_result(len(self._splits), len(couplings))
+    else:
+        def _solve(self, *, max_iters, tol, step, initial_lambda,
+                   min_iters, primal_tail, progress_callback=None):
+            recorder["kwargs"] = {}
+            return _make_recording_result(len(self._splits), len(couplings))
+
+    class _StubLagrangian:
+        # Capture the number of subproblems so the stub result can size
+        # its ``subproblem_objectives`` to match ``splits``.
+        def __init__(self, subproblems, specs):
+            self._splits = subproblems
+        solve = _solve
+
+    monkeypatch.setattr(_lagr_mod, "LagrangianProblem", _StubLagrangian)
+    # Force a non-trivial coupling path so solve_lagrangian builds the
+    # LagrangianProblem (rather than taking the trivial early-return).
+    monkeypatch.setattr(
+        _lagr_mod, "_identify_coupling_cols",
+        lambda splits, warms: couplings,
+    )
+    monkeypatch.setattr(
+        _lagr_mod, "_build_coupling_specs",
+        lambda splits, warms, couplings: ["__spec__"],
+    )
+    # The post-solve invest assembly reads ``subproblem_col_values``; with
+    # the empty list above it returns ``{}`` (TIER 1 disabled) — fine.
+
+
+def test_forwarding_passes_when_signature_accepts(lh2_data, lh2_workdir, monkeypatch) -> None:
+    rec: dict = {}
+    _install_stub_lagrangian(monkeypatch, accepts=True, recorder=rec)
+    sentinel_cb = lambda entry: None  # noqa: E731
+    result = solve_lagrangian(
+        lh2_data, work_dir=lh2_workdir, alpha=1.0, max_iters=5, tol=1.0,
+        workers=3, subsolve_callback=sentinel_cb,
+    )
+    assert result is not None
+    assert rec["kwargs"]["max_workers"] == 3            # workers -> max_workers
+    assert rec["kwargs"]["subsolve_callback"] is sentinel_cb
+
+
+def test_forwarding_omitted_when_signature_lacks(lh2_data, lh2_workdir, monkeypatch) -> None:
+    rec: dict = {}
+    _install_stub_lagrangian(monkeypatch, accepts=False, recorder=rec)
+    # The stub ``.solve`` would raise TypeError if max_workers/subsolve
+    # were forwarded; reaching a result proves they were gated out.
+    result = solve_lagrangian(
+        lh2_data, work_dir=lh2_workdir, alpha=1.0, max_iters=5, tol=1.0,
+        workers=3, subsolve_callback=lambda entry: None,
+    )
+    assert result is not None
+    assert rec["kwargs"] == {}
+
+
+# ---------------------------------------------------------------------------
+# D. END-TO-END against the live editable polar-high branch: workers + the
+#    subsolve callback actually fire through the real LagrangianProblem.
+# ---------------------------------------------------------------------------
+
+
+def test_end_to_end_subsolve_callback_fires(lh2_data, lh2_workdir) -> None:
+    """Real solve_lagrangian -> real polar-high LagrangianProblem.solve
+    with workers=2 and a thread-safe collector.  Proves the FlexTool ->
+    polar-high wiring works and the pinned callback schema holds."""
+    # If the installed polar-high predates the parallel-subsolve API the
+    # callback simply never fires; skip rather than silently pass.
+    if "subsolve_callback" not in inspect.signature(
+        __import__("polar_high").LagrangianProblem.solve
+    ).parameters:
+        pytest.skip("installed polar-high lacks subsolve_callback support")
+
+    lock = threading.Lock()
+    collected: list[dict] = []
+
+    def _collector(entry: dict) -> None:
+        with lock:
+            collected.append(dict(entry))
+
+    regions = ["region_A", "region_B", "region_C"]
+    result = solve_lagrangian(
+        lh2_data,
+        work_dir=lh2_workdir,
+        regions=regions,
+        alpha=1.0,
+        max_iters=10,
+        tol=1.0,
+        min_iters=3,
+        workers=2,
+        subsolve_callback=_collector,
+    )
+    assert result.iterations > 0
+
+    assert collected, "subsolve_callback never fired end-to-end"
+    events = {e.get("event") for e in collected}
+    assert "start" in events and "finish" in events, (
+        f"expected both start+finish events, got {events}"
+    )
+    for e in collected:
+        # event discriminator
+        assert e["event"] in ("start", "finish"), e
+        # phase label is never a finish/done sentinel
+        assert e["phase"] in ("initial", "iterate", "recovery"), e
+        # subproblem is a 0-based region index in range
+        assert isinstance(e["subproblem"], int)
+        assert 0 <= e["subproblem"] < len(regions), e
+        # finish-optimal entries carry a float obj
+        if e["event"] == "finish" and "obj" in e:
+            assert isinstance(e["obj"], float), e
