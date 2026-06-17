@@ -108,7 +108,6 @@ plots:
         xlabel: MWh (annualized)
         ylabel: Node
         skip_data_with_only_zeroes: true
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_se, b_ge]
           legend: shared
@@ -124,7 +123,6 @@ plots:
         xlabel: MWh (horizon total)
         ylabel: Node
         skip_data_with_only_zeroes: true
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_se, y_ge]
           legend: shared
@@ -141,7 +139,6 @@ plots:
         ylabel: Node
         xlabel: MWh
         skip_data_with_only_zeroes: true
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_se, tt_lu]
           max_items_per_plot: 10
@@ -158,7 +155,6 @@ plots:
         ylabel: Node
         xlabel: MWh
         skip_data_with_only_zeroes: true
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sp, ti_lu]
           max_items_per_plot: 10
@@ -175,7 +171,6 @@ plots:
         xlabel: MWh (annualized)
         ylabel: Node
         skip_data_with_only_zeroes: true
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_se, b_ge]
           legend: shared
@@ -191,7 +186,6 @@ plots:
         xlabel: MWh (horizon total)
         ylabel: Node
         skip_data_with_only_zeroes: true
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_se, y_ge]
           legend: shared
@@ -224,7 +218,6 @@ plots:
         xlabel: MWh
         ylabel: Node
         skip_data_with_only_zeroes: true
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sp, ti_lu]
           legend: shared
@@ -242,7 +235,6 @@ plots:
         xlabel: MWh/h
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_seeg, tt_luuu]
           max_items_per_plot: 10
@@ -258,7 +250,6 @@ plots:
         xlabel: MWh/h
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_seeg, ti_luuu]
           max_items_per_plot: 10
@@ -273,7 +264,6 @@ plots:
         xlabel: MWh (annualized)
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
-        scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_seeg, b_essu]
           max_items_per_plot: 40
@@ -288,7 +278,6 @@ plots:
         xlabel: MWh (horizon total)
         ylabel: NodeGroup
         skip_data_with_only_zeroes: true
-        scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_seeg, y_essu]
           max_items_per_plot: 40
@@ -332,7 +321,6 @@ plots:
         ylabel: NodeGroup
         xlabel: MWs (annualized)
         skip_data_with_only_zeroes: true
-        scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, b_eu]
           max_items_per_plot: 40
@@ -345,7 +333,6 @@ plots:
         ylabel: NodeGroup
         xlabel: MWs (horizon total)
         skip_data_with_only_zeroes: true
-        scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, y_eu]
           max_items_per_plot: 40
@@ -389,7 +376,6 @@ plots:
         ylabel: NodeGroup
         xlabel: MWh (annualized)
         skip_data_with_only_zeroes: true
-        scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, b_eu]
           max_items_per_plot: 40
@@ -402,7 +388,6 @@ plots:
         ylabel: NodeGroup
         xlabel: MWh (horizon total)
         skip_data_with_only_zeroes: true
-        scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, y_eu]
           max_items_per_plot: 40
@@ -417,7 +402,6 @@ plots:
         ylabel: NodeGroup
         xlabel: MW
         skip_data_with_only_zeroes: true
-        scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, b_eu]
           max_items_per_plot: 40
@@ -430,7 +414,6 @@ plots:
         ylabel: NodeGroup
         xlabel: MW (weighted average)
         skip_data_with_only_zeroes: true
-        scenario_rule: e
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, z_eu]
           max_items_per_plot: 40
@@ -447,7 +430,6 @@ plots:
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
         xlabel: MWh (annualized)
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_see, b_gee]
           max_items_per_plot: 40
@@ -493,7 +475,6 @@ plots:
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
         axis_tick_format: '1,.0f'
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_see, ti_luu]
           plot_name: 'Unit curtailment weekly avg'
@@ -523,7 +504,6 @@ plots:
         max_items_per_plot: 40
         axis_bounds: shared
         axis_tick_format: '.0%'
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_see, b_gee]
           legend: shared
@@ -538,7 +518,6 @@ plots:
         axis_bounds: shared
         axis_tick_format: '.0%'
         xlabel: percent (weighted average)
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_see, z_gbu]
           legend: shared
@@ -552,7 +531,6 @@ plots:
         legend: all
         skip_data_with_only_zeroes: true
         axis_tick_format: '.0%'
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_see, tt_luu]
       chunks:
@@ -566,10 +544,8 @@ plots:
         legend: all
         skip_data_with_only_zeroes: true
         axis_tick_format: '.0%'
-        scenario_rule: l
 
   # Flows for units and connections
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_see, ti_luu]
   'Flows: unit to node':
@@ -601,7 +577,6 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 6
         skip_data_with_only_zeroes: true
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_see, y_gbu]
           legend: shared
@@ -738,7 +713,6 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 6
         subplots_per_row: 2
-        scenario_rule: g
         skip_data_with_only_zeroes: true
         comparison_overrides:
           map_dimensions_for_plots: [d_se, u_gb]
@@ -996,7 +970,6 @@ plots:
         subplots_per_row: 2
         max_subplots_per_file: 6
         color_category: costs
-        scenario_rule: u
         comparison_overrides:
           map_dimensions_for_plots: [dt_sp, ti_us]
           plot_name: 'Costs weekly chunks'
@@ -1017,7 +990,6 @@ plots:
         max_subplots_per_file: 12
         ylabel: Currency
         color_category: costs
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sp, tt_lu]
           legend: shared
@@ -1037,7 +1009,6 @@ plots:
         ylabel: Currency
         time_average_duration: 168
         color_category: costs
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sp, ti_lu]
           always_include_zero_in_axis: false
@@ -1110,8 +1081,12 @@ plots:
         ylabel: M CUR/a
         skip_data_with_only_zeroes: true
         color_category: costs
-        scenario_rule: g
         comparison_overrides:
+          # Single mode already stacks the cost parameter ('s'); grouped+stacked
+          # on one axis is unsupported, so fold scenario in as an 'expand' bar
+          # dimension ('e') instead of grouped — one bar per (period × scenario),
+          # stacked by cost component.
+          map_dimensions_for_plots: [de_sp, bu_es]
           legend: shared
           max_subplots_per_file: 2
           base_length: 8
@@ -1128,8 +1103,12 @@ plots:
         ylabel: M CUR
         skip_data_with_only_zeroes: true
         color_category: costs
-        scenario_rule: g
         comparison_overrides:
+          # Single mode already stacks the cost parameter ('s'); grouped+stacked
+          # on one axis is unsupported, so fold scenario in as an 'expand' bar
+          # dimension ('e') instead of grouped — one bar per (period × scenario),
+          # stacked by cost component.
+          map_dimensions_for_plots: [de_sp, bu_es]
           legend: shared
           max_subplots_per_file: 2
           base_length: 8
@@ -1148,8 +1127,12 @@ plots:
         ylabel: M CUR/a
         skip_data_with_only_zeroes: true
         color_category: costs
-        scenario_rule: g
         comparison_overrides:
+          # Single mode already stacks the cost parameter ('s'); grouped+stacked
+          # on one axis is unsupported, so fold scenario in as an 'expand' bar
+          # dimension ('e') instead of grouped — one bar per (period × scenario),
+          # stacked by cost component.
+          map_dimensions_for_plots: [de_sp, bu_es]
           legend: shared
           max_subplots_per_file: 2
           base_length: 8
@@ -1166,8 +1149,12 @@ plots:
         ylabel: M CUR
         skip_data_with_only_zeroes: true
         color_category: costs
-        scenario_rule: g
         comparison_overrides:
+          # Single mode already stacks the cost parameter ('s'); grouped+stacked
+          # on one axis is unsupported, so fold scenario in as an 'expand' bar
+          # dimension ('e') instead of grouped — one bar per (period × scenario),
+          # stacked by cost component.
+          map_dimensions_for_plots: [de_sp, bu_es]
           legend: shared
           max_subplots_per_file: 2
           base_length: 8
@@ -1186,8 +1173,12 @@ plots:
         ylabel: M CUR/a
         skip_data_with_only_zeroes: true
         color_category: costs
-        scenario_rule: g
         comparison_overrides:
+          # Single mode already stacks the cost parameter ('s'); grouped+stacked
+          # on one axis is unsupported, so fold scenario in as an 'expand' bar
+          # dimension ('e') instead of grouped — one bar per (period × scenario),
+          # stacked by cost component.
+          map_dimensions_for_plots: [de_sp, bu_es]
           legend: shared
           max_subplots_per_file: 2
           base_length: 8
@@ -1204,8 +1195,12 @@ plots:
         ylabel: M CUR
         skip_data_with_only_zeroes: true
         color_category: costs
-        scenario_rule: g
         comparison_overrides:
+          # Single mode already stacks the cost parameter ('s'); grouped+stacked
+          # on one axis is unsupported, so fold scenario in as an 'expand' bar
+          # dimension ('e') instead of grouped — one bar per (period × scenario),
+          # stacked by cost component.
+          map_dimensions_for_plots: [de_sp, bu_es]
           legend: shared
           max_subplots_per_file: 2
           base_length: 8
@@ -1225,7 +1220,6 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [ed_sp, eb_gu]
           max_subplots_per_file: 2
@@ -1267,7 +1261,6 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [ed_sp, eb_gu]
           legend: shared
@@ -1350,7 +1343,6 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: t CO2 (annualized)
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, b_gu]
           legend: shared
@@ -1376,7 +1368,6 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: t CO2 (annualized)
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_seeee, u_gxbxe]
           legend: shared
@@ -1389,7 +1380,6 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: t CO2 (horizon total)
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_seeee, y_gxbxe]
           legend: shared
@@ -1404,7 +1394,6 @@ plots:
         max_items_per_plot: 40
         max_subplots_per_file: 8
         xlabel: Currency / tCO2
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, u_gb]
           legend: shared
@@ -1421,7 +1410,6 @@ plots:
         xlabel: Currency / tCO2
 
   # NodeGroups
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, u_gb]
           legend: shared
@@ -1526,7 +1514,6 @@ plots:
         axis_bounds: [[0, 1], [0, 1], [0, 1], [0, 1], [], [0, 1]]
         axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
         xlabel: [percent, percent, percent, percent, MWh, percent]
-        scenario_rule: b
         comparison_overrides:
           map_dimensions_for_plots: [gd_sp, fg_bu]
           max_items_per_plot: 40
@@ -1556,7 +1543,6 @@ plots:
         max_subplots_per_file: 8
         axis_tick_format: '.0%'
         xlabel: share
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, b_ge]
           legend: shared
@@ -1587,7 +1573,6 @@ plots:
         max_subplots_per_file: 4
         axis_tick_format: '.0%'
         ylabel: share
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sg, tt_lu]
           legend: shared
@@ -1602,7 +1587,6 @@ plots:
         max_subplots_per_file: 4
         axis_tick_format: '.0%'
         ylabel: share
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sg, ti_lu]
           legend: shared
@@ -1618,7 +1602,6 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 4
         ylabel: MWs
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sg, tt_lu]
           legend: shared
@@ -1631,7 +1614,6 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 4
         ylabel: MWs
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sg, ti_lu]
           legend: shared
@@ -1690,7 +1672,6 @@ plots:
         map_dimensions_for_plots: [d_g, b_s]
         max_items_per_plot: 40
         ylabel: MWh (annualized)
-        scenario_rule: b
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, g_bu]
           legend: shared
@@ -1704,7 +1685,6 @@ plots:
         map_dimensions_for_plots: [d_g, y_s]
         max_items_per_plot: 40
         ylabel: MWh (horizon total)
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [d_sg, y_gb]
           plot_name: 'NodeGroup inflows total'
@@ -1720,7 +1700,6 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 4
         ylabel: MWh/h
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sg, tt_lu]
       chunks:
@@ -1734,7 +1713,6 @@ plots:
         ylabel: MWh/h
 
   # Node details
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sg, ti_lu]
           max_subplots_per_file: 6
@@ -1750,7 +1728,6 @@ plots:
         subplots_per_row: 2
         ylabel: MWh (annualized)
         color_category: node_flows
-        scenario_rule: b
         comparison_overrides:
           map_dimensions_for_plots: [d_sep, u_bes]
           base_length: 6
@@ -1779,7 +1756,6 @@ plots:
         legend: all
         ylabel: MWh/h
         color_category: node_flows
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sep, tt_luu]
           max_items_per_plot: 10
@@ -1795,7 +1771,6 @@ plots:
         legend: all
         ylabel: MWh/h
         color_category: node_flows
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_sep, ti_luu]
           plot_name: 'Node flows weekly avg'
@@ -1812,7 +1787,6 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: Currency/MWh
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [sdt_se, mtt_lu]
           legend: shared
@@ -1825,7 +1799,6 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: Currency/MWh
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [sdt_se, mti_lu]
           legend: shared
@@ -1841,7 +1814,6 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: MWh
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_se, tt_lu]
           skip_data_with_only_zeroes: true
@@ -1857,7 +1829,6 @@ plots:
         ylabel: MWh
 
   # Unit and connection (process) details
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_se, ti_lu]
           skip_data_with_only_zeroes: true
@@ -1935,7 +1906,6 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: units online
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_se, ti_lu]
           legend: shared
@@ -2069,7 +2039,6 @@ plots:
         max_items_per_plot: 10
         max_subplots_per_file: 6
         ylabel: MWh/h
-        scenario_rule: l
         comparison_overrides:
           map_dimensions_for_plots: [dt_se, ti_lu]
           legend: shared
@@ -2122,7 +2091,6 @@ plots:
         max_subplots_per_file: 6
         legend: all
         ylabel: MWh/h
-        scenario_rule: g
         comparison_overrides:
           map_dimensions_for_plots: [dt_seppe, ti_gullu]
     process_reserve_average_d_eppe:
@@ -2138,7 +2106,6 @@ plots:
         map_dimensions_for_plots: [d_eppe, z_bssb]
         max_items_per_plot: 40
         xlabel: MW (weighted average)
-        scenario_rule: u
         comparison_overrides:
           map_dimensions_for_plots: [d_seppe, z_uesse]
   'Reserve price in NodeGroups':
