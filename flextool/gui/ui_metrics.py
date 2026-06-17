@@ -155,12 +155,13 @@ def setup_fonts(root: tk.Misc, *, body_pt: int = 10, code_pt: int = 10) -> None:
         except tk.TclError:
             pass
 
-    # heading — two points larger, bold. +1 read as "still smaller" under
-    # sv_ttk because bold and proportional bodies render heavier; +2
-    # reliably looks like a heading.
+    # heading — one point larger, bold. Bold weight already reads as a
+    # heading next to the regular body; +2 looked oversized on Windows
+    # (esp. the "Input sources" / "File outputs" section labels), so +1 is
+    # enough lift without dominating the surrounding sv_ttk widgets.
     try:
         heading = tkfont.nametofont("TkHeadingFont")
-        heading.configure(size=body_pt + 2, weight="bold")
+        heading.configure(size=body_pt + 1, weight="bold")
     except tk.TclError:
         pass
 
@@ -206,10 +207,29 @@ def get_metrics(root: tk.Misc | None = None) -> FontMetrics:
     lh = default.metrics("linespace")
     bold = default.copy()
     bold.configure(weight="bold")
+    # Treeview row height must track the font the tree ACTUALLY renders cell
+    # text with — under sv_ttk that's SunValleyBodyFont, whose linespace runs
+    # ~20% tighter than TkDefaultFont's at the same visual size. Deriving the
+    # row height from TkDefaultFont (the old code) over-padded every row, so
+    # rows looked sparse at all DPIs. A flat 1.3× of the real linespace gives
+    # a comfortable click target without the gaps; the old max(24, …) px floor
+    # is dropped because a fixed pixel doesn't scale and only inflated rows at
+    # 96 DPI.
+    tree_lh = lh
+    try:
+        import tkinter.ttk as ttk
+        # lookup() returns a Tcl_Obj, not a str; str() yields the clean font
+        # name ("SunValleyBodyFont"), whereas passing the Tcl_Obj straight to
+        # nametofont raises "named font … does not already exist".
+        tree_font_name = str(ttk.Style().lookup("Treeview", "font") or "")
+        if tree_font_name:
+            tree_lh = tkfont.nametofont(tree_font_name).metrics("linespace")
+    except (tk.TclError, RuntimeError):
+        pass
     return FontMetrics(
         cw=cw,
         lh=lh,
         em=cw,
-        row_height=max(24, int(lh * 1.25)),
+        row_height=max(18, round(tree_lh * 1.3)),
         bold_font=bold,
     )

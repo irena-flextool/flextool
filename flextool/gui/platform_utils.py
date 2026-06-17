@@ -230,19 +230,25 @@ def apply_dpi_scaling(root: tk.Tk) -> float:
     if dpi is not None and dpi > 0:
         current_scaling = float(root.tk.call("tk", "scaling"))
         if sys.platform == "win32":
-            # Tk on Windows does NOT auto-scale ``tk scaling`` for the
-            # display DPI — it stays pinned at the 96-DPI baseline (~1.33)
-            # regardless of the real monitor. So point-sized fonts render
-            # tiny on a scaled screen and, conversely, the old ">current"
-            # guard made the result wildly machine-dependent (huge on one
-            # box, tiny on another). The process is DPI-aware (set early),
-            # so set scaling to the documented pixels-per-point UNCONDITION-
-            # ALLY: every point-sized font and the row height derived from
-            # it then track the OS scale factor together (no sparse rows /
-            # tiny text). ``FLEXTOOL_DPI`` overrides the detected DPI.
+            # Pin ``tk scaling`` to the documented pixels-per-point for the
+            # real DPI. When the process is DPI-aware Tk usually pre-sets
+            # this to the same value already (so the call is a harmless
+            # no-op); when it doesn't (or ``FLEXTOOL_DPI`` overrides), this
+            # is what makes point-sized fonts track the OS scale instead of
+            # rendering tiny. Either way the result is deterministic, not
+            # dependent on Tk's startup guess.
+            #
+            # The factor we RETURN is NOT ``new/current``: on a DPI-aware
+            # box ``current`` already equals ``new`` (Tk read the true DPI),
+            # so that ratio collapses to ~1.0 and ``scale_theme_fonts`` would
+            # never touch sv_ttk's pixel-sized fonts — they'd stay frozen at
+            # their 96-DPI baseline while every point font doubled (tiny body
+            # text + huge headings on hi-DPI). Return the *absolute* factor
+            # that lifts those 96-DPI-baseline pixel fonts to the current DPI
+            # (``dpi/96``), so the pixel and point worlds scale together.
             new_scaling = dpi / 72.0
             root.tk.call("tk", "scaling", new_scaling)
-            return new_scaling / current_scaling
+            return new_scaling / (96.0 / 72.0)
         # Linux/X11: desktop apps treat 96 DPI as "scale = 1.0", and a
         # 0.85 fudge keeps sv_ttk's heavier metrics in line with
         # surrounding Qt/GTK content. Only raise scaling, never shrink it

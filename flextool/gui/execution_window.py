@@ -138,17 +138,18 @@ class ExecutionWindow(tk.Toplevel):
         taskbar_margin = self._line_height * 4 if hasattr(self, '_line_height') else 80
         usable_h = screen_h - taskbar_margin
 
-        # Place to the right of the main window only when there is genuinely
-        # room there (and that room is on the primary screen, the only one
-        # winfo_screenwidth() can see). A maximized / screen-filling main
-        # window leaves no room, so we must NOT place this window at
-        # main_x + main_w — that lands it off the right edge where Windows
-        # shows it as an unrecoverable black box. Otherwise overlap the main
-        # window but leave the leftmost ~10% uncovered so the menu stays
-        # reachable; this position is always fully on-screen.
+        # Tile to the right of the main window only when the right-hand gap is
+        # genuinely roomy — at least half the screen. The old bar (cw*70, the
+        # bare-minimum window width) tiled into a cramped sliver whenever the
+        # main window left any gap at all; on a single 1920-wide display that
+        # right strip is too narrow to be useful. Below the bar (the common
+        # case, incl. a maximized main window that would otherwise push this
+        # off the right edge into an unrecoverable black box) we overlap the
+        # main window instead, leaving the leftmost ~10% uncovered so the menu
+        # stays reachable; that position is always fully on-screen.
         exec_x = main_x + main_w
         right_room = screen_w - exec_x
-        if exec_x >= 0 and right_room >= cw * 70:
+        if exec_x >= 0 and right_room >= screen_w // 2:
             self.geometry(f"{right_room}x{usable_h}+{exec_x}+0")
         else:
             left_gap = int(screen_w * 0.10)

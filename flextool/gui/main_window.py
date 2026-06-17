@@ -210,11 +210,20 @@ class MainWindow(tk.Tk):
         _metrics = get_metrics(self)
         self._char_width: int = _metrics.cw
         self._line_height: int = _metrics.lh
-        # Use the named heading font for bold labels so live size changes
-        # via _set_font_size reach widgets that already exist. Passing the
-        # string name (rather than a Font object copy) keeps tkinter
-        # bound to the named font.
-        self._bold_font = "TkHeadingFont"
+        # Section headers ("Input sources", "Available scenarios" …) use
+        # sv_ttk's BodyStrong font: the WinUI idiom for a section label is
+        # *body-size, semibold* rather than a larger font, and because it's
+        # one of the SunValley pixel fonts it DPI-scales in lockstep with the
+        # surrounding body text (scale_theme_fonts already ran). Fall back to
+        # the standard Tk heading font if the theme didn't load (e.g. tests).
+        # Passing the string name (not a Font copy) keeps widgets bound to
+        # the named font.
+        import tkinter.font as _tkfont
+        self._bold_font = (
+            "SunValleyBodyStrongFont"
+            if "SunValleyBodyStrongFont" in _tkfont.names(self)
+            else "TkHeadingFont"
+        )
 
         # ── Treeview row height and selection visibility ──────────
         # Add ~25% vertical padding so rows don't touch the row above —
@@ -1375,30 +1384,41 @@ class MainWindow(tk.Tk):
     def _on_ui_settings_btn(self) -> None:
         """Show the UI-settings popup menu under the button.
 
-        Holds two items: a cascading "UI font size" menu (presets plus
-        Custom…) and "Reset window layout".  These were previously part
-        of the Project popup menu but moved here so the Project button
-        can be a direct action that opens Manage projects.
+        Holds a "UI font size" cascade (presets plus Custom…; hidden on
+        Windows, where sv_ttk's pixel fonts ignore it), a "Theme" cascade,
+        and "Reset window layout".  These were previously part of the
+        Project popup menu but moved here so the Project button can be a
+        direct action that opens Manage projects.
         """
         menu = self._styled_popup_menu(self)
 
         # UI font size cascade — radio for presets + Custom...
-        size_menu = self._styled_popup_menu(menu)
-        current = self.global_settings.font_size_pt
-        self._font_size_var = getattr(self, "_font_size_var", None) or tk.IntVar(
-            value=current
-        )
-        self._font_size_var.set(current)
-        for sz in (9, 10, 11, 12, 14):
-            size_menu.add_radiobutton(
-                label=f"{sz} pt",
-                variable=self._font_size_var,
-                value=sz,
-                command=lambda s=sz: self._set_font_size(s),
+        # Hidden on Windows: there almost the entire UI is painted with
+        # sv_ttk's pixel-sized fonts (SunValleyBodyFont &c.), which are immune
+        # to the point-size changes this control makes — so it would only
+        # resize the log/mono font and look broken (body text unchanged). The
+        # one knob that matters on Windows (overall scale) is the OS display
+        # scaling, picked up automatically via apply_dpi_scaling.
+        size_menu = None
+        if sys.platform != "win32":
+            size_menu = self._styled_popup_menu(menu)
+            current = self.global_settings.font_size_pt
+            self._font_size_var = getattr(self, "_font_size_var", None) or tk.IntVar(
+                value=current
             )
-        size_menu.add_separator()
-        size_menu.add_command(label="Custom...", command=self._on_font_size_custom)
-        menu.add_cascade(label="UI font size", menu=size_menu)
+            self._font_size_var.set(current)
+            for sz in (9, 10, 11, 12, 14):
+                size_menu.add_radiobutton(
+                    label=f"{sz} pt",
+                    variable=self._font_size_var,
+                    value=sz,
+                    command=lambda s=sz: self._set_font_size(s),
+                )
+            size_menu.add_separator()
+            size_menu.add_command(
+                label="Custom...", command=self._on_font_size_custom
+            )
+            menu.add_cascade(label="UI font size", menu=size_menu)
 
         theme_menu = self._styled_popup_menu(menu)
         for label, value in (("OS theme", "os"), ("Dark", "dark"), ("Light", "light")):
@@ -1418,7 +1438,8 @@ class MainWindow(tk.Tk):
         # Auto-dismiss when the mouse leaves all menus.  The delay keeps
         # the menu visible while the cursor briefly crosses the border
         # to a cascade submenu.
-        self._install_menu_hover_dismiss(menu, [size_menu, theme_menu])
+        submenus = [theme_menu] if size_menu is None else [size_menu, theme_menu]
+        self._install_menu_hover_dismiss(menu, submenus)
 
         # Post the menu just under the button, right-aligned so the
         # menu's right edge lines up with the button's right edge.
@@ -1457,10 +1478,10 @@ class MainWindow(tk.Tk):
         ttk.Style().configure("Treeview", rowheight=_m.row_height)
         self._char_width = _m.cw
         self._line_height = _m.lh
-        # _bold_font is the *string* "TkHeadingFont" — the named font has
-        # already been reconfigured by setup_fonts above, so every widget
-        # using font="TkHeadingFont" picks up the new size live. Nothing
-        # to refresh here.
+        # Section headers use _bold_font = SunValleyBodyStrongFont (an sv_ttk
+        # pixel font), which setup_fonts does NOT touch — it tracks the body
+        # via the one-time scale_theme_fonts pass, not this slider. So header
+        # size is intentionally decoupled from the live body-font slider here.
 
     def _on_font_size_custom(self) -> None:
         """Prompt for a custom font size in points."""
@@ -4399,8 +4420,9 @@ class MainWindow(tk.Tk):
         ttk.Style().configure("Treeview", rowheight=_m.row_height)
         self._char_width = _m.cw
         self._line_height = _m.lh
-        # _bold_font is the named-font string "TkHeadingFont" — already
-        # reconfigured by setup_fonts above.
+        # _bold_font (SunValleyBodyStrongFont) is an sv_ttk pixel font, not
+        # reconfigured by setup_fonts — headers track the body via the
+        # startup scale_theme_fonts pass, not this slider.
 
     def _focus_tree(self, tree: ttk.Treeview) -> None:
         """Give keyboard focus to a treeview, ensuring arrow keys work."""
