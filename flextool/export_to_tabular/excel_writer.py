@@ -42,6 +42,13 @@ from flextool.export_to_tabular.formatting import (
 )
 from flextool.export_to_tabular.sheet_config import SheetSpec
 
+# Index-cell marker written for a zero-length Array/Map parameter value so
+# the round-trip can rebuild an *empty* collection rather than dropping it
+# (a positional layout emits no rows for a collection with no elements).
+# The reader side mirrors this literal in
+# write_self_describing_to_db._group_map_records — keep the two in sync.
+EMPTY_COLLECTION_SENTINEL = "(empty)"
+
 
 def _to_native(value: Any) -> Any:
     """Convert numpy scalar types to native Python types for openpyxl."""
@@ -3054,6 +3061,7 @@ def write_periodic_sheet_v2(
                 param_maps: dict[str, Map] = {}
                 param_arrays: dict[str, list[str]] = {}
                 param_scalars: dict[str, Any] = {}
+                empty_collections: list[str] = []
 
                 for pname in spec.parameter_names:
                     key = (entity_class, entity_byname, pname, alt)
@@ -3068,11 +3076,28 @@ def write_periodic_sheet_v2(
                         # the entity class defines time structure itself
                         if _is_time_indexed_map(value) and entity_class not in _time_structure_classes:
                             continue
+                        if not value.indexes:
+                            # Empty Map carries no rows in the positional
+                            # layout — record it for the sentinel row below
+                            # so the empty value survives the round-trip
+                            # instead of vanishing into "no value".
+                            empty_collections.append(pname)
+                            continue
                         param_maps[pname] = value
                         for idx in value.indexes:
                             all_indexes.add(str(_to_native(idx)))
                     elif _is_array(value):
                         period_names = [str(_to_native(v)) for v in value.values]
+                        if not period_names:
+                            # Empty Array — same problem as the empty Map: a
+                            # positional array of zero elements emits no rows
+                            # and is indistinguishable from an absent value
+                            # unless we mark it explicitly.  An absent value
+                            # inherits the lower-ranked alternative; an empty
+                            # override (e.g. solve.contains_solves = []) must
+                            # NOT, so the distinction is load-bearing.
+                            empty_collections.append(pname)
+                            continue
                         param_arrays[pname] = period_names
                     elif _is_scalar(value):
                         # Scalar values on a periodic-layout sheet — captured
@@ -3154,6 +3179,17 @@ def write_periodic_sheet_v2(
                     cells = _build_left_cells(None)
                     for pname, val in param_scalars.items():
                         cells.append((param_col_map[pname], val))
+                    data_rows.append(cells)
+
+                # Emit a sentinel row for empty Array/Map parameter values.
+                # The index cell carries EMPTY_COLLECTION_SENTINEL so the
+                # importer can rebuild a zero-length collection (see
+                # write_self_describing_to_db._group_map_records); the
+                # data-type row already distinguishes Array from Map.
+                if empty_collections:
+                    cells = _build_left_cells(EMPTY_COLLECTION_SENTINEL)
+                    for pname in empty_collections:
+                        cells.append((param_col_map[pname], EMPTY_COLLECTION_SENTINEL))
                     data_rows.append(cells)
 
     # --- Sort rows ---

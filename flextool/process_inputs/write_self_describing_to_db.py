@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 # The special pseudo-parameter that maps to entity_alternative rows.
 _ENTITY_EXISTENCE = "entity existence"
 
+# Index-cell marker the exporter writes for a zero-length Array/Map value.
+# Mirrors excel_writer.EMPTY_COLLECTION_SENTINEL — keep the two in sync.
+_EMPTY_COLLECTION_SENTINEL = "(empty)"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -381,7 +385,17 @@ def _group_map_records(
         # from the source so the engine's axis labels stay intact.
         dtype = (rec.get("data_type") or "").lower()
         is_array_dtype = "(array)" in dtype or dtype.endswith(" array") or dtype == "array"
-        if is_array_dtype:
+        if indexes and all(i == _EMPTY_COLLECTION_SENTINEL for i in indexes):
+            # Sentinel row written by the exporter for a zero-length
+            # Array/Map (excel_writer.EMPTY_COLLECTION_SENTINEL): rebuild an
+            # empty collection so an explicit empty override (e.g.
+            # solve.contains_solves = []) round-trips instead of collapsing
+            # into "no value" and inheriting a lower-ranked alternative.
+            if is_array_dtype:
+                value = Array(values=[])
+            else:
+                value = Map(indexes=[], values=[])
+        elif is_array_dtype:
             value = Array(values=values, index_name=index_name)
         else:
             value = Map(indexes=indexes, values=values, index_name=index_name)
