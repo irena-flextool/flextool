@@ -1505,31 +1505,43 @@ def _lagrangian_consume_guard_message(
     base_solve_name: str,
     prev_captured: str | None,
     lagrangian_solve_names: "set[str]",
+    lagrangian_invest_handoff_names: "set[str]",
 ) -> str | None:
-    """Loud guard for the deferred cross-scheme handoff (v60).
+    """Loud guard for the cross-scheme handoff (v60, narrowed for TIER 1).
 
-    Returns an actionable error message when *base_solve_name* would
-    consume the results of a predecessor solve that ran under
-    ``decomposition=lagrangian`` — that handoff is intentionally not
-    deposited (cross-scheme handoff is a follow-up), so consuming it
-    would silently load nothing.  Returns ``None`` when the situation is
-    safe:
+    A Lagrangian *investment* solve now deposits a real ``SolveHandoff``
+    (``realized_invest`` / ``realized_existing`` / ``divest_cumulative``)
+    so a downstream rolling-dispatch solve can consume its invested
+    capacity — that path is SUPPORTED and must NOT fire the guard.
+
+    The guard now fires only when *base_solve_name* would consume a
+    Lagrangian predecessor that deposited **no usable investment
+    handoff** — i.e. the predecessor is in *lagrangian_solve_names* but
+    NOT in *lagrangian_invest_handoff_names* (its handoff carries no
+    ``realized_invest`` / ``divest_cumulative`` to hand forward, so the
+    downstream solve would silently load nothing investy from it).
+
+    Returns ``None`` when the situation is safe:
 
     * no predecessor, or the predecessor was not a Lagrangian solve;
     * the predecessor is a roll of the *same* base solve (rolls of one
-      Lagrangian solve share its base name — not a cross-scheme consume).
+      Lagrangian solve share its base name — not a cross-scheme consume);
+    * the predecessor deposited a usable invest handoff (TIER 1 path).
     """
     if prev_captured is None or prev_captured not in lagrangian_solve_names:
         return None
     if base_solve_name == re.sub(r"_roll_\d+$", "", prev_captured):
         return None
+    if prev_captured in lagrangian_invest_handoff_names:
+        return None
     return (
         f"Solve '{base_solve_name}' follows '{prev_captured}', which ran "
-        f"under decomposition=lagrangian, and would consume its results. "
-        f"Cross-scheme handoff (a Lagrangian solve feeding a downstream "
-        f"solve) is not yet supported. Make the downstream solve "
-        f"lagrangian too, or order the chain so the Lagrangian solve is "
-        f"terminal."
+        f"under decomposition=lagrangian but produced NO invested/divested "
+        f"capacity to hand forward (its handoff carries no realized_invest "
+        f"/ divest_cumulative). Consuming it would silently load nothing "
+        f"from that solve. Make the downstream solve lagrangian too, order "
+        f"the chain so the Lagrangian solve is terminal, or ensure the "
+        f"Lagrangian solve actually invests."
     )
 
 
@@ -1918,6 +1930,13 @@ def _drive_cascade(
             # would try to consume a Lagrangian solve's (absent) handoff —
             # cross-scheme handoff is a deferred follow-up.
             self._lagrangian_solve_names: set[str] = set()
+            # TIER 1 — complete-solve names whose Lagrangian solve
+            # deposited a USABLE investment handoff (non-empty
+            # ``result.invest_solution_vars`` → ``realized_invest`` /
+            # ``divest_cumulative`` carriers).  A downstream solve may
+            # consume these; the consume-side guard fires only for
+            # Lagrangian predecessors NOT in this set.
+            self._lagrangian_invest_handoff_names: set[str] = set()
 
         def _run_lagrangian_solve(
             self,
@@ -1934,14 +1953,20 @@ def _drive_cascade(
             using the per-solve knobs resolved by
             :meth:`SolveConfig.lagrangian_config_for`.
 
-            First-cut scope (per the decomposition spec): the solve runs
-            and reports convergence/objective, deposits an
-            :class:`OrchestrationStep`, and is recorded in
-            ``self._lagrangian_solve_names`` so the consume-side guard in
-            :meth:`run` can fire.  It does NOT deposit a ``SolveHandoff``
-            into ``state.handoffs`` — threading a Lagrangian solve's
-            results into a downstream monolithic solve is a deferred
-            follow-up, guarded loudly rather than silently dropped.
+            The solve runs and reports convergence/objective, then (TIER
+            1) assembles its owner-selected whole-system invest/divest
+            decisions (``result.invest_solution_vars``) into a
+            :class:`SolveHandoff` and deposits it into ``state.handoffs``
+            so a DOWNSTREAM rolling-dispatch solve consumes the invested
+            capacity.  When the model has no investment the dict is empty,
+            no handoff is built, and the deposited step carries a
+            :class:`SnapshotSolution` with empty ``_vars``.  Every
+            Lagrangian solve is recorded in
+            ``self._lagrangian_solve_names``; those that handed forward a
+            usable invest handoff are also recorded in
+            ``self._lagrangian_invest_handoff_names`` so the (now narrowed)
+            consume-side guard in :meth:`run` fires only for a downstream
+            consumer of a Lagrangian solve that produced no investment.
             """
             from flextool.engine_polars._lagrangian import solve_lagrangian
             from flextool.decomposition.region_filter import (
@@ -2067,15 +2092,74 @@ def _drive_cascade(
                     base_solve_name, result.iterations, max_iter, _gap_pct,
                 )
 
-            # Record so the consume-side guard fires for any downstream
-            # solve, and deposit a slim OrchestrationStep (no Solution /
-            # SolveHandoff — the Lagrangian result is not yet threaded
-            # into the monolithic output / handoff pipeline).
+            # TIER 1 — turn the assembled, owner-selected whole-system
+            # invest/divest frames into a handoff so a DOWNSTREAM rolling-
+            # dispatch solve consumes this Lagrangian solve's invested
+            # capacity.  ``result.invest_solution_vars`` is a dict keyed by
+            # ``v_invest_p`` / ``v_invest_n`` / ``v_divest_p`` /
+            # ``v_divest_n`` to long-form (entity, d, value) frames whose
+            # columns match ``polar_high.Solution.value(name)`` exactly;
+            # it is ``{}`` when the model has no investment.
+            from flextool.engine_polars.input import (
+                build_handoff_from_solution,
+            )
+
             self._lagrangian_solve_names.add(complete_solve_name)
+
+            # Carrier: a SnapshotSolution duck-types the ``_vars``
+            # membership + ``.value(name)`` contract the invest/divest
+            # extraction in ``build_handoff_from_solution`` needs (it
+            # reads ONLY ``name in sol._vars`` and ``sol.value(name)`` on
+            # that path — no Var internals, no ``col_value``).
+            snap = SnapshotSolution(_vars=dict(result.invest_solution_vars))
+
+            handoff = None
+            if result.invest_solution_vars:
+                # Mirror the monolithic path's prior-handoff resolution
+                # (the predecessor this solve loaded), so the cumulative
+                # invest/existing carriers chain forward correctly.
+                _prior = (
+                    self.state.handoffs.get(self.state.last_captured_solve)
+                    if self.state.last_captured_solve is not None else None
+                )
+                # CRITICAL: pass ``flex_data=None``.  With a real
+                # ``flex_data`` the builder also runs the co2 /
+                # cumulative-commodity / fix_storage branches, the last of
+                # which is gated on storage nodes (not on ``v_flow in
+                # _vars``) and calls ``sol.constraint_dual(...)`` —
+                # absent on SnapshotSolution → AttributeError.  TIER 1
+                # needs none of those derivations from the invest solve;
+                # ``flex_data=None`` collapses them to prior-handoff
+                # passthroughs and keeps the call on the pure invest/divest
+                # path.  ``provider`` is safe (it only feeds the
+                # ``solve_data/`` CSV reads that source the invest periods
+                # / entity sets, independent of ``sol``) and is REQUIRED
+                # for the carriers to populate.
+                handoff = build_handoff_from_solution(
+                    snap,
+                    self.state.paths.work_folder,
+                    complete_solve_name,
+                    prior_handoff=_prior,
+                    flex_data=None,
+                    parent_handoff=None,
+                    provider=getattr(
+                        self.state, "current_provider", None,
+                    ),
+                )
+                # Deposit so the next solve's load picks it up via the
+                # ``last_captured_solve`` translation in _native_run_model
+                # (which re-reads ``state.handoffs[last_captured_solve]``
+                # after this method returns 0).
+                self.state.handoffs[complete_solve_name] = handoff
+                # Track that this Lagrangian solve handed forward usable
+                # investment so the narrowed consume-side guard does NOT
+                # fire for a downstream consumer of it.
+                self._lagrangian_invest_handoff_names.add(complete_solve_name)
+
             self._all_steps[complete_solve_name] = OrchestrationStep(
                 solve_name=complete_solve_name,
-                solution=None,
-                handoff=None,
+                solution=snap,
+                handoff=handoff,
                 obj=result.total_objective,
                 optimal=result.converged,
                 warm_used=False,
@@ -2233,6 +2317,7 @@ def _drive_cascade(
                 base_solve_name,
                 self.state.last_captured_solve,
                 self._lagrangian_solve_names,
+                self._lagrangian_invest_handoff_names,
             )
             if _guard_msg is not None:
                 raise FlexToolConfigError(_guard_msg)

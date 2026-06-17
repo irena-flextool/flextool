@@ -366,8 +366,13 @@ def test_decomposition_lagrangian_db_driven(
 
     # Exactly one solve in this scenario (``lh2_week``); it must have been
     # routed through the Lagrangian driver, so its step carries the
-    # decomposition objective and the convergence flag, and no monolithic
-    # Solution / handoff (deferred output integration).
+    # decomposition objective and the convergence flag.  TIER 1: the step
+    # now carries a :class:`SnapshotSolution` invest-carrier (not a
+    # monolithic Solution).  LH2 declares NO investment, so its
+    # ``invest_solution_vars`` is empty → the SnapshotSolution has empty
+    # ``_vars`` and NO handoff is built (nothing to hand forward).
+    from flextool.engine_polars._orchestration import SnapshotSolution
+
     step = next(reversed(list(steps.values())))
     assert step.obj is not None, (
         "Lagrangian solve step has no objective — routing did not fire"
@@ -375,9 +380,16 @@ def test_decomposition_lagrangian_db_driven(
     assert step.optimal in (True, False), (
         f"expected a bool convergence flag, got {step.optimal!r}"
     )
-    assert step.solution is None and step.handoff is None, (
-        "Lagrangian step should carry no monolithic Solution/handoff "
-        "(cross-scheme integration is deferred)"
+    assert isinstance(step.solution, SnapshotSolution), (
+        "Lagrangian step should carry a SnapshotSolution invest carrier, "
+        f"got {type(step.solution).__name__}"
+    )
+    assert step.solution._vars == {}, (
+        "LH2 has no investment, so the invest carrier must be empty, "
+        f"got keys {list(step.solution._vars)}"
+    )
+    assert step.handoff is None, (
+        "LH2 has no investment to hand forward, so no handoff is built"
     )
 
     golden = json.loads(LH2_GOLDEN_OBJ.read_text())["obj"]
