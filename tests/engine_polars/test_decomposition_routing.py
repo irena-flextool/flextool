@@ -5,8 +5,10 @@ Solver-free coverage of:
 * :meth:`SolveConfig.decomposition_for` / ``lagrangian_config_for`` —
   the per-solve scheme + knob resolvers (defaults + normalisation).
 * :func:`_orchestration._lagrangian_consume_guard_message` — the loud
-  guard that fires when a downstream solve would consume a Lagrangian
-  solve's (deferred, absent) handoff.
+  guard that (post TIER 1) fires only when a downstream solve would
+  consume a Lagrangian predecessor that deposited NO usable investment
+  handoff; it is silent when the predecessor handed forward invested
+  capacity (the supported invest→dispatch path).
 
 The solver-backed end-to-end routing check lives in
 ``test_cli_smoke.py::test_decomposition_lagrangian_db_driven``.
@@ -99,23 +101,39 @@ def test_lagrangian_config_partial_authoring_fills_defaults() -> None:
 
 
 def test_guard_silent_when_no_predecessor() -> None:
-    assert _lagrangian_consume_guard_message("disp", None, set()) is None
+    assert _lagrangian_consume_guard_message(
+        "disp", None, set(), set()
+    ) is None
 
 
 def test_guard_silent_when_predecessor_not_lagrangian() -> None:
-    assert _lagrangian_consume_guard_message("disp", "invest", set()) is None
+    assert _lagrangian_consume_guard_message(
+        "disp", "invest", set(), set()
+    ) is None
 
 
-def test_guard_fires_for_downstream_consumer() -> None:
-    msg = _lagrangian_consume_guard_message("disp", "invest", {"invest"})
+def test_guard_fires_when_predecessor_has_no_invest_handoff() -> None:
+    # A Lagrangian predecessor that deposited NO usable investment handoff
+    # (not in the invest-handoff set) → consuming it loads nothing investy.
+    msg = _lagrangian_consume_guard_message(
+        "disp", "invest", {"invest"}, set()
+    )
     assert msg is not None
     assert "disp" in msg and "invest" in msg
     assert "lagrangian" in msg.lower()
+
+
+def test_guard_silent_when_predecessor_deposited_invest_handoff() -> None:
+    # TIER 1 — a Lagrangian invest solve that handed forward usable
+    # capacity (in the invest-handoff set) is a SUPPORTED consume; silent.
+    assert _lagrangian_consume_guard_message(
+        "disp", "invest", {"invest"}, {"invest"}
+    ) is None
 
 
 def test_guard_silent_for_roll_of_same_lagrangian_solve() -> None:
     # A later roll of the same Lagrangian solve shares its base name and
     # is not a cross-scheme consume.
     assert _lagrangian_consume_guard_message(
-        "invest", "invest_roll_3", {"invest_roll_3"}
+        "invest", "invest_roll_3", {"invest_roll_3"}, set()
     ) is None

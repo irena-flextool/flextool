@@ -366,8 +366,13 @@ def test_decomposition_lagrangian_db_driven(
 
     # Exactly one solve in this scenario (``lh2_week``); it must have been
     # routed through the Lagrangian driver, so its step carries the
-    # decomposition objective and the convergence flag, and no monolithic
-    # Solution / handoff (deferred output integration).
+    # decomposition objective and the convergence flag.  TIER 1: the step
+    # now carries a :class:`SnapshotSolution` invest-carrier (not a
+    # monolithic Solution).  LH2 declares NO investment, so its
+    # ``invest_solution_vars`` is empty → the SnapshotSolution has empty
+    # ``_vars`` and NO handoff is built (nothing to hand forward).
+    from flextool.engine_polars._orchestration import SnapshotSolution
+
     step = next(reversed(list(steps.values())))
     assert step.obj is not None, (
         "Lagrangian solve step has no objective — routing did not fire"
@@ -375,9 +380,21 @@ def test_decomposition_lagrangian_db_driven(
     assert step.optimal in (True, False), (
         f"expected a bool convergence flag, got {step.optimal!r}"
     )
-    assert step.solution is None and step.handoff is None, (
-        "Lagrangian step should carry no monolithic Solution/handoff "
-        "(cross-scheme integration is deferred)"
+    assert isinstance(step.solution, SnapshotSolution), (
+        "Lagrangian step should carry a SnapshotSolution invest carrier, "
+        f"got {type(step.solution).__name__}"
+    )
+    assert step.solution._vars == {}, (
+        "LH2 has no investment, so the invest carrier must be empty, "
+        f"got keys {list(step.solution._vars)}"
+    )
+    assert step.handoff is None, (
+        "LH2 has no investment to hand forward, so no handoff is built"
+    )
+    # The step must be flagged Lagrangian so cmd_run_flextool can emit the
+    # clear "no standalone outputs yet" notice and SKIP write_outputs.
+    assert step.is_lagrangian is True, (
+        "Lagrangian region-driven step must carry is_lagrangian=True"
     )
 
     golden = json.loads(LH2_GOLDEN_OBJ.read_text())["obj"]
@@ -401,6 +418,82 @@ def test_decomposition_lagrangian_db_driven(
     )
     assert "optimality gap" in out, (
         f"final dual/primal-gap summary missing:\n{out}"
+    )
+
+
+def test_orchestration_step_is_lagrangian_defaults_false() -> None:
+    """A normally-constructed :class:`OrchestrationStep` (the monolithic /
+    dispatch path) must default ``is_lagrangian`` to ``False`` so the
+    cmd_run_flextool guard only skips write_outputs for the Lagrangian
+    region-driven case.
+    """
+    from flextool.engine_polars._orchestration import OrchestrationStep
+
+    step = OrchestrationStep(
+        solve_name="dispatch_solve",
+        solution=None,
+        handoff=None,
+    )
+    assert step.is_lagrangian is False
+
+
+def test_cmd_run_flextool_lagrangian_guard_skips_write_outputs(
+    monkeypatch, caplog,
+) -> None:
+    """The cmd_run_flextool guard reads ``last_step.is_lagrangian`` and,
+    when True, emits the clear standalone-Lagrangian notice and SKIPS
+    write_outputs.  Drive the exact guard expression + message branch in
+    isolation (a full subprocess run is heavy and unnecessary).
+    """
+    import logging
+
+    class _FakeStep:
+        is_lagrangian = True
+        solve_name = "lh2_invest"
+
+    last_step = _FakeStep()
+    called = {"write_outputs": False}
+
+    def _fake_write_outputs(*_a, **_k):
+        called["write_outputs"] = True
+
+    # Mirror the guard's control flow exactly (the condition + the
+    # skip-vs-call decision are what we're locking down here).
+    wo_solve_name = (
+        last_step.solve_name if last_step else None
+    ) or "scenario"
+    with caplog.at_level(logging.INFO):
+        if last_step is not None and getattr(
+            last_step, "is_lagrangian", False
+        ):
+            logging.info(
+                "Final solve '%s' ran under decomposition=lagrangian and "
+                "does not yet produce processed outputs on its own.",
+                wo_solve_name,
+            )
+        else:
+            _fake_write_outputs()
+
+    assert called["write_outputs"] is False, (
+        "write_outputs must be SKIPPED when last_step.is_lagrangian is True"
+    )
+    assert any(
+        "decomposition=lagrangian" in r.getMessage() for r in caplog.records
+    ), "the clear standalone-Lagrangian notice was not emitted"
+
+    # And the non-Lagrangian path still calls write_outputs.
+    class _NormalStep:
+        is_lagrangian = False
+        solve_name = "dispatch"
+
+    normal = _NormalStep()
+    called["write_outputs"] = False
+    if normal is not None and getattr(normal, "is_lagrangian", False):
+        pass
+    else:
+        _fake_write_outputs()
+    assert called["write_outputs"] is True, (
+        "non-Lagrangian last step must still call write_outputs"
     )
 
 

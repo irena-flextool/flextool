@@ -300,6 +300,21 @@
       null
     ],
     [
+      "flowGroup",
+      "coal_electricity",
+      null
+    ],
+    [
+      "flowGroup",
+      "connections_with_east",
+      null
+    ],
+    [
+      "flowGroup",
+      "to_west_node",
+      null
+    ],
+    [
       "group",
       "daily_group",
       null
@@ -407,6 +422,16 @@
     [
       "profile",
       "wind_profile_C",
+      null
+    ],
+    [
+      "solve",
+      "lh2_dispatch",
+      null
+    ],
+    [
+      "solve",
+      "lh2_invest",
       null
     ],
     [
@@ -2131,6 +2156,22 @@
         "wind_profile_C"
       ],
       "lh2_three_region",
+      true
+    ],
+    [
+      "solve",
+      [
+        "lh2_dispatch"
+      ],
+      "lh2_three_region_invest",
+      true
+    ],
+    [
+      "solve",
+      [
+        "lh2_invest"
+      ],
+      "lh2_three_region_invest",
       true
     ],
     [
@@ -4063,7 +4104,7 @@
         "str"
       ],
       "decomposition_methods",
-      "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition \u2014 default), 'lagrangian_region' (group is solved as an independent region with shared-commodity coupling).",
+      "Decomposition strategy.  'none' (default) leaves the group monolithic; 'lagrangian_region' marks it as an independent region for Agent 3.2's decomposition.",
       "solve_advanced"
     ],
     [
@@ -4184,7 +4225,7 @@
         null
       ],
       null,
-      "Hours. Members of this group operate at this step duration. Overrides the solve-level new_stepduration for these entities. Used for multi-resolution models where some nodes (e.g. fuel markets) need coarser dispatch resolution than others (e.g. power systems).",
+      "Hours. Members of this group operate at this step duration. Overrides the solve-level new_stepduration for these entities.",
       "solve_advanced"
     ],
     [
@@ -7726,6 +7767,46 @@
       "lh2_three_region"
     ],
     [
+      "commodity",
+      "coal",
+      "price_ladder_annual",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMywgImRhdGEiOiBbWyJwMjAyMCIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAicmFuayI6IDIsICJkYXRhIjogW1siMSIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAicmFuayI6IDEsICJkYXRhIjogW1sicHJpY2UiLCAyMC4wXSwgWyJxdWFudGl0eSIsIDEuMF1dfV0sIFsiMiIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAicmFuayI6IDEsICJkYXRhIjogW1sicHJpY2UiLCAzMC4wXSwgWyJxdWFudGl0eSIsIEluZmluaXR5XV19XV0sICJpbmRleF9uYW1lIjogInRpZXIifV1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "ladder_ann_on"
+    ],
+    [
+      "commodity",
+      "coal",
+      "price_ladder_cumulative",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMiwgImRhdGEiOiBbWyIxIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwcmljZSIsIDIwLjBdLCBbInF1YW50aXR5IiwgMS4wXV19XSwgWyIyIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwcmljZSIsIDMwLjBdLCBbInF1YW50aXR5IiwgSW5maW5pdHldXX1dXSwgImluZGV4X25hbWUiOiAidGllciJ9",
+        "map"
+      ],
+      "ladder_cum_on"
+    ],
+    [
+      "commodity",
+      "coal",
+      "price_method",
+      [
+        "InByaWNlX2xhZGRlcl9hbm51YWwi",
+        "str"
+      ],
+      "ladder_ann_on"
+    ],
+    [
+      "commodity",
+      "coal",
+      "price_method",
+      [
+        "InByaWNlX2xhZGRlcl9jdW11bGF0aXZlIg==",
+        "str"
+      ],
+      "ladder_cum_on"
+    ],
+    [
       "connection",
       "electrolyser_A",
       "efficiency",
@@ -7874,6 +7955,36 @@
         "str"
       ],
       "lh2_three_region"
+    ],
+    [
+      "flowGroup",
+      "coal_electricity",
+      "flow_aggregator",
+      [
+        "ImJvdGgi",
+        "str"
+      ],
+      "aggregate_outputs"
+    ],
+    [
+      "flowGroup",
+      "connections_with_east",
+      "flow_aggregator",
+      [
+        "ImJvdGgi",
+        "str"
+      ],
+      "aggregate_outputs"
+    ],
+    [
+      "flowGroup",
+      "to_west_node",
+      "flow_aggregator",
+      [
+        "InN0YW5kYWxvbmVfYWdncmVnYXRvcl9vbmx5Ig==",
+        "str"
+      ],
+      "init"
     ],
     [
       "group",
@@ -7924,6 +8035,16 @@
         "str"
       ],
       "lh2_three_region"
+    ],
+    [
+      "model",
+      "flexTool",
+      "inflation_rate",
+      [
+        "MC4wMg==",
+        "float"
+      ],
+      "inflation_2pct"
     ],
     [
       "model",
@@ -8010,6 +8131,16 @@
       "flexTool",
       "solves",
       [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJ5MjAyMF9oYWxmX3llYXIiXSwgImluZGV4X25hbWUiOiAic2VxdWVuY2VfaW5kZXgifQ==",
+        "array"
+      ],
+      "half_year"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJ5MjAyMF8yZGF5X2Rpc3BhdGNoIl0sICJpbmRleF9uYW1lIjogInNlcXVlbmNlX2luZGV4In0=",
         "array"
       ],
@@ -8084,6 +8215,36 @@
         "array"
       ],
       "lh2_three_region"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
+        "eyJ0eXBlIjogImFycmF5IiwgInZhbHVlX3R5cGUiOiAic3RyIiwgImRhdGEiOiBbImxoMl9pbnZlc3QiLCAibGgyX2Rpc3BhdGNoIl0sICJpbmRleF9uYW1lIjogInNlcXVlbmNlX2luZGV4In0=",
+        "array"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJsb3NzbGVzc18yd2F5X3NvbHZlIl0sICJpbmRleF9uYW1lIjogInNlcXVlbmNlX2luZGV4In0=",
+        "array"
+      ],
+      "lossless_2way"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJ5MjAyMF8yXzVfeWVhciJdLCAiaW5kZXhfbmFtZSI6ICJzZXF1ZW5jZV9pbmRleCJ9",
+        "array"
+      ],
+      "two_and_half_year"
     ],
     [
       "node",
@@ -8927,6 +9088,126 @@
     ],
     [
       "solve",
+      "lh2_dispatch",
+      "period_timeset",
+      [
+        "eyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJpbmRleF9uYW1lIjogInBlcmlvZCIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ5MjAzMCIsICJ3ZWVrMTY4Il1dfQ==",
+        "map"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_dispatch",
+      "realized_periods",
+      [
+        "eyJ0eXBlIjogImFycmF5IiwgInZhbHVlX3R5cGUiOiAic3RyIiwgImRhdGEiOiBbInkyMDMwIl0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
+        "array"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_dispatch",
+      "solve_mode",
+      [
+        "InNpbmdsZV9zb2x2ZSI=",
+        "str"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "decomposition",
+      [
+        "ImxhZ3JhbmdpYW4i",
+        "str"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "invest_periods",
+      [
+        "eyJ0eXBlIjogImFycmF5IiwgInZhbHVlX3R5cGUiOiAic3RyIiwgImRhdGEiOiBbInkyMDMwIl0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
+        "array"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "lagrangian_alpha",
+      [
+        "MTAuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "lagrangian_max_iter",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "lagrangian_tolerance",
+      [
+        "MC41",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "period_timeset",
+      [
+        "eyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJpbmRleF9uYW1lIjogInBlcmlvZCIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ5MjAzMCIsICJ3ZWVrMTY4Il1dfQ==",
+        "map"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "realized_invest_periods",
+      [
+        "eyJ0eXBlIjogImFycmF5IiwgInZhbHVlX3R5cGUiOiAic3RyIiwgImRhdGEiOiBbInkyMDMwIl0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
+        "array"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "realized_periods",
+      [
+        "eyJ0eXBlIjogImFycmF5IiwgInZhbHVlX3R5cGUiOiAic3RyIiwgImRhdGEiOiBbInkyMDMwIl0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
+        "array"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
+      "lh2_invest",
+      "solve_mode",
+      [
+        "InNpbmdsZV9zb2x2ZSI=",
+        "str"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "solve",
       "lh2_week",
       "period_timeset",
       [
@@ -9197,6 +9478,16 @@
     ],
     [
       "unit",
+      "coal_A",
+      "existing",
+      [
+        "MjAuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
       "coal_B",
       "conversion_method",
       [
@@ -9227,6 +9518,16 @@
     ],
     [
       "unit",
+      "coal_B",
+      "existing",
+      [
+        "MjAuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
       "coal_C",
       "conversion_method",
       [
@@ -9257,6 +9558,16 @@
     ],
     [
       "unit",
+      "coal_C",
+      "existing",
+      [
+        "MjAuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
       "liquefier_A",
       "conversion_method",
       [
@@ -9358,6 +9669,16 @@
     [
       "unit",
       "wind_A",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
+      "wind_A",
       "efficiency",
       [
         "MS4w",
@@ -9377,6 +9698,36 @@
     ],
     [
       "unit",
+      "wind_A",
+      "invest_cost",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
+      "wind_A",
+      "invest_method",
+      [
+        "ImludmVzdF9ub19saW1pdCI=",
+        "str"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
+      "wind_A",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
       "wind_B",
       "conversion_method",
       [
@@ -9384,6 +9735,16 @@
         "str"
       ],
       "lh2_three_region"
+    ],
+    [
+      "unit",
+      "wind_B",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "lh2_three_region_invest"
     ],
     [
       "unit",
@@ -9407,6 +9768,36 @@
     ],
     [
       "unit",
+      "wind_B",
+      "invest_cost",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
+      "wind_B",
+      "invest_method",
+      [
+        "ImludmVzdF9ub19saW1pdCI=",
+        "str"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
+      "wind_B",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
       "wind_C",
       "conversion_method",
       [
@@ -9414,6 +9805,16 @@
         "str"
       ],
       "lh2_three_region"
+    ],
+    [
+      "unit",
+      "wind_C",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "lh2_three_region_invest"
     ],
     [
       "unit",
@@ -9434,6 +9835,36 @@
         "float"
       ],
       "lh2_three_region"
+    ],
+    [
+      "unit",
+      "wind_C",
+      "invest_cost",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
+      "wind_C",
+      "invest_method",
+      [
+        "ImludmVzdF9ub19saW1pdCI=",
+        "str"
+      ],
+      "lh2_three_region_invest"
+    ],
+    [
+      "unit",
+      "wind_C",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "lh2_three_region_invest"
     ],
     [
       "unit__node__profile",
@@ -9580,6 +10011,10 @@
       ""
     ],
     [
+      "delay_source_coef_on",
+      "Phase 3d: override unit__inputNode.(water_pump, water_source).conversion_flow_coeff from 1.0 to 2.0 for test_flex_delay_source_coef.py."
+    ],
+    [
       "dispatch_fullYear_roll",
       ""
     ],
@@ -9612,12 +10047,24 @@
       ""
     ],
     [
+      "half_year",
+      ""
+    ],
+    [
       "heat",
+      ""
+    ],
+    [
+      "hyphenated",
       ""
     ],
     [
       "inertia",
       ""
+    ],
+    [
+      "inflation_2pct",
+      "Phase 3d: override model.inflation_rate to 0.02 for test_db_direct_inflation_2pct.py"
     ],
     [
       "init",
@@ -9648,8 +10095,20 @@
       ""
     ],
     [
+      "ladder_ann_on",
+      "Phase 3d: enable coal annual price ladder."
+    ],
+    [
+      "ladder_cum_on",
+      "Phase 3d: enable coal cumulative price ladder."
+    ],
+    [
       "lh2_three_region",
       "Three-region LH2 fixture (Agent 1.9)"
+    ],
+    [
+      "lh2_three_region_invest",
+      "Three-region LH2 invest\u2192dispatch chain (TIER 1)"
     ],
     [
       "lifetime_choice",
@@ -9658,6 +10117,10 @@
     [
       "lifetime_renew",
       ""
+    ],
+    [
+      "lossless_2way",
+      "Lossless 2-way connection forced-reverse test"
     ],
     [
       "network",
@@ -9681,6 +10144,14 @@
     ],
     [
       "storage_fullYear_6h",
+      ""
+    ],
+    [
+      "two_and_half_year",
+      ""
+    ],
+    [
+      "unidirectional",
       ""
     ],
     [
@@ -9782,6 +10253,16 @@
       ""
     ],
     [
+      "coal_ladder_annual",
+      false,
+      null
+    ],
+    [
+      "coal_ladder_cumulative",
+      false,
+      null
+    ],
+    [
       "coal_min_load",
       false,
       ""
@@ -9832,6 +10313,11 @@
       ""
     ],
     [
+      "delay_source_coef",
+      false,
+      null
+    ],
+    [
       "dr_decrease_demand",
       false,
       ""
@@ -9862,9 +10348,24 @@
       ""
     ],
     [
+      "hyphenated_entity_names",
+      false,
+      ""
+    ],
+    [
       "lh2_three_region",
       false,
       "Three-region LH2 fixture (Agent 1.9)"
+    ],
+    [
+      "lh2_three_region_invest",
+      false,
+      "Three-region LH2 Lagrangian invest\u2192dispatch chain (TIER 1)"
+    ],
+    [
+      "lossless_2way",
+      false,
+      ""
     ],
     [
       "multi_fullYear_battery",
@@ -9977,6 +10478,11 @@
       ""
     ],
     [
+      "unidirectional_connection",
+      false,
+      ""
+    ],
+    [
       "water_pump",
       false,
       ""
@@ -10017,12 +10523,27 @@
       ""
     ],
     [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      false,
+      null
+    ],
+    [
       "y2020_2029_1x10y",
       false,
       ""
     ],
     [
       "y2020_2029_2x5y",
+      false,
+      ""
+    ],
+    [
+      "years_represented_2_5",
+      false,
+      ""
+    ],
+    [
+      "years_represented_half",
       false,
       ""
     ]
@@ -10379,6 +10900,46 @@
       null
     ],
     [
+      "coal_ladder_annual",
+      "init",
+      "west"
+    ],
+    [
+      "coal_ladder_annual",
+      "west",
+      "coal"
+    ],
+    [
+      "coal_ladder_annual",
+      "coal",
+      "ladder_ann_on"
+    ],
+    [
+      "coal_ladder_annual",
+      "ladder_ann_on",
+      null
+    ],
+    [
+      "coal_ladder_cumulative",
+      "init",
+      "west"
+    ],
+    [
+      "coal_ladder_cumulative",
+      "west",
+      "coal"
+    ],
+    [
+      "coal_ladder_cumulative",
+      "coal",
+      "ladder_cum_on"
+    ],
+    [
+      "coal_ladder_cumulative",
+      "ladder_cum_on",
+      null
+    ],
+    [
       "coal_min_load",
       "init",
       "west"
@@ -10659,6 +11220,36 @@
       null
     ],
     [
+      "delay_source_coef",
+      "init",
+      "west"
+    ],
+    [
+      "delay_source_coef",
+      "west",
+      "coal"
+    ],
+    [
+      "delay_source_coef",
+      "coal",
+      "water_pump"
+    ],
+    [
+      "delay_source_coef",
+      "water_pump",
+      "water_pump_delayed"
+    ],
+    [
+      "delay_source_coef",
+      "water_pump_delayed",
+      "delay_source_coef_on"
+    ],
+    [
+      "delay_source_coef",
+      "delay_source_coef_on",
+      null
+    ],
+    [
       "dr_decrease_demand",
       "init",
       "west"
@@ -10794,8 +11385,58 @@
       null
     ],
     [
+      "hyphenated_entity_names",
+      "init",
+      "west"
+    ],
+    [
+      "hyphenated_entity_names",
+      "west",
+      "coal"
+    ],
+    [
+      "hyphenated_entity_names",
+      "coal",
+      "wind"
+    ],
+    [
+      "hyphenated_entity_names",
+      "wind",
+      "network"
+    ],
+    [
+      "hyphenated_entity_names",
+      "network",
+      "hyphenated"
+    ],
+    [
+      "hyphenated_entity_names",
+      "hyphenated",
+      null
+    ],
+    [
       "lh2_three_region",
       "lh2_three_region",
+      null
+    ],
+    [
+      "lh2_three_region_invest",
+      "lh2_three_region",
+      "lh2_three_region_invest"
+    ],
+    [
+      "lh2_three_region_invest",
+      "lh2_three_region_invest",
+      null
+    ],
+    [
+      "lossless_2way",
+      "Base",
+      "lossless_2way"
+    ],
+    [
+      "lossless_2way",
+      "lossless_2way",
       null
     ],
     [
@@ -12104,6 +12745,36 @@
       null
     ],
     [
+      "unidirectional_connection",
+      "init",
+      "west"
+    ],
+    [
+      "unidirectional_connection",
+      "west",
+      "coal"
+    ],
+    [
+      "unidirectional_connection",
+      "coal",
+      "wind"
+    ],
+    [
+      "unidirectional_connection",
+      "wind",
+      "network"
+    ],
+    [
+      "unidirectional_connection",
+      "network",
+      "unidirectional"
+    ],
+    [
+      "unidirectional_connection",
+      "unidirectional",
+      null
+    ],
+    [
       "water_pump",
       "init",
       "west"
@@ -12369,6 +13040,66 @@
       null
     ],
     [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "init",
+      "west"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "west",
+      "wind"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "wind",
+      "wind_invest"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "wind_invest",
+      "battery"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "battery",
+      "battery_invest"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "battery_invest",
+      "5weeks"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "5weeks",
+      "lifetime_choice"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "lifetime_choice",
+      "invest_solveSequence_5weeks"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "invest_solveSequence_5weeks",
+      "invest_allYears_5weeks"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "invest_allYears_5weeks",
+      "lifetime_renew"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "lifetime_renew",
+      "inflation_2pct"
+    ],
+    [
+      "wind_battery_invest_lifetime_renew_inflation_2pct",
+      "inflation_2pct",
+      null
+    ],
+    [
       "y2020_2029_1x10y",
       "init",
       "west"
@@ -12436,6 +13167,46 @@
     [
       "y2020_2029_2x5y",
       "2x5y",
+      null
+    ],
+    [
+      "years_represented_2_5",
+      "init",
+      "west"
+    ],
+    [
+      "years_represented_2_5",
+      "west",
+      "coal"
+    ],
+    [
+      "years_represented_2_5",
+      "coal",
+      "two_and_half_year"
+    ],
+    [
+      "years_represented_2_5",
+      "two_and_half_year",
+      null
+    ],
+    [
+      "years_represented_half",
+      "init",
+      "west"
+    ],
+    [
+      "years_represented_half",
+      "west",
+      "coal"
+    ],
+    [
+      "years_represented_half",
+      "coal",
+      "half_year"
+    ],
+    [
+      "years_represented_half",
+      "half_year",
       null
     ]
   ]

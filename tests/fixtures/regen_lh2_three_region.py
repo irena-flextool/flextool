@@ -85,6 +85,14 @@ from build_lh2_three_region import (  # noqa: E402
 
 DEFAULT_OUT = HERE / "lh2_three_region.json"
 
+# Additive invest layer (TIER 1 Lagrangian invest→dispatch chain).  This
+# alternative + scenario layers ON TOP of the base ``ALT`` topology; the
+# base ``lh2_three_region`` scenario is untouched so every existing
+# lagrangian/parity test stays byte-stable.  See
+# ``specs/lagrangian_solution_assembly.md`` "Tier1 test fixture plan".
+INVEST_ALT: str = "lh2_three_region_invest"
+INVEST_SCENARIO: str = "lh2_three_region_invest"
+
 
 # --- Time series synthesis --------------------------------------------------
 
@@ -156,6 +164,132 @@ def _period_timeset_map(rows: list[tuple[str, str]]) -> dict[str, Any]:
 
 
 # --- Builder ---------------------------------------------------------------
+
+
+def _array_str_periods(values: list[str]) -> dict[str, Any]:
+    """Encode a period Array (``invest_periods`` / ``realized_periods``)."""
+    return _array_str(values, "period")
+
+
+def _build_invest_overlay(base_entities: list[tuple]) -> dict[str, list]:
+    """Return the additive invest layer (entities, parameter_values,
+    alternative/scenario, entity_alternatives) for the
+    ``lh2_three_region_invest`` scenario.
+
+    The layer composes ON TOP of the base ``ALT`` topology: the invest
+    scenario lists BOTH ``ALT`` (base entities + their parameter values)
+    then ``INVEST_ALT`` (this layer's overrides + new solves), so the
+    invest layer wins on overlapping ``(entity, parameter)`` keys.
+
+    What the layer does
+    -------------------
+    * Makes ``wind_<r>`` invest-eligible in EVERY region
+      (``invest_method=invest_no_limit`` + low ``invest_cost`` +
+      ``lifetime`` / ``discount_rate``), so the assembled invest vars span
+      all three regions and the owner-selection assembly is exercised.
+    * TIGHTENS the binding ``existing`` capacity (drops ``coal_<r>`` from
+      400 → a small floor) so each region has a genuine in-region capacity
+      shortage.  With the per-hour annualised wind invest cost far below
+      the ``penalty_up=8000`` unserved-energy slack price, the LP strictly
+      prefers building wind over paying the penalty — i.e. it actually
+      invests.  Verified empirically (see the test thresholds).
+    * Defines a two-solve chain ``[lh2_invest, lh2_dispatch]``:
+      ``lh2_invest`` is a single-solve Lagrangian invest solve
+      (``decomposition=lagrangian`` + ``invest_periods=[y2030]``);
+      ``lh2_dispatch`` is a monolithic single-solve dispatch over the same
+      period (``decomposition`` unset) that consumes the invested capacity
+      via the handoff overlay.
+    """
+    new_entities: list[tuple] = []
+    pv: list[tuple] = []
+
+    # --- New solves -----------------------------------------------------
+    # Lagrangian investment solve.
+    new_entities.append(("solve", "lh2_invest"))
+    pv.extend([
+        ("solve", "lh2_invest", "solve_mode", "single_solve", INVEST_ALT),
+        ("solve", "lh2_invest", "decomposition", "lagrangian", INVEST_ALT),
+        ("solve", "lh2_invest", "period_timeset",
+         _period_timeset_map([("y2030", "week168")]), INVEST_ALT),
+        ("solve", "lh2_invest", "realized_periods",
+         _array_str_periods(["y2030"]), INVEST_ALT),
+        ("solve", "lh2_invest", "invest_periods",
+         _array_str_periods(["y2030"]), INVEST_ALT),
+        ("solve", "lh2_invest", "realized_invest_periods",
+         _array_str_periods(["y2030"]), INVEST_ALT),
+        # Lagrangian knobs mirror the base-scenario db-driven test so the
+        # subgradient converges on the same ~0.1 % gap floor.
+        ("solve", "lh2_invest", "lagrangian_alpha", 10.0, INVEST_ALT),
+        ("solve", "lh2_invest", "lagrangian_max_iter", 100.0, INVEST_ALT),
+        ("solve", "lh2_invest", "lagrangian_tolerance", 0.5, INVEST_ALT),
+    ])
+
+    # Downstream monolithic dispatch solve (consumes the invested
+    # capacity via the handoff overlay).  ``decomposition`` left unset ⇒
+    # monolithic.
+    new_entities.append(("solve", "lh2_dispatch"))
+    pv.extend([
+        ("solve", "lh2_dispatch", "solve_mode", "single_solve", INVEST_ALT),
+        ("solve", "lh2_dispatch", "period_timeset",
+         _period_timeset_map([("y2030", "week168")]), INVEST_ALT),
+        ("solve", "lh2_dispatch", "realized_periods",
+         _array_str_periods(["y2030"]), INVEST_ALT),
+    ])
+
+    # --- Chain: override base ``[lh2_week]`` with the 2-solve chain -----
+    pv.append(
+        ("model", "flexTool", "solves",
+         _array_str(["lh2_invest", "lh2_dispatch"]), INVEST_ALT))
+
+    # --- Per-region invest eligibility + binding capacity tightening ---
+    for r in REGIONS:
+        wind = f"wind_{r}"
+        coal = f"coal_{r}"
+        pv.extend([
+            # Make wind invest-eligible (cheapest path: invest_no_limit,
+            # no caps needed).  ``invest_cost`` is the OVERNIGHT capital
+            # cost per kW; annualised over lifetime/discount it is a tiny
+            # fraction of the 8000 slack price, so investing strictly beats
+            # unserved energy whenever capacity is short.
+            ("unit", wind, "invest_method", "invest_no_limit", INVEST_ALT),
+            ("unit", wind, "invest_cost", 50.0, INVEST_ALT),
+            ("unit", wind, "lifetime", 25.0, INVEST_ALT),
+            ("unit", wind, "discount_rate", 0.05, INVEST_ALT),
+            # Tighten the dispatchable thermal so each region faces a
+            # genuine in-region capacity shortage that wind investment
+            # must cover.  Base ``existing`` = 400; drop to 20 under the
+            # invest scenario only (additive override — base scenario
+            # keeps 400).
+            ("unit", coal, "existing", 20.0, INVEST_ALT),
+        ])
+
+    # --- Entity-alternatives: activate the two NEW solves under the
+    #     invest alternative (the base entities are activated by ALT,
+    #     which the invest scenario also lists).
+    ent_alts: list[tuple] = []
+    for ent in new_entities:
+        cl, name = ent[0], ent[1]
+        ent_byname = (name,) if isinstance(name, str) else tuple(name)
+        ent_alts.append((cl, ent_byname, INVEST_ALT, True))
+
+    return {
+        "entities": new_entities,
+        "parameter_values": pv,
+        "alternatives": [
+            (INVEST_ALT, "Three-region LH2 invest→dispatch chain (TIER 1)"),
+        ],
+        "scenarios": [
+            (INVEST_SCENARIO, False,
+             "Three-region LH2 Lagrangian invest→dispatch chain (TIER 1)"),
+        ],
+        # Order matters: ALT first (base topology), INVEST_ALT second
+        # (overrides + new solves win on overlapping keys).
+        "scenario_alternatives": [
+            (INVEST_SCENARIO, ALT, None),
+            (INVEST_SCENARIO, INVEST_ALT, None),
+        ],
+        "entity_alternatives": ent_alts,
+    }
 
 
 def _build_payload() -> dict[str, list]:
@@ -406,6 +540,19 @@ def _build_payload() -> dict[str, list]:
             ent_byname = tuple(name)
         entity_alternatives.append((cl, ent_byname, ALT, True))
 
+    # Additive invest layer (TIER 1).  Composes on top of the base
+    # topology via a NEW alternative + scenario; the base scenario is
+    # untouched.  New solves reference the existing base entities, so the
+    # overlay only adds two ``solve`` entities + parameter values +
+    # alternative/scenario rows.
+    invest = _build_invest_overlay(entities)
+    entities.extend(invest["entities"])
+    parameter_values.extend(invest["parameter_values"])
+    alternatives.extend(invest["alternatives"])
+    scenarios.extend(invest["scenarios"])
+    scenario_alternatives.extend(invest["scenario_alternatives"])
+    entity_alternatives.extend(invest["entity_alternatives"])
+
     return {
         "entities": entities,
         "parameter_values": parameter_values,
@@ -505,7 +652,7 @@ def _prune_baseline_topology(url: str) -> None:
     keep_commodities: set[str] = {"coal"}
     keep_timelines: set[str] = {"y2030_168h"}
     keep_timesets: set[str] = {"week168"}
-    keep_solves: set[str] = {"lh2_week"}
+    keep_solves: set[str] = {"lh2_week", "lh2_invest", "lh2_dispatch"}
     for r in REGIONS:
         keep_nodes |= {f"elec_{r}", f"h2_{r}", f"lh2_{r}", f"battery_{r}"}
         keep_units |= {
