@@ -177,6 +177,109 @@ class TestBuildSheetSpecs:
 
 
 # ---------------------------------------------------------------------------
+# Regression: a param eligible for BOTH constant and periodic layouts (e.g.
+# node.existing — float for some entities, 1d-map for others) is split across
+# a ``*_c`` constant sheet and a ``*_p`` periodic sheet.  Its scalar value
+# belongs ONLY on the constant sheet; the periodic writer must NOT also emit a
+# scalar-only row (empty period cell), or the value duplicates and collides on
+# import round-trip.  This is generic (keyed off the spec/param type-lists),
+# not hard-coded to ``node.existing``.
+# ---------------------------------------------------------------------------
+
+
+def _periodic_index_and_param_cols(
+    ws: "openpyxl.worksheet.worksheet.Worksheet", def_row: int
+) -> "tuple[int, dict[str, int]]":
+    """Return (index_col, {param_name: col}) for a v2 periodic sheet."""
+    index_col = None
+    param_start = None
+    for c in range(1, ws.max_column + 1):
+        label = str(ws.cell(row=def_row, column=c).value or "").strip()
+        if label.lower().startswith("index:"):
+            index_col = c
+        if label.lower() == "parameter":
+            param_start = c
+            break
+    assert index_col is not None and param_start is not None
+    param_cols: dict[str, int] = {}
+    for c in range(param_start + 1, ws.max_column + 1):
+        label = str(ws.cell(row=def_row, column=c).value or "").strip()
+        if not label:
+            break
+        param_cols[label] = c
+    return index_col, param_cols
+
+
+class TestScalarSiblingNoPeriodicDuplication:
+    """Constant-eligible scalars must not leak onto the periodic sibling sheet."""
+
+    def test_periodic_specs_mark_constant_sibling_params(
+        self, sheet_specs: list[SheetSpec]
+    ) -> None:
+        """Every periodic spec flags exactly the params shared with a constant
+        sibling over the same entity classes — generically, with at least one
+        real overlap present in the example DB (e.g. node.existing)."""
+        const_params: dict[frozenset, set[str]] = {}
+        for s in sheet_specs:
+            if s.layout == "constant":
+                key = frozenset(s.entity_classes)
+                const_params.setdefault(key, set()).update(s.parameter_names)
+
+        total_overlap = 0
+        for s in sheet_specs:
+            if s.layout != "periodic":
+                continue
+            siblings = const_params.get(frozenset(s.entity_classes), set())
+            expected = set(s.parameter_names) & siblings
+            assert s.scalar_params_on_constant_sibling == expected, (
+                f"{s.sheet_name}: scalar_params_on_constant_sibling="
+                f"{s.scalar_params_on_constant_sibling}, expected {expected}"
+            )
+            total_overlap += len(expected)
+        assert total_overlap > 0, (
+            "Example DB exercises no constant/periodic-shared param; the "
+            "regression no longer covers the original bug."
+        )
+
+    def test_node_existing_is_a_constant_sibling_param(
+        self, sheet_specs: list[SheetSpec]
+    ) -> None:
+        spec = next(s for s in sheet_specs if s.sheet_name == "node_p")
+        assert "existing" in spec.scalar_params_on_constant_sibling
+
+    def test_no_scalar_only_rows_for_constant_sibling_params(
+        self, exported_workbook: openpyxl.Workbook, sheet_specs: list[SheetSpec]
+    ) -> None:
+        """In every exported periodic sheet, no data row carries an empty
+        period cell together with a filled value for a constant-sibling param
+        (that filled cell would be a duplicated scalar)."""
+        periodic = {s.sheet_name: s for s in sheet_specs if s.layout == "periodic"}
+        checked = 0
+        for sheet_name, spec in periodic.items():
+            if not spec.scalar_params_on_constant_sibling:
+                continue
+            if sheet_name not in exported_workbook.sheetnames:
+                continue
+            ws = exported_workbook[sheet_name]
+            def_row = _find_def_row(ws)
+            index_col, param_cols = _periodic_index_and_param_cols(ws, def_row)
+            for pname in spec.scalar_params_on_constant_sibling:
+                col = param_cols.get(pname)
+                if col is None:
+                    continue
+                for r in range(def_row + 1, ws.max_row + 1):
+                    idx = ws.cell(row=r, column=index_col).value
+                    val = ws.cell(row=r, column=col).value
+                    if (idx is None or str(idx).strip() == "") and val not in (None, ""):
+                        raise AssertionError(
+                            f"{sheet_name} row {r}: scalar-only row leaked for "
+                            f"constant-sibling param '{pname}' (value={val!r})"
+                        )
+                checked += 1
+        assert checked > 0, "No constant-sibling periodic param columns checked"
+
+
+# ---------------------------------------------------------------------------
 # Test 3: test_export_produces_valid_excel
 # ---------------------------------------------------------------------------
 

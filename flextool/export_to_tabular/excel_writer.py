@@ -3069,6 +3069,14 @@ def write_periodic_sheet_v2(
                         # split-params sheets like 'solve' that mix scalars
                         # (solve_mode, solver, ...) with 1d-map params
                         # (solver_arguments).
+                        #
+                        # BUT skip params that also live on a sibling constant
+                        # sheet (e.g. node.existing on node_c + node_p): the
+                        # constant writer already emits the scalar there, so a
+                        # scalar-only row here would duplicate the value and
+                        # collide on import round-trip.
+                        if pname in spec.scalar_params_on_constant_sibling:
+                            continue
                         param_scalars[pname] = _to_native(value)
 
                 # If no Map indexes but we have Array values, use the array

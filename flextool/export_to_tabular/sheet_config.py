@@ -34,6 +34,14 @@ class SheetSpec:
     pre_ea_params: list[str] = field(default_factory=list)  # params before Entity Alternative column
     index_name_default: str | None = None  # fallback index column name for this layout
     descriptions: dict[str, str] = field(default_factory=dict)  # param_name -> description text
+    # Periodic-layout only: params whose SCALAR values are written on a sibling
+    # constant sheet (e.g. node.existing lives on both node_c and node_p because
+    # it is float for some entities, 1d-map for others).  The periodic writer
+    # MUST NOT re-emit a scalar-only row for these — doing so duplicates the
+    # value and collides on import round-trip.  Empty for split-params periodic
+    # sheets (e.g. 'solve'), where scalar params have no constant home and the
+    # scalar-only row is the only carrier.
+    scalar_params_on_constant_sibling: set[str] = field(default_factory=set)
 
 
 def load_settings() -> dict:
@@ -379,6 +387,10 @@ def build_sheet_specs(
                 direction_map=direction_map,
                 has_entity_alternative=has_ea,
             )
+            if layout_key == "periodic":
+                spec.scalar_params_on_constant_sibling = (
+                    set(params) & set(layout_params["constant"])
+                )
             spec._raw_params = params  # type: ignore[attr-defined]
             spec._primary_class = class_names[0]  # type: ignore[attr-defined]
             spec._all_param_defs = all_param_defs  # type: ignore[attr-defined]
@@ -607,6 +619,14 @@ def build_sheet_specs(
                 erule = element_rules[cls_name]
                 spec.extra_entity_columns = erule["columns"]
                 spec.extra_entity_class = erule["from_class"]
+
+            # Mark params that also have a constant sibling sheet so the
+            # periodic writer skips their scalar-only rows (avoids the
+            # node.existing-style round-trip duplication).
+            if layout_key == "periodic":
+                spec.scalar_params_on_constant_sibling = (
+                    set(params) & set(layout_params["constant"])
+                )
 
             spec._raw_params = params  # type: ignore[attr-defined]
             spec._primary_class = cls_name  # type: ignore[attr-defined]

@@ -366,11 +366,22 @@ def _write_sheet(
     alternatives_added: set[str],
     entities_added: set[tuple[str, tuple[str, ...]]],
     entity_alts_added: set[tuple[str, tuple[str, ...], str]],
+    param_values_added: set[tuple[str, tuple[str, ...], str, str]],
 ) -> None:
     """Write a single SheetData into *db*.
 
     The caller-owned sets track what has already been added so that
     duplicates are silently skipped.
+
+    ``param_values_added`` keys on
+    ``(entity_class, entity_byname, param_name, alternative)`` — the unique
+    identity of a Spine parameter_value.  A parameter that can be either
+    constant or period-indexed (e.g. ``node.existing``) is split across a
+    ``*_c`` constant sheet and a ``*_p`` periodic sheet by the exporter;
+    older workbooks emitted the scalar value on BOTH.  The constant sheet is
+    written first (pass-1 workbook order), so first-writer-wins keeps the
+    correctly-typed float and silently drops the periodic-sheet duplicate
+    instead of surfacing an alarming "already a parameter_value" warning.
     """
     # -- Link sheets (entity relationships only, no parameters) -------------
     if sheet.link_entities:
@@ -464,6 +475,13 @@ def _write_sheet(
             continue
         if not rec["param_name"]:
             continue  # entity-only record — no param to write
+        pv_key = (
+            rec["entity_class"], rec["entity_byname"],
+            rec["param_name"], rec["alternative"],
+        )
+        if pv_key in param_values_added:
+            continue  # already written by a sibling sheet (constant wins)
+        param_values_added.add(pv_key)
         value, type_ = to_database(rec["value"])
         try:
             db.add_parameter_value(
@@ -483,6 +501,13 @@ def _write_sheet(
 
     # -- Map parameter values -----------------------------------------------
     for rec in maps:
+        pv_key = (
+            rec["entity_class"], rec["entity_byname"],
+            rec["param_name"], rec["alternative"],
+        )
+        if pv_key in param_values_added:
+            continue  # already written by a sibling sheet
+        param_values_added.add(pv_key)
         value, type_ = to_database(rec["value"])
         try:
             db.add_parameter_value(
@@ -719,6 +744,7 @@ def write_sheet_data_to_db(
         alternatives_added: set[str] = set()
         entities_added: set[tuple[str, tuple[str, ...]]] = set()
         entity_alts_added: set[tuple[str, tuple[str, ...], str]] = set()
+        param_values_added: set[tuple[str, tuple[str, ...], str, str]] = set()
 
         # Separate scenario sheets from data sheets
         scenario_sheets: list[SheetData] = []
@@ -739,7 +765,10 @@ def write_sheet_data_to_db(
                 "Pass 1 — writing sheet '%s' (%d records, %d links)",
                 sheet.sheet_name, len(sheet.records), len(sheet.link_entities),
             )
-            _write_sheet(sheet, db, alternatives_added, entities_added, entity_alts_added)
+            _write_sheet(
+                sheet, db, alternatives_added, entities_added,
+                entity_alts_added, param_values_added,
+            )
 
         # Pass 1.5: ensure 0-dim entities referenced by multi-dim sheets
         _ensure_dimension_entities(data_sheets_nd, db, entities_added)
@@ -750,7 +779,10 @@ def write_sheet_data_to_db(
                 "Pass 2 — writing sheet '%s' (%d records, %d links)",
                 sheet.sheet_name, len(sheet.records), len(sheet.link_entities),
             )
-            _write_sheet(sheet, db, alternatives_added, entities_added, entity_alts_added)
+            _write_sheet(
+                sheet, db, alternatives_added, entities_added,
+                entity_alts_added, param_values_added,
+            )
 
         # Pass 3: scenario sheets
         for sheet in scenario_sheets:
