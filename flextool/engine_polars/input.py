@@ -317,8 +317,24 @@ def _read_p_flow_max(
     df = _provider_read(provider, name, path)
     if df is None or df.height == 0:
         return None
-    return df.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"}) \
-             .select("p", "source", "sink", "d", "t", "value")
+    out = (df.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"})
+             .select("p", "source", "sink", "d", "t", "value"))
+    # ``p_flow_max.csv`` is emitted with ``value`` as ``repr(float)`` — a
+    # Utf8 column — so heterogeneous CSV leaves round-trip byte-identically
+    # (see :func:`flextool.engine_polars._emit_arc_unions.derive_p_flow_max`,
+    # whose ``_rows_to_frame`` types every column ``pl.Utf8``).  This frame is
+    # the authoritative seed for ``p_flow_upper`` in the native cascade.  Cast
+    # ``value`` back to Float64 here: ``p_flow_upper`` feeds numeric
+    # ``pl.concat`` (``model.py`` flow_upper_rhs, indirect_pss ⧺ direct_pss_dt)
+    # and ``Param × Param`` paths that raise ``SchemaError`` /
+    # ``InvalidOperationError`` on a String ``value`` (the concat fires once
+    # the per-(p,source,sink,d,t) frame carries indirect-process rows — e.g.
+    # the mt_3h solve).  ``strict=False`` mirrors the cast in
+    # :func:`_slice_param` above.
+    if out.schema["value"] == pl.Utf8:
+        out = out.with_columns(
+            value=pl.col("value").cast(pl.Float64, strict=False))
+    return out
 
 
 def _slice_param(path: Path, entity_col: str, param_value: str,
