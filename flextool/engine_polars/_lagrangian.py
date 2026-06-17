@@ -57,6 +57,13 @@ class LagrangianResult:
     final_lambdas: dict[tuple[str, str, str], float]
     iteration_log: list[dict] = field(default_factory=list)
     couplings: list[Coupling] = field(default_factory=list)
+    # ``best_dual_total`` is the tight lower bound (max Σ region obj across
+    # iters) and equals ``total_objective``; ``recovered_total`` is the
+    # tail-averaged fix-and-resolve primal.  Their relative gap is the
+    # decomposition's optimality tradeoff — surfaced in the orchestrator's
+    # per-solve summary.  Defaults cover the no-coupling trivial path.
+    best_dual_total: float = 0.0
+    recovered_total: float = 0.0
 
 
 def _identify_coupling_cols(splits: list[RegionSplit],
@@ -142,6 +149,7 @@ def solve_lagrangian(
     initial_lambda: float = 0.0,
     min_iters: int = 1,
     solver_config: "object | None" = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> LagrangianResult:
     """Run Lagrangian decomposition on whole-system *data*.
 
@@ -216,16 +224,19 @@ def solve_lagrangian(
                     raise RuntimeError(
                         f"Lagrangian trivial solve {s.region!r} not optimal")
                 region_objs[s.region] = sol.obj
+            _trivial_total = sum(region_objs.values())
             return LagrangianResult(
                 converged=True, iterations=0,
-                total_objective=sum(region_objs.values()),
-                region_objectives=region_objs, final_lambdas={}, couplings=[])
+                total_objective=_trivial_total,
+                region_objectives=region_objs, final_lambdas={}, couplings=[],
+                best_dual_total=_trivial_total,
+                recovered_total=_trivial_total)
 
         specs = _build_coupling_specs(splits, warm_lookup, couplings)
         sol = LagrangianProblem(subproblems, specs).solve(
             max_iters=max_iters, tol=tol, step=alpha,
             initial_lambda=initial_lambda, min_iters=min_iters,
-            primal_tail=primal_tail)
+            primal_tail=primal_tail, progress_callback=progress_callback)
     finally:
         if _enums_token is not None:
             reset_global_axis_enums(_enums_token)
@@ -257,4 +268,6 @@ def solve_lagrangian(
         final_lambdas=final_lambdas,
         iteration_log=domain_log,
         couplings=couplings,
+        best_dual_total=getattr(sol, "best_dual_total", sol.total_objective),
+        recovered_total=getattr(sol, "recovered_total", sol.total_objective),
     )

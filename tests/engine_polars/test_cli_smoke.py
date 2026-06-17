@@ -331,7 +331,7 @@ def _set_solve_decomposition(
 
 @pytest.mark.solver
 def test_decomposition_lagrangian_db_driven(
-    lh2_three_region_db, tmp_path,
+    lh2_three_region_db, tmp_path, capsys,
 ) -> None:
     """Setting ``solve.decomposition = lagrangian`` in the DB routes that
     solve through the native coordinator
@@ -348,6 +348,9 @@ def test_decomposition_lagrangian_db_driven(
     2. That objective is within 2 % of the LH2 monolithic optimum pinned
        in ``golden_obj.json`` — i.e. the decomposition actually solved
        the right model, selected purely from the database value.
+    3. The run emits live per-iteration progress lines plus a final
+       dual/primal-gap summary to stdout (the observability the
+       orchestrator adds for Lagrangian solves).
     """
     db_url, scenario = lh2_three_region_db
     _set_solve_decomposition(db_url)
@@ -382,6 +385,22 @@ def test_decomposition_lagrangian_db_driven(
     assert rel_gap <= 0.02, (
         f"Lagrangian total_objective={step.obj:.6e} vs monolithic "
         f"golden={golden:.6e} → {rel_gap * 100:.3f}% gap exceeds 2%."
+    )
+
+    # Observability: a start banner, at least one live per-iteration line,
+    # and the final dual/primal-gap summary reach stdout.
+    out = capsys.readouterr().out
+    assert "[lagrangian" in out, (
+        f"no Lagrangian progress lines in stdout:\n{out}"
+    )
+    assert "start:" in out and "regions" in out, (
+        f"Lagrangian start banner missing:\n{out}"
+    )
+    assert "iter" in out and "dual_obj=" in out, (
+        f"live per-iteration progress lines missing:\n{out}"
+    )
+    assert "optimality gap" in out, (
+        f"final dual/primal-gap summary missing:\n{out}"
     )
 
 

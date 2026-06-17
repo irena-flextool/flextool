@@ -1982,11 +1982,37 @@ def _drive_cascade(
                 complete_solve_name
             ) or state.solve.solver_configs.get(base_solve_name)
 
-            self.state.logger.warning(
-                "Solve '%s': decomposition=lagrangian over %d region "
-                "groups %s (alpha=%g, max_iter=%d, tol=%g).",
-                base_solve_name, len(regions), regions, alpha, max_iter, tol,
+            # Lagrangian progress is surfaced via ``print`` (flushed), the
+            # same channel as the cascade's "Solve start" markers — the
+            # per-solve logger is pinned to ERROR in ``_drive_cascade``, so
+            # logger.info/.warning would be swallowed.
+            _tag = f"[lagrangian {base_solve_name}]"
+
+            def _emit(line: str) -> None:
+                try:
+                    print(line, flush=True)
+                except OSError:
+                    pass
+
+            _emit(
+                f"{_tag} start: {len(regions)} regions "
+                f"{regions} (alpha={alpha:g}, max_iter={max_iter}, "
+                f"tol={tol:g})"
             )
+
+            # Live per-iteration callback — one line as each outer
+            # subgradient iteration completes (the iter==-1 summary marker
+            # is handled by the richer final block below, so skip it here).
+            def _on_iteration(entry: dict) -> None:
+                if entry.get("iter", -1) == -1:
+                    return
+                _emit(
+                    f"{_tag}   iter {entry['iter']:>3}/{max_iter}: "
+                    f"step={entry['alpha_k']:.3g}  "
+                    f"max_imbalance={entry['max_abs_residual']:.4g}  "
+                    f"dual_obj={entry['total_obj']:.6g}"
+                )
+
             result = solve_lagrangian(
                 data,
                 work_dir=self.state.paths.work_folder,
@@ -1995,23 +2021,50 @@ def _drive_cascade(
                 max_iters=max_iter,
                 tol=tol,
                 solver_config=solver_cfg,
+                progress_callback=_on_iteration,
             )
-            _conv_msg = (
-                "Solve '%s': Lagrangian decomposition %s after %d "
-                "iterations, total_objective=%.6g."
+
+            # Final summary — convergence + the dual/primal gap that shows
+            # the decomposition's benefit (smaller per-region solves) vs its
+            # tradeoff (the optimality gap between the recovered feasible
+            # primal and the dual lower bound).
+            _status = "CONVERGED" if result.converged else "DID NOT CONVERGE"
+            _dual = result.best_dual_total
+            _primal = result.recovered_total
+            _gap_pct = (
+                abs(_primal - _dual) / abs(_dual) * 100.0
+                if _dual else float("nan")
             )
-            if result.converged:
-                self.state.logger.warning(
-                    _conv_msg, base_solve_name, "converged",
-                    result.iterations, result.total_objective,
+            _emit(
+                f"{_tag} {_status} after {result.iterations}/{max_iter} "
+                f"iterations"
+            )
+            _emit(f"{_tag}   dual bound (reported total) = {_dual:.6g}")
+            _emit(f"{_tag}   recovered primal            = {_primal:.6g}")
+            _emit(
+                f"{_tag}   optimality gap              = {_gap_pct:.3f}% "
+                f"(recovered vs dual)"
+            )
+            if result.region_objectives:
+                _ro = ", ".join(
+                    f"{r}={o:.6g}"
+                    for r, o in result.region_objectives.items()
                 )
-            else:
-                # Loud, not silent: non-convergence within max_iters is a
-                # result the operator must see, but we don't abort the
-                # chain over it (the decomposition still produced a point).
+                _emit(f"{_tag}   region objectives: {_ro}")
+            if result.final_lambdas:
+                _la = ", ".join(
+                    f"{'.'.join(map(str, k))}={v:.4g}"
+                    for k, v in result.final_lambdas.items()
+                )
+                _emit(f"{_tag}   final lambda per pipe: {_la}")
+            if not result.converged:
+                # Also log at ERROR so non-convergence still surfaces in
+                # error-only contexts (CI, log scrapers); the chain is not
+                # aborted — the decomposition produced a usable point.
                 self.state.logger.error(
-                    _conv_msg, base_solve_name, "did NOT converge",
-                    result.iterations, result.total_objective,
+                    "Solve '%s': Lagrangian decomposition did NOT converge "
+                    "after %d/%d iterations (gap %.3f%%).",
+                    base_solve_name, result.iterations, max_iter, _gap_pct,
                 )
 
             # Record so the consume-side guard fires for any downstream
