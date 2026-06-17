@@ -87,7 +87,20 @@ def _compute_ylim(
         pos_max = max(pos_max, inflow_slice.max())
         neg_min = min(neg_min, inflow_slice.min())
 
-    return (neg_min, pos_max)
+    # Guard against a degenerate range. An empty/all-zero/flat dispatch
+    # window yields neg_min == pos_max (or NaN from a max()/min() over no
+    # rows), which makes ax.set_ylim() emit the "identical low and high
+    # ylims" warning and collapse the axis. Fall back to a small
+    # non-degenerate band centred on the value so the (empty) plot still
+    # renders cleanly.
+    if not (np.isfinite(neg_min) and np.isfinite(pos_max)):
+        neg_min, pos_max = 0.0, 0.0
+    if pos_max - neg_min < 1e-9:
+        center = pos_max
+        pad = abs(center) * 0.05 if center != 0.0 else 1.0
+        neg_min, pos_max = center - pad, center + pad
+
+    return (float(neg_min), float(pos_max))
 
 
 def _build_dispatch_figure(

@@ -765,7 +765,7 @@ plots:
           legend: shared
       time_plots:
         variant: l
-        map_dimensions_for_plots: [dt_ee, tt_l]
+        map_dimensions_for_plots: [dt_e, tt_l]
         color_entity_class: connection
         max_items_per_plot: 10
         subplots_per_row: 2
@@ -773,7 +773,7 @@ plots:
         skip_data_with_only_zeroes: true
         ylabel: MWh/h
         comparison_overrides:
-          map_dimensions_for_plots: [dt_see, tt_lu]
+          map_dimensions_for_plots: [dt_se, tt_lu]
           legend: shared
 
   'Connection leftward':
