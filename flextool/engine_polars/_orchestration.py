@@ -1392,6 +1392,10 @@ class OrchestrationStep:
     warm_used: bool = False
     flex_data: "FlexData | None" = None
     flex_data_provider: "object | None" = None
+    is_lagrangian: bool = False
+    """True when this step was produced by the Lagrangian region driver
+    and carries only a :class:`SnapshotSolution` invest carrier, not a
+    full :class:`Solution` (so it cannot yet drive processed outputs)."""
     captured_vars: "dict[str, pl.DataFrame]" = field(default_factory=dict)
     """Per-sub-solve snapshot of the decision-variable frames that
     end-of-cascade writers (``_entity_all_capacity`` and friends) need
@@ -2163,6 +2167,7 @@ def _drive_cascade(
                 obj=result.total_objective,
                 optimal=result.converged,
                 warm_used=False,
+                is_lagrangian=True,
                 flex_data=data,
                 flex_data_provider=getattr(
                     self.state, "current_provider", None,

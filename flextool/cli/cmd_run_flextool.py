@@ -812,59 +812,82 @@ def main():
     output_subdir = args.output_subdir or scenario_name
     if return_code == 0:
         t_write_outputs = time.perf_counter()
-        try:
-            # Δ.31 — pass the last step's flex_data + solution so
-            # write_outputs can build par/s in memory.  ``solve_name``
-            # is the complete sub-solve identifier (e.g. ``y2025_5week``
-            # for a roll, or just the scenario name for a single solve).
-            #
-            # Multi-solve (rolling) note: the last step alone would
-            # collapse par/s to the final roll's (d,t).  write_outputs
-            # detects the per-roll realized slices persisted under
-            # ``output_raw/`` (``has_persisted_slices``) and unions them
-            # into the full-timeline par/s; ``last_step`` then only
-            # supplies the static (solve-invariant) attrs + the per-attr
-            # shape template.  We deliberately do NOT pass ``solve_steps``
-            # here — the union activates on persisted-parquet presence and
-            # carries solve labels via parquet filenames + the
-            # ``output_raw/_solve_order.txt`` creation-order manifest.
-            wo_flex_data = last_step.flex_data if last_step else None
-            wo_solution = last_step.solution if last_step else None
-            wo_solve_name = (
-                last_step.solve_name if last_step else None
-            ) or scenario_name
-            write_outputs(
-                scenario_name=scenario_name,
-                output_location=args.output_location,
-                subdir=output_subdir,
-                output_config_path=args.output_config,
-                active_configs=args.active_configs,
-                write_methods=args.write_methods,
-                plot_rows=tuple(args.plot_rows) if args.plot_rows else None,
-                settings_db_url=settings_db_url,
-                fallback_output_location=str(output_path),
-                raw_output_dir=str(wf / 'output_raw'),
-                only_first_file=args.only_first_file_per_plot,
-                timing_recorder=timing_recorder,
-                flex_data=wo_flex_data,
-                solution=wo_solution,
-                solve_name=wo_solve_name,
-                flex_data_provider=getattr(
-                    last_step, "flex_data_provider", None
-                ),
-                results_db_url=args.results_db_url,
+        # Δ.31 — pass the last step's flex_data + solution so
+        # write_outputs can build par/s in memory.  ``solve_name``
+        # is the complete sub-solve identifier (e.g. ``y2025_5week``
+        # for a roll, or just the scenario name for a single solve).
+        wo_solve_name = (
+            last_step.solve_name if last_step else None
+        ) or scenario_name
+        # A standalone Lagrangian-only final solve carries only a
+        # SnapshotSolution invest carrier (not a full Solution), so it
+        # cannot yet drive processed outputs (TIER 2, planned follow-up).
+        # Emit a clear, targeted notice and SKIP write_outputs entirely
+        # rather than letting it fail and degrade to a generic warning.
+        # The invest→dispatch chain ends on a real dispatch Solution
+        # (is_lagrangian=False) and is unaffected.
+        if last_step is not None and getattr(
+            last_step, "is_lagrangian", False
+        ):
+            logging.info(
+                "Final solve '%s' ran under decomposition=lagrangian and "
+                "does not yet produce processed outputs on its own. The "
+                "decomposition objective/region summary was logged above. "
+                "To get output files, add a downstream dispatch solve to "
+                "the chain (model.solves = [%s, <dispatch solve>]); the "
+                "dispatch solve produces the outputs. (Standalone "
+                "Lagrangian output processing is a planned follow-up.)",
+                wo_solve_name,
+                wo_solve_name,
             )
-        except FileNotFoundError as exc:
-            # The in-memory parameter / set path doesn't read
-            # ``solve_data/`` CSVs, but ``read_variables`` still
-            # reads ``output_raw/`` parquets.  Catch missing-parquet
-            # cases here (rare) and exit cleanly.
-            logging.warning(
-                "write_outputs failed (%s).  output_raw/ artefacts "
-                "ARE produced; downstream output_csv/, output_parquet/, "
-                "output_excel/, output_plots/ are skipped on this run.",
-                exc,
-            )
+        else:
+            try:
+                # Multi-solve (rolling) note: the last step alone would
+                # collapse par/s to the final roll's (d,t).  write_outputs
+                # detects the per-roll realized slices persisted under
+                # ``output_raw/`` (``has_persisted_slices``) and unions them
+                # into the full-timeline par/s; ``last_step`` then only
+                # supplies the static (solve-invariant) attrs + the per-attr
+                # shape template.  We deliberately do NOT pass ``solve_steps``
+                # here — the union activates on persisted-parquet presence and
+                # carries solve labels via parquet filenames + the
+                # ``output_raw/_solve_order.txt`` creation-order manifest.
+                wo_flex_data = last_step.flex_data if last_step else None
+                wo_solution = last_step.solution if last_step else None
+                write_outputs(
+                    scenario_name=scenario_name,
+                    output_location=args.output_location,
+                    subdir=output_subdir,
+                    output_config_path=args.output_config,
+                    active_configs=args.active_configs,
+                    write_methods=args.write_methods,
+                    plot_rows=(
+                        tuple(args.plot_rows) if args.plot_rows else None
+                    ),
+                    settings_db_url=settings_db_url,
+                    fallback_output_location=str(output_path),
+                    raw_output_dir=str(wf / 'output_raw'),
+                    only_first_file=args.only_first_file_per_plot,
+                    timing_recorder=timing_recorder,
+                    flex_data=wo_flex_data,
+                    solution=wo_solution,
+                    solve_name=wo_solve_name,
+                    flex_data_provider=getattr(
+                        last_step, "flex_data_provider", None
+                    ),
+                    results_db_url=args.results_db_url,
+                )
+            except FileNotFoundError as exc:
+                # The in-memory parameter / set path doesn't read
+                # ``solve_data/`` CSVs, but ``read_variables`` still
+                # reads ``output_raw/`` parquets.  Catch missing-parquet
+                # cases here (rare) and exit cleanly.
+                logging.warning(
+                    "write_outputs failed (%s).  output_raw/ artefacts "
+                    "ARE produced; downstream output_csv/, output_parquet/, "
+                    "output_excel/, output_plots/ are skipped on this run.",
+                    exc,
+                )
         timing_recorder.record('write_outputs', subphase='total',
                                seconds=time.perf_counter() - t_write_outputs,
                                t_start=t_write_outputs)
