@@ -1745,6 +1745,129 @@ def write_v_dual_invest_by_class(
     return paths
 
 
+def _divide_by_inflation_and_row_scaler(
+    df: "pd.DataFrame",
+    *,
+    wf: "Path",
+    solve_name: str,
+    flex_data: "FlexData | None",
+) -> "pd.DataFrame":
+    """Un-discount and un-row-scale a nodal-dual frame in place-equivalent.
+
+    Divides each ``(solve, period, time)`` row by its period's
+    ``inflation_factor_operations_yearly`` (recover nominal currency) and
+    each ``(period, node)`` cell by ``node_capacity_for_scaling`` (Mode A:
+    scaler ≡ 1 → no effect).  Shared verbatim by the per-(d,t)
+    ``nodeBalance_eq`` path and the per-block ``nodeBalanceBlock_eq`` path
+    so both report user-facing currency/MWh under the same convention.
+    """
+    if df.empty:
+        return df
+    inflation = _load_inflation_factor(wf, flex_data=flex_data)
+    if inflation:
+        # Divide each row by its period's inflation factor.  Rows whose
+        # period isn't in the dict keep a unity divisor.
+        periods = df.index.get_level_values("period")
+        divisors = pd.Series(
+            [inflation.get(str(p), 1.0) for p in periods],
+            index=df.index,
+            dtype=float,
+        )
+        df = df.div(divisors, axis=0)
+    scaler = _load_row_scaler(wf, "node", solve_name, flex_data=flex_data)
+    if scaler is not None and not scaler.empty:
+        scaler_by_period = (
+            scaler.droplevel("solve")
+            if "solve" in (scaler.index.names or [])
+            else scaler
+        )
+        # Align columns to df's node names; missing → 1.
+        node_names = df.columns.astype(str).tolist()
+        mult = scaler_by_period.reindex(columns=node_names).astype(float)
+        periods = df.index.get_level_values("period").astype(str)
+        mult = mult.reindex(periods.astype(str)).fillna(1.0)
+        mult.index = df.index
+        mult.columns = df.columns
+        df = df.div(mult)
+    return df
+
+
+def _broadcast_block_node_duals(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    inv_scale: float,
+    realized_dispatch_csv: "Path | str | None",
+    flex_data: "FlexData | None",
+    wf: "Path",
+) -> "pd.DataFrame | None":
+    """Per-(d,t) nodal prices for ``nodeStateBlock`` nodes.
+
+    Nodes balanced on a coarse block (``new_stepduration`` variable-
+    resolution feature) carry ``nodeBalanceBlock_eq[n, d, b_first]`` — one
+    row per (node, period, block), summed over the block's timesteps — NOT
+    the per-(d,t) ``nodeBalance_eq``.  Its dual is the marginal value of
+    one MWh of energy anywhere in the block (the block RHS is total block
+    energy in MWh, so the dual is already currency/MWh, the same unit as
+    the per-step ``nodeBalance_eq`` dual — no block-size or step-duration
+    factor).  We therefore extract it under the identical sign/scaling
+    convention as ``nodeBalance_eq`` and **broadcast** each block's price
+    to every ``(d, t)`` in the block via ``period_block_time``, giving a
+    per-(d,t) price that is constant within each block.
+
+    Returns a ``(solve, period, time)`` × block-node DataFrame, or
+    ``None`` when the run has no block-balanced nodes.
+    """
+    block_set = getattr(flex_data, "nodeStateBlock", None) if flex_data else None
+    pbt = getattr(flex_data, "period_block_time", None) if flex_data else None
+    if (block_set is None or block_set.height == 0
+            or pbt is None or pbt.height == 0):
+        return None
+
+    blk = extract_variable(
+        h, "nodeBalanceBlock_eq", ("node",),
+        solve_name=solve_name, has_time=True, source="row_dual",
+        value_scale=-inv_scale,
+        realized_dispatch_csv=realized_dispatch_csv,
+        flex_data=flex_data,
+    )
+    if blk.empty or blk.shape[1] == 0:
+        return None
+
+    # Same un-discount / un-row-scale convention as nodeBalance_eq.  The
+    # raw extract places each block's dual on its ``b_first`` row and 0 on
+    # the other (canonical) rows; both inflation and the row-scaler are
+    # per-period (constant across a block's timesteps), so applying them
+    # here — before the broadcast — is equivalent to applying them after.
+    blk = _divide_by_inflation_and_row_scaler(
+        blk, wf=wf, solve_name=solve_name, flex_data=flex_data,
+    )
+
+    # Broadcast the b_first price across every (d, t) in the block.
+    # ``period_block_time`` is (d, b_first, t); the block dual lives on the
+    # (period, b_first) row, so join on (period == d, time == b_first) and
+    # re-key to (period, t).
+    pbt_pd = pbt.select(["d", "b_first", "t"]).to_pandas()
+    blk_long = (
+        blk.stack(future_stack=True)
+        .rename("value")
+        .reset_index()
+    )  # columns: solve, period, time, node, value
+    merged = blk_long.merge(
+        pbt_pd, left_on=["period", "time"], right_on=["d", "b_first"],
+        how="inner",
+    )
+    if merged.empty:
+        return None
+    wide = merged.pivot_table(
+        index=["solve", "period", "t"], columns="node", values="value",
+        aggfunc="first",
+    )
+    wide.index = wide.index.set_names(["solve", "period", "time"])
+    wide.columns.name = "node"
+    return wide
+
+
 def write_v_dual_node_balance(
     h: "highspy.Highs",
     *,
@@ -1764,10 +1887,15 @@ def write_v_dual_node_balance(
          / scale_the_objective
 
     Equivalently, raw-dual × (−1e6 / inflation[d]).  Nodes in
-    ``nodeStateBlock`` use ``nodeBalanceBlock_eq`` summed over
-    period_block_time — NOT YET IMPLEMENTED HERE.  Scenarios using
-    representative periods with block storage will see missing/zero
-    entries for those nodes.
+    ``nodeStateBlock`` (coarse ``new_stepduration`` variable-resolution
+    nodes) are balanced by ``nodeBalanceBlock_eq`` (one row per block,
+    summed over ``period_block_time``) instead.  Their per-block dual —
+    in the same currency/MWh units and under the same sign/scale
+    convention as ``nodeBalance_eq`` — is extracted and **broadcast** to
+    every ``(d, t)`` in the block (constant within a block); see
+    :func:`_broadcast_block_node_duals`.  Without this those nodes would
+    have no dual column and the ``node_prices_dt_e`` output would raise a
+    KeyError indexing them.
 
     The polars LP emits ``nodeBalance_eq`` with arity-3
     ``(node, period, time)``; this writer reads that arity directly.
@@ -1790,39 +1918,32 @@ def write_v_dual_node_balance(
         flex_data=flex_data,
     )
 
-    if not df.empty:
-        inflation = _load_inflation_factor(wf, flex_data=flex_data)
-        if inflation:
-            # Divide each row by its period's inflation factor.  Rows
-            # whose period isn't in the dict keep a unity divisor.
-            periods = df.index.get_level_values("period")
-            divisors = pd.Series(
-                [inflation.get(str(p), 1.0) for p in periods],
-                index=df.index,
-                dtype=float,
-            )
-            df = df.div(divisors, axis=0)
+    # Per-(d,t) ``nodeBalance_eq`` duals (storage + per-step balance nodes),
+    # un-discounted and un-row-scaled to user-facing currency/MWh.
+    df = _divide_by_inflation_and_row_scaler(
+        df, wf=wf, solve_name=solve_name, flex_data=flex_data,
+    )
 
-        # Agent 9 — un-scale row scaling on nodeBalance_eq.  Divide each
-        # (period, node) cell by node_capacity_for_scaling[n, d] so the
-        # nodal price returns to user-facing EUR/MWh.  Mode A: scaler = 1
-        # everywhere → no effect.
-        scaler = _load_row_scaler(wf, "node", solve_name, flex_data=flex_data)
-        if scaler is not None and not scaler.empty:
-            scaler_by_period = (
-                scaler.droplevel("solve")
-                if "solve" in (scaler.index.names or [])
-                else scaler
-            )
-            # Align columns to df's node names; missing → 1.
-            node_names = df.columns.astype(str).tolist()
-            mult = scaler_by_period.reindex(columns=node_names).astype(float)
-            periods = df.index.get_level_values("period").astype(str)
-            mult = mult.reindex(periods.astype(str)).fillna(1.0)
-            mult.index = df.index
-            mult.columns = df.columns
-            # dual / node_cap  ⇒  element-wise divide
-            df = df.div(mult)
+    # Per-block ``nodeBalanceBlock_eq`` duals for ``nodeStateBlock`` nodes
+    # (coarse variable-resolution nodes), broadcast to per-(d,t) and merged
+    # in.  Without this these nodes have NO dual column and the downstream
+    # ``node_prices_dt_e`` output (out_node) raises a KeyError indexing
+    # them.  None when the run has no block-balanced nodes → existing
+    # (non-block) outputs are byte-identical.
+    block_prices = _broadcast_block_node_duals(
+        h, solve_name=solve_name, inv_scale=inv_scale,
+        realized_dispatch_csv=realized_dispatch_csv,
+        flex_data=flex_data, wf=wf,
+    )
+    if block_prices is not None and not block_prices.empty:
+        if df.empty:
+            df = block_prices
+        else:
+            block_prices = block_prices.reindex(df.index)
+            df = pd.concat([df, block_prices], axis=1)
+        # Deterministic node-column order once both families are present.
+        df = df.reindex(sorted(df.columns.astype(str)), axis=1)
+        df.columns.name = "node"
 
     path = output_dir / f"v_dual_node_balance__{solve_name}.parquet"
     write_lean_parquet(df, path)

@@ -114,8 +114,18 @@ def node_additional_results(par, s, v, r, debug):
     """Additional node results: prices, state, and slacks"""
     results = []
 
-    # 1. Nodal prices
-    results.append((v.dual_node_balance[s.node_balance.difference(s.node_state)], 'node_prices_dt_e'))
+    # 1. Nodal prices — the per-(d,t) nodal-balance dual.  Per-step balance
+    # nodes carry ``nodeBalance_eq``; coarse variable-resolution nodes
+    # (``new_stepduration`` → ``nodeStateBlock``) carry ``nodeBalanceBlock_eq``
+    # broadcast to per-(d,t) — both are merged into ``v.dual_node_balance``
+    # by ``write_v_dual_node_balance``.  Defensive intersection with the
+    # available columns (order-preserving): every requested node normally
+    # has a dual, but if a node genuinely lacks one (e.g. a future balance
+    # mode without a dual writer) this omits it rather than raising
+    # ``KeyError: None of [...] are in the columns``.
+    price_nodes = s.node_balance.difference(s.node_state).intersection(
+        v.dual_node_balance.columns)
+    results.append((v.dual_node_balance[price_nodes], 'node_prices_dt_e'))
 
     # 2. Node state
     node_state = v.state.mul(par.entity_unitsize[s.node_state], level="node")
