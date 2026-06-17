@@ -143,6 +143,20 @@ class SheetMetadata:
     entity_row: int | None = None
     index_col_transposed: int | None = None  # column with index values (usually 0)
 
+    # Whether this is a stochastic (_s) sheet — a transposed sheet whose
+    # entity / alternative / parameter live in COLUMN headers (like a
+    # timeseries sheet) but whose index is a MULTI-LEVEL nested Map spread
+    # across N left-side ``index:`` columns (one column per Map level).
+    # The definition column (carrying the ``parameter:`` triplet, the
+    # ``entity:`` label and the ``alternative`` label) sits at ``def_col``
+    # (= number of index columns).  Each data column to its right is one
+    # (entity, alternative) series whose cells carry the leaf scalars.
+    is_stochastic: bool = False
+
+    # Ordered ``(column_index, axis_name)`` for the stochastic index
+    # columns, left-to-right (outermost Map level first).
+    stoch_index_cols: list[tuple[int, str]] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Crossing point detection
@@ -675,6 +689,209 @@ def parse_scenario_sheet(ws: Worksheet) -> SheetData:
 
 
 # ---------------------------------------------------------------------------
+# Stochastic (_s) sheet parsing
+# ---------------------------------------------------------------------------
+
+
+def _is_index_label(text: str) -> bool:
+    """Return True when *text* is an ``index:`` column definition."""
+    return text.lower().startswith("index:") or text.lower() == "index"
+
+
+def _find_stochastic_def_col(ws: Worksheet) -> int | None:
+    """Locate the definition column of a stochastic (_s) sheet, or None.
+
+    A stochastic sheet is a transposed sheet whose nested-Map index is
+    spread across ``N`` left-side ``index:`` columns (one per Map level)
+    followed by a definition column that carries the ``alternative`` /
+    ``parameter`` / ``entity`` row roles (the entity/alt/param VALUES live
+    in the column headers to its right, like a timeseries sheet).
+
+    The signal: there are at least TWO ``index:`` columns on the left, and
+    immediately after the last of them comes a column whose header rows
+    carry the ``alternative`` (and ``parameter`` / ``entity``) role
+    labels.  A single-index transposed sheet (timeseries) keeps its lone
+    ``index:`` in column A and its def labels in column B — that case is
+    handled by the existing transposed path and is explicitly NOT matched
+    here (it has fewer than two ``index:`` columns).
+    """
+    max_row = _actual_max_row(ws)
+    max_col = ws.max_column or 1
+    scan_rows = min(8, max_row)
+
+    # The role-definition row is the one carrying the ``alternative`` label
+    # (in the definition column).  On a stochastic sheet that same row also
+    # carries the ``index:`` labels for every Map level in the columns to
+    # its left.  Anchor on that row, then verify the left columns are all
+    # ``index:``.
+    for role_row in range(scan_rows):
+        def_col: int | None = None
+        for c in range(max_col):
+            if _cell_value(ws, role_row, c).lower() == "alternative":
+                def_col = c
+                break
+        if def_col is None or def_col < 2:
+            # Need at least two ``index:`` columns to the left to be a
+            # genuine nested-Map (multi-index) sheet; a lone ``index:`` in
+            # column A is an ordinary single-index transposed sheet.
+            continue
+        if all(
+            _is_index_label(_cell_value(ws, role_row, c)) for c in range(def_col)
+        ):
+            return def_col
+    return None
+
+
+def parse_stochastic_sheet_metadata(ws: Worksheet, def_col: int) -> SheetMetadata:
+    """Parse a stochastic (_s) sheet's embedded metadata.
+
+    ``def_col`` is the 0-based definition column index (= the number of
+    left-side ``index:`` columns).  The header rows carry the role labels
+    (``parameter:``, ``entity:``, ``alternative``) in that column; the
+    entity / alternative / leaf-data values live in the columns to its
+    right (transposed).  The ``index:`` columns 0..def_col-1 give the
+    nested-Map level axis names, outermost first.
+    """
+    meta = SheetMetadata(
+        sheet_name=ws.title, is_transposed=True, is_stochastic=True,
+    )
+    meta.def_col = def_col
+    max_row = _actual_max_row(ws)
+    scan_rows = min(8, max_row)
+
+    # Index columns (left of def_col), in order.  Axis name comes from the
+    # role-definition row; collect from whichever header row carries it.
+    for c in range(def_col):
+        axis = ""
+        for r in range(scan_rows):
+            val = _cell_value(ws, r, c)
+            if val and _is_index_label(val):
+                axis = _parse_index_def(val)
+                break
+        meta.stoch_index_cols.append((c, axis))
+    if meta.stoch_index_cols:
+        # Keep single-index compatibility fields pointing at the LAST level.
+        meta.index_col, meta.index_name = meta.stoch_index_cols[-1]
+
+    # Role rows in the definition column.
+    triplet_dtype: str | None = None
+    for r in range(scan_rows):
+        val = _cell_value(ws, r, def_col)
+        if not val:
+            continue
+        vl = val.lower()
+        kw, default_val = _parse_default_value(val)
+        kw_lower = kw.lower()
+        if vl == "alternative" or vl.startswith("alternative"):
+            meta.alt_row = r
+        elif kw_lower == "parameter":
+            meta.param_row = r
+            if default_val:
+                meta.default_parameter = default_val
+            # The single-param triplet carries the canonical data type.
+            triplet_dtype = _extract_triplet_field(val, "data type")
+        elif vl.startswith("entity"):
+            meta.entity_row = r
+            meta.entity_classes = _parse_entity_def(val)
+
+    if triplet_dtype:
+        meta.default_data_type = triplet_dtype.lower()
+
+    # Data rows start after the last header (role) row.
+    role_rows = [
+        r for r in (meta.alt_row, meta.param_row, meta.entity_row)
+        if r is not None
+    ]
+    meta.data_start_row = (max(role_rows) + 1) if role_rows else def_col + 1
+    return meta
+
+
+def _extract_stochastic(ws: Worksheet, meta: SheetMetadata) -> SheetData:
+    """Extract per-leaf records from a stochastic (_s) sheet.
+
+    Each data column (def_col+1 onward) is one (entity, alternative)
+    series.  Each data row carries one full nested-Map index tuple in the
+    left ``index:`` columns.  We emit one record per (column, row) cell,
+    carrying the first N-1 index levels in ``extra_index_values`` and the
+    last level in ``index_value`` / ``index_name`` — mirroring the ladder
+    reader so the DB-side nested-Map reconstruction can rebuild the
+    full ``Map(idx0 -> Map(idx1 -> ... -> leaf))``.
+    """
+    data = SheetData(sheet_name=meta.sheet_name, metadata=meta)
+    max_row = _actual_max_row(ws)
+    max_col = ws.max_column or 1
+    def_col = meta.def_col
+
+    entity_class = meta.entity_classes[0] if meta.entity_classes else None
+    if entity_class is None:
+        return data
+
+    n_dims = len(entity_class.dimensions)
+    leaf_dtype = meta.default_data_type or "string"
+
+    for c in range(def_col + 1, max_col):
+        alt = _cell_value(ws, meta.alt_row, c) if meta.alt_row is not None else None
+        pname = (
+            _cell_value(ws, meta.param_row, c) if meta.param_row is not None else None
+        )
+        ent_name = (
+            _cell_value(ws, meta.entity_row, c) if meta.entity_row is not None else None
+        )
+        if not pname and meta.default_parameter:
+            pname = meta.default_parameter
+        if not alt or not ent_name or not pname:
+            continue
+
+        # The entity header carries only the FIRST dimension element for a
+        # multi-dim class (the writer emits ``byname[0]``).  Stochastic
+        # params in the schema are single-dimension (profile, node, …); a
+        # multi-dim header would be ambiguous, so we only build a byname we
+        # can trust.
+        if n_dims == 1:
+            entity_byname: tuple[str, ...] = (ent_name,)
+        else:
+            # Reaching here means a multi-dim class was routed onto an _s
+            # sheet whose header can't carry the full byname — surface it
+            # rather than silently fabricating a wrong entity.
+            logger.warning(
+                "Sheet '%s' col %d: stochastic sheet for multi-dim class "
+                "%r cannot recover the full entity byname from a single "
+                "header value %r; skipping column.",
+                meta.sheet_name, c + 1, entity_class.class_name, ent_name,
+            )
+            continue
+
+        for r in range(meta.data_start_row, max_row):
+            val = _cell_value(ws, r, c)
+            if not val:
+                continue
+            # Read all index levels for this row.
+            level_vals: list[tuple[str, str | None]] = []
+            for col_idx, axis in meta.stoch_index_cols:
+                level_vals.append((axis, _cell_value(ws, r, col_idx) or None))
+            # A row missing any index level is malformed — skip it.
+            if any(v is None for _, v in level_vals):
+                continue
+
+            converted = _convert_value(val, leaf_dtype)
+            record: dict[str, Any] = {
+                "alternative": alt,
+                "entity_class": entity_class.class_name,
+                "entity_byname": entity_byname,
+                "param_name": pname,
+                "value": converted,
+                "index_value": level_vals[-1][1],
+                "index_name": level_vals[-1][0],
+                "data_type": leaf_dtype,
+            }
+            if len(level_vals) > 1:
+                record["extra_index_values"] = level_vals[:-1]
+            data.records.append(record)
+
+    return data
+
+
+# ---------------------------------------------------------------------------
 # Determine sheet type and parse accordingly
 # ---------------------------------------------------------------------------
 
@@ -697,6 +914,14 @@ def detect_and_parse_sheet(ws: Worksheet) -> tuple[SheetMetadata | None, bool]:
     # Check for scenario sheet: "Scenario names" in row 1, col B
     if _is_scenario_sheet(ws):
         return SheetMetadata(sheet_name=ws.title), True
+
+    # Check for a stochastic (_s) sheet: N>=2 left ``index:`` columns then a
+    # definition column carrying the transposed entity/alt/param roles.  Must
+    # run BEFORE the standard-sheet probe, which would otherwise misread the
+    # transposed ``alternative`` value header as a parameter column.
+    stoch_def_col = _find_stochastic_def_col(ws)
+    if stoch_def_col is not None:
+        return parse_stochastic_sheet_metadata(ws, stoch_def_col), False
 
     # Check for transposed sheet first: "alternative" or "parameter" in column B (row 0-4)
     for r in range(min(5, _actual_max_row(ws))):
@@ -753,7 +978,9 @@ class SheetData:
 
 def extract_sheet_data(ws: Worksheet, meta: SheetMetadata) -> SheetData:
     """Extract data records from a parsed sheet."""
-    if meta.is_transposed:
+    if meta.is_stochastic:
+        return _extract_stochastic(ws, meta)
+    elif meta.is_transposed:
         return _extract_transposed(ws, meta)
     elif not meta.param_cols and meta.entity_classes:
         return _extract_link(ws, meta)

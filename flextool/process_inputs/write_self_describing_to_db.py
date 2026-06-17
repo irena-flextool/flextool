@@ -328,6 +328,122 @@ def _combine_facet_records(
     return out
 
 
+def _build_nested_map(
+    entries: list[tuple[tuple[tuple[str, str], ...], Any]],
+) -> Map:
+    """Build a depth-N nested ``Map`` from per-leaf ``(index_pairs, value)``.
+
+    ``index_pairs`` is the left-to-right ``((axis0, val0), (axis1, val1),
+    …)`` tuple for one leaf cell (length N == nesting depth).  All entries
+    must share the same depth and the same per-level axis names.  Returns
+    ``Map(val0 -> Map(val1 -> … -> leaf))`` with each level's
+    ``index_name`` set from its axis, preserving the first-seen order of
+    keys at every level (numeric-aware so an integer axis stays
+    ``1,2,…,10`` rather than the lexical ``1,10,…,2``).
+
+    The leaf scalar values are inserted verbatim — the reader has already
+    coerced them to the declared leaf dtype (e.g. ``float``).
+    """
+    # Recursive grouping on the first axis, preserving insertion order.
+    def _recurse(
+        rows: list[tuple[tuple[tuple[str, str], ...], Any]],
+    ) -> Map:
+        axis_name = rows[0][0][0][0]
+        # Group rows by this level's value, keeping first-seen order.
+        order: list[str] = []
+        buckets: dict[str, list[tuple[tuple[tuple[str, str], ...], Any]]] = (
+            defaultdict(list)
+        )
+        for pairs, val in rows:
+            key = pairs[0][1]
+            if key not in buckets:
+                order.append(key)
+            # Drop the consumed (this-level) pair for the recursion.
+            buckets[key].append((pairs[1:], val))
+        # Ordering policy: when EVERY key at this level is integer-like,
+        # sort numerically so an integer axis stays 1,2,…,10,11 rather than
+        # the lexical 1,10,11,…,2 a string sort yields.  Otherwise preserve
+        # the first-seen (authoring / sheet-row) order — a genuine string
+        # axis (e.g. branch names ``realized``, ``f1``) must NOT be
+        # alphabetised, which would silently reorder it versus the source.
+        if all(_natural_key(k)[0] == 0 for k in order):
+            order.sort(key=_natural_key)
+        indexes: list[str] = []
+        values: list[Any] = []
+        for key in order:
+            child_rows = buckets[key]
+            indexes.append(key)
+            if child_rows and child_rows[0][0]:
+                # Deeper levels remain — recurse.
+                values.append(_recurse(child_rows))
+            else:
+                # Leaf level — single value per key.
+                values.append(child_rows[0][1])
+        return Map(indexes=indexes, values=values, index_name=axis_name)
+
+    return _recurse(entries)
+
+
+def _group_multi_index_records(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split out generic multi-index (nested-Map) records.
+
+    A record carrying a non-empty ``extra_index_values`` describes ONE leaf
+    of a depth-N nested float Map (the stochastic ``_s`` reader and the
+    ladder reader both emit these).  Facet-leaf ladder records are already
+    consumed upstream by :func:`_combine_facet_records`, so anything still
+    carrying ``extra_index_values`` here is a GENERIC nested Map that has no
+    other reconstruction path.
+
+    Returns ``(passthrough, nested_map_records)``: ``passthrough`` keeps
+    every record WITHOUT ``extra_index_values`` for the existing
+    scalar/single-index grouper; ``nested_map_records`` are the rebuilt
+    collapsed records (one per entity/param/alt group) with a nested Map
+    ``value``.
+    """
+    passthrough: list[dict[str, Any]] = []
+    # group key -> list of (index_pairs, value)
+    groups: dict[tuple, list[tuple[tuple[tuple[str, str], ...], Any]]] = (
+        defaultdict(list)
+    )
+    templates: dict[tuple, dict[str, Any]] = {}
+
+    for rec in records:
+        extra = rec.get("extra_index_values")
+        if not extra or rec.get("index_value") is None:
+            passthrough.append(rec)
+            continue
+        pairs = _index_tuple(rec)  # full left-to-right (axis, value) tuple
+        if len(pairs) < 2:
+            # Not genuinely multi-level after dropping empties — let the
+            # single-index grouper handle it.
+            passthrough.append(rec)
+            continue
+        key = (
+            rec["entity_class"],
+            rec["entity_byname"],
+            rec["param_name"],
+            rec["alternative"],
+        )
+        groups[key].append((pairs, rec["value"]))
+        if key not in templates:
+            templates[key] = rec
+
+    nested: list[dict[str, Any]] = []
+    for key, entries in groups.items():
+        top_map = _build_nested_map(entries)
+        rec = dict(templates[key])
+        rec["value"] = top_map
+        rec["index_value"] = None
+        rec["index_name"] = None
+        rec.pop("extra_index_values", None)
+        rec["data_type"] = "map"
+        nested.append(rec)
+
+    return passthrough, nested
+
+
 def _group_map_records(
     records: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -337,11 +453,18 @@ def _group_map_records(
     (entity_class, entity_byname, param_name, alternative) key and are
     collected into a single Map value per group.
 
+    Generic multi-index records (carrying ``extra_index_values`` — emitted
+    by the stochastic ``_s`` reader) are first peeled off and rebuilt into
+    depth-N nested Maps via :func:`_group_multi_index_records`; the
+    remaining single-index records flow through the original logic below.
+
     Returns:
         (scalar_records, map_records) where each map_record is a dict with
         keys identical to an input record but ``value`` replaced by a
         :class:`spinedb_api.Map` built from all the grouped index entries.
     """
+    records, nested_maps = _group_multi_index_records(records)
+
     scalars: list[dict[str, Any]] = []
     # key -> list of (index_value, value) in insertion order
     map_groups: dict[tuple, list[tuple[str, Any]]] = defaultdict(list)
@@ -403,6 +526,7 @@ def _group_map_records(
         rec["index_value"] = None  # no longer individual
         collapsed.append(rec)
 
+    collapsed.extend(nested_maps)
     return scalars, collapsed
 
 

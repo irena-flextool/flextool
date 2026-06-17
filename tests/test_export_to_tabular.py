@@ -1052,3 +1052,250 @@ class TestRoundTripGenericRegressions:
     def test_nonempty_contains_solves_unaffected(self, round_tripped: dict) -> None:
         val = round_tripped[("contains_solves", ("s_main",), "base")]
         assert list(val.values) == ["s_child"]
+
+
+class TestGenericNestedMapRoundTrip:
+    """Round-trip for GENERIC (non-facet) multi-index nested float Maps.
+
+    The self-describing exporter emits a depth-N nested-float Map (e.g. a 3d
+    ``profile``) onto a stochastic ``_s`` sheet with one left-side ``index:``
+    column per Map level plus a value column.  The reader previously rebuilt
+    only a single index level, silently dropping the value on re-import.
+    These tests cover the reconstruction of the full
+    ``Map(idx0 -> Map(idx1 -> ... -> leaf))`` for both depth-3 (end-to-end
+    export -> import) and depth-2 (synthetic SheetData -> DB writer).
+    """
+
+    @staticmethod
+    def _profile_3d() -> "object":
+        from spinedb_api import Map
+
+        # branch -> analysis_time -> time -> float.  Top-level branch keys
+        # are intentionally NOT alphabetical so the importer's order
+        # preservation (string axis = insertion order, not sorted) is tested;
+        # the ragged second branch (one analysis_time) tests sparse levels.
+        return Map(
+            indexes=["realized", "f1"],
+            values=[
+                Map(
+                    indexes=["t0001", "t0002"],
+                    values=[
+                        Map(indexes=["t01", "t02"], values=[0.5, 0.7],
+                            index_name="time"),
+                        Map(indexes=["t01", "t02"], values=[0.1, 0.2],
+                            index_name="time"),
+                    ],
+                    index_name="analysis_time",
+                ),
+                Map(
+                    indexes=["t0001"],
+                    values=[
+                        Map(indexes=["t01", "t02"], values=[0.9, 0.8],
+                            index_name="time"),
+                    ],
+                    index_name="analysis_time",
+                ),
+            ],
+            index_name="branch",
+        )
+
+    def test_depth3_profile_round_trip_byte_identical(
+        self, tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """A 3d nested-float ``profile`` Map survives export -> import with
+        its nested structure, every index key, per-level index names, and
+        float leaves intact (byte-identical Spine JSON)."""
+        import json
+
+        from spinedb_api import DatabaseMapping, from_database, to_database
+
+        from flextool.export_to_tabular.export_to_excel import export_to_excel
+        from flextool.process_inputs.read_self_describing_excel import (
+            read_self_describing_excel,
+        )
+        from flextool.process_inputs.write_self_describing_to_db import (
+            write_sheet_data_to_db,
+        )
+
+        out = tmp_path_factory.mktemp("nested3d_rt")
+        src = out / "src.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(src))
+        src_url = f"sqlite:///{src}"
+        with DatabaseMapping(src_url) as db:
+            db.add_alternative(name="Base")
+            db.add_entity(entity_class_name="profile", entity_byname=("wind1",))
+            value, type_ = to_database(self._profile_3d())
+            db.add_parameter_value(
+                entity_class_name="profile", entity_byname=("wind1",),
+                parameter_definition_name="profile", alternative_name="Base",
+                value=value, type=type_,
+            )
+            db.commit_session("setup")
+
+        xlsx = out / "out.xlsx"
+        export_to_excel(src_url, str(xlsx))
+
+        # The stochastic _s sheet must yield one record per leaf.  The
+        # fixture is ragged: realized has 2 analysis_times x 2 times (4
+        # leaves), f1 has 1 analysis_time x 2 times (2 leaves) = 6 total.
+        sheets = read_self_describing_excel(str(xlsx))
+        s_sheet = next(s for s in sheets if s.sheet_name == "profile_s")
+        assert len(s_sheet.records) == 6
+        # Every record carries the two outer index levels in extra_index_values.
+        for rec in s_sheet.records:
+            extra = rec.get("extra_index_values")
+            assert extra and [a for a, _ in extra] == ["branch", "analysis_time"]
+            assert rec["index_name"] == "time"
+            assert isinstance(rec["value"], float)
+
+        rt = out / "rt.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(rt))
+        rt_url = f"sqlite:///{rt}"
+        write_sheet_data_to_db(
+            sheets, rt_url, purge_first=True, keep_entities=True,
+        )
+
+        def _profile(url: str):
+            with DatabaseMapping(url) as db:
+                for p in db.get_parameter_value_items():
+                    if (p["parameter_definition_name"] == "profile"
+                            and p["entity_byname"] == ("wind1",)):
+                        return from_database(p["value"], p["type"])
+            return None
+
+        src_val = _profile(src_url)
+        rt_val = _profile(rt_url)
+        assert rt_val is not None, "3d profile vanished on round-trip"
+        # Structural spot check: a deep leaf survives with its float value.
+        assert rt_val.index_name == "branch"
+        assert list(rt_val.indexes) == ["realized", "f1"]
+        f1_at = rt_val.values[1]
+        assert f1_at.index_name == "analysis_time"
+        assert f1_at.values[0].values[1] == 0.8  # f1 / t0001 / t02
+        # Byte-identical Spine JSON (float diffs at ~1e-15 OK, structure exact).
+        src_json = json.loads(to_database(src_val)[0])
+        rt_json = json.loads(to_database(rt_val)[0])
+        assert src_json == rt_json, (
+            f"3d profile Map JSON differs on round-trip:\n"
+            f"src={json.dumps(src_json)}\nrt ={json.dumps(rt_json)}"
+        )
+
+    def test_depth2_generic_nested_map_reconstruction(
+        self, tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """A synthetic multi-``index:`` SheetData (two index levels per leaf)
+        rebuilds ``Map(idx0 -> Map(idx1 -> float))`` with the correct
+        per-level index names, float leaves, and authoring (insertion) order
+        for the string outer axis."""
+        from spinedb_api import DatabaseMapping, from_database
+
+        from flextool.process_inputs.read_self_describing_excel import (
+            EntityClassDef,
+            SheetData,
+            SheetMetadata,
+        )
+        from flextool.process_inputs.write_self_describing_to_db import (
+            write_sheet_data_to_db,
+        )
+
+        out = tmp_path_factory.mktemp("nested2d_rt")
+        db_path = out / "rt.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(db_path))
+        db_url = f"sqlite:///{db_path}"
+        with DatabaseMapping(db_url) as db:
+            db.add_alternative(name="Base")
+            db.add_entity(entity_class_name="profile", entity_byname=("w1",))
+            db.commit_session("setup")
+
+        meta = SheetMetadata(
+            sheet_name="profile_s", is_transposed=True, is_stochastic=True,
+        )
+        meta.entity_classes = [EntityClassDef("profile", ["profile"])]
+        sheet = SheetData(sheet_name="profile_s", metadata=meta)
+        # branch (string, NOT alphabetical) -> time -> float.
+        leaves = {
+            ("realized", "t01"): 0.5, ("realized", "t02"): 0.7,
+            ("f9", "t01"): 0.9, ("f9", "t02"): 0.8,
+        }
+        for (branch, tval), leaf in leaves.items():
+            sheet.records.append({
+                "alternative": "Base", "entity_class": "profile",
+                "entity_byname": ("w1",), "param_name": "profile",
+                "value": leaf, "index_value": tval, "index_name": "time",
+                "data_type": "float",
+                "extra_index_values": [("branch", branch)],
+            })
+
+        write_sheet_data_to_db(
+            [sheet], db_url, purge_first=False, keep_entities=True,
+        )
+
+        with DatabaseMapping(db_url) as db:
+            vals = [
+                from_database(p["value"], p["type"])
+                for p in db.get_parameter_value_items()
+                if p["parameter_definition_name"] == "profile"
+            ]
+        assert len(vals) == 1
+        top = vals[0]
+        assert top.index_name == "branch"
+        # Insertion order preserved — a string axis is NOT alphabetised.
+        assert list(top.indexes) == ["realized", "f9"]
+        realized = top.values[0]
+        assert realized.index_name == "time"
+        assert list(realized.indexes) == ["t01", "t02"]
+        assert list(realized.values) == [0.5, 0.7]
+        assert all(isinstance(v, float) for v in realized.values)
+        f9 = top.values[1]
+        assert list(f9.values) == [0.9, 0.8]
+
+    def test_numeric_outer_axis_sorts_numerically(
+        self, tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """An integer-like outer axis orders 1,2,…,10 (numeric), not the
+        lexical 1,10,2 a plain string sort would yield."""
+        from spinedb_api import DatabaseMapping, from_database
+
+        from flextool.process_inputs.read_self_describing_excel import (
+            EntityClassDef,
+            SheetData,
+            SheetMetadata,
+        )
+        from flextool.process_inputs.write_self_describing_to_db import (
+            write_sheet_data_to_db,
+        )
+
+        out = tmp_path_factory.mktemp("nested_numeric")
+        db_path = out / "rt.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(db_path))
+        db_url = f"sqlite:///{db_path}"
+        with DatabaseMapping(db_url) as db:
+            db.add_alternative(name="Base")
+            db.add_entity(entity_class_name="profile", entity_byname=("w1",))
+            db.commit_session("setup")
+
+        meta = SheetMetadata(
+            sheet_name="profile_s", is_transposed=True, is_stochastic=True,
+        )
+        meta.entity_classes = [EntityClassDef("profile", ["profile"])]
+        sheet = SheetData(sheet_name="profile_s", metadata=meta)
+        # Outer axis given out of order: 2, 10, 1.
+        for branch in ("2", "10", "1"):
+            sheet.records.append({
+                "alternative": "Base", "entity_class": "profile",
+                "entity_byname": ("w1",), "param_name": "profile",
+                "value": float(branch), "index_value": "t01",
+                "index_name": "time", "data_type": "float",
+                "extra_index_values": [("branch", branch)],
+            })
+
+        write_sheet_data_to_db(
+            [sheet], db_url, purge_first=False, keep_entities=True,
+        )
+        with DatabaseMapping(db_url) as db:
+            top = next(
+                from_database(p["value"], p["type"])
+                for p in db.get_parameter_value_items()
+                if p["parameter_definition_name"] == "profile"
+            )
+        assert list(top.indexes) == ["1", "2", "10"]
