@@ -931,3 +931,124 @@ class TestLadderReaderUnit:
         assert list(leaf1.values) == [20.0, 1.0]
         leaf2 = val.values[1]
         assert leaf2.values[1] == float("inf")
+
+
+class TestRoundTripGenericRegressions:
+    """End-to-end export -> import regressions for the generic round-trip
+    corruptions found via the H2_trade model.
+
+    The pre-existing ``test_price_ladder_round_trip_byte_identical`` only
+    exercised a single cumulative ladder, so it never surfaced the
+    annual/cumulative collision, the lexical tier ordering, the dropped
+    decomposition knobs, or the vanishing empty Array.  This builds a DB
+    from the live schema (never a checked-in .sqlite) carrying all four
+    shapes at once and asserts they survive a real workbook round-trip.
+    """
+
+    @pytest.fixture(scope="class")
+    def round_tripped(self, tmp_path_factory: pytest.TempPathFactory) -> dict:
+        from spinedb_api import (
+            Array, DatabaseMapping, Map, from_database, to_database,
+        )
+
+        out = tmp_path_factory.mktemp("generic_rt")
+        src = out / "src.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(src))
+        src_url = f"sqlite:///{src}"
+
+        def _ladder(tiers: list[tuple[str, float, float]]) -> Map:
+            # Map(tier -> Map(price/quantity)).  ``tiers`` intentionally
+            # unsorted so the import-side ordering is tested.
+            return Map(
+                indexes=[t for t, _, _ in tiers],
+                values=[
+                    Map(indexes=["price", "quantity"], values=[p, q])
+                    for _, p, q in tiers
+                ],
+                index_name="tier",
+            )
+
+        with DatabaseMapping(src_url) as db:
+            db.add_alternative(name="override")
+            for ent in ("h2_a", "co2_a"):
+                db.add_entity(entity_class_name="commodity", entity_byname=(ent,))
+            for solve in ("s_main", "s_child"):
+                db.add_entity(entity_class_name="solve", entity_byname=(solve,))
+
+            def put(ec, bn, pn, alt, value):
+                v, t = to_database(value)
+                db.add_parameter_value(
+                    entity_class_name=ec, entity_byname=bn,
+                    parameter_definition_name=pn, alternative_name=alt,
+                    value=v, type=t,
+                )
+
+            # Annual + cumulative ladders coexisting, both 2d (tier,) — the
+            # shape that collided.  Tiers given out of order to test sorting.
+            put("commodity", ("h2_a",), "price_method", "base", "price_ladder_annual")
+            put("commodity", ("h2_a",), "price_ladder_annual", "base",
+                _ladder([("2", 2.0, 20.0), ("10", 10.0, 100.0), ("1", 1.0, 10.0)]))
+            put("commodity", ("co2_a",), "price_method", "base", "price_ladder_cumulative")
+            put("commodity", ("co2_a",), "price_ladder_cumulative", "base",
+                _ladder([("1", 5.0, 0.5), ("2", 9.0, float("inf"))]))
+
+            # solve: decomposition knob + an empty contains_solves override.
+            put("solve", ("s_main",), "decomposition", "base", "lagrangian")
+            put("solve", ("s_main",), "contains_solves", "base", Array(["s_child"]))
+            put("solve", ("s_main",), "contains_solves", "override", Array([]))
+            db.commit_session("setup")
+
+        xlsx = out / "rt.xlsx"
+        export_to_excel(src_url, str(xlsx), include_advanced=True)
+        rt = out / "rt.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(rt))
+        from flextool.process_inputs.read_self_describing_excel import (
+            read_self_describing_excel,
+        )
+        from flextool.process_inputs.write_self_describing_to_db import (
+            write_sheet_data_to_db,
+        )
+        sheets = read_self_describing_excel(str(xlsx), skip_sheets={"navigate", "version"})
+        write_sheet_data_to_db(sheets, f"sqlite:///{rt}", purge_first=True, keep_entities=True)
+
+        result: dict = {}
+        with DatabaseMapping(f"sqlite:///{rt}") as db:
+            for p in db.get_parameter_value_items():
+                key = (
+                    p["parameter_definition_name"],
+                    tuple(p["entity_byname"]),
+                    p["alternative_name"],
+                )
+                result[key] = from_database(p["value"], p["type"])
+        return result
+
+    def test_annual_ladder_keeps_its_identity(self, round_tripped: dict) -> None:
+        # Was relabelled to price_ladder_cumulative before the fix.
+        assert ("price_ladder_annual", ("h2_a",), "base") in round_tripped
+        assert ("price_ladder_cumulative", ("h2_a",), "base") not in round_tripped
+
+    def test_cumulative_ladder_keeps_its_identity(self, round_tripped: dict) -> None:
+        assert ("price_ladder_cumulative", ("co2_a",), "base") in round_tripped
+        assert ("price_ladder_annual", ("co2_a",), "base") not in round_tripped
+
+    def test_ladder_tiers_in_numeric_order(self, round_tripped: dict) -> None:
+        val = round_tripped[("price_ladder_annual", ("h2_a",), "base")]
+        # Numeric, not the lexical "1","10","2".
+        assert list(val.indexes) == ["1", "2", "10"]
+
+    def test_decomposition_survives(self, round_tripped: dict) -> None:
+        assert round_tripped.get(("decomposition", ("s_main",), "base")) == "lagrangian"
+
+    def test_empty_contains_solves_override_survives(self, round_tripped: dict) -> None:
+        from spinedb_api import Array
+        key = ("contains_solves", ("s_main",), "override")
+        assert key in round_tripped, (
+            "empty contains_solves override was dropped on round-trip"
+        )
+        val = round_tripped[key]
+        assert isinstance(val, Array)
+        assert list(val.values) == []
+
+    def test_nonempty_contains_solves_unaffected(self, round_tripped: dict) -> None:
+        val = round_tripped[("contains_solves", ("s_main",), "base")]
+        assert list(val.values) == ["s_child"]
