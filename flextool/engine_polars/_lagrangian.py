@@ -9,6 +9,7 @@ This module slices a whole-system :class:`flextool.input.FlexData` via
 """
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -233,10 +234,22 @@ def solve_lagrangian(
                 recovered_total=_trivial_total)
 
         specs = _build_coupling_specs(splits, warm_lookup, couplings)
-        sol = LagrangianProblem(subproblems, specs).solve(
+        _solve = LagrangianProblem(subproblems, specs).solve
+        _solve_kwargs = dict(
             max_iters=max_iters, tol=tol, step=alpha,
             initial_lambda=initial_lambda, min_iters=min_iters,
-            primal_tail=primal_tail, progress_callback=progress_callback)
+            primal_tail=primal_tail)
+        # ``progress_callback`` (live per-iteration streaming) landed in
+        # polar-high 2.7.0.  Only forward it when the installed version
+        # accepts it, so an older polar-high still runs the solve (the
+        # live lines are simply absent; the returned result — and the
+        # caller's final summary — are unchanged).
+        if (
+            progress_callback is not None
+            and "progress_callback" in inspect.signature(_solve).parameters
+        ):
+            _solve_kwargs["progress_callback"] = progress_callback
+        sol = _solve(**_solve_kwargs)
     finally:
         if _enums_token is not None:
             reset_global_axis_enums(_enums_token)
