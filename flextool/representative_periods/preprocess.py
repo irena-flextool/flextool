@@ -213,6 +213,11 @@ def _build_weights_map(
     Outer keys = base period starting timesteps.
     Inner keys = representative period starting timesteps.
     Inner values = weights (only non-zero entries are included).
+
+    Both levels carry an ``index_name`` (``base_period`` / ``representative_period``)
+    so the self-describing-xlsx export labels the two index columns
+    meaningfully instead of falling back to the stochastic-sheet defaults
+    (``forecast`` / ``branch_time``); the names round-trip with the Map.
     """
     rep_start_keys = [timestep_keys[idx * period_length] for idx in rep_indices]
 
@@ -233,9 +238,11 @@ def _build_weights_map(
 
         if inner_keys:
             outer_keys.append(base_start_key)
-            outer_values.append(Map(inner_keys, inner_values))
+            outer_values.append(
+                Map(inner_keys, inner_values, index_name="representative_period")
+            )
 
-    return Map(outer_keys, outer_values)
+    return Map(outer_keys, outer_values, index_name="base_period")
 
 
 def _write_results_to_db(
