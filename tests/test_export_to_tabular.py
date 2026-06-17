@@ -372,28 +372,57 @@ class TestNodeCContent:
 class TestNodeTContent:
     """Verify that node_t has the correct v2 transposed timeseries layout.
 
-    V2 format:
-      Row 1: navigate | info text...
-      Row 2: (blank)  | entity: node | entity names...
-      Row 3: (blank)  | alternative  | alt names...
-      Row 4: index: time | parameter | param names...
-      Row 5+: time values | data...
+    V2 format (multi-param sheets carry a per-column 'data type' row so the
+    float leaf type survives the round-trip):
+      Row 1: navigate    | info text...
+      Row 2: (blank)      | data type    | dtypes...
+      Row 3: (blank)      | entity: node | entity names...
+      Row 4: (blank)      | alternative  | alt names...
+      Row 5: index: time  | parameter    | param names...
+      Row 6+: time values | data...
+
+    Row positions shift with the presence of the data-type/default rows, so
+    the tests locate header rows by their column-B label rather than a fixed
+    index.
     """
+
+    @staticmethod
+    def _label_row(ws: "openpyxl.worksheet.worksheet.Worksheet", label: str) -> int | None:
+        for r in range(1, min(10, ws.max_row) + 1):
+            if str(ws.cell(row=r, column=2).value or "").strip().lower() == label:
+                return r
+        return None
 
     def test_transposed_layout_structure(self, exported_workbook: openpyxl.Workbook) -> None:
         ws = exported_workbook["node_t"]
-        assert ws.cell(row=2, column=2).value == "entity: node", (
-            f"node_t: row 2, col 2 should be 'entity: node', got '{ws.cell(row=2, column=2).value}'"
-        )
-        assert ws.cell(row=3, column=2).value == "alternative", (
-            f"node_t: row 3, col 2 should be 'alternative', got '{ws.cell(row=3, column=2).value}'"
+        ent_row = self._label_row(ws, "entity: node")
+        alt_row = self._label_row(ws, "alternative")
+        assert ent_row is not None, "node_t: no 'entity: node' label row found"
+        assert alt_row is not None, "node_t: no 'alternative' label row found"
+
+    def test_data_type_row_present(self, exported_workbook: openpyxl.Workbook) -> None:
+        """Multi-param _t sheets must declare a per-column data type so float
+        time-series do not round-trip as string-valued Maps."""
+        ws = exported_workbook["node_t"]
+        dt_row = self._label_row(ws, "data type")
+        assert dt_row is not None, "node_t: missing 'data type' header row"
+        dtypes = [
+            str(ws.cell(row=dt_row, column=c).value or "")
+            for c in range(3, ws.max_column + 1)
+        ]
+        assert any("float" in d for d in dtypes), (
+            f"node_t: expected at least one float column data type, got {dtypes}"
         )
 
     def test_time_index_label(self, exported_workbook: openpyxl.Workbook) -> None:
         ws = exported_workbook["node_t"]
-        assert ws.cell(row=4, column=1).value == "index: time", (
-            f"node_t: row 4, col 1 should be 'index: time', got '{ws.cell(row=4, column=1).value}'"
+        # 'index: time' sits on column A of the last header row (the
+        # parameter row); locate it rather than assuming a fixed position.
+        found = any(
+            str(ws.cell(row=r, column=1).value or "").strip() == "index: time"
+            for r in range(1, min(10, ws.max_row) + 1)
         )
+        assert found, "node_t: 'index: time' label not found in column A"
 
     def test_entity_names_in_headers(self, exported_workbook: openpyxl.Workbook) -> None:
         ws = exported_workbook["node_t"]

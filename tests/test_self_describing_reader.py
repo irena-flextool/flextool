@@ -340,6 +340,36 @@ class TestConvertValueBoolean:
             _convert_value("no", "boolean")
 
 
+class TestConvertValueMapLeafDtype:
+    """``_convert_value`` derives the leaf scalar type from the part of the
+    dtype before any ``(...)`` container suffix, so Map/Array leaves keep
+    their float type instead of round-tripping as strings.
+    """
+
+    def test_float_map_and_array_leaves_convert(self):
+        for dt in ("float (1d-map)", "float (2d-map)", "float (3d-map)", "float (array)"):
+            assert _convert_value("10", dt) == 10.0
+            assert isinstance(_convert_value("10", dt), float)
+
+    def test_compound_string_float_prefers_float(self):
+        # A param typed string/float that stored a number → float;
+        # a genuinely non-numeric cell falls back to the raw string.
+        assert _convert_value("3000000", "string/float (1d-map)") == 3000000.0
+        assert _convert_value("auto", "string/float (1d-map)") == "auto"
+
+    def test_float_map_keeps_non_finite(self):
+        assert _convert_value("inf", "float (1d-map)") == float("inf")
+
+    def test_string_map_leaves_stay_raw(self):
+        # No float token → keep verbatim (numeric-looking strings preserved).
+        assert _convert_value("01", "string (1d-map)") == "01"
+
+    def test_boolean_array_token_stays_raw(self):
+        # 'boolean (array)' cells carry period tokens (round-trip form),
+        # NOT TRUE/FALSE — they must not strict-parse and must not raise.
+        assert _convert_value("p2025", "boolean (array)") == "p2025"
+
+
 class TestEntityExistenceHeaderStrict:
     """The legacy ``"entity alternative"`` alias is no longer rewritten.
 

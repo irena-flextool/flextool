@@ -622,6 +622,14 @@ def _find_index_column_name(
 
     Ignores the placeholder 'x' from the DB and falls back to the spec's
     ``index_name_default`` (from export_settings.yaml) or *default*.
+
+    Only maps that are actually written on THIS (periodic) sheet are
+    counted: nested Maps go to the nested-periodic sheet and time-indexed
+    Maps go to the ``_t`` sheet (except for time-structure classes), so
+    including them would let a param's stray time-series values out-vote
+    the genuine period index and mislabel the column ``index: time`` —
+    making every period-indexed value on the sheet round-trip with the
+    wrong axis name.
     """
     fallback = spec.index_name_default or default
     name_counts: dict[str, int] = {}
@@ -629,6 +637,10 @@ def _find_index_column_name(
     for entity_class in spec.entity_classes:
         for (cls, _byname, pname, _alt), value in db_contents.parameter_values.items():
             if cls == entity_class and pname in spec.parameter_names and _is_map(value):
+                if any(_is_map(mv) for mv in value.values):
+                    continue  # nested Map → nested-periodic sheet
+                if _is_time_indexed_map(value) and entity_class not in _time_structure_classes:
+                    continue  # time-indexed → _t sheet
                 iname = value.index_name
                 if iname and iname != "x":
                     name_counts[iname] = name_counts.get(iname, 0) + 1
@@ -3266,6 +3278,18 @@ def write_timeseries_sheet_v2(
             triplet += f" | default: {default_str}"
         ws.cell(row=cur_row, column=2, value=triplet)
         row_types[cur_row] = "param_info"
+        cur_row += 1
+
+    # data type row (multi-param only — the single-param branch carries the
+    # data type inside its triplet).  Without this, the reader has no leaf
+    # dtype for a multi-param _t sheet (e.g. node_t) and defaults to string,
+    # so float time-series round-trip as string-valued Maps.
+    if not single_param:
+        ws.cell(row=cur_row, column=2, value="data type")
+        for col_idx, (ec, byname, pname, alt, _m) in enumerate(columns, start=3):
+            dtype = _get_param_data_type(pname, [ec], db_contents, layout="timeseries")
+            ws.cell(row=cur_row, column=col_idx, value=dtype)
+        row_types[cur_row] = "data type"
         cur_row += 1
 
     # entity row — simplified label (just dimension names, not full mapping)

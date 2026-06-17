@@ -552,6 +552,7 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
 
     # Scan column B for row role definitions (skip INFO rows)
     label_col = 1  # column B
+    datatype_row: int | None = None
     for r in range(min(10, max_row)):
         val_a = _cell_value(ws, r, 0)
         if _is_info_row(val_a):
@@ -565,6 +566,13 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
 
         if vl == "alternative" or vl.startswith("alternative"):
             meta.alt_row = r
+        elif kw_lower == "data type":
+            # Multi-param _t sheets carry a per-column data-type row so the
+            # leaf scalar type survives the round-trip (single-param sheets
+            # fold it into the triplet instead).
+            datatype_row = r
+            if default_val:
+                meta.default_data_type = default_val.lower()
         elif kw_lower == "parameter":
             meta.param_row = r
             if default_val:
@@ -573,8 +581,19 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             meta.entity_row = r
             meta.entity_classes = _parse_entity_def(val)
 
+    # Read per-column data types (one per transposed data column, C+).
+    if datatype_row is not None:
+        max_col = ws.max_column or 1
+        for c in range(2, max_col):
+            dt = _cell_value(ws, datatype_row, c)
+            if dt:
+                meta.data_types[c] = dt.lower()
+
     # Determine data start row (row after last metadata row)
-    metadata_rows = [r for r in [meta.alt_row, meta.param_row, meta.entity_row] if r is not None]
+    metadata_rows = [
+        r for r in [meta.alt_row, meta.param_row, meta.entity_row, datatype_row]
+        if r is not None
+    ]
     if metadata_rows:
         meta.data_start_row = max(metadata_rows) + 1
 
@@ -1001,6 +1020,10 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
 
         entity_byname = (ent_name,)
 
+        # Per-column data type (multi-param _t sheets) takes precedence over
+        # the single-param triplet; fall back to the triplet then "string".
+        col_dtype = meta.data_types.get(c) or triplet_dtype
+
         # Read time-indexed data
         for r in range(meta.data_start_row, max_row):
             index_val = _cell_value(ws, r, 0) if meta.index_col_transposed == 0 else None
@@ -1008,14 +1031,14 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
             if not val or not index_val:
                 continue
 
-            # Use the actual triplet data type for value conversion.
+            # Use the column/triplet data type for value conversion.
             # The pre-fix code force-cast every cell to float, which only
             # worked by accident for ``boolean (array)`` (period names
             # like ``"Y2025"`` raise on ``float()`` and ``_convert_value``
             # falls back to returning the raw string).  A schema-string
             # series with numeric-looking entries (e.g. ``"01"``) would
             # silently get coerced to ``1.0`` and round-trip wrong.
-            value_dtype = triplet_dtype or "string"
+            value_dtype = col_dtype or "string"
             converted = _convert_value(val, value_dtype)
             data.records.append({
                 "alternative": alt,
@@ -1025,7 +1048,7 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "value": converted,
                 "index_value": index_val,
                 "index_name": meta.index_name,
-                "data_type": triplet_dtype,
+                "data_type": col_dtype,
             })
 
     return data
@@ -1067,8 +1090,23 @@ def _convert_value(val: str, dtype: str) -> Any:
     ``float`` cells accept the IEEE non-finite sentinels ``inf`` /
     ``-inf`` / ``nan`` (case-insensitive) — the export writer emits
     them as strings because openpyxl drops actual non-finite floats.
+
+    The leaf scalar type is taken from the part of *dtype* BEFORE any
+    ``(...)`` container suffix: ``"float (1d-map)"``, ``"float (array)"``,
+    ``"float (3d-map)"`` all carry a ``float`` leaf and must convert their
+    per-cell values to ``float`` — otherwise a Map/Array would round-trip
+    with string leaves (``["10", "20"]`` instead of ``[10.0, 20.0]``).
+    Compound leaf types joined with ``/`` (e.g. ``"string/float (1d-map)"``
+    — a param that accepts either) attempt the ``float`` conversion when
+    ``float`` is one of the tokens, falling back to the raw string for a
+    genuinely non-numeric cell.  Only the exact scalar ``"boolean"``
+    strict-parses TRUE/FALSE: a ``"boolean (array)"`` cell holds a period
+    token (the round-trip preservation form, see _extract_standard) and
+    must stay raw.
     """
-    if dtype == "float":
+    base = dtype.split("(", 1)[0].strip().lower() if dtype else ""
+    base_tokens = base.replace("/", " ").split()
+    if "float" in base_tokens:
         if isinstance(val, str):
             lo = val.strip().lower()
             if lo in ("inf", "+inf", "infinity", "+infinity"):
