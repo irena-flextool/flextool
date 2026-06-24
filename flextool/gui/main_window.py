@@ -2820,11 +2820,10 @@ class MainWindow(tk.Tk):
                         # rather than crashing the trace.
                         continue
 
-        verb = "Update" if any_results else "Create"
         self.add_to_execution_btn.configure(
             state="normal",
             style="Accent.TButton",
-            text=f"{verb} checked scenarios on\nthe execution list [F9]",
+            text=f"Add checked scenarios to\nthe execution list [F9]",
         )
 
     def _update_execution_menu_style(self) -> None:
