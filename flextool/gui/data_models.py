@@ -109,6 +109,14 @@ class ProjectSettings:
     # default).  Only appended when > 0.
     solver_time_limit: int = 0
 
+    # Parallel worker threads for Lagrangian region decomposition
+    # (machine-local; NOT a DB/schema param). 0 = auto = cpu_count-1,
+    # so a model authored on a many-core box does not carry a large
+    # worker count to a small machine. Positive N requests N workers,
+    # capped at cpu_count when resolved; polar-high further caps at the
+    # number of regions. Surfaced to the solve via --lagrangian-workers.
+    lagrangian_workers: int = 0
+
     # HiGHS MIP relative optimality gap (``--solver-mip-gap``), routed to
     # HiGHS' ``mip_rel_gap`` option.  ``solver_mip_gap_set`` gates whether
     # the value is sent at all: when True the gap is appended (and 0 is a

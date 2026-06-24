@@ -328,6 +328,8 @@ def solve_lagrangian(
     min_iters: int = 1,
     solver_config: "object | None" = None,
     progress_callback: Callable[[dict], None] | None = None,
+    workers: int | None = None,
+    subsolve_callback: Callable[[dict], None] | None = None,
 ) -> LagrangianResult:
     """Run Lagrangian decomposition on whole-system *data*.
 
@@ -440,11 +442,13 @@ def solve_lagrangian(
         # accepts it, so an older polar-high still runs the solve (the
         # live lines are simply absent; the returned result — and the
         # caller's final summary — are unchanged).
-        if (
-            progress_callback is not None
-            and "progress_callback" in inspect.signature(_solve).parameters
-        ):
+        _solve_params = inspect.signature(_solve).parameters
+        if progress_callback is not None and "progress_callback" in _solve_params:
             _solve_kwargs["progress_callback"] = progress_callback
+        if workers is not None and "max_workers" in _solve_params:
+            _solve_kwargs["max_workers"] = workers          # NOTE: FlexTool 'workers' -> polar-high 'max_workers'
+        if subsolve_callback is not None and "subsolve_callback" in _solve_params:
+            _solve_kwargs["subsolve_callback"] = subsolve_callback
         sol = _solve(**_solve_kwargs)
     finally:
         if _enums_token is not None:

@@ -94,6 +94,9 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     _stl = data.get("solver_time_limit", settings.solver_time_limit)
     if isinstance(_stl, int) and not isinstance(_stl, bool) and _stl >= 0:
         settings.solver_time_limit = _stl
+    _lw = data.get("lagrangian_workers", settings.lagrangian_workers)
+    if isinstance(_lw, int) and not isinstance(_lw, bool) and _lw >= 0:
+        settings.lagrangian_workers = _lw
     _smg = data.get("solver_mip_gap", settings.solver_mip_gap)
     if isinstance(_smg, (int, float)) and not isinstance(_smg, bool) and _smg >= 0:
         settings.solver_mip_gap = float(_smg)

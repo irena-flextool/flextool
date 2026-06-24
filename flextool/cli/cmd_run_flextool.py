@@ -456,6 +456,15 @@ def main():
                              'determinism for wall-clock speedup; goldens are '
                              'not guaranteed to reproduce across runs in that '
                              'mode.')
+    parser.add_argument('--lagrangian-workers', type=int, default=None,
+                        metavar='N',
+                        help='Parallel worker threads for Lagrangian '
+                             'per-region subsolves. Unset/0 = auto '
+                             '(cpu_count-1). A positive N requests N workers, '
+                             'capped at cpu_count when resolved (polar-high '
+                             'further caps at the number of regions). '
+                             'Machine-local runtime override, analogous to '
+                             '--solver-time-limit; NOT a DB/schema param.')
     parser.add_argument(
         '--scaling',
         choices=['off', 'solver_only', 'basic', 'full'],
@@ -595,6 +604,8 @@ def main():
         # name is a historical artefact from the diagnostic shim that
         # predated the resolver but the semantics are identical.
         os.environ['FLEXTOOL_HIGHS_TIME_LIMIT'] = str(args.solver_time_limit)
+    if args.lagrangian_workers is not None and args.lagrangian_workers > 0:
+        os.environ['FLEXTOOL_LAGRANGIAN_WORKERS'] = str(args.lagrangian_workers)
     if args.solver_mip_gap is not None:
         os.environ['FLEXTOOL_HIGHS_MIP_GAP'] = str(args.solver_mip_gap)
     if args.matrix_file_format is not None:
