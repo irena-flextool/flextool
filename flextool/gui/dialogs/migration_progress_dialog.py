@@ -36,7 +36,6 @@ class MigrationProgressDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(title)
         self.transient(parent)
-        self.grab_set()
         self.resizable(False, False)
 
         self._cancel_requested: bool = False
@@ -105,6 +104,24 @@ class MigrationProgressDialog(tk.Toplevel):
         # Kick off the spinner animation and the worker-update pump.
         self._spinner_after_id = self.after(200, self._tick_spinner)
         self._pump_after_id = self.after(50, self._pump_queue)
+
+        # Grab input once the window is actually mapped. ``grab_set`` raises
+        # "grab failed: window not viewable" if called before Tk has mapped
+        # the Toplevel — which happens when this dialog is constructed from
+        # inside another Tk callback (e.g. the project-combo selection).
+        self._install_grab()
+
+    def _install_grab(self) -> None:
+        """Grab input once the window is viewable, retrying on the main thread."""
+        if self._finished or not self.winfo_exists():
+            return
+        if self.winfo_viewable():
+            try:
+                self.grab_set()
+            except tk.TclError:
+                pass
+            return
+        self.after(50, self._install_grab)
 
     # ── Public API (thread-safe wrappers) ───────────────────────────
 
