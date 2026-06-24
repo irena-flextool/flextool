@@ -363,6 +363,7 @@ def _build_region_data(
     keep_procs: set[str],
     half_flows: list[HalfFlow],
     cross_arcs_by_pss: set[tuple[str, str, str]],
+    benders_uncap_cross_region: bool = False,
 ) -> FlexData:
     """Construct one region's :class:`FlexData` by filtering+rewriting
     the whole-system frames/Params.
@@ -530,13 +531,31 @@ def _build_region_data(
 
     # ---- Inject virtual half-flow arcs ----
     if half_flows:
-        new = _inject_half_flows(new, src, half_flows)
+        new = _inject_half_flows(
+            new, src, half_flows,
+            benders_uncap_cross_region=benders_uncap_cross_region,
+        )
 
     return new
 
 
+#: Benders mode sentinel for the cross-region half-flow ``maxFlow``
+#: capacity.  The real ``f ≤ C·unitsize`` limit lives in the master, so
+#: the per-region half-flow must be effectively uncapped.  The largest
+#: achievable physical flow is bounded by the connection's
+#: ``invest_max_total · unitsize`` (and ``v_flow`` is normalised by
+#: unitsize, so in solver units it is bounded by ``invest_max_total``);
+#: 1e12 is comfortably ≫ any realistic ``invest_max_total``, so the
+#: half-flow's ``maxFlow`` row is structurally slack for any flow the
+#: master could pin — it can never bind and therefore cannot leak a dual
+#: into the per-region subgradient (Phase-1 Claim 4).
+_BENDERS_UNCAP_SENTINEL: float = 1e12
+
+
 def _inject_half_flows(
     rd: FlexData, src: FlexData, half_flows: list[HalfFlow],
+    *,
+    benders_uncap_cross_region: bool = False,
 ) -> FlexData:
     """Add virtual half-flow connections + virtual arcs into the
     region's frames.  Each half-flow gets:
@@ -731,12 +750,22 @@ def _inject_half_flows(
                 & (pl.col("sink") == hf.original_sink)
             ).select("d", "value")
             for r in cap_rows.iter_rows(named=True):
+                # Benders mode: the master owns the real ``f ≤ C·unitsize``
+                # capacity limit, so the per-region half-flow's ``maxFlow``
+                # bound must be effectively unbounded — otherwise a
+                # greenfield pipe (whose inherited ``existing`` is 0) is
+                # pinned to zero trade (the false-convergence bug).  Swap
+                # the inherited value for a large sentinel that can never
+                # bind.  Default (un-set) keeps today's inherit.
+                value = (_BENDERS_UNCAP_SENTINEL
+                         if benders_uncap_cross_region
+                         else float(r["value"]))
                 new_flow_upper_existing_rows.append({
                     "p": hf.virtual_p,
                     "source": hf.virtual_arc_source,
                     "sink": hf.virtual_arc_sink,
                     "d": r["d"],
-                    "value": float(r["value"]),
+                    "value": value,
                 })
 
         # ── arc-block weights (lh2 fixture only) ──
@@ -1071,6 +1100,7 @@ def split(
     *,
     regions: list[str] | None = None,
     region_membership: dict[str, dict[str, set[str]]] | None = None,
+    benders_uncap_cross_region: bool = False,
 ) -> list[RegionSplit]:
     """Slice a whole-system :class:`FlexData` into per-region splits.
 
@@ -1088,6 +1118,16 @@ def split(
         Pre-computed ``{region: {"nodes": ..., "processes": ...}}`` from
         :func:`load_region_membership`.  When omitted we re-derive from
         ``data``.
+    benders_uncap_cross_region
+        Benders mode.  When ``True``, each cross-region virtual half-flow
+        is built with an effectively-unbounded ``maxFlow`` capacity (a
+        large sentinel) instead of inheriting the original arc's
+        ``p_flow_upper_existing``.  In Benders decomposition the TRUE
+        capacity limit ``f ≤ C·unitsize`` is enforced in the MASTER, so
+        a per-region cap would double-bound the flow and (for greenfield
+        cross-region pipes, whose inherited ``existing`` is 0) sever the
+        trade arc to zero — the false-convergence bug.  Default ``False``
+        preserves today's inherit-from-original behaviour byte-for-byte.
 
     Returns
     -------
@@ -1225,6 +1265,7 @@ def split(
                 keep_procs=keep_procs,
                 half_flows=half_flows_by_region.get(r, []),
                 cross_arcs_by_pss=cross_arcs_by_pss,
+                benders_uncap_cross_region=benders_uncap_cross_region,
             )
             splits.append(RegionSplit(
                 region=r,

@@ -74,16 +74,20 @@ from db_utils import db_to_json, json_to_db  # noqa: E402
 # stay in lockstep.
 from build_lh2_three_region import (  # noqa: E402
     ALT,
-    DAILY_STEPS,
-    HOURLY_STEPS,
-    N_DAYS,
-    N_HOURS,
+    Horizon,
     REGIONS,
     SCENARIO,
 )
 
 
 DEFAULT_OUT = HERE / "lh2_three_region.json"
+
+# Benders Phase-0 sibling fixture (greenfield investable trade, 2-day
+# horizon).  Lives in a SEPARATE JSON so the committed
+# ``lh2_three_region.json`` stays byte-identical.
+TRADE_INVEST_ALT: str = "lh2_three_region_trade_invest"
+TRADE_INVEST_SCENARIO: str = "lh2_three_region_trade_invest"
+TRADE_INVEST_OUT = HERE / "lh2_three_region_trade_invest.json"
 
 # Additive invest layer (TIER 1 Lagrangian invest→dispatch chain).  This
 # alternative + scenario layers ON TOP of the base ``ALT`` topology; the
@@ -97,10 +101,12 @@ INVEST_SCENARIO: str = "lh2_three_region_invest"
 # --- Time series synthesis --------------------------------------------------
 
 
-def _wind_profile(scale: float, phase: float) -> dict[str, float]:
-    """Sinusoidal wind profile over 168h, normalised to [0.05, 0.95]·scale."""
+def _wind_profile(scale: float, phase: float, hz: Horizon) -> dict[str, float]:
+    """Sinusoidal wind profile over the horizon, normalised to
+    [0.05, 0.95]·scale.  The weekly term keeps the legacy ``/168.0``
+    period so the DEFAULT 168h emit is byte-identical."""
     out: dict[str, float] = {}
-    for i, ts in enumerate(HOURLY_STEPS):
+    for i, ts in enumerate(hz.hourly_steps):
         diurnal = 0.5 + 0.4 * math.cos((i + phase) * 2 * math.pi / 24)
         weekly = 0.85 + 0.15 * math.sin((i / 168.0) * 2 * math.pi)
         v = scale * diurnal * weekly
@@ -108,23 +114,40 @@ def _wind_profile(scale: float, phase: float) -> dict[str, float]:
     return out
 
 
-def _elec_demand(peak: float, base: float) -> dict[str, float]:
+def _step_wind_profile(hz: Horizon) -> dict[str, float]:
+    """Deterministic 100/50/0 availability vector for the Benders Phase-0
+    fixture: the first third of the horizon at 1.0, the middle third at
+    0.5, the last third at 0.0.  For the canonical 48h horizon this is
+    exactly ``[1.0]*16 + [0.5]*16 + [0.0]*16``.
+    """
+    n = hz.n_hours
+    third = n // 3
+    levels = [1.0] * third + [0.5] * third + [0.0] * (n - 2 * third)
+    return {ts: levels[i] for i, ts in enumerate(hz.hourly_steps)}
+
+
+def _zero_profile(hz: Horizon) -> dict[str, float]:
+    """All-zero availability across the horizon."""
+    return {ts: 0.0 for ts in hz.hourly_steps}
+
+
+def _elec_demand(peak: float, base: float, hz: Horizon) -> dict[str, float]:
     """Hourly electricity demand profile (negative = demand)."""
     out: dict[str, float] = {}
-    for i, ts in enumerate(HOURLY_STEPS):
+    for i, ts in enumerate(hz.hourly_steps):
         diurnal = 0.7 + 0.3 * math.cos((i - 6) * 2 * math.pi / 24)
         v = base + (peak - base) * diurnal
         out[ts] = round(-v, 4)
     return out
 
 
-def _daily_lh2_demand(daily_kw: float) -> dict[str, float]:
+def _daily_lh2_demand(daily_kw: float, hz: Horizon) -> dict[str, float]:
     """Daily LH2 demand at the lh2 storage node, indexed at the daily
     block's per-day step labels (one entry per day).
     """
     out: dict[str, float] = {}
-    for d in range(N_DAYS):
-        out[DAILY_STEPS[d]] = round(-daily_kw * 24, 4)
+    for d in range(hz.n_days):
+        out[hz.daily_steps[d]] = round(-daily_kw * 24, 4)
     return out
 
 
@@ -292,13 +315,134 @@ def _build_invest_overlay(base_entities: list[tuple]) -> dict[str, list]:
     }
 
 
-def _build_payload() -> dict[str, list]:
+def _build_trade_invest_overlay(
+    base_entities: list[tuple], hz: Horizon
+) -> dict[str, list]:
+    """Return the additive Benders Phase-0 ``lh2_three_region_trade_invest``
+    overlay (greenfield investable cross-region pipes + asymmetric
+    wind/demand that makes A→B→C trade strictly optimal).
+
+    Layered ON TOP of the base ``ALT`` topology: the new scenario lists
+    ``ALT`` first then ``TRADE_INVEST_ALT``, so these overrides win on
+    overlapping ``(entity, parameter)`` keys.  Mirrors
+    :func:`_build_invest_overlay` structurally.
+
+    See ``specs/benders_option_c_fixture_recipe.md`` for the numeric
+    argument; the verified ground truth (monolith trades, current
+    Lagrangian collapses to autarky) is exercised by
+    ``tests/engine_polars/test_benders_phase0_fixture.py``.
+    """
+    new_entities: list[tuple] = []
+    pv: list[tuple] = []
+
+    # --- New single Lagrangian investment solve -------------------------
+    new_entities.append(("solve", "lh2_trade_invest"))
+    pv.extend([
+        ("solve", "lh2_trade_invest", "solve_mode", "single_solve",
+         TRADE_INVEST_ALT),
+        ("solve", "lh2_trade_invest", "decomposition", "lagrangian",
+         TRADE_INVEST_ALT),
+        ("solve", "lh2_trade_invest", "period_timeset",
+         _period_timeset_map([("y2030", "week168")]), TRADE_INVEST_ALT),
+        ("solve", "lh2_trade_invest", "realized_periods",
+         _array_str_periods(["y2030"]), TRADE_INVEST_ALT),
+        ("solve", "lh2_trade_invest", "invest_periods",
+         _array_str_periods(["y2030"]), TRADE_INVEST_ALT),
+        ("solve", "lh2_trade_invest", "realized_invest_periods",
+         _array_str_periods(["y2030"]), TRADE_INVEST_ALT),
+        ("solve", "lh2_trade_invest", "lagrangian_alpha", 10.0,
+         TRADE_INVEST_ALT),
+        ("solve", "lh2_trade_invest", "lagrangian_max_iter", 100.0,
+         TRADE_INVEST_ALT),
+        ("solve", "lh2_trade_invest", "lagrangian_tolerance", 0.5,
+         TRADE_INVEST_ALT),
+    ])
+    pv.append(
+        ("model", "flexTool", "solves",
+         _array_str(["lh2_trade_invest"]), TRADE_INVEST_ALT))
+
+    # --- Greenfield investable pipes (override base existing=50) --------
+    for pipe in ("pipe_AB", "pipe_BC"):
+        pv.extend([
+            ("connection", pipe, "existing", 0.0, TRADE_INVEST_ALT),
+            ("connection", pipe, "invest_method", "invest_total",
+             TRADE_INVEST_ALT),
+            ("connection", pipe, "invest_cost", 10.0, TRADE_INVEST_ALT),
+            ("connection", pipe, "invest_max_total", 5000.0,
+             TRADE_INVEST_ALT),
+            ("connection", pipe, "lifetime", 25.0, TRADE_INVEST_ALT),
+            ("connection", pipe, "discount_rate", 0.05, TRADE_INVEST_ALT),
+            # efficiency 0.95 inherited from base.
+        ])
+
+    # --- Region A: cheap wind, deterministic 100/50/0 availability -----
+    pv.append(
+        ("profile", "wind_profile_A", "profile",
+         _map(_step_wind_profile(hz)), TRADE_INVEST_ALT))
+
+    # --- Region C: demand-heavy import sink -----------------------------
+    # (a) add a daily LH2 demand at lh2_C (absent in base).
+    pv.append(
+        ("node", "lh2_C", "inflow",
+         _map(_daily_lh2_demand(120.0, hz)), TRADE_INVEST_ALT))
+    # (b) kill C's local cheap wind so it cannot self-supply.
+    pv.append(
+        ("profile", "wind_profile_C", "profile",
+         _map(_zero_profile(hz)), TRADE_INVEST_ALT))
+    # (c) cap C's coal so even coal cannot fully cover C (mostly consumed
+    #     locally by C's elec demand).
+    pv.append(("unit", "coal_C", "existing", 60.0, TRADE_INVEST_ALT))
+
+    # --- Entity-alternatives: activate the new solve under the overlay --
+    ent_alts: list[tuple] = []
+    for ent in new_entities:
+        cl, name = ent[0], ent[1]
+        ent_byname = (name,) if isinstance(name, str) else tuple(name)
+        ent_alts.append((cl, ent_byname, TRADE_INVEST_ALT, True))
+
+    return {
+        "entities": new_entities,
+        "parameter_values": pv,
+        "alternatives": [
+            (TRADE_INVEST_ALT,
+             "Three-region LH2 greenfield-trade invest (Benders Phase 0)"),
+        ],
+        "scenarios": [
+            (TRADE_INVEST_SCENARIO, False,
+             "Three-region LH2 greenfield investable trade "
+             "(Benders Phase 0 prototype)"),
+        ],
+        "scenario_alternatives": [
+            (TRADE_INVEST_SCENARIO, ALT, None),
+            (TRADE_INVEST_SCENARIO, TRADE_INVEST_ALT, None),
+        ],
+        "entity_alternatives": ent_alts,
+    }
+
+
+def _build_payload(
+    hz: Horizon | None = None,
+    extra_overlay: "callable | None" = None,
+) -> dict[str, list]:
     """Return the import_data payload for the LH2 fixture.
 
     Composes onto the v51-migrated baseline tests.json (which already
     carries every entity_class, parameter_definition and value-list we
     need).
+
+    Parameters
+    ----------
+    hz:
+        Timeline horizon.  ``None`` (the default) reproduces the
+        committed 168h / 7-day fixture byte-for-byte.
+    extra_overlay:
+        Optional callable ``f(base_entities) -> overlay_dict`` (same
+        shape as :func:`_build_invest_overlay`) layered on top of the
+        invest overlay.  Used by the Benders Phase-0 sibling fixture to
+        add the greenfield-trade scenario.
     """
+    if hz is None:
+        hz = Horizon.default()
     entities: list[tuple] = []
     parameter_values: list[tuple] = []
     alternatives: list[tuple] = [(ALT, "Three-region LH2 fixture (Agent 1.9)")]
@@ -313,13 +457,13 @@ def _build_payload() -> dict[str, list]:
     entities.append(("timeline", "y2030_168h"))
     parameter_values.append(
         ("timeline", "y2030_168h", "timestep_duration",
-         _map([(ts, 1.0) for ts in HOURLY_STEPS]), ALT))
+         _map([(ts, 1.0) for ts in hz.hourly_steps]), ALT))
 
     entities.append(("timeset", "week168"))
     parameter_values.append(("timeset", "week168", "timeline", "y2030_168h", ALT))
     parameter_values.append(
         ("timeset", "week168", "timeset_duration",
-         _map([(HOURLY_STEPS[0], float(N_HOURS))]), ALT))
+         _map([(hz.hourly_steps[0], float(hz.n_hours))]), ALT))
 
     # ------------------------------------------------------------------
     # Solve / model
@@ -394,7 +538,7 @@ def _build_payload() -> dict[str, list]:
             ("node", elec, "node_type", "balance", ALT),
             ("node", elec, "penalty_up", 8000.0, ALT),
             ("node", elec, "penalty_down", 8000.0, ALT),
-            ("node", elec, "inflow", _map(_elec_demand(elec_peak[r], elec_base[r])), ALT),
+            ("node", elec, "inflow", _map(_elec_demand(elec_peak[r], elec_base[r], hz)), ALT),
             ("node", h2, "node_type", "balance", ALT),
             ("node", h2, "penalty_up", 5000.0, ALT),
             ("node", h2, "penalty_down", 5000.0, ALT),
@@ -421,7 +565,7 @@ def _build_payload() -> dict[str, list]:
         if lh2_daily_kw[r] > 0:
             parameter_values.append(
                 ("node", lh2, "inflow",
-                 _map(_daily_lh2_demand(lh2_daily_kw[r])), ALT))
+                 _map(_daily_lh2_demand(lh2_daily_kw[r], hz)), ALT))
 
         # --- Resolution group memberships ------------------------------
         entities.append(("group__node", ("hourly_group", elec)))
@@ -437,7 +581,7 @@ def _build_payload() -> dict[str, list]:
         entities.append(("profile", wind_profile_name))
         parameter_values.append(
             ("profile", wind_profile_name, "profile",
-             _map(_wind_profile(wind_scales[r], wind_phases[r])), ALT))
+             _map(_wind_profile(wind_scales[r], wind_phases[r], hz)), ALT))
 
         # --- Wind unit ------------------------------------------------
         entities.append(("unit", wind))
@@ -553,6 +697,18 @@ def _build_payload() -> dict[str, list]:
     scenario_alternatives.extend(invest["scenario_alternatives"])
     entity_alternatives.extend(invest["entity_alternatives"])
 
+    # Optional additional overlay (Benders Phase-0 greenfield-trade
+    # scenario).  Layered last so it can override base values on the same
+    # keys (the scenario lists ALT first, then the overlay's alternative).
+    if extra_overlay is not None:
+        overlay = extra_overlay(entities, hz)
+        entities.extend(overlay["entities"])
+        parameter_values.extend(overlay["parameter_values"])
+        alternatives.extend(overlay["alternatives"])
+        scenarios.extend(overlay["scenarios"])
+        scenario_alternatives.extend(overlay["scenario_alternatives"])
+        entity_alternatives.extend(overlay["entity_alternatives"])
+
     return {
         "entities": entities,
         "parameter_values": parameter_values,
@@ -563,8 +719,16 @@ def _build_payload() -> dict[str, list]:
     }
 
 
-def _build_sqlite(db_path: Path) -> str:
-    """Build the LH2 fixture as a fresh SQLite DB at *db_path*."""
+def _build_sqlite(
+    db_path: Path,
+    hz: Horizon | None = None,
+    extra_overlay: "callable | None" = None,
+) -> str:
+    """Build the LH2 fixture as a fresh SQLite DB at *db_path*.
+
+    ``hz`` / ``extra_overlay`` default to ``None`` ⇒ the committed
+    168h / 7-day fixture, byte-identical to the legacy emit.
+    """
     db_path = Path(db_path)
     if db_path.exists():
         db_path.unlink()
@@ -620,7 +784,7 @@ def _build_sqlite(db_path: Path) -> str:
         db.commit_session("Applied v51 group-block schema additions")
 
     # Step 3: layer the LH2 fixture on top.
-    payload = _build_payload()
+    payload = _build_payload(hz=hz, extra_overlay=extra_overlay)
     with DatabaseMapping(url) as db:
         count, errors = import_data(db, **payload)
         if errors:
@@ -652,7 +816,9 @@ def _prune_baseline_topology(url: str) -> None:
     keep_commodities: set[str] = {"coal"}
     keep_timelines: set[str] = {"y2030_168h"}
     keep_timesets: set[str] = {"week168"}
-    keep_solves: set[str] = {"lh2_week", "lh2_invest", "lh2_dispatch"}
+    keep_solves: set[str] = {
+        "lh2_week", "lh2_invest", "lh2_dispatch", "lh2_trade_invest",
+    }
     for r in REGIONS:
         keep_nodes |= {f"elec_{r}", f"h2_{r}", f"lh2_{r}", f"battery_{r}"}
         keep_units |= {
@@ -729,17 +895,35 @@ def _prune_baseline_topology(url: str) -> None:
         db.commit_session("Pruned baseline topology")
 
 
-def regenerate_json(out_path: Path) -> int:
+def regenerate_json(
+    out_path: Path,
+    hz: Horizon | None = None,
+    extra_overlay: "callable | None" = None,
+) -> int:
     """Rebuild the SQLite from scratch and export to JSON.
+
+    ``hz`` / ``extra_overlay`` default to the committed 168h fixture.
 
     Returns the JSON file size in bytes.
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="lh2_regen_") as td:
         db_path = Path(td) / "lh2_three_region.sqlite"
-        _build_sqlite(db_path)
+        _build_sqlite(db_path, hz=hz, extra_overlay=extra_overlay)
         db_to_json(db_path, out_path)
     return out_path.stat().st_size
+
+
+def regenerate_trade_invest_json(out_path: Path = TRADE_INVEST_OUT) -> int:
+    """Rebuild the Benders Phase-0 sibling fixture
+    (``lh2_three_region_trade_invest.json``) at a 2-day / 48h horizon
+    with the greenfield-trade overlay.  Independent of the committed
+    ``lh2_three_region.json`` (which this function never touches)."""
+    return regenerate_json(
+        out_path,
+        hz=Horizon(n_hours=48, n_days=2),
+        extra_overlay=_build_trade_invest_overlay,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -754,9 +938,23 @@ def main(argv: list[str] | None = None) -> int:
         "--out", type=Path, default=DEFAULT_OUT,
         help="Output JSON path (default: tests/fixtures/lh2_three_region.json)",
     )
+    parser.add_argument(
+        "--trade-invest-out", type=Path, default=TRADE_INVEST_OUT,
+        help=(
+            "Output JSON path for the Benders Phase-0 sibling fixture "
+            "(default: tests/fixtures/lh2_three_region_trade_invest.json)"
+        ),
+    )
+    parser.add_argument(
+        "--no-trade-invest", action="store_true",
+        help="Skip emitting the Benders Phase-0 sibling fixture.",
+    )
     args = parser.parse_args(argv)
     size = regenerate_json(args.out)
     print(f"Wrote {args.out}  ({size:,} bytes)")
+    if not args.no_trade_invest:
+        ti_size = regenerate_trade_invest_json(args.trade_invest_out)
+        print(f"Wrote {args.trade_invest_out}  ({ti_size:,} bytes)")
     return 0
 
 
