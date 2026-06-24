@@ -25,7 +25,9 @@ class ViewerSettings:
     last_entry: str = ""      # e.g., "0.0"
     last_variant: str = ""    # e.g., "t"
     last_mode: str = "single" # "single", "comparison", "network"
-    window_geometry: str = ""  # saved Tk geometry string
+    # Saved viewer-window placement, keyed by monitor configuration
+    # (ui_metrics.monitor_signature): {signature -> "WxH+X+Y"}.
+    window_geometry: dict[str, str] = field(default_factory=dict)
     left_pane_width: int = 0  # saved horizontal sash position (0 = use default)
     scenario_pane_height: int = 0  # saved vertical sash in left column (0 = default)
     # cw (TkDefaultFont.measure("0")) at the time window_geometry / sash
@@ -233,13 +235,17 @@ class GlobalSettings:
     recent_project: str | None = None
     theme: str = "dark"  # Valid values: "dark", "light", "os"
     exec_jobs_sash: int = 0  # saved Jobs/Progress sash position (0 = default)
-    # cw at the time exec_jobs_sash was saved. 0 = unknown / use as-is.
+    # cw at the time the exec-jobs geometry/sash was saved. 0 = unknown.
     exec_jobs_layout_cw: int = 0
-    # Full Tk geometry string ("WxH+X+Y") of the execution-jobs window the
-    # last time it was closed. Empty = never saved; fall back to the
-    # default monitor-aware placement. Restored (clamped/rescaled) on open
-    # so the user's manual placement persists across sessions.
-    exec_jobs_geometry: str = ""
+    # Saved exec-jobs window placement, keyed by monitor configuration
+    # (ui_metrics.monitor_signature): {signature -> "WxH+X+Y"}. Each layout
+    # remembers its own placement; an unseen layout falls back to the
+    # monitor-aware default. Restored clamped/rescaled on open.
+    exec_jobs_geometry: dict[str, str] = field(default_factory=dict)
+    # Saved main-window placement, same per-configuration scheme as above.
+    main_window_geometry: dict[str, str] = field(default_factory=dict)
+    # cw at the time main_window_geometry was saved. 0 = unknown.
+    main_window_layout_cw: int = 0
     # Legacy fallback for projects whose settings.yaml predates the
     # per-project ``max_workers`` field.  0 means "not set yet".
     max_workers: int = 0

@@ -173,20 +173,18 @@ class ExecutionWindow(tk.Toplevel):
             exec_w = mon_right - left_gap
             self.geometry(f"{exec_w}x{usable_h}+{left_gap}+{mon_y}")
 
-        # Restore the saved geometry (the user's last manual placement),
-        # clamped to the current screen so a value saved at a different
-        # resolution does not run off-screen. This overrides the default
-        # placement above when present.
-        saved_geom = ""
-        saved_geom_cw = 0
+        # Restore the saved geometry for the current monitor configuration
+        # (the user's last manual placement on this layout). Overrides the
+        # default placement above when present.
         if self._global_settings is not None:
-            saved_geom = self._global_settings.exec_jobs_geometry
-            saved_geom_cw = self._global_settings.exec_jobs_layout_cw
-        if saved_geom:
-            from flextool.gui.ui_metrics import clamp_geometry, rescale_geometry
-            geom = rescale_geometry(saved_geom, saved_geom_cw, cw)
-            clamped = clamp_geometry(
-                geom, screen_w, screen_h, min_w=cw * 70, min_h=lh * 20,
+            from flextool.gui.ui_metrics import monitor_signature, resolve_saved_geometry
+            clamped = resolve_saved_geometry(
+                self._global_settings.exec_jobs_geometry,
+                monitor_signature(self),
+                self._global_settings.exec_jobs_layout_cw,
+                cw,
+                screen_w, screen_h,
+                min_w=cw * 70, min_h=lh * 20,
             )
             if clamped is not None:
                 try:
@@ -1348,10 +1346,14 @@ class ExecutionWindow(tk.Toplevel):
         except (tk.TclError, IndexError):
             pass
         self._global_settings.exec_jobs_layout_cw = self._char_width
-        # Persist the window placement so it reopens where the user left it
-        # (on the monitor they dragged it to), instead of the default tile.
+        # Persist the window placement keyed by monitor configuration so it
+        # reopens where the user left it on *this* layout, without reusing a
+        # docked offset on a single-monitor setup (and vice-versa).
         try:
-            self._global_settings.exec_jobs_geometry = self.geometry()
+            from flextool.gui.ui_metrics import monitor_signature
+            self._global_settings.exec_jobs_geometry[monitor_signature(self)] = (
+                self.geometry()
+            )
         except tk.TclError:
             pass
         try:

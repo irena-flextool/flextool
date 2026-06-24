@@ -124,6 +124,61 @@ def rescale_geometry(saved: str, saved_cw: int, current_cw: int) -> str:
     return f"{new_w}x{new_h}{xs}{m['x']}{ys}{m['y']}"
 
 
+def monitor_signature(window: tk.Misc | None = None) -> str:
+    """Stable key identifying the current monitor *configuration*.
+
+    Used to remember window placements per monitor layout: a window
+    dragged onto the 4K while docked, then the laptop undocked, should not
+    have its docked offset reused on the single internal panel. The
+    signature changes whenever a monitor is added/removed/moved/resized, so
+    each configuration keeps its own saved geometry.
+
+    Built from the sorted ``WxH+X+Y`` rectangles reported by ``screeninfo``
+    (order-independent). Falls back to ``virtual:<W>x<H>`` from the Tk
+    virtual-desktop size when ``screeninfo`` is unavailable, and finally to
+    ``"virtual:unknown"`` so callers always get a usable, hashable key.
+    """
+    try:
+        from screeninfo import get_monitors
+        monitors = list(get_monitors())
+        if monitors:
+            parts = sorted(
+                f"{int(m.width)}x{int(m.height)}+{int(m.x)}+{int(m.y)}"
+                for m in monitors
+            )
+            return "|".join(parts)
+    except Exception:
+        pass
+    if window is not None:
+        try:
+            return f"virtual:{window.winfo_screenwidth()}x{window.winfo_screenheight()}"
+        except tk.TclError:
+            pass
+    return "virtual:unknown"
+
+
+def primary_monitor_bounds() -> tuple[int, int, int, int] | None:
+    """Bounds ``(x, y, w, h)`` of the primary monitor, or ``None``.
+
+    Used to place a window that has no prior position to detect a "current"
+    monitor from (e.g. the main window at first launch). Prefers the monitor
+    ``screeninfo`` flags ``is_primary``; otherwise the first enumerated one.
+    Returns ``None`` when ``screeninfo`` is unavailable or enumerates none,
+    so callers fall back to virtual-desktop sizing.
+    """
+    try:
+        from screeninfo import get_monitors
+        monitors = list(get_monitors())
+    except Exception:
+        return None
+    if not monitors:
+        return None
+    chosen = next((m for m in monitors if getattr(m, "is_primary", False)), monitors[0])
+    if chosen.width <= 1 or chosen.height <= 1:
+        return None
+    return (int(chosen.x), int(chosen.y), int(chosen.width), int(chosen.height))
+
+
 def _monitor_bounds_screeninfo(
     window: tk.Misc,
 ) -> tuple[int, int, int, int] | None:
@@ -224,6 +279,34 @@ def current_monitor_bounds(window: tk.Misc) -> tuple[int, int, int, int] | None:
         return (x, y, w, h)
     except tk.TclError:
         return None
+
+
+def resolve_saved_geometry(
+    geom_map: dict[str, str],
+    signature: str,
+    saved_cw: int,
+    current_cw: int,
+    screen_w: int,
+    screen_h: int,
+    *,
+    min_w: int,
+    min_h: int,
+) -> str | None:
+    """Pick the geometry saved for *signature* and make it safe to apply.
+
+    Looks up *geom_map* by the current monitor *signature*, falling back to
+    a ``"legacy"`` entry migrated from the old single-string format. The
+    result is rescaled for any font/DPI change (``rescale_geometry``) and
+    clamped to the current screen (``clamp_geometry``). Returns ``None``
+    when nothing usable is saved, so callers keep the default placement.
+    """
+    if not geom_map:
+        return None
+    saved = geom_map.get(signature) or geom_map.get("legacy", "")
+    if not saved:
+        return None
+    geom = rescale_geometry(saved, saved_cw, current_cw)
+    return clamp_geometry(geom, screen_w, screen_h, min_w=min_w, min_h=min_h)
 
 
 @dataclass(frozen=True)

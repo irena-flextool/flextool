@@ -285,25 +285,23 @@ class ResultViewer(tk.Toplevel):
             viewer_w = mon_right - left_gap
             self.geometry(f"{viewer_w}x{usable_h}+{left_gap}+{mon_y}")
 
-        # Restore saved geometry, clamped to the current screen so a
-        # value saved at a different resolution does not run off-screen.
-        if self._viewer_settings.window_geometry:
-            from flextool.gui.ui_metrics import clamp_geometry, rescale_geometry
-            saved_geom = rescale_geometry(
-                self._viewer_settings.window_geometry,
-                self._viewer_settings.layout_cw,
-                cw,
-            )
-            clamped = clamp_geometry(
-                saved_geom,
-                screen_w, screen_h,
-                min_w=cw * 80, min_h=lh * 30,
-            )
-            if clamped is not None:
-                try:
-                    self.geometry(clamped)
-                except tk.TclError:
-                    pass
+        # Restore the saved geometry for the current monitor configuration,
+        # rescaled/clamped so a value saved at a different resolution does
+        # not run off-screen. Overrides the default placement above.
+        from flextool.gui.ui_metrics import monitor_signature, resolve_saved_geometry
+        clamped = resolve_saved_geometry(
+            self._viewer_settings.window_geometry,
+            monitor_signature(self),
+            self._viewer_settings.layout_cw,
+            cw,
+            screen_w, screen_h,
+            min_w=cw * 80, min_h=lh * 30,
+        )
+        if clamped is not None:
+            try:
+                self.geometry(clamped)
+            except tk.TclError:
+                pass
 
         # ── Build layout ─────────────────────────────────────────────
         self.columnconfigure(0, weight=1)
@@ -4294,9 +4292,10 @@ class ResultViewer(tk.Toplevel):
         for seq in ("<Prior>", "<Next>", "<Left>", "<Right>"):
             self.unbind_all(seq)
 
-        # Save window geometry and sash positions
+        # Save window geometry (keyed by monitor configuration) and sashes
+        from flextool.gui.ui_metrics import monitor_signature
         self._viewer_settings.layout_cw = self._char_width
-        self._viewer_settings.window_geometry = self.geometry()
+        self._viewer_settings.window_geometry[monitor_signature(self)] = self.geometry()
         try:
             self._viewer_settings.left_pane_width = self._paned.sashpos(0)
         except (tk.TclError, IndexError):

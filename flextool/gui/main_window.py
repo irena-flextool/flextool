@@ -1015,22 +1015,56 @@ class MainWindow(tk.Tk):
 
         # ── Window sizing: compute from actual widget layout ─────────
         self.update_idletasks()
+        cw = self._char_width
         nat_width = self.winfo_reqwidth()
         nat_height = self.winfo_reqheight()
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        # Width: the natural layout width, but never wider than the screen.
+        # Confine the default to the primary monitor: winfo_screenwidth/height
+        # span ALL monitors, and +0+0 is the top-left of the *virtual* desktop
+        # — which need not lie on any real monitor in a multi-monitor layout
+        # (e.g. monitors of differing heights). screeninfo gives the primary
+        # monitor's own origin and size; fall back to virtual +0+0 when it is
+        # unavailable.
+        from flextool.gui.ui_metrics import (
+            monitor_signature,
+            primary_monitor_bounds,
+            resolve_saved_geometry,
+        )
+        prim = primary_monitor_bounds()
+        if prim is not None:
+            mon_x, mon_y, mon_w, mon_h = prim
+        else:
+            mon_x, mon_y, mon_w, mon_h = 0, 0, screen_w, screen_h
+        # Width: the natural layout width, but never wider than the monitor.
         # Without this clamp a DPI-aware layout whose natural width exceeds a
         # small (e.g. laptop) display runs off-screen, and the weight=1 spacer
         # columns stretch the content apart instead of staying compact.
-        # Height: fill the screen minus taskbar space so the tree lists show
+        # Height: fill the monitor minus taskbar space so the tree lists show
         # as many rows as fit — extra height becomes more rows, not whitespace.
-        win_width = min(nat_width, screen_w)
-        win_height = max(nat_height, screen_h - lh * 4)
-        self.geometry(f"{win_width}x{win_height}+0+0")
+        win_width = min(nat_width, mon_w)
+        win_height = max(nat_height, mon_h - lh * 4)
+        self.geometry(f"{win_width}x{win_height}+{mon_x}+{mon_y}")
         # minsize must also stay within the screen, or the window can't be
         # shrunk to fit and the WM may re-inflate it past the display edge.
-        self.minsize(min(nat_width, screen_w), min(nat_height, screen_h))
+        self.minsize(min(nat_width, mon_w), min(nat_height, mon_h))
+
+        # Restore the saved geometry for the current monitor configuration
+        # (the user's last manual placement on this layout), overriding the
+        # default above. Clamped/rescaled against the full virtual desktop.
+        clamped = resolve_saved_geometry(
+            self.global_settings.main_window_geometry,
+            monitor_signature(self),
+            self.global_settings.main_window_layout_cw,
+            cw,
+            screen_w, screen_h,
+            min_w=min(nat_width, mon_w), min_h=lh * 20,
+        )
+        if clamped is not None:
+            try:
+                self.geometry(clamped)
+            except tk.TclError:
+                pass
 
         # ── Startup logic ────────────────────────────────────────────
         self._startup()
@@ -1568,12 +1602,15 @@ class MainWindow(tk.Tk):
         """Clear all saved window/sash positions and apply defaults.
 
         Resets:
-          * ResultViewer window_geometry, left_pane_width, scenario_pane_height
-            and the recorded layout_cw.
-          * ExecutionWindow exec_jobs_sash and exec_jobs_layout_cw.
+          * ResultViewer window_geometry (all monitor configurations),
+            left_pane_width, scenario_pane_height and the recorded layout_cw.
+          * ExecutionWindow exec_jobs_sash, exec_jobs_layout_cw and the saved
+            per-configuration geometry.
+          * The main window's saved per-configuration geometry.
 
         Any currently open ResultViewer / ExecutionWindow is closed; the
-        next time it opens it uses computed defaults.
+        next time it opens it uses computed defaults. The main-window default
+        applies on next launch.
         """
         confirm = messagebox.askyesno(
             "Reset window layout",
@@ -1589,7 +1626,7 @@ class MainWindow(tk.Tk):
         # Project-scoped settings (viewer) — only if a project is loaded
         if self.current_project:
             vs = self.project_settings.viewer_settings
-            vs.window_geometry = ""
+            vs.window_geometry = {}
             vs.left_pane_width = 0
             vs.scenario_pane_height = 0
             vs.layout_cw = 0
@@ -1603,9 +1640,12 @@ class MainWindow(tk.Tk):
                     exc_info=True,
                 )
 
-        # Global settings (execution window sash)
+        # Global settings (execution-window sash + saved geometries)
         self.global_settings.exec_jobs_sash = 0
         self.global_settings.exec_jobs_layout_cw = 0
+        self.global_settings.exec_jobs_geometry = {}
+        self.global_settings.main_window_geometry = {}
+        self.global_settings.main_window_layout_cw = 0
         try:
             save_global_settings(get_projects_dir(), self.global_settings)
         except Exception:
@@ -1815,6 +1855,19 @@ class MainWindow(tk.Tk):
                 save_project_settings(project_path, self.project_settings)
             except Exception:
                 logger.exception("Error saving settings during close")
+
+        # Persist the main-window placement keyed by monitor configuration.
+        # Done unconditionally (even with no open project) so the menu
+        # reopens where the user left it on this layout.
+        try:
+            from flextool.gui.ui_metrics import monitor_signature
+            self.global_settings.main_window_geometry[monitor_signature(self)] = (
+                self.geometry()
+            )
+            self.global_settings.main_window_layout_cw = self._char_width
+            save_global_settings(get_projects_dir(), self.global_settings)
+        except Exception:
+            logger.exception("Error saving main-window geometry during close")
 
         try:
             self.destroy()

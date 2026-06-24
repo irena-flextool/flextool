@@ -19,6 +19,22 @@ SETTINGS_FILENAME = "settings.yaml"
 GLOBAL_SETTINGS_FILENAME = "projects.yaml"
 
 
+def _as_geometry_map(raw: object) -> dict[str, str]:
+    """Normalise a saved geometry field into a {signature -> geometry} map.
+
+    Accepts the new dict form, or a legacy plain string (from before
+    per-monitor-configuration memory) which is migrated under the
+    ``"legacy"`` key — used as a layout-agnostic fallback until the window
+    is next closed and re-saved under a concrete signature. Anything else
+    yields an empty map.
+    """
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items() if isinstance(v, str) and v}
+    if isinstance(raw, str) and raw:
+        return {"legacy": raw}
+    return {}
+
+
 def load_project_settings(project_path: Path) -> ProjectSettings:
     """Load project settings from settings.yaml in the project directory.
 
@@ -176,7 +192,7 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
             last_entry=viewer.get("last_entry", ""),
             last_variant=viewer.get("last_variant", ""),
             last_mode=viewer.get("last_mode", "single"),
-            window_geometry=viewer.get("window_geometry", ""),
+            window_geometry=_as_geometry_map(viewer.get("window_geometry")),
             left_pane_width=viewer.get("left_pane_width", 0),
             scenario_pane_height=viewer.get("scenario_pane_height", 0),
             layout_cw=viewer.get("layout_cw", 0),
@@ -267,6 +283,9 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
         theme=theme,
         exec_jobs_sash=data.get("exec_jobs_sash", 0),
         exec_jobs_layout_cw=data.get("exec_jobs_layout_cw", 0),
+        exec_jobs_geometry=_as_geometry_map(data.get("exec_jobs_geometry")),
+        main_window_geometry=_as_geometry_map(data.get("main_window_geometry")),
+        main_window_layout_cw=data.get("main_window_layout_cw", 0),
         max_workers=data.get("max_workers", 0),
         execution_limits=execution_limits,
         font_size_pt=data.get("font_size_pt", 10),
