@@ -142,15 +142,17 @@ class ExecutionWindow(tk.Toplevel):
         from flextool.gui.ui_metrics import current_monitor_bounds
         self.geometry(f"+{main_x}+{main_y}")
         bounds = current_monitor_bounds(self)
+        # Reserve taskbar/dock space: screeninfo reports the full monitor
+        # rectangle, so the margin is subtracted here for both paths.
+        taskbar_margin = self._line_height * 4 if hasattr(self, '_line_height') else 80
         if bounds is not None:
             mon_x, mon_y, mon_w, mon_h = bounds
-            usable_h = mon_h  # already the WM work area (taskbar excluded)
+            usable_h = mon_h - taskbar_margin
         else:
-            # Fallback: no per-monitor info — use the virtual desktop and
-            # estimate the taskbar height (no worse than the old behaviour).
-            mon_x, mon_y, mon_w = 0, 0, screen_w
-            taskbar_margin = self._line_height * 4 if hasattr(self, '_line_height') else 80
-            usable_h = screen_h - taskbar_margin
+            # Fallback: no per-monitor info — use the virtual desktop
+            # (no worse than the old behaviour).
+            mon_x, mon_y, mon_w, mon_h = 0, 0, screen_w, screen_h
+            usable_h = mon_h - taskbar_margin
 
         # Tile to the right of the main window only when the right-hand gap is
         # genuinely roomy — at least half the monitor. The old bar (cw*70, the

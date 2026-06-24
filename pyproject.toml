@@ -74,6 +74,11 @@ dependencies = [
     # Move to an optional [gui] extra in a future release if headless
     # users complain about the install size.
     "sv-ttk",
+    # Per-monitor geometry so GUI windows open on the main window's
+    # monitor instead of stretching across the whole virtual desktop.
+    # Tk has no portable multi-monitor API; flextool.gui.ui_metrics falls
+    # back to a maximise-probe if this is unavailable.
+    "screeninfo",
     "pywin32; sys_platform == 'win32'",
 ]
 

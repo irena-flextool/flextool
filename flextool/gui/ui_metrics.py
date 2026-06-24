@@ -124,24 +124,76 @@ def rescale_geometry(saved: str, saved_cw: int, current_cw: int) -> str:
     return f"{new_w}x{new_h}{xs}{m['x']}{ys}{m['y']}"
 
 
+def _monitor_bounds_screeninfo(
+    window: tk.Misc,
+) -> tuple[int, int, int, int] | None:
+    """Per-monitor rectangle via the ``screeninfo`` package (flicker-free).
+
+    Picks the monitor whose rectangle contains the centre of *window*; if
+    no monitor claims the centre (e.g. the window straddles a gap), falls
+    back to the primary monitor, then the first enumerated one. Returns
+    ``None`` when ``screeninfo`` is missing or enumerates no monitors, so
+    the caller can drop to the maximise-probe.
+    """
+    try:
+        from screeninfo import get_monitors
+    except Exception:
+        return None
+    try:
+        monitors = list(get_monitors())
+    except Exception:
+        # screeninfo raises on headless / unusual display backends.
+        return None
+    if not monitors:
+        return None
+    try:
+        window.update_idletasks()
+        cx = window.winfo_x() + window.winfo_width() // 2
+        cy = window.winfo_y() + window.winfo_height() // 2
+    except tk.TclError:
+        cx = cy = None
+    chosen = None
+    if cx is not None:
+        for m in monitors:
+            if m.x <= cx < m.x + m.width and m.y <= cy < m.y + m.height:
+                chosen = m
+                break
+    if chosen is None:
+        chosen = next((m for m in monitors if getattr(m, "is_primary", False)), None)
+    if chosen is None:
+        chosen = monitors[0]
+    if chosen.width <= 1 or chosen.height <= 1:
+        return None
+    return (int(chosen.x), int(chosen.y), int(chosen.width), int(chosen.height))
+
+
 def current_monitor_bounds(window: tk.Misc) -> tuple[int, int, int, int] | None:
-    """Best-effort work area ``(x, y, w, h)`` of the monitor showing *window*.
+    """Best-effort bounds ``(x, y, w, h)`` of the monitor showing *window*.
 
     Tk exposes no per-monitor geometry: ``winfo_screenwidth`` /
     ``winfo_screenheight`` report the FULL virtual desktop spanning *every*
     monitor, so sizing a window to those values stretches it across all
     screens (the dual-monitor "window covers both displays" bug).
 
-    There is no portable Tk API for the rectangle of a single monitor, so
-    this momentarily maximises *window* — the window manager snaps a
-    maximised window to the *current* monitor's usable area — reads the
-    resulting offset and size, then restores the window to normal state.
+    Prefers the ``screeninfo`` package (flicker-free, also yields the
+    monitor's ``x``/``y`` origin). When it is unavailable or enumerates no
+    monitors, falls back to momentarily maximising *window* — the window
+    manager snaps a maximised window to the *current* monitor's usable area
+    — then reading the resulting offset/size and restoring normal state.
 
     *window* should already be positioned (e.g. via ``geometry("+x+y")``) on
-    the target monitor before calling, so the WM maximises onto the right
-    display. Returns ``None`` when the probe is unsupported or fails, so
-    callers fall back to virtual-desktop sizing (no worse than before).
+    the target monitor before calling, so both paths pick the right display.
+    Returns ``None`` when every approach fails, so callers fall back to
+    virtual-desktop sizing (no worse than before).
+
+    Note: ``screeninfo`` reports the full monitor rectangle, not the WM work
+    area, so callers should still reserve taskbar/dock space themselves; the
+    maximise-probe path already excludes it.
     """
+    bounds = _monitor_bounds_screeninfo(window)
+    if bounds is not None:
+        return bounds
+
     def _set_maximised(on: bool) -> bool:
         # Windows / macOS use state('zoomed'); most Linux WMs honour the
         # '-zoomed' attribute. Try both; report whether either took.

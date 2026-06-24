@@ -258,12 +258,13 @@ class ResultViewer(tk.Toplevel):
         from flextool.gui.ui_metrics import current_monitor_bounds
         self.geometry(f"+{main_x}+{main_y}")
         bounds = current_monitor_bounds(self)
+        # Reserve taskbar/dock space: screeninfo reports the full monitor
+        # rectangle, so the margin is subtracted here for both paths.
         if bounds is not None:
             mon_x, mon_y, mon_w, mon_h = bounds
-            usable_h = mon_h  # already the WM work area (taskbar excluded)
         else:
-            mon_x, mon_y, mon_w = 0, 0, screen_w
-            usable_h = screen_h - lh * 4
+            mon_x, mon_y, mon_w, mon_h = 0, 0, screen_w, screen_h
+        usable_h = mon_h - lh * 4
 
         # Tile to the right of the main window only when the right-hand gap is
         # genuinely roomy — at least half the monitor. The old bar (cw*80, the
