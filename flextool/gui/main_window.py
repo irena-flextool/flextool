@@ -175,11 +175,12 @@ class MainWindow(tk.Tk):
         self.global_settings = load_global_settings(get_projects_dir())
 
         # Configure role-aware named fonts (body/heading/tooltip/code).
-        # code_font_size_pt = 0 means "auto" → derive as body + 2 so logs
-        # render at a comfortably readable size next to body text.
+        # code_font_size_pt = 0 means "auto" → match the body size so logs
+        # render at the same size as body text (monospace already runs a
+        # touch shorter than the proportional body font at equal points).
         from flextool.gui.ui_metrics import setup_fonts
         _body_pt = self.global_settings.font_size_pt or 10
-        _code_pt = self.global_settings.code_font_size_pt or (_body_pt + 2)
+        _code_pt = self._resolve_code_pt(_body_pt)
         setup_fonts(self, body_pt=_body_pt, code_pt=_code_pt)
 
         # One-line startup diagnostic (WARNING → flextool_gui.log): real DPI,
@@ -1456,6 +1457,37 @@ class MainWindow(tk.Tk):
             )
             menu.add_cascade(label="UI font size", menu=size_menu)
 
+        # Code/log font size — the monospace TkFixedFont used by the
+        # execution progress log and other code/log views. Shown on ALL
+        # platforms (unlike "UI font size"): TkFixedFont honours point-size
+        # changes everywhere, including Windows where the sv_ttk body fonts
+        # do not. "Auto" (value 0) tracks the UI body size.
+        code_menu = self._styled_popup_menu(menu)
+        code_current = self.global_settings.code_font_size_pt
+        self._code_font_size_var = getattr(
+            self, "_code_font_size_var", None
+        ) or tk.IntVar(value=code_current)
+        self._code_font_size_var.set(code_current)
+        code_menu.add_radiobutton(
+            label="Auto (match UI)",
+            variable=self._code_font_size_var,
+            value=0,
+            command=lambda: self._set_code_font_size(0),
+        )
+        code_menu.add_separator()
+        for sz in (8, 9, 10, 11, 12, 14):
+            code_menu.add_radiobutton(
+                label=f"{sz} pt",
+                variable=self._code_font_size_var,
+                value=sz,
+                command=lambda s=sz: self._set_code_font_size(s),
+            )
+        code_menu.add_separator()
+        code_menu.add_command(
+            label="Custom...", command=self._on_code_font_size_custom
+        )
+        menu.add_cascade(label="Code/log font size", menu=code_menu)
+
         theme_menu = self._styled_popup_menu(menu)
         for label, value in (("OS theme", "os"), ("Dark", "dark"), ("Light", "light")):
             theme_menu.add_radiobutton(
@@ -1474,7 +1506,9 @@ class MainWindow(tk.Tk):
         # Auto-dismiss when the mouse leaves all menus.  The delay keeps
         # the menu visible while the cursor briefly crosses the border
         # to a cascade submenu.
-        submenus = [theme_menu] if size_menu is None else [size_menu, theme_menu]
+        submenus = [code_menu, theme_menu]
+        if size_menu is not None:
+            submenus.insert(0, size_menu)
         self._install_menu_hover_dismiss(menu, submenus)
 
         # Post the menu just under the button, right-aligned so the
@@ -1487,6 +1521,15 @@ class MainWindow(tk.Tk):
             menu.tk_popup(x, y)
         finally:
             menu.grab_release()
+
+    def _resolve_code_pt(self, body_pt: int) -> int:
+        """Effective monospace/code font size in points.
+
+        ``code_font_size_pt == 0`` means "auto" → match the body size.
+        Any positive value is an explicit override the user set via the
+        UI-settings menu.
+        """
+        return self.global_settings.code_font_size_pt or body_pt
 
     def _set_font_size(self, size_pt: int) -> None:
         """Apply *size_pt* as the UI body/menu/heading font size and persist."""
@@ -1507,7 +1550,7 @@ class MainWindow(tk.Tk):
             logger.warning("Failed to save font size", exc_info=True)
 
         from flextool.gui.ui_metrics import setup_fonts, get_metrics
-        _code_pt = self.global_settings.code_font_size_pt or (size_pt + 2)
+        _code_pt = self._resolve_code_pt(size_pt)
         setup_fonts(self, body_pt=size_pt, code_pt=_code_pt)
         # Treeview rowheight depends on line-height — recompute & re-apply.
         _m = get_metrics(self)
@@ -1532,6 +1575,49 @@ class MainWindow(tk.Tk):
         )
         if new is not None:
             self._set_font_size(new)
+
+    def _set_code_font_size(self, size_pt: int) -> None:
+        """Apply *size_pt* as the monospace/code (TkFixedFont) size and persist.
+
+        ``size_pt == 0`` means "auto" → the code font tracks the UI body
+        size. Any positive value is an explicit override; it is clamped to
+        the same 6–32 pt range as the body size.
+        """
+        size_pt = 0 if size_pt == 0 else max(6, min(int(size_pt), 32))
+        self.global_settings.code_font_size_pt = size_pt
+        # Keep the radio variable in sync for the Custom... path (the
+        # radio-button command path updates it automatically).
+        if getattr(self, "_code_font_size_var", None) is not None:
+            try:
+                self._code_font_size_var.set(size_pt)
+            except tk.TclError:
+                pass
+
+        try:
+            save_global_settings(get_projects_dir(), self.global_settings)
+        except Exception:
+            logger.warning("Failed to save code font size", exc_info=True)
+
+        from flextool.gui.ui_metrics import setup_fonts
+        body_pt = self.global_settings.font_size_pt or 10
+        # Reconfigures the shared TkFixedFont named font in place, so every
+        # open log/code view (incl. the execution progress window) restyles
+        # live — they reference the named font, not a private copy.
+        setup_fonts(self, body_pt=body_pt, code_pt=self._resolve_code_pt(body_pt))
+
+    def _on_code_font_size_custom(self) -> None:
+        """Prompt for a custom code/log font size in points (0 = auto)."""
+        current = self.global_settings.code_font_size_pt
+        new = simpledialog.askinteger(
+            "Code/log font size",
+            "Monospace font size (points, 6–32; 0 = match UI):",
+            parent=self,
+            initialvalue=current,
+            minvalue=0,
+            maxvalue=32,
+        )
+        if new is not None:
+            self._set_code_font_size(new)
 
     def _open_project_dialog(self) -> None:
         """Open the ProjectDialog and handle its result.
@@ -4468,7 +4554,7 @@ class MainWindow(tk.Tk):
         from flextool.gui.ui_metrics import setup_fonts, get_metrics
         from tkinter import ttk
         body_pt = self.global_settings.font_size_pt or 10
-        code_pt = self.global_settings.code_font_size_pt or (body_pt + 2)
+        code_pt = self._resolve_code_pt(body_pt)
         setup_fonts(self, body_pt=body_pt, code_pt=code_pt)
         _m = get_metrics(self)
         ttk.Style().configure("Treeview", rowheight=_m.row_height)
