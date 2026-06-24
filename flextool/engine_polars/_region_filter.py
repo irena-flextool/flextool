@@ -60,6 +60,7 @@ __all__ = [
     "RegionSplit",
     "discover_regions",
     "split",
+    "master_network_data",
     "load_decomposition_method",
     "load_region_membership",
 ]
@@ -1088,6 +1089,342 @@ def _inject_half_flows(
     # group_slack / capacity_margin features which aren't in lh2 fixture.
 
     return rd
+
+
+# ---------------------------------------------------------------------------
+# Benders network-only master producer (the INVERSE of ``split``)
+# ---------------------------------------------------------------------------
+
+
+#: FlexData fields keyed on a NODE axis ``n`` (node entity sets, storage,
+#: inflow, penalties, profiles, …).  The master OMITS every terminal node
+#: from balance, so each of these is emptied (set to ``None``) — a node
+#: absent from ``nodeBalance`` / ``nodeStateBlock`` gets no balance row
+#: (Phase-3 design §1.3; ``model.py`` builds balance only over the
+#: populated node sets).
+_MASTER_NODE_FIELDS: tuple[str, ...] = (
+    "nodeBalance_dt", "nodeBalancePeriod",
+    "nodeState", "nodeState_dt", "nodeState_first_dt", "nodeState_last_dt",
+    "nodeState_rp", "nodeStateBlock",
+    "storage_bind_within_timeblock", "storage_bind_forward_only",
+    "storage_bind_within_solve", "storage_bind_within_solve_blended_weights",
+    "storage_bind_within_period_blended_weights",
+    "storage_bind_forward_only_blended_weights", "storage_fix_start",
+    "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
+    "p_state_start", "p_state_existing_capacity",
+    "storage_use_reference_value", "p_storage_state_reference_value",
+    "p_storage_state_reference_price",
+    "node_profile_upper", "node_profile_lower", "node_profile_fixed",
+    "p_node_availability", "p_roll_continue_state",
+    "n_fix_storage_quantity", "ndt_fix_storage_quantity",
+    "p_fix_storage_quantity", "n_fix_storage_usage",
+    "ndt_fix_storage_usage", "p_fix_storage_usage",
+    "p_node_capacity_for_scaling",
+    # node-keyed invest/divest sets (the trade nodes are not the master's
+    # invest variables — only the cross connections are).
+    "nd_invest_set", "nd_divest_set",
+    # CO2 / reserve / user-constraint / group features — all in-region
+    # recourse, not part of the network-only master.  (The commodity
+    # frames + ``p_commodity_price`` are REQUIRED-present by the PROCESSES
+    # feature, so they are EMPTIED rather than nulled below.)
+    "flow_from_co2_priced", "flow_from_co2_priced_noEff",
+    "p_co2_content", "p_co2_price",
+    "group_co2_max_period", "flow_from_co2_capped",
+    "flow_from_co2_capped_noEff", "p_co2_max_period", "group_d_co2_capped",
+    "group_co2_max_total", "flow_from_co2_capped_total",
+    "flow_from_co2_capped_total_noEff", "p_co2_max_total",
+    "flow_constraint_idx", "p_flow_constraint_coef", "p_constraint_constant",
+    "cdt_eq", "cdt_le", "cdt_ge",
+    "p_node_constraint_invested_capacity_coeff",
+    "p_process_constraint_invested_capacity_coeff",
+    "p_node_constraint_state_coeff",
+    "p_node_constraint_prebuilt_capacity_coeff",
+    "p_process_constraint_prebuilt_capacity_coeff",
+    "groupCapacityMargin", "groupInertia", "groupNonSync", "group_node",
+    "process_sink_inertia", "process_source_inertia",
+    "process_sink_nonSync", "process_group_inside_nonSync",
+    "p_inv_group_cap", "p_group_capacity_for_scaling",
+    "pdGroup_capacity_margin",
+)
+
+
+def master_network_data(
+    data: FlexData,
+    regions: list[str],
+    *,
+    region_membership: dict[str, dict[str, set[str]]] | None = None,
+) -> FlexData:
+    """Build the Benders MASTER's reduced :class:`FlexData` — the INVERSE
+    of :func:`split`.
+
+    Returns a reduced :class:`FlexData` containing ONLY the cross-region
+    ``(p, source, sink)`` arcs plus their invest / cost / timeline params,
+    with EVERY terminal node OMITTED from node balance (and the
+    block / state / inflow frames).  ``build_flextool`` over the result
+    generates the master skeleton natively:
+
+    * ``v_flow[conn, source, sink, d, t]`` for every cross arc (built from
+      ``process_source_sink × dt``, independent of ``nodeBalance``);
+    * ``v_invest_p[conn, d]`` over ``pd_invest_set``;
+    * the capacity-tied ``maxFlow`` row (greenfield ⇒ ``flow_upper_rhs=0``
+      with ``-v_invest_p`` on the LHS ⇒ ``v_flow ≤ v_invest_p``);
+    * the invest annuity cost + (when authored) the connection flow cost.
+
+    Reuses the cross-arc CLASSIFICATION (:func:`_classify_arcs`) — the same
+    detection :func:`split` uses — rather than re-deriving it.
+
+    Parameters
+    ----------
+    data
+        Whole-system :class:`FlexData`.
+    regions
+        The region group names the splitter partitions on.
+    region_membership
+        Pre-computed membership (see :func:`load_region_membership`); when
+        omitted, re-derived from *data*.
+
+    Notes
+    -----
+    The reduced FlexData KEEPS only cross-arc rows in the process / arc /
+    arc-cost / arc-block frames and the cross connections in the invest /
+    unitsize / max-units params; EVERY node-keyed frame (balance, state,
+    inflow, penalties, storage, profiles, CO2, groups, user constraints)
+    is emptied (``None``).  The solve-data-keyed timeline frames (``dt``,
+    ``p_step_duration``, ``p_timestep_weight``, ``p_inflation_op``,
+    ``p_period_share``, the RP / block frames) carry through the
+    ``dataclasses.replace`` shallow copy unchanged, so the master's
+    ``v_flow`` lives on the SAME ``(d, t)`` grid as the region pinned
+    half-flows (Phase-3 §3.5 guard (a)).
+    """
+    if region_membership is None:
+        region_membership = load_region_membership(data, regions)
+    region_nodes = {r: m["nodes"] for r, m in region_membership.items()}
+
+    new = dataclasses.replace(data)
+
+    if data.process_source_sink is None:
+        raise RuntimeError(
+            "master_network_data: no process_source_sink — nothing to "
+            "decompose"
+        )
+
+    # Reuse the cross-region classification (same detection as ``split``).
+    _pss_tagged, cross = _classify_arcs(data.process_source_sink, region_nodes)
+    if cross.height == 0:
+        raise RuntimeError(
+            "master_network_data: no cross-region arcs found"
+        )
+    cross_keys: set[tuple[str, str, str]] = {
+        (r["p"], r["source"], r["sink"]) for r in cross.iter_rows(named=True)
+    }
+    cross_procs: set[str] = {k[0] for k in cross_keys}
+
+    _enums = getattr(data, "_axis_enums", None) or get_global_axis_enums()
+
+    def _keep_cross_triple(df: pl.DataFrame | None) -> pl.DataFrame | None:
+        """Keep ONLY the rows whose (p, source, sink) is a cross arc."""
+        if df is None:
+            return None
+        if not all(c in df.columns for c in ("p", "source", "sink")):
+            return df
+        key_df = pl.DataFrame(
+            {
+                "p":      [t[0] for t in cross_keys],
+                "source": [t[1] for t in cross_keys],
+                "sink":   [t[2] for t in cross_keys],
+            },
+            schema={"p": schema_dtype(_enums, "p"),
+                    "source": schema_dtype(_enums, "source"),
+                    "sink": schema_dtype(_enums, "sink")},
+        )
+        return df.join(key_df, on=("p", "source", "sink"), how="semi")
+
+    def _keep_cross_triple_param(p: Param | None) -> Param | None:
+        if p is None:
+            return None
+        if not all(c in p.dims for c in ("p", "source", "sink")):
+            # p-keyed but not arc-keyed (e.g. p_unitsize): keep cross procs.
+            return _keep_proc_param(p)
+        f = _keep_cross_triple(p.frame)
+        return Param(p.dims, f, name=p.name)
+
+    def _keep_proc(df: pl.DataFrame | None) -> pl.DataFrame | None:
+        if df is None or "p" not in df.columns:
+            return df
+        return df.filter(_is_in_keep("p", cross_procs))
+
+    def _keep_proc_param(p: Param | None) -> Param | None:
+        if p is None:
+            return None
+        if "p" not in p.dims:
+            return p
+        return Param(p.dims, p.frame.filter(_is_in_keep("p", cross_procs)),
+                     name=p.name)
+
+    def _keep_entity_param(p: Param | None) -> Param | None:
+        """Keep only the cross connections on an entity-axis (``e``) param."""
+        if p is None:
+            return None
+        if "e" not in p.dims:
+            return p
+        return Param(p.dims, p.frame.filter(_is_in_keep("e", cross_procs)),
+                     name=p.name)
+
+    def _keep_entity_frame(df):
+        """Keep cross connections on an ``e``-axis frame OR Param (some
+        invest sets ship as plain DataFrames, others as Params)."""
+        if df is None:
+            return None
+        if isinstance(df, Param):
+            return _keep_entity_param(df)
+        if "e" not in df.columns:
+            return df
+        return df.filter(_is_in_keep("e", cross_procs))
+
+    # ---- Process / arc topology: KEEP only cross arcs ----
+    new.process_source_sink = _keep_cross_triple(data.process_source_sink)
+    new.process_source_sink_eff = _keep_cross_triple(data.process_source_sink_eff)
+    new.process_source_sink_noEff = _keep_cross_triple(data.process_source_sink_noEff)
+    new.pss_dt = None  # rebuilt on demand from process_source_sink × dt.
+    new.process_source_canonical = _keep_proc(data.process_source_canonical)
+    new.process_sink_canonical = _keep_proc(data.process_sink_canonical)
+    new.flow_to_n = _keep_cross_triple(data.flow_to_n)
+    new.flow_from_n = _keep_cross_triple(data.flow_from_n)
+    new.flow_from_nodeBalance_eff = _keep_cross_triple(data.flow_from_nodeBalance_eff)
+    new.flow_from_nodeBalance_noEff = _keep_cross_triple(data.flow_from_nodeBalance_noEff)
+    new.process_unit = _keep_proc(data.process_unit)
+    new.process_indirect = _keep_proc(data.process_indirect)
+    # Commodity frames + price are REQUIRED-present by the PROCESSES feature.
+    # Cross arcs (trade pipes) are not commodity-fed, so keeping only their
+    # rows EMPTIES these frames while preserving the schema (not None).
+    new.flow_from_commodity_eff = _keep_cross_triple(data.flow_from_commodity_eff)
+    new.flow_from_commodity_noEff = _keep_cross_triple(data.flow_from_commodity_noEff)
+    new.flow_to_commodity = _keep_cross_triple(data.flow_to_commodity)
+    new.p_commodity_price = _keep_proc_param(data.p_commodity_price)
+
+    # ---- Per-arc operating / capacity params ----
+    new.p_unitsize = _keep_proc_param(data.p_unitsize)
+    new.p_all_entity_unitsize = _keep_entity_param(data.p_all_entity_unitsize)
+    new.p_flow_upper = _keep_cross_triple_param(data.p_flow_upper)
+    new.p_flow_upper_existing = _keep_cross_triple_param(data.p_flow_upper_existing)
+    new.p_arc_max_cap_coef = _keep_cross_triple_param(data.p_arc_max_cap_coef)
+    new.p_slope = _keep_proc_param(data.p_slope)
+    new.p_process_existing_count = _keep_proc_param(data.p_process_existing_count)
+    new.p_process_availability = _keep_proc_param(data.p_process_availability)
+    new.pd_neg_cap = _keep_proc_param(data.pd_neg_cap)
+
+    # ---- Profiles (process-keyed) ----
+    new.process_profile_upper = _keep_proc(data.process_profile_upper)
+    new.process_profile_lower = _keep_proc(data.process_profile_lower)
+    new.process_profile_fixed = _keep_proc(data.process_profile_fixed)
+
+    # ---- Per-arc block weights (lh2 fixture; trade nodes are block nodes) ----
+    new.arc_sink_block_dt = _keep_cross_triple(getattr(data, "arc_sink_block_dt", None))
+    new.arc_source_block_dt = _keep_cross_triple(getattr(data, "arc_source_block_dt", None))
+    new.p_arc_sink_weight = _keep_cross_triple_param(getattr(data, "p_arc_sink_weight", None))
+    new.p_arc_source_weight = _keep_cross_triple_param(getattr(data, "p_arc_source_weight", None))
+    new.p_arc_step_duration_sink = _keep_cross_triple_param(
+        getattr(data, "p_arc_step_duration_sink", None))
+    new.p_arc_step_duration_source = _keep_cross_triple_param(
+        getattr(data, "p_arc_step_duration_source", None))
+
+    # ---- Per-arc / per-process variable-cost frames (flow cost) ----
+    new.pssdt_varCost_eff_connection = _keep_cross_triple(
+        getattr(data, "pssdt_varCost_eff_connection", None))
+    new.pssdt_varCost_eff_unit_source = _keep_cross_triple(
+        getattr(data, "pssdt_varCost_eff_unit_source", None))
+    new.pssdt_varCost_eff_unit_sink = _keep_cross_triple(
+        getattr(data, "pssdt_varCost_eff_unit_sink", None))
+    new.pssdt_varCost_noEff = _keep_cross_triple(
+        getattr(data, "pssdt_varCost_noEff", None))
+    new.p_pssdt_varCost = _keep_cross_triple_param(getattr(data, "p_pssdt_varCost", None))
+    new.p_pdt_varCost_source = _keep_proc_param(getattr(data, "p_pdt_varCost_source", None))
+    new.p_pdt_varCost_sink = _keep_proc_param(getattr(data, "p_pdt_varCost_sink", None))
+    new.p_pdt_varCost_process = _keep_proc_param(getattr(data, "p_pdt_varCost_process", None))
+
+    # ---- Invest params for the cross connections ----
+    new.pd_invest_set = _keep_proc(data.pd_invest_set)
+    new.pd_divest_set = _keep_proc(data.pd_divest_set)
+    new.ed_invest_set = _keep_entity_frame(data.ed_invest_set)
+    new.ed_divest_set = _keep_entity_frame(data.ed_divest_set)
+    new.edd_invest_set = _keep_entity_frame(data.edd_invest_set)
+    new.edd_invest_lookback_set = _keep_entity_frame(data.edd_invest_lookback_set)
+    new.edd_divest_active = _keep_entity_frame(data.edd_divest_active)
+    new.p_entity_max_units = _keep_entity_param(data.p_entity_max_units)
+    new.ed_lifetime_fixed_cost = _keep_entity_param(data.ed_lifetime_fixed_cost)
+    new.ed_lifetime_fixed_cost_divest = _keep_entity_param(data.ed_lifetime_fixed_cost_divest)
+    new.ed_entity_annual_discounted = _keep_entity_param(data.ed_entity_annual_discounted)
+    new.ed_entity_annual_divest_discounted = _keep_entity_param(
+        data.ed_entity_annual_divest_discounted)
+    new.e_invest_total = _keep_entity_frame(data.e_invest_total)
+    new.e_divest_total = _keep_entity_frame(data.e_divest_total)
+    new.e_invest_max_total = _keep_entity_frame(data.e_invest_max_total)
+    new.e_divest_max_total = _keep_entity_frame(data.e_divest_max_total)
+    new.ed_invest_period_set = _keep_entity_frame(data.ed_invest_period_set)
+    new.ed_divest_period_set = _keep_entity_frame(data.ed_divest_period_set)
+    new.ed_invest_max_period = _keep_entity_frame(data.ed_invest_max_period)
+    new.ed_divest_max_period = _keep_entity_frame(data.ed_divest_max_period)
+    new.p_entity_previously_invested_capacity = _keep_entity_param(
+        data.p_entity_previously_invested_capacity)
+    new.p_entity_invested = _keep_entity_param(data.p_entity_invested)
+    new.p_entity_divested = _keep_entity_param(data.p_entity_divested)
+    new.p_entity_all_existing = _keep_entity_param(data.p_entity_all_existing)
+    new.p_ed_fixed_cost = _keep_entity_param(data.p_ed_fixed_cost)
+
+    # ---- Drop in-region features that reference the OMITTED terminal nodes
+    # (or in-region recourse not part of the network-only master). ----
+    for fld in _MASTER_NODE_FIELDS:
+        if hasattr(new, fld):
+            setattr(new, fld, None)
+
+    # ``build_flextool``'s ALWAYS feature requires these four fields to be
+    # PRESENT (not None) even when empty (model.py ``ALWAYS``).  Emptying
+    # them (head(0)) — rather than nulling — OMITS every terminal node from
+    # balance while keeping the build's structural precondition satisfied:
+    # the master's ``v_flow`` is then free except for ``maxFlow`` and its
+    # own bound (Phase-3 §1.3).
+    def _empty_like_frame(df: pl.DataFrame | None) -> pl.DataFrame | None:
+        return df.head(0) if df is not None else df
+
+    def _empty_like_param(p: Param | None) -> Param | None:
+        if p is None:
+            return None
+        return Param(p.dims, p.frame.head(0), name=p.name)
+
+    # OMIT every cross-arc TERMINAL node from balance — that is the
+    # "unbalanced virtual node" requirement: with the terminals absent the
+    # master's trade ``v_flow`` is free except for ``maxFlow`` and its own
+    # bound (Phase-3 §1.3).  We do NOT empty ``nodeBalance`` entirely,
+    # because ``build_flextool`` requires a non-empty balance-node set to
+    # declare the ``vq_state_up/down`` slack vars and the ``nodeBalance_eq``
+    # row (a None ``nodeBalance_dt`` crashes ``add_var`` / ``add_cstr``).
+    # Instead we keep the NON-terminal nodes: in the reduced master they
+    # carry NO arcs (every non-cross arc was dropped) and NO inflow, so
+    # their balance collapses to ``slack = 0`` — structurally inert, with
+    # zero effect on the trade flow.  This satisfies the build precondition
+    # while still omitting exactly the trade terminals.
+    terminal_nodes: set[str] = set()
+    for k in cross_keys:
+        terminal_nodes.add(k[1])
+        terminal_nodes.add(k[2])
+
+    def _drop_terminal_frame(df: pl.DataFrame | None) -> pl.DataFrame | None:
+        if df is None or "n" not in df.columns:
+            return df
+        return df.filter(~_is_in_keep("n", terminal_nodes))
+
+    def _drop_terminal_param(p: Param | None) -> Param | None:
+        if p is None or "n" not in p.dims:
+            return p
+        return Param(p.dims, p.frame.filter(~_is_in_keep("n", terminal_nodes)),
+                     name=p.name)
+
+    new.nodeBalance = _drop_terminal_frame(data.nodeBalance)
+    new.p_inflow = _empty_like_param(data.p_inflow)
+    new.p_penalty_up = _drop_terminal_param(data.p_penalty_up)
+    new.p_penalty_down = _drop_terminal_param(data.p_penalty_down)
+
+    return new
 
 
 # ---------------------------------------------------------------------------
