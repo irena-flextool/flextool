@@ -7,7 +7,7 @@ name = "flextool"
 # restructure are in.  4.0.0 final follows after the remaining
 # minor-functionality additions, cleanup and testing land.  PEP 440
 # pre-release suffix: 4.0.0a1, 4.0.0a2, ... 4.0.0b1, 4.0.0rc1, then 4.0.0.
-version = "4.0.0b10"
+version = "4.0.0b11"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
@@ -47,8 +47,11 @@ dependencies = [
     # sys.stdout isn't fd 1, so machines whose highspy callback is silent
     # (some Linux builds) keep the native log instead of losing it entirely.
     # 2.6.0 adds Problem.coef_zero_threshold, which the v59 model-wide
-    # small-number coefficient cutoff sets — so it is a hard floor here.
-    "polar-high>=2.6.0",
+    # small-number coefficient cutoff sets.  2.9.0 adds the thread-parallel
+    # Lagrangian subsolves (max_workers) + per-subsolve callback that the
+    # per-solve decomposition path and the --lagrangian-workers knob use —
+    # so it is the hard floor here.
+    "polar-high>=2.9.0",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.

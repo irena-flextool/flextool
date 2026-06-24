@@ -1,3 +1,85 @@
+## Release 4.0.0b11 (24.6.2026) — per-solve Lagrangian decomposition (v60/v61); thread-parallel subsolves; xlsx round-trip + output fixes; per-monitor GUI placement
+
+Requires a **database migration to v61** (`FLEXTOOL_DB_VERSION` 59 → 61, in two
+steps): v60 adds the per-solve `solve.decomposition` selector and its Lagrangian
+knobs; v61 adds `timeset.representative_period_weights`. Raises the solver-backend
+floor to **`polar-high>=2.9.0`** (the per-solve decomposition path and the new
+`--lagrangian-workers` knob use its thread-parallel subsolves / per-subsolve
+callback); other dependency floors unchanged (`polars>=1.40`, `highspy<=1.14.0`).
+A model that does not opt into decomposition solves exactly as before — the LP and
+all outputs are unchanged for the monolithic path.
+
+### Per-solve Lagrangian decomposition (schema v60)
+
+- **DB-driven decomposition.** A solve now selects its own scheme via the new
+  `solve.decomposition` parameter (value list `decomposition_schemes`); set it to
+  `lagrangian` to decompose that solve's investment problem by owner region. The
+  Lagrangian behaviour is tuned per solve by `lagrangian_alpha`,
+  `lagrangian_max_iter` and `lagrangian_tolerance` (grouped under
+  `solve_advanced`). The old `--decomposition*` CLI flags are removed — the choice
+  lives in the database, not the command line.
+- **Investment → dispatch handoff.** A decomposed investment solve assembles the
+  owner-selected invest/divest variables and deposits the resulting capacities for
+  the downstream rolling dispatch solve to consume, so a Lagrangian invest stage
+  hands its build decisions to an ordinary dispatch stage end-to-end.
+- **Live progress in the log.** The Lagrangian driver now prints a per-iteration
+  line plus a closing dual-gap summary block; the progress callback is forwarded to
+  `polar-high` only when the installed version supports it.
+
+### Thread-parallel Lagrangian subsolves
+
+- **`--lagrangian-workers N`** (CLI; mirrored to `FLEXTOOL_LAGRANGIAN_WORKERS`) and a
+  machine-local **"Parallel workers (Lagrangian)"** spinbox in the GUI solver-options
+  dialog (`0` = auto = cpu − 1) cap how many region subproblems solve concurrently
+  within each barrier. The count is plumbed to `polar-high`'s `max_workers` and a
+  per-subsolve progress callback, both **version-gated** via `inspect.signature` — an
+  older `polar-high` (which floors at 2.9.0 here, but the guard is defensive) silently
+  stays on the sequential path. The worker count is a per-machine setting (GUI YAML,
+  not a DB/schema parameter), so a many-core author's count never travels to a small
+  box. Default behaviour is unchanged — with no flag the solve stays sequential.
+
+### Representative-period weights (schema v61) & xlsx round-trip
+
+- New `timeset.representative_period_weights` (rank-2 nested Map: base-period start
+  → representative-period start → weight) produced by the representative-periods
+  preprocess tool; its presence enables RP-aware storage binding
+  (`*_blended_weights`), its absence silently downgrades those methods to non-RP
+  behaviour. Mutually exclusive with `timeset_weights` on the same timeset. Its Map
+  axes are named for a clean Excel export.
+- **Excel round-trip correctness.** Several DB → xlsx → DB corruptions are fixed:
+  constant/periodic-shared scalars no longer duplicate; float leaves and the period
+  axis survive Map round-trips; ladder parameter identity, tier order and
+  solve-parameter export are preserved; empty `Array`/`Map` values round-trip via a
+  sentinel; and a generic multi-index nested-float Map path fixes a latent stochastic
+  3-D/4-D drop.
+
+### Output & plot fixes
+
+- **Node prices for coarse-resolution block nodes.** Nodes on a coarser
+  `new_stepduration` resolution land in the block balance equation; the per-`(d,t)`
+  price output extracts and broadcasts that block dual instead of raising a
+  `node_prices_dt_e` `KeyError`.
+- **Cost-by-entity comparison plot** is now grouped + stacked correctly (and a
+  frivolous `scenario_rule` is dropped).
+- **Dispatch plots:** build each scenario's dispatch DataFrame once to avoid pandas
+  fragmentation; silence a degenerate dispatch y-limit; correct the
+  `connection_dt_eee` comparison column spec.
+
+### Input fix
+
+- Cast `p_flow_max` values to `Float64` on read, so an integer-typed limit no longer
+  trips a dtype mismatch downstream.
+
+### Desktop GUI
+
+- **Per-monitor window placement.** Child windows (Execution-jobs / Results) open on
+  the main window's monitor and remember their geometry per monitor configuration;
+  placement uses `screeninfo` for flicker-free, multi-monitor-aware positioning. Fixes
+  the earlier single-monitor `winfo_screenwidth()` assumption that could strand a
+  child window off-screen.
+- **Windows DPI font scaling**, header style and the Add-input-source dialog sizing
+  are corrected; startup logs ground-truth DPI / font-scaling for diagnosis.
+
 ## Release 4.0.0b10 (16.6.2026) — never open child windows off-screen
 
 GUI-only release — no database migration (schema stays at **v59**;
