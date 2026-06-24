@@ -264,7 +264,10 @@ def prepare_dispatch_data(
         if time_index is None:
             return None, None
 
-        df_dispatch = pd.DataFrame(index=time_index)
+        # Accumulate columns in a dict and build the DataFrame once at the end.
+        # Inserting columns one-by-one into a DataFrame in these loops fragments
+        # the block manager and triggers pandas PerformanceWarnings.
+        df_dispatch: dict[str, pd.Series] = {}
 
         # --- Process Unit_to_group (unit outputs to nodes in group) ---
         unit_to_group_df = mappings.get_for_scenario('processGroup_Unit_to_group', scenario)
@@ -323,8 +326,8 @@ def prepare_dispatch_data(
                             # If this group already has a positive (Unit_to_group)
                             # column, keep charge as "Charge" so both discharge
                             # and charge are separately visible in the dispatch.
-                            if group_agg in df_dispatch.columns:
-                                if 'Charge' in df_dispatch.columns:
+                            if group_agg in df_dispatch:
+                                if 'Charge' in df_dispatch:
                                     df_dispatch['Charge'] = df_dispatch['Charge'].add(flow_sum, fill_value=0)
                                 else:
                                     df_dispatch['Charge'] = flow_sum
@@ -374,7 +377,7 @@ def prepare_dispatch_data(
                             flow_sum = flow_sum.add(conn_right[col_key], fill_value=0)
 
                 if flow_sum.abs().sum() > 0:
-                    if group_agg in df_dispatch.columns:
+                    if group_agg in df_dispatch:
                         df_dispatch[group_agg] = df_dispatch[group_agg].add(flow_sum, fill_value=0)
                     else:
                         df_dispatch[group_agg] = flow_sum
@@ -434,7 +437,7 @@ def prepare_dispatch_data(
                     col_key = (process, node)
                     col_name = f"({process}, {node})"
                     if col_key in conn_right.columns:
-                        if col_name in df_dispatch.columns:
+                        if col_name in df_dispatch:
                             df_dispatch[col_name] = df_dispatch[col_name].add(conn_right[col_key], fill_value=0)
                         else:
                             df_dispatch[col_name] = conn_right[col_key]
@@ -508,6 +511,9 @@ def prepare_dispatch_data(
                     if curtailed.abs().sum() > 0:
                         df_dispatch['Curtailed'] = curtailed
 
+        # Build the DataFrame once from the accumulated columns.
+        df_dispatch = pd.DataFrame(df_dispatch, index=time_index)
+
         # --- Order columns (S6) ---
         df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{output_node_group} ({scenario})", config_order=config_order)
 
@@ -552,7 +558,9 @@ def prepare_node_dispatch_data(
         if time_index is None:
             return None, None
 
-        df_dispatch = pd.DataFrame(index=time_index)
+        # Accumulate columns in a dict and build the DataFrame once at the end
+        # (avoids pandas fragmentation PerformanceWarnings from per-column inserts).
+        df_dispatch: dict[str, pd.Series] = {}
 
         # --- Unit outputs to this node (positive) ---
         unit_output = _slice_scenario_df(results.unit_outputNode_dt_ee, scenario)
@@ -589,7 +597,7 @@ def prepare_node_dispatch_data(
                     neg_part = series.clip(upper=0)
                     if pos_part.abs().sum() > 0:
                         col_label = f"{conn_name}_left"
-                        if col_label in df_dispatch.columns:
+                        if col_label in df_dispatch:
                             df_dispatch[col_label] = df_dispatch[col_label].add(pos_part, fill_value=0)
                         else:
                             df_dispatch[col_label] = pos_part
@@ -609,7 +617,7 @@ def prepare_node_dispatch_data(
                     neg_part = series.clip(upper=0)
                     if pos_part.abs().sum() > 0:
                         col_label = f"{conn_name}_right"
-                        if col_label in df_dispatch.columns:
+                        if col_label in df_dispatch:
                             df_dispatch[col_label] = df_dispatch[col_label].add(pos_part, fill_value=0)
                         else:
                             df_dispatch[col_label] = pos_part
@@ -626,6 +634,9 @@ def prepare_node_dispatch_data(
                     lol = slack_data[node].groupby('time').sum()
                     if lol.abs().sum() > 0:
                         df_dispatch['LossOfLoad'] = lol
+
+        # Build the DataFrame once from the accumulated columns.
+        df_dispatch = pd.DataFrame(df_dispatch, index=time_index)
 
         # --- Order columns (S6) ---
         df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{node} ({scenario})")
