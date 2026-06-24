@@ -3776,7 +3776,7 @@ def run_chain_from_db(
             formatted = ", ".join(f"{n}={s}" for n, s in statuses.items())
             # Trailing blank line so the mem-checkpoint table that
             # follows visually separates from the header block.
-            logger.info("Available solvers: %s\n", formatted)
+            logger.info("Solvers: %s\n", formatted)
     except ImportError:  # pragma: no cover — older polar_high without dispatch
         pass
 
