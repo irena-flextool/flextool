@@ -235,6 +235,11 @@ class GlobalSettings:
     exec_jobs_sash: int = 0  # saved Jobs/Progress sash position (0 = default)
     # cw at the time exec_jobs_sash was saved. 0 = unknown / use as-is.
     exec_jobs_layout_cw: int = 0
+    # Full Tk geometry string ("WxH+X+Y") of the execution-jobs window the
+    # last time it was closed. Empty = never saved; fall back to the
+    # default monitor-aware placement. Restored (clamped/rescaled) on open
+    # so the user's manual placement persists across sessions.
+    exec_jobs_geometry: str = ""
     # Legacy fallback for projects whose settings.yaml predates the
     # per-project ``max_workers`` field.  0 means "not set yet".
     max_workers: int = 0

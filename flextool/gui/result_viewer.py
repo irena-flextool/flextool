@@ -245,16 +245,28 @@ class ResultViewer(tk.Toplevel):
 
         master.update_idletasks()
         main_x = master.winfo_x()
-        master.winfo_y()
+        main_y = master.winfo_y()
         main_w = master.winfo_width()
         screen_w = master.winfo_screenwidth()
         screen_h = master.winfo_screenheight()
 
-        taskbar_margin = lh * 4
-        usable_h = screen_h - taskbar_margin
+        # Confine the default placement to the monitor the main window is on.
+        # winfo_screenwidth/height span ALL monitors, so sizing to them
+        # stretches this window across every display in a multi-monitor
+        # setup. Park this window on the main window's monitor first, then
+        # probe that monitor's work area (see current_monitor_bounds).
+        from flextool.gui.ui_metrics import current_monitor_bounds
+        self.geometry(f"+{main_x}+{main_y}")
+        bounds = current_monitor_bounds(self)
+        if bounds is not None:
+            mon_x, mon_y, mon_w, mon_h = bounds
+            usable_h = mon_h  # already the WM work area (taskbar excluded)
+        else:
+            mon_x, mon_y, mon_w = 0, 0, screen_w
+            usable_h = screen_h - lh * 4
 
         # Tile to the right of the main window only when the right-hand gap is
-        # genuinely roomy — at least half the screen. The old bar (cw*80, the
+        # genuinely roomy — at least half the monitor. The old bar (cw*80, the
         # bare-minimum window width) tiled into a cramped sliver whenever the
         # main window left any gap at all; on a single 1920-wide display that
         # right strip is too narrow to be useful. Below the bar (the common
@@ -262,14 +274,15 @@ class ResultViewer(tk.Toplevel):
         # off the right edge into an unrecoverable black box) we overlap the
         # main window instead, leaving the leftmost ~10% uncovered; that
         # position is always fully on-screen.
+        mon_right = mon_x + mon_w
         viewer_x = main_x + main_w
-        right_room = screen_w - viewer_x
-        if viewer_x >= 0 and right_room >= screen_w // 2:
-            self.geometry(f"{right_room}x{usable_h}+{viewer_x}+0")
+        right_room = mon_right - viewer_x
+        if viewer_x >= mon_x and right_room >= mon_w // 2:
+            self.geometry(f"{right_room}x{usable_h}+{viewer_x}+{mon_y}")
         else:
-            left_gap = int(screen_w * 0.10)
-            viewer_w = screen_w - left_gap
-            self.geometry(f"{viewer_w}x{usable_h}+{left_gap}+0")
+            left_gap = mon_x + int(mon_w * 0.10)
+            viewer_w = mon_right - left_gap
+            self.geometry(f"{viewer_w}x{usable_h}+{left_gap}+{mon_y}")
 
         # Restore saved geometry, clamped to the current screen so a
         # value saved at a different resolution does not run off-screen.

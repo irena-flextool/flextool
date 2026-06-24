@@ -124,6 +124,56 @@ def rescale_geometry(saved: str, saved_cw: int, current_cw: int) -> str:
     return f"{new_w}x{new_h}{xs}{m['x']}{ys}{m['y']}"
 
 
+def current_monitor_bounds(window: tk.Misc) -> tuple[int, int, int, int] | None:
+    """Best-effort work area ``(x, y, w, h)`` of the monitor showing *window*.
+
+    Tk exposes no per-monitor geometry: ``winfo_screenwidth`` /
+    ``winfo_screenheight`` report the FULL virtual desktop spanning *every*
+    monitor, so sizing a window to those values stretches it across all
+    screens (the dual-monitor "window covers both displays" bug).
+
+    There is no portable Tk API for the rectangle of a single monitor, so
+    this momentarily maximises *window* — the window manager snaps a
+    maximised window to the *current* monitor's usable area — reads the
+    resulting offset and size, then restores the window to normal state.
+
+    *window* should already be positioned (e.g. via ``geometry("+x+y")``) on
+    the target monitor before calling, so the WM maximises onto the right
+    display. Returns ``None`` when the probe is unsupported or fails, so
+    callers fall back to virtual-desktop sizing (no worse than before).
+    """
+    def _set_maximised(on: bool) -> bool:
+        # Windows / macOS use state('zoomed'); most Linux WMs honour the
+        # '-zoomed' attribute. Try both; report whether either took.
+        try:
+            window.tk.call("wm", "state", window._w, "zoomed" if on else "normal")
+            return True
+        except tk.TclError:
+            pass
+        try:
+            window.tk.call("wm", "attributes", window._w, "-zoomed", "1" if on else "0")
+            return True
+        except tk.TclError:
+            return False
+
+    try:
+        window.update_idletasks()
+        if not _set_maximised(True):
+            return None
+        window.update_idletasks()
+        x = window.winfo_x()
+        y = window.winfo_y()
+        w = window.winfo_width()
+        h = window.winfo_height()
+        _set_maximised(False)
+        window.update_idletasks()
+        if w <= 1 or h <= 1:
+            return None
+        return (x, y, w, h)
+    except tk.TclError:
+        return None
+
+
 @dataclass(frozen=True)
 class FontMetrics:
     """Snapshot of derived font metrics. Cheap to recompute, immutable."""

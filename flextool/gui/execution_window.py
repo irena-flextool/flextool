@@ -129,17 +129,31 @@ class ExecutionWindow(tk.Toplevel):
         # We need to call update_idletasks() on parent to get accurate geometry
         parent.update_idletasks()
         main_x = parent.winfo_x()
-        parent.winfo_y()
+        main_y = parent.winfo_y()
         main_w = parent.winfo_width()
         screen_w = parent.winfo_screenwidth()
         screen_h = parent.winfo_screenheight()
 
-        # Account for taskbar (estimate)
-        taskbar_margin = self._line_height * 4 if hasattr(self, '_line_height') else 80
-        usable_h = screen_h - taskbar_margin
+        # Confine the default placement to the monitor the main window is on.
+        # winfo_screenwidth/height span ALL monitors, so sizing to them
+        # stretches this window across every display in a multi-monitor
+        # setup. Park this window on the main window's monitor first, then
+        # probe that monitor's work area (see current_monitor_bounds).
+        from flextool.gui.ui_metrics import current_monitor_bounds
+        self.geometry(f"+{main_x}+{main_y}")
+        bounds = current_monitor_bounds(self)
+        if bounds is not None:
+            mon_x, mon_y, mon_w, mon_h = bounds
+            usable_h = mon_h  # already the WM work area (taskbar excluded)
+        else:
+            # Fallback: no per-monitor info — use the virtual desktop and
+            # estimate the taskbar height (no worse than the old behaviour).
+            mon_x, mon_y, mon_w = 0, 0, screen_w
+            taskbar_margin = self._line_height * 4 if hasattr(self, '_line_height') else 80
+            usable_h = screen_h - taskbar_margin
 
         # Tile to the right of the main window only when the right-hand gap is
-        # genuinely roomy — at least half the screen. The old bar (cw*70, the
+        # genuinely roomy — at least half the monitor. The old bar (cw*70, the
         # bare-minimum window width) tiled into a cramped sliver whenever the
         # main window left any gap at all; on a single 1920-wide display that
         # right strip is too narrow to be useful. Below the bar (the common
@@ -147,14 +161,36 @@ class ExecutionWindow(tk.Toplevel):
         # off the right edge into an unrecoverable black box) we overlap the
         # main window instead, leaving the leftmost ~10% uncovered so the menu
         # stays reachable; that position is always fully on-screen.
+        mon_right = mon_x + mon_w
         exec_x = main_x + main_w
-        right_room = screen_w - exec_x
-        if exec_x >= 0 and right_room >= screen_w // 2:
-            self.geometry(f"{right_room}x{usable_h}+{exec_x}+0")
+        right_room = mon_right - exec_x
+        if exec_x >= mon_x and right_room >= mon_w // 2:
+            self.geometry(f"{right_room}x{usable_h}+{exec_x}+{mon_y}")
         else:
-            left_gap = int(screen_w * 0.10)
-            exec_w = screen_w - left_gap
-            self.geometry(f"{exec_w}x{usable_h}+{left_gap}+0")
+            left_gap = mon_x + int(mon_w * 0.10)
+            exec_w = mon_right - left_gap
+            self.geometry(f"{exec_w}x{usable_h}+{left_gap}+{mon_y}")
+
+        # Restore the saved geometry (the user's last manual placement),
+        # clamped to the current screen so a value saved at a different
+        # resolution does not run off-screen. This overrides the default
+        # placement above when present.
+        saved_geom = ""
+        saved_geom_cw = 0
+        if self._global_settings is not None:
+            saved_geom = self._global_settings.exec_jobs_geometry
+            saved_geom_cw = self._global_settings.exec_jobs_layout_cw
+        if saved_geom:
+            from flextool.gui.ui_metrics import clamp_geometry, rescale_geometry
+            geom = rescale_geometry(saved_geom, saved_geom_cw, cw)
+            clamped = clamp_geometry(
+                geom, screen_w, screen_h, min_w=cw * 70, min_h=lh * 20,
+            )
+            if clamped is not None:
+                try:
+                    self.geometry(clamped)
+                except tk.TclError:
+                    pass
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
@@ -1310,6 +1346,12 @@ class ExecutionWindow(tk.Toplevel):
         except (tk.TclError, IndexError):
             pass
         self._global_settings.exec_jobs_layout_cw = self._char_width
+        # Persist the window placement so it reopens where the user left it
+        # (on the monitor they dragged it to), instead of the default tile.
+        try:
+            self._global_settings.exec_jobs_geometry = self.geometry()
+        except tk.TclError:
+            pass
         try:
             from flextool.gui.project_utils import get_projects_dir
             from flextool.gui.settings_io import save_global_settings
