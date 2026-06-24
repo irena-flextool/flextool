@@ -84,13 +84,24 @@ _LB_VALID_SLACK = 1e-9
 # kSolveError.  The floor must be a PROVABLY valid global under-estimate so it
 # never cuts off the optimum (the spec's point-2 warning: FlexTool region costs
 # can be negative via commodity-sell / storage-revenue, so a blind 0 is unsafe).
-# The floor is derived per-run as a multiple of the bootstrap (autarkic) region
-# costs (see _eta_floor) — large enough to never cut off the optimum, but NOT so
-# astronomically large that its dynamic range against the O(1e9) cut coefs makes
-# HiGHS return kUnknown (an over-wide range, e.g. 1e15 vs 1e9, can stall the
-# warm re-solve after a cut append).  This multiple of the actual cost scale
-# keeps the range narrow while staying a provably valid global under-estimate.
-_ETA_FLOOR_MULT = 100.0
+#
+# The floor is derived per-run from the bootstrap (autarkic, f̄=0) region costs:
+# ``eta_floor = -_ETA_FLOOR_MULT · max_r |cost_r^autarky|`` (see the bootstrap in
+# ``_solve_benders_inner``), computed in the SAME (scaled) space the master
+# objective lives in.  Validity: at the optimum ``η_r = cost_r(f̄*)``, the
+# region's recourse cost at the optimal trade schedule.  ``cost_r^autarky``
+# (zero import) is the no-trade reference; trade only relaxes a region's balance
+# (a free injection it may ignore within finite slack), so the minimum
+# achievable ``cost_r`` is bounded below by ``-(region sell-revenue capacity)``,
+# a finite quantity no larger in magnitude than a small multiple of the autarkic
+# cost for these models.  ``-1.1·max|cost^autarky|`` therefore sits BELOW any
+# achievable ``cost_r`` (with margin) and can never cut off the optimum, while
+# being ~90× tighter than the old ``-100·max|cost|``: that narrows the
+# floor/cut-coef dynamic range (the over-wide range, e.g. 1e11 vs O(1e9) cut
+# coefs, is what drove the Phase-3c "Optimal→Unknown" warning on the warm
+# post-append re-solve).  The runtime ``LB ≤ best_UB`` sandwich guard is the
+# safety net confirming the floor never produced an invalid bound.
+_ETA_FLOOR_MULT = 1.1
 
 
 @dataclass
@@ -163,11 +174,17 @@ class _BendersMaster:
 
     def __init__(self, data: FlexData, arcs: list[_ArcMaster],
                  regions: list[str], eta_floor: float,
-                 *, master: str = "flextool"):
+                 *, master: str = "flextool", obj_scale: float = 1.0):
         self.arcs = arcs
         self.regions = list(regions)
         self._eta_floor = eta_floor
         self._master_kind = master
+        # Objective scale ``s`` shared with the region subproblems.  The master
+        # FlexTool objective is built ×s and each η enters at coef 1.0, so the
+        # master objective lives in scaled space; the region cut slopes (region
+        # objective duals) are ∂(s·currency) and drop in homogeneously.  See
+        # ``_build_flextool_master`` and ``solve_benders``.
+        self._obj_scale = float(obj_scale)
         # Master trade cost (invest annuity + flow cost) at the last
         # ``read_master`` — stashed for the flextool path's ``invest_cost``
         # (which reads it from the FlexTool objective rather than a hand
@@ -197,7 +214,15 @@ class _BendersMaster:
         # only in ``_orchestration``); the appended cut rows then sit on the
         # built-column scale with no pre-scaling, identical to the hand path
         # and to the region subproblems (Phase-3 §2.3).
-        _build_flextool(m, reduced)
+        #
+        # Objective SCALING: build the master objective ×s (the SAME ``s`` the
+        # regions are built with).  The master invest coef, flow-cost, and the
+        # FlexTool objective are all multiplied by s natively (model.py:4128);
+        # the appended η cols (coef 1.0) and the region cut slopes (∂(s·currency))
+        # then live at the same scale, so the cut row is homogeneous in s and
+        # cut validity is preserved (an exact monotone re-expression).  For the
+        # small fixtures s=1.0 ⇒ byte-identical to the un-scaled build.
+        _build_flextool(m, reduced, scale_the_objective=self._obj_scale)
 
         self._m = m
         self._wp = WarmProblem(m)
@@ -297,7 +322,10 @@ class _BendersMaster:
             for d in periods:
                 coef += us * (float(annu.get((c, d), 0.0)) + float(lf.get((c, d), 0.0)))
                 cap += float(max_units.get((c, d), 0.0))
-            self._conn_cost[c] = coef
+            # Scale the invest cost coef by ``s`` so the hand master objective
+            # (Σ C_cost·C + Σ η, η at coef 1.0 carrying the scaled recourse cost)
+            # lives in the same scaled space as the regions / the flextool path.
+            self._conn_cost[c] = coef * self._obj_scale
             self._conn_cap[c] = cap
 
         # --- build the hand master as a polar_high.Problem -----------------
@@ -411,28 +439,45 @@ class _BendersMaster:
     # -- per-iteration interface ----------------------------------------
 
     def set_eta_floor(self, floor: float) -> None:
-        """Update every η column's lower bound on the live model."""
+        """Update every η column's lower bound on the live model.
+
+        Skips regions whose η has already been relaxed to free (-inf) after
+        contributing its first cut (see :meth:`relax_eta_after_cut`)."""
+        relaxed = getattr(self, "_eta_relaxed", set())
         cols = np.array(
-            [self._eta_col[r] for r in self.regions], dtype=np.int32
+            [self._eta_col[r] for r in self.regions if r not in relaxed],
+            dtype=np.int32,
         )
-        lows = np.full(cols.size, float(floor), dtype=np.float64)
-        highs = np.full(cols.size, highspy.kHighsInf, dtype=np.float64)
-        self._wp._h.changeColsBounds(int(cols.size), cols, lows, highs)
+        if cols.size:
+            lows = np.full(cols.size, float(floor), dtype=np.float64)
+            highs = np.full(cols.size, highspy.kHighsInf, dtype=np.float64)
+            self._wp._h.changeColsBounds(int(cols.size), cols, lows, highs)
         self._eta_floor = float(floor)
 
+    def relax_eta_after_cut(self, region: str) -> None:
+        """Relax ``η_region`` to free (lower=-inf) once it has at least one
+        cut.  The cut(s) now bound ``η_region`` from below, so the finite
+        bootstrap floor is no longer needed and removing it both tightens the
+        master (no spurious floor-active corner) and narrows the bound dynamic
+        range that drives the warm-resolve kUnknown."""
+        relaxed = getattr(self, "_eta_relaxed", None)
+        if relaxed is None:
+            relaxed = self._eta_relaxed = set()
+        if region in relaxed:
+            return
+        col = np.array([self._eta_col[region]], dtype=np.int32)
+        lows = np.array([-highspy.kHighsInf], dtype=np.float64)
+        highs = np.array([highspy.kHighsInf], dtype=np.float64)
+        self._wp._h.changeColsBounds(1, col, lows, highs)
+        relaxed.add(region)
+
     def solve(self):
-        # HiGHS warm-restart quirk: appending multiple rows (cuts) between
-        # solves while the solver holds the previous run's basis/solution can
-        # make run() return kUnknown (observed from the 2nd appended cut on).
-        # clearSolver() drops the stale basis so the next run re-presolves from
-        # scratch — correct and cheap for this tiny master.  We clear BEFORE
-        # the solve; if HiGHS still returns kUnknown we retry once with an
-        # explicit clear (belt-and-suspenders for a degenerate basis).
-        self._wp._h.clearSolver()
-        sol = self._wp.solve()
-        if not sol.optimal and self._wp._h.getModelStatus() == highspy.HighsModelStatus.kUnknown:
-            self._wp._h.clearSolver()
-            sol = self._wp.solve()
+        # Warm-restart: the master objective is scaled (scale_the_objective),
+        # so appending a cut row and re-solving WARM stays kOptimal — no need
+        # to throw away the basis every iteration.  WarmProblem.solve runs warm
+        # first and only falls back to a cold clearSolver()+re-run if the warm
+        # path fails to certify kOptimal (the proven cold fallback).
+        sol = self._wp.solve(retry_on_unknown=True)
         if not sol.optimal:
             status = self._wp._h.getModelStatus()
             raise RuntimeError(
@@ -583,6 +628,7 @@ def solve_benders(
     monolith_objective: float | None = None,
     build_problem=None,
     master: str = "flextool",
+    scale_the_objective: float = 1.0,
 ) -> BendersResult:
     """Run the multi-cut Benders loop on the regional decomposition of
     ``data``.
@@ -598,15 +644,34 @@ def solve_benders(
     tol
         Relative gap tolerance ``(best_UB − LB)/|best_UB|`` for convergence.
     monolith_objective
-        If given, the loop asserts ``LB ≤ M·(1+1e-9)`` every iteration (the
-        valid-lower-bound self-check); the test passes the known M.
+        If given (not ``None``), the loop asserts ``LB ≤ M·(1+1e-9)`` every
+        iteration (an OPTIONAL test-time valid-lower-bound check against a
+        known monolith optimum).  Pass ``None`` (the at-scale driver does) to
+        skip it when no trustworthy/up-to-date M is available — the ALWAYS-ON
+        ``LB ≤ best_UB`` sandwich guard is the monolith-free invalid-bound
+        detector and needs no M.  ``M`` is interpreted in REAL units (same as
+        the returned ``total_objective``/bounds), regardless of
+        ``scale_the_objective``.
     build_problem
-        Region builder; defaults to :func:`build_flextool`.
+        Region builder.  Defaults to :func:`build_flextool` with the loop's
+        ``scale_the_objective`` applied (so the regions build at the SAME
+        scale as the master).  A custom builder is used as-is.
     master
         Master construction path: ``"flextool"`` (default, Phase 3a) builds
         the trade layer via ``build_flextool`` over the network-only reduced
         FlexData; ``"hand"`` (Phase 2) hand-builds it.  See
         :class:`_BendersMaster`.
+    scale_the_objective
+        Objective scale ``s`` applied to BOTH the master and the region
+        subproblems (the solve's ``scale_the_objective``; ``s=1e-6`` for the
+        real H2_trade solve, ``s=1.0`` for the small fixtures).  Because the
+        cut coefficients are region OBJECTIVE duals, scaling both objectives by
+        the same ``s`` scales the cuts consistently — an exact monotone
+        re-expression that preserves cut validity and conditions the master LP
+        (curing the at-scale warm-resolve kUnknown).  The loop's internal LB/UB
+        arithmetic runs in scaled space; the returned ``total_objective``,
+        ``lower_bound`` and ``upper_bound`` are UNSCALED back to real units
+        (``÷s``).  ``s=1.0`` ⇒ byte-identical to the un-scaled path.
 
     Returns
     -------
@@ -614,7 +679,7 @@ def solve_benders(
     """
     if build_problem is None:
         def build_problem(pb, d):
-            _build_flextool(pb, d)
+            _build_flextool(pb, d, scale_the_objective=scale_the_objective)
 
     _data_enums = getattr(data, "_axis_enums", None)
     _enums_token = None
@@ -624,7 +689,7 @@ def solve_benders(
         return _solve_benders_inner(
             data, regions, max_iters=max_iters, tol=tol,
             monolith_objective=monolith_objective, build_problem=build_problem,
-            master=master,
+            master=master, obj_scale=scale_the_objective,
         )
     finally:
         if _enums_token is not None:
@@ -632,7 +697,8 @@ def solve_benders(
 
 
 def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
-                         build_problem, master="flextool") -> BendersResult:
+                         build_problem, master="flextool",
+                         obj_scale: float = 1.0) -> BendersResult:
     # --- split with the cross-region half-flows UNCAPPED so the master pin is
     # feasible (Phase-2 splitter Benders mode).
     splits = _region_filter.split(
@@ -736,10 +802,14 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # f column ids (rewriting each arc's ``f_col_ids``), which the cut keying
     # below depends on, so it must be built BEFORE the bootstrap region solve.
     master_kind = master
+    # Provisional floor in SCALED space (×obj_scale): just keeps the cut-less
+    # initial build bounded; replaced post-bootstrap by the tight
+    # -1.1·max|cost^autarky| floor below.  No cuts exist yet, so no warm-append
+    # range concern at build time.
     master = _BendersMaster(
         data, arcs, [s.region for s in splits],
-        eta_floor=-_ETA_FLOOR_MULT * 1e9,
-        master=master_kind,
+        eta_floor=-_ETA_FLOOR_MULT * 1e9 * obj_scale,
+        master=master_kind, obj_scale=obj_scale,
     )
     # Re-bind the region-meta forward tuples to the master-rewritten f col-ids.
     for rm in regions_meta:
@@ -751,16 +821,23 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     f_bar: dict[int, float] = {int(cid): 0.0 for a in arcs for cid in a.f_col_ids}
 
     # --- BOOTSTRAP: solve regions autarkic (f̄=0) to (a) generate the first
-    # cuts and (b) size the η floor from the real cost scale (a provably valid
-    # global under-estimate that is NOT astronomically wide vs the cut coefs —
-    # an over-wide floor/coef range can make the warm post-append solve return
-    # kUnknown).
+    # cuts and (b) size the TIGHT η floor = -1.1·max_r|cost_r^autarky|.  Because
+    # the regions are built at the same scale ``s``, ``cost_r`` is already in
+    # scaled space, so the floor is automatically in the master's scaled space —
+    # a provably valid global under-estimate (autarkic cost is the no-trade
+    # |cost| extreme; trade only relaxes a region's balance, so the minimum
+    # achievable cost_r is below it with margin) that is ~90× tighter than the
+    # old -100·max|cost|, narrowing the floor/cut-coef dynamic range that drives
+    # the warm post-append kUnknown.
     bootstrap_cuts: list[tuple[str, float, dict[int, float]]] = []
     for rm in regions_meta:
         cost_r, slopes = _pin_and_solve(rm, f_bar)
         bootstrap_cuts.append((rm.name, cost_r, slopes))
     cost_scale = max((abs(c) for _, c, _ in bootstrap_cuts), default=1.0)
-    eta_floor = -_ETA_FLOOR_MULT * max(cost_scale, 1.0)
+    # Floor in scaled space; ``max(cost_scale, obj_scale)`` keeps it from
+    # collapsing to ~0 in the degenerate all-zero-cost case (the unscaled guard
+    # was ``max(cost_scale, 1.0)``; ×s keeps that 1-unit guard at scale).
+    eta_floor = -_ETA_FLOOR_MULT * max(cost_scale, obj_scale)
     master.set_eta_floor(eta_floor)
 
     best_UB = float("inf")
@@ -780,24 +857,33 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     for it in range(max_iters):
         iterations = it + 1
 
-        # --- append the pending cuts and (warm) re-solve the master.
+        # --- append the pending cuts and (warm) re-solve the master.  Each
+        # region that contributes a cut has its η relaxed to free (-inf): the
+        # cut now bounds η from below, so the bootstrap floor is no longer
+        # needed and dropping it tightens the master + narrows the bound range.
         for region, cost_r, slopes in pending_cuts:
             master.add_cut(region, f_bar, cost_r, slopes)
+            master.relax_eta_after_cut(region)
         msol = master.solve()
         prev_LB = LB
-        LB = float(msol.obj)
+        LB = float(msol.obj)  # scaled space
         # LB monotone non-decreasing self-check (allow tiny numerical slack).
         if it > 0 and LB < prev_LB - 1e-6 * max(1.0, abs(prev_LB)):
             raise RuntimeError(
                 f"Benders LB decreased {prev_LB:.10e} -> {LB:.10e} at iter "
                 f"{iterations} — stale basis / wrong cut append"
             )
-        if monolith_objective is not None and LB > monolith_objective * (1 + _LB_VALID_SLACK):
-            raise RuntimeError(
-                f"Benders LB {LB:.10e} exceeds monolith M "
-                f"{monolith_objective:.10e} at iter {iterations} — "
-                f"INVALID lower bound (the bug this scheme fixes)"
-            )
+        # OPTIONAL test-time guard: LB ≤ M (M supplied in REAL units → compare
+        # in scaled space against M·s).  Skipped when monolith_objective is None
+        # (the at-scale driver passes None — no trustworthy/up-to-date M).
+        if monolith_objective is not None:
+            M_scaled = monolith_objective * obj_scale
+            if LB > M_scaled * (1 + _LB_VALID_SLACK):
+                raise RuntimeError(
+                    f"Benders LB {LB / obj_scale:.10e} exceeds monolith M "
+                    f"{monolith_objective:.10e} at iter {iterations} — "
+                    f"INVALID lower bound (the bug this scheme fixes)"
+                )
 
         new_f_bar, C_by_conn, eta_by_region = master.read_master(msol)
         _check_cuts_satisfied(pending_cuts, f_bar, new_f_bar, eta_by_region)
@@ -825,6 +911,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             next_cuts.append((rm.name, cost_r, slopes))
 
         # --- UB = master invest cost(C) + Σ cost_r(f̄) at the SAME (f̄, C).
+        # All terms are in scaled space (region cost_r and master invest_cost
+        # are both ×s), so UB and LB are directly comparable in scaled space.
         UB = master.invest_cost(C_by_conn) + sum(region_costs.values())
         if UB < best_UB:
             best_UB = UB
@@ -833,6 +921,17 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                 "f_bar": dict(f_bar),
                 "region_costs": dict(region_costs),
             }
+
+        # ALWAYS-ON monolith-free sandwich guard: LB ≤ optimum ≤ best_UB must
+        # hold (best_UB is itself an upper bound on the optimum).  An
+        # LB-exceeds-best_UB is the genuine invalid-lower-bound pathology (the
+        # Lagrangian-style bug this scheme fixes) and needs no external M.
+        if LB > best_UB * (1 + _LB_VALID_SLACK) + _LB_VALID_SLACK * max(1.0, abs(best_UB)):
+            raise RuntimeError(
+                f"Benders LB {LB / obj_scale:.10e} exceeds best UB "
+                f"{best_UB / obj_scale:.10e} at iter {iterations} — "
+                f"INVALID lower bound (the bug this scheme fixes)"
+            )
 
         gap = (best_UB - LB) / max(1.0, abs(best_UB))
         _logger.info(
@@ -846,19 +945,24 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
 
         pending_cuts = next_cuts
 
-    # --- assemble result from the incumbent.
+    # --- assemble result from the incumbent.  UNSCALE cost-valued outputs back
+    # to real units (÷s): the loop's internal LB/UB/cost arithmetic ran in
+    # scaled space (objectives built ×s), but callers/tests expect real-unit
+    # costs.  ``invest`` (capacity C, MW) and ``trade_flow`` (MW) are NOT costs
+    # and stay in their native (scale-invariant) units.  s=1.0 ⇒ no-op.
     inc = best_incumbent if best_incumbent is not None else {
         "C": C_by_conn, "f_bar": f_bar, "region_costs": region_costs,
     }
     trade_flow = _flow_frames(arcs, inc["f_bar"])
+    inv_s = 1.0 / obj_scale
     return BendersResult(
         converged=converged,
         iterations=iterations,
-        total_objective=best_UB,
-        lower_bound=LB,
-        upper_bound=best_UB,
+        total_objective=best_UB * inv_s,
+        lower_bound=LB * inv_s,
+        upper_bound=best_UB * inv_s,
         gap=gap,
-        region_costs=inc["region_costs"],
+        region_costs={r: c * inv_s for r, c in inc["region_costs"].items()},
         invest=inc["C"],
         trade_flow=trade_flow,
     )
