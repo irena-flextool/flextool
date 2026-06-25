@@ -53,12 +53,21 @@ unchanged).
   `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)`
   and the `polar_high.parallel` helpers (**floor raised to `polar-high>=3.0.0`**).
   Benders is HiGHS-only (the master is a persistent `WarmProblem`).
+- **Stochastic branch weights reach the objective.** Confirmed (and pinned by a
+  regression test) that per-branch probability weights from
+  `solve.stochastic_branches` flow through the derived cascade into the objective
+  — the stochastic twin of the representative-period-weight fix above; the dense
+  `1.0` baseline set in `apply_derived_a` is superseded by the real
+  sibling-normalised weights in `apply_derived_g`.
 
 ### Desktop GUI
 
 - Fix a crash when the migration dialog's `grab_set` fires from a callback on a
   not-yet-viewable window.
 - Smaller default code/log font, with the code font size now exposed in settings.
+- Simplify the **Add-to-execution** button to a static label driven only by the
+  checked rows (enabled when ≥1 scenario is checked, disabled otherwise),
+  dropping the per-scenario "Create vs. Update" results-on-disk detection.
 
 ## Release 4.0.0b11 (24.6.2026) — per-solve Lagrangian decomposition (v60/v61); thread-parallel subsolves; xlsx round-trip + output fixes; per-monitor GUI placement
 
