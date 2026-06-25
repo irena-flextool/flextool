@@ -1070,6 +1070,7 @@ def solve_benders(
     master: str = "flextool",
     scale_the_objective: float = 1.0,
     progress_callback: Callable[[dict], None] | None = None,
+    subsolve_callback: Callable[[dict], None] | None = None,
     workers: int | None = None,
 ) -> BendersResult:
     """Run the multi-cut Benders loop on the regional decomposition of
@@ -1153,7 +1154,8 @@ def solve_benders(
             data, regions, max_iters=max_iters, tol=tol,
             monolith_objective=monolith_objective, build_problem=build_problem,
             master=master, obj_scale=scale_the_objective,
-            progress_callback=progress_callback, workers=workers,
+            progress_callback=progress_callback,
+            subsolve_callback=subsolve_callback, workers=workers,
         )
     finally:
         if _enums_token is not None:
@@ -1163,7 +1165,8 @@ def solve_benders(
 def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          build_problem, master="flextool",
                          obj_scale: float = 1.0,
-                         progress_callback=None, workers=None) -> BendersResult:
+                         progress_callback=None, subsolve_callback=None,
+                         workers=None) -> BendersResult:
     # --- split with the cross-region half-flows UNCAPPED so the master pin is
     # feasible (Phase-2 splitter Benders mode).
     splits = _region_filter.split(
@@ -1310,15 +1313,29 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         len(regions_meta), eff_workers,
     )
 
+    # Current outer-iteration index, surfaced to ``subsolve_callback`` so the
+    # orchestrator can label each region-finish line (bootstrap = 0).
+    _cur_iter = [0]
+
     def _solve_regions(f_bar_local):
         """Pin+solve every region at ``f_bar_local`` (parallel when
         ``eff_workers > 1``), returning a per-region-index list of
-        ``(cost_r, slopes, sol_r)`` in deterministic order."""
-        return solve_indexed_parallel(
-            region_warm,
-            lambda i: _pin_and_solve(regions_meta[i], f_bar_local),
-            workers=eff_workers,
-        )
+        ``(cost_r, slopes, sol_r)`` in deterministic order.  Fires
+        ``subsolve_callback`` once per region as it FINISHES (from the worker
+        thread; the callback must be thread-safe)."""
+        def _fn(i):
+            res = _pin_and_solve(regions_meta[i], f_bar_local)
+            if subsolve_callback is not None:
+                try:
+                    subsolve_callback({
+                        "iter": _cur_iter[0],
+                        "region": regions_meta[i].name,
+                        "obj": res[0] / obj_scale,  # cost_r → REAL units
+                    })
+                except Exception:  # noqa: BLE001 — observer must not break solve
+                    pass
+            return res
+        return solve_indexed_parallel(region_warm, _fn, workers=eff_workers)
 
     # --- BOOTSTRAP: solve regions autarkic (f̄=0) to (a) generate the first
     # cuts and (b) size the TIGHT η floor = -1.1·max_r|cost_r^autarky|.  Because
@@ -1413,6 +1430,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # (a) get this iteration's recourse cost (→ a VALID UB, since C ≥ f̄ at
         # the master optimum) and (b) produce the next iteration's cuts.
         f_bar = new_f_bar
+        _cur_iter[0] = iterations  # label this pass's region-finish lines
         region_costs: dict[str, float] = {}
         next_cuts: list[tuple[str, float, dict[int, float]]] = []
         # Per-region recovered primal at THIS f̄ (region-index aligned), for

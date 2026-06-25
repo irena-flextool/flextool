@@ -2018,9 +2018,10 @@ def _drive_cascade(
             # logger.info/.warning would be swallowed.
             _tag = f"[benders {base_solve_name}]"
 
-            # ``_emit`` is called only from the main thread here (the
-            # Benders region solve is sequential), but keep the lock so the
-            # channel stays consistent with the rest of the cascade output.
+            # ``_emit`` is called from the main thread (iteration / summary
+            # lines) AND from polar-high worker threads (the per-region
+            # ``subsolve_callback`` fires from the parallel region pass), so
+            # the lock keeps lines from interleaving mid-string.
             _emit_lock = threading.Lock()
 
             def _emit(line: str) -> None:
@@ -2030,10 +2031,12 @@ def _drive_cascade(
                     except OSError:
                         pass
 
+            # Put the config INSIDE the tag so it stays visible even though the
+            # (long, non-wrapping) region list pushes the rest off-screen.
             _emit(
-                f"{_tag} start: {len(regions)} regions "
-                f"{regions} (max_iter={max_iter}, tol={tol:g}, "
-                f"obj_scale={obj_scale:g})"
+                f"[benders {base_solve_name}, max_iter={max_iter}, "
+                f"tol={tol:g}, obj_scale={obj_scale:g}] "
+                f"start: {len(regions)} regions {regions}"
             )
 
             # Live per-iteration callback — one line as each outer Benders
@@ -2047,6 +2050,16 @@ def _drive_cascade(
                     f"gap={entry['gap']:.4g}"
                 )
 
+            # Per-region sub-solve FINISH line — replaces the raw per-sub-solve
+            # HiGHS banner with a useful "which region finished" log.  Fires
+            # from polar-high worker threads (parallel region pass); ``_emit``
+            # is lock-guarded.  (``iter`` 0 is the autarkic bootstrap pass.)
+            def _on_subsolve(entry: dict) -> None:
+                _emit(
+                    f"{_tag}   iter {entry['iter']:>3}: "
+                    f"{entry['region']} done (obj={entry['obj']:.6g})"
+                )
+
             result = solve_benders(
                 data,
                 regions,
@@ -2055,6 +2068,7 @@ def _drive_cascade(
                 monolith_objective=None,
                 scale_the_objective=obj_scale,
                 progress_callback=_on_iteration,
+                subsolve_callback=_on_subsolve,
             )
 
             # Final summary — convergence + the valid LB/UB sandwich that
