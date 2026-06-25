@@ -2845,25 +2845,16 @@ class MainWindow(tk.Tk):
             self.add_source_btn.configure(style="TButton")
 
     def _update_add_to_execution_style(self) -> None:
-        """Update the Add/Create/Update button text + state + style.
+        """Update the Add-to-execution button state + style.
 
-        Three states, driven by checked rows in ``available_tree`` and
-        whether on-disk results already exist for those scenarios under
-        ``output_parquet/<resolved subdir>/``:
+        Two states, driven by checked rows in ``available_tree``:
 
-        - 0 checked scenarios → button is disabled, base label
-          ("Add checked scenarios to the execution list [F9]"), plain
-          style.
-        - ≥1 checked, none with results on disk → enabled, label
-          starts with "Create" (signals "new results"), Accent style.
-        - ≥1 checked, at least one with results on disk → enabled,
-          label starts with "Update" (signals "regen"), Accent style.
+        - 0 checked scenarios → button is disabled, plain style.
+        - ≥1 checked scenarios → button is enabled, Accent style.
 
-        Results existence is checked per scenario via
-        :func:`resolve_subdir_for_read` against ``output_parquet/``.
+        The label is static ("Add checked scenarios to the execution
+        list [F9]") in both states.
         """
-        from flextool.gui.scenario_key import resolve_subdir_for_read
-
         # Collect checked rows: each row is (source_number, scenario_name).
         checked_pairs: list[tuple[int, str]] = []
         for item in self.available_tree.get_children():
@@ -2885,31 +2876,10 @@ class MainWindow(tk.Tk):
             )
             return
 
-        # Determine whether any checked scenario already has results on
-        # disk under output_parquet/<resolved subdir>/.
-        any_results = False
-        if self.current_project:
-            parquet_root = (
-                get_projects_dir() / self.current_project / "output_parquet"
-            )
-            bare_owners = self.project_settings.bare_output_owners
-            for src_num, scen_name in checked_pairs:
-                subdir = resolve_subdir_for_read(bare_owners, src_num, scen_name)
-                scen_dir = parquet_root / subdir
-                if scen_dir.is_dir():
-                    try:
-                        if any(scen_dir.iterdir()):
-                            any_results = True
-                            break
-                    except OSError:
-                        # Permission / I/O glitch — treat as "no results"
-                        # rather than crashing the trace.
-                        continue
-
         self.add_to_execution_btn.configure(
             state="normal",
             style="Accent.TButton",
-            text=f"Add checked scenarios to\nthe execution list [F9]",
+            text="Add checked scenarios to\nthe execution list [F9]",
         )
 
     def _update_execution_menu_style(self) -> None:

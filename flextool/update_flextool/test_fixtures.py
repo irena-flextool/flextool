@@ -38,7 +38,6 @@ TEST_FIXTURES: tuple[str, ...] = (
     "stochastics.json",
     "lh2_three_region.json",
     "h2_trade_parity.json",
-    "multi_ts_branch1.json",
     "stochastics_pbt_inflow.json",
     "branch2_parent_period.json",
     "case14_dc_power_flow.json",
