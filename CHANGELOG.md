@@ -1,11 +1,15 @@
-## Unreleased — regional decomposition switched to Benders (schema v62)
+## Release 4.0.0b12 (25.6.2026) — Benders regional decomposition (v62) replaces Lagrangian; greenfield cross-region trade; GUI fixes
 
-Requires a **database migration to v62** (`FLEXTOOL_DB_VERSION` 61 → 62). This
-is a **breaking schema change**: the spatial regional decomposition is changed
-from the dual-subgradient (Lagrangian) scheme to a **Benders decomposition**.
-Existing databases are auto-migrated by the v62 step; a model that does not opt
-into decomposition solves exactly as before (the monolithic LP and all outputs
-are unchanged).
+Requires a **database migration to v62** (`FLEXTOOL_DB_VERSION` 61 → 62) and
+raises the solver-backend floor to **`polar-high>=3.0.0`** (3.0.0 removes the old
+`LagrangianProblem` driver and ships the Benders cut-append / warm-restart /
+parallel primitives this release uses); other floors unchanged (`polars>=1.40`,
+`highspy<=1.14.0`). This is a **breaking schema change**: the spatial regional
+decomposition is changed from the dual-subgradient (Lagrangian) scheme
+(introduced in the unreleased b11) to a **Benders decomposition**. Existing
+databases are auto-migrated by the v62 step; a model that does not opt into
+decomposition solves exactly as before (the monolithic LP and all outputs are
+unchanged).
 
 ### Benders regional decomposition (schema v62)
 
@@ -35,12 +39,26 @@ are unchanged).
   network-only reduced model — the same emit the monolith uses — so the master
   trade-flow cost and the region recourse costs carry the same
   representative-period / timestep weights and sum to the monolithic objective.
+- **Warm master + parallel regions.** The master is grown one optimality cut per
+  iteration and warm-re-solved off the retained basis
+  (`WarmProblem.solve(retry_on_unknown=True)`) instead of rebuilt, removing the
+  super-linear cold-presolve cost at scale; the region recourse subproblems solve
+  in parallel via `polar_high.parallel`. The worker count is the machine-local
+  `FLEXTOOL_BENDERS_WORKERS` env var (`0`/auto = cpu − 1; no DB/schema knob, so a
+  many-core author's count never travels to a small box) — superseding the b11
+  `--lagrangian-workers` flag / GUI knob, which never shipped.
 - **Implementation.** Driver in `flextool/engine_polars/_benders.py` (master +
   multi-cut loop, `solve_benders` / `BendersResult`); region slicing in
   `flextool/engine_polars/_region_filter.py`. Uses the polar-high primitives
   `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)`
-  (floor unchanged at `polar-high>=2.9.0`). Benders is HiGHS-only (the master is
-  a persistent `WarmProblem`).
+  and the `polar_high.parallel` helpers (**floor raised to `polar-high>=3.0.0`**).
+  Benders is HiGHS-only (the master is a persistent `WarmProblem`).
+
+### Desktop GUI
+
+- Fix a crash when the migration dialog's `grab_set` fires from a callback on a
+  not-yet-viewable window.
+- Smaller default code/log font, with the code font size now exposed in settings.
 
 ## Release 4.0.0b11 (24.6.2026) — per-solve Lagrangian decomposition (v60/v61); thread-parallel subsolves; xlsx round-trip + output fixes; per-monitor GUI placement
 
