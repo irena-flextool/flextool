@@ -59,6 +59,14 @@ unchanged).
   — the stochastic twin of the representative-period-weight fix above; the dense
   `1.0` baseline set in `apply_derived_a` is superseded by the real
   sibling-normalised weights in `apply_derived_g`.
+- **Clean Benders progress log.** The per-sub-solve native HiGHS output (master +
+  N region solves each iteration) is muted by default via
+  `WarmProblem.set_output_flag(False)`; instead the orchestrator streams a concise
+  per-iteration `LB / UB / gap` line and a lock-guarded "iter k: <region> done
+  (obj=…)" line as each region finishes (fired from the parallel worker via a new
+  `solve_benders` `subsolve_callback`). The start line carries the run config
+  inside its tag so it stays visible past the long region list. Set
+  `FLEXTOOL_BENDERS_VERBOSE=1` to restore the full native HiGHS log.
 
 ### Desktop GUI
 
