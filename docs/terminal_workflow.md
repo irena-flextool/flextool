@@ -190,19 +190,19 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 | `--highs-threads N` | Number of HiGHS solver threads (default `1`). Values >1 enable HiGHS parallel mode and trade determinism for wall-clock speedup |
 | `--save-memory` | Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source, write the LP to a temp MPS file, and solve it in a separate HiGHS subprocess (via `cmd_solve_mps`) so the solver's working set lives outside the FlexTool address space. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See [architecture.md](dev/architecture.md) |
 
-**Decomposition (Lagrangian):**
+**Decomposition (Benders):**
 
-Lagrangian decomposition is selected **per solve from the database**, not
-via a CLI flag: set `solve.decomposition = lagrangian` (plus the optional
-`solve.lagrangian_alpha` / `lagrangian_max_iter` / `lagrangian_tolerance`
-knobs) and declare at least two `group.decomposition_method =
-lagrangian_region` region groups. A single chain can mix schemes. See
+Benders decomposition is selected **per solve from the database**, not
+via a CLI flag: set `solve.decomposition = benders` (plus the optional
+`solve.benders_max_iter` / `benders_tolerance` knobs) and declare at
+least two `group.decomposition_method = benders_regional` region groups.
+A single chain can mix schemes. See
 [decomposition.md](dev/decomposition.md). The one remaining CLI flag is
 the filter-only inspector:
 
 | Flag | Description |
 |---|---|
-| `--region GROUP_NAME` | Filter-only entry point: produce a per-region input directory `input_region_<GROUP>/` for Lagrangian decomposition and exit without solving. Cross-region processes are replaced with import/export half-flows; coupling variables are listed in `solve_data/region_coupling.csv` |
+| `--region GROUP_NAME` | Filter-only entry point: produce a per-region input directory `input_region_<GROUP>/` for Benders decomposition and exit without solving. Cross-region processes are replaced with import/export half-flows; coupling variables are listed in `solve_data/region_coupling.csv` |
 
 ### Example
 

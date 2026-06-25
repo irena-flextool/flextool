@@ -1,4 +1,4 @@
-"""Regional filter for Lagrangian decomposition (gaps A4 + A5).
+"""Regional filter for Benders decomposition (gaps A4 + A5).
 
 Slices a whole-system :class:`FlexData` into N per-region :class:`FlexData`s.
 Cross-region arcs (rows in ``process_source_sink`` whose ``source`` and
@@ -7,13 +7,17 @@ half-flow arcs, one in each region.
 
 The virtual entities are pure bookkeeping — the half-flow on the export
 side and the half-flow on the import side carry the **same flow** at
-optimality (the Lagrangian coupling constraint that
-:mod:`flextool._lagrangian` prices via λ).  Inside a region's standalone
-LP, the half-flow column is just an ordinary ``v_flow`` column with:
+optimality.  In the Benders scheme that coupling is enforced by the
+coordinating master (:mod:`flextool.engine_polars._benders`): the master
+holds the inter-regional trade flows and pins each region's forward
+cross-region half-flow to its chosen value before solving the region as a
+subproblem.  Inside a region's standalone LP, the half-flow column is just
+an ordinary ``v_flow`` column with:
 
 * ``p_unitsize = 1`` (same units as the original column);
 * ``p_flow_upper`` = original pipe capacity (so dispatch can push flow
-  at full pipe capacity even with λ=0);
+  at full pipe capacity; uncapped when the master may pin a positive
+  greenfield trade);
 * the in-region terminal node enters ``flow_to_n`` (export) or
   ``flow_from_n`` (import) so the half-flow contributes to its
   nodeBalance;
@@ -21,7 +25,7 @@ LP, the half-flow column is just an ordinary ``v_flow`` column with:
   other terminal is free (no balance pin, no penalty).
 
 This module is a no-op when the input :class:`FlexData` has no
-``decomposition_method=lagrangian_region`` group params.
+``decomposition_method=benders_regional`` group params.
 
 Public surface
 --------------
@@ -79,8 +83,8 @@ class HalfFlow:
     HalfFlows: ``pipe(A→B)`` becomes an export in A and an import in B;
     ``pipe(B→A)`` becomes an export in B and an import in A.  Each
     coupling pair shares the same ``(original_p, original_source,
-    original_sink)`` triple — the :mod:`flextool._lagrangian` coordinator
-    pairs export and import on that key.
+    original_sink)`` triple — the :mod:`flextool.engine_polars._benders`
+    coordinator pairs export and import on that key.
     """
     region: str
     side: str  # "export" or "import"
@@ -549,7 +553,7 @@ def _build_region_data(
 #: 1e12 is comfortably ≫ any realistic ``invest_max_total``, so the
 #: half-flow's ``maxFlow`` row is structurally slack for any flow the
 #: master could pin — it can never bind and therefore cannot leak a dual
-#: into the per-region subgradient (Phase-1 Claim 4).
+#: into the per-region subproblem (Phase-1 Claim 4).
 _BENDERS_UNCAP_SENTINEL: float = 1e12
 
 
@@ -573,7 +577,7 @@ def _inject_half_flows(
       import;
     * unitsize = 1.0 (independent of the original);
     * flow_upper = original arc's flow_upper (so dispatch can max out
-      the pipe even with λ=0; subgradient prices the actual flow).
+      the pipe; the master pins the actual flow each iteration).
     """
     if not half_flows:
         return rd

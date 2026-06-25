@@ -1,3 +1,47 @@
+## Unreleased — regional decomposition switched to Benders (schema v62)
+
+Requires a **database migration to v62** (`FLEXTOOL_DB_VERSION` 61 → 62). This
+is a **breaking schema change**: the spatial regional decomposition is changed
+from the dual-subgradient (Lagrangian) scheme to a **Benders decomposition**.
+Existing databases are auto-migrated by the v62 step; a model that does not opt
+into decomposition solves exactly as before (the monolithic LP and all outputs
+are unchanged).
+
+### Benders regional decomposition (schema v62)
+
+- **New algorithm.** A coordinating **master** problem holds the inter-regional
+  trade flows and the trade-connection investment plus one recourse variable per
+  region; each region is an operational **subproblem** solved with the master's
+  trade fixed, returning duals that become optimality **cuts** the master
+  accumulates. The master objective is a **valid lower bound** and the loop
+  converges on the optimality gap. This fixes the earlier subgradient scheme,
+  which collapsed greenfield cross-region trade to autarky with an *invalid*
+  bound above the true optimum.
+- **Schema renames.** The `decomposition_schemes` value-list member
+  `lagrangian` → `benders`, and the `decomposition_methods` member
+  `lagrangian_region` → `benders_regional` (every authored
+  `solve.decomposition` / `group.decomposition_method` value is rewritten in
+  place by the migration).
+- **Knobs.** The `solve.lagrangian_alpha` / `lagrangian_max_iter` /
+  `lagrangian_tolerance` parameters are **dropped** (Benders has no subgradient
+  step) and replaced by `solve.benders_max_iter` (default `50`) and
+  `solve.benders_tolerance` (default `1e-3`, the relative optimality-gap
+  threshold).
+- **Invest → dispatch handoff.** A Benders invest solve assembles the
+  owner-selected invested trade + in-region capacity into a whole-system handoff
+  so a downstream rolling or monolithic dispatch solve consumes the realised
+  capacity end-to-end.
+- **RP-weight consistency.** The master is built by `build_flextool` over a
+  network-only reduced model — the same emit the monolith uses — so the master
+  trade-flow cost and the region recourse costs carry the same
+  representative-period / timestep weights and sum to the monolithic objective.
+- **Implementation.** Driver in `flextool/engine_polars/_benders.py` (master +
+  multi-cut loop, `solve_benders` / `BendersResult`); region slicing in
+  `flextool/engine_polars/_region_filter.py`. Uses the polar-high primitives
+  `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)`
+  (floor unchanged at `polar-high>=2.9.0`). Benders is HiGHS-only (the master is
+  a persistent `WarmProblem`).
+
 ## Release 4.0.0b11 (24.6.2026) — per-solve Lagrangian decomposition (v60/v61); thread-parallel subsolves; xlsx round-trip + output fixes; per-monitor GUI placement
 
 Requires a **database migration to v61** (`FLEXTOOL_DB_VERSION` 59 → 61, in two

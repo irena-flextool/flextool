@@ -82,8 +82,8 @@ Canonical fixtures currently in `tests/fixtures/`:
 | `tests.json` | Main fixture; `tests/scenarios.yaml` and most engine_polars tests build their work-folders from here. Also the source for the generated `templates_examples.json` canonical DB. |
 | `stochastics.json` | Stochastic / forecast-branch scenarios. Source for the generated `howto_stochastics.json` canonical DB. |
 | `stochastics_pbt_inflow.json` | PBT inflow scenarios (period-block-time stochastic inflow). |
-| `lh2_three_region.json` | LH2 three-region monolithic + Lagrangian parity fixture (see [`decomposition.md`](decomposition.md)). |
-| `h2_trade_parity.json` | H2-trade Lagrangian parity fixture. |
+| `lh2_three_region.json` | LH2 three-region monolithic + Benders parity fixture (see [`decomposition.md`](decomposition.md)). |
+| `h2_trade_parity.json` | H2-trade Benders parity fixture. |
 | `multi_ts_branch1.json` | Multi-timeseries branch-1 fixture. |
 | `branch2_parent_period.json` | Branch-2 / parent-period stochastic fixture. |
 | `case14_dc_power_flow.json` | PGLib IEEE case14 MATPOWER export (~8200 lines), used by `test_flex_dc_power_flow.py`. |
@@ -178,7 +178,7 @@ Standalone golden integration tests live alongside (e.g.
 `tests/test_lh2_three_region.py` pins the LH2 three-region monolithic
 objective against `tests/expected/lh2_three_region/objective.json` at
 relative tolerance `1e-4`). The same fixture also backs the native
-Lagrangian gap-to-monolithic check — see
+Benders gap-to-monolithic check — see
 [`decomposition.md`](decomposition.md) and
 [`slack_convention.md`](slack_convention.md).
 
@@ -304,6 +304,6 @@ test so scenarios that share solve names cannot cross-contaminate.
 - [`engine_polars.md`](engine_polars.md) — the core under Layer 1
 - [`db_schema.md`](db_schema.md) — schema migration chain that
   `sync_master_json_template --verify` enforces
-- [`decomposition.md`](decomposition.md) — Lagrangian parity context
+- [`decomposition.md`](decomposition.md) — Benders parity context
 - `CHANGELOG.md` 3.47.0 entry — the JSON-fixture architecture rollout
 - `CHANGELOG.md` 3.33.0 entry — the original test-pyramid rollout

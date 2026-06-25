@@ -1,4 +1,4 @@
-"""Lagrangian region decomposition wrapper.
+"""Benders region decomposition wrapper.
 
 Builds a self-contained ``input_region_<region>/`` directory for one
 decomposition region's standalone solve.
@@ -58,7 +58,7 @@ def write_input_for_region(
         Standard cascade entry-point inputs.
     region_group
         The group name whose ``decomposition_method`` is
-        ``lagrangian_region``.  Must exist in the database.
+        ``benders_regional``.  Must exist in the database.
     output_dir
         Destination directory, typically
         ``work_folder / "input_region_<region>"``.  Created if missing.

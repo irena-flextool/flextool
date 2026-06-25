@@ -22,7 +22,7 @@ flowchart LR
   backend --> derive["input_derivation<br/>(per-solve preprocessing)"]
   derive --> provider["FlexDataProvider<br/>(in-memory transport)"]
   provider --> build["engine_polars.build_flextool<br/>(polar_high.Problem)"]
-  build --> solve["HiGHS via highspy<br/>(Problem / WarmProblem /<br/>LagrangianProblem)"]
+  build --> solve["HiGHS via highspy<br/>(Problem / WarmProblem)"]
   solve --> handoff["SolveHandoff<br/>(Provider keys)"]
   handoff -->|next roll / sub-solve| derive
   solve --> outputs["process_outputs<br/>(read solution → calc_* → out_*)"]
@@ -103,7 +103,7 @@ flextool/                          The installed Python package
 │                                    run_chain_from_db, SolveHandoff,
 │                                    auto-scaling.
 ├── decomposition/                 Region decomposition + region filter
-│                                    (Lagrangian sub-problems).
+│                                    (Benders sub-problems).
 ├── common_utils/                  Cross-package helpers (precision rounding).
 ├── process_inputs/                Tabular / Excel / old-format readers →
 │                                    Spine DB writers.
@@ -161,7 +161,7 @@ tests/                             Test suite (single root):
   tests/spinedb_backend/             — backend unit tests
   tests/model/                       — model-level end-to-end suites
   tests/gui/                         — GUI startup tests
-  tests/decomposition/               — Lagrangian / region-filter tests
+  tests/decomposition/               — Benders / region-filter tests
   tests/fixtures/*.json              — single authoritative source for all
                                        test data; sqlite DBs are built on
                                        demand
@@ -253,10 +253,18 @@ Same `build_flextool` body, three wrappers from `polar_high`:
   once, then mutates marked Params (`_apply_warm_updates` in
   `_solve_handoff.py`) between rolls. The optimisation room for the future
   rolling-overlap work (only update changing coefficients) lives here.
-- **Lagrangian** — `polar_high.LagrangianProblem` driven by
-  `engine_polars._lagrangian.solve_lagrangian`; slices `FlexData` by region
-  via `_region_filter` and couples half-flow pairs with subgradient-updated
-  multipliers. See [decomposition.md](decomposition.md).
+- **Benders (regional)** — `engine_polars._benders.solve_benders` driven by
+  the orchestrator. Slices `FlexData` by region via `_region_filter`, then
+  runs a **Benders decomposition**: a coordinating *master* (a persistent
+  `polar_high.WarmProblem`) holds the inter-regional trade flows and the
+  trade-connection investment plus one recourse variable `η_r` per region;
+  each region is an operational *subproblem* solved with the master's trade
+  pinned, returning duals that the master accumulates as optimality
+  **cuts** (`WarmProblem.add_cut_row` / `add_recourse_col`). The master
+  objective is a **valid lower bound** and the loop converges on the
+  optimality gap. This replaces the earlier dual-subgradient scheme, which
+  collapsed greenfield cross-region trade to autarky with an *invalid*
+  bound. See [decomposition.md](decomposition.md).
 
 #### Feature blocks in `build_flextool`
 
@@ -328,7 +336,9 @@ _orchestration.py                 run_orchestration / run_chain_from_db,
 _solve_state.py                   RunnerState, PathConfig, SolveConfig,
                                   TimelineConfig dataclasses
 _solve_handoff.py                 SolveHandoff carrier + capture wiring
-_lagrangian.py                    solve_lagrangian + Coupling / Result
+_benders.py                       solve_benders + Coupling / BendersResult
+                                  (master + multi-cut loop)
+_region_filter.py                 region slicing + half-flow injection
 _warm.py                          WarmProblem update routine
 _provider_keys.py                 Canonical key names for FlexDataProvider
 _flex_data_provider.py            In-memory transport surface
@@ -528,10 +538,14 @@ CI-enforced verify chain (`tests.yml::template-check`):
 - `generate_canonical --verify` — generated canonical files in sync.
 - `canonical_databases verify` — authoritative canonical files at current schema.
 
-### `flextool/decomposition/` — Lagrangian region helpers
+### `flextool/decomposition/` — Benders region helpers
 
 `region_decomposition.py` and `region_filter.py` slice `FlexData` by region
-group and prepare sub-problems for the Lagrangian solve mode.
+group and prepare sub-problems for the Benders solve mode (the filter-only
+`--region` CLI entry point that materialises one region's standalone input
+directory). The in-engine slicer used by the live Benders driver lives at
+`engine_polars/_region_filter.py`; the master + cut loop is in
+`engine_polars/_benders.py`.
 
 ### `flextool/model_builder/` and `flextool/representative_periods/`
 
@@ -794,7 +808,7 @@ tests/
 ├── spinedb_backend/             Backend unit tests.
 ├── model/                       Model-level end-to-end suites.
 ├── gui/                         GUI startup tests.
-├── decomposition/               Lagrangian / region-filter tests.
+├── decomposition/               Benders / region-filter tests.
 └── test_*.py                    Top-level unit & integration tests.
 ```
 

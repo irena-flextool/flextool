@@ -432,10 +432,10 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 
 - `include_stochastics` Flag to choose if stochastic timeseries are to be used for the units/nodes/connections of this group 
 
-### Decomposition (spatial Lagrangian)
+### Decomposition (spatial Benders)
 
-- `decomposition_method` (on `group`) - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `lagrangian_region` (the group becomes a spatial region when a solve sets `decomposition = lagrangian` — the `_region` suffix emphasises that this is the *geographic* flavour, distinct from any future temporal Lagrangian variant). See [dev/decomposition.md](dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
-- `decomposition` (on `solve`) - Whether *this solve* decomposes. `none` (default) solves monolithically; `lagrangian` routes the solve through the spatial Lagrangian coordinator over the `lagrangian_region` groups. Chosen per solve, so one chain can mix schemes. The optional knobs `lagrangian_alpha` (default `0.1`), `lagrangian_max_iter` (default `80`) and `lagrangian_tolerance` (default `1.0`) tune the subgradient loop.
+- `decomposition_method` (on `group`) - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `benders_regional` (the group becomes a spatial region when a solve sets `decomposition = benders` — the `_region` suffix emphasises that this is the *geographic* flavour, distinct from any future temporal variant). See [dev/decomposition.md](dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
+- `decomposition` (on `solve`) - Whether *this solve* decomposes. `none` (default) solves monolithically; `benders` routes the solve through the spatial Benders coordinator (master trade flows + trade invest + per-region recourse, optimality cuts) over the `benders_regional` groups. Chosen per solve, so one chain can mix schemes. The optional knobs `benders_max_iter` (default `50`) and `benders_tolerance` (default `1e-3`) cap the cut loop and set the relative optimality-gap threshold.
 
 ### Flex-temporal decomposition (per-group step duration)
 

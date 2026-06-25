@@ -5,10 +5,13 @@ solvable pieces, then recombining their solutions. FlexTool supports
 three independent flavours, all implemented natively in
 `engine_polars`:
 
-- **Spatial / Lagrangian** — partition the network into regions joined
-  only by priced coupling flows; iterate dual prices until the regions
-  agree. Selected **per solve** from the database
-  (`solve.decomposition = lagrangian`); see [§2.8](#28-selecting-the-scheme-per-solve).
+- **Spatial / Benders** — partition the network into regions joined
+  only by the inter-regional trade flows; a coordinating master holds
+  those trade flows plus the trade-connection investment, and each
+  region is an operational subproblem whose duals become optimality
+  cuts the master accumulates until the optimality gap closes. Selected
+  **per solve** from the database (`solve.decomposition = benders`); see
+  [§2.8](#28-selecting-the-scheme-per-solve).
 - **Flex-temporal** — let different parts of the same solve run at
   different timestep resolutions (hourly power, daily hydrogen, …) in
   one LP. Configured per-entity via `group.new_stepduration`.
@@ -24,7 +27,7 @@ chain of solves, each with its own LP). They compose, with one
 exception noted in [§6](#6-where-they-compose).
 
 The engine-side overview of the per-solve pipeline and warm-start /
-Lagrangian / cascade solve modes lives in
+Benders / cascade solve modes lives in
 [engine_polars.md](engine_polars.md); this page focuses on the
 decomposition mechanics themselves.
 
@@ -32,7 +35,7 @@ decomposition mechanics themselves.
 
 | Symptom | Use |
 |---|---|
-| Monolithic LP slow, but the system has clear regional structure (multi-country grid, sparse interconnections) | Spatial / Lagrangian |
+| Monolithic LP slow, but the system has clear regional structure (multi-country grid, sparse interconnections) | Spatial / Benders |
 | Power demand needs hourly resolution but some commodities (long-duration storage, hydrogen, district heat) only need daily / weekly resolution | Flex-temporal |
 | Long horizon (decades, full reanalysis years) that does not fit one solve | Rolling |
 | Long-term storage needs a multi-year view, but dispatch needs intra-week resolution | Nested |
@@ -44,46 +47,59 @@ the geography axis, the time-resolution axis, and the horizon axis).
 [§6](#6-where-they-compose) covers which combinations are actually
 wired today.
 
-## 2. Spatial / Lagrangian decomposition
+## 2. Spatial / Benders decomposition
 
 ### 2.1 Concept
 
-Lagrangian decomposition splits the LP along *coupling constraints* and
-prices the violation of those constraints in the objective. In FlexTool
-the coupling constraints are the cross-region pipeline / transmission
-flows: a connection whose source endpoint lies in one region and sink
-endpoint lies in another. Each region becomes a self-contained
-sub-problem (its own network, generators, storage, demand); the
-coordinator iterates a Lagrange multiplier λ per coupling cell until
-the regions' chosen flows agree.
+Benders decomposition splits the LP into a coordinating **master** and a
+set of operational **subproblems**, one per region. The complicating
+decisions — the inter-regional trade flows and the trade-connection
+investment — live in the master; everything inside a region (its own
+network, generators, storage, demand) is a subproblem solved with the
+master's trade schedule **pinned**. Each subproblem returns the duals of
+its pinned trade columns; the master accumulates those as **optimality
+cuts** and re-solves. The master objective is a **valid lower bound** on
+the true optimum; the incumbent feasible cost is the upper bound; the loop
+stops when the optimality gap `(UB − LB) / |UB|` drops below tolerance.
 
-The outer loop is a damped subgradient method (Bertsekas-style):
+This **replaces** the earlier dual-subgradient (Lagrangian) scheme, which
+severed each cross-region arc into invest-less half-flows bounded near zero
+and collapsed greenfield trade to an autarkic solution with an *invalid*
+bound above the true optimum. Benders puts the trade investment and the
+trade flow / capacity coupling in the master, feeds each region the
+master's chosen flow as a pinned boundary injection, and returns a
+certified lower bound and the true optimum.
 
-- iteration *k* solves every region's LP given the current λ
-- the residual is the per-cell imbalance between paired export and
-  import flows
-- λ updates by a damped step ``α / √k`` along the imbalance
-- after `max_iters` outer iterations or once the tail-averaged
-  imbalance drops below `tol`, the coordinator runs a final
-  **primal-average** pass: average each cell's export/import over the
-  tail of iterations, fix those flows, and re-solve every region.
+The master is built by `build_flextool` over a **network-only reduced
+`FlexData`** (`_region_filter.master_network_data`) — the SAME emit the
+monolith uses — so the master picks up the trade `maxFlow` capacity
+coupling, the invest annuity, and the connection flow cost natively and
+**RP-weight-consistently**: the master's trade flow cost and the regions'
+recourse costs are both weighted by the same representative-period /
+timestep weights `build_flextool` applies everywhere, so summing them is
+arithmetically the monolithic objective (no hand-rolled annuity, no
+weight mismatch). One **recourse** variable `η_r` per region carries that
+region's operational cost in the master objective.
 
 ```mermaid
 flowchart TD
     A[FlexData whole system] --> B[_region_filter.split<br/>regions + half-flows]
-    B --> C[Per-region Problem<br/>build_flextool]
-    C --> D[LagrangianProblem<br/>damped subgradient]
-    D --> E{converged?<br/>k &lt; max_iters?}
-    E -- iterate --> F[update λ ← λ + α/√k · residual]
-    F --> D
-    E -- stop --> G[primal average<br/>cross-region flows]
-    G --> H[LagrangianResult<br/>region_objectives, λ, log]
+    A --> M0[_region_filter.master_network_data<br/>network-only reduced FlexData]
+    M0 --> M[Master = build_flextool + WarmProblem<br/>trade flow f, invest C, recourse η_r]
+    B --> C[Per-region Problem<br/>build_flextool, trade pinned to f̄]
+    M --> C
+    C --> D[subproblem duals<br/>col_dual of pinned trade cols]
+    D --> E[master.add_cut_row<br/>optimality cut per region]
+    E --> M
+    M --> F{gap ≤ tol?}
+    F -- iterate --> C
+    F -- stop --> G[BendersResult<br/>region_objectives, LB/UB, log]
 ```
 
 ### 2.2 Region declaration
 
 Regions are `group` entities whose `decomposition_method` parameter
-equals the string ``lagrangian_region``. The group's
+equals the string ``benders_regional``. The group's
 `group__node` / `group__unit` / `group__connection` memberships list
 the entities belonging to that region. The coordinator requires at
 least two such groups in the active scenario; one is treated as an
@@ -93,8 +109,8 @@ error (use the monolithic path instead).
 # Spine input DB fixture sketch.
 entities += [("group", "region_A"), ("group", "region_B")]
 parameter_values += [
-    ("group", "region_A", "decomposition_method", "lagrangian_region", ALT),
-    ("group", "region_B", "decomposition_method", "lagrangian_region", ALT),
+    ("group", "region_A", "decomposition_method", "benders_regional", ALT),
+    ("group", "region_B", "decomposition_method", "benders_regional", ALT),
 ]
 for r in ("A", "B"):
     for node in [f"elec_{r}", f"h2_{r}", f"battery_{r}"]:
@@ -103,9 +119,9 @@ for r in ("A", "B"):
 
 The reference catalogue entry is `group.decomposition_method` in
 [reference.md](../reference.md); the only accepted value is
-`lagrangian_region` (the `_region` suffix makes the geographic flavour
-explicit, leaving naming room for any future temporal Lagrangian
-variant). The source of truth is
+`benders_regional` (the `_region` suffix makes the geographic flavour
+explicit, leaving naming room for any future temporal variant). The
+source of truth is
 `flextool/engine_polars/_region_filter.py:load_decomposition_method`.
 
 ### 2.3 Half-flow rewriting
@@ -119,102 +135,102 @@ hf_<pipe>__export__<region_A>     (in region A, virtual sink node)
 hf_<pipe>__import__<region_B>     (in region B, virtual source node)
 ```
 
-The coupling spec is the consensus constraint
+Inside a region's standalone LP each half-flow is an ordinary `v_flow`
+column. The export and import sides of an arc carry the **same flow** at
+optimality. In the Benders scheme that consensus is enforced by the
+master: each iteration **pins** every region's forward cross-region
+half-flow to the master's current `f̄` per `(d, t)` (reverse pinned to 0)
+before solving the region. The cut slope for `(arc, d, t)` is then the
+reduced cost of the pinned forward column
+(`Solution.col_dual[pin_col_id]` = `∂cost_r / ∂f̄`, basis-correct, no
+monolith reference). The rewriter / half-flow metadata structure is in
+`_region_filter` (`HalfFlow`, `Coupling`, `split`); the arc / pin
+bookkeeping for the master lives in `_benders._build_arcs`.
 
-```
-+ v_flow[hf_<pipe>__export__<region_A>, d, t]
-- v_flow[hf_<pipe>__import__<region_B>, d, t]   =   0           (per cell)
-```
+Star topologies (more than two regions sharing one pipeline) are not
+supported; the rewriter asserts bilateral arcs only.
 
-with one λ per `(d, t)` cell. The rewriter and the consensus spec
-builder both live in `_lagrangian.py`
-(`_identify_coupling_cols` and `_build_coupling_specs`); the half-flow
-metadata structure is in `_region_filter.HalfFlow`.
+### 2.4 Algorithm — master + multi-cut Benders loop
 
-Star topologies (more than two regions sharing one pipeline) collapse
-to a single λ per pipe across all sharing regions; the rewriter
-asserts bilateral arcs only.
+The master is a single `polar_high.Problem` wrapped in a
+`polar_high.WarmProblem`, built ONCE and grown by appended optimality cut
+rows. The loop:
 
-### 2.4 Algorithm — damped subgradient
+1. **Bootstrap** `f̄ = 0`, solve every region, harvest the first cuts.
+2. **Master solve** → new trade schedule `f̄` and invest `C`; the master
+   objective is the lower bound `LB` (a *valid* global under-estimate —
+   the whole point versus the old scheme).
+3. **Subproblems**: pin each region's forward trade columns to `f̄`,
+   solve, read `col_dual` of the pinned columns.
+4. **Cuts**: append one optimality cut per region via
+   `WarmProblem.add_cut_row`, bounding that region's recourse `η_r`.
+5. **Upper bound**: `UB = master invest cost(C) + Σ_r cost_r(f̄)`;
+   incumbent = best (min) `UB`.
+6. Repeat from 2 until `gap = (best_UB − LB) / |best_UB| ≤ tol` or the
+   iteration cap is hit.
 
-The outer loop is implemented in `polar_high.LagrangianProblem`; the
-FlexTool side just translates `Coupling` objects into `CouplingSpec`s
-and delegates. The relevant knobs:
+The recourse vars and cut rows are appended through the polar-high
+primitives `WarmProblem.add_recourse_col` and `WarmProblem.add_cut_row`;
+each region subproblem is solved with `WarmProblem.solve(retry_on_unknown=
+…)` so a transient HiGHS `kUnknown` is retried rather than aborting the
+run. Each `η_r` is lower-bounded by a large-NEGATIVE finite floor (NOT a
+hard `η ≥ 0`): FlexTool region costs can be negative, so a blind zero floor
+could cut off the optimum; the finite floor is a provably valid global
+under-estimate that keeps the cut-less iter-0 master optimal.
 
-| Field on `solve_lagrangian` | DB parameter (`solve` entity) | Meaning |
+The two knobs:
+
+| DB parameter (`solve` entity) | Default | Meaning |
 |---|---|---|
-| `alpha` (float, default `1e-3` in code; `0.1` from DB) | `lagrangian_alpha` (default `0.1`) | Base step size; per-iter step is ``α / √k`` |
-| `max_iters` (default `200` in code; `80` from DB) | `lagrangian_max_iter` (default `80`) | Outer-loop cap |
-| `tol` (default `1.0`) | `lagrangian_tolerance` (default `1.0`) | Tail-averaged primal residual threshold |
-| `min_iters` | — | Force at least this many outer iterations |
-| `initial_lambda` | — | Warm-start λ value (default 0) |
-| `primal_tail` | — | How many iterations to tail-average for primal recovery (None = solver default) |
+| `benders_max_iter` | `50` | Outer-loop iteration cap |
+| `benders_tolerance` | `1e-3` | Relative optimality-gap threshold (gap normalised by the incumbent UB) |
 
-The DB defaults are deliberately wider than the function defaults —
-they are tuned for typical multi-region runs (`α = 0.1`,
-`max_iters = 80`), while the function defaults are conservative for
-tests. The three knobs are resolved per solve by
-`SolveConfig.lagrangian_config_for`; a solve that authors none of them
-falls back to these defaults.
+They are resolved per solve by `SolveConfig.benders_config_for`; a solve
+that authors neither falls back to these defaults.
 
-### 2.5 Primal recovery
+### 2.5 Existing vs investable trade capacity
 
-After the outer loop exits, every coupling-flow column is fixed to its
-tail-averaged value across the last `primal_tail` iterations, costs
-are reset to zero, and every region is re-solved. The summed
-sub-problem objective is `LagrangianResult.total_objective`.
+The master handles existing and investable trade connections in ONE
+build. An existing-only arc (`existing > 0`, no `invest_method`) carries
+no invest variable; its flow is bounded by `existing / unitsize` through
+the FlexTool `maxFlow` RHS (`p_flow_upper_existing`). An investable arc
+gets a `v_invest` var and its capacity is bounded by `existing +
+invested`. A greenfield arc (`existing = 0`) is unchanged — all its trade
+capacity is invested `C`. Because the master is the SAME emit as the
+monolith, the existing-capacity term and the invest annuity drop in with
+no rescale, and the per-region half-flows are left **uncapped**
+(`benders_uncap_cross_region=True`) so a positive master pin is always
+feasible in the region.
 
-For pure LP sub-problems the primal-averaged objective converges to
-the monolithic optimum within a small residual gap (typically
-0.5–2 %). The gap is bounded by:
+### 2.6 Validity guard
 
-- subgradient step decay (``α / √k`` does not shrink fast enough to
-  eliminate the last trace of bang-bang oscillation in the coupling
-  flows);
-- efficiency mismatches when the half-flow formulation does not
-  propagate the original pipeline's loss coefficient (the default
-  injection sets `efficiency = 1.0` on the virtual half-flow).
-
-For MIP sub-problems (unit commitment) the duality gap is intrinsic
-and cannot be closed by a Lagrangian outer loop alone; a follow-up
-bundle / branch-and-bound layer would be required and is not currently
-implemented.
-
-### 2.6 Practical pointers
-
-- Typical convergence is in 5–50 outer iterations for well-decomposable
-  systems. Each iteration is cheaper than the monolithic LP (smaller
-  HiGHS instance per region), so total wall-clock beats monolithic when
-  the regions are loosely coupled.
-- Systems with many tight cross-region couplings (e.g. dense
-  interconnection plus shared reserve groups) see slow convergence;
-  the dual loop's residual oscillates before averaging in. If you can
-  reshape the regions to push more flow inside a region and less
-  across boundaries, do.
-- The coordinator builds each region's `polar_high.Problem` once and
-  re-uses it across iterations via `polar_high.WarmProblem`; only the
-  coupling columns' objective costs change per iteration.
+A monolith-free **sandwich guard** is always on: `LB ≤ optimum ≤ best_UB`
+must hold (`best_UB` is itself an upper bound on the optimum). An
+`LB > best_UB` is the genuine invalid-lower-bound pathology — exactly the
+bug this scheme fixes — and raises `RuntimeError` rather than reporting a
+wrong-but-plausible optimum. No external big-`M` is needed.
 
 ### 2.7 Diagnostics
 
-Every outer iteration logs a row with `iter`, `alpha_k`,
-`max_abs_imbalance`, `total_obj`, and the per-pipe mean λ. The same
-data is available on the returned object:
+Every outer iteration logs the iteration index, the master `LB`, the
+incumbent `UB`, and the current gap; the orchestrator also prints a final
+convergence + LB/UB sandwich summary. The same data is available on the
+returned `BendersResult`:
 
-- `LagrangianResult.iteration_log` — list of per-iteration dicts
-  (plot λ trajectories and primal residuals from here)
-- `LagrangianResult.final_lambdas` — final λ mean per pipeline key
-- `LagrangianResult.region_objectives` — per-region sub-problem
-  objective at the primal recovery pass
-- `LagrangianResult.converged` — True iff the tail-averaged residual
-  dropped below `tol` before `max_iters` was hit
+- `BendersResult.iteration_log` — per-iteration dicts (LB / UB / gap
+  trajectory)
+- `BendersResult.lower_bound` / `upper_bound` / `gap` — final values
+- `BendersResult.region_objectives` — per-region recourse cost at the
+  incumbent
+- `BendersResult.converged` — True iff the gap dropped below `tol`
+  before the iteration cap
 
 Look for:
 
-- residual monotone-ish decay (a noisy zig-zag is normal; a monotone
-  *increase* means α is too large for the system)
-- λ values stabilising — a still-drifting λ at the cap usually means
-  `max_iters` is too low or the residual tolerance is too tight
+- the gap closing monotonically (LB rising, UB falling toward each
+  other); a stalled gap usually means `benders_max_iter` is too low or
+  the cut slopes are degenerate (a region whose pinned trade column is
+  basic returns a zero reduced cost)
 - region objectives broadly similar magnitude — one region dominating
   often means the cut placement is wrong (a major load centre ended
   up in a region with too little generation)
@@ -222,38 +238,34 @@ Look for:
 ### 2.8 Selecting the scheme per solve
 
 Decomposition is chosen **per solve, from the database** — there is no
-CLI flag. Set `solve.decomposition = lagrangian` on the solve(s) you
-want decomposed (the PLEXOS-to-FlexTool writer emits this automatically
-under its `lagrangian` alternative), optionally overriding the three
-`lagrangian_*` knobs:
+CLI flag. Set `solve.decomposition = benders` on the solve(s) you
+want decomposed, optionally overriding the two `benders_*` knobs:
 
 | `solve` parameter | Value list / type | Default | Effect |
 |---|---|---|---|
-| `decomposition` | `decomposition_schemes` = {`none`, `lagrangian`} | `none` | `lagrangian` routes this solve through `solve_lagrangian`; `none` solves it monolithically |
-| `lagrangian_alpha` | float | `0.1` | Subgradient base step size |
-| `lagrangian_max_iter` | float | `80` | Outer-loop cap |
-| `lagrangian_tolerance` | float | `1.0` | Tail-averaged residual threshold |
+| `decomposition` | `decomposition_schemes` = {`none`, `benders`} | `none` | `benders` routes this solve through `solve_benders`; `none` solves it monolithically |
+| `benders_max_iter` | float | `50` | Outer-loop iteration cap |
+| `benders_tolerance` | float | `1e-3` | Relative optimality-gap threshold |
 
 Because the decision is per solve, a single chain can mix schemes — for
-example a Lagrangian investment solve followed by a monolithic
+example a Benders investment solve followed by a monolithic
 full-resolution dispatch solve. The orchestrator
 (`engine_polars._orchestration`) reads each solve's resolved
 `decomposition` value as it iterates `model.solves`. This is distinct
 from the group-level `group.decomposition_method`
-(`none` / `lagrangian_region`), which declares *which groups are
-regions* (the `decomp_<REG>` groups); `solve.decomposition` declares
-*whether a given solve decomposes*. Lagrangian still requires at least
-two `lagrangian_region` groups.
+(`none` / `benders_regional`), which declares *which groups are
+regions*; `solve.decomposition` declares *whether a given solve
+decomposes*. Benders still requires at least two `benders_regional`
+groups.
 
-> **Deferred — cross-scheme handoff.** A Lagrangian solve currently runs
-> and reports its convergence/objective but does **not** thread its
-> results into a downstream solve's handoff. If a downstream solve would
-> consume a Lagrangian solve's results, the orchestrator raises
-> `FlexToolConfigError` rather than silently dropping them
-> (`_lagrangian_consume_guard_message`). For now, keep a Lagrangian
-> solve terminal in its chain, or make the downstream solve Lagrangian
-> too. Wiring the Lagrangian → monolithic handoff is a planned
-> follow-up.
+**Invest → dispatch handoff.** A Benders investment solve assembles the
+owner-selected invested trade + in-region capacity into a whole-system
+`SolveHandoff` (the TIER-1 invest→dispatch chain) so a downstream rolling
+or monolithic dispatch solve consumes the realised capacity exactly as it
+would after any other invest solve. The orchestrator records which Benders
+solves produced an invest handoff and threads it forward; a downstream
+solve that would consume a Benders solve which produced none is rejected
+loudly rather than silently dropping the link.
 
 The `--region <GROUP_NAME>` flag is a separate, filter-only entry
 point that emits a per-region input directory and exits without
@@ -263,16 +275,17 @@ solving — useful for inspecting how the rewriter sees a given region.
 
 | Symbol | Module |
 |---|---|
-| `solve_lagrangian(data, *, ...)` — top-level entry | `flextool/engine_polars/_lagrangian.py` |
-| `LagrangianResult` — return type | same |
-| `Coupling`, `_identify_coupling_cols`, `_build_coupling_specs` | same |
-| `RegionSplit`, `HalfFlow`, `split` | `flextool/engine_polars/_region_filter.py` |
+| `solve_benders(data, *, ...)` — top-level entry | `flextool/engine_polars/_benders.py` |
+| `BendersResult` — return type | same |
+| `Coupling`, `_build_arcs`, the master + cut loop | same |
+| `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine_polars/_region_filter.py` |
+| `RegionSplit`, `HalfFlow`, `split` | same |
 | `load_decomposition_method` (reads ``decomposition_method`` from solve_data) | same |
-| `LagrangianProblem`, `CouplingSpec`, `CouplingEntry` | `polar_high` (external) |
+| `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)` | `polar_high` (external) |
 
 The per-solve routing lives in `flextool/engine_polars/_orchestration.py`
-(`_PolarHighCascadeSolver._run_lagrangian_solve`, driven by
-`SolveConfig.decomposition_for`). The Lagrangian path is also surfaced
+(`_PolarHighCascadeSolver._run_benders_solve`, driven by
+`SolveConfig.decomposition_for`). The Benders path is also surfaced
 as a "Solve modes" entry in
 [engine_polars.md § Solve modes](engine_polars.md#solve-modes).
 
@@ -289,7 +302,7 @@ decomposition lets a single LP carry both — every entity runs on the
 block resolution it needs, joined by overlap-set aggregation across
 the LP's constraints.
 
-This is structurally different from the Lagrangian path: there is one
+This is structurally different from the Benders path: there is one
 LP, one HiGHS run, no outer loop. The decomposition lives in the LP
 *structure* (which `(entity, block)` rows the `_emit_*` modules produce).
 
@@ -307,7 +320,7 @@ Validation in `BlockLayout.validate_group_membership`:
 - every entity may belong to at most one resolution-group (otherwise
   block assignment is ambiguous)
 - every entity may belong to at most one decomposition-group (the
-  Lagrangian region groups counted here too)
+  Benders region groups counted here too)
 - reserve participants must NOT sit in any resolution-group (reserve
   blocks are V1 only — preserved compatibility quirk)
 
@@ -514,23 +527,28 @@ features. Quick map (full text in
   group-level `new_stepduration` + `decomposition_method`.
 - **3.30.0–3.32.0** — Block-aware emitters complete (then known as writer ports); output
   expansion stabilises.
-- **3.33.0** — `--decomposition lagrangian` (CLI flag) rewired onto the
-  polars coordinator (`engine_polars._lagrangian`).
-- **4.0.0 (`v60` migration)** — decomposition becomes DB-driven and
-  per-solve: `solve.decomposition` (value list `decomposition_schemes` =
-  {`none`, `lagrangian`}) plus `solve.lagrangian_alpha` /
-  `lagrangian_max_iter` / `lagrangian_tolerance`. The global
-  `--decomposition` / `--lagrangian-*` CLI flags are removed; the
-  orchestrator routes each solve from its DB value. Cross-scheme handoff
-  (Lagrangian → downstream solve) is guarded loudly and deferred.
+- **4.0.0 (`v60` migration)** — spatial decomposition becomes DB-driven
+  and per-solve: `solve.decomposition` plus per-solve knobs. The global
+  `--decomposition` CLI flags are removed; the orchestrator routes each
+  solve from its DB value.
+- **4.0.0 (`v62` migration)** — the spatial scheme switches from the
+  dual-subgradient (Lagrangian) coordinator to **Benders**. The
+  `decomposition_schemes` value `lagrangian` → `benders` and the group
+  method `lagrangian_region` → `benders_regional`; the old
+  `lagrangian_alpha` / `lagrangian_max_iter` / `lagrangian_tolerance`
+  knobs are dropped and replaced by `benders_max_iter` (50) /
+  `benders_tolerance` (1e-3). Existing DBs are auto-migrated (breaking
+  schema change, DB version 62). The Benders invest solve threads its
+  realised capacity into a downstream dispatch solve (TIER-1
+  invest→dispatch handoff).
 
 ## 6. Where they compose
 
 | Combination | Supported | Notes |
 |---|---|---|
-| Lagrangian + flex-temporal | Yes | Each region's `build_flextool` runs through the block-aware `_emit_*` modules unchanged. |
-| Lagrangian + rolling | No | One Lagrangian solve is the unit of work for the outer rolling loop. Not currently wired and not on the roadmap; would require per-roll dual warm-start. |
-| Lagrangian + nested | Partial | The outer (parent) solve can be Lagrangian, but the parent's handoff to children does not currently propagate per-region state. Treat as untested. |
+| Benders + flex-temporal | Yes | Each region's `build_flextool` runs through the block-aware `_emit_*` modules unchanged. |
+| Benders + rolling | No | One Benders solve is the unit of work for the outer rolling loop. Not currently wired; would require per-roll cut warm-start. The TIER-1 invest→dispatch handoff threads a Benders *invest* solve into a downstream *rolling dispatch* solve, which is the supported pattern. |
+| Benders + nested | Partial | The outer (parent) solve can be Benders, but the parent's handoff to children propagates only the invest→dispatch capacity, not per-region operational state. Treat as untested beyond the invest→dispatch chain. |
 | Flex-temporal + rolling | Yes | The rolling jump is on the fine timeline; coarse blocks honour the jump boundary inside each window. |
 | Flex-temporal + nested | Yes | Each parent / child solve carries its own `BlockLayout`. |
 | Flex-temporal + stochastic | Yes | Branches enter the active-time lists at the fine resolution; coarse-block constraints pick up the relevant branch-suffixed steps via the same overlap set. |
@@ -540,7 +558,7 @@ features. Quick map (full text in
 ## 7. See also
 
 - [engine_polars.md](engine_polars.md) — the engine guide; Solve modes
-  section covers monolithic / warm / Lagrangian and Flex-temporal
+  section covers monolithic / warm / Benders and Flex-temporal
   decomposition section covers the BlockLayout shape.
 - [architecture.md](architecture.md) — top-level architecture; how the
   decomposition pieces fit into the larger pipeline.
@@ -554,5 +572,5 @@ features. Quick map (full text in
   `solve.new_stepduration`, `group.new_stepduration`,
   `group.decomposition_method`, `node.storage_nested_fix_method`.
 - [how_to.md](../how_to.md) — practical recipes for setting up
-  Lagrangian regions, rolling windows, nested solves, and stochastic
+  Benders regions, rolling windows, nested solves, and stochastic
   branches.
