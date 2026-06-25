@@ -891,18 +891,20 @@ def pd_branch_weight_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
 ) -> Param | None:
-    """Per-period branch weight.
+    """Per-period branch weight — dense 1.0 baseline (superseded later).
 
-    Audit §3.18.1: defaults to 1.0; in deterministic single-branch
-    scenarios the file is absent / silent.  The full multi-branch
-    derivation (read ``period__branch.weight``, normalise across
-    siblings) needs a ``period__branch`` relationship class that the
-    current Spine schema doesn't expose directly to ``InputSource`` —
-    it's downstream of ``solve.stochastic_branches``.
+    Returns the trivial 1.0 default per realized period.  This is the
+    baseline assigned in ``apply_derived_a``; it is the final value only
+    for deterministic / non-stochastic fixtures (where it matches the
+    .mod's ``param pd_branch_weight`` default).
 
-    For Γ.3.A: emit the trivial 1.0 default per realized period; this
-    matches every non-stochastic fixture.  Stochastic fixtures retain
-    their CSV-computed value (deferred to Batch C/D).
+    For stochastic fixtures it is SUPERSEDED downstream: ``apply_derived_g``
+    calls ``_derived_branch.apply_branch_cluster``, whose
+    ``pd_branch_weight_lf`` reads ``solve_branch_weight`` /
+    ``period__branch`` and writes the real sibling-normalised weights
+    (each branch's input weight divided by the sum across siblings that
+    share the same first-step).  That later pass overwrites the dense 1.0
+    set here whenever stochastic branches are active.
     """
     if dt is None:
         return None
@@ -922,10 +924,14 @@ def pdt_branch_weight_from_source(
     dt: pl.DataFrame,
     pd_bw: Param | None = None,
 ) -> Param | None:
-    """Per-(d, t) branch weight.
+    """Per-(d, t) branch weight — dense 1.0 baseline (superseded later).
 
-    Audit §3.18.1: defaults to 1.0 per (d, t).  The full multi-branch
-    derivation is deferred (same rationale as :func:`pd_branch_weight_from_source`).
+    Returns the trivial 1.0 default per (d, t).  Like
+    :func:`pd_branch_weight_from_source`, this is the ``apply_derived_a``
+    baseline; it is the final value only for deterministic / non-stochastic
+    fixtures.  For stochastic fixtures it is SUPERSEDED by the real
+    sibling-normalised weights computed in ``apply_derived_g``
+    (``_derived_branch.apply_branch_cluster`` → ``pdt_branch_weight_lf``).
     """
     if dt is None:
         return None
