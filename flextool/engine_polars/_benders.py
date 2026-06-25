@@ -83,6 +83,31 @@ from flextool.engine_polars.input import FlexData
 
 _logger = logging.getLogger(__name__)
 
+
+def _benders_quiet() -> bool:
+    """Whether the per-solve HiGHS native log should be silenced.
+
+    Benders solves a master plus N region subproblems (cold build + a warm
+    re-solve per iteration, regions in parallel); leaving HiGHS verbose
+    floods the console with many interleaved native logs.  By DEFAULT we
+    mute every HiGHS solve and let the orchestrator's per-iteration
+    LB/UB/gap log be the visible progress.  Set ``FLEXTOOL_BENDERS_VERBOSE``
+    to restore the full native HiGHS output (the pre-silencing behaviour).
+    """
+    return not os.environ.get("FLEXTOOL_BENDERS_VERBOSE")
+
+
+def _silence_if_quiet(wp: WarmProblem) -> None:
+    """Mute the HiGHS native log on ``wp`` when Benders runs quietly.
+
+    Output-flag persists on the WarmProblem's HiGHS handle across all of
+    its subsequent cold / warm / retry solves, so a single call right after
+    construction covers the whole lifetime.  Silencing changes no solve
+    numerics — results are byte-identical with and without it.
+    """
+    if _benders_quiet():
+        wp.set_output_flag(False)
+
 # The four investment/divestment decision variables assembled into a
 # whole-system handoff for the TIER-1 invest->dispatch chain.  Each is
 # declared in ``model.py`` over a 2-tuple of dims whose FIRST element is
@@ -354,6 +379,7 @@ class _BendersMaster:
 
         self._m = m
         self._wp = WarmProblem(m)
+        _silence_if_quiet(self._wp)
         # Initial build so the warm handle exists and col ids resolve.  The
         # iter-0 master (no cuts) is bounded: η has the finite floor and
         # ``v_invest_p ≤ p_entity_max_units`` (FlexTool-emitted) bounds the
@@ -575,6 +601,7 @@ class _BendersMaster:
 
         self._m = m
         self._wp = WarmProblem(m)
+        _silence_if_quiet(self._wp)
         # Initial build so the warm handle exists and col ids resolve.  The
         # iter-0 master (no cuts, η at its finite floor) is kOptimal; we never
         # read this solve's objective — the loop seeds the first cuts BEFORE the
@@ -1146,6 +1173,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     for s, pb in zip(splits, subproblems):
         build_problem(pb, s.data)
     warm = [WarmProblem(p) for p in subproblems]
+    # Silence each region's per-solve HiGHS log by default (output_flag
+    # persists across the cold build below and every warm parallel re-solve).
+    for w in warm:
+        _silence_if_quiet(w)
     # Initial build of every region (fix_cols / col_dual need a built model).
     for w in warm:
         w.solve()
@@ -1429,7 +1460,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             )
 
         gap = (best_UB - LB) / max(1.0, abs(best_UB))
-        _logger.info(
+        # DEBUG (not info): the orchestrator streams the user-facing per-iter
+        # line in REAL units via ``progress_callback``; this internal line
+        # carries the raw SCALED values and would otherwise duplicate it.
+        _logger.debug(
             "Benders iter %d: LB=%.6e UB=%.6e bestUB=%.6e gap=%.3e",
             iterations, LB, UB, best_UB, gap,
         )
