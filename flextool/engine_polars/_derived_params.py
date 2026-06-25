@@ -748,10 +748,19 @@ def p_timestep_weight_from_source(
          default 1.0.
 
     RP path (``representative_period_weights`` set):
-      Currently deferred — RP fixtures don't appear in the regression
-      set this helper unblocks.  The CSV-loaded ``timestep_weight.csv``
-      already encodes the canonical weights; the helper emits ``None``
-      via the empty-frame fallback so the CSV value survives.
+      Representative-period weights are folded into
+      ``solve_data/timestep_weight.csv`` by the writer
+      (:func:`._emit_solve_writers._compute_rp_frames`,
+      ``w_r[rep]=Σ_base·n_rp/n_base``) and loaded into
+      ``flex_data.p_timestep_weight`` by the CSV loader
+      (``input.py`` ``_load_time``).  When the ACTIVE solve's
+      ``period_timeset`` references a timeset carrying
+      ``representative_period_weights``, this helper returns ``None`` so
+      the call site (guarded) PRESERVES that folded CSV value instead of
+      clobbering it with the dense 1.0 default.  This keeps a single
+      source of truth (``_compute_rp_frames``) shared by every consumer
+      — objective, outputs, inflow scaling — rather than re-folding the
+      weights against ``source`` here.
 
     The ``active_solve`` argument was added in Γ.8.E so the helper can
     filter ``solve.period_timeset`` to the right solve when running in
@@ -793,6 +802,29 @@ def p_timestep_weight_from_source(
 
     tw = _try_param_explicit(source, "timeset", "timeset_weights")
     if tw is None or tw.height == 0:
+        # No flat ``timeset_weights`` — but this may be an RP solve.
+        # ``representative_period_weights`` are folded into
+        # ``solve_data/timestep_weight.csv`` by the writer
+        # (``_emit_solve_writers._compute_rp_frames``) and already loaded
+        # into ``flex_data.p_timestep_weight`` by the CSV loader.  If the
+        # ACTIVE solve's ``period_timeset`` references a timeset carrying
+        # RP weights, return None so the guarded call site preserves that
+        # folded value instead of clobbering it with the dense 1.0
+        # default.  Filter to the active timesets so a stray RP param on
+        # an UNUSED timeset cannot suppress the legitimate dense default
+        # for a genuinely non-RP solve.
+        rpw = _try_param_explicit(
+            source, "timeset", "representative_period_weights")
+        if rpw is not None and rpw.height > 0 and "name" in rpw.columns:
+            active_ts = (period_timeset_lf
+                         .select(pl.col("ts"))
+                         .unique()
+                         .collect()
+                         .get_column("ts")
+                         .to_list())
+            rp_ts = set(rpw.get_column("name").to_list())
+            if any(ts in rp_ts for ts in active_ts):
+                return None
         out = default_lf.collect()
         return Param(("d", "t"), out) if out.height > 0 else None
     # ``timeset_weights`` shape: name (timeset), x (timestep), value (weight).
@@ -859,18 +891,20 @@ def pd_branch_weight_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
 ) -> Param | None:
-    """Per-period branch weight.
+    """Per-period branch weight — dense 1.0 baseline (superseded later).
 
-    Audit §3.18.1: defaults to 1.0; in deterministic single-branch
-    scenarios the file is absent / silent.  The full multi-branch
-    derivation (read ``period__branch.weight``, normalise across
-    siblings) needs a ``period__branch`` relationship class that the
-    current Spine schema doesn't expose directly to ``InputSource`` —
-    it's downstream of ``solve.stochastic_branches``.
+    Returns the trivial 1.0 default per realized period.  This is the
+    baseline assigned in ``apply_derived_a``; it is the final value only
+    for deterministic / non-stochastic fixtures (where it matches the
+    .mod's ``param pd_branch_weight`` default).
 
-    For Γ.3.A: emit the trivial 1.0 default per realized period; this
-    matches every non-stochastic fixture.  Stochastic fixtures retain
-    their CSV-computed value (deferred to Batch C/D).
+    For stochastic fixtures it is SUPERSEDED downstream: ``apply_derived_g``
+    calls ``_derived_branch.apply_branch_cluster``, whose
+    ``pd_branch_weight_lf`` reads ``solve_branch_weight`` /
+    ``period__branch`` and writes the real sibling-normalised weights
+    (each branch's input weight divided by the sum across siblings that
+    share the same first-step).  That later pass overwrites the dense 1.0
+    set here whenever stochastic branches are active.
     """
     if dt is None:
         return None
@@ -890,10 +924,14 @@ def pdt_branch_weight_from_source(
     dt: pl.DataFrame,
     pd_bw: Param | None = None,
 ) -> Param | None:
-    """Per-(d, t) branch weight.
+    """Per-(d, t) branch weight — dense 1.0 baseline (superseded later).
 
-    Audit §3.18.1: defaults to 1.0 per (d, t).  The full multi-branch
-    derivation is deferred (same rationale as :func:`pd_branch_weight_from_source`).
+    Returns the trivial 1.0 default per (d, t).  Like
+    :func:`pd_branch_weight_from_source`, this is the ``apply_derived_a``
+    baseline; it is the final value only for deterministic / non-stochastic
+    fixtures.  For stochastic fixtures it is SUPERSEDED by the real
+    sibling-normalised weights computed in ``apply_derived_g``
+    (``_derived_branch.apply_branch_cluster`` → ``pdt_branch_weight_lf``).
     """
     if dt is None:
         return None
@@ -1384,11 +1422,17 @@ def apply_derived_a(
     flex_data.p_inflation_op = p_inflation_op_from_source(
         source, usable_dt, active_solve)
 
-    # 4. p_timestep_weight — Δ.12b: unconditional.  None == no
-    #    timeset.timeset_weights declared (default 1.0 broadcast handled
-    #    inside the helper).
-    flex_data.p_timestep_weight = p_timestep_weight_from_source(
+    # 4. p_timestep_weight — GUARDED (narrow inversion of Δ.12b for THIS
+    #    helper).  None now means "no override — keep the CSV-loaded
+    #    value".  On RP solves the helper returns None so the folded
+    #    ``solve_data/timestep_weight.csv`` weights survive (the loader
+    #    always populates a non-None Param, at minimum the dense 1.0
+    #    default, so arithmetic stays safe).  Non-RP ``timeset_weights``
+    #    solves still take the helper's computed Param unchanged.
+    tsw_new = p_timestep_weight_from_source(
         source, usable_dt, active_solve)
+    if tsw_new is not None:
+        flex_data.p_timestep_weight = tsw_new
 
     # 5. pd_branch_weight + pdt_branch_weight — Δ.12b: unconditional.
     # Γ.3.A's simple-1.0 helpers; Γ.3.G's full multi-branch cascade

@@ -243,9 +243,8 @@ class SolveConfig:
         user_bound_scale: dict | None = None,
         solver_configs: dict[str, "SolverConfig"] | None = None,
         decomposition: dict | None = None,
-        lagrangian_alpha: dict | None = None,
-        lagrangian_max_iter: dict | None = None,
-        lagrangian_tolerance: dict | None = None,
+        benders_max_iter: dict | None = None,
+        benders_tolerance: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -284,23 +283,20 @@ class SolveConfig:
             solver_configs if solver_configs is not None else {}
         )
 
-        # v60 per-solve decomposition.  ``decomposition`` maps
-        # solve-name → "none"/"lagrangian"; absent means the schema
-        # default "none" (monolithic).  The three ``lagrangian_*`` dicts
-        # carry the per-solve Lagrangian knobs (str(float) values, only
-        # present when authored); absence falls back to the schema
-        # defaults via :meth:`lagrangian_config_for`.
+        # v60/v62 per-solve decomposition.  ``decomposition`` maps
+        # solve-name → "none"/"benders"; absent means the schema
+        # default "none" (monolithic).  The two ``benders_*`` dicts carry
+        # the per-solve Benders knobs (str(float) values, only present
+        # when authored); absence falls back to the schema defaults via
+        # :meth:`benders_config_for`.
         self.decomposition: dict = (
             decomposition if decomposition is not None else {}
         )
-        self.lagrangian_alpha: dict = (
-            lagrangian_alpha if lagrangian_alpha is not None else {}
+        self.benders_max_iter: dict = (
+            benders_max_iter if benders_max_iter is not None else {}
         )
-        self.lagrangian_max_iter: dict = (
-            lagrangian_max_iter if lagrangian_max_iter is not None else {}
-        )
-        self.lagrangian_tolerance: dict = (
-            lagrangian_tolerance if lagrangian_tolerance is not None else {}
+        self.benders_tolerance: dict = (
+            benders_tolerance if benders_tolerance is not None else {}
         )
 
         # Computed fields — populated by load_from_db after construction.
@@ -491,22 +487,19 @@ class SolveConfig:
             db=db, cl="solve", par="user_bound_scale", mode=DictMode.DICT
         )
 
-        # v60 per-solve decomposition scheme + Lagrangian knobs.  Only
+        # v60/v62 per-solve decomposition scheme + Benders knobs.  Only
         # solves that explicitly author the parameter appear in each
         # dict; absent solves fall back to the schema defaults
-        # (decomposition "none"; alpha 0.1 / max_iter 80 / tol 1.0) at
-        # access time via ``decomposition_for`` / ``lagrangian_config_for``.
+        # (decomposition "none"; max_iter 50 / tol 1e-3) at access time
+        # via ``decomposition_for`` / ``benders_config_for``.
         decomposition: dict = params_to_dict(
             db=db, cl="solve", par="decomposition", mode=DictMode.DICT
         )
-        lagrangian_alpha: dict = params_to_dict(
-            db=db, cl="solve", par="lagrangian_alpha", mode=DictMode.DICT
+        benders_max_iter: dict = params_to_dict(
+            db=db, cl="solve", par="benders_max_iter", mode=DictMode.DICT
         )
-        lagrangian_max_iter: dict = params_to_dict(
-            db=db, cl="solve", par="lagrangian_max_iter", mode=DictMode.DICT
-        )
-        lagrangian_tolerance: dict = params_to_dict(
-            db=db, cl="solve", par="lagrangian_tolerance", mode=DictMode.DICT
+        benders_tolerance: dict = params_to_dict(
+            db=db, cl="solve", par="benders_tolerance", mode=DictMode.DICT
         )
 
         # rolling_times: assemble per-solve [jump, horizon, duration].
@@ -612,9 +605,8 @@ class SolveConfig:
             user_bound_scale=user_bound_scale,
             solver_configs=solver_configs,
             decomposition=decomposition,
-            lagrangian_alpha=lagrangian_alpha,
-            lagrangian_max_iter=lagrangian_max_iter,
-            lagrangian_tolerance=lagrangian_tolerance,
+            benders_max_iter=benders_max_iter,
+            benders_tolerance=benders_tolerance,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
@@ -808,9 +800,8 @@ class SolveConfig:
                 self.invest_periods,
                 self.fix_storage_periods,
                 self.decomposition,
-                self.lagrangian_alpha,
-                self.lagrangian_max_iter,
-                self.lagrangian_tolerance,
+                self.benders_max_iter,
+                self.benders_tolerance,
             ]
             for dup_map in dup_map_list:
                 if old_solve in dup_map.keys():
@@ -824,15 +815,15 @@ class SolveConfig:
                     self.model_solve[model] = solves
 
     # ------------------------------------------------------------------
-    # v60 per-solve decomposition accessors
+    # v60/v62 per-solve decomposition accessors
     # ------------------------------------------------------------------
 
     def decomposition_for(self, solve_name: str) -> str:
         """Resolve the decomposition scheme for *solve_name*.
 
-        Returns ``"lagrangian"`` only when the solve explicitly authors
-        ``solve.decomposition = lagrangian``; everything else (unset,
-        the schema default ``"none"``, blank, or any unrecognised value)
+        Returns ``"benders"`` only when the solve explicitly authors
+        ``solve.decomposition = benders``; everything else (unset, the
+        schema default ``"none"``, blank, or any unrecognised value)
         resolves to ``"none"`` (monolithic).  Recognised values are
         normalised to lower-case so authoring case does not matter.
         """
@@ -840,23 +831,21 @@ class SolveConfig:
         if raw is None:
             return "none"
         value = str(raw).strip().lower()
-        return "lagrangian" if value == "lagrangian" else "none"
+        return "benders" if value == "benders" else "none"
 
-    def lagrangian_config_for(self, solve_name: str) -> tuple[float, int, float]:
-        """Resolve ``(alpha, max_iter, tol)`` for *solve_name*.
+    def benders_config_for(self, solve_name: str) -> tuple[int, float]:
+        """Resolve ``(max_iter, tol)`` for *solve_name*.
 
-        Falls back to the schema defaults (0.1 / 80 / 1.0) for any knob
-        the solve does not author.  ``params_to_dict`` stores scalar
-        floats as ``str(float)``, so values are coerced through ``float``
-        here; ``max_iter`` is additionally rounded to ``int``.
+        Falls back to the schema defaults (50 / 1e-3) for any knob the
+        solve does not author.  ``params_to_dict`` stores scalar floats
+        as ``str(float)``, so values are coerced through ``float`` here;
+        ``max_iter`` is additionally rounded to ``int``.
         """
-        alpha_raw = self.lagrangian_alpha.get(solve_name)
-        max_iter_raw = self.lagrangian_max_iter.get(solve_name)
-        tol_raw = self.lagrangian_tolerance.get(solve_name)
-        alpha = float(alpha_raw) if alpha_raw is not None else 0.1
-        max_iter = int(float(max_iter_raw)) if max_iter_raw is not None else 80
-        tol = float(tol_raw) if tol_raw is not None else 1.0
-        return alpha, max_iter, tol
+        max_iter_raw = self.benders_max_iter.get(solve_name)
+        tol_raw = self.benders_tolerance.get(solve_name)
+        max_iter = int(float(max_iter_raw)) if max_iter_raw is not None else 50
+        tol = float(tol_raw) if tol_raw is not None else 1e-3
+        return max_iter, tol
 
     def periods_to_tuples(
         self,

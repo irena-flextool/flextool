@@ -1,9 +1,8 @@
 """CLI subprocess smoke tests covering the default run path and the
-Lagrangian decomposition entry point.
+Benders decomposition entry point.
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -14,9 +13,6 @@ import spinedb_api as api
 
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
-LH2_FIXTURE_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "lh2_three_region.json"
-LH2_GOLDEN_OBJ = FLEXTOOL_ROOT / "tests" / "engine_polars" / "data" / \
-    "work_lh2_three_region" / "golden_obj.json"
 
 
 # ---------------------------------------------------------------------------
@@ -265,95 +261,63 @@ def test_backfill_group_indicator_sets_requires_provider(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# decomposition=lagrangian — DB-driven, per-solve routing (v60)
+# decomposition=benders — DB-driven, per-solve routing (v60/v62)
 # ---------------------------------------------------------------------------
+
+
+TI_FIXTURE_JSON = (
+    FLEXTOOL_ROOT / "tests" / "fixtures" / "lh2_three_region_trade_invest.json"
+)
 
 
 @pytest.fixture
 def lh2_three_region_db(tmp_path):
-    """Materialise the committed LH2 three-region JSON fixture into a
-    fresh SQLite and return ``(db_url, scenario_name)``.
+    """Materialise the LH2 trade-invest JSON fixture into a fresh SQLite,
+    migrate it to the current schema, and return ``(db_url, scenario)``.
 
-    The native ``solve_lagrangian`` coordinator and its DB schema pieces
-    (``group.decomposition_method`` + the v60 ``solve.decomposition``)
-    are exercised here; the JSON fixture pins three groups
-    (``region_A/B/C``) at ``lagrangian_region`` plus the cross-region
-    pipes ``pipe_AB`` and ``pipe_BC``.
+    The native ``solve_benders`` coordinator and its DB schema pieces
+    (``group.decomposition_method`` + the v60/v62 ``solve.decomposition``)
+    are exercised here; the fixture pins three groups (``region_A/B/C``)
+    at ``benders_regional`` plus the invest-eligible cross-region trade
+    pipes ``pipe_AB`` / ``pipe_BC`` (Benders requires investable trade
+    connections — the no-invest base LH2 scenario is not Benders-solvable).
     """
-    if not LH2_FIXTURE_JSON.exists():
-        pytest.skip(f"LH2 JSON fixture not present: {LH2_FIXTURE_JSON}")
+    if not TI_FIXTURE_JSON.exists():
+        pytest.skip(f"trade-invest JSON fixture not present: {TI_FIXTURE_JSON}")
     tests_dir = FLEXTOOL_ROOT / "tests"
     if str(tests_dir) not in sys.path:
         sys.path.insert(0, str(tests_dir))
     from db_utils import json_to_db  # noqa: E402
-    db_path = tmp_path / "lh2_three_region.sqlite"
-    db_url = json_to_db(LH2_FIXTURE_JSON, db_path)
-    return db_url, "lh2_three_region"
-
-
-def _set_solve_decomposition(
-    db_url: str,
-    *,
-    solve: str = "lh2_week",
-    alternative: str = "lh2_three_region",
-    alpha: float = 10.0,
-    max_iter: float = 100.0,
-    tol: float = 0.5,
-) -> None:
-    """Author ``solve.decomposition = lagrangian`` plus the per-solve
-    Lagrangian knobs on *solve* under *alternative* in the DB.
-
-    Mirrors what the PLEXOS-to-FlexTool writer emits — the run path then
-    reads the scheme per solve with no CLI flag involved.  Tuning matches
-    the algorithm-level parity test in ``test_lagrangian.py`` (the
-    subgradient oscillates around a ~0.1 % gap on LH2, so we drive it the
-    same way).
-    """
-    with api.DatabaseMapping(db_url) as db:
-        for name, value in (
-            ("decomposition", "lagrangian"),
-            ("lagrangian_alpha", alpha),
-            ("lagrangian_max_iter", max_iter),
-            ("lagrangian_tolerance", tol),
-        ):
-            db_value, db_type = api.to_database(value)
-            db.add_update_item(
-                "parameter_value",
-                entity_class_name="solve",
-                entity_byname=(solve,),
-                parameter_definition_name=name,
-                alternative_name=alternative,
-                value=db_value,
-                type=db_type,
-            )
-        db.commit_session("test: set solve.decomposition = lagrangian")
+    from flextool.update_flextool.db_migration import migrate_database
+    db_path = tmp_path / "lh2_trade_invest.sqlite"
+    db_url = json_to_db(TI_FIXTURE_JSON, db_path)
+    migrate_database(db_url)
+    return db_url, "lh2_three_region_trade_invest"
 
 
 @pytest.mark.solver
-def test_decomposition_lagrangian_db_driven(
+def test_decomposition_benders_db_driven(
     lh2_three_region_db, tmp_path, capsys,
 ) -> None:
-    """Setting ``solve.decomposition = lagrangian`` in the DB routes that
-    solve through the native coordinator
-    (``engine_polars._lagrangian.solve_lagrangian``) from inside the
+    """The fixture authors ``solve.decomposition = benders`` (migrated
+    from the legacy ``lagrangian`` value), so the ``lh2_trade_invest``
+    solve routes through the native coordinator
+    (``engine_polars._benders.solve_benders``) from inside the
     orchestrator — no CLI flag.
 
-    Acceptance bar (carried over from the retired CLI smoke):
+    Acceptance bar:
 
-    1. ``run_chain_from_db`` returns without error and the LH2 solve's
-       :class:`OrchestrationStep` carries the Lagrangian objective in
-       ``obj`` and a converged/non-converged flag in ``optimal`` (the
-       dual subgradient on LH2 oscillates around a ~0.1 % gap, so either
-       value of ``optimal`` is acceptable here).
-    2. That objective is within 2 % of the LH2 monolithic optimum pinned
-       in ``golden_obj.json`` — i.e. the decomposition actually solved
-       the right model, selected purely from the database value.
-    3. The run emits live per-iteration progress lines plus a final
-       dual/primal-gap summary to stdout (the observability the
-       orchestrator adds for Lagrangian solves).
+    1. ``run_chain_from_db`` returns without error and the solve's
+       :class:`OrchestrationStep` carries the Benders objective in ``obj``,
+       a convergence flag in ``optimal``, and a ``SnapshotSolution`` invest
+       carrier (TIER 1).
+    2. The step is flagged ``is_benders`` (so cmd_run_flextool can SKIP
+       write_outputs for a standalone Benders solve).
+    3. The run emits live per-iteration LB/UB progress lines plus a final
+       valid-lower-bound summary to stdout (the observability the
+       orchestrator adds for Benders solves).
     """
     db_url, scenario = lh2_three_region_db
-    _set_solve_decomposition(db_url)
     work_folder = tmp_path / "work"
     work_folder.mkdir()
 
@@ -364,67 +328,50 @@ def test_decomposition_lagrangian_db_driven(
     )
     assert steps, "run_chain_from_db produced no orchestration steps"
 
-    # Exactly one solve in this scenario (``lh2_week``); it must have been
-    # routed through the Lagrangian driver, so its step carries the
-    # decomposition objective and the convergence flag.  TIER 1: the step
-    # now carries a :class:`SnapshotSolution` invest-carrier (not a
-    # monolithic Solution).  LH2 declares NO investment, so its
-    # ``invest_solution_vars`` is empty → the SnapshotSolution has empty
-    # ``_vars`` and NO handoff is built (nothing to hand forward).
+    # Single solve in this scenario (``lh2_trade_invest``); it must have
+    # been routed through the Benders driver, so its step carries the
+    # decomposition objective and the convergence flag plus a
+    # :class:`SnapshotSolution` invest carrier.
     from flextool.engine_polars._orchestration import SnapshotSolution
 
     step = next(reversed(list(steps.values())))
     assert step.obj is not None, (
-        "Lagrangian solve step has no objective — routing did not fire"
+        "Benders solve step has no objective — routing did not fire"
     )
     assert step.optimal in (True, False), (
         f"expected a bool convergence flag, got {step.optimal!r}"
     )
     assert isinstance(step.solution, SnapshotSolution), (
-        "Lagrangian step should carry a SnapshotSolution invest carrier, "
+        "Benders step should carry a SnapshotSolution invest carrier, "
         f"got {type(step.solution).__name__}"
     )
-    assert step.solution._vars == {}, (
-        "LH2 has no investment, so the invest carrier must be empty, "
-        f"got keys {list(step.solution._vars)}"
-    )
-    assert step.handoff is None, (
-        "LH2 has no investment to hand forward, so no handoff is built"
-    )
-    # The step must be flagged Lagrangian so cmd_run_flextool can emit the
+    # The step must be flagged Benders so cmd_run_flextool can emit the
     # clear "no standalone outputs yet" notice and SKIP write_outputs.
-    assert step.is_lagrangian is True, (
-        "Lagrangian region-driven step must carry is_lagrangian=True"
-    )
-
-    golden = json.loads(LH2_GOLDEN_OBJ.read_text())["obj"]
-    rel_gap = abs(step.obj - golden) / abs(golden)
-    assert rel_gap <= 0.02, (
-        f"Lagrangian total_objective={step.obj:.6e} vs monolithic "
-        f"golden={golden:.6e} → {rel_gap * 100:.3f}% gap exceeds 2%."
+    assert step.is_benders is True, (
+        "Benders region-driven step must carry is_benders=True"
     )
 
     # Observability: a start banner, at least one live per-iteration line,
-    # and the final dual/primal-gap summary reach stdout.
+    # and the final valid-lower-bound summary reach stdout.
     out = capsys.readouterr().out
-    assert "[lagrangian" in out, (
-        f"no Lagrangian progress lines in stdout:\n{out}"
+    assert "[benders" in out, (
+        f"no Benders progress lines in stdout:\n{out}"
     )
     assert "start:" in out and "regions" in out, (
-        f"Lagrangian start banner missing:\n{out}"
+        f"Benders start banner missing:\n{out}"
     )
-    assert "iter" in out and "dual_obj=" in out, (
+    assert "iter" in out and "LB=" in out, (
         f"live per-iteration progress lines missing:\n{out}"
     )
-    assert "optimality gap" in out, (
-        f"final dual/primal-gap summary missing:\n{out}"
+    assert "lower bound (valid)" in out, (
+        f"final valid-lower-bound summary missing:\n{out}"
     )
 
 
-def test_orchestration_step_is_lagrangian_defaults_false() -> None:
+def test_orchestration_step_is_benders_defaults_false() -> None:
     """A normally-constructed :class:`OrchestrationStep` (the monolithic /
-    dispatch path) must default ``is_lagrangian`` to ``False`` so the
-    cmd_run_flextool guard only skips write_outputs for the Lagrangian
+    dispatch path) must default ``is_benders`` to ``False`` so the
+    cmd_run_flextool guard only skips write_outputs for the Benders
     region-driven case.
     """
     from flextool.engine_polars._orchestration import OrchestrationStep
@@ -434,21 +381,21 @@ def test_orchestration_step_is_lagrangian_defaults_false() -> None:
         solution=None,
         handoff=None,
     )
-    assert step.is_lagrangian is False
+    assert step.is_benders is False
 
 
-def test_cmd_run_flextool_lagrangian_guard_skips_write_outputs(
+def test_cmd_run_flextool_benders_guard_skips_write_outputs(
     monkeypatch, caplog,
 ) -> None:
-    """The cmd_run_flextool guard reads ``last_step.is_lagrangian`` and,
-    when True, emits the clear standalone-Lagrangian notice and SKIPS
+    """The cmd_run_flextool guard reads ``last_step.is_benders`` and,
+    when True, emits the clear standalone-Benders notice and SKIPS
     write_outputs.  Drive the exact guard expression + message branch in
     isolation (a full subprocess run is heavy and unnecessary).
     """
     import logging
 
     class _FakeStep:
-        is_lagrangian = True
+        is_benders = True
         solve_name = "lh2_invest"
 
     last_step = _FakeStep()
@@ -464,10 +411,10 @@ def test_cmd_run_flextool_lagrangian_guard_skips_write_outputs(
     ) or "scenario"
     with caplog.at_level(logging.INFO):
         if last_step is not None and getattr(
-            last_step, "is_lagrangian", False
+            last_step, "is_benders", False
         ):
             logging.info(
-                "Final solve '%s' ran under decomposition=lagrangian and "
+                "Final solve '%s' ran under decomposition=benders and "
                 "does not yet produce processed outputs on its own.",
                 wo_solve_name,
             )
@@ -475,25 +422,25 @@ def test_cmd_run_flextool_lagrangian_guard_skips_write_outputs(
             _fake_write_outputs()
 
     assert called["write_outputs"] is False, (
-        "write_outputs must be SKIPPED when last_step.is_lagrangian is True"
+        "write_outputs must be SKIPPED when last_step.is_benders is True"
     )
     assert any(
-        "decomposition=lagrangian" in r.getMessage() for r in caplog.records
-    ), "the clear standalone-Lagrangian notice was not emitted"
+        "decomposition=benders" in r.getMessage() for r in caplog.records
+    ), "the clear standalone-Benders notice was not emitted"
 
-    # And the non-Lagrangian path still calls write_outputs.
+    # And the non-Benders path still calls write_outputs.
     class _NormalStep:
-        is_lagrangian = False
+        is_benders = False
         solve_name = "dispatch"
 
     normal = _NormalStep()
     called["write_outputs"] = False
-    if normal is not None and getattr(normal, "is_lagrangian", False):
+    if normal is not None and getattr(normal, "is_benders", False):
         pass
     else:
         _fake_write_outputs()
     assert called["write_outputs"] is True, (
-        "non-Lagrangian last step must still call write_outputs"
+        "non-Benders last step must still call write_outputs"
     )
 
 
@@ -570,83 +517,3 @@ def test_cli_highs_threads_two(work_base_db_with_scenario, tmp_path) -> None:
         f"output_parquet/<scenario>/ missing or empty under "
         f"--highs-threads 2: {output_parquet}"
     )
-
-
-# ---------------------------------------------------------------------------
-# E. --lagrangian-workers — CLI flag surfaces as the
-#    FLEXTOOL_LAGRANGIAN_WORKERS env var (machine-local runtime override).
-#
-# Drives the real ``main()`` arg-parse + env-surfacing code against the
-# ``work_base`` DB fixture, but short-circuits the heavy solve by
-# stubbing ``_run_solve`` to capture the env state and raise SystemExit
-# (which propagates past main()'s ``except Exception``).
-# ---------------------------------------------------------------------------
-
-
-class _CapturedEnv(SystemExit):
-    """SystemExit subclass carrying the captured env snapshot."""
-    def __init__(self, env_value):
-        super().__init__(0)
-        self.lagrangian_workers_env = env_value
-
-
-def _drive_main_capture_env(monkeypatch, tmp_path, sqlite, scenario, extra_args):
-    """Run cmd_run_flextool.main() with the given extra CLI args, stubbing
-    the solve so we can read os.environ after the env-surfacing block.
-    Returns the captured FLEXTOOL_LAGRANGIAN_WORKERS value (or None)."""
-    import flextool.cli.cmd_run_flextool as cmd
-
-    # Isolate os.environ: ensure no inherited value leaks into the assert.
-    monkeypatch.delenv("FLEXTOOL_LAGRANGIAN_WORKERS", raising=False)
-
-    def _stub_run_solve(args, scenario_name, work_folder, timing_recorder):
-        raise _CapturedEnv(os.environ.get("FLEXTOOL_LAGRANGIAN_WORKERS"))
-
-    monkeypatch.setattr(cmd, "_run_solve", _stub_run_solve)
-
-    work_folder = tmp_path / "work"
-    work_folder.mkdir()
-    argv = [
-        "cmd_run_flextool",
-        f"sqlite:///{sqlite}",
-        "--scenario-name", scenario,
-        "--work-folder", str(work_folder),
-        "--output-location", str(tmp_path),
-        *extra_args,
-    ]
-    monkeypatch.setattr(sys, "argv", argv)
-    with pytest.raises(_CapturedEnv) as excinfo:
-        cmd.main()
-    return excinfo.value.lagrangian_workers_env
-
-
-def test_cli_lagrangian_workers_sets_env(
-    work_base_db_with_scenario, tmp_path, monkeypatch,
-) -> None:
-    sqlite, scenario = work_base_db_with_scenario
-    captured = _drive_main_capture_env(
-        monkeypatch, tmp_path, sqlite, scenario,
-        ["--lagrangian-workers", "4"],
-    )
-    assert captured == "4"
-
-
-def test_cli_lagrangian_workers_zero_unset(
-    work_base_db_with_scenario, tmp_path, monkeypatch,
-) -> None:
-    sqlite, scenario = work_base_db_with_scenario
-    captured = _drive_main_capture_env(
-        monkeypatch, tmp_path, sqlite, scenario,
-        ["--lagrangian-workers", "0"],
-    )
-    assert captured is None
-
-
-def test_cli_lagrangian_workers_absent_unset(
-    work_base_db_with_scenario, tmp_path, monkeypatch,
-) -> None:
-    sqlite, scenario = work_base_db_with_scenario
-    captured = _drive_main_capture_env(
-        monkeypatch, tmp_path, sqlite, scenario, [],
-    )
-    assert captured is None

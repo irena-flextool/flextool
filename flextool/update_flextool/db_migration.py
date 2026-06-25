@@ -1720,6 +1720,8 @@ def migrate_database(
                 db.commit_session(
                     "Added timeset.representative_period_weights parameter"
                 )
+            elif next_version == 62:
+                _migrate_v62_benders_rename(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3026,6 +3028,204 @@ def _migrate_v60_solve_decomposition(db) -> None:
             "v60: added solve.decomposition (decomposition_schemes value "
             "list) + solve.lagrangian_alpha/max_iter/tolerance for "
             "per-solve Lagrangian decomposition."
+        )
+    except SpineDBAPIError:
+        pass
+
+
+def _migrate_v62_benders_rename(db) -> None:
+    """Rename the decomposition method from Lagrangian to Benders.
+
+    Rationale
+    ---------
+    The dual-subgradient Lagrangian region decomposition (v51/v60) is
+    replaced wholesale by a Benders decomposition (master trade layer +
+    per-region recourse subproblems with cut append / warm restart).
+    Benders is a different algorithm — a master/subproblem scheme that
+    produces a VALID lower bound and converges on the optimality gap —
+    so the subgradient-specific knobs (``lagrangian_alpha`` step size,
+    the subgradient ``max_iter`` / tail-averaged-imbalance ``tolerance``)
+    have no meaning under Benders and are dropped; Benders gets its own
+    iteration cap + relative-gap tolerance.
+
+    Schema changes (entity_class ``solve`` / ``group``):
+
+    * Rename the ``decomposition_schemes`` value-list member
+      ``lagrangian`` → ``benders`` (and every authored
+      ``solve.decomposition = lagrangian`` value).
+    * Rename the ``decomposition_methods`` value-list member
+      ``lagrangian_region`` → ``benders_regional`` (and every authored
+      ``group.decomposition_method = lagrangian_region`` value).
+    * DROP ``solve.lagrangian_alpha`` / ``lagrangian_max_iter`` /
+      ``lagrangian_tolerance`` (subgradient knobs).
+    * ADD ``solve.benders_max_iter`` (default 50) +
+      ``solve.benders_tolerance`` (default 1e-3) — Benders has no
+      subgradient step, so there is no ``alpha`` analogue.
+    * Update the ``decomposition`` / ``decomposition_method``
+      descriptions to describe Benders.
+
+    Idempotency
+    -----------
+    list_value members are renamed in place by id (the
+    parameter_definition FK and dependent parameter_value rows are
+    unaffected); the parameter_value rewrite is keyed by parsed value so
+    a re-run over an already-migrated DB finds no ``lagrangian`` /
+    ``lagrangian_region`` rows to rewrite.  ``add_update_item`` /
+    ``remove_parameters_manual`` converge to the same definitions
+    whether or not the legacy ones are present.
+    """
+
+    # --- 1. Rename solve.decomposition value 'lagrangian' -> 'benders' ----
+    old_val_bytes, _ = to_database("lagrangian")
+    new_val_bytes, new_val_type = to_database("benders")
+    # Rewrite authored parameter_values first (while the old list member
+    # still exists), then swap the list_value member.
+    for pv in list(db.find_parameter_values(
+        entity_class_name="solve",
+        parameter_definition_name="decomposition",
+    )):
+        if pv["parsed_value"] == "lagrangian":
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name="solve",
+                entity_byname=pv["entity_byname"],
+                parameter_definition_name="decomposition",
+                alternative_name=pv["alternative_name"],
+                value=new_val_bytes,
+                type=new_val_type,
+            )
+    for lv in db.find_list_values(
+        parameter_value_list_name="decomposition_schemes",
+    ):
+        if lv["value"] == old_val_bytes:
+            db.update_item(
+                "list_value", id=lv["id"],
+                value=new_val_bytes, type=new_val_type,
+            )
+            break
+
+    # --- 2. Rename group method 'lagrangian_region' -> 'benders_regional' -
+    old_meth_bytes, _ = to_database("lagrangian_region")
+    new_meth_bytes, new_meth_type = to_database("benders_regional")
+    for pv in list(db.find_parameter_values(
+        entity_class_name="group",
+        parameter_definition_name="decomposition_method",
+    )):
+        if pv["parsed_value"] == "lagrangian_region":
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name="group",
+                entity_byname=pv["entity_byname"],
+                parameter_definition_name="decomposition_method",
+                alternative_name=pv["alternative_name"],
+                value=new_meth_bytes,
+                type=new_meth_type,
+            )
+    for lv in db.find_list_values(
+        parameter_value_list_name="decomposition_methods",
+    ):
+        if lv["value"] == old_meth_bytes:
+            db.update_item(
+                "list_value", id=lv["id"],
+                value=new_meth_bytes, type=new_meth_type,
+            )
+            break
+
+    try:
+        _commit_step(db,
+            "v62: renamed decomposition value lagrangian -> benders and "
+            "group method lagrangian_region -> benders_regional."
+        )
+    except SpineDBAPIError:
+        pass
+
+    # --- 3. Drop the three subgradient knobs ------------------------------
+    # remove_parameters_manual commits internally (cascades the values).
+    remove_parameters_manual(db, [
+        ["solve", "lagrangian_alpha"],
+        ["solve", "lagrangian_max_iter"],
+        ["solve", "lagrangian_tolerance"],
+    ])
+
+    has_solve_advanced = (
+        db.item(db.mapped_table("parameter_group"), name="solve_advanced")
+        is not None
+    )
+
+    # --- 4. Add the Benders knobs -----------------------------------------
+    default_val, default_type = to_database(50.0)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="benders_max_iter",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Benders decomposition: maximum number of outer (master/"
+            "subproblem) iterations. Only used when decomposition = "
+            "'benders'. Default 50."
+        ),
+    )
+    default_val, default_type = to_database(1e-3)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="benders_tolerance",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Benders decomposition: relative optimality-gap tolerance "
+            "(best_UB - LB)/|best_UB| for convergence of the outer loop. "
+            "Only used when decomposition = 'benders'. Default 0.001."
+        ),
+    )
+    if has_solve_advanced:
+        for _pname in ("benders_max_iter", "benders_tolerance"):
+            db.add_update_item(
+                "parameter_definition",
+                entity_class_name="solve",
+                name=_pname,
+                parameter_group_name="solve_advanced",
+            )
+
+    # --- 5. Refresh the routing-parameter descriptions for Benders --------
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="decomposition",
+        description=(
+            "Decomposition scheme for this solve. 'none' (default) "
+            "solves monolithically. 'benders' runs the solve through the "
+            "Benders region-decomposition driver (a master trade layer "
+            "coordinating per-region recourse subproblems via appended "
+            "optimality cuts, producing a valid lower bound) over the "
+            "groups whose group.decomposition_method is 'benders_regional' "
+            "(requires at least two such region groups). The choice is "
+            "per solve, so an investment solve can decompose while a later "
+            "dispatch solve in the same chain stays monolithic."
+        ),
+    )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="decomposition_method",
+        description=(
+            "Decomposition strategy to apply to this group. "
+            "Currently supported: 'none' (no decomposition — default), "
+            "'benders_regional' (group is solved as an independent region "
+            "in the Benders master/subproblem decomposition, with "
+            "shared-commodity trade coupling handled by the master)."
+        ),
+    )
+
+    try:
+        _commit_step(db,
+            "v62: dropped solve.lagrangian_alpha/max_iter/tolerance; added "
+            "solve.benders_max_iter (50) + benders_tolerance (1e-3); "
+            "refreshed decomposition/decomposition_method descriptions for "
+            "Benders."
         )
     except SpineDBAPIError:
         pass

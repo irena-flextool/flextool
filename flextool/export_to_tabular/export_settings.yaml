@@ -83,8 +83,8 @@ split_params:
                "solver_arguments", "new_stepduration",
                "solver_mip_gap",
                "timeline_hole_multiplier",
-               "decomposition", "lagrangian_tolerance",
-               "lagrangian_alpha", "lagrangian_max_iter"]
+               "decomposition", "benders_tolerance",
+               "benders_max_iter"]
     solve_period:
       params: ["period_timeset", "years_represented", "realized_periods",
                "invest_periods", "realized_invest_periods", "fix_storage_periods"]

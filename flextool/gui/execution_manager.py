@@ -1259,13 +1259,6 @@ class ExecutionManager:
         _stl = getattr(settings, "solver_time_limit", 0)
         if isinstance(_stl, int) and _stl > 0:
             cmd.extend(["--solver-time-limit", str(_stl)])
-        # Parallel workers for Lagrangian region decomposition.  0 means
-        # "auto" (the orchestrator resolves cpu_count-1); only positive
-        # values emit the flag so a small machine isn't burdened by a
-        # large worker count baked into the model on a many-core box.
-        _lw = getattr(settings, "lagrangian_workers", 0)
-        if isinstance(_lw, int) and not isinstance(_lw, bool) and _lw > 0:
-            cmd.extend(["--lagrangian-workers", str(_lw)])
         # MIP gap is forwarded only when explicitly enabled (the dialog's
         # "Set relative MIP gap here" checkbox).  When enabled, 0 is a
         # valid value and IS sent; when disabled, no flag is emitted and

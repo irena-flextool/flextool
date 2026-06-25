@@ -1,3 +1,65 @@
+## Release 4.0.0b12 (25.6.2026) — Benders regional decomposition (v62) replaces Lagrangian; greenfield cross-region trade; GUI fixes
+
+Requires a **database migration to v62** (`FLEXTOOL_DB_VERSION` 61 → 62) and
+raises the solver-backend floor to **`polar-high>=3.0.0`** (3.0.0 removes the old
+`LagrangianProblem` driver and ships the Benders cut-append / warm-restart /
+parallel primitives this release uses); other floors unchanged (`polars>=1.40`,
+`highspy<=1.14.0`). This is a **breaking schema change**: the spatial regional
+decomposition is changed from the dual-subgradient (Lagrangian) scheme
+(introduced in the unreleased b11) to a **Benders decomposition**. Existing
+databases are auto-migrated by the v62 step; a model that does not opt into
+decomposition solves exactly as before (the monolithic LP and all outputs are
+unchanged).
+
+### Benders regional decomposition (schema v62)
+
+- **New algorithm.** A coordinating **master** problem holds the inter-regional
+  trade flows and the trade-connection investment plus one recourse variable per
+  region; each region is an operational **subproblem** solved with the master's
+  trade fixed, returning duals that become optimality **cuts** the master
+  accumulates. The master objective is a **valid lower bound** and the loop
+  converges on the optimality gap. This fixes the earlier subgradient scheme,
+  which collapsed greenfield cross-region trade to autarky with an *invalid*
+  bound above the true optimum.
+- **Schema renames.** The `decomposition_schemes` value-list member
+  `lagrangian` → `benders`, and the `decomposition_methods` member
+  `lagrangian_region` → `benders_regional` (every authored
+  `solve.decomposition` / `group.decomposition_method` value is rewritten in
+  place by the migration).
+- **Knobs.** The `solve.lagrangian_alpha` / `lagrangian_max_iter` /
+  `lagrangian_tolerance` parameters are **dropped** (Benders has no subgradient
+  step) and replaced by `solve.benders_max_iter` (default `50`) and
+  `solve.benders_tolerance` (default `1e-3`, the relative optimality-gap
+  threshold).
+- **Invest → dispatch handoff.** A Benders invest solve assembles the
+  owner-selected invested trade + in-region capacity into a whole-system handoff
+  so a downstream rolling or monolithic dispatch solve consumes the realised
+  capacity end-to-end.
+- **RP-weight consistency.** The master is built by `build_flextool` over a
+  network-only reduced model — the same emit the monolith uses — so the master
+  trade-flow cost and the region recourse costs carry the same
+  representative-period / timestep weights and sum to the monolithic objective.
+- **Warm master + parallel regions.** The master is grown one optimality cut per
+  iteration and warm-re-solved off the retained basis
+  (`WarmProblem.solve(retry_on_unknown=True)`) instead of rebuilt, removing the
+  super-linear cold-presolve cost at scale; the region recourse subproblems solve
+  in parallel via `polar_high.parallel`. The worker count is the machine-local
+  `FLEXTOOL_BENDERS_WORKERS` env var (`0`/auto = cpu − 1; no DB/schema knob, so a
+  many-core author's count never travels to a small box) — superseding the b11
+  `--lagrangian-workers` flag / GUI knob, which never shipped.
+- **Implementation.** Driver in `flextool/engine_polars/_benders.py` (master +
+  multi-cut loop, `solve_benders` / `BendersResult`); region slicing in
+  `flextool/engine_polars/_region_filter.py`. Uses the polar-high primitives
+  `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)`
+  and the `polar_high.parallel` helpers (**floor raised to `polar-high>=3.0.0`**).
+  Benders is HiGHS-only (the master is a persistent `WarmProblem`).
+
+### Desktop GUI
+
+- Fix a crash when the migration dialog's `grab_set` fires from a callback on a
+  not-yet-viewable window.
+- Smaller default code/log font, with the code font size now exposed in settings.
+
 ## Release 4.0.0b11 (24.6.2026) — per-solve Lagrangian decomposition (v60/v61); thread-parallel subsolves; xlsx round-trip + output fixes; per-monitor GUI placement
 
 Requires a **database migration to v61** (`FLEXTOOL_DB_VERSION` 59 → 61, in two

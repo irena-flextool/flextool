@@ -37,7 +37,7 @@ General:
 - [How to create aggregate outputs](#how-to-create-aggregate-outputs)
 - [How to enable/disable outputs](#how-to-enabledisable-outputs)
 - [How to make the Flextool run faster](#how-to-make-the-flextool-run-faster)
-- [How to use Lagrangian decomposition (spatial)](#how-to-use-lagrangian-decomposition-spatial)
+- [How to use Benders decomposition (spatial)](#how-to-use-benders-decomposition-spatial)
 - [How to use timeset weights (non-RP weighted timesteps)](#how-to-use-timeset-weights-non-rp-weighted-timesteps)
 - [How to read the LP scaling diagnostic report](#how-to-read-the-lp-scaling-diagnostic-report)
 - [How to export a partial Excel template (parameter-group picker)](#how-to-export-a-partial-excel-template-parameter-group-picker)
@@ -1223,23 +1223,22 @@ Model changes (potentially large changes to the results --> need to understand h
 [How to use Nested Rolling window solves (investments and long-term storage)](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
 - Aggregate data. Technological: Combine power plants that are using the same technology. Spatial: Combine nodes. Temporal: Use longer timesteps.
 
-## How to use Lagrangian decomposition (spatial)
+## How to use Benders decomposition (spatial)
 
-Large systems that naturally split into regions (e.g. an interconnected pan-continental network where each country's internal grid is cheap but the joint solve is large) can be solved with a spatial Lagrangian decomposition. The coordinator builds one HiGHS instance per region via `LagrangianProblem`, prices the cross-region pipeline flows with a damped subgradient on λ, and returns the primal-averaged solution once the tail-averaged imbalance is below tolerance.
+Large systems that naturally split into regions (e.g. an interconnected pan-continental network where each country's internal grid is cheap but the joint solve is large) can be solved with a spatial Benders decomposition. A coordinating master holds the inter-regional trade flows and the trade-connection investment plus one recourse variable per region; each region is solved as an operational subproblem with the master's trade fixed, returning duals that become optimality cuts the master accumulates. The master objective is a valid lower bound and the loop converges on the optimality gap.
 
 Set up the regions in the database:
 
 - create one `group` per region, list its `node` members via `group__node`
-- set the group parameter `decomposition_method` to *lagrangian_region* on each region group
+- set the group parameter `decomposition_method` to *benders_regional* on each region group
 - declare at least two such region groups in the active scenario
 
 See the `group.decomposition_method` parameter in [Reference](reference.md) and the algorithm write-up in [dev/decomposition.md](dev/decomposition.md).
 
-Then turn on Lagrangian decomposition **on the solve itself** — set the
-`solve` parameter `decomposition` to *lagrangian* on the solve(s) you want
-decomposed (optionally tuning `lagrangian_alpha`, `lagrangian_max_iter`,
-`lagrangian_tolerance`; they default to `0.1` / `80` / `1.0`). Then run
-normally:
+Then turn on Benders decomposition **on the solve itself** — set the
+`solve` parameter `decomposition` to *benders* on the solve(s) you want
+decomposed (optionally tuning `benders_max_iter` and `benders_tolerance`;
+they default to `50` / `1e-3`). Then run normally:
 
 ```bash
 python -m flextool.cli.cmd_run_flextool \
@@ -1248,16 +1247,17 @@ python -m flextool.cli.cmd_run_flextool \
 ```
 
 The choice is per solve, so a single chain can mix schemes (e.g. a
-Lagrangian investment solve followed by a monolithic dispatch solve). The
-per-solve routing is in `flextool/engine_polars/_orchestration.py` and the
-coordinator in `flextool/engine_polars/_lagrangian.py`. `lagrangian_alpha`
-is the base step size (per-iteration step is `α / √k`),
-`lagrangian_max_iter` caps the outer loop, and `lagrangian_tolerance` is
-the primal-units imbalance threshold for declaring convergence. Use
-Lagrangian when the per-region solve is cheap but the monolithic solve is
-expensive; if the regions are tightly coupled (i.e. cross-region flows
-dominate the dispatch) the subgradient loop may need many iterations and a
-monolithic solve is usually better.
+Benders investment solve followed by a monolithic dispatch solve — the
+Benders invest solve's realised trade + in-region capacity threads into
+the downstream dispatch). The per-solve routing is in
+`flextool/engine_polars/_orchestration.py` and the coordinator (master +
+cut loop) in `flextool/engine_polars/_benders.py`. `benders_max_iter`
+caps the cut loop and `benders_tolerance` is the relative
+optimality-gap threshold for declaring convergence. Use Benders when the
+per-region solve is cheap but the monolithic solve is expensive; if the
+regions are tightly coupled (i.e. cross-region flows dominate the
+dispatch) the cut loop may need many iterations and a monolithic solve is
+usually better.
 
 ## How to use timeset weights (non-RP weighted timesteps)
 

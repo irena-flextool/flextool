@@ -288,8 +288,8 @@ class TestValidateGroupMembership:
                 ],
                 resolution_groups={},
                 decomposition_groups={
-                    "r1": "lagrangian_region",
-                    "r2": "lagrangian_region",
+                    "r1": "benders_regional",
+                    "r2": "benders_regional",
                 },
             )
         assert "n1" in str(excinfo.value)
@@ -313,7 +313,7 @@ class TestValidateGroupMembership:
             group_connection=[],
             group_node=[("region_a", "u1")],
             resolution_groups={"hourly": 1.0},
-            decomposition_groups={"region_a": "lagrangian_region"},
+            decomposition_groups={"region_a": "benders_regional"},
         )  # no raise
 
     # ---- Agent 1.7: reserve-block compatibility ---------------------------

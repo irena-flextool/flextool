@@ -42,9 +42,9 @@ class TestDiscovery:
     def test_load_decomposition_method(self, lh2_workdir) -> None:
         meth = load_decomposition_method(lh2_workdir)
         assert meth == {
-            "region_A": "lagrangian_region",
-            "region_B": "lagrangian_region",
-            "region_C": "lagrangian_region",
+            "region_A": "benders_regional",
+            "region_B": "benders_regional",
+            "region_C": "benders_regional",
         }
 
     def test_discover_regions(self, lh2_workdir) -> None:

@@ -14,8 +14,9 @@ pipeline in the order a bug or extension actually traverses it.
 
 !!! note "Two repositories"
     `polar_high` is the standalone LP eDSL — sets, parameters,
-    variables, lazy constraint composition, warm-LP machinery,
-    Lagrangian driver. `engine_polars` is the FlexTool-side glue:
+    variables, lazy constraint composition, warm-LP machinery, and
+    the Benders cut / recourse primitives. `engine_polars` is the
+    FlexTool-side glue:
     it knows the on-disk layout of the input/ + solve_data/ CSVs
     and the shape of FlexTool's optimization model. `polar_high`
     knows nothing of FlexTool.
@@ -30,7 +31,7 @@ flowchart TD
   emit["_emit_*.py + _derived_*.py<br/>(~150 sets &amp; params, Provider-first)"] --> provider["FlexDataProvider<br/>(in-memory transport)"]
   provider --> flex["FlexData<br/>(polars frames + Params)"]
   flex --> build["build_flextool(m, d)<br/>feature-gated LP build"]
-  build --> prob["polar_high.Problem<br/>(or WarmProblem /<br/>LagrangianProblem)"]
+  build --> prob["polar_high.Problem<br/>(or WarmProblem)"]
   prob --> highs["HiGHS via highspy"]
   highs --> sol["Solution"]
   sol --> capture["capture_post_solve<br/>→ SolveHandoff"]
@@ -48,10 +49,12 @@ Side-paths off this trunk:
   active-time lists with branch-suffixed periods before `overlay`
   sees them. Branched periods get LP variables; only the realized
   branch contributes to handoff carriers.
-- **Spatial Lagrangian**: `_lagrangian.solve_lagrangian` slices a
+- **Spatial Benders**: `_benders.solve_benders` slices a
   single `FlexData` into per-region copies via `_region_filter`,
-  builds one sub-problem per region, and couples cross-region
-  half-flow pairs with subgradient-updated multipliers.
+  builds a coordinating master (trade flows + trade invest + one
+  recourse per region) plus one operational sub-problem per region,
+  and accumulates the sub-problems' duals as optimality cuts until
+  the optimality gap closes.
 
 ## FlexData — the central data carrier
 
@@ -498,21 +501,28 @@ machinery:
 The `OrchestrationStep.warm_used` boolean reports whether each
 sub-solve actually warm-updated or cold-rebuilt.
 
-### Spatial Lagrangian — `polar_high.LagrangianProblem`
+### Spatial Benders — master + multi-cut loop
 
-`_lagrangian.solve_lagrangian` slices `FlexData` by region using
-`_region_filter.split_by_region`, which returns a list of
-`RegionSplit` (one per region) plus the `HalfFlow` metadata that
-describes cross-region arcs. Each region gets its own
-`polar_high.Problem`; cross-region half-flow pairs are wrapped in
-`CouplingSpec`s and fed to `LagrangianProblem`, which runs the
-dual-subgradient iteration.
+`_benders.solve_benders` slices `FlexData` by region using
+`_region_filter.split`, which returns a list of `RegionSplit` (one per
+region) plus the `HalfFlow` / `Coupling` metadata that describes
+cross-region arcs. A coordinating **master** is built by `build_flextool`
+over a network-only reduced `FlexData`
+(`_region_filter.master_network_data`) and wrapped in a
+`polar_high.WarmProblem`; it holds the trade flows `f`, the
+trade-connection invest `C`, and one recourse var `η_r` per region
+(`WarmProblem.add_recourse_col`). Each iteration pins every region's
+forward trade columns to the master's chosen `f̄`, solves the region as
+an operational sub-problem, reads the pinned columns' reduced costs, and
+appends one optimality cut per region (`WarmProblem.add_cut_row`). The
+loop converges on the optimality gap; the master objective is a valid
+lower bound.
 
 The FlexTool wrapper handles the FlexTool-side concerns: regional
-unitsize, regional profiles, regional handoff state. The actual
-multiplier update lives in `polar_high.lagrangian`. See
-[decomposition.md](decomposition.md) for the user-facing story and the
-parameters that gate this path.
+unitsize, regional profiles, regional handoff state, and the RP-weight
+consistency that follows from building the master with the same emit as
+the monolith. See [decomposition.md](decomposition.md) for the
+user-facing story and the parameters that gate this path.
 
 ## Solve-to-solve handoff
 
@@ -813,7 +823,7 @@ small. Repeating the table from
 | Add a new feature block | `model.py` requirement tuples | Declare your `MY_FEATURE = (...)` tuple. Inspect a switch field via `has_my_feature = d.<switch> is not None and d.<switch>.height > 0`. Wrap the variable / constraint / objective additions in `if has_my_feature:`. Add a `_check(d, MY_FEATURE, "my_feature")` call alongside the existing ones. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |
-| Add a new decomposition mode | `_lagrangian.py` for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
+| Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
 | Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `input.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `capture_post_solve`. |
 | Trace a warm-LP divergence | `_warm._STRUCTURAL_FIELDS`, `_warm._WARM_PARAMS` | A divergence usually means a structural field changed (add it to `_STRUCTURAL_FIELDS`) or a Param outside the warm set was mutated (add it to `_WARM_PARAMS` and write the `_apply_warm_updates` clause). |
 | Add a new variable / dual to the parquet output | `flextool/process_outputs/read_highs_solution.VARIABLE_SPECS` | Append one `VariableSpec`. No engine-side change required. |

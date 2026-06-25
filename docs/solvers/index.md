@@ -155,18 +155,18 @@ parameter is set. **Picking any non-HiGHS solver disables warm-start for that
 solve.** In a rolling-horizon scenario this means each sub-solve is built
 cold; expect a slower per-iteration build, but the result is fully correct.
 
-## Lagrangian-decomposition caveat
+## Benders-decomposition caveat
 
-`decomposition_method = lagrangian_region` is currently **HiGHS-only**.
-Setting a non-HiGHS `solver` on a Lagrangian-decomposed scenario raises a
+`decomposition_method = benders_regional` is currently **HiGHS-only**.
+Setting a non-HiGHS `solver` on a Benders-decomposed scenario raises a
 `FlexToolUserError` at startup. The error names both the offending solve and
 the two remedies (either set `solver = highs` for that solve, or remove the
-Lagrangian decomposition from the group).
+Benders decomposition from the group).
 
-This is an upstream constraint in polar-high: its `LagrangianProblem.solve`
-does not yet accept a `solver_name`. Lifting the restriction is tracked
-separately; in the meantime FlexTool fails loudly rather than silently
-running on HiGHS.
+This is an upstream constraint in polar-high: the Benders master is a
+persistent `WarmProblem`, and warm-LP machinery is HiGHS-only by design.
+Lifting the restriction is tracked separately; in the meantime FlexTool
+fails loudly rather than silently running on HiGHS.
 
 ## Verifying which solvers are installed
 

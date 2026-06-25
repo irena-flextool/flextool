@@ -221,6 +221,46 @@ def lh2_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="session")
+def lh2_trade_invest_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Benders Phase-0 greenfield-trade LH2 fixture DB.
+
+    Built from ``tests/fixtures/lh2_three_region_trade_invest.json`` — a
+    2-day / 48h sibling of the LH2 fixture whose pipes are greenfield
+    investable, exercising the greenfield-trade decomposition bug.
+    Defensive migration as in :func:`stochastic_db_url`.
+    """
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = tmp_path_factory.mktemp("db_lh2ti") / "lh2_trade_invest.sqlite"
+    url = json_to_db(
+        FIXTURES_DIR / "lh2_three_region_trade_invest.json", db_path
+    )
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
+def lh2_rp_invest_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Benders Phase-3b representative-period invest LH2 fixture DB.
+
+    Built from ``tests/fixtures/lh2_three_region_rp_invest.json`` — a
+    2-day / 48h sibling of the LH2 fixture with two representative
+    periods carrying NON-UNIT ``representative_period_weights`` (the
+    RP-weight regression vehicle).  Three scenarios share the base
+    topology (base / swapped / uniform weights).  Defensive migration as
+    in :func:`stochastic_db_url`.
+    """
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = tmp_path_factory.mktemp("db_lh2rp") / "lh2_rp_invest.sqlite"
+    url = json_to_db(
+        FIXTURES_DIR / "lh2_three_region_rp_invest.json", db_path
+    )
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
 def h2_trade_parity_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     """``h2_trade_parity`` fixture DB.
 
@@ -297,6 +337,8 @@ _DB_FIXTURE_NAMES: dict[str, str] = {
     "main": "test_db_url",
     "stochastic": "stochastic_db_url",
     "lh2": "lh2_db_url",
+    "lh2_trade_invest": "lh2_trade_invest_db_url",
+    "lh2_rp_invest": "lh2_rp_invest_db_url",
     "h2_trade_parity": "h2_trade_parity_db_url",
     "stochastics_pbt_inflow": "stochastics_pbt_inflow_db_url",
     "branch2_parent_period": "branch2_parent_period_db_url",
@@ -334,6 +376,8 @@ def scenario_workdir(
     test_db_url,
     stochastic_db_url,
     lh2_db_url,
+    lh2_trade_invest_db_url,
+    lh2_rp_invest_db_url,
     h2_trade_parity_db_url,
     stochastics_pbt_inflow_db_url,
     branch2_parent_period_db_url,
@@ -384,6 +428,8 @@ def scenario_workdir(
         "main": test_db_url,
         "stochastic": stochastic_db_url,
         "lh2": lh2_db_url,
+        "lh2_trade_invest": lh2_trade_invest_db_url,
+        "lh2_rp_invest": lh2_rp_invest_db_url,
         "h2_trade_parity": h2_trade_parity_db_url,
         "stochastics_pbt_inflow": stochastics_pbt_inflow_db_url,
         "branch2_parent_period": branch2_parent_period_db_url,

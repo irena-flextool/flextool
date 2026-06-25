@@ -1,8 +1,8 @@
 """
-region_filter.py — Regional filter for Lagrangian decomposition (Agent 3.1).
+region_filter.py — Regional filter for Benders decomposition (Agent 3.1).
 
 Given a populated ``input/`` directory and a region group name (a group with
-``decomposition_method = 'lagrangian_region'``), produce a self-contained
+``decomposition_method = 'benders_regional'``), produce a self-contained
 ``input_region_<group>/`` directory for that region's standalone solve.
 
 Cross-region processes (pipelines, transmission) are removed from the
@@ -17,7 +17,8 @@ filtered directory and replaced by **import/export half-flows**:
 
 The virtual nodes are declared with ``node_type = commodity`` — they
 participate in the node balance but have no state, and their flow is the
-Lagrangian coupling variable to be λ-priced by the coordinator (Agent 3.2).
+trade coupling variable that the Benders master pins each iteration
+(Agent 3.2).
 
 Entry point: ``build_region_directory``.
 
@@ -178,7 +179,7 @@ def discover_region_membership(
 
     * in-region nodes/units/connections from ``group__*`` CSVs
     * other regions' membership (every other group whose
-      ``decomposition_method`` is ``lagrangian_region``)
+      ``decomposition_method`` is ``benders_regional``)
 
     ``group__decomposition_method.csv`` is not a direct output of
     ``write_input``; instead the group→decomposition_method pairing lives
@@ -232,7 +233,7 @@ def discover_region_membership(
 
 def discover_decomposition_regions_from_db(input_db_url: str) -> list[str]:
     """Return the list of group names whose ``decomposition_method`` is
-    ``lagrangian_region``.
+    ``benders_regional``.
 
     Used by the CLI to present the list of available regions and by
     ``build_region_directory`` to know other regions' membership.
@@ -247,7 +248,7 @@ def discover_decomposition_regions_from_db(input_db_url: str) -> list[str]:
         ):
             if pv["type"] is None:
                 continue
-            if str(pv["parsed_value"]) == "lagrangian_region":
+            if str(pv["parsed_value"]) == "benders_regional":
                 names.append(pv["entity_byname"][0])
     return names
 
@@ -579,7 +580,8 @@ def _virtual_rows(
     ``transfer_method = no_losses_no_variable_cost`` (method_2way_1var_off)
     analogous to the group-level DC-flow overrides used elsewhere in
     FlexTool.  This is just enough to make them appear in the LP with a
-    flow variable; Agent 3.2's coordinator then prices them via λ.
+    flow variable; Agent 3.2's coordinator (the Benders master) then pins
+    them per iteration.
     """
     rows: list[list[str]] = []
     if not half_flows:
@@ -632,7 +634,7 @@ def _virtual_rows(
     elif filename == "p_process.csv":
         # The half-flow's ``existing`` capacity gates ``p_flow_max`` at
         # zero otherwise (v_flow columns appear in the MPS but with
-        # ``lb = ub = 0``, so Lagrangian λ updates have no effect).
+        # ``lb = ub = 0``, so the master's trade pin would have no effect).
         # ``efficiency = 1.0`` because the half-flow is a bookkeeping
         # artefact, not a physical pipe — the underlying pipe
         # efficiency stays embedded in the importing region's import
@@ -730,7 +732,7 @@ def build_region_directory(
     # Populate per-pipe capacity override so _virtual_rows can inject a
     # matching ``existing`` line into the filtered ``p_process.csv``.
     # Without this, p_flow_max gates v_flow[hf_*, ...] at zero and
-    # Lagrangian cost updates have no effect on the solve.
+    # the master's trade pin has no effect on the solve.
     _virtual_capacity_override.clear()
     try:
         _, p_process_rows = _read_csv_rows(input_dir / "p_process.csv")

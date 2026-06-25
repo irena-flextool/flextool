@@ -1303,7 +1303,7 @@
         "str"
       ],
       "decomposition_methods",
-      "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solved as an independent region with shared-commodity coupling).",
+      "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'benders_regional' (group is solved as an independent region in the Benders master/subproblem decomposition, with shared-commodity trade coupling handled by the master).",
       "solve_advanced"
     ],
     [
@@ -1567,7 +1567,7 @@
       "model",
       "version",
       [
-        "61",
+        "62",
         "float"
       ],
       null,
@@ -2057,6 +2057,28 @@
     ],
     [
       "solve",
+      "benders_max_iter",
+      [
+        "50.0",
+        "float"
+      ],
+      null,
+      "Benders decomposition: maximum number of outer (master/subproblem) iterations. Only used when decomposition = 'benders'. Default 50.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "benders_tolerance",
+      [
+        "0.001",
+        "float"
+      ],
+      null,
+      "Benders decomposition: relative optimality-gap tolerance (best_UB - LB)/|best_UB| for convergence of the outer loop. Only used when decomposition = 'benders'. Default 0.001.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "contains_solves",
       null,
       null,
@@ -2071,7 +2093,7 @@
         "str"
       ],
       "decomposition_schemes",
-      "Decomposition scheme for this solve. 'none' (default) solves monolithically. 'lagrangian' runs the solve through the Lagrangian region-decomposition driver over the groups whose group.decomposition_method is 'lagrangian_region' (requires at least two such region groups). The choice is per solve, so an investment solve can decompose while a later dispatch solve in the same chain stays monolithic.",
+      "Decomposition scheme for this solve. 'none' (default) solves monolithically. 'benders' runs the solve through the Benders region-decomposition driver (a master trade layer coordinating per-region recourse subproblems via appended optimality cuts, producing a valid lower bound) over the groups whose group.decomposition_method is 'benders_regional' (requires at least two such region groups). The choice is per solve, so an investment solve can decompose while a later dispatch solve in the same chain stays monolithic.",
       "solve_advanced"
     ],
     [
@@ -2089,39 +2111,6 @@
       null,
       "Array of periods where investments are allowed.",
       "solve_basics"
-    ],
-    [
-      "solve",
-      "lagrangian_alpha",
-      [
-        "0.1",
-        "float"
-      ],
-      null,
-      "Lagrangian decomposition: subgradient base step size for the multiplier update. Only used when decomposition = 'lagrangian'. Default 0.1.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "lagrangian_max_iter",
-      [
-        "80.0",
-        "float"
-      ],
-      null,
-      "Lagrangian decomposition: maximum number of outer (subgradient) iterations. Only used when decomposition = 'lagrangian'. Default 80.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "lagrangian_tolerance",
-      [
-        "1.0",
-        "float"
-      ],
-      null,
-      "Lagrangian decomposition: tail-averaged coupling-imbalance threshold for convergence of the outer loop. Only used when decomposition = 'lagrangian'. Default 1.0.",
-      "solve_advanced"
     ],
     [
       "solve",
@@ -3997,6 +3986,18 @@
     ],
     [
       "solve",
+      "benders_max_iter",
+      "float",
+      0
+    ],
+    [
+      "solve",
+      "benders_tolerance",
+      "float",
+      0
+    ],
+    [
+      "solve",
       "contains_solves",
       "array",
       1
@@ -4036,24 +4037,6 @@
       "invest_periods",
       "map",
       2
-    ],
-    [
-      "solve",
-      "lagrangian_alpha",
-      "float",
-      0
-    ],
-    [
-      "solve",
-      "lagrangian_max_iter",
-      "float",
-      0
-    ],
-    [
-      "solve",
-      "lagrangian_tolerance",
-      "float",
-      0
     ],
     [
       "solve",
@@ -4677,7 +4660,7 @@
     [
       "decomposition_methods",
       [
-        "\"lagrangian_region\"",
+        "\"benders_regional\"",
         "str"
       ]
     ],
@@ -4698,7 +4681,7 @@
     [
       "decomposition_schemes",
       [
-        "\"lagrangian\"",
+        "\"benders\"",
         "str"
       ]
     ],

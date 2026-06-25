@@ -54,6 +54,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the a...
     ('base_MVA', 'group'): QuantityType.APPARENT_POWER,
     # [MVA] Base power for the per-unit system used in DC power flow. Default 100. susceptance = base_MVA / reactance_pu.
+    ('benders_max_iter', 'solve'): QuantityType.DIMENSIONLESS,
+    # Benders max outer (master/subproblem) iterations. Solver-algorithm knob, never an LP coefficient.
+    ('benders_tolerance', 'solve'): QuantityType.DIMENSIONLESS,
+    # Benders relative optimality-gap convergence threshold. Solver-algorithm knob, never an LP coefficient.
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin', 'group'): QuantityType.POWER,
@@ -150,9 +154,9 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('cumulative_min_capacity', 'unit'): QuantityType.POWER,
     # [MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
     ('decomposition', 'solve'): QuantityType.DIMENSIONLESS,
-    # Decomposition scheme for this solve: 'none' (monolithic, default) or 'lagrangian' (region decomposition). Solver-config choice, never an LP coefficient.
+    # Decomposition scheme for this solve: 'none' (monolithic, default) or 'benders' (region decomposition). Solver-config choice, never an LP coefficient.
     ('decomposition_method', 'group'): QuantityType.DIMENSIONLESS,
-    # Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'lagrangian_region' (group is solve...
+    # Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'benders_regional' (group is solve...
     ('delay', 'connection'): QuantityType.DURATION,
     # [hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicati...
     ('delay', 'unit'): QuantityType.DURATION,
@@ -283,12 +287,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Flag whether the reserve participation is enabled; disabled rows dropped.
     ('is_enabled', 'reserve__upDown__unit__node'): QuantityType.DIMENSIONLESS,
     # Flag whether the reserve participation is enabled; disabled rows dropped.
-    ('lagrangian_alpha', 'solve'): QuantityType.DIMENSIONLESS,
-    # Lagrangian subgradient base step size. Solver-algorithm knob, never an LP coefficient.
-    ('lagrangian_max_iter', 'solve'): QuantityType.DIMENSIONLESS,
-    # Lagrangian max outer iterations. Solver-algorithm knob, never an LP coefficient.
-    ('lagrangian_tolerance', 'solve'): QuantityType.DIMENSIONLESS,
-    # Lagrangian coupling-imbalance convergence threshold. Solver-algorithm knob, never an LP coefficient.
     ('large_failure_ratio', 'reserve__upDown__connection__node'): QuantityType.FRACTION,
     # [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of th...
     ('large_failure_ratio', 'reserve__upDown__unit__node'): QuantityType.FRACTION,

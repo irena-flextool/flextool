@@ -392,7 +392,6 @@ class MainWindow(tk.Tk):
         # the side menu, above the Debug radio group).
         self.solver_log_level_var = tk.StringVar(value="normal")
         self.solver_time_limit_var = tk.IntVar(value=0)
-        self.lagrangian_workers_var = tk.IntVar(value=0)
         self.solver_mip_gap_var = tk.DoubleVar(value=0.001)
         self.solver_mip_gap_set_var = tk.BooleanVar(value=True)
         self.matrix_file_format_var = tk.StringVar(value="mps")
@@ -401,7 +400,6 @@ class MainWindow(tk.Tk):
 
         for _v in (
             self.solver_log_level_var, self.solver_time_limit_var,
-            self.lagrangian_workers_var,
             self.solver_mip_gap_var, self.solver_mip_gap_set_var,
             self.matrix_file_format_var, self.scaling_var,
             self.presolve_var,
@@ -5245,7 +5243,6 @@ class MainWindow(tk.Tk):
             # Solver options.
             self.solver_log_level_var.set(s.solver_log_level)
             self.solver_time_limit_var.set(s.solver_time_limit)
-            self.lagrangian_workers_var.set(s.lagrangian_workers)
             self.solver_mip_gap_var.set(s.solver_mip_gap)
             self.solver_mip_gap_set_var.set(s.solver_mip_gap_set)
             self.matrix_file_format_var.set(s.matrix_file_format)
@@ -5279,10 +5276,6 @@ class MainWindow(tk.Tk):
             self.project_settings.solver_log_level = _sll
         try:
             self.project_settings.solver_time_limit = max(0, int(self.solver_time_limit_var.get()))
-        except (TypeError, ValueError, tk.TclError):
-            pass
-        try:
-            self.project_settings.lagrangian_workers = max(0, int(self.lagrangian_workers_var.get()))
         except (TypeError, ValueError, tk.TclError):
             pass
         try:
@@ -5327,7 +5320,6 @@ class MainWindow(tk.Tk):
         # discards cleanly.
         d_sll = tk.StringVar(value=self.solver_log_level_var.get())
         d_stl = tk.IntVar(value=self.solver_time_limit_var.get())
-        d_lw = tk.IntVar(value=self.lagrangian_workers_var.get())
         d_mg = tk.DoubleVar(value=self.solver_mip_gap_var.get())
         d_mg_set = tk.BooleanVar(value=self.solver_mip_gap_set_var.get())
         d_mff = tk.StringVar(value=self.matrix_file_format_var.get())
@@ -5391,31 +5383,6 @@ class MainWindow(tk.Tk):
             "(the CLI's unset default). Routed through the\n"
             "effective-options resolver as a CLI override\n"
             "(highest precedence)."
-        ))
-        row += 1
-
-        # Parallel workers (Lagrangian).  Machine-local: a Spinbox over
-        # [0, cpu_count] because the useful range is tiny and bounded.
-        # 0 = auto (the orchestrator resolves cpu_count-1), so a model
-        # authored on a many-core box doesn't carry a large worker count
-        # to a small machine.  Emitted as --lagrangian-workers only when
-        # positive.
-        cpu = os.cpu_count() or 2
-        ttk.Label(body, text="Parallel workers (Lagrangian):").grid(
-            row=row, column=0, sticky="w", padx=(0, 8), pady=4,
-        )
-        lw_spin = ttk.Spinbox(
-            body, from_=0, to=cpu, textvariable=d_lw, width=6,
-        )
-        lw_spin.grid(row=row, column=1, sticky="w", pady=4)
-        _attach_tip(lw_spin, (
-            "Parallel worker threads for Lagrangian region\n"
-            "decomposition (--lagrangian-workers N).\n"
-            "  • 0 = auto — cpu_count-1, scales per machine.\n"
-            f"  • N = use N workers (this machine has {cpu} CPUs;\n"
-            "        capped at cpu_count, and polar-high further\n"
-            "        caps at the number of regions).\n"
-            "Only affects Lagrangian-decomposition solves."
         ))
         row += 1
 
@@ -5576,10 +5543,6 @@ class MainWindow(tk.Tk):
                 self.solver_log_level_var.set(_v_sll)
             try:
                 self.solver_time_limit_var.set(max(0, int(d_stl.get())))
-            except (TypeError, ValueError, tk.TclError):
-                pass
-            try:
-                self.lagrangian_workers_var.set(max(0, int(d_lw.get())))
             except (TypeError, ValueError, tk.TclError):
                 pass
             self.solver_mip_gap_set_var.set(bool(d_mg_set.get()))

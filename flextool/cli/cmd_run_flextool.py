@@ -5,8 +5,8 @@ import os
 # freed-but-not-returned-to-OS pages, so worst-case fragmentation
 # scales with core count.  Capping to 4 is a precautionary middle
 # ground: ~64× reduction vs the default, while still allowing up to
-# four concurrent allocators (HiGHS parallel presolve, Lagrangian
-# scenario runs) without serialising every malloc through one heap.
+# four concurrent allocators (HiGHS parallel presolve, Benders
+# subproblem runs) without serialising every malloc through one heap.
 # No measured benefit on the FlexTool cascade workload as of this
 # writing — FlexTool's hot path is essentially single-threaded
 # (polars pinned to 1 thread, --highs-threads typically 1).  Kept
@@ -434,37 +434,28 @@ def main():
                              'Overrides the FLEXTOOL_PRECISION_DIGITS env var.')
     parser.add_argument('--region', metavar='GROUP_NAME', default=None,
                         help='Produce a filtered per-region input directory '
-                             '``input_region_<GROUP_NAME>/`` for Lagrangian '
+                             '``input_region_<GROUP_NAME>/`` for Benders '
                              'decomposition (Agent 3.1).  The group must have '
-                             '``decomposition_method=lagrangian_region`` in '
+                             '``decomposition_method=benders_regional`` in '
                              'the DB.  Cross-region processes are replaced '
                              'with import/export half-flows; the coupling '
                              'variables are listed in '
                              '``solve_data/region_coupling.csv``.  When this '
                              'flag is set, no solve runs — this is the '
                              'filter-only entry point used by the coordinator.')
-    # Decomposition is DB-driven and per-solve (v60): set
-    # ``solve.decomposition = lagrangian`` plus the per-solve
-    # ``solve.lagrangian_alpha`` / ``lagrangian_max_iter`` /
-    # ``lagrangian_tolerance`` knobs in the database.  The old global
-    # ``--decomposition`` / ``--lagrangian-*`` CLI flags were removed —
-    # the orchestrator reads the scheme per solve so a single chain can
-    # mix monolithic and Lagrangian solves.  See docs/dev/decomposition.md.
+    # Decomposition is DB-driven and per-solve (v62): set
+    # ``solve.decomposition = benders`` plus the per-solve
+    # ``solve.benders_max_iter`` / ``benders_tolerance`` knobs in the
+    # database.  The old global ``--decomposition`` / ``--lagrangian-*``
+    # CLI flags were removed — the orchestrator reads the scheme per solve
+    # so a single chain can mix monolithic and Benders solves.  See
+    # docs/dev/decomposition.md.
     parser.add_argument('--highs-threads', type=int, default=1,
                         help='Number of HiGHS solver threads.  Default 1. '
                              'Values > 1 enable HiGHS parallel mode and trade '
                              'determinism for wall-clock speedup; goldens are '
                              'not guaranteed to reproduce across runs in that '
                              'mode.')
-    parser.add_argument('--lagrangian-workers', type=int, default=None,
-                        metavar='N',
-                        help='Parallel worker threads for Lagrangian '
-                             'per-region subsolves. Unset/0 = auto '
-                             '(cpu_count-1). A positive N requests N workers, '
-                             'capped at cpu_count when resolved (polar-high '
-                             'further caps at the number of regions). '
-                             'Machine-local runtime override, analogous to '
-                             '--solver-time-limit; NOT a DB/schema param.')
     parser.add_argument(
         '--scaling',
         choices=['off', 'solver_only', 'basic', 'full'],
@@ -604,8 +595,6 @@ def main():
         # name is a historical artefact from the diagnostic shim that
         # predated the resolver but the semantics are identical.
         os.environ['FLEXTOOL_HIGHS_TIME_LIMIT'] = str(args.solver_time_limit)
-    if args.lagrangian_workers is not None and args.lagrangian_workers > 0:
-        os.environ['FLEXTOOL_LAGRANGIAN_WORKERS'] = str(args.lagrangian_workers)
     if args.solver_mip_gap is not None:
         os.environ['FLEXTOOL_HIGHS_MIP_GAP'] = str(args.solver_mip_gap)
     if args.matrix_file_format is not None:
@@ -732,7 +721,7 @@ def main():
 
     # --- Regional filter mode (Agent 3.1) --------------------------------
     # ``--region GROUP`` produces ``input_region_<GROUP>/`` and exits
-    # without invoking the solver.  The Lagrangian coordinator (Agent
+    # without invoking the solver.  The Benders coordinator (Agent
     # 3.2) then orchestrates multiple region solves itself.
     if args.region:
         from flextool.decomposition.region_decomposition import (
@@ -759,9 +748,9 @@ def main():
         )
         sys.exit(0)
 
-    # Lagrangian decomposition is now DB-driven and per-solve: the
+    # Benders decomposition is now DB-driven and per-solve: the
     # orchestrator reads ``solve.decomposition`` for each solve and runs
-    # the Lagrangian region driver for the ones set to ``lagrangian``
+    # the Benders region driver for the ones set to ``benders``
     # (see engine_polars._orchestration / docs/dev/decomposition.md).  The
     # old global ``--decomposition lagrangian`` standalone path was
     # removed; nothing special happens here — the normal run path below
@@ -830,24 +819,24 @@ def main():
         wo_solve_name = (
             last_step.solve_name if last_step else None
         ) or scenario_name
-        # A standalone Lagrangian-only final solve carries only a
+        # A standalone Benders-only final solve carries only a
         # SnapshotSolution invest carrier (not a full Solution), so it
         # cannot yet drive processed outputs (TIER 2, planned follow-up).
         # Emit a clear, targeted notice and SKIP write_outputs entirely
         # rather than letting it fail and degrade to a generic warning.
         # The invest→dispatch chain ends on a real dispatch Solution
-        # (is_lagrangian=False) and is unaffected.
+        # (is_benders=False) and is unaffected.
         if last_step is not None and getattr(
-            last_step, "is_lagrangian", False
+            last_step, "is_benders", False
         ):
             logging.info(
-                "Final solve '%s' ran under decomposition=lagrangian and "
+                "Final solve '%s' ran under decomposition=benders and "
                 "does not yet produce processed outputs on its own. The "
                 "decomposition objective/region summary was logged above. "
                 "To get output files, add a downstream dispatch solve to "
                 "the chain (model.solves = [%s, <dispatch solve>]); the "
                 "dispatch solve produces the outputs. (Standalone "
-                "Lagrangian output processing is a planned follow-up.)",
+                "Benders output processing is a planned follow-up.)",
                 wo_solve_name,
                 wo_solve_name,
             )

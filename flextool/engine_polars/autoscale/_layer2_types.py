@@ -171,6 +171,23 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ``v_flow_back`` mirrors v_flow on the reverse direction.
     # flextool/engine_polars/_dc_power_flow.py:296
     "v_flow_back": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+
+    # ── Benders (Option C) hand-built master families.  The hand master
+    # (``master="hand"``) is built AUTOSCALE-OFF, so Layer 2 never scales
+    # these columns; registering them keeps the registry-coverage invariant
+    # complete (CLAUDE.md #1).
+    # ``f`` = cross-region trade flow, in the SAME unitsize-normalised units
+    # as the region half-flow ``v_flow`` ⇒ same family as v_flow.
+    # flextool/engine_polars/_benders.py:483
+    "f": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    # ``C`` = invested trade-connection capacity (normalised) ⇒ same family
+    # as v_invest_p.
+    # flextool/engine_polars/_benders.py:473
+    "C": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    # ``eta`` = per-region recourse cost (enters the objective at coef 1.0
+    # carrying the region's currency cost) ⇒ CURRENCY column.
+    # flextool/engine_polars/_benders.py:489
+    "eta": VarFamily(QuantityType.CURRENCY),
 }
 
 
@@ -454,6 +471,19 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "profile_flow_upper_limit": CstrFamily(QuantityType.POWER),
     "profile_flow_lower_limit": CstrFamily(QuantityType.POWER),
     "profile_flow_fixed": CstrFamily(QuantityType.POWER),
+
+    # ── Benders (Option C) hand-built master constraints.  The hand master
+    # is built AUTOSCALE-OFF, so Layer 2 never scales these rows; registering
+    # them keeps the registry-coverage invariant complete (CLAUDE.md #1).
+    # ``maxInvest``: C[conn] <= max_units — capacity bound, mirrors the
+    # entity-scope ``maxInvest_var_bound`` (POWER RHS).
+    # flextool/engine_polars/_benders.py:520
+    "maxInvest": CstrFamily(QuantityType.POWER),
+    # ``trade_capacity``: C[conn] - f[arc,d,t] >= 0 — the RHS is identically
+    # zero (no per-row scaling), so CstrFamily(None) like the other zero-RHS
+    # structural rows; the column scalers on C / f still propagate.
+    # flextool/engine_polars/_benders.py:504
+    "trade_capacity": CstrFamily(None),
 }
 
 

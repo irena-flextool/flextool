@@ -85,21 +85,6 @@ def test_mip_gap_zero_is_emitted_when_enabled(tmp_path: Path):
     assert cmd[i + 1] == repr(0.0)
 
 
-def test_lagrangian_workers_emitted_when_positive(tmp_path: Path):
-    # Positive worker count → --lagrangian-workers N, mirroring the
-    # sibling --solver-time-limit knob.
-    cmd = _cmd_for(tmp_path, lagrangian_workers=4)
-    i = cmd.index("--lagrangian-workers")
-    assert cmd[i + 1] == "4"
-
-
-def test_lagrangian_workers_omitted_when_zero(tmp_path: Path):
-    # 0 means "auto" — the GUI emits NO flag, letting the orchestrator
-    # auto-resolve (cpu_count-1).
-    cmd = _cmd_for(tmp_path, lagrangian_workers=0)
-    assert "--lagrangian-workers" not in cmd
-
-
 # --- settings_io round-trip -------------------------------------------
 
 
@@ -128,58 +113,18 @@ def test_settings_io_rejects_negative_mip_gap(tmp_path: Path):
     assert loaded.solver_mip_gap == default_gap
 
 
-def test_settings_io_roundtrips_lagrangian_workers(tmp_path: Path):
-    settings = ProjectSettings(lagrangian_workers=3)
-    save_project_settings(tmp_path, settings)
-    loaded = load_project_settings(tmp_path)
-    assert loaded.lagrangian_workers == 3
-
-
-def test_settings_io_absent_lagrangian_workers_defaults_to_zero(tmp_path: Path):
-    # A settings.yaml predating the field (key absent) loads the default.
-    settings = ProjectSettings()
+def test_settings_io_tolerates_stale_lagrangian_workers_key(tmp_path: Path):
+    # The retired subgradient-workers knob may still linger in old
+    # settings.yaml files. The load path must ignore the unknown key
+    # rather than error, and round-trip cleanly otherwise.
+    settings = ProjectSettings(solver_mip_gap=0.005)
     save_project_settings(tmp_path, settings)
     yaml_path = tmp_path / next(
         p.name for p in tmp_path.iterdir() if p.suffix in (".yaml", ".yml")
     )
     text = yaml_path.read_text(encoding="utf-8")
-    # Strip the field entirely to simulate an older settings file.
-    stripped = "\n".join(
-        ln for ln in text.splitlines() if "lagrangian_workers" not in ln
-    )
-    yaml_path.write_text(stripped + "\n", encoding="utf-8")
+    # Inject a stale key as an older file would have carried it.
+    yaml_path.write_text(text + "lagrangian_workers: 4\n", encoding="utf-8")
     loaded = load_project_settings(tmp_path)
-    assert loaded.lagrangian_workers == 0
-
-
-def test_settings_io_rejects_negative_lagrangian_workers(tmp_path: Path):
-    # A hand-edited / corrupt negative value falls back to the default 0.
-    settings = ProjectSettings(lagrangian_workers=5)
-    save_project_settings(tmp_path, settings)
-    yaml_path = tmp_path / next(
-        p.name for p in tmp_path.iterdir() if p.suffix in (".yaml", ".yml")
-    )
-    text = yaml_path.read_text(encoding="utf-8")
-    yaml_path.write_text(
-        text.replace("lagrangian_workers: 5", "lagrangian_workers: -1"),
-        encoding="utf-8",
-    )
-    loaded = load_project_settings(tmp_path)
-    assert loaded.lagrangian_workers == 0
-
-
-def test_settings_io_rejects_bool_lagrangian_workers(tmp_path: Path):
-    # bool is an int subclass in Python; the guard must reject it so a
-    # stray `true` doesn't read as workers=1.
-    settings = ProjectSettings(lagrangian_workers=5)
-    save_project_settings(tmp_path, settings)
-    yaml_path = tmp_path / next(
-        p.name for p in tmp_path.iterdir() if p.suffix in (".yaml", ".yml")
-    )
-    text = yaml_path.read_text(encoding="utf-8")
-    yaml_path.write_text(
-        text.replace("lagrangian_workers: 5", "lagrangian_workers: true"),
-        encoding="utf-8",
-    )
-    loaded = load_project_settings(tmp_path)
-    assert loaded.lagrangian_workers == 0
+    assert loaded.solver_mip_gap == pytest.approx(0.005)
+    assert not hasattr(loaded, "lagrangian_workers")
