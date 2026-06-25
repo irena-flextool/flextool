@@ -54,6 +54,7 @@ master objective (a valid lower bound — the whole point vs the Lagrangian bug)
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -61,7 +62,14 @@ import highspy
 import numpy as np
 import polars as pl
 
-from polar_high import Param, Problem, Sum, WarmProblem
+from polar_high import (
+    Param,
+    Problem,
+    Sum,
+    WarmProblem,
+    resolve_worker_count,
+    solve_indexed_parallel,
+)
 
 from flextool.engine_polars import _region_filter
 from flextool.engine_polars import build_flextool as _build_flextool
@@ -117,6 +125,34 @@ _LB_VALID_SLACK = 1e-9
 # post-append re-solve).  The runtime ``LB ≤ best_UB`` sandwich guard is the
 # safety net confirming the floor never produced an invalid bound.
 _ETA_FLOOR_MULT = 1.1
+
+# Env override for the per-iteration region-solve worker count (machine-local;
+# NO schema/DB knob — avoids another migration).  ``FLEXTOOL_BENDERS_WORKERS``
+# pins the thread-pool size for the parallel region recourse pass; unset/<=0
+# leaves the ``workers`` argument (default: auto = min(n_regions, cpu-1)) in
+# charge.  ``workers=1`` (or 1 region) keeps the fully-sequential path.
+_BENDERS_WORKERS_ENV = "FLEXTOOL_BENDERS_WORKERS"
+
+
+def _resolve_benders_workers(n_regions: int, workers) -> int:
+    """Resolve the effective region-solve worker count.
+
+    Precedence: explicit ``FLEXTOOL_BENDERS_WORKERS`` env (machine-local) wins;
+    otherwise the ``workers`` argument (``None`` ⇒ auto ``min(n, cpu-1)``).
+    Clamped to ``[1, n_regions]`` by :func:`resolve_worker_count`.
+    """
+    env = os.environ.get(_BENDERS_WORKERS_ENV)
+    if env:
+        try:
+            env_n = int(env)
+        except ValueError:
+            _logger.warning(
+                "Benders: ignoring non-integer %s=%r", _BENDERS_WORKERS_ENV, env
+            )
+        else:
+            if env_n > 0:
+                workers = env_n
+    return resolve_worker_count(n_regions, workers)
 
 
 @dataclass
@@ -1007,6 +1043,7 @@ def solve_benders(
     master: str = "flextool",
     scale_the_objective: float = 1.0,
     progress_callback: Callable[[dict], None] | None = None,
+    workers: int | None = None,
 ) -> BendersResult:
     """Run the multi-cut Benders loop on the regional decomposition of
     ``data``.
@@ -1060,6 +1097,17 @@ def solve_benders(
         REAL units (÷s), matching the returned :class:`BendersResult`.
         No-op when ``None``; the loop behaviour is byte-identical when
         omitted.
+    workers
+        Worker-thread count for the per-iteration region recourse pass (the
+        N independent region subproblem solves).  ``None`` (default)
+        auto-resolves to ``min(n_regions, cpu_count - 1)``; ``<= 1`` (or a
+        single region) keeps the fully-sequential path.  The machine-local
+        env override ``FLEXTOOL_BENDERS_WORKERS`` takes precedence when set.
+        The region solves are independent (each region owns its own HiGHS
+        handle) and each solves single-threaded, so the parallel result is
+        DETERMINISTIC — bit-identical ``(cost_r, cut slopes)`` and therefore
+        identical LB/UB/iteration-count to ``workers=1`` (see the
+        determinism gate test).
 
     Returns
     -------
@@ -1078,7 +1126,7 @@ def solve_benders(
             data, regions, max_iters=max_iters, tol=tol,
             monolith_objective=monolith_objective, build_problem=build_problem,
             master=master, obj_scale=scale_the_objective,
-            progress_callback=progress_callback,
+            progress_callback=progress_callback, workers=workers,
         )
     finally:
         if _enums_token is not None:
@@ -1088,7 +1136,7 @@ def solve_benders(
 def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          build_problem, master="flextool",
                          obj_scale: float = 1.0,
-                         progress_callback=None) -> BendersResult:
+                         progress_callback=None, workers=None) -> BendersResult:
     # --- split with the cross-region half-flows UNCAPPED so the master pin is
     # feasible (Phase-2 splitter Benders mode).
     splits = _region_filter.split(
@@ -1215,6 +1263,32 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # --- f̄ state, keyed by the LIVE master f col-id.  Bootstrap f̄ = 0.
     f_bar: dict[int, float] = {int(cid): 0.0 for a in arcs for cid in a.f_col_ids}
 
+    # --- Parallel region recourse: the N region subproblems are independent
+    # (each owns its own WarmProblem / HiGHS handle, and HiGHS run() releases
+    # the GIL), so they fan out across a thread pool.  Every region's cold first
+    # build already ran SEQUENTIALLY above (the ``for w in warm: w.solve()``
+    # loop), so ``solve_indexed_parallel`` only parallelizes WARM re-solves and
+    # the per-region solve is single-threaded + deterministic — the recovered
+    # ``(cost_r, slopes)`` are bit-identical to the sequential path.  The
+    # WarmProblem list is region-index aligned with ``regions_meta`` (both
+    # iterate ``splits`` in order).
+    region_warm = [rm.wp for rm in regions_meta]
+    eff_workers = _resolve_benders_workers(len(regions_meta), workers)
+    _logger.info(
+        "Benders: region recourse pass over %d region(s) with %d worker(s)",
+        len(regions_meta), eff_workers,
+    )
+
+    def _solve_regions(f_bar_local):
+        """Pin+solve every region at ``f_bar_local`` (parallel when
+        ``eff_workers > 1``), returning a per-region-index list of
+        ``(cost_r, slopes, sol_r)`` in deterministic order."""
+        return solve_indexed_parallel(
+            region_warm,
+            lambda i: _pin_and_solve(regions_meta[i], f_bar_local),
+            workers=eff_workers,
+        )
+
     # --- BOOTSTRAP: solve regions autarkic (f̄=0) to (a) generate the first
     # cuts and (b) size the TIGHT η floor = -1.1·max_r|cost_r^autarky|.  Because
     # the regions are built at the same scale ``s``, ``cost_r`` is already in
@@ -1225,8 +1299,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # old -100·max|cost|, narrowing the floor/cut-coef dynamic range that drives
     # the warm post-append kUnknown.
     bootstrap_cuts: list[tuple[str, float, dict[int, float]]] = []
-    for rm in regions_meta:
-        cost_r, slopes, _sol_r = _pin_and_solve(rm, f_bar)
+    for rm, (cost_r, slopes, _sol_r) in zip(regions_meta, _solve_regions(f_bar)):
         bootstrap_cuts.append((rm.name, cost_r, slopes))
     cost_scale = max((abs(c) for _, c, _ in bootstrap_cuts), default=1.0)
     # Floor in scaled space; ``max(cost_scale, obj_scale)`` keeps it from
@@ -1315,8 +1388,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # the TIER-1 whole-system invest assembly when this iteration becomes
         # the incumbent.  Each entry is the region Solution's ``col_value``.
         region_col_values: list[np.ndarray] = [None] * len(regions_meta)
-        for rm in regions_meta:
-            cost_r, slopes, sol_r = _pin_and_solve(rm, f_bar)
+        for rm, (cost_r, slopes, sol_r) in zip(regions_meta, _solve_regions(f_bar)):
             region_costs[rm.name] = cost_r
             next_cuts.append((rm.name, cost_r, slopes))
             region_col_values[region_idx[rm.name]] = np.asarray(
