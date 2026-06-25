@@ -88,7 +88,7 @@ def write_input_for_region(
     if region_group not in all_regions:
         raise FlexToolConfigError(
             f"Region '{region_group}' is not declared with "
-            f"decomposition_method='lagrangian_region' in the database. "
+            f"decomposition_method='benders_regional' in the database. "
             f"Available regions: {sorted(all_regions) or '(none)'}"
         )
 

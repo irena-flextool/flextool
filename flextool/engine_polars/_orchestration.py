@@ -97,30 +97,6 @@ def _wrap_log_prose(text: str, width: int = 100, indent: str = "  ") -> str:
     )
 
 
-def _resolve_lagrangian_workers(setting: int, cpu: int) -> int:
-    """Resolve the effective parallel-worker count. setting<=0 => auto
-    (cpu-1); else min(setting, cpu); floored at 1."""
-    workers = (cpu - 1) if setting <= 0 else min(setting, cpu)
-    return max(1, workers)
-
-
-def _format_subsolve_line(entry: dict, regions: list, tag: str, max_iter: int) -> str | None:
-    """Render one discrete progress line from a polar-high subsolve
-    callback entry. Branches on entry['event'] (start|finish); uses
-    entry['phase'] only for context. Returns None for unknown events."""
-    idx = entry.get("subproblem")
-    name = regions[idx] if isinstance(idx, int) and 0 <= idx < len(regions) else idx
-    it = entry.get("iter")
-    ev = entry.get("event")
-    if ev == "start":
-        return f"{tag}     iter {it}/{max_iter} solving {name}"
-    if ev == "finish":
-        obj = entry.get("obj")
-        tail = f" obj={obj:.6g}" if isinstance(obj, (int, float)) else " (non-optimal)"
-        return f"{tag}     iter {it}/{max_iter} done {name}{tail}"
-    return None
-
-
 # Legacy ``scale_the_objective`` default — historically the
 # ``flextool_base.dat``'s ``param scale_the_objective default 1e-6`` and the
 # pre-autoscale analyser's fallback when the rough-objective heuristic
@@ -1417,10 +1393,10 @@ class OrchestrationStep:
     warm_used: bool = False
     flex_data: "FlexData | None" = None
     flex_data_provider: "object | None" = None
-    is_lagrangian: bool = False
-    """True when this step was produced by the Lagrangian region driver
-    and carries only a :class:`SnapshotSolution` invest carrier, not a
-    full :class:`Solution` (so it cannot yet drive processed outputs)."""
+    is_benders: bool = False
+    """True when this step was produced by the Benders region driver and
+    carries only a :class:`SnapshotSolution` invest carrier, not a full
+    :class:`Solution` (so it cannot yet drive processed outputs)."""
     captured_vars: "dict[str, pl.DataFrame]" = field(default_factory=dict)
     """Per-sub-solve snapshot of the decision-variable frames that
     end-of-cascade writers (``_entity_all_capacity`` and friends) need
@@ -1530,47 +1506,47 @@ def _validate_model_solve(state: RunnerState) -> list[str]:
     return solves
 
 
-def _lagrangian_consume_guard_message(
+def _benders_consume_guard_message(
     base_solve_name: str,
     prev_captured: str | None,
-    lagrangian_solve_names: "set[str]",
-    lagrangian_invest_handoff_names: "set[str]",
+    benders_solve_names: "set[str]",
+    benders_invest_handoff_names: "set[str]",
 ) -> str | None:
-    """Loud guard for the cross-scheme handoff (v60, narrowed for TIER 1).
+    """Loud guard for the cross-scheme handoff (v60/v62, narrowed for TIER 1).
 
-    A Lagrangian *investment* solve now deposits a real ``SolveHandoff``
+    A Benders *investment* solve now deposits a real ``SolveHandoff``
     (``realized_invest`` / ``realized_existing`` / ``divest_cumulative``)
     so a downstream rolling-dispatch solve can consume its invested
     capacity — that path is SUPPORTED and must NOT fire the guard.
 
     The guard now fires only when *base_solve_name* would consume a
-    Lagrangian predecessor that deposited **no usable investment
-    handoff** — i.e. the predecessor is in *lagrangian_solve_names* but
-    NOT in *lagrangian_invest_handoff_names* (its handoff carries no
+    Benders predecessor that deposited **no usable investment handoff**
+    — i.e. the predecessor is in *benders_solve_names* but NOT in
+    *benders_invest_handoff_names* (its handoff carries no
     ``realized_invest`` / ``divest_cumulative`` to hand forward, so the
     downstream solve would silently load nothing investy from it).
 
     Returns ``None`` when the situation is safe:
 
-    * no predecessor, or the predecessor was not a Lagrangian solve;
+    * no predecessor, or the predecessor was not a Benders solve;
     * the predecessor is a roll of the *same* base solve (rolls of one
-      Lagrangian solve share its base name — not a cross-scheme consume);
+      Benders solve share its base name — not a cross-scheme consume);
     * the predecessor deposited a usable invest handoff (TIER 1 path).
     """
-    if prev_captured is None or prev_captured not in lagrangian_solve_names:
+    if prev_captured is None or prev_captured not in benders_solve_names:
         return None
     if base_solve_name == re.sub(r"_roll_\d+$", "", prev_captured):
         return None
-    if prev_captured in lagrangian_invest_handoff_names:
+    if prev_captured in benders_invest_handoff_names:
         return None
     return (
         f"Solve '{base_solve_name}' follows '{prev_captured}', which ran "
-        f"under decomposition=lagrangian but produced NO invested/divested "
+        f"under decomposition=benders but produced NO invested/divested "
         f"capacity to hand forward (its handoff carries no realized_invest "
         f"/ divest_cumulative). Consuming it would silently load nothing "
-        f"from that solve. Make the downstream solve lagrangian too, order "
-        f"the chain so the Lagrangian solve is terminal, or ensure the "
-        f"Lagrangian solve actually invests."
+        f"from that solve. Make the downstream solve benders too, order "
+        f"the chain so the Benders solve is terminal, or ensure the "
+        f"Benders solve actually invests."
     )
 
 
@@ -1953,51 +1929,51 @@ def _drive_cascade(
             self._autoscale_shape_cache: (
                 "dict[tuple, _AutoscaleShapeCacheEntry]"
             ) = {}
-            # v60 per-solve decomposition — complete-solve names that ran
-            # under ``decomposition=lagrangian``.  Used by the consume-side
+            # v60/v62 per-solve decomposition — complete-solve names that
+            # ran under ``decomposition=benders``.  Used by the consume-side
             # guard in :meth:`run` to raise loudly if a downstream solve
-            # would try to consume a Lagrangian solve's (absent) handoff —
+            # would try to consume a Benders solve's (absent) handoff —
             # cross-scheme handoff is a deferred follow-up.
-            self._lagrangian_solve_names: set[str] = set()
-            # TIER 1 — complete-solve names whose Lagrangian solve
-            # deposited a USABLE investment handoff (non-empty
+            self._benders_solve_names: set[str] = set()
+            # TIER 1 — complete-solve names whose Benders solve deposited a
+            # USABLE investment handoff (non-empty
             # ``result.invest_solution_vars`` → ``realized_invest`` /
             # ``divest_cumulative`` carriers).  A downstream solve may
-            # consume these; the consume-side guard fires only for
-            # Lagrangian predecessors NOT in this set.
-            self._lagrangian_invest_handoff_names: set[str] = set()
+            # consume these; the consume-side guard fires only for Benders
+            # predecessors NOT in this set.
+            self._benders_invest_handoff_names: set[str] = set()
 
-        def _run_lagrangian_solve(
+        def _run_benders_solve(
             self,
             complete_solve_name: str,
             base_solve_name: str,
             data,
         ) -> int:
-            """Run *complete_solve_name* via the Lagrangian region driver.
+            """Run *complete_solve_name* via the Benders region driver.
 
-            Selected per solve from ``solve.decomposition = lagrangian``.
+            Selected per solve from ``solve.decomposition = benders``.
             Decomposes over the groups whose
-            ``group.decomposition_method`` is ``lagrangian_region`` (the
+            ``group.decomposition_method`` is ``benders_regional`` (the
             ``decomp_<REG>`` groups the PLEXOS-to-FlexTool writer emits),
             using the per-solve knobs resolved by
-            :meth:`SolveConfig.lagrangian_config_for`.
+            :meth:`SolveConfig.benders_config_for`.
 
-            The solve runs and reports convergence/objective, then (TIER
-            1) assembles its owner-selected whole-system invest/divest
-            decisions (``result.invest_solution_vars``) into a
-            :class:`SolveHandoff` and deposits it into ``state.handoffs``
-            so a DOWNSTREAM rolling-dispatch solve consumes the invested
-            capacity.  When the model has no investment the dict is empty,
-            no handoff is built, and the deposited step carries a
-            :class:`SnapshotSolution` with empty ``_vars``.  Every
-            Lagrangian solve is recorded in
-            ``self._lagrangian_solve_names``; those that handed forward a
-            usable invest handoff are also recorded in
-            ``self._lagrangian_invest_handoff_names`` so the (now narrowed)
+            The solve runs and reports convergence/objective + the valid
+            LB/UB sandwich, then (TIER 1) assembles its owner-selected
+            whole-system invest/divest decisions
+            (``result.invest_solution_vars``) into a :class:`SolveHandoff`
+            and deposits it into ``state.handoffs`` so a DOWNSTREAM
+            rolling-dispatch solve consumes the invested capacity.  When
+            the model has no investment the dict is empty, no handoff is
+            built, and the deposited step carries a
+            :class:`SnapshotSolution` with empty ``_vars``.  Every Benders
+            solve is recorded in ``self._benders_solve_names``; those that
+            handed forward a usable invest handoff are also recorded in
+            ``self._benders_invest_handoff_names`` so the (now narrowed)
             consume-side guard in :meth:`run` fires only for a downstream
-            consumer of a Lagrangian solve that produced no investment.
+            consumer of a Benders solve that produced no investment.
             """
-            from flextool.engine_polars._lagrangian import solve_lagrangian
+            from flextool.engine_polars._benders import solve_benders
             from flextool.decomposition.region_filter import (
                 discover_decomposition_regions_from_db,
             )
@@ -2010,8 +1986,8 @@ def _drive_cascade(
             if db_url is None:
                 raise FlexToolConfigError(
                     f"Solve '{base_solve_name}' requests "
-                    f"decomposition=lagrangian but the run was started "
-                    f"without a database URL (db_url is None). Lagrangian "
+                    f"decomposition=benders but the run was started "
+                    f"without a database URL (db_url is None). Benders "
                     f"region decomposition is only available on the "
                     f"DB-driven run path (run_chain_from_db)."
                 )
@@ -2019,42 +1995,32 @@ def _drive_cascade(
             if len(regions) < 2:
                 raise FlexToolConfigError(
                     f"Solve '{base_solve_name}' requests "
-                    f"decomposition=lagrangian but the model declares "
+                    f"decomposition=benders but the model declares "
                     f"{len(regions)} group(s) with "
-                    f"decomposition_method='lagrangian_region' "
+                    f"decomposition_method='benders_regional' "
                     f"({regions or '(none)'}); at least two region groups "
                     f"are required."
                 )
 
-            alpha, max_iter, tol = state.solve.lagrangian_config_for(
-                base_solve_name
-            )
-            # Resolve the parallel-worker count from the CLI-set env var
-            # (``--lagrangian-workers``; machine-local runtime override, not
-            # a DB/schema param).  Unset/0 => auto (cpu_count-1).
-            _cpu = os.cpu_count() or 2
-            _lw_env = os.environ.get("FLEXTOOL_LAGRANGIAN_WORKERS", "0")
-            try:
-                _lw_setting = int(_lw_env)
-            except (TypeError, ValueError):
-                _lw_setting = 0
-            _workers = _resolve_lagrangian_workers(_lw_setting, _cpu)
-            # Lagrangian decomposition is HiGHS-only; pass the solve's
-            # SolverConfig so the driver can raise an actionable error if
-            # the user selected a commercial solver.
-            solver_cfg = state.solve.solver_configs.get(
+            max_iter, tol = state.solve.benders_config_for(base_solve_name)
+            # Resolve the objective scale the SAME way the monolithic path
+            # does (the solve's ``scale_the_objective``; malformed/unset =>
+            # 1e-6).  Both the Benders master and the region subproblems
+            # build at this scale so the cut coefficients stay consistent.
+            _user_obj_scale = state.solve.scale_the_objective.get(
                 complete_solve_name
-            ) or state.solve.solver_configs.get(base_solve_name)
+            ) or state.solve.scale_the_objective.get(base_solve_name)
+            obj_scale = _resolve_effective_obj_scale(_user_obj_scale)
 
-            # Lagrangian progress is surfaced via ``print`` (flushed), the
+            # Benders progress is surfaced via ``print`` (flushed), the
             # same channel as the cascade's "Solve start" markers — the
             # per-solve logger is pinned to ERROR in ``_drive_cascade``, so
             # logger.info/.warning would be swallowed.
-            _tag = f"[lagrangian {base_solve_name}]"
+            _tag = f"[benders {base_solve_name}]"
 
-            # ``_emit`` is called from BOTH the main thread (iteration /
-            # summary lines) and polar-high worker threads (subsolve lines);
-            # the lock keeps those lines from interleaving mid-string.
+            # ``_emit`` is called only from the main thread here (the
+            # Benders region solve is sequential), but keep the lock so the
+            # channel stays consistent with the rest of the cascade output.
             _emit_lock = threading.Lock()
 
             def _emit(line: str) -> None:
@@ -2066,91 +2032,66 @@ def _drive_cascade(
 
             _emit(
                 f"{_tag} start: {len(regions)} regions "
-                f"{regions} (alpha={alpha:g}, max_iter={max_iter}, "
-                f"tol={tol:g}, workers={_workers})"
+                f"{regions} (max_iter={max_iter}, tol={tol:g}, "
+                f"obj_scale={obj_scale:g})"
             )
 
-            # Live per-iteration callback — one line as each outer
-            # subgradient iteration completes (the iter==-1 summary marker
-            # is handled by the richer final block below, so skip it here).
+            # Live per-iteration callback — one line as each outer Benders
+            # iteration completes, reporting the valid LB/UB sandwich + gap
+            # (all in REAL units, ÷s).
             def _on_iteration(entry: dict) -> None:
-                if entry.get("iter", -1) == -1:
-                    return
                 _emit(
                     f"{_tag}   iter {entry['iter']:>3}/{max_iter}: "
-                    f"step={entry['alpha_k']:.3g}  "
-                    f"max_imbalance={entry['max_abs_residual']:.4g}  "
-                    f"dual_obj={entry['total_obj']:.6g}"
+                    f"LB={entry['lower_bound']:.6g}  "
+                    f"UB={entry['best_upper_bound']:.6g}  "
+                    f"gap={entry['gap']:.4g}"
                 )
 
-            # Live per-subsolve callback — fires from polar-high WORKER
-            # threads, so it must only touch ``_emit`` (lock-guarded) and
-            # read-only locals (``regions``, ``_tag``, ``max_iter``).  It
-            # branches on entry['event'] (start|finish), NOT on phase.
-            def _on_subsolve(entry: dict) -> None:
-                line = _format_subsolve_line(entry, regions, _tag, max_iter)
-                if line is not None:
-                    _emit(line)
-
-            result = solve_lagrangian(
+            result = solve_benders(
                 data,
-                work_dir=self.state.paths.work_folder,
-                regions=regions,
-                alpha=alpha,
+                regions,
                 max_iters=max_iter,
                 tol=tol,
-                solver_config=solver_cfg,
+                monolith_objective=None,
+                scale_the_objective=obj_scale,
                 progress_callback=_on_iteration,
-                workers=_workers,
-                subsolve_callback=_on_subsolve,
             )
 
-            # Final summary — convergence + the dual/primal gap that shows
-            # the decomposition's benefit (smaller per-region solves) vs its
-            # tradeoff (the optimality gap between the recovered feasible
-            # primal and the dual lower bound).
+            # Final summary — convergence + the valid LB/UB sandwich that
+            # is the headline benefit of Benders over the subgradient path
+            # (a certified lower bound, not just a dual estimate).
             _status = "CONVERGED" if result.converged else "DID NOT CONVERGE"
-            _dual = result.best_dual_total
-            _primal = result.recovered_total
-            _gap_pct = (
-                abs(_primal - _dual) / abs(_dual) * 100.0
-                if _dual else float("nan")
-            )
+            _lb = result.lower_bound
+            _ub = result.upper_bound
             _emit(
                 f"{_tag} {_status} after {result.iterations}/{max_iter} "
                 f"iterations"
             )
-            _emit(f"{_tag}   dual bound (reported total) = {_dual:.6g}")
-            _emit(f"{_tag}   recovered primal            = {_primal:.6g}")
+            _emit(f"{_tag}   lower bound (valid) = {_lb:.6g}")
+            _emit(f"{_tag}   upper bound (best)  = {_ub:.6g}")
             _emit(
-                f"{_tag}   optimality gap              = {_gap_pct:.3f}% "
-                f"(recovered vs dual)"
+                f"{_tag}   optimality gap      = {result.gap:.4g} "
+                f"(relative, (UB-LB)/|UB|)"
             )
-            if result.region_objectives:
-                _ro = ", ".join(
-                    f"{r}={o:.6g}"
-                    for r, o in result.region_objectives.items()
+            if result.region_costs:
+                _rc = ", ".join(
+                    f"{r}={c:.6g}"
+                    for r, c in result.region_costs.items()
                 )
-                _emit(f"{_tag}   region objectives: {_ro}")
-            if result.final_lambdas:
-                _la = ", ".join(
-                    f"{'.'.join(map(str, k))}={v:.4g}"
-                    for k, v in result.final_lambdas.items()
-                )
-                _emit(f"{_tag}   final lambda per pipe: {_la}")
+                _emit(f"{_tag}   region costs: {_rc}")
             if not result.converged:
                 # Also log at ERROR so non-convergence still surfaces in
                 # error-only contexts (CI, log scrapers); the chain is not
                 # aborted — the decomposition produced a usable point.
                 self.state.logger.error(
-                    "Solve '%s': Lagrangian decomposition did NOT converge "
-                    "after %d/%d iterations (gap %.3f%%).",
-                    base_solve_name, result.iterations, max_iter, _gap_pct,
+                    "Solve '%s': Benders decomposition did NOT converge "
+                    "after %d/%d iterations (gap %.4g).",
+                    base_solve_name, result.iterations, max_iter, result.gap,
                 )
 
             # TIER 1 — turn the assembled, owner-selected whole-system
             # invest/divest frames into a handoff so a DOWNSTREAM rolling-
-            # dispatch solve consumes this Lagrangian solve's invested
+            # dispatch solve consumes this Benders solve's invested
             # capacity.  ``result.invest_solution_vars`` is a dict keyed by
             # ``v_invest_p`` / ``v_invest_n`` / ``v_divest_p`` /
             # ``v_divest_n`` to long-form (entity, d, value) frames whose
@@ -2160,7 +2101,7 @@ def _drive_cascade(
                 build_handoff_from_solution,
             )
 
-            self._lagrangian_solve_names.add(complete_solve_name)
+            self._benders_solve_names.add(complete_solve_name)
 
             # Carrier: a SnapshotSolution duck-types the ``_vars``
             # membership + ``.value(name)`` contract the invest/divest
@@ -2207,10 +2148,10 @@ def _drive_cascade(
                 # (which re-reads ``state.handoffs[last_captured_solve]``
                 # after this method returns 0).
                 self.state.handoffs[complete_solve_name] = handoff
-                # Track that this Lagrangian solve handed forward usable
+                # Track that this Benders solve handed forward usable
                 # investment so the narrowed consume-side guard does NOT
                 # fire for a downstream consumer of it.
-                self._lagrangian_invest_handoff_names.add(complete_solve_name)
+                self._benders_invest_handoff_names.add(complete_solve_name)
 
             self._all_steps[complete_solve_name] = OrchestrationStep(
                 solve_name=complete_solve_name,
@@ -2219,7 +2160,7 @@ def _drive_cascade(
                 obj=result.total_objective,
                 optimal=result.converged,
                 warm_used=False,
-                is_lagrangian=True,
+                is_benders=True,
                 flex_data=data,
                 flex_data_provider=getattr(
                     self.state, "current_provider", None,
@@ -2363,26 +2304,26 @@ def _drive_cascade(
             # handle residual cost / bound magnitudes inside HiGHS.
             base_solve_name = re.sub(r"_roll_\d+$", "", complete_solve_name)
 
-            # v60 per-solve decomposition routing -----------------------
+            # v60/v62 per-solve decomposition routing -------------------
             # Consume-side guard: if the immediately-preceding captured
-            # solve ran under decomposition=lagrangian and THIS solve is a
+            # solve ran under decomposition=benders and THIS solve is a
             # different base solve, it would consume the (intentionally
-            # absent) Lagrangian handoff.  Cross-scheme handoff
-            # (Lagrangian → monolithic dispatch) is a deferred follow-up,
+            # absent) Benders handoff.  Cross-scheme handoff
+            # (Benders → monolithic dispatch) is a deferred follow-up,
             # so we fail loudly rather than silently load handoff=None.
-            _guard_msg = _lagrangian_consume_guard_message(
+            _guard_msg = _benders_consume_guard_message(
                 base_solve_name,
                 self.state.last_captured_solve,
-                self._lagrangian_solve_names,
-                self._lagrangian_invest_handoff_names,
+                self._benders_solve_names,
+                self._benders_invest_handoff_names,
             )
             if _guard_msg is not None:
                 raise FlexToolConfigError(_guard_msg)
-            # When this solve resolves to decomposition=lagrangian, run it
-            # through the Lagrangian region coordinator instead of building
+            # When this solve resolves to decomposition=benders, run it
+            # through the Benders region coordinator instead of building
             # and solving a monolithic LP.
-            if state.solve.decomposition_for(base_solve_name) == "lagrangian":
-                return self._run_lagrangian_solve(
+            if state.solve.decomposition_for(base_solve_name) == "benders":
+                return self._run_benders_solve(
                     complete_solve_name, base_solve_name, data,
                 )
 

@@ -182,9 +182,9 @@ def discover_regions(
     provider: "object | None" = None,
 ) -> list[str]:
     """Return the list of group names with
-    ``decomposition_method=lagrangian_region``."""
+    ``decomposition_method=benders_regional``."""
     methods = load_decomposition_method(work_dir, provider=provider)
-    return sorted(g for g, m in methods.items() if m == "lagrangian_region")
+    return sorted(g for g, m in methods.items() if m == "benders_regional")
 
 
 def load_region_membership(

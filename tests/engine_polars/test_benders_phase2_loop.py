@@ -19,7 +19,6 @@ from polar_high import Problem
 
 from flextool.engine_polars import build_flextool, load_flextool
 from flextool.engine_polars._benders import solve_benders
-from flextool.engine_polars._lagrangian import solve_lagrangian
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 _M_EXPECTED = 8.544247e9
@@ -136,24 +135,3 @@ def test_benders_recovers_invest_and_trade(ti_data, monolith) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# (3) The CURRENT Lagrangian gives the autarkic ~9.071e9 > M (what Benders fixes).
-# ---------------------------------------------------------------------------
-
-
-def test_lagrangian_is_autarkic_above_monolith(ti_data, ti_workdir, monolith) -> None:
-    M = monolith.obj
-    lag = solve_lagrangian(
-        ti_data, work_dir=ti_workdir, alpha=10.0, max_iters=100, tol=0.5,
-        initial_lambda=0.0, min_iters=20,
-    )
-    # The autarkic Lagrangian total sits clearly ABOVE the true optimum M
-    # (weak-duality violation — the bug Benders fixes).
-    assert lag.total_objective > M * (1 + 0.01), (
-        f"Lagrangian total {lag.total_objective:.6e} did NOT exceed M "
-        f"{M:.6e} — the no-trade bug is not reproduced"
-    )
-    assert np.isclose(lag.total_objective, 9.071132e9, rtol=1e-2), (
-        f"Lagrangian autarkic total drifted from ~9.071e9: "
-        f"{lag.total_objective:.6e}"
-    )

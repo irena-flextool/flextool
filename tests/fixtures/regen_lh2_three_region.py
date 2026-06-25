@@ -279,7 +279,7 @@ def _build_invest_overlay(base_entities: list[tuple]) -> dict[str, list]:
     new_entities.append(("solve", "lh2_invest"))
     pv.extend([
         ("solve", "lh2_invest", "solve_mode", "single_solve", INVEST_ALT),
-        ("solve", "lh2_invest", "decomposition", "lagrangian", INVEST_ALT),
+        ("solve", "lh2_invest", "decomposition", "benders", INVEST_ALT),
         ("solve", "lh2_invest", "period_timeset",
          _period_timeset_map([("y2030", "week168")]), INVEST_ALT),
         ("solve", "lh2_invest", "realized_periods",
@@ -288,11 +288,6 @@ def _build_invest_overlay(base_entities: list[tuple]) -> dict[str, list]:
          _array_str_periods(["y2030"]), INVEST_ALT),
         ("solve", "lh2_invest", "realized_invest_periods",
          _array_str_periods(["y2030"]), INVEST_ALT),
-        # Lagrangian knobs mirror the base-scenario db-driven test so the
-        # subgradient converges on the same ~0.1 % gap floor.
-        ("solve", "lh2_invest", "lagrangian_alpha", 10.0, INVEST_ALT),
-        ("solve", "lh2_invest", "lagrangian_max_iter", 100.0, INVEST_ALT),
-        ("solve", "lh2_invest", "lagrangian_tolerance", 0.5, INVEST_ALT),
     ])
 
     # Downstream monolithic dispatch solve (consumes the invested
@@ -388,7 +383,7 @@ def _build_trade_invest_overlay(
     pv.extend([
         ("solve", "lh2_trade_invest", "solve_mode", "single_solve",
          TRADE_INVEST_ALT),
-        ("solve", "lh2_trade_invest", "decomposition", "lagrangian",
+        ("solve", "lh2_trade_invest", "decomposition", "benders",
          TRADE_INVEST_ALT),
         ("solve", "lh2_trade_invest", "period_timeset",
          _period_timeset_map([("y2030", "week168")]), TRADE_INVEST_ALT),
@@ -398,12 +393,6 @@ def _build_trade_invest_overlay(
          _array_str_periods(["y2030"]), TRADE_INVEST_ALT),
         ("solve", "lh2_trade_invest", "realized_invest_periods",
          _array_str_periods(["y2030"]), TRADE_INVEST_ALT),
-        ("solve", "lh2_trade_invest", "lagrangian_alpha", 10.0,
-         TRADE_INVEST_ALT),
-        ("solve", "lh2_trade_invest", "lagrangian_max_iter", 100.0,
-         TRADE_INVEST_ALT),
-        ("solve", "lh2_trade_invest", "lagrangian_tolerance", 0.5,
-         TRADE_INVEST_ALT),
     ])
     pv.append(
         ("model", "flexTool", "solves",
@@ -719,7 +708,7 @@ def _build_payload(
         entities.append(("group", f"region_{r}"))
         parameter_values.append(
             ("group", f"region_{r}", "decomposition_method",
-             "lagrangian_region", ALT))
+             "benders_regional", ALT))
 
     # ------------------------------------------------------------------
     # Per-region nodes / processes
@@ -971,7 +960,7 @@ def _build_sqlite(
         decomp_payload = {
             "parameter_value_lists": [
                 ("decomposition_methods", "none"),
-                ("decomposition_methods", "lagrangian_region"),
+                ("decomposition_methods", "benders_regional"),
             ],
         }
         _, _ = import_data(db, **decomp_payload)
@@ -999,9 +988,11 @@ def _build_sqlite(
             parameter_value_list_name="decomposition_methods",
             parameter_type_list=("str",),
             description=(
-                "Decomposition strategy.  'none' (default) leaves the "
-                "group monolithic; 'lagrangian_region' marks it as an "
-                "independent region for Agent 3.2's decomposition."
+                "Decomposition strategy to apply to this group. Currently "
+                "supported: 'none' (no decomposition — default), "
+                "'benders_regional' (group is solved as an independent region "
+                "in the Benders master/subproblem decomposition, with "
+                "shared-commodity trade coupling handled by the master)."
             ),
         )
         db.commit_session("Applied v51 group-block schema additions")

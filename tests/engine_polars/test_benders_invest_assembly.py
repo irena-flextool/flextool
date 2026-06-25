@@ -1,15 +1,17 @@
-"""Unit tests for the flextool-side Lagrangian invest/divest assembly.
+"""Unit tests for the Benders-side region invest/divest assembly.
 
 Exercises the two pure helpers in
-:mod:`flextool.engine_polars._lagrangian`:
+:mod:`flextool.engine_polars._benders` (formerly in the deleted
+subgradient ``_lagrangian`` module; the owner-selection / normalisation
+logic was ported into Benders and is now its sole home):
 
 * :func:`_resolve_entity_owner` — entity -> owning-region resolution from
   the exclusive per-region membership, with the deterministic
   shared-owner tie-break + warning.
-* :func:`_assemble_invest_vars` — materialize each region's recovered
-  primal invest/divest frame the way ``Solution.value`` does, owner-select
-  the rows, and concatenate across regions into one whole-system frame per
-  var with disjoint entity keys.
+* :func:`_assemble_region_invest_vars` — materialize each region's
+  recovered primal invest/divest frame the way ``Solution.value`` does,
+  owner-select the rows, and concatenate across regions into one
+  whole-system frame per var with disjoint entity keys.
 
 These use SYNTHETIC :class:`polar_high.Problem` objects (a small
 invest-like ``Var`` with known ``col_value``s) — no DB / model run.
@@ -23,8 +25,8 @@ import polars as pl
 
 from polar_high import Problem
 
-from flextool.engine_polars._lagrangian import (
-    _assemble_invest_vars,
+from flextool.engine_polars._benders import (
+    _assemble_region_invest_vars as _assemble_invest_vars,
     _resolve_entity_owner,
 )
 

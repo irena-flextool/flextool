@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Callable
 
 import highspy
 import numpy as np
@@ -69,10 +70,24 @@ from flextool.engine_polars._axis_enums import (
     reset_global_axis_enums,
     set_global_axis_enums,
 )
-from flextool.engine_polars._lagrangian import _identify_coupling_cols
+from flextool.engine_polars._region_filter import HalfFlow, RegionSplit
 from flextool.engine_polars.input import FlexData
 
 _logger = logging.getLogger(__name__)
+
+# The four investment/divestment decision variables assembled into a
+# whole-system handoff for the TIER-1 invest->dispatch chain.  Each is
+# declared in ``model.py`` over a 2-tuple of dims whose FIRST element is
+# the entity axis ("p" for process / connection vars, "n" for node vars)
+# and whose second is the period axis "d".  ``Var.dims`` is read at
+# runtime to recover the exact entity column name — we do not hard-code it.
+_INVEST_VAR_NAMES = ("v_invest_p", "v_invest_n", "v_divest_p", "v_divest_n")
+
+# Absolute tolerance below which a non-owner region's invest value for an
+# entity is treated as a numerically-collapsed zero (the expected case for
+# an out-of-region invest var).  A non-owner value above this triggers a
+# (non-fatal) canary warning.
+_NONOWNER_NONZERO_ABS_TOL = 1e-6
 
 # Slack on the "LB ≤ M" valid-bound assertion: LB is a true lower bound up to
 # the LP optimality tolerance, so allow a tiny relative overshoot.
@@ -102,6 +117,74 @@ _LB_VALID_SLACK = 1e-9
 # post-append re-solve).  The runtime ``LB ≤ best_UB`` sandwich guard is the
 # safety net confirming the floor never produced an invalid bound.
 _ETA_FLOOR_MULT = 1.1
+
+
+@dataclass
+class Coupling:
+    """One cross-region ``(p, source, sink)`` coupling pair.
+
+    Pairs an export half-flow with the matching import half-flow and
+    carries the per-region ``v_flow`` column ids for each cell of the
+    arc.  This is the SHARED decomposition substrate consumed by
+    :func:`_build_arcs` (and re-exported for tests).  The dual-subgradient
+    ``lam`` multipliers that the old Lagrangian scheme stored here are NOT
+    part of the Benders contract and have been dropped.
+    """
+
+    pipeline_key: tuple[str, str, str]
+    export_region: str
+    import_region: str
+    export_cols: np.ndarray = field(
+        default_factory=lambda: np.zeros(0, dtype=np.int64)
+    )
+    import_cols: np.ndarray = field(
+        default_factory=lambda: np.zeros(0, dtype=np.int64)
+    )
+
+
+def _identify_coupling_cols(splits: list[RegionSplit],
+                            warm: list[WarmProblem]) -> list[Coupling]:
+    """Pair :class:`HalfFlow`s on ``(p, source, sink)`` and resolve the
+    ``v_flow`` column ids per region.  Used by :func:`_build_arcs` and by
+    the decomposition tests directly."""
+    by_e: dict[tuple, tuple[str, list[HalfFlow]]] = {}
+    by_i: dict[tuple, tuple[str, list[HalfFlow]]] = {}
+    for s in splits:
+        for hf in s.half_flows:
+            key = (hf.original_p, hf.original_source, hf.original_sink)
+            (by_e if hf.side == "export" else by_i).setdefault(
+                key, (s.region, []))[1].append(hf)
+
+    region_idx = {s.region: i for i, s in enumerate(splits)}
+    out: list[Coupling] = []
+    for key, (er, hfs_e) in by_e.items():
+        if key not in by_i:
+            continue
+        ir, hfs_i = by_i[key]
+        v_flow_e = warm[region_idx[er]]._p._vars["v_flow"]
+        v_flow_i = warm[region_idx[ir]]._p._vars["v_flow"]
+        ehf, ihf = hfs_e[0], hfs_i[0]
+
+        def _cols(vf, hf):
+            return (vf.frame.filter(
+                (pl.col("p") == hf.virtual_p)
+                & (pl.col("source") == hf.virtual_arc_source)
+                & (pl.col("sink") == hf.virtual_arc_sink)
+            ).sort("d", "t"))["col_id"].to_numpy().astype(np.int64)
+        e_cols, i_cols = _cols(v_flow_e, ehf), _cols(v_flow_i, ihf)
+        if e_cols.size == 0 or i_cols.size == 0:
+            raise RuntimeError(
+                f"Benders: empty coupling columns for arc {key!r} "
+                f"(export={e_cols.size}, import={i_cols.size}).")
+        if e_cols.size != i_cols.size:
+            raise RuntimeError(
+                f"Benders: pair size mismatch for {key!r}: "
+                f"export={e_cols.size} vs import={i_cols.size}.")
+        out.append(Coupling(
+            pipeline_key=key, export_region=er, import_region=ir,
+            export_cols=e_cols, import_cols=i_cols,
+        ))
+    return out
 
 
 @dataclass
@@ -136,6 +219,15 @@ class BendersResult:
     invest: dict[str, float]  # connection -> normalised invested capacity C
     # arc-key -> polars frame (p, source, sink, d, t, value) of the trade flow.
     trade_flow: dict[tuple, pl.DataFrame] = field(default_factory=dict)
+    # Whole-system, owner-de-duplicated invest/divest decision frames for the
+    # TIER-1 invest->dispatch handoff.  Keys are a subset of
+    # ``_INVEST_VAR_NAMES``; each value is a long-form frame whose columns
+    # match ``polar_high.Solution.value(name)`` exactly (``(entity_col, "d",
+    # "value")``), so a downstream ``SnapshotSolution`` can expose them to
+    # ``build_handoff_from_solution``.  UNION of region in-region invest +
+    # master trade-connection invest.  Empty dict when the model has no
+    # investment.
+    invest_solution_vars: dict[str, pl.DataFrame] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -243,26 +335,71 @@ class _BendersMaster:
                 dtype=np.int64,
             )
         # Resolve C col-ids per connection by (conn, d).  The reduced
-        # FlexData's ``pd_invest_set`` gives one invest period per pipe in
-        # the prototype; we sum the master invest value over those periods
-        # in ``read_master``.
+        # FlexData's ``pd_invest_set`` gives one invest period per
+        # INVESTABLE pipe; we sum the master invest value over those periods
+        # in ``read_master``.  A trade connection of FIXED EXISTING capacity
+        # only (``existing>0`` + no ``invest_method``) carries NO
+        # ``v_invest_p`` column — it contributes an empty ``_C_cols`` entry
+        # (zero invested capacity, zero handoff invest), and its flow is
+        # bounded natively by the FlexTool ``maxFlow`` row at
+        # ``p_flow_upper_existing = existing/unitsize`` (model.py:2468-2473;
+        # ``has_invest_p`` False ⇒ no ``-v_invest_p`` LHS term ⇒
+        # ``v_flow ≤ existing/unitsize``).  Mixed masters (some pipes
+        # investable, some existing-only) are handled in ONE master: the
+        # FlexTool emit bounds each arc by ``existing + invested``, the
+        # invest var existing only for the investable subset.
         conns = sorted({a.conn for a in self.arcs})
         invest_periods: dict[str, list[str]] = {}
         if reduced.pd_invest_set is not None:
             for r in reduced.pd_invest_set.iter_rows(named=True):
                 invest_periods.setdefault(r["p"], []).append(r["d"])
+        has_invest_var = "v_invest_p" in self._wp._p._vars
         self._C_cols: dict[str, list[int]] = {}
         for c in conns:
             periods = invest_periods.get(c, [])
-            if not periods:
-                raise RuntimeError(
-                    f"Benders flextool master: connection {c!r} has no "
-                    f"pd_invest_set period — no v_invest_p column"
-                )
+            if not periods or not has_invest_var:
+                # Existing-only trade connection: no invest var/column.  An
+                # empty list ⇒ ``read_master`` reports invested capacity 0
+                # for ``c`` and ``trade_invest_frame`` carries no invest row
+                # for it.  The existing capacity term lives in the FlexTool
+                # ``maxFlow`` RHS (``_existing_cap_by_col`` below), not in C.
+                self._C_cols[c] = []
+                continue
             self._C_cols[c] = [
                 int(self._wp.col_id_of_var("v_invest_p", (c, d)))
                 for d in periods
             ]
+
+        # Per master f col-id, the EXISTING flow capacity ``existing/unitsize``
+        # the FlexTool ``maxFlow`` RHS (``p_flow_upper_existing``) enforces.
+        # The master-side capacity self-check (``solve_benders``) bounds each
+        # cell's chosen flow by ``existing_cap + invested`` — so an
+        # existing-only arc (C=0) is correctly allowed flow up to its existing
+        # capacity, while a greenfield arc (existing=0) is unchanged.  The
+        # reduced data's ``p_flow_upper_existing`` is keyed
+        # ``(p, source, sink, d[, t])`` and already unitsize-normalised
+        # (existing/unitsize), the SAME normalisation the master ``v_flow``
+        # lives in (Phase-1 §A.5), so it drops in cell-for-cell.
+        self._existing_cap_by_col: dict[int, float] = {}
+        fue = getattr(reduced, "p_flow_upper_existing", None)
+        ex_lookup: dict[tuple, float] = {}
+        if fue is not None:
+            fr = fue.frame
+            has_t = "t" in fr.columns
+            for r in fr.iter_rows(named=True):
+                if has_t:
+                    ex_lookup[(r["p"], r["source"], r["sink"],
+                               r["d"], r["t"])] = float(r["value"])
+                else:
+                    ex_lookup[(r["p"], r["source"], r["sink"], r["d"])] = (
+                        float(r["value"]))
+        for a in self.arcs:
+            for dt, cid in zip(a.dim_tuples, a.f_col_ids):
+                p, s, k, d, t = dt
+                cap = ex_lookup.get((p, s, k, d, t))
+                if cap is None:
+                    cap = ex_lookup.get((p, s, k, d), 0.0)
+                self._existing_cap_by_col[int(cid)] = cap
 
         # Append one η_r recourse column per region (cost=1.0 ⇒ each η
         # enters the master objective with coef 1.0 ON TOP of FlexTool's
@@ -423,6 +560,11 @@ class _BendersMaster:
         self._C_cols: dict[str, int] = {
             c: int(self._wp.col_id_of_var("C", (c,))) for c in conns
         }
+        # The hand master is GREENFIELD-only (Phase-2 prototype: existing=0 ⇒
+        # all trade capacity is invested ``C``).  No existing-capacity term,
+        # so the per-col existing cap is uniformly 0 — the capacity self-check
+        # then reduces to ``f ≤ C`` exactly as before.
+        self._existing_cap_by_col: dict[int, float] = {}
         self._f_var_dims = ("p", "source", "sink", "d", "t")
 
     @staticmethod
@@ -534,6 +676,28 @@ class _BendersMaster:
             self._last_trade_cost = float(sol.obj) - eta_sum
         return f_by_col, C_by_conn, eta_by_region
 
+    def trade_invest_frame(self, sol) -> pl.DataFrame | None:
+        """Return the master's trade-connection ``v_invest_p`` as a long-form
+        ``(p, d, value)`` frame in the SAME ``Solution.value`` semantics /
+        unitsize-normalisation FlexTool emits — for the TIER-1 invest
+        handoff.  ``None`` on the hand master (no FlexTool ``v_invest_p``
+        Var).
+
+        The frame is built directly from ``Solution.value("v_invest_p")``
+        (which indexes the master's ``v_invest_p`` Var frame by ``col_id``),
+        so it is byte-identical in shape/units to what the monolith's
+        ``v_invest_p`` value returns for the cross-region connections — the
+        master is FlexTool-built over the network-only reduced data, so its
+        ``v_invest_p`` is the very same normalised invest variable.  The
+        cross-region connections are the ONLY entities the master invests in,
+        so no extra filtering is needed (and they are disjoint from any
+        region's in-region invest by construction)."""
+        if self._master_kind != "flextool":
+            return None
+        if "v_invest_p" not in self._wp._p._vars:
+            return None
+        return sol.value("v_invest_p")
+
     def invest_cost(self, C_by_conn: dict[str, float]) -> float:
         """Master trade cost (invest annuity + flow cost) at the last
         ``read_master``.
@@ -562,6 +726,219 @@ class _Region:
     forward: list[tuple[_ArcMaster, np.ndarray, np.ndarray]]  # (arc, region_cols, master_cols)
     # reverse half-flow region col-ids to pin to 0.
     reverse_cols: np.ndarray
+
+
+# ---------------------------------------------------------------------------
+# TIER-1 whole-system invest assembly (region in-region + master trade).
+# ---------------------------------------------------------------------------
+
+
+def _resolve_entity_owner(
+    region_membership: dict[str, dict[str, set[str]]],
+    regions: list[str],
+) -> dict[str, str]:
+    """Build an ``entity -> owning-region`` map from region membership.
+
+    Covers BOTH node entities (consumed by ``v_invest_n`` / ``v_divest_n``)
+    and process/connection entities (consumed by ``v_invest_p`` /
+    ``v_divest_p``).  A process is owned by the region that lists it in its
+    ``"processes"`` set (the splitter assigns a process to a region via
+    ``group_entity`` membership, i.e. the region containing its node(s)).
+
+    *region_membership* is the EXCLUSIVE per-region membership returned by
+    :func:`_region_filter.load_region_membership` — a region's OWN
+    nodes/processes, NOT the shared set every region carries.  Ownership is
+    therefore unambiguous for any entity claimed by exactly one region.
+
+    An entity claimed by MORE than one region (shared, no unique owner) is
+    assigned a deterministic owner: the first region in sorted region order
+    that claims it (and a warning is emitted).  Iteration is over
+    ``sorted(regions)`` so the tie-break is stable regardless of caller list
+    order.
+
+    Returns
+    -------
+    dict[str, str]
+        ``{entity_name: region_name}`` for every node/process appearing in
+        any region's membership.
+    """
+    owner: dict[str, str] = {}
+    claims: dict[str, list[str]] = {}
+    for region in sorted(regions):
+        m = region_membership.get(region, {})
+        for entity in m.get("nodes", set()) | m.get("processes", set()):
+            claims.setdefault(entity, []).append(region)
+    for entity, claiming in claims.items():
+        owner[entity] = claiming[0]
+        if len(claiming) > 1:
+            _logger.warning(
+                "Benders invest assembly: entity %r is shared across "
+                "regions %r (no unique owner); assigning deterministic "
+                "owner %r (first in sorted region order).  Shared "
+                "invest-eligible entities are an untested edge case.",
+                entity, claiming, owner[entity],
+            )
+    return owner
+
+
+def _assemble_region_invest_vars(
+    subproblems: list[Problem],
+    subproblem_col_values: list[np.ndarray],
+    owner_of_entity: Callable[[int, str], bool],
+) -> dict[str, pl.DataFrame]:
+    """Assemble whole-system invest/divest frames from the per-region
+    recovered primal, keeping only owner-region rows.
+
+    Parameters
+    ----------
+    subproblems
+        Per-region :class:`polar_high.Problem` objects (region-index
+        aligned).  Their ``_vars[name].frame`` carries ``(*dims, col_id)``
+        and ``_vars[name].dims`` gives the natural dim order
+        (``(entity_col, "d")`` for the invest/divest vars).
+    subproblem_col_values
+        Per-region recovered-primal ``col_value`` arrays
+        (``Solution.col_value`` of each region's incumbent solve),
+        region-index aligned with *subproblems*.  An empty / missing entry
+        causes that region to be skipped.
+    owner_of_entity
+        Predicate ``(region_idx, entity) -> bool`` — ``True`` iff region
+        ``region_idx`` OWNS ``entity``.  Only owned rows are kept, so the
+        concatenated per-var frame has disjoint entity keys.
+
+    Returns
+    -------
+    dict[str, pl.DataFrame]
+        ``{name: frame}`` for each invest/divest var present in at least
+        one region with >=1 owned row.  Each frame's columns exactly match
+        ``polar_high.Solution.value(name)`` — ``(entity_col, "d",
+        "value")`` — so a ``SnapshotSolution`` can serve them via
+        ``.value(name)``.
+    """
+    out: dict[str, pl.DataFrame] = {}
+    n_regions = len(subproblems)
+    for name in _INVEST_VAR_NAMES:
+        per_region_kept: list[pl.DataFrame] = []
+        entity_col: str | None = None
+        for i in range(n_regions):
+            pb = subproblems[i]
+            var = pb._vars.get(name)
+            if var is None:
+                continue
+            if i >= len(subproblem_col_values):
+                continue
+            col_values = subproblem_col_values[i]
+            if col_values is None or len(col_values) == 0:
+                continue
+            # Materialize this region's long-form frame exactly as
+            # ``Solution.value(name)`` does: index the region's recovered
+            # ``col_value`` by the Var's ``col_id`` and attach as "value".
+            dims = tuple(var.dims)
+            ent_col = dims[0]
+            entity_col = ent_col
+            frame = var.frame
+            ids = frame["col_id"].to_numpy()
+            vals = np.asarray(col_values)[ids]
+            region_frame = frame.select(*dims).with_columns(
+                value=pl.Series("value", vals)
+            )
+            # Owner-select: keep only rows whose entity is owned by this
+            # region, so the concatenated frame has disjoint entity keys.
+            entities = region_frame[ent_col].to_list()
+            owned_mask = [bool(owner_of_entity(i, e)) for e in entities]
+            # Canary: a NON-owner region carrying a materially non-zero
+            # value violates the owner-selection assumption.  Warn, keep
+            # only the owner's value.
+            value_series = region_frame["value"].to_list()
+            for e, owned, v in zip(entities, owned_mask, value_series):
+                if (not owned) and v is not None and abs(v) > _NONOWNER_NONZERO_ABS_TOL:
+                    _logger.warning(
+                        "Benders invest assembly: non-owner region index "
+                        "%d carries non-zero %s value %.6g for entity %r "
+                        "(expected ~0 for an out-of-region invest var); "
+                        "keeping only the owner's value.",
+                        i, name, v, e,
+                    )
+            kept = region_frame.filter(pl.Series("__owned", owned_mask))
+            if kept.height > 0:
+                per_region_kept.append(kept)
+        if per_region_kept:
+            frame = pl.concat(per_region_kept, how="vertical")
+            sort_cols = [c for c in (entity_col, "d") if c in frame.columns]
+            if sort_cols:
+                frame = frame.sort(sort_cols, maintain_order=True)
+            out[name] = frame
+    return out
+
+
+def _assemble_benders_invest_vars(
+    *,
+    subproblems: list[Problem],
+    region_of_index: list[str],
+    region_membership: dict[str, dict[str, set[str]]],
+    regions: list[str],
+    region_col_values: list[np.ndarray] | None,
+    master_trade_invest: pl.DataFrame | None,
+    trade_conns: set[str],
+) -> dict[str, pl.DataFrame]:
+    """Assemble the whole-system TIER-1 invest handoff: the UNION of each
+    region's owner-selected in-region invest/divest frames and the master's
+    trade-connection ``v_invest_p``.
+
+    The two contributions are DISJOINT by construction, but the partition is
+    NOT pure region-membership ownership: a cross-region trade connection
+    typically appears in BOTH regions' ``group_entity`` membership (it
+    touches a node in each), so ``_resolve_entity_owner`` would otherwise
+    hand it to one of them — clobbering the master's correct invested value
+    with that region's pinned half-flow model's ZERO invest var.  The MASTER
+    owns the trade-connection invest (it is the variable the capacity
+    coupling acts on), so we EXCLUDE the trade connections from the region
+    invest and take their value SOLELY from ``master_trade_invest``.  The
+    result is the disjoint union: in-region entities from the regions, the
+    cross-region pipes from the master.
+
+    Returns the same-shaped dict the downstream ``SnapshotSolution`` /
+    ``build_handoff_from_solution`` expects (each frame's columns match
+    ``Solution.value(name)`` exactly: ``(entity_col, "d", "value")``).
+    """
+    # (a) region in-region invest, owner-de-duplicated, with the cross-region
+    # trade connections EXCLUDED (they are the master's, see docstring).
+    out: dict[str, pl.DataFrame] = {}
+    if region_col_values is not None:
+        owner_by_entity = _resolve_entity_owner(region_membership, regions)
+
+        def _owner_of_entity(region_idx: int, entity: str) -> bool:
+            if entity in trade_conns:
+                return False  # master-owned; never claimed by a region
+            return owner_by_entity.get(entity) == region_of_index[region_idx]
+
+        out = _assemble_region_invest_vars(
+            subproblems, region_col_values, _owner_of_entity
+        )
+
+    # (b) master trade-connection invest (``v_invest_p`` only — the master
+    # invests in cross-region connections, never nodes).  Union into the
+    # region ``v_invest_p`` frame.  The region part excluded these entities,
+    # so the union is disjoint by construction; the defensive ``unique`` is a
+    # belt-and-braces guard only.
+    trade = master_trade_invest
+    if trade is not None and trade.height > 0:
+        existing = out.get("v_invest_p")
+        if existing is not None:
+            ent_col = trade.columns[0]
+            trade = trade.select(existing.columns)
+            merged = pl.concat([existing, trade], how="vertical")
+            merged = merged.unique(
+                subset=[ent_col, "d"], keep="first", maintain_order=True
+            )
+            sort_cols = [c for c in (ent_col, "d") if c in merged.columns]
+            out["v_invest_p"] = (
+                merged.sort(sort_cols, maintain_order=True)
+                if sort_cols else merged
+            )
+        else:
+            out["v_invest_p"] = trade
+    return out
 
 
 def _build_arcs(splits, warm) -> list[_ArcMaster]:
@@ -629,6 +1006,7 @@ def solve_benders(
     build_problem=None,
     master: str = "flextool",
     scale_the_objective: float = 1.0,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> BendersResult:
     """Run the multi-cut Benders loop on the regional decomposition of
     ``data``.
@@ -672,6 +1050,16 @@ def solve_benders(
         arithmetic runs in scaled space; the returned ``total_objective``,
         ``lower_bound`` and ``upper_bound`` are UNSCALED back to real units
         (``÷s``).  ``s=1.0`` ⇒ byte-identical to the un-scaled path.
+    progress_callback
+        Optional ``Callable[[dict], None]`` invoked ONCE per outer Benders
+        iteration (after that iteration's master + region solves), so a
+        caller (e.g. the orchestrator) can stream live per-iter lines.  The
+        dict carries at least ``iter`` (1-based), ``lower_bound``,
+        ``upper_bound`` (this iter's UB), ``best_upper_bound``, ``gap``,
+        ``converged`` (bool), and ``region_costs`` — all bounds/costs in
+        REAL units (÷s), matching the returned :class:`BendersResult`.
+        No-op when ``None``; the loop behaviour is byte-identical when
+        omitted.
 
     Returns
     -------
@@ -690,6 +1078,7 @@ def solve_benders(
             data, regions, max_iters=max_iters, tol=tol,
             monolith_objective=monolith_objective, build_problem=build_problem,
             master=master, obj_scale=scale_the_objective,
+            progress_callback=progress_callback,
         )
     finally:
         if _enums_token is not None:
@@ -698,7 +1087,8 @@ def solve_benders(
 
 def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          build_problem, master="flextool",
-                         obj_scale: float = 1.0) -> BendersResult:
+                         obj_scale: float = 1.0,
+                         progress_callback=None) -> BendersResult:
     # --- split with the cross-region half-flows UNCAPPED so the master pin is
     # feasible (Phase-2 splitter Benders mode).
     splits = _region_filter.split(
@@ -768,7 +1158,12 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
 
     def _pin_and_solve(rm: _Region, f_bar_local: dict[int, float]):
         """Pin region ``rm``'s forward half-flows to ``f_bar_local`` (reverse to
-        0) and solve; return (cost_r, {master_f_col: slope})."""
+        0) and solve; return (cost_r, {master_f_col: slope}, region Solution).
+
+        The returned :class:`polar_high.Solution` carries the region's
+        recovered primal (incl. its in-region ``v_invest_p``/``v_invest_n``),
+        used to assemble the whole-system TIER-1 invest handoff at the
+        incumbent."""
         w = rm.wp
         for a, region_cols, master_cols in rm.forward:
             vals = np.array(
@@ -795,7 +1190,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             rc = sol_r.col_dual[region_cols]
             for mc, g in zip(master_cols, rc):
                 slopes[int(mc)] = slopes.get(int(mc), 0.0) + float(g)
-        return float(sol_r.obj), slopes
+        return float(sol_r.obj), slopes, sol_r
 
     # --- Build the master with a PROVISIONAL η floor (refined after the
     # bootstrap once we know the real cost scale).  The master assigns the live
@@ -831,7 +1226,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # the warm post-append kUnknown.
     bootstrap_cuts: list[tuple[str, float, dict[int, float]]] = []
     for rm in regions_meta:
-        cost_r, slopes = _pin_and_solve(rm, f_bar)
+        cost_r, slopes, _sol_r = _pin_and_solve(rm, f_bar)
         bootstrap_cuts.append((rm.name, cost_r, slopes))
     cost_scale = max((abs(c) for _, c, _ in bootstrap_cuts), default=1.0)
     # Floor in scaled space; ``max(cost_scale, obj_scale)`` keeps it from
@@ -847,6 +1242,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     iterations = 0
     converged = False
     gap = float("inf")
+    # Inverse objective scale: the loop's LB/UB arithmetic runs in scaled
+    # space (objectives built ×s); callers/tests (and the progress callback)
+    # expect REAL-unit costs (÷s).  s=1.0 ⇒ no-op.
+    inv_s = 1.0 / obj_scale
 
     # ``pending_cuts`` are the cuts for the regions solved at the CURRENT f̄;
     # they are appended at the top of each iteration before the master solve.
@@ -888,15 +1287,22 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         new_f_bar, C_by_conn, eta_by_region = master.read_master(msol)
         _check_cuts_satisfied(pending_cuts, f_bar, new_f_bar, eta_by_region)
         # The master's chosen capacity must support its chosen flow (the
-        # capacity coupling f ≤ C holds at the master optimum) — a cheap
-        # feasibility self-check that the UB below is a valid primal point.
+        # FlexTool ``maxFlow`` row ``f ≤ existing_cap + Σ v_invest_p`` holds at
+        # the master optimum) — a cheap feasibility self-check that the UB
+        # below is a valid primal point.  For a GREENFIELD arc the existing
+        # term is 0 (cap = invested C); for an EXISTING-only arc the invested
+        # C is 0 (cap = existing/unitsize); for a BOTH arc both contribute.
+        existing_cap_by_col = master._existing_cap_by_col
         for a in arcs:
-            cap = C_by_conn.get(a.conn, 0.0)
+            invested = C_by_conn.get(a.conn, 0.0)
             for cid in a.f_col_ids:
+                cap = invested + existing_cap_by_col.get(int(cid), 0.0)
                 if new_f_bar[int(cid)] > cap + 1e-6 * max(1.0, abs(cap)):
                     raise RuntimeError(
-                        f"Benders master infeasible coupling: f={new_f_bar[int(cid)]} "
-                        f"> C[{a.conn}]={cap}"
+                        f"Benders master infeasible coupling: "
+                        f"f={new_f_bar[int(cid)]} > cap[{a.conn}]={cap} "
+                        f"(invested={invested}, "
+                        f"existing={existing_cap_by_col.get(int(cid), 0.0)})"
                     )
 
         # --- advance f̄ to the master optimum and solve the regions there to
@@ -905,10 +1311,17 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         f_bar = new_f_bar
         region_costs: dict[str, float] = {}
         next_cuts: list[tuple[str, float, dict[int, float]]] = []
+        # Per-region recovered primal at THIS f̄ (region-index aligned), for
+        # the TIER-1 whole-system invest assembly when this iteration becomes
+        # the incumbent.  Each entry is the region Solution's ``col_value``.
+        region_col_values: list[np.ndarray] = [None] * len(regions_meta)
         for rm in regions_meta:
-            cost_r, slopes = _pin_and_solve(rm, f_bar)
+            cost_r, slopes, sol_r = _pin_and_solve(rm, f_bar)
             region_costs[rm.name] = cost_r
             next_cuts.append((rm.name, cost_r, slopes))
+            region_col_values[region_idx[rm.name]] = np.asarray(
+                sol_r.col_value
+            ).copy()
 
         # --- UB = master invest cost(C) + Σ cost_r(f̄) at the SAME (f̄, C).
         # All terms are in scaled space (region cost_r and master invest_cost
@@ -920,6 +1333,16 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                 "C": dict(C_by_conn),
                 "f_bar": dict(f_bar),
                 "region_costs": dict(region_costs),
+                # The master trade ``v_invest_p`` frame + per-region primal AT
+                # this incumbent, for the TIER-1 invest handoff (master trade
+                # ∪ region in-region invest, owner-de-duplicated).  The master
+                # frame is MATERIALIZED here (a fresh DataFrame), not held as a
+                # Solution reference: the warm-restart reuses the master's
+                # ``col_value`` buffer across iterations, so a stashed Solution
+                # would read a later iteration's values.  ``region_col_values``
+                # are already per-region ``.copy()``-d above.
+                "master_trade_invest": master.trade_invest_frame(msol),
+                "region_col_values": region_col_values,
             }
 
         # ALWAYS-ON monolith-free sandwich guard: LB ≤ optimum ≤ best_UB must
@@ -939,6 +1362,20 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             iterations, LB, UB, best_UB, gap,
         )
 
+        if progress_callback is not None:
+            # Stream one live per-iteration summary.  Bounds are reported in
+            # REAL units (÷s) so the orchestrator's lines match the returned
+            # ``BendersResult`` fields regardless of ``scale_the_objective``.
+            progress_callback({
+                "iter": iterations,
+                "lower_bound": LB * inv_s,
+                "upper_bound": UB * inv_s,
+                "best_upper_bound": best_UB * inv_s,
+                "gap": gap,
+                "converged": gap <= tol,
+                "region_costs": {r: c * inv_s for r, c in region_costs.items()},
+            })
+
         if gap <= tol:
             converged = True
             break
@@ -952,9 +1389,37 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # and stay in their native (scale-invariant) units.  s=1.0 ⇒ no-op.
     inc = best_incumbent if best_incumbent is not None else {
         "C": C_by_conn, "f_bar": f_bar, "region_costs": region_costs,
+        "master_trade_invest": (
+            master.trade_invest_frame(msol) if iterations else None
+        ),
+        "region_col_values": region_col_values if iterations else None,
     }
     trade_flow = _flow_frames(arcs, inc["f_bar"])
-    inv_s = 1.0 / obj_scale
+
+    # --- TIER-1 whole-system invest handoff (GAP-a).  Assemble the same-shaped
+    # ``{v_invest_p/v_invest_n/v_divest_p/v_divest_n -> (entity, d, value)}``
+    # dict the downstream rolling-dispatch consumes, as the UNION of:
+    #   (a) each REGION's in-region invest (owner-de-duplicated so each entity
+    #       is claimed exactly once), AND
+    #   (b) the MASTER's trade-connection ``v_invest_p`` (the cross-region
+    #       pipes the master owns; disjoint from any region's in-region invest
+    #       since the splitter never assigns a cross-region connection to a
+    #       region's membership).
+    # NORMALISATION: both the region subproblems and the master are FlexTool-
+    # built (``build_flextool``), so their ``v_invest_p`` carry IDENTICAL
+    # p_unitsize-normalised units — the same units ``Solution.value("v_invest_p")``
+    # returns on the monolith.  The assembled frames therefore drop straight
+    # into ``build_handoff_from_solution`` with no rescale.
+    invest_solution_vars = _assemble_benders_invest_vars(
+        subproblems=subproblems,
+        region_of_index=[s.region for s in splits],
+        region_membership=_region_filter.load_region_membership(data, regions),
+        regions=regions,
+        region_col_values=inc.get("region_col_values"),
+        master_trade_invest=inc.get("master_trade_invest"),
+        trade_conns={a.conn for a in arcs},
+    )
+
     return BendersResult(
         converged=converged,
         iterations=iterations,
@@ -965,6 +1430,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         region_costs={r: c * inv_s for r, c in inc["region_costs"].items()},
         invest=inc["C"],
         trade_flow=trade_flow,
+        invest_solution_vars=invest_solution_vars,
     )
 
 

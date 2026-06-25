@@ -232,7 +232,7 @@ def discover_region_membership(
 
 def discover_decomposition_regions_from_db(input_db_url: str) -> list[str]:
     """Return the list of group names whose ``decomposition_method`` is
-    ``lagrangian_region``.
+    ``benders_regional``.
 
     Used by the CLI to present the list of available regions and by
     ``build_region_directory`` to know other regions' membership.
@@ -247,7 +247,7 @@ def discover_decomposition_regions_from_db(input_db_url: str) -> list[str]:
         ):
             if pv["type"] is None:
                 continue
-            if str(pv["parsed_value"]) == "lagrangian_region":
+            if str(pv["parsed_value"]) == "benders_regional":
                 names.append(pv["entity_byname"][0])
     return names
 

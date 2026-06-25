@@ -11,9 +11,12 @@ These tests pin the ground truth the brief requires:
 
 * MONOLITH (``build_flextool`` + ``.solve()``): both pipes invested,
   A→B→C trade flow strictly positive, region-C up-slack ≈ 0.
-* CURRENT Lagrangian (``solve_lagrangian``): trade collapses to autarky
-  and the reported total sits ABOVE the monolith optimum ``M`` (the
-  greenfield-trade weak-duality bug reproduced at small scale).
+
+The MONOLITH is the ground-truth optimum ``M`` that Benders must recover
+(see ``test_benders_phase2_loop.py``).  The historical contrast — the old
+subgradient Lagrangian collapsing trade to autarky ABOVE ``M`` — is no
+longer asserted here: the subgradient driver was deleted in Phase 4
+Chunk C.
 
 See ``specs/benders_option_c.md`` and
 ``specs/benders_option_c_fixture_recipe.md``.
@@ -32,7 +35,6 @@ import pytest
 from polar_high import Problem
 
 from flextool.engine_polars import build_flextool, load_flextool
-from flextool.engine_polars._lagrangian import solve_lagrangian
 
 
 @pytest.fixture(scope="module")
@@ -111,41 +113,3 @@ def test_monolith_objective_finite(ti_monolith) -> None:
     assert 1e9 < M < 1e11, f"objective M out of expected band: {M}"
 
 
-# ---------------------------------------------------------------------------
-# (c) Current Lagrangian reproduces the greenfield no-trade bug.
-# ---------------------------------------------------------------------------
-
-
-def test_lagrangian_reproduces_no_trade_bug(ti_data, ti_workdir, ti_monolith) -> None:
-    M = ti_monolith.obj
-    result = solve_lagrangian(
-        ti_data,
-        work_dir=ti_workdir,
-        alpha=10.0,
-        max_iters=100,
-        tol=0.5,
-        initial_lambda=0.0,
-        min_iters=20,
-    )
-    # The 4 cross-region couplings (pipe_AB × 2 dir, pipe_BC × 2 dir).
-    assert set(result.final_lambdas.keys()) == {
-        ("pipe_AB", "lh2_A", "lh2_B"),
-        ("pipe_AB", "lh2_B", "lh2_A"),
-        ("pipe_BC", "lh2_B", "lh2_C"),
-        ("pipe_BC", "lh2_C", "lh2_B"),
-    }
-    # The headline bug: greenfield half-flow severance bounds trade to ≈0,
-    # so the autarkic recovered total sits ABOVE the true optimum M by a
-    # clear margin (weak-duality violation).
-    assert result.total_objective > M * (1 + 0.01), (
-        f"Lagrangian total {result.total_objective:.6e} did not exceed "
-        f"monolith M={M:.6e} — the greenfield no-trade bug is not "
-        f"reproduced by this fixture"
-    )
-    # All three regions solved with positive operating cost (autarky is
-    # expensive in C).
-    assert set(result.region_objectives.keys()) == {
-        "region_A", "region_B", "region_C"
-    }
-    for r, obj in result.region_objectives.items():
-        assert obj > 0, f"{r} obj={obj} non-positive"
