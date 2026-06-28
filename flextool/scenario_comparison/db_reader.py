@@ -156,6 +156,20 @@ def combine_parquet_files(
                             columns={s: scenario_name for s in src},
                             level='scenario',
                         )
+                elif (
+                    not isinstance(df.columns, pd.MultiIndex)
+                    and df.columns.name == 'scenario'
+                ):
+                    # Entity-less variables (e.g. period-indexed costs ``_p_``)
+                    # carry a single-level column index named 'scenario'.  The
+                    # MultiIndex branch above skips these, so two folders that
+                    # share a baked model tag (``trade_only_shipping_4`` and
+                    # ``_2`` both baked as ``trade_only_shipping``) would emit
+                    # duplicate columns after the cross-scenario concat and
+                    # crash the downstream ``stack``.  Re-tag here too.
+                    src = list(df.columns.unique())
+                    if src != [scenario_name]:
+                        df = df.rename(columns={s: scenario_name for s in src})
                 dfs_to_append.append(df)
 
             except Exception as e:
