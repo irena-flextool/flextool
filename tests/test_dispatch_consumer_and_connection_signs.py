@@ -153,6 +153,43 @@ class TestGroupDispatchSigns(unittest.TestCase):
         self.assertAlmostEqual(total, -1.0, places=9)
 
 
+class TestBidirectionalUnitNotDropped(unittest.TestCase):
+    """A unit that both produces to and consumes from the same node must keep
+    BOTH directions (production must not be overwritten by consumption)."""
+
+    def _results(self) -> TimeSeriesResults:
+        res = TimeSeriesResults()
+        # 'bu' discharges (output) at t0 and charges (input) at t1, same node.
+        res.unit_outputNode_dt_ee = _frame(("bu", NODE), [4.0, 0.0])
+        res.unit_inputNode_dt_ee = _frame(("bu", NODE), [0.0, -3.0])
+        return res
+
+    def _mappings(self) -> DispatchMappings:
+        m = DispatchMappings()
+        m.dispatch_groups = _scen_indexed([{"group": GROUP}])
+        m.group_node = _scen_indexed([{"group": GROUP, "node": NODE}])
+        m.not_in_aggregate_unit_to_node = _scen_indexed(
+            [{"group": GROUP, "process": "bu", "unit": "bu", "node": NODE}]
+        )
+        m.not_in_aggregate_node_to_unit = _scen_indexed(
+            [{"group": GROUP, "process": "bu", "node": NODE, "unit": "bu"}]
+        )
+        return m
+
+    def test_both_directions_survive(self) -> None:
+        df, _ = prepare_dispatch_data(
+            self._results(), self._mappings(), SCEN, GROUP
+        )
+        cols = [str(c) for c in df.columns]
+        # Mixed-sign net column "(bu, elec_n)" splits into _pos / _neg.
+        pos = [c for c in cols if c.startswith("(bu, ") and c.endswith("_pos")]
+        neg = [c for c in cols if c.startswith("(bu, ") and c.endswith("_neg")]
+        self.assertTrue(pos, f"discharge (_pos) dropped: {cols}")
+        self.assertTrue(neg, f"charge (_neg) dropped: {cols}")
+        self.assertAlmostEqual(df[pos[0]].sum(), 4.0, places=9)
+        self.assertAlmostEqual(df[neg[0]].sum(), -3.0, places=9)
+
+
 class TestNodeDispatchConsumer(unittest.TestCase):
     def test_per_node_consumer_not_dropped(self) -> None:
         # Per-node bug: consumer must appear as a negative ``*_in`` column.

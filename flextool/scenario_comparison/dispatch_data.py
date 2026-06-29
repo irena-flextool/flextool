@@ -420,7 +420,20 @@ def prepare_dispatch_data(
                         # as-is — negating again would flip consumers to
                         # positive (rendering them as producers).  Mirrors the
                         # aggregate ``Group_to_unit`` path above.
-                        df_dispatch[col_name] = unit_input[col_key]
+                        #
+                        # A unit that both produces to AND consumes from the
+                        # same node (e.g. a reversible/storage unit with
+                        # input_node == output_node) shares this col_name with
+                        # the unit_to_node path above.  Add into the existing
+                        # column so both directions survive — the net mixed-sign
+                        # column is then split into _pos/_neg by
+                        # ``_order_dispatch_columns`` — instead of overwriting
+                        # and silently dropping the production side.  Mirrors the
+                        # ``not_in_aggregate_node_to_connection`` path below.
+                        if col_name in df_dispatch:
+                            df_dispatch[col_name] = df_dispatch[col_name].add(unit_input[col_key], fill_value=0)
+                        else:
+                            df_dispatch[col_name] = unit_input[col_key]
 
         # Connection to node not in aggregate
         not_agg_conn_to_node = mappings.get_for_scenario('not_in_aggregate_connection_to_node', scenario)
