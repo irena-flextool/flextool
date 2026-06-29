@@ -1414,20 +1414,24 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # term is 0 (cap = invested C); for an EXISTING-only arc the invested
         # C is 0 (cap = existing/unitsize); for a BOTH arc both contribute.
         existing_cap_by_col = master._existing_cap_by_col
+        # The solver returns a vertex within its feasibility tolerance of the
+        # active rows, so the coupling row ``C − f ≥ 0`` can carry a tiny slack
+        # on ``f ≤ cap``.  HiGHS enforces feasibility on the INTERNALLY-SCALED
+        # problem, so the UNSCALED slack reported here can exceed the nominal
+        # (scaled) tolerance — especially on a normalised coupling row with
+        # small capacity.  Derive the self-check budget from the solver's own
+        # achieved infeasibility (generic to whatever the solve produced) and
+        # floor it with the sibling cut-satisfaction self-check's relative
+        # tolerance so a near-zero reported value still admits the vertex slack.
+        # A violation above this is a genuine read/stale-state bug, not solver
+        # slack — the coupling row's slack is by construction ≤ this maximum.
+        solver_feas = msol.max_primal_infeasibility
         for a in arcs:
             invested = C_by_conn.get(a.conn, 0.0)
             for cid in a.f_col_ids:
                 cap = invested + existing_cap_by_col.get(int(cid), 0.0)
                 f_val = new_f_bar[int(cid)]
-                # HiGHS enforces primal feasibility on the INTERNALLY-SCALED
-                # row (default 1e-7); for a normalised coupling row
-                # ``C − f ≥ 0`` with small capacity that maps to a larger
-                # UNSCALED slack on ``f ≤ cap`` — a normal solver artifact, not
-                # an invalid bound.  Use the same relative-with-floor tolerance
-                # as the sibling cut-satisfaction self-check
-                # (``_check_cuts_satisfied``): a pure absolute 1e-6 collapses
-                # too tight whenever ``cap < 1``.
-                tol = 1e-5 * max(1.0, abs(cap), abs(f_val))
+                tol = max(1e-5 * max(1.0, abs(cap), abs(f_val)), solver_feas)
                 if f_val > cap + tol:
                     raise RuntimeError(
                         f"Benders master infeasible coupling: "
