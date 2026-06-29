@@ -339,13 +339,17 @@ def prepare_dispatch_data(
         conn_to_node_members = mappings.get_for_scenario('processGroup_connection_to_node_members', scenario)
         conn_from_node_members = mappings.get_for_scenario('processGroup_node_to_connection_members', scenario)
 
-        conn_left = None
-        conn_right = None
+        # Connection flow frames feed both the aggregate path below and the
+        # not-in-aggregate paths further down, so load them unconditionally.
+        # Previously they were loaded only inside the ``processGroup_Connection``
+        # guard; when a model has no aggregated connections (empty
+        # ``processGroup_Connection``) they stayed ``None`` and every
+        # non-aggregated connection (batteries, transport links) was silently
+        # dropped from the dispatch.
+        conn_left = _slice_scenario_df(results.connection_leftward_dt_eee, scenario)
+        conn_right = _slice_scenario_df(results.connection_rightward_dt_eee, scenario)
         if connection_df is not None and not connection_df.empty:
             group_aggregates = connection_df[connection_df['group'] == output_node_group]['group_aggregate'].unique()
-
-            conn_left = _slice_scenario_df(results.connection_leftward_dt_eee, scenario)
-            conn_right = _slice_scenario_df(results.connection_rightward_dt_eee, scenario)
 
             for group_agg in group_aggregates:
                 flow_sum = pd.Series(0.0, index=time_index)
@@ -411,7 +415,12 @@ def prepare_dispatch_data(
                     col_key = (unit, node)
                     col_name = f"({row['process']}, {node})"
                     if col_key in unit_input.columns:
-                        df_dispatch[col_name] = -unit_input[col_key]
+                        # ``unit_inputNode_dt_ee`` is already stored negated
+                        # (consumption = negative; see out_flows.py).  Use it
+                        # as-is — negating again would flip consumers to
+                        # positive (rendering them as producers).  Mirrors the
+                        # aggregate ``Group_to_unit`` path above.
+                        df_dispatch[col_name] = unit_input[col_key]
 
         # Connection to node not in aggregate
         not_agg_conn_to_node = mappings.get_for_scenario('not_in_aggregate_connection_to_node', scenario)
@@ -442,30 +451,15 @@ def prepare_dispatch_data(
                         else:
                             df_dispatch[col_name] = conn_right[col_key]
 
-        # Connection not in aggregate (total flow)
-        not_agg_connection = mappings.get_for_scenario('not_in_aggregate_connection', scenario)
-        if not_agg_connection is not None and not not_agg_connection.empty:
-            entries = not_agg_connection[not_agg_connection['group'] == output_node_group]
-            if conn_left is not None or conn_right is not None:
-                for _, row in entries.iterrows():
-                    connection = row['connection']
-                    col_name = f"({connection})"
-                    flow_sum = pd.Series(0.0, index=time_index)
-
-                    if conn_left is not None:
-                        matching_cols = [c for c in conn_left.columns if c[0] == connection]
-                        for col in matching_cols:
-                            if col[1] in nodes_in_group:
-                                flow_sum = flow_sum.add(conn_left[col], fill_value=0)
-
-                    if conn_right is not None:
-                        matching_cols = [c for c in conn_right.columns if c[0] == connection]
-                        for col in matching_cols:
-                            if col[1] in nodes_in_group:
-                                flow_sum = flow_sum.add(conn_right[col], fill_value=0)
-
-                    if flow_sum.abs().sum() > 0:
-                        df_dispatch[col_name] = flow_sum
+        # NOTE: the ``not_in_aggregate_connection`` ("connection total") table
+        # is intentionally NOT rendered here.  It is, by construction, the
+        # (group, connection) projection of the two directional sets
+        # (connection→node ∪ node→connection; see
+        # engine_polars/_emit_arc_unions.py), so every connection it lists is
+        # already drawn by the directional paths above.  Rendering it too would
+        # double-count each connection's flow.  The engine's authoritative
+        # group-flow computation (process_outputs/calc_group_flows.py) likewise
+        # consumes only the directional sets, never this total.
 
         # --- Process fully inside (internal losses) ---
         process_fully_inside = mappings.get_for_scenario('process_fully_inside', scenario)
@@ -580,7 +574,11 @@ def prepare_node_dispatch_data(
                 col_node = col[1] if isinstance(col, tuple) else col
                 if col_node == node:
                     unit_name = col[0] if isinstance(col, tuple) else col
-                    series = -unit_input[col]
+                    # ``unit_inputNode_dt_ee`` is already negated (consumption =
+                    # negative; see out_flows.py).  Use it as-is; negating again
+                    # would flip to positive and the ``clip(upper=0)`` below
+                    # would then silently drop all unit consumption.
+                    series = unit_input[col]
                     neg_part = series.clip(upper=0)
                     if neg_part.abs().sum() > 0:
                         df_dispatch[f"{unit_name}_in"] = neg_part
