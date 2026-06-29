@@ -1418,10 +1418,21 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             invested = C_by_conn.get(a.conn, 0.0)
             for cid in a.f_col_ids:
                 cap = invested + existing_cap_by_col.get(int(cid), 0.0)
-                if new_f_bar[int(cid)] > cap + 1e-6 * max(1.0, abs(cap)):
+                f_val = new_f_bar[int(cid)]
+                # HiGHS enforces primal feasibility on the INTERNALLY-SCALED
+                # row (default 1e-7); for a normalised coupling row
+                # ``C − f ≥ 0`` with small capacity that maps to a larger
+                # UNSCALED slack on ``f ≤ cap`` — a normal solver artifact, not
+                # an invalid bound.  Use the same relative-with-floor tolerance
+                # as the sibling cut-satisfaction self-check
+                # (``_check_cuts_satisfied``): a pure absolute 1e-6 collapses
+                # too tight whenever ``cap < 1``.
+                tol = 1e-5 * max(1.0, abs(cap), abs(f_val))
+                if f_val > cap + tol:
                     raise RuntimeError(
                         f"Benders master infeasible coupling: "
-                        f"f={new_f_bar[int(cid)]} > cap[{a.conn}]={cap} "
+                        f"f={f_val} > cap[{a.conn}]={cap} (slack {f_val - cap:.3e} "
+                        f"> tol {tol:.3e}) "
                         f"(invested={invested}, "
                         f"existing={existing_cap_by_col.get(int(cid), 0.0)})"
                     )
