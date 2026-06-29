@@ -190,6 +190,51 @@ class TestBidirectionalUnitNotDropped(unittest.TestCase):
         self.assertAlmostEqual(df[neg[0]].sum(), -3.0, places=9)
 
 
+class TestConnectionEndKeying(unittest.TestCase):
+    """A connection's flow must be read from the ward frame keyed by the
+    in-group node's physical end, not by the mapping's flow direction. A
+    unidirectional connection whose in-group node is the RIGHT end (flow lives
+    in the rightward frame) must not be dropped."""
+
+    def _results(self) -> TimeSeriesResults:
+        res = TimeSeriesResults()
+        # Producer at Y seeds the time index and gives the group a column.
+        res.unit_outputNode_dt_ee = _frame(("genY", NODE), [1.0, 1.0])
+        # Connection C: left end = X (out of group), right end = Y (== NODE,
+        # in group). Unidirectional, delivering INTO Y -> flow is in the
+        # RIGHTWARD frame keyed by the right node Y. Leftward is keyed by X.
+        res.connection_leftward_dt_eee = _frame(("C", "X"), [-5.0, -5.0])
+        res.connection_rightward_dt_eee = _frame(("C", NODE), [4.0, 4.0])
+        return res
+
+    def _mappings(self) -> DispatchMappings:
+        m = DispatchMappings()
+        m.dispatch_groups = _scen_indexed([{"group": GROUP}])
+        m.group_node = _scen_indexed([{"group": GROUP, "node": NODE}])
+        m.not_in_aggregate_unit_to_node = _scen_indexed(
+            [{"group": GROUP, "process": "genY", "unit": "genY", "node": NODE}]
+        )
+        # Receive-only node -> only a connection_to_node row is emitted (node=Y,
+        # the right end). The old code looked this up in LEFTWARD and missed.
+        m.not_in_aggregate_connection_to_node = _scen_indexed(
+            [{"group": GROUP, "process": "C", "connection": "C", "node": NODE}]
+        )
+        return m
+
+    def test_right_end_connection_not_dropped(self) -> None:
+        df, _ = prepare_dispatch_data(
+            self._results(), self._mappings(), SCEN, GROUP
+        )
+        cols = [str(c) for c in df.columns]
+        conn = [c for c in df.columns if str(c).startswith("(C, ")]
+        self.assertTrue(conn, f"right-end connection dropped: {cols}")
+        # Y imports 4.0 MW per step through C -> positive, counted once.
+        self.assertAlmostEqual(df[conn[0]].sum(), 8.0, places=9)
+        self.assertEqual(
+            len(conn), 1, f"connection counted more than once: {cols}"
+        )
+
+
 class TestNodeDispatchConsumer(unittest.TestCase):
     def test_per_node_consumer_not_dropped(self) -> None:
         # Per-node bug: consumer must appear as a negative ``*_in`` column.

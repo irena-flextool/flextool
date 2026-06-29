@@ -65,6 +65,35 @@ def _slice_scenario_df(
     return df.xs(scenario, axis=1, level='scenario').groupby('time').sum()
 
 
+def _connection_series_at_node(
+    conn_left: pd.DataFrame | None,
+    conn_right: pd.DataFrame | None,
+    process: str,
+    node: str,
+) -> pd.Series | None:
+    """Signed net connection flow at *node*, from the correct ward frame.
+
+    ``connection_leftward`` / ``connection_rightward`` are keyed by the
+    connection's left / right end node respectively (see
+    ``calc_connections.py``), each carrying the full signed net flow at that
+    end.  A node is the left XOR right end of a given connection, so pick
+    whichever frame holds it.  The dispatch mapping tables are keyed by flow
+    DIRECTION (connection→node / node→connection), which is independent of
+    which physical end the node is, so the frame must be chosen by the node's
+    end — not by the direction table the pair came from — or unidirectional
+    connections whose end and direction don't coincide get silently dropped.
+
+    A self-loop connection (same node on both ends) is not a valid topology;
+    it would resolve to the left frame only.
+    """
+    col_key = (process, node)
+    if conn_left is not None and col_key in conn_left.columns:
+        return conn_left[col_key]
+    if conn_right is not None and col_key in conn_right.columns:
+        return conn_right[col_key]
+    return None
+
+
 def _order_dispatch_columns(
     df: pd.DataFrame,
     plot_name: str = "",
@@ -354,31 +383,26 @@ def prepare_dispatch_data(
             for group_agg in group_aggregates:
                 flow_sum = pd.Series(0.0, index=time_index)
 
-                # Connection to node (leftward flows - node receives from connection)
-                if conn_to_node_members is not None and not conn_to_node_members.empty and conn_left is not None:
-                    members = conn_to_node_members[
-                        (conn_to_node_members['group'] == output_node_group) &
-                        (conn_to_node_members['group_aggregate'] == group_agg)
-                    ]
-                    for _, row in members.iterrows():
-                        process = row['process']
-                        node = row['node']
-                        col_key = (process, node)
-                        if col_key in conn_left.columns:
-                            flow_sum = flow_sum.add(conn_left[col_key], fill_value=0)
-
-                # Node to connection (rightward flows - node sends to connection)
-                if conn_from_node_members is not None and not conn_from_node_members.empty and conn_right is not None:
-                    members = conn_from_node_members[
-                        (conn_from_node_members['group'] == output_node_group) &
-                        (conn_from_node_members['group_aggregate'] == group_agg)
-                    ]
-                    for _, row in members.iterrows():
-                        process = row['process']
-                        node = row['node']
-                        col_key = (process, node)
-                        if col_key in conn_right.columns:
-                            flow_sum = flow_sum.add(conn_right[col_key], fill_value=0)
+                # Collect the unique (connection, node) pairs for this aggregate
+                # across BOTH direction member tables, then read each from the
+                # ward frame that actually holds its node (see
+                # _connection_series_at_node).  Dedup prevents a bidirectional
+                # connection — listed in both tables — being summed twice.
+                agg_pairs: dict[tuple, None] = {}
+                for members_df in (conn_to_node_members, conn_from_node_members):
+                    if members_df is not None and not members_df.empty:
+                        members = members_df[
+                            (members_df['group'] == output_node_group) &
+                            (members_df['group_aggregate'] == group_agg)
+                        ]
+                        for _, row in members.iterrows():
+                            agg_pairs[(row['process'], row['node'])] = None
+                for process, node in agg_pairs:
+                    series = _connection_series_at_node(
+                        conn_left, conn_right, process, node,
+                    )
+                    if series is not None:
+                        flow_sum = flow_sum.add(series, fill_value=0)
 
                 if flow_sum.abs().sum() > 0:
                     if group_agg in df_dispatch:
@@ -435,34 +459,34 @@ def prepare_dispatch_data(
                         else:
                             df_dispatch[col_name] = unit_input[col_key]
 
-        # Connection to node not in aggregate
-        not_agg_conn_to_node = mappings.get_for_scenario('not_in_aggregate_connection_to_node', scenario)
-        if not_agg_conn_to_node is not None and not not_agg_conn_to_node.empty:
-            entries = not_agg_conn_to_node[not_agg_conn_to_node['group'] == output_node_group]
-            if conn_left is not None:
-                for _, row in entries.iterrows():
-                    process = row['process']
-                    node = row['node']
-                    col_key = (process, node)
-                    col_name = f"({process}, {node})"
-                    if col_key in conn_left.columns:
-                        df_dispatch[col_name] = conn_left[col_key]
-
-        # Node to connection not in aggregate
-        not_agg_node_to_conn = mappings.get_for_scenario('not_in_aggregate_node_to_connection', scenario)
-        if not_agg_node_to_conn is not None and not not_agg_node_to_conn.empty:
-            entries = not_agg_node_to_conn[not_agg_node_to_conn['group'] == output_node_group]
-            if conn_right is not None:
-                for _, row in entries.iterrows():
-                    process = row['process']
-                    node = row['node']
-                    col_key = (process, node)
-                    col_name = f"({process}, {node})"
-                    if col_key in conn_right.columns:
-                        if col_name in df_dispatch:
-                            df_dispatch[col_name] = df_dispatch[col_name].add(conn_right[col_key], fill_value=0)
-                        else:
-                            df_dispatch[col_name] = conn_right[col_key]
+        # Connections not in an aggregate (individual columns).  As with the
+        # aggregate path, the two mapping tables are keyed by flow direction
+        # while the ward frames are keyed by physical end, so build the unique
+        # (connection, node) set across both tables and read each from the frame
+        # that holds its node (see _connection_series_at_node).  Dedup prevents
+        # double-counting a bidirectional connection (listed in both tables);
+        # reading by direction would drop a unidirectional connection whose end
+        # and direction don't line up.
+        conn_pairs: dict[tuple, None] = {}
+        for _key in (
+            'not_in_aggregate_connection_to_node',
+            'not_in_aggregate_node_to_connection',
+        ):
+            tbl = mappings.get_for_scenario(_key, scenario)
+            if tbl is not None and not tbl.empty:
+                for _, row in tbl[tbl['group'] == output_node_group].iterrows():
+                    conn_pairs[(row['process'], row['node'])] = None
+        for process, node in conn_pairs:
+            series = _connection_series_at_node(
+                conn_left, conn_right, process, node,
+            )
+            if series is None:
+                continue
+            col_name = f"({process}, {node})"
+            if col_name in df_dispatch:
+                df_dispatch[col_name] = df_dispatch[col_name].add(series, fill_value=0)
+            else:
+                df_dispatch[col_name] = series
 
         # NOTE: the ``not_in_aggregate_connection`` ("connection total") table
         # is intentionally NOT rendered here.  It is, by construction, the
