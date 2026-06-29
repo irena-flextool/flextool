@@ -1,3 +1,47 @@
+## Release 4.0.0b13 (25.6.2026) — scenario-comparison & nodeGroup-dispatch plot fixes
+
+Output/visualization-only bug fixes — **no database migration** (schema stays
+**v62**; `FLEXTOOL_DB_VERSION` unchanged) and dependency floors unchanged
+(`polar-high>=3.0.0`, `polars>=1.40`, `highspy<=1.14.0`). The LP, engine, and all
+solver outputs are byte-identical to b12; only scenario comparison and the
+nodeGroup dispatch plots change. Each fix carries a regression test.
+
+### Scenario comparison
+
+- **Retag single-level scenario columns to folder identity.**
+  `combine_parquet_files` re-tags each scenario's baked-in model tag to its
+  folder name so two folders holding the same model scenario stay distinct —
+  but the retag was gated on `MultiIndex` columns only. Entity-less,
+  period-indexed variables (e.g. `costs_discounted_p_`) carry a single-level
+  column `Index` named `scenario` and so skipped it; two compared folders
+  sharing a baked tag (e.g. `trade_only_shipping_4` / `_2`, both baked
+  `trade_only_shipping`) then produced duplicate columns and crashed
+  `plot_outputs`' `stack()` ("Columns with duplicate values are not supported in
+  stack"). Adds the single-level retag branch.
+
+### NodeGroup dispatch plots
+
+- **Correct consumer sign + restore connections.** Consumers no longer render as
+  producers (the node→unit path double-negated the already-negated
+  `unit_inputNode_dt_ee`); non-aggregated connections (battery/transport) load
+  unconditionally instead of only when an aggregated connection exists; and the
+  redundant not-in-aggregate "total" connection path that double-counted is
+  dropped. Fixes the matching per-node consumer bug too.
+- **Keep both directions for same-node bidirectional units.** A unit that both
+  produces to and consumes from the same node (reversible/storage with
+  `input_node == output_node`) no longer has its production side overwritten; the
+  mixed-sign column is split into `_pos`/`_neg` so charge and discharge both show.
+- **Read connection flow by the node's physical end, not flow direction.**
+  `connection_leftward`/`rightward` are keyed by the connection's physical end
+  node, but the plot picked a frame by the mapping table's flow *direction*, so a
+  unidirectional connection whose in-group node sits on the "wrong" end vanished
+  from the plot (while correct in the engine's authoritative `nodeGroup_flows`).
+  Both paths now use a single end-correct lookup (`_connection_series_at_node`).
+
+These plots now agree with the engine's authoritative group-flow output; real
+elec-group plots are byte-equivalent where the old code happened to capture
+everything, with regression tests added for the cases it dropped.
+
 ## Release 4.0.0b12 (25.6.2026) — Benders regional decomposition (v62) replaces Lagrangian; greenfield cross-region trade; GUI fixes
 
 Requires a **database migration to v62** (`FLEXTOOL_DB_VERSION` 61 → 62) and
