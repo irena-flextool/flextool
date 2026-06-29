@@ -1,3 +1,26 @@
+## Release 4.0.0b14 (29.6.2026) — Benders master coupling self-check tolerance fix
+
+Raises the solver-backend floor to **`polar-high>=3.1.0`** (the Benders master
+coupling self-check now reads `Solution.max_primal_infeasibility`, added in
+3.1.0). No database migration (schema stays **v62**); other floors unchanged
+(`polars>=1.40`, `highspy<=1.14.0`). A model that does not use regional
+(Benders) decomposition is unaffected.
+
+### Benders regional decomposition
+
+- **Size the master coupling self-check from the solver's achieved feasibility.**
+  The post-master-solve self-check that the chosen flow is supported by the
+  chosen capacity (`f <= cap`) used a hard-coded `1e-6` absolute tolerance. For a
+  unitsize-normalised coupling row `C - f >= 0` with small capacity, HiGHS
+  enforces primal feasibility on the *internally-scaled* row (default `1e-7`),
+  which maps to a larger *unscaled* slack on `f <= cap` — a normal solver
+  artifact, not an invalid bound. On a full-scale model this tripped at iteration
+  4 (slack ~`3e-6` > tol `1e-6`) and aborted an otherwise-valid solve. The
+  tolerance is now derived from the master solve's own
+  `Solution.max_primal_infeasibility` (with a small relative floor), and the
+  error message reports the actual slack vs. tolerance so a genuine,
+  orders-of-magnitude coupling violation still surfaces loudly.
+
 ## Release 4.0.0b13 (25.6.2026) — scenario-comparison & nodeGroup-dispatch plot fixes
 
 Output/visualization-only bug fixes — **no database migration** (schema stays
