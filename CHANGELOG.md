@@ -1,3 +1,33 @@
+## Release 4.0.0b15 (30.6.2026) — flowGroup instant-flow obligation fix
+
+Fixes a flowGroup `min_instant_flow` / `max_instant_flow` limit being silently
+ignored — or crashing at load — depending on how the limit was authored. **No
+database migration** (schema stays **v62**; `FLEXTOOL_DB_VERSION` unchanged) and
+dependency floors are unchanged (`polar-high>=3.1.0`, `polars>=1.40`,
+`highspy<=1.14.0`). Models that set no instant-flow limit on a flowGroup are
+unaffected.
+
+### flowGroup flow limits
+
+- **Emit the instant-flow constraint for every authored shape.** The
+  `min_instant_flow` / `max_instant_flow` obligation's RHS cap was resolved
+  correctly for all shapes (constant, period map, time map, period+time —
+  including Spine's silent-default `"x"` Map `index_name`), but the
+  constraint's `(g, d, t)` support was built by a *separate* raw-source
+  projection that detected the index axis by column name. That projection
+  returned an **empty** support for an `"x"`-labelled period map, a constant,
+  or a time map — so the `>=` / `<=` constraint was never emitted and the
+  limit was **silently ignored** — and it **crashed** (`ColumnNotFoundError:
+  "t"`, at `apply_projection_params`) on a pure period map, which has no `t`
+  column. Spine Toolbox cannot cleanly distinguish period from time maps, so
+  authors routinely leave `index_name` as `"x"`, landing in the broken path.
+  The support is now derived directly from the resolved cap and broadcast
+  against the active `(d, t)` grid — exactly as the cumulative-flow limits
+  already are — so support and RHS stay in lock-step and every authoring shape
+  binds correctly. A regression test covers each cap shape plus the reported
+  field case: an `"x"`-indexed period map with a non-zero first period and a
+  zero later period under a single-period solve.
+
 ## Release 4.0.0b14 (29.6.2026) — Benders master coupling self-check tolerance fix
 
 Raises the solver-backend floor to **`polar-high>=3.1.0`** (the Benders master
