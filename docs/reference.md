@@ -33,6 +33,8 @@ The second time varying dimension is `period`, which is typically used to depict
 
 A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based.
 
+**Recommendation — name the Map index for parameters that accept both `period` and `time`.** A few parameters accept *either* a period map or a time series (for example the flowGroup `min_instant_flow` / `max_instant_flow` limits, which accept "Constant, period, time or period+time"). Period and time Maps look structurally identical in Spine Toolbox — both are 1-dimensional Maps — so FlexTool tells them apart from the Map's `index_name`. Set it explicitly to **`period`** or **`time`** when authoring such a Map. If you leave the default (Spine stores it as `x`), FlexTool falls back to inspecting the Map's index *values* and matching them against the model's period and timestep names to guess the intended axis; this works when the keys clearly belong to one set, but is ambiguous if they don't, and an ambiguous Map is dropped (the limit is silently not applied). Setting `index_name` removes the guesswork. (Parameters that accept only one of the two — e.g. `inflow` is time-only — are never ambiguous and need no `index_name`.)
+
 ### Timesets
 
 Timesets pick one or more sections from the `timeline` to form a `timeset`. Each timeset defines a start and a duration. The aim of timesets is to allow the modeller to create models with representative periods often used in the investment planning.
@@ -468,6 +470,8 @@ A `flowGroup` aggregates a set of *flows* — where each flow is a `(process, no
 - `min_cumulative_flow` - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
 - `max_instant_flow` - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.
 - `min_instant_flow` - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.
+
+When authoring `min_instant_flow` / `max_instant_flow` as a Map, set the Map's `index_name` to `period` or `time` so the period-vs-time axis is unambiguous — see [the note on naming the Map index](#timesteps-and-periods) above.
 
 ### Flow aggregation method
 
