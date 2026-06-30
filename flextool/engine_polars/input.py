@@ -832,8 +832,6 @@ class FlexData:
     g_invest_cumulative: pl.DataFrame | None = None                # (g,)
     gd_invest_period: pl.DataFrame | None = None                   # (g, d)
     gd_divest_period: pl.DataFrame | None = None                   # (g, d)
-    gdt_maxInstantFlow: pl.DataFrame | None = None                 # (g, d, t)
-    gdt_minInstantFlow: pl.DataFrame | None = None                 # (g, d, t)
     group_process_node: pl.DataFrame | None = None                 # (g, p, n)
     # Parameters
     ed_invest_min_period: Param | None = None             # (e, d)
@@ -3603,11 +3601,9 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
                                               if pdt_max is not None else None)
     out["pdt_min_instant_flow"]           = (Param(("g", "d", "t"), pdt_min)
                                               if pdt_min is not None else None)
-    # Support of pdt_*_instant_flow (rows where param is non-null/non-zero)
-    out["gdt_maxInstantFlow"] = (pdt_max.select("g", "d", "t")
-                                  if pdt_max is not None else None)
-    out["gdt_minInstantFlow"] = (pdt_min.select("g", "d", "t")
-                                  if pdt_min is not None else None)
+    # NB: the instant-flow constraint support is no longer materialised
+    # as a separate ``gdt_*InstantFlow`` field — ``_emit_instant_flow``
+    # derives the (g, d, t) domain from the resolved cap directly.
 
     return out
 

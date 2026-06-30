@@ -1673,37 +1673,14 @@ def g_invest_cumulative(source: "InputSource") -> pl.DataFrame:
     return _g_param_set(source, "invest_max_cumulative")
 
 
-def gdt_maxInstantFlow(source: "InputSource") -> pl.DataFrame:
-    """Distinct (g, d, t) where ``group.max_instant_flow`` is set.
-
-    Schema: ``[g, d, t]``.
-    """
-    df = _try_param(source, "flowGroup", "max_instant_flow")
-    if df is None:
-        return _empty({"g": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
-    if "period" in df.columns:
-        return (df.lazy()
-                  .pipe(rename_to_axis, {"name": "g", "period": "d"})
-                  .select("g", "d", "t")
-                  .unique()
-                  .sort("g", "d", "t")
-                  .collect())
-    # Scalar: no (d, t) — return empty.
-    return _empty({"g": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
-
-
-def gdt_minInstantFlow(source: "InputSource") -> pl.DataFrame:
-    df = _try_param(source, "flowGroup", "min_instant_flow")
-    if df is None:
-        return _empty({"g": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
-    if "period" in df.columns:
-        return (df.lazy()
-                  .pipe(rename_to_axis, {"name": "g", "period": "d"})
-                  .select("g", "d", "t")
-                  .unique()
-                  .sort("g", "d", "t")
-                  .collect())
-    return _empty({"g": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8})
+# NB: the instant-flow constraint support (``gdt_*InstantFlow``) used to
+# live here as a raw-source projection, but it mis-detected the index
+# axis by column name — silently dropping Spine's silent-default ``"x"``
+# index_name and constant maps, and crashing on pure period maps (no
+# ``t`` column to select).  The ``(g, d, t)`` support is now derived
+# directly from the resolved ``pdt_*_instant_flow`` cap inside
+# ``_cumulative_invest._emit_instant_flow``, which routes shape detection
+# through ``_param_shapes.resolve_param_shape``.
 
 
 # ---------------------------------------------------------------------------
@@ -1990,8 +1967,6 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "g_invest_total": g_invest_total,
     "g_divest_total": g_divest_total,
     "g_invest_cumulative": g_invest_cumulative,
-    "gdt_maxInstantFlow": gdt_maxInstantFlow,
-    "gdt_minInstantFlow": gdt_minInstantFlow,
     "connection_dc_power_flow": connection_dc_power_flow,
     "commodity_with_ladder": commodity_with_ladder,
     "commodity_with_ladder_annual": commodity_with_ladder_annual,

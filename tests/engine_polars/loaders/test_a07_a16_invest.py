@@ -245,7 +245,6 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
         group_entity=None,  # the missing piece for the emit-guard
         p_group_max_cumulative_flow=None, p_group_min_cumulative_flow=None,
         pd_max_cumulative_flow=None, pd_min_cumulative_flow=None,
-        gdt_maxInstantFlow=None, gdt_minInstantFlow=None,
         group_process_node=None,
         edd_invest_set=None,
         p_group_invest_max_cumulative=None,

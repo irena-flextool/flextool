@@ -145,7 +145,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "ed_invest_forbidden_no_investment", "ed_invest_cumulative",
     "group_entity", "g_invest_total", "g_divest_total",
     "g_invest_cumulative", "gd_invest_period", "gd_divest_period",
-    "gdt_maxInstantFlow", "gdt_minInstantFlow", "group_process_node",
+    "group_process_node",
     # Delays.
     "process_delayed", "process_delayed__duration",
     "process_source_delayed", "process_source_undelayed",
@@ -475,8 +475,8 @@ _WARM_PARAM_GATES: dict[str, tuple[str, ...]] = {
     "p_group_min_cumulative_flow":    ("group_process_node",),
     "pd_max_cumulative_flow":         ("group_process_node",),
     "pd_min_cumulative_flow":         ("group_process_node",),
-    "pdt_max_instant_flow":           ("gdt_maxInstantFlow",),
-    "pdt_min_instant_flow":           ("gdt_minInstantFlow",),
+    "pdt_max_instant_flow":           ("group_process_node",),
+    "pdt_min_instant_flow":           ("group_process_node",),
     # Variable-cost partitions.
     "p_pssdt_varCost":      ("pssdt_varCost_noEff",
                               "pssdt_varCost_eff_unit_source",

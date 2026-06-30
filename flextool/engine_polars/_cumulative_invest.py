@@ -101,7 +101,7 @@ _GATE_FIELDS: tuple[str, ...] = (
     # group-flow
     "p_group_max_cumulative_flow", "p_group_min_cumulative_flow",
     "pd_max_cumulative_flow",      "pd_min_cumulative_flow",
-    "gdt_maxInstantFlow",          "gdt_minInstantFlow",
+    "pdt_max_instant_flow",        "pdt_min_instant_flow",
     "group_process_node",
 )
 
@@ -111,7 +111,12 @@ def has_feature(d) -> bool:
     min-max-invest fields populated and non-empty."""
     for f in _GATE_FIELDS:
         v = getattr(d, f, None)
-        if v is not None and getattr(v, "height", 0) > 0:
+        if v is None:
+            continue
+        # ``_GATE_FIELDS`` mixes raw ``pl.DataFrame`` sets (``.height``)
+        # and ``Param`` caps (``.frame.height``); normalise both.
+        frame = getattr(v, "frame", v)
+        if getattr(frame, "height", 0) > 0:
             return True
     return False
 
@@ -1101,26 +1106,59 @@ def _emit_cumulative_flow_period(m, d, vars: dict, sense: str) -> None:
     )
 
 
+def _instant_flow_support(cap_frame: pl.DataFrame,
+                          dt: pl.DataFrame) -> pl.DataFrame:
+    """Broadcast a resolved instant-flow cap to its full ``(g, d, t)``
+    constraint support against the active ``(d, t)`` grid.
+
+    The cap is produced by ``pdt_*_instant_flow_from_source`` via
+    ``resolve_param_shape`` / ``broadcast_to_period_time``, so it is
+    keyed by whatever axes were authored — scalar → ``(g,)``, period map
+    → ``(g, d)``, time map → ``(g, t)``, period+time → ``(g, d, t)``.
+    The missing axes are filled from ``dt`` (the active ``(d, t)`` grid)
+    so the obligation binds at every active timestep.
+
+    Deriving the support from the cap keeps it in lock-step with the RHS
+    and replaces the old separate raw-source projection, which detected
+    the axis by column name — silently dropping Spine's silent-default
+    ``"x"`` index_name and constant maps, and crashing on pure period
+    maps (no ``t`` column to select).
+    """
+    has_d = "d" in cap_frame.columns
+    has_t = "t" in cap_frame.columns
+    if has_d and has_t:                       # MAP_PERIOD_TIME
+        over = cap_frame.select("g", "d", "t")
+    elif has_d:                               # MAP_PERIOD
+        over = (cap_frame.select("g", "d").unique()
+                         .join(dt, on="d", how="inner"))
+    elif has_t:                               # MAP_TIME
+        over = (cap_frame.select("g", "t").unique()
+                         .join(dt, on="t", how="inner"))
+    else:                                     # SCALAR — broadcast over grid
+        over = cap_frame.select("g").unique().join(dt, how="cross")
+    return over.select("g", "d", "t").unique()
+
+
 def _emit_instant_flow(m, d, vars: dict, sense: str) -> None:
-    if sense == "<=":
-        gdt_idx   = getattr(d, "gdt_maxInstantFlow", None)
-        cap_field = "pdt_max_instant_flow"
-    else:
-        gdt_idx   = getattr(d, "gdt_minInstantFlow", None)
-        cap_field = "pdt_min_instant_flow"
-    if gdt_idx is None or gdt_idx.height == 0:
-        return
+    cap_field = ("pdt_max_instant_flow" if sense == "<="
+                 else "pdt_min_instant_flow")
     cap_param = getattr(d, cap_field, None)
-    if cap_param is None:
+    if cap_param is None or cap_param.frame.height == 0:
         return
     flow_lhs = _flow_lhs(d, vars)
     if flow_lhs is None:
         return
+
+    dt = d.p_step_duration.frame.select("d", "t").unique()
+    over = _instant_flow_support(cap_param.frame, dt)
+    if over.height == 0:
+        return
+
     pre = "max" if sense == "<=" else "min"
     name = f"{pre}Instant_flow"
     m.add_cstr(
         name,
-        over      = gdt_idx,
+        over      = over,
         sense     = sense,
         lhs_terms = {"flow": flow_lhs},
         rhs_terms = {"cap":  cap_param},
