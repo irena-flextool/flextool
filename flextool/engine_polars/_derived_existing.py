@@ -242,11 +242,19 @@ def _per_entity_param_lf(source: "InputSource",
         extra = [c for c in cols if c not in ("name", "value")]
         period_col = "period" if "period" in extra else (extra[0] if extra else None)
         if period_col is not None:
+            # Per-ROW scalar detection — see the matching helper in
+            # ``_derived_npv._per_entity_param_lf`` for the full rationale.
+            # A constant ``existing`` (etc.) stored in an entity class
+            # that ALSO carries period-Map values for sibling entities
+            # surfaces with a NULL index (``x = null``).  That row must
+            # broadcast across the period universe (``is_scalar=True``),
+            # not be emitted as an explicit ``(e, d=null)`` row that
+            # never joins the period grid and silently zeroes out.
             parts.append(df.lazy().select(
                 alias_to_axis("name", "e"),
                 alias_to_axis(period_col, "d"),
                 pl.col("value").cast(pl.Float64, strict=False),
-                pl.lit(False).alias("is_scalar"),
+                pl.col(period_col).is_null().alias("is_scalar"),
             ))
         else:
             parts.append(df.lazy().select(

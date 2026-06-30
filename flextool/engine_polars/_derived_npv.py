@@ -201,12 +201,23 @@ def _per_entity_param_lf(source: "InputSource",
         extra = [c for c in cols if c not in ("name", "value")]
         period_col = "period" if "period" in extra else (extra[0] if extra else None)
         if period_col is not None:
+            # Per-ROW scalar detection.  A scalar value stored alongside
+            # Map values in the same entity class surfaces with a NULL
+            # index ((e.g. ``x = null``) — Spine emits one ``x`` column
+            # for the whole class, so a unit with a constant ``existing``
+            # while a sibling unit carries a period-Map shows up as a
+            # null-period row.  Such rows must broadcast across the
+            # period universe (``is_scalar=True``), NOT be treated as an
+            # explicit ``(e, d=null)`` row that fails to join the period
+            # grid and silently fills 0.  Classifying by ``period_col``'s
+            # null-ness per row (rather than per frame) covers the mixed
+            # scalar+Map class.
             parts.append(df.lazy().select(
                 alias_to_axis("name", "e"),
                 alias_to_axis(pl.col(period_col).cast(pl.Utf8, strict=False),
                               "d"),
                 pl.col("value").cast(pl.Float64, strict=False),
-                pl.lit(False).alias("is_scalar"),
+                pl.col(period_col).is_null().alias("is_scalar"),
             ))
         else:
             parts.append(df.lazy().select(
