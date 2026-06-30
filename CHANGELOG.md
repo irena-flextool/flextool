@@ -1,3 +1,30 @@
+## Release 4.0.0b17 (30.6.2026) — autoscale centres the objective (no more "excessively small costs")
+
+No database migration (schema stays **v62**). Dependency floor raised to
+**`polar-high>=3.2.0`** (`polars>=1.40`, `highspy<=1.14.0` unchanged). The
+converged solution is unchanged on every model.
+
+### Numerical scaling
+
+- **The "Problem has some excessively small costs" HiGHS warning is fixed at the
+  source.** FlexTool multiplies the whole objective by the legacy
+  `scale_the_objective = 1e-6`, which drags every cost coefficient ~6 decades
+  down (e.g. a typical operational-cost band lands around `[5e-5, 6e-1]`, below
+  HiGHS' `1e-4` floor). polar-high 3.2.0's autoscale Layer 3 now **geometrically
+  centres** the cost band over HiGHS' comfort zone via a power-of-two
+  `user_objective_scale`: it lands the band straddling `1.0`, clearing the
+  warning and giving the cheapest costs several decades of headroom above the
+  dual-feasibility tolerance — which helps duals (node/reserve prices) converge
+  on degenerate dispatch LPs. The exponent is a power of two and HiGHS unscales
+  the objective and duals on output, so the reported solution is **byte-for-byte
+  unchanged** — only the magnitudes the simplex pivots on. Bands already in
+  HiGHS' zone are left untouched, so well-scaled models see no change.
+
+### Housekeeping
+
+- Genericized a handful of test fixtures and source comments (synthetic entity
+  names in place of model-specific ones); no behavioural change.
+
 ## Release 4.0.0b16 (30.6.2026) — Benders fail-safe numerical guards + clearer failure diagnostics
 
 No database migration (schema stays **v62**) and dependency floors unchanged

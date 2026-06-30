@@ -7,7 +7,7 @@ name = "flextool"
 # restructure are in.  4.0.0 final follows after the remaining
 # minor-functionality additions, cleanup and testing land.  PEP 440
 # pre-release suffix: 4.0.0a1, 4.0.0a2, ... 4.0.0b1, 4.0.0rc1, then 4.0.0.
-version = "4.0.0b16"
+version = "4.0.0b17"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
@@ -51,8 +51,11 @@ dependencies = [
     # blocks the regional decomposition uses (WarmProblem.add_cut_row /
     # solve(retry_on_unknown=) and the polar_high.parallel helpers).  3.1.0
     # adds Solution.max_primal_infeasibility, which the Benders master coupling
-    # self-check reads to size its tolerance — so it is the hard floor here.
-    "polar-high>=3.1.0",
+    # self-check reads to size its tolerance.  3.2.0 makes autoscale Layer 3
+    # centre the objective over HiGHS' cost comfort zone (clearing the
+    # "excessively small costs" warning that the legacy 1e-6 scale_the_objective
+    # provokes) — so it is the hard floor here.
+    "polar-high>=3.2.0",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.
