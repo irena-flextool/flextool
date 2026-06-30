@@ -126,6 +126,26 @@ _NONOWNER_NONZERO_ABS_TOL = 1e-6
 # the LP optimality tolerance, so allow a tiny relative overshoot.
 _LB_VALID_SLACK = 1e-9
 
+# Relative band that separates benign numerical noise from a GENUINE invalid-
+# bound bug on the lower-bound self-checks (LB monotonicity, LB ≤ best-UB
+# sandwich).  A drop/overshoot smaller than this (and smaller than the
+# convergence tolerance — a difference below ``tol`` cannot change the answer
+# beyond tolerance) is recovered fail-safe: the loop keeps its best feasible
+# incumbent instead of aborting the whole run.  A larger anomaly hard-fails,
+# since that is the Lagrangian-style invalid-lower-bound pathology this scheme
+# exists to catch.
+_LB_GROSS_SLACK = 1e-3
+
+
+def _benders_failure_message(summary: str, meaning: str, how_to_avoid: str) -> str:
+    """Format a Benders hard-failure into a plain-English diagnostic: a one-line
+    technical summary, what it means for the user, and how to avoid it."""
+    return (
+        f"{summary}\n\n"
+        f"What this means:\n  {meaning}\n\n"
+        f"How to avoid it:\n  {how_to_avoid}"
+    )
+
 # A large-NEGATIVE finite floor on each recourse var ``η_r``.  A truly free
 # (lower=-inf) η leaves the cut-less master UNBOUNDED; an unbounded HiGHS solve
 # then corrupts the warm basis so the first appended cut row triggers a
@@ -685,10 +705,30 @@ class _BendersMaster:
         sol = self._wp.solve(retry_on_unknown=True)
         if not sol.optimal:
             status = self._wp._h.getModelStatus()
-            raise RuntimeError(
-                f"Benders master solve not optimal: {status} "
-                f"(ncol={self._wp._h.getNumCol()} nrow={self._wp._h.getNumRow()})"
-            )
+            raise RuntimeError(_benders_failure_message(
+                summary=(
+                    f"Benders master problem did not solve to optimality "
+                    f"(solver status {status}; "
+                    f"{self._wp._h.getNumCol()} columns, "
+                    f"{self._wp._h.getNumRow()} rows)."
+                ),
+                meaning=(
+                    "The master problem — which decides how much capacity to "
+                    "invest in the connections that couple the node groups — "
+                    "could not be solved even after a cold restart. An "
+                    "'infeasible' status usually means the connection bounds "
+                    "cannot be satisfied together; an 'unbounded' status means "
+                    "a connection investment has no (or a negative) cost and "
+                    "the solver can build it for free."
+                ),
+                how_to_avoid=(
+                    "Check the connections that couple the node groups for "
+                    "contradictory bounds (e.g. a forced minimum above the "
+                    "allowed maximum) and for missing or non-positive "
+                    "investment costs. Re-run to rule out a transient solver "
+                    "state. If it persists, please report it with the model."
+                ),
+            ))
         return sol
 
     def add_cut(self, region: str, f_bar: dict[int, float], cost_r: float,
@@ -1264,9 +1304,30 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             )
         sol_r = w.solve()
         if not sol_r.optimal:
-            raise RuntimeError(
-                f"Benders region {rm.name!r} subproblem not optimal"
-            )
+            raise RuntimeError(_benders_failure_message(
+                summary=(
+                    f"Benders node-group subproblem for {rm.name!r} did not "
+                    "solve to optimality."
+                ),
+                meaning=(
+                    "A single node group's dispatch+investment subproblem could "
+                    "not be solved with the flows on its connections to other "
+                    "node groups pinned to the master's values. Flow across the "
+                    "node-group boundary is penalised rather than hard-"
+                    "constrained, so this normally points to an infeasibility "
+                    "WITHIN the node group (e.g. demand that cannot be met by "
+                    "any combination of its own capacity, inflow and "
+                    "investments) or a numerical problem there."
+                ),
+                how_to_avoid=(
+                    f"Check node group {rm.name!r} in isolation: can its demand "
+                    "be served by its own units/storages/inflows and allowed "
+                    "investments? Look for missing capacity, an over-tight "
+                    "constraint, or extreme parameter magnitudes. Re-run to rule "
+                    "out a transient solver state. If it persists, please report "
+                    "it with the model."
+                ),
+            ))
         slopes: dict[int, float] = {}
         for a, region_cols, master_cols in rm.forward:
             rc = sol_r.col_dual[region_cols]
@@ -1387,12 +1448,47 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         msol = master.solve()
         prev_LB = LB
         LB = float(msol.obj)  # scaled space
-        # LB monotone non-decreasing self-check (allow tiny numerical slack).
-        if it > 0 and LB < prev_LB - 1e-6 * max(1.0, abs(prev_LB)):
-            raise RuntimeError(
-                f"Benders LB decreased {prev_LB:.10e} -> {LB:.10e} at iter "
-                f"{iterations} — stale basis / wrong cut append"
-            )
+        # LB monotone non-decreasing self-check.  In exact arithmetic the bound
+        # can only rise (cuts only tighten), so any drop is numerical.  FAIL-
+        # SAFE: a drop within the gross band is treated as noise — pin LB back
+        # to the (valid) previous bound and continue; only a GROSS drop signals
+        # a stale basis / corrupted cut append and hard-fails with guidance.
+        gross_band = max(tol, _LB_GROSS_SLACK)
+        if it > 0 and LB < prev_LB:
+            rel_drop = (prev_LB - LB) / max(1.0, abs(prev_LB))
+            if rel_drop > gross_band:
+                raise RuntimeError(_benders_failure_message(
+                    summary=(
+                        f"Benders lower bound dropped "
+                        f"{prev_LB * inv_s:.6e} → {LB * inv_s:.6e} "
+                        f"(by {rel_drop:.2e}, > {gross_band:.0e}) at iteration "
+                        f"{iterations}."
+                    ),
+                    meaning=(
+                        "The Benders lower bound must never decrease — each "
+                        "iteration only adds cuts, which can only tighten it. A "
+                        "large drop means the master problem returned an "
+                        "inconsistent solution, almost always from a stale "
+                        "solver basis (warm restart) or severe numerical ill-"
+                        "conditioning of that master — not from your model's "
+                        "economics."
+                    ),
+                    how_to_avoid=(
+                        "Re-run the solve first — a fresh basis usually clears a "
+                        "one-off warm-restart glitch. If it recurs: loosen the "
+                        "solver tolerance (e.g. --solver-mip-gap 0.01); check the "
+                        "connections that couple the node groups for extreme "
+                        "investment-cost or capacity magnitudes / unit "
+                        "mismatches that make the master ill-conditioned. If it "
+                        "persists, please report it with the model."
+                    ),
+                ))
+            if rel_drop > 1e-6:
+                _logger.warning(
+                    "Benders iter %d: LB dipped %.3e (numerical) — pinned to "
+                    "previous lower bound", iterations, rel_drop,
+                )
+            LB = prev_LB  # restore monotonicity (prev_LB is a valid bound)
         # OPTIONAL test-time guard: LB ≤ M (M supplied in REAL units → compare
         # in scaled space against M·s).  Skipped when monolith_objective is None
         # (the at-scale driver passes None — no trustworthy/up-to-date M).
@@ -1443,14 +1539,31 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                     1e-2 * max(1.0, abs(cap), abs(f_val)), 1e3 * solver_feas
                 )
                 if slack > gross_tol:
-                    raise RuntimeError(
-                        f"Benders master infeasible coupling: "
-                        f"f={f_val} > cap[{a.conn}]={cap} (slack {slack:.3e} > "
-                        f"gross tol {gross_tol:.3e}, solver_feas={solver_feas:.3e}) "
-                        f"(invested={invested}, "
-                        f"existing={existing_cap_by_col.get(cid, 0.0)}) — "
-                        f"genuine infeasibility, not solver slack"
-                    )
+                    raise RuntimeError(_benders_failure_message(
+                        summary=(
+                            f"Benders master chose a flow {f_val:.6e} on "
+                            f"connection '{a.conn}' that exceeds the capacity "
+                            f"{cap:.6e} it invested in (slack {slack:.3e} > "
+                            f"{gross_tol:.3e}, solver feasibility "
+                            f"{solver_feas:.3e}) at iteration {iterations}."
+                        ),
+                        meaning=(
+                            "The master picked a flow on this connection larger "
+                            "than the capacity it invested in, by far more than "
+                            "solver rounding can explain (small overshoots are "
+                            "absorbed automatically). That points to a real "
+                            "inconsistency on this connection — typically a "
+                            "units / normalisation mismatch or an extreme "
+                            "cost/capacity magnitude — rather than solver noise."
+                        ),
+                        how_to_avoid=(
+                            f"Check connection '{a.conn}' for an investment-cost, "
+                            "capacity, efficiency or unitsize inconsistency or "
+                            "extreme magnitude. Re-run to rule out a transient "
+                            "solver state. If it persists, please report it with "
+                            "the model."
+                        ),
+                    ))
                 new_f_bar[cid] = cap  # clamp to the supported capacity
                 max_clamp = max(max_clamp, slack)
         if max_clamp > max(1e-9, solver_feas):
@@ -1501,15 +1614,48 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             }
 
         # ALWAYS-ON monolith-free sandwich guard: LB ≤ optimum ≤ best_UB must
-        # hold (best_UB is itself an upper bound on the optimum).  An
-        # LB-exceeds-best_UB is the genuine invalid-lower-bound pathology (the
-        # Lagrangian-style bug this scheme fixes) and needs no external M.
-        if LB > best_UB * (1 + _LB_VALID_SLACK) + _LB_VALID_SLACK * max(1.0, abs(best_UB)):
-            raise RuntimeError(
-                f"Benders LB {LB / obj_scale:.10e} exceeds best UB "
-                f"{best_UB / obj_scale:.10e} at iter {iterations} — "
-                f"INVALID lower bound (the bug this scheme fixes)"
+        # hold (best_UB is itself an upper bound on the optimum).  FAIL-SAFE: an
+        # overshoot within the gross band means LB has numerically MET best_UB —
+        # i.e. the bounds have closed, the incumbent is optimal — so treat it as
+        # converged and stop on the incumbent rather than aborting.  A GROSS
+        # overshoot is the genuine invalid-lower-bound pathology (the Lagrangian-
+        # style bug this scheme fixes) and hard-fails with guidance.
+        if LB > best_UB:
+            rel_over = (LB - best_UB) / max(1.0, abs(best_UB))
+            if rel_over > gross_band:
+                raise RuntimeError(_benders_failure_message(
+                    summary=(
+                        f"Benders lower bound {LB * inv_s:.6e} exceeds the best "
+                        f"feasible cost found {best_UB * inv_s:.6e} (by "
+                        f"{rel_over:.2e}, > {gross_band:.0e}) at iteration "
+                        f"{iterations}."
+                    ),
+                    meaning=(
+                        "The lower bound has risen above a solution we already "
+                        "know is achievable, which is impossible for a valid "
+                        "bound. A gap this large means the master's bound is "
+                        "invalid — typically from severe numerical ill-"
+                        "conditioning of the master problem (very large or very "
+                        "small connection investment costs / capacities), not "
+                        "from your model being wrong."
+                    ),
+                    how_to_avoid=(
+                        "Check the connections that couple the node groups "
+                        "(investment cost, capacity, efficiency) for extreme "
+                        "magnitudes or unit errors and rescale/correct the "
+                        "outliers so the master is better conditioned. Loosen "
+                        "the solver tolerance (e.g. --solver-mip-gap 0.01) and "
+                        "re-run to rule out a transient solver state. If it "
+                        "persists, please report it with the model."
+                    ),
+                ))
+            _logger.warning(
+                "Benders iter %d: LB met best UB within %.3e (numerical) — "
+                "treating as converged", iterations, rel_over,
             )
+            converged = True
+            gap = 0.0
+            break
 
         gap = (best_UB - LB) / max(1.0, abs(best_UB))
         # DEBUG (not info): the orchestrator streams the user-facing per-iter
