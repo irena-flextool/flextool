@@ -1,3 +1,47 @@
+## Release 4.0.0b16 (30.6.2026) — Benders fail-safe numerical guards + clearer failure diagnostics
+
+No database migration (schema stays **v62**) and dependency floors unchanged
+(`polar-high>=3.1.0`, `polars>=1.40`, `highspy<=1.14.0`). Robustness fixes to the
+Benders regional-decomposition driver plus a docs note; a model that does not use
+regional decomposition is unaffected, and the converged solution is unchanged.
+
+### Benders regional decomposition
+
+- **Clamp the master coupling flow to capacity instead of tuning the tolerance.**
+  The post-master-solve `f <= cap` self-check kept tripping on benign solver
+  slack: HiGHS enforces feasibility on the internally-*scaled* master, so the
+  unscaled slack exceeds both the nominal tolerance and the reported
+  `max_primal_infeasibility`, and it *grows* as cuts accumulate (~`3e-6` at iter 4,
+  ~`1.2e-5` at iter 8) — a fixed tolerance chases a moving target (this supersedes
+  the b14 tolerance-from-feasibility approach). Instead, the upper bound is now
+  evaluated at the strictly capacity-feasible point `(C, min(f, cap))`: clamping
+  flow down can only raise region recourse cost, so it stays a valid whole-problem
+  UB and the optimality cut stays valid (a subgradient inequality holds at any
+  linearization point). The clamped flow is used consistently downstream (region
+  pin, next cuts, incumbent); only a gross overshoot (>`1e-2` relative, or `1e3×`
+  the solver's reported infeasibility) still hard-fails as a genuine read/stale
+  bug. Clamp magnitude logged at DEBUG.
+- **Fail-safe LB guards.** The LB-monotonicity (`1e-6`) and `LB <= best_UB`
+  sandwich (`1e-9`) self-checks no longer hard-crash the whole run on benign
+  numerical noise (discarding a good feasible incumbent). Both now separate noise
+  from a genuine invalid-bound bug via a unified gross band
+  `max(tol, 1e-3)`: a small LB dip pins LB back to the previous valid bound and
+  continues; a small LB/UB crossing is treated as converged (stop on the
+  incumbent); a *gross* dip or overshoot still hard-fails (stale basis / corrupted
+  cut / invalid-bound pathology).
+- **Plain-English failure diagnostics.** Every hard-failure site (master /
+  node-group not optimal, LB dip, `LB > UB`, coupling overshoot) now emits a
+  one-line summary plus "What this means" and "How to avoid it", using only
+  FlexTool class vocabulary (node, group, connection, flow) — no model-instance
+  terms — pinned by a static AST regression test.
+
+### Documentation
+
+- Recommend setting an explicit `Map` `index_name` (`period` or `time`) for
+  parameters that accept both a period map and a time series (e.g. flowGroup
+  `min_instant_flow` / `max_instant_flow`), so the value-domain fallback never has
+  to guess; cross-linked from the flowGroup flow-limit reference.
+
 ## Release 4.0.0b15 (30.6.2026) — flowGroup instant-flow obligation fix
 
 Fixes a flowGroup `min_instant_flow` / `max_instant_flow` limit being silently
