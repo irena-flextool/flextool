@@ -1,3 +1,31 @@
+## Release 4.0.0b18 (30.6.2026) — fix zeroed existing capacity for scalar+Map entity classes
+
+No database migration (schema stays **v62**) and dependency floors unchanged
+(`polar-high>=3.2.0`, `polars>=1.40`, `highspy<=1.14.0`). Output-only fix — the
+converged solution (dispatch, investments, optimal objective) is unchanged.
+
+### Outputs
+
+- **Fix zeroed `existing` capacity for a unit whose constant value shares an
+  entity class with a period-Map sibling.** When one unit carries a scalar
+  (constant) `existing` capacity while another unit of the same class carries a
+  period-indexed Map, the Spine reader returns a single frame with one shared
+  index column (named `x` by Spine's silent default) in which the constant
+  unit's row has a **null** index. The per-entity resolver classified rows by the
+  *presence* of that column rather than per-row, so the null-index scalar became
+  an explicit `(entity, period=null)` row that never joined the period grid and
+  was silently filled with `0`. Downstream this zeroed the output-facing
+  existing/total capacity for such units — surfacing most visibly as **negative
+  VRE curtailment** (`potential − flow`, with `potential` computed from a `0`
+  capacity), and as `0` in the capacity, capacity-factor, and per-entity
+  pre-existing fixed-cost reports. The resolver now detects scalars per row (a
+  null index broadcasts the constant across the period universe), in both mirror
+  implementations. The LP itself was never affected — its flow bound reads a
+  separate, scalar-correct existing-count parameter, and existing fixed cost
+  enters the objective only as an opt-in constant term — so this is purely a
+  reporting fix; re-running output processing on an existing solve produces
+  correct reports without re-solving.
+
 ## Release 4.0.0b17 (30.6.2026) — autoscale centres the objective (no more "excessively small costs")
 
 No database migration (schema stays **v62**). Dependency floor raised to
