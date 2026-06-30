@@ -1407,39 +1407,58 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
 
         new_f_bar, C_by_conn, eta_by_region = master.read_master(msol)
         _check_cuts_satisfied(pending_cuts, f_bar, new_f_bar, eta_by_region)
-        # The master's chosen capacity must support its chosen flow (the
-        # FlexTool ``maxFlow`` row ``f ≤ existing_cap + Σ v_invest_p`` holds at
-        # the master optimum) — a cheap feasibility self-check that the UB
-        # below is a valid primal point.  For a GREENFIELD arc the existing
-        # term is 0 (cap = invested C); for an EXISTING-only arc the invested
-        # C is 0 (cap = existing/unitsize); for a BOTH arc both contribute.
+        # The master's chosen capacity must support its chosen flow: the
+        # coupling row ``C − f ≥ 0`` (≡ ``f ≤ existing_cap + Σ v_invest_p``)
+        # holds at the master optimum.  For a GREENFIELD arc the existing term
+        # is 0 (cap = invested C); for an EXISTING-only arc the invested C is 0
+        # (cap = existing/unitsize); for a BOTH arc both contribute.
+        #
+        # The solver returns a vertex only within its feasibility tolerance of
+        # the active rows, and HiGHS enforces that on the INTERNALLY-SCALED
+        # problem — so the UNSCALED slack on ``f ≤ cap`` can exceed BOTH the
+        # nominal tolerance AND the reported ``max_primal_infeasibility``
+        # (measured in scaled space), and it grows as cuts accumulate and the
+        # master gets more ill-conditioned.  Tuning a fixed tolerance is
+        # therefore chasing a moving target.  Instead CLAMP the master flow
+        # down to the capacity it chose: the UB below is then evaluated at a
+        # strictly capacity-feasible primal point ``(C, min(f, cap))`` (a valid
+        # whole-problem upper bound — clamping flow DOWN can only raise region
+        # recourse cost, never invalidate it).  A GROSS overshoot — orders of
+        # magnitude beyond any plausible solver slack — still signals a real
+        # read/stale-state bug and hard-fails.
         existing_cap_by_col = master._existing_cap_by_col
-        # The solver returns a vertex within its feasibility tolerance of the
-        # active rows, so the coupling row ``C − f ≥ 0`` can carry a tiny slack
-        # on ``f ≤ cap``.  HiGHS enforces feasibility on the INTERNALLY-SCALED
-        # problem, so the UNSCALED slack reported here can exceed the nominal
-        # (scaled) tolerance — especially on a normalised coupling row with
-        # small capacity.  Derive the self-check budget from the solver's own
-        # achieved infeasibility (generic to whatever the solve produced) and
-        # floor it with the sibling cut-satisfaction self-check's relative
-        # tolerance so a near-zero reported value still admits the vertex slack.
-        # A violation above this is a genuine read/stale-state bug, not solver
-        # slack — the coupling row's slack is by construction ≤ this maximum.
         solver_feas = msol.max_primal_infeasibility
+        max_clamp = 0.0
         for a in arcs:
             invested = C_by_conn.get(a.conn, 0.0)
             for cid in a.f_col_ids:
-                cap = invested + existing_cap_by_col.get(int(cid), 0.0)
-                f_val = new_f_bar[int(cid)]
-                tol = max(1e-5 * max(1.0, abs(cap), abs(f_val)), solver_feas)
-                if f_val > cap + tol:
+                cid = int(cid)
+                cap = invested + existing_cap_by_col.get(cid, 0.0)
+                f_val = new_f_bar[cid]
+                slack = f_val - cap
+                if slack <= 0.0:
+                    continue
+                # Gross overshoot ⇒ genuine bug, not solver slack.
+                gross_tol = max(
+                    1e-2 * max(1.0, abs(cap), abs(f_val)), 1e3 * solver_feas
+                )
+                if slack > gross_tol:
                     raise RuntimeError(
                         f"Benders master infeasible coupling: "
-                        f"f={f_val} > cap[{a.conn}]={cap} (slack {f_val - cap:.3e} "
-                        f"> tol {tol:.3e}) "
+                        f"f={f_val} > cap[{a.conn}]={cap} (slack {slack:.3e} > "
+                        f"gross tol {gross_tol:.3e}, solver_feas={solver_feas:.3e}) "
                         f"(invested={invested}, "
-                        f"existing={existing_cap_by_col.get(int(cid), 0.0)})"
+                        f"existing={existing_cap_by_col.get(cid, 0.0)}) — "
+                        f"genuine infeasibility, not solver slack"
                     )
+                new_f_bar[cid] = cap  # clamp to the supported capacity
+                max_clamp = max(max_clamp, slack)
+        if max_clamp > max(1e-9, solver_feas):
+            _logger.debug(
+                "Benders iter %d: clamped master coupling flow to capacity "
+                "(max slack %.3e, solver_feas %.3e)",
+                iterations, max_clamp, solver_feas,
+            )
 
         # --- advance f̄ to the master optimum and solve the regions there to
         # (a) get this iteration's recourse cost (→ a VALID UB, since C ≥ f̄ at
