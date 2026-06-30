@@ -6,7 +6,7 @@ The warning is emitted by
 Such a connection cannot transfer between nodes; if it also carries an
 ``invest_method`` it still becomes a degenerate (always-zero) ``v_invest``
 column, which is the input shape that previously crashed the output post-
-processor with ``KeyError: ['MON-PYR'] not in index``.
+processor with ``KeyError: ['L1'] not in index``.
 """
 from __future__ import annotations
 
@@ -71,18 +71,18 @@ def test_connection_without_endpoints_warns(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A connection with no connection__node__node row must warn — this is
-    the ``MON-PYR`` shape from the Cyprus model."""
+    a connection with no endpoint relationship."""
     url = _build_db(
         tmp_path,
-        connections=["MON-PYR", "AAT-MGS"],
-        cnn_rows=[("AAT-MGS", "AAT", "MGS")],
+        connections=["L1", "L2"],
+        cnn_rows=[("L2", "N1", "N2")],
     )
     records = _run_validation(url, caplog)
     msgs = [r.getMessage() for r in records]
-    assert any("MON-PYR" in m and "connection__node__node" in m
+    assert any("L1" in m and "connection__node__node" in m
                for m in msgs), msgs
     # The well-formed connection must NOT warn.
-    assert not any("AAT-MGS" in m for m in msgs), msgs
+    assert not any("L2" in m for m in msgs), msgs
 
 
 def test_all_connections_wired_is_silent(
@@ -90,8 +90,8 @@ def test_all_connections_wired_is_silent(
 ) -> None:
     url = _build_db(
         tmp_path,
-        connections=["AAT-MGS", "MGS-MON"],
-        cnn_rows=[("AAT-MGS", "AAT", "MGS"), ("MGS-MON", "MGS", "MON")],
+        connections=["L2", "L3"],
+        cnn_rows=[("L2", "N1", "N2"), ("L3", "N2", "N3")],
     )
     records = _run_validation(url, caplog)
     assert records == [], [r.getMessage() for r in records]

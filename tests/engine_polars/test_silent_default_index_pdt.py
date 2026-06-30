@@ -23,7 +23,7 @@ per-source-column rename dict, since three of the four parameters live
 on relationship classes (``unit__inputNode`` 2-dim, ``unit__outputNode``
 2-dim, ``reserve__upDown__group`` 3-dim).
 
-A real-world (Cyprus migration) audit on 2026-05-25 showed the
+A real-world migration audit on 2026-05-25 showed the
 ``other_operational_cost`` family is authored as plain SCALAR floats
 on ``unit__outputNode`` and ``reservation`` as SCALAR floats on
 ``reserve__upDown__group`` — the silent-default Map path is rarely
@@ -85,7 +85,7 @@ def _assert_no_key_duplicates(param, key_cols: tuple[str, ...]) -> None:
 # ---------------------------------------------------------------------------
 # SCALAR-shape regression — synthetic stub mirroring real-world authoring
 #
-# A Cyprus-migration audit (2026-05-25, kept locally) found
+# A real-world migration audit (2026-05-25, kept locally) found
 # ``unit__outputNode.other_operational_cost`` is authored as plain SCALAR
 # floats across 99 rows and ``reserve__upDown__group.reservation`` as
 # 2 SCALAR rows.  Pre-migration the helper's column-gate
@@ -95,7 +95,7 @@ def _assert_no_key_duplicates(param, key_cols: tuple[str, ...]) -> None:
 # returns a (p, sink) Param that polar_high broadcasts against the LHS
 # (p, sink, d, t) at LP build time.
 #
-# This stub is inspired by Cyprus's shape but uses synthetic fixtures
+# This stub is inspired by a real-world shape but uses synthetic fixtures
 # only (per CONTRIBUTING.md — no proprietary DB content in the repo).
 # ---------------------------------------------------------------------------
 
@@ -103,7 +103,7 @@ def _assert_no_key_duplicates(param, key_cols: tuple[str, ...]) -> None:
 class _ScalarRelationshipStub:
     """Surfaces a single SCALAR-authored row on an n-dim relationship
     class.  The frame has no period / t columns — the pre-migration
-    helper's column-gate would silently REJECT this (Cyprus-observed
+    helper's column-gate would silently REJECT this (observed
     real-world authoring shape).
     """
 
@@ -141,7 +141,7 @@ class _ScalarRelationshipStub:
 
 
 def test_scalar_relationship_unit_outputNode(period_filter) -> None:
-    """Inspired by Cyprus's authoring shape: SCALAR ``float`` on
+    """Inspired by a real-world authoring shape: SCALAR ``float`` on
     ``unit__outputNode.other_operational_cost``.  Pre-migration the
     helper's column-gate (``{"period", "t"}.issubset(cols)``) silently
     DROPPED such rows because no period / t columns exist.  Post-
@@ -169,7 +169,7 @@ def test_scalar_relationship_unit_outputNode(period_filter) -> None:
 
 
 def test_scalar_relationship_reserve_upDown_group(period_filter) -> None:
-    """Inspired by Cyprus's authoring shape: SCALAR ``float`` on
+    """Inspired by a real-world authoring shape: SCALAR ``float`` on
     ``reserve__upDown__group.reservation``.  Same pre-migration column-
     gate bug; post-migration the resolver emits Param ``(r, ud, g)``.
     ``filter_zero=False`` is preserved (the helper accepts non-zero

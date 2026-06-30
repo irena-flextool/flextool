@@ -1488,10 +1488,10 @@ def broadcast_to_period(
         # them silently.  Mirrors the matching split in
         # :func:`broadcast_to_period_time`'s MAP_PERIOD branch.
         #
-        # Observed: Cyprus_Grid ``group.inertia_limit`` authors
-        # "All Electricity Nodes" as Map(period→…) while "Diesel
-        # Units" carries a scalar (Map index null) — without this
-        # split the scalar entity drops from the LP.
+        # Observed in practice: within a single group parameter one
+        # entity authors its value as Map(period→…) while a sibling
+        # carries a scalar (Map index null) — without this split the
+        # scalar entity drops from the LP.
         lf_p = lf.pipe(rename_to_axis, {"period": "d"})
         if period_filter is not None and period_filter.height > 0:
             d_lf = period_filter.lazy().select("d").unique()

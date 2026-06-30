@@ -8,7 +8,7 @@ Their Layer-2 registration is the single ``"ramp"`` entry in
 ``CONSTRAINT_FAMILIES``, which only resolves through the documented
 *prefix dispatch* in :func:`lookup_cstr` (``name.startswith(key + "_")``).
 
-A real Cyprus solve (``y2024_2050_5week``) surfaced the gap: prefix
+A real production solve surfaced the gap: prefix
 dispatch was documented in the module header and in
 ``test_registry_coverage`` but never implemented in ``lookup_cstr``, so
 ``ramp_sink_up_constraint`` raised ``KeyError`` and autoscale Layer 2

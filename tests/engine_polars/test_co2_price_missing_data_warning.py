@@ -8,7 +8,7 @@ priced commodity group), but the *data* fields (``p_co2_price``,
 ``commodity.co2_content``.  Pre-fix HEAD raised a ``ValueError`` from
 ``build_flextool`` when the data was missing — a hard abort that broke
 otherwise-valid solves (e.g. a debug run with the CO2 group temporarily
-emptied, or a Cyprus-style fixture where ``group.co2_price`` carried
+emptied, or a fixture where ``group.co2_price`` carried
 extra periods that the silent-default resolver couldn't classify).
 
 Post-fix: ``build_flextool`` logs a warning naming the missing field(s)
