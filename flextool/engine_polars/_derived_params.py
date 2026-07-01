@@ -3877,17 +3877,25 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
             ))
         ex = _try_param_explicit(source, ec, "existing")
         if ex is not None and ex.height > 0:
-            if "period" in ex.columns:
-                ex_parts.append(ex.lazy()
-                    .select(alias_to_axis("name", "e"),
-                              pl.col("value").cast(pl.Float64).alias("v"))
-                    .group_by("e")
-                    .agg(pl.col("v").max().alias("ex")))
-            else:
-                ex_parts.append(ex.lazy().select(
-                    alias_to_axis("name", "e"),
-                    pl.col("value").cast(pl.Float64).alias("ex"),
-                ))
+            # ``existing`` may be a scalar (one row per entity) or a
+            # 1d_map(period).  The period axis carries Spine's silent-
+            # default name ``"x"`` — NOT ``"period"`` — so a column-name
+            # check misfires and, via the downstream ``keep="last"``
+            # dedup, takes the *last* period's value.  For a retiring
+            # unit whose map ends at 0 (e.g. ``220→0`` by expiry) that
+            # collapses the cascade input to 0, defaults unitsize to
+            # ``1000`` and turns ``existing_count = existing/unitsize``
+            # into a spurious fraction (caps continuous online below 1
+            # and forbids integer online entirely).  Take the per-entity
+            # MAX over whatever period rows exist — index-name-agnostic
+            # per CLAUDE.md Invariant #2; a scalar's single row makes the
+            # group_by a no-op.  The cascade only checks "non-zero", and
+            # the per-period MAX is non-zero iff any period is.
+            ex_parts.append(ex.lazy()
+                .select(alias_to_axis("name", "e"),
+                          pl.col("value").cast(pl.Float64).alias("v"))
+                .group_by("e")
+                .agg(pl.col("v").max().alias("ex")))
     if not base_parts:
         return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "us": pl.Float64})

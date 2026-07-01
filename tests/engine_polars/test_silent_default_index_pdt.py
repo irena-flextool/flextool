@@ -492,3 +492,118 @@ def test_pdtReserve_reservation_zero_not_filtered(period_filter) -> None:
         f"Explicit zero row was filtered out — pdtReserve uses "
         f"filter_zero=False but observed n={n} for (p2024, t00001)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Silent-default Map regression — entity-unitsize cascade
+#
+# ``_entity_unitsize_lf`` computes ``unitsize = virtual_unitsize OR
+# existing OR 1000`` per entity, taking the per-period MAX of a
+# 1d_map(period) ``existing``.  Pre-fix it gated on
+# ``if "period" in ex.columns`` — but spinedb_api authors the Map index
+# with its silent default ``"x"``, so the gate MISSED and the ``else``
+# branch fed every period row through unchanged.  The downstream
+# ``unique(subset=["e"], keep="last")`` then kept the LAST period's
+# value.  For a retiring unit whose map decays to 0 at expiry that
+# collapsed the cascade input to 0 → unitsize defaulted to 1000 →
+# ``existing_count = existing/unitsize`` became a spurious fraction
+# (observed live: a 220 MW CCGT capped continuous online at 0.22 and
+# could never commit under integer online).  The fix takes the
+# per-entity MAX index-name-agnostically.
+# ---------------------------------------------------------------------------
+
+
+class _EntityExistingStub:
+    """Surfaces a ``unit``-class ``existing`` parameter whose Map index
+    column carries spinedb_api's silent-default name ``"x"`` (NOT
+    ``"period"``).  ``virtual_unitsize`` is absent (KeyError), so the
+    cascade must fall back to ``existing`` — via its per-period MAX.
+
+    ``existing_by_unit`` maps ``unit -> [(period, value), ...]``.  A
+    single ``(None, value)`` entry authors a SCALAR ``existing`` (no
+    index column) to exercise the group-by no-op path.
+    """
+
+    def __init__(self, existing_by_unit: dict[str, list]) -> None:
+        self._existing = existing_by_unit
+
+    def entities(self, entity_class: str):
+        if entity_class == "unit":
+            return pl.DataFrame({"name": list(self._existing)})
+        raise KeyError(entity_class)
+
+    def parameter_explicit(self, entity_class: str, parameter_name: str):
+        if entity_class == "unit" and parameter_name == "existing":
+            names: list[str] = []
+            idx: list[str] = []
+            vals: list[float] = []
+            scalar = False
+            for unit, series in self._existing.items():
+                for period, value in series:
+                    names.append(unit)
+                    if period is None:
+                        scalar = True
+                    else:
+                        idx.append(period)
+                    vals.append(value)
+            if scalar:
+                # SCALAR authoring — no index column at all.
+                return pl.DataFrame({"name": names, "value": vals})
+            # Map(period) authored with the silent-default ``"x"`` index.
+            return pl.DataFrame({"name": names, "x": idx, "value": vals})
+        raise KeyError((entity_class, parameter_name))
+
+    def parameter(self, entity_class: str, parameter_name: str):
+        return self.parameter_explicit(entity_class, parameter_name)
+
+
+def _unitsize_map(stub) -> dict[str, float]:
+    from flextool.engine_polars._derived_params import _entity_unitsize_lf
+    us = _entity_unitsize_lf(stub).collect()
+    return {
+        e: v for e, v in zip(
+            us.get_column("e").cast(pl.Utf8).to_list(),
+            us.get_column("us").to_list(),
+        )
+    }
+
+
+def test_entity_unitsize_retiring_silent_default_map_uses_nameplate_max():
+    """A retiring unit whose silent-default (``"x"``-indexed) ``existing``
+    Map decays to 0 must take its per-period MAX (nameplate), NOT the
+    last period's 0 → NOT the 1000 fallback."""
+    from flextool.engine_polars._derived_params import UNITSIZE_DEFAULT
+
+    stub = _EntityExistingStub({
+        # Retires: nameplate 220 early, 0 from p2027 onward (last = 0).
+        "retiring_ccgt": [("p2024", 220.0), ("p2025", 220.0),
+                          ("p2026", 220.0), ("p2027", 0.0),
+                          ("p2050", 0.0)],
+        # Never retires: constant 60 (last period non-zero — unaffected
+        # by the bug, pins that the fix is byte-identical here).
+        "steady_st": [("p2024", 60.0), ("p2050", 60.0)],
+    })
+    got = _unitsize_map(stub)
+    assert got["retiring_ccgt"] == 220.0, (
+        "retiring unit's silent-default existing Map collapsed to the "
+        f"last-period 0 / {UNITSIZE_DEFAULT} default: {got}"
+    )
+    assert got["steady_st"] == 60.0, got
+
+
+def test_entity_unitsize_scalar_existing_preserved():
+    """SCALAR ``existing`` (no index column) must still surface its value
+    — the per-entity group-by MAX is a no-op on a single row."""
+    stub = _EntityExistingStub({"scalar_unit": [(None, 150.0)]})
+    got = _unitsize_map(stub)
+    assert got["scalar_unit"] == 150.0, got
+
+
+def test_entity_unitsize_no_existing_falls_back_to_default():
+    """A unit with NO ``existing`` and NO ``virtual_unitsize`` keeps the
+    canonical 1000 fallback (guards against the fix over-reaching)."""
+    from flextool.engine_polars._derived_params import UNITSIZE_DEFAULT
+
+    stub = _EntityExistingStub({"bare_unit": []})
+    got = _unitsize_map(stub)
+    assert got["bare_unit"] == UNITSIZE_DEFAULT, got

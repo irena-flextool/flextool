@@ -389,6 +389,67 @@ DB-authored, never reach the resolver, and a stray one already fails
 loudly via `_UnrecognisedIndex`. Document such internal axes in
 `schemas/flextool_axis_contract.json`, not in the resolver's allow-lists.
 
+##### Silent-default `"x"` index — readers outside the resolver
+
+Not every DB read goes through `resolve_param_shape`. The **per-entity
+cascades** in `_derived_params.py` / `_derived_existing.py` /
+`_derived_npv.py` read raw entity params (`source.parameter(...)`) and
+must detect the period axis themselves. The failure mode is identical to
+the resolver's: Spine names a Map's index column with the author's
+`index_name`, whose spinedb_api *default is the literal string `"x"`*
+(not empty — real 2-D maps carry `index_name='x'`, see
+`_spinedb_reader._discover_index_cols`). So a `if "period" in cols`
+gate misfires on the common `"x"`-indexed map and the code either drops
+the row or collapses it via a downstream `.unique(subset=["e"],
+keep="last")` — for a *retiring* `existing` map (nameplate → 0 at expiry)
+that keeps the last period's `0`, defaulting `unitsize` to `1000` and
+turning `existing_count = existing/unitsize` into a spurious fraction
+(caps continuous online below 1; forbids integer online entirely).
+
+**Safe idioms** (use one of these for any raw per-entity map read):
+
+- period-agnostic aggregate — `group_by("e").agg(pl.col("value").max())`
+  (used by `_entity_unitsize_lf`: the cascade only needs "non-zero", and
+  the per-period MAX is non-zero iff any period is);
+- explicit dual check — `period_col = "period" if "period" in cols else
+  "x"` / `for cand in ("period","x")` (used by
+  `_ed_explicit_period_param`, `_per_solve_sets`);
+- per-row scalar detection — treat any single non-`name`/`value` column
+  as the period dim and classify scalar-vs-map by that column's
+  *per-row* null-ness, so a constant value sharing a class with period-Map
+  siblings (surfaces as `x = null`) broadcasts instead of zeroing (used by
+  `_per_entity_param_lf` in both the `existing` and `npv` mirrors).
+
+**Audited state** (see the coverage test
+`tests/engine_polars/test_silent_default_index_pdt.py`):
+
+- *Safe* — `availability`, `inflow`, `other_operational_cost`,
+  `reservation` (resolver-routed); the `existing`/`lifetime`/
+  `virtual_unitsize` per-period chains (`_per_entity_param_lf`,
+  hardened); `_ed_explicit_period_param`, `_per_solve_sets`; `profile`
+  in real solves (reads the engine-written canonical `pt_profile.csv` /
+  `pbt_profile`, not the raw Map).
+- *Residual, latent* — the `_derived_profile.py` **raw-Spine fallback**
+  readers (`_profile_time_lf` matches only `t`/`i`/`time`;
+  `_profile_period_time_lf` / `_profile_period_only_lf` gate on literal
+  `"period"`). An `"x"`-indexed profile Map read via these returns empty
+  (silent zero profile). Only reachable when the averaged-CSV primary
+  path is absent (tests / runner bypass), so not a live-solve bug —
+  harden if that path ever becomes load-bearing.
+- *Guarded by schema* — `invest_max_total` and `virtual_unitsize` are
+  declared `float`-only in `parameter_types` (no `map` row), so the
+  `keep="last"` collapse in `_e_explicit_param` and in the
+  `virtual_unitsize` sub-branch of `_entity_unitsize_lf` can only bite if
+  a param is authored against its declared type. Value-type enforcement
+  is not yet strict, so these are latent-until-misauthored, not safe by
+  construction.
+- *Separate gap* — `min_load` is declared map-capable (`map,1` / `map,3`)
+  but `p_min_load_from_source` reads it as a scalar `Param(("p",))`, and
+  `minFlow_minload` consumes only that scalar. A period/time-varying
+  `min_load` is therefore flattened regardless of the index name — an
+  engine "consumes scalar only" gap, not just an `"x"`-detection one.
+  Route through the resolver if per-period `min_load` is ever wired.
+
 ### `flextool/process_inputs/` — tabular → Spine DB
 
 Reads tabular data and writes Spine DB. The output of this package is the
