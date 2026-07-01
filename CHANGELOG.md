@@ -1,3 +1,30 @@
+## Release 4.0.0b20 (1.7.2026) — Benders stall guard (fail fast with a diagnostic)
+
+No database migration (schema stays **v62**). Dependency floor raised to
+**`polar-high>=3.3.0`** (`polars>=1.40`, `highspy<=1.14.0` unchanged) for the new
+generic tail-off detector. Detection only — no converged solution changes.
+
+### Decomposition (Benders)
+
+- **A stalled spatial-Benders solve now fails fast with a plain-English
+  diagnostic instead of silently exhausting the iteration cap.** When one node
+  group is near-infeasible on its own (it can only meet its demand via the
+  boundary/slack penalty), the master keeps proposing coupling flows that force
+  the penalty regime, the best feasible cost freezes far above any sane value,
+  and the run would otherwise burn all its iterations returning that garbage. The
+  solver now detects this and aborts with a three-section message that names the
+  worst-offender node group and recommends the fix (give that node group's
+  import/boundary nodes a moderate import price rather than an extreme penalty —
+  an over-large penalty is what inflates the recourse and freezes the bound). The
+  detector is a domain-free tail-off monitor in polar-high 3.3.0
+  (`decomposition.StallMonitor`); FlexTool supplies the reference scale (the sum
+  of the node groups' stand-alone costs) and the node-group diagnosis. A run is
+  flagged stalled only when the best feasible cost is frozen for a window of
+  iterations AND still far above that reference AND the gap is far from the
+  tolerance — a conjunction that never trips a slow-but-genuinely-converging
+  solve (validated against solves that converge in 8–28 iterations). The window
+  defaults to 8 and is overridable with `FLEXTOOL_BENDERS_MAX_STALL`.
+
 ## Release 4.0.0b19 (1.7.2026) — retiring-unit `existing` map read + Benders cut-tolerance fix
 
 No database migration (schema stays **v62**) and dependency floors unchanged
