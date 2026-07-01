@@ -1,3 +1,36 @@
+## Release 4.0.0b21 (1.7.2026) — Benders in-out stabilization (degeneracy tail-off)
+
+No database migration (schema stays **v62**). Dependency floor raised to
+**`polar-high>=3.4.0`** (`polars>=1.40`, `highspy<=1.14.0` unchanged). Opt-in and
+OFF by default — the converged solution is unchanged on every model.
+
+### Decomposition (Benders)
+
+- **Optional in-out separation to speed up a slowly-converging (tailing-off)
+  spatial-Benders solve.** When storage (or any inter-temporal coupling) makes
+  timesteps fungible, the region recourse is flat in the per-timestep coupling
+  flow and the cut slopes become basis-dependent; the master then wanders among
+  cost-equivalent flow schedules and the lower bound closes very slowly even
+  though the best feasible solution is near-optimal early. In-out separation
+  (Ben-Ameur & Neto 2007) generates each cut at an interior point
+  `f_sep = λ·centre + (1-λ)·f_out` instead of the extreme master vertex — better-
+  centred cuts, no wandering, faster bound closure, at **zero extra subproblem
+  solves** (the region is solved once per iteration either way, just at a better
+  point). Enabled per solve via the environment variable
+  `FLEXTOOL_BENDERS_IN_OUT_WEIGHT` (the weight `λ`): **`0.0` (the default) is OFF**
+  and byte-identical to before; `λ ∈ (0, 1)` turns it on, larger = more
+  stabilisation. On a hydrogen-trade tail-off benchmark, `λ ≈ 0.3–0.7` reached the
+  practical optimality gaps about 30% faster and closed the bound tighter than the
+  un-stabilised run (which plateaued above the gap it could otherwise reach). The
+  stabilisation math is the domain-free `polar_high.decomposition.InOutStabilizer`
+  (3.4.0); FlexTool drives one instance per node group. Correctness is preserved
+  regardless of `λ`: a cut generated at any point is a valid supporting hyperplane
+  (valid lower bound), the interior point is clamped to the chosen capacity (valid
+  upper bound), and the moment a region's cut fails to separate the master vertex
+  the method falls back to an exact-Benders step for that region — so the optimum
+  is unchanged and convergence is guaranteed. A future release will promote the
+  knob to a `solve` database parameter once a default is settled.
+
 ## Release 4.0.0b20 (1.7.2026) — Benders stall guard (fail fast with a diagnostic)
 
 No database migration (schema stays **v62**). Dependency floor raised to

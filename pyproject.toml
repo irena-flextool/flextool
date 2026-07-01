@@ -7,7 +7,7 @@ name = "flextool"
 # restructure are in.  4.0.0 final follows after the remaining
 # minor-functionality additions, cleanup and testing land.  PEP 440
 # pre-release suffix: 4.0.0a1, 4.0.0a2, ... 4.0.0b1, 4.0.0rc1, then 4.0.0.
-version = "4.0.0b20"
+version = "4.0.0b21"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
@@ -54,9 +54,10 @@ dependencies = [
     # self-check reads to size its tolerance.  3.2.0 makes autoscale Layer 3
     # centre the objective over HiGHS' cost comfort zone (clearing the
     # "excessively small costs" warning that the legacy 1e-6 scale_the_objective
-    # provokes).  3.3.0 adds polar_high.decomposition.StallMonitor, the generic
-    # tail-off detector the Benders stall guard drives — so it is the hard floor.
-    "polar-high>=3.3.0",
+    # provokes).  3.3.0 adds polar_high.decomposition.StallMonitor (the Benders
+    # stall guard).  3.4.0 adds decomposition.InOutStabilizer, the generic in-out
+    # separation picker the Benders in-out stabilization drives — the hard floor.
+    "polar-high>=3.4.0",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.
