@@ -245,6 +245,7 @@ class SolveConfig:
         decomposition: dict | None = None,
         benders_max_iter: dict | None = None,
         benders_tolerance: dict | None = None,
+        benders_in_out_weight: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -297,6 +298,9 @@ class SolveConfig:
         )
         self.benders_tolerance: dict = (
             benders_tolerance if benders_tolerance is not None else {}
+        )
+        self.benders_in_out_weight: dict = (
+            benders_in_out_weight if benders_in_out_weight is not None else {}
         )
 
         # Computed fields — populated by load_from_db after construction.
@@ -501,6 +505,9 @@ class SolveConfig:
         benders_tolerance: dict = params_to_dict(
             db=db, cl="solve", par="benders_tolerance", mode=DictMode.DICT
         )
+        benders_in_out_weight: dict = params_to_dict(
+            db=db, cl="solve", par="benders_in_out_weight", mode=DictMode.DICT
+        )
 
         # rolling_times: assemble per-solve [jump, horizon, duration].
         rolling_duration: dict = params_to_dict(
@@ -607,6 +614,7 @@ class SolveConfig:
             decomposition=decomposition,
             benders_max_iter=benders_max_iter,
             benders_tolerance=benders_tolerance,
+            benders_in_out_weight=benders_in_out_weight,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
@@ -802,6 +810,7 @@ class SolveConfig:
                 self.decomposition,
                 self.benders_max_iter,
                 self.benders_tolerance,
+                self.benders_in_out_weight,
             ]
             for dup_map in dup_map_list:
                 if old_solve in dup_map.keys():
@@ -833,19 +842,25 @@ class SolveConfig:
         value = str(raw).strip().lower()
         return "benders" if value == "benders" else "none"
 
-    def benders_config_for(self, solve_name: str) -> tuple[int, float]:
-        """Resolve ``(max_iter, tol)`` for *solve_name*.
+    def benders_config_for(self, solve_name: str) -> tuple[int, float, float]:
+        """Resolve ``(max_iter, tol, in_out_weight)`` for *solve_name*.
 
-        Falls back to the schema defaults (50 / 1e-3) for any knob the
-        solve does not author.  ``params_to_dict`` stores scalar floats
-        as ``str(float)``, so values are coerced through ``float`` here;
-        ``max_iter`` is additionally rounded to ``int``.
+        Falls back to the schema defaults (50 / 1e-3 / 0.0) for any knob
+        the solve does not author.  ``params_to_dict`` stores scalar
+        floats as ``str(float)``, so values are coerced through ``float``
+        here; ``max_iter`` is additionally rounded to ``int``.  The
+        ``in_out_weight`` (default 0.0 = OFF = exact Benders) is the DB
+        value; the machine-local ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` env
+        overrides it downstream in
+        :func:`flextool.engine_polars._benders._resolve_benders_in_out_weight`.
         """
         max_iter_raw = self.benders_max_iter.get(solve_name)
         tol_raw = self.benders_tolerance.get(solve_name)
+        weight_raw = self.benders_in_out_weight.get(solve_name)
         max_iter = int(float(max_iter_raw)) if max_iter_raw is not None else 50
         tol = float(tol_raw) if tol_raw is not None else 1e-3
-        return max_iter, tol
+        in_out_weight = float(weight_raw) if weight_raw is not None else 0.0
+        return max_iter, tol, in_out_weight
 
     def periods_to_tuples(
         self,

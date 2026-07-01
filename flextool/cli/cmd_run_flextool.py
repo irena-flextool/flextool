@@ -445,8 +445,8 @@ def main():
                              'filter-only entry point used by the coordinator.')
     # Decomposition is DB-driven and per-solve (v62): set
     # ``solve.decomposition = benders`` plus the per-solve
-    # ``solve.benders_max_iter`` / ``benders_tolerance`` knobs in the
-    # database.  The old global ``--decomposition`` / ``--lagrangian-*``
+    # ``solve.benders_max_iter`` / ``benders_tolerance`` /
+    # ``benders_in_out_weight`` knobs in the database.  The old global ``--decomposition`` / ``--lagrangian-*``
     # CLI flags were removed — the orchestrator reads the scheme per solve
     # so a single chain can mix monolithic and Benders solves.  See
     # docs/dev/decomposition.md.

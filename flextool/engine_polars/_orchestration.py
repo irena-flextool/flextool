@@ -2002,7 +2002,9 @@ def _drive_cascade(
                     f"are required."
                 )
 
-            max_iter, tol = state.solve.benders_config_for(base_solve_name)
+            max_iter, tol, in_out_weight_db = state.solve.benders_config_for(
+                base_solve_name
+            )
             # Resolve the objective scale the SAME way the monolithic path
             # does (the solve's ``scale_the_objective``; malformed/unset =>
             # 1e-6).  Both the Benders master and the region subproblems
@@ -2067,6 +2069,7 @@ def _drive_cascade(
                 tol=tol,
                 monolith_objective=None,
                 scale_the_objective=obj_scale,
+                in_out_weight=in_out_weight_db,
                 progress_callback=_on_iteration,
                 subsolve_callback=_on_subsolve,
             )

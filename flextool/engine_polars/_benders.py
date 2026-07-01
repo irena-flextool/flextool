@@ -255,18 +255,19 @@ def _resolve_benders_max_stall() -> int:
 _BENDERS_IN_OUT_WEIGHT_ENV = "FLEXTOOL_BENDERS_IN_OUT_WEIGHT"
 
 
-def _resolve_benders_in_out_weight() -> float:
-    """Resolve the Benders in-out separation weight ``λ`` from the environment.
+def _resolve_benders_in_out_weight(db_value: float = 0.0) -> float:
+    """Resolve the Benders in-out separation weight ``λ``.
 
-    Precedence: an explicit, valid ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` in
-    ``[0, 1)`` wins; otherwise the default ``0.0`` (OFF).  Mirrors
-    :func:`_resolve_benders_max_stall` EXACTLY, including the malformed-value
-    warning branch: a non-float OR an out-of-``[0, 1)`` value is IGNORED (not
-    fatal) and the default is used — ``λ ≥ 1`` never queries the master
-    (non-convergent) and ``λ < 0`` is meaningless, both config mistakes worth
-    surfacing rather than silently clamping.
+    Precedence (mirrors :func:`_resolve_benders_workers`' env-first
+    resolution): an explicit, valid ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` in
+    ``[0, 1)`` (machine-local) OVERRIDES the per-solve DB value; otherwise
+    the DB ``db_value`` (the ``solve.benders_in_out_weight`` parameter,
+    default ``0.0`` = OFF).  A non-float OR an out-of-``[0, 1)`` env value
+    is IGNORED (not fatal, warned) and the DB value is used — ``λ ≥ 1``
+    never queries the master (non-convergent) and ``λ < 0`` is meaningless,
+    both config mistakes worth surfacing rather than silently clamping.
     """
-    weight = 0.0
+    weight = db_value
     env = os.environ.get(_BENDERS_IN_OUT_WEIGHT_ENV)
     if env:
         try:
@@ -1243,6 +1244,7 @@ def solve_benders(
     build_problem=None,
     master: str = "flextool",
     scale_the_objective: float = 1.0,
+    in_out_weight: float = 0.0,
     progress_callback: Callable[[dict], None] | None = None,
     subsolve_callback: Callable[[dict], None] | None = None,
     workers: int | None = None,
@@ -1289,6 +1291,13 @@ def solve_benders(
         arithmetic runs in scaled space; the returned ``total_objective``,
         ``lower_bound`` and ``upper_bound`` are UNSCALED back to real units
         (``÷s``).  ``s=1.0`` ⇒ byte-identical to the un-scaled path.
+    in_out_weight
+        The per-solve DB value of ``solve.benders_in_out_weight`` (the
+        in-out separation weight ``λ``; default ``0.0`` = OFF = exact
+        Benders, byte-identical).  Passed through to
+        :func:`_resolve_benders_in_out_weight`, where the machine-local
+        ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` env — when set and valid —
+        overrides it.
     progress_callback
         Optional ``Callable[[dict], None]`` invoked ONCE per outer Benders
         iteration (after that iteration's master + region solves), so a
@@ -1328,6 +1337,7 @@ def solve_benders(
             data, regions, max_iters=max_iters, tol=tol,
             monolith_objective=monolith_objective, build_problem=build_problem,
             master=master, obj_scale=scale_the_objective,
+            in_out_weight=in_out_weight,
             progress_callback=progress_callback,
             subsolve_callback=subsolve_callback, workers=workers,
         )
@@ -1339,6 +1349,7 @@ def solve_benders(
 def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          build_problem, master="flextool",
                          obj_scale: float = 1.0,
+                         in_out_weight: float = 0.0,
                          progress_callback=None, subsolve_callback=None,
                          workers=None) -> BendersResult:
     # --- split with the cross-region half-flows UNCAPPED so the master pin is
@@ -1619,7 +1630,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # capacity-feasible against any C≥0, and matching the loop bootstrap).  When
     # ``λ==0.0`` the whole in-out block below is skipped and the loop is
     # byte-identical to exact Benders.
-    in_out_weight = _resolve_benders_in_out_weight()
+    in_out_weight = _resolve_benders_in_out_weight(in_out_weight)
     in_out_on = in_out_weight > 0.0
     if in_out_on:
         _logger.info(

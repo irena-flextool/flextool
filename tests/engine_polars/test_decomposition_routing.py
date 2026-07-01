@@ -31,6 +31,7 @@ def _bare_solve_config(**dicts) -> SolveConfig:
     sc.decomposition = dicts.get("decomposition", {})
     sc.benders_max_iter = dicts.get("benders_max_iter", {})
     sc.benders_tolerance = dicts.get("benders_tolerance", {})
+    sc.benders_in_out_weight = dicts.get("benders_in_out_weight", {})
     return sc
 
 
@@ -75,7 +76,7 @@ def test_decomposition_for_unknown_value_resolves_to_none() -> None:
 
 def test_benders_config_defaults() -> None:
     sc = _bare_solve_config()
-    assert sc.benders_config_for("solve") == (50, 1e-3)
+    assert sc.benders_config_for("solve") == (50, 1e-3, 0.0)
 
 
 def test_benders_config_reads_authored_knobs() -> None:
@@ -84,13 +85,14 @@ def test_benders_config_reads_authored_knobs() -> None:
     sc = _bare_solve_config(
         benders_max_iter={"s": "30.0"},
         benders_tolerance={"s": "0.005"},
+        benders_in_out_weight={"s": "0.25"},
     )
-    assert sc.benders_config_for("s") == (30, 0.005)
+    assert sc.benders_config_for("s") == (30, 0.005, 0.25)
 
 
 def test_benders_config_partial_authoring_fills_defaults() -> None:
     sc = _bare_solve_config(benders_max_iter={"s": "20.0"})
-    assert sc.benders_config_for("s") == (20, 1e-3)
+    assert sc.benders_config_for("s") == (20, 1e-3, 0.0)
 
 
 # ---------------------------------------------------------------------------

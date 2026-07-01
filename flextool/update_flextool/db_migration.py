@@ -1722,6 +1722,8 @@ def migrate_database(
                 )
             elif next_version == 62:
                 _migrate_v62_benders_rename(db)
+            elif next_version == 63:
+                _migrate_v63_add_in_out_weight(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3229,6 +3231,59 @@ def _migrate_v62_benders_rename(db) -> None:
         )
     except SpineDBAPIError:
         pass
+
+
+def _migrate_v63_add_in_out_weight(db) -> None:
+    """Add the ``solve.benders_in_out_weight`` knob (v62 -> v63).
+
+    Rationale
+    ---------
+    Promotes the previously machine-local env knob
+    ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` to a proper per-solve DB parameter.
+    It is the in-out separation stabilization weight ``lambda`` in
+    ``f_sep = lambda*centre + (1-lambda)*f_out`` (Ben-Ameur & Neto 2007),
+    fed one InOutStabilizer per region.  ``0.0`` (default) = OFF = exact
+    Benders (byte-identical); values in ``(0, 1)`` turn it on, larger =
+    more stabilisation.  Only used when ``decomposition = 'benders'``.
+
+    Mirrors the "Add the Benders knobs" section of
+    :func:`_migrate_v62_benders_rename`: a single ``add_update_item``
+    (an upsert, so re-run-safe) plus the ``solve_advanced`` group
+    assignment when that group exists.
+    """
+    has_solve_advanced = (
+        db.item(db.mapped_table("parameter_group"), name="solve_advanced")
+        is not None
+    )
+
+    default_val, default_type = to_database(0.0)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="benders_in_out_weight",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_type_list=("float",),
+        description=(
+            "Benders decomposition: in-out separation stabilization weight "
+            "(lambda) in f_sep = lambda*centre + (1-lambda)*f_out. 0.0 "
+            "(default) = off (exact Benders); values in (0,1) turn it on, "
+            "larger = more stabilization. Only used when decomposition = "
+            "'benders'. Default 0.0."
+        ),
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="benders_in_out_weight",
+            parameter_group_name="solve_advanced",
+        )
+
+    _commit_step(db,
+        "v63: added solve.benders_in_out_weight (in-out separation weight, "
+        "default 0.0)."
+    )
 
 
 def _migrate_v52_solver_selection(db) -> None:

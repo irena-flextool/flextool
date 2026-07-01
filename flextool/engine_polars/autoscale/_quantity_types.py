@@ -58,6 +58,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Benders max outer (master/subproblem) iterations. Solver-algorithm knob, never an LP coefficient.
     ('benders_tolerance', 'solve'): QuantityType.DIMENSIONLESS,
     # Benders relative optimality-gap convergence threshold. Solver-algorithm knob, never an LP coefficient.
+    ('benders_in_out_weight', 'solve'): QuantityType.DIMENSIONLESS,
+    # Benders in-out separation stabilization weight (lambda). Solver-algorithm knob, never an LP coefficient.
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin', 'group'): QuantityType.POWER,

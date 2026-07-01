@@ -2489,7 +2489,7 @@
       "model",
       "version",
       [
-        "62",
+        "63",
         "float"
       ],
       null,
@@ -2976,6 +2976,17 @@
       null,
       "[factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.",
       "reserve"
+    ],
+    [
+      "solve",
+      "benders_in_out_weight",
+      [
+        "0.0",
+        "float"
+      ],
+      null,
+      "Benders decomposition: in-out separation stabilization weight (lambda) in f_sep = lambda*centre + (1-lambda)*f_out. 0.0 (default) = off (exact Benders); values in (0,1) turn it on, larger = more stabilization. Only used when decomposition = 'benders'. Default 0.0.",
+      "solve_advanced"
     ],
     [
       "solve",
@@ -4895,6 +4906,12 @@
     [
       "reserve__upDown__unit__node",
       "reliability",
+      "float",
+      0
+    ],
+    [
+      "solve",
+      "benders_in_out_weight",
       "float",
       0
     ],

@@ -84,6 +84,31 @@ def test_resolver_rejects_weight_lt_zero_with_warning(monkeypatch, caplog, val):
 
 
 # ---------------------------------------------------------------------------
+# DB-value / env precedence (the v63 solve.benders_in_out_weight param).
+# ---------------------------------------------------------------------------
+
+
+def test_resolver_uses_db_value_when_env_unset(monkeypatch):
+    """No env ⇒ the per-solve DB value flows through unchanged."""
+    monkeypatch.delenv(_BENDERS_IN_OUT_WEIGHT_ENV, raising=False)
+    assert _resolve_benders_in_out_weight(0.4) == pytest.approx(0.4)
+
+
+def test_resolver_env_overrides_db_value(monkeypatch):
+    """A valid env value OVERRIDES the DB value (machine-local precedence)."""
+    monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, "0.7")
+    assert _resolve_benders_in_out_weight(0.2) == pytest.approx(0.7)
+
+
+def test_resolver_invalid_env_falls_back_to_db_value(monkeypatch, caplog):
+    """A malformed / out-of-range env is IGNORED (warned) ⇒ DB value used."""
+    monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, "not-a-number")
+    with caplog.at_level(logging.WARNING):
+        assert _resolve_benders_in_out_weight(0.3) == pytest.approx(0.3)
+    assert any("non-float" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # Pure per-region separation predicate (the load-bearing row-scale tolerance).
 # ---------------------------------------------------------------------------
 
