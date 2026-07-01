@@ -63,6 +63,7 @@ import numpy as np
 import polars as pl
 
 from polar_high import (
+    InOutStabilizer,
     Param,
     Problem,
     StallMonitor,
@@ -238,6 +239,53 @@ def _resolve_benders_max_stall() -> int:
             if env_n > 0:
                 k = env_n
     return k
+
+
+# Env override for the Benders in-out separation weight ``λ`` (machine-local; NO
+# schema/DB knob in Phase 1 — mirrors ``FLEXTOOL_BENDERS_WORKERS`` /
+# ``FLEXTOOL_BENDERS_MAX_STALL``, avoids a migration).  ``λ`` is the weight on
+# the stable interior CENTRE in ``f_sep = λ·centre + (1-λ)·f_out`` fed to
+# :class:`polar_high.InOutStabilizer` (one instance PER REGION).  ``0.0``
+# (default) ⇒ OFF: the in-out block is skipped entirely and the loop is
+# byte-identical to exact Benders.  ``λ ∈ (0, 1)`` ⇒ ON, larger = more
+# stabilisation.  ``λ ≥ 1`` ("never query the master") is non-convergent and
+# ``λ < 0`` is meaningless — both are IGNORED with a warning (the default 0.0 is
+# used), mirroring the non-float-warning branch below and in
+# :func:`_resolve_benders_max_stall`.
+_BENDERS_IN_OUT_WEIGHT_ENV = "FLEXTOOL_BENDERS_IN_OUT_WEIGHT"
+
+
+def _resolve_benders_in_out_weight() -> float:
+    """Resolve the Benders in-out separation weight ``λ`` from the environment.
+
+    Precedence: an explicit, valid ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` in
+    ``[0, 1)`` wins; otherwise the default ``0.0`` (OFF).  Mirrors
+    :func:`_resolve_benders_max_stall` EXACTLY, including the malformed-value
+    warning branch: a non-float OR an out-of-``[0, 1)`` value is IGNORED (not
+    fatal) and the default is used — ``λ ≥ 1`` never queries the master
+    (non-convergent) and ``λ < 0`` is meaningless, both config mistakes worth
+    surfacing rather than silently clamping.
+    """
+    weight = 0.0
+    env = os.environ.get(_BENDERS_IN_OUT_WEIGHT_ENV)
+    if env:
+        try:
+            env_w = float(env)
+        except ValueError:
+            _logger.warning(
+                "Benders: ignoring non-float %s=%r",
+                _BENDERS_IN_OUT_WEIGHT_ENV, env,
+            )
+        else:
+            if 0.0 <= env_w < 1.0:
+                weight = env_w
+            else:
+                _logger.warning(
+                    "Benders: ignoring out-of-range %s=%r (must be in [0, 1); "
+                    ">= 1 never queries the master, < 0 is meaningless)",
+                    _BENDERS_IN_OUT_WEIGHT_ENV, env,
+                )
+    return weight
 
 
 def _stall_worst_offenders(
@@ -1301,6 +1349,21 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     subproblems = [Problem() for _ in splits]
     for s, pb in zip(splits, subproblems):
         build_problem(pb, s.data)
+        # PIN ``run_crossover=on`` on every region subproblem.  The Benders cut
+        # slope is the reduced cost of the pinned boundary-flow column, which is
+        # only a well-defined *basic* dual when the solve ends on a simplex basis.
+        # Warm re-solves already run dual simplex and HiGHS' default is
+        # crossover-on — but if a region grows large enough that ``solver=choose``
+        # picks interior-point, crossover-OFF would return drifting interior duals
+        # and non-reproducible, ill-conditioned cut slopes.  Pinning it guarantees
+        # basic cut duals regardless of size or a future HiGHS default change.  Set
+        # AFTER ``build_problem`` and via ``set_solver_option`` (which MERGES) so
+        # the autoscaler's options (user_bound_scale / simplex_scale_strategy /
+        # presolve) are preserved; ``WarmProblem`` reads this dict on its cold
+        # build and the option persists across warm re-solves.  ``on`` is already
+        # the HiGHS default, so this is byte-identical today — it is regression-
+        # proofing, not a numerics change.
+        pb.set_solver_option("run_crossover", "on")
     warm = [WarmProblem(p) for p in subproblems]
     # Silence each region's per-solve HiGHS log by default (output_flag
     # persists across the cold build below and every warm parallel re-solve).
@@ -1465,13 +1528,24 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     _cur_iter = [0]
 
     def _solve_regions(f_bar_local):
-        """Pin+solve every region at ``f_bar_local`` (parallel when
-        ``eff_workers > 1``), returning a per-region-index list of
-        ``(cost_r, slopes, sol_r)`` in deterministic order.  Fires
-        ``subsolve_callback`` once per region as it FINISHES (from the worker
-        thread; the callback must be thread-safe)."""
+        """Pin+solve every region and return a per-region-index list of
+        ``(cost_r, slopes, sol_r)`` in deterministic order (parallel when
+        ``eff_workers > 1``).  Fires ``subsolve_callback`` once per region as it
+        FINISHES (from the worker thread; the callback must be thread-safe).
+
+        ``f_bar_local`` is EITHER a single ``{master_col -> value}`` dict — every
+        region is pinned at the same point (the exact-Benders / bootstrap path,
+        byte-identical) — OR a callable ``i -> {master_col -> value}`` returning
+        region ``i``'s OWN pin point (the in-out path, where each region is
+        pinned at its own interior ``f_sep``).  A shared arc column is read by
+        BOTH its export- and import-region, at potentially different per-region
+        interior values, so a per-region callable — not one merged dict — is the
+        correct in-out interface."""
+        per_region = callable(f_bar_local)
+
         def _fn(i):
-            res = _pin_and_solve(regions_meta[i], f_bar_local)
+            point = f_bar_local(i) if per_region else f_bar_local
+            res = _pin_and_solve(regions_meta[i], point)
             if subsolve_callback is not None:
                 try:
                     subsolve_callback({
@@ -1493,15 +1567,23 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # achievable cost_r is below it with margin) that is ~90× tighter than the
     # old -100·max|cost|, narrowing the floor/cut-coef dynamic range that drives
     # the warm post-append kUnknown.
-    bootstrap_cuts: list[tuple[str, float, dict[int, float]]] = []
+    # Each cut carries its GENERATION POINT (the ``f̄`` the region was solved at)
+    # as the 2nd element: ``(region, gen_point, cost_r, slopes)``.  The bootstrap
+    # regions are solved at autarky ``f̄=0``, so their generation point is the
+    # ``f_bar`` (all-zero) dict — snapshotted so a later ``f_bar`` reassignment
+    # cannot alias it.  With in-out separation OFF the generation point always
+    # equals the loop's current ``f_bar``, so threading it is byte-identical;
+    # with in-out ON it is the interior ``f_sep``, which differs per region.
+    bootstrap_gen = dict(f_bar)
+    bootstrap_cuts: list[tuple[str, dict[int, float], float, dict[int, float]]] = []
     for rm, (cost_r, slopes, _sol_r) in zip(regions_meta, _solve_regions(f_bar)):
-        bootstrap_cuts.append((rm.name, cost_r, slopes))
-    cost_scale = max((abs(c) for _, c, _ in bootstrap_cuts), default=1.0)
+        bootstrap_cuts.append((rm.name, bootstrap_gen, cost_r, slopes))
+    cost_scale = max((abs(c) for _, _, c, _ in bootstrap_cuts), default=1.0)
     # Per-node-group STAND-ALONE (autarkic, f̄=0) cost, keyed by name.  Its sum
     # is a "sane objective magnitude" reference for the stall guard, and its
     # per-region values pick the worst-offender node group for the diagnostic.
     # Kept in SCALED space (bootstrap cost_r is ×s), matching the loop's LB/UB.
-    autarky_by_region = {name: cost_r for name, cost_r, _ in bootstrap_cuts}
+    autarky_by_region = {name: cost_r for name, _, cost_r, _ in bootstrap_cuts}
     # Domain-free stall detector (polar-high).  reference_scale = Σ|autarky|; the
     # window K is env-resolved (FLEXTOOL_BENDERS_MAX_STALL); the other thresholds
     # keep the library defaults (gap-floor is raised below to max(20·tol, 0.02)
@@ -1529,9 +1611,35 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # expect REAL-unit costs (÷s).  s=1.0 ⇒ no-op.
     inv_s = 1.0 / obj_scale
 
+    # --- In-out separation (Ben-Ameur & Neto 2007) — PER-REGION stabilizer.
+    # ``λ`` (env-resolved; default 0.0 = OFF) is the weight on the stable
+    # interior centre in ``f_sep = λ·centre + (1-λ)·f_out``.  One stabilizer PER
+    # REGION (the correct BAN unit — a global λ lets a well-behaved region mask a
+    # degenerate one), each seeded with the AUTARKY centre ``f̄=0`` (guaranteed
+    # capacity-feasible against any C≥0, and matching the loop bootstrap).  When
+    # ``λ==0.0`` the whole in-out block below is skipped and the loop is
+    # byte-identical to exact Benders.
+    in_out_weight = _resolve_benders_in_out_weight()
+    in_out_on = in_out_weight > 0.0
+    if in_out_on:
+        _logger.info(
+            "Benders: in-out separation ON (weight λ=%.3f) over %d region(s)",
+            in_out_weight, len(regions_meta),
+        )
+    autarky_centre = dict(f_bar)  # f̄=0 (snapshot, pre-loop)
+    stabilizers: dict[str, InOutStabilizer] = {}
+    if in_out_on:
+        for rm in regions_meta:
+            stab = InOutStabilizer(weight=in_out_weight)
+            stab.set_centre(autarky_centre)
+            stabilizers[rm.name] = stab
+
     # ``pending_cuts`` are the cuts for the regions solved at the CURRENT f̄;
     # they are appended at the top of each iteration before the master solve.
-    # Iter 0 uses the bootstrap cuts (regions at f̄=0).
+    # Iter 0 uses the bootstrap cuts (regions at f̄=0).  Each entry is a
+    # ``(region, gen_point, cost_r, slopes)`` 4-tuple carrying its own
+    # generation point (= the loop ``f̄`` with in-out OFF; = the interior
+    # ``f_sep`` with in-out ON).
     pending_cuts = bootstrap_cuts
     C_by_conn: dict[str, float] = {}
 
@@ -1542,8 +1650,13 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # region that contributes a cut has its η relaxed to free (-inf): the
         # cut now bounds η from below, so the bootstrap floor is no longer
         # needed and dropping it tightens the master + narrows the bound range.
-        for region, cost_r, slopes in pending_cuts:
-            master.add_cut(region, f_bar, cost_r, slopes)
+        for region, gen_point, cost_r, slopes in pending_cuts:
+            # Pass each cut's OWN generation point (= ``f_bar`` with in-out OFF;
+            # = the interior ``f_sep`` with in-out ON) so the cut constant is
+            # computed against the point it was actually generated at.  Passing
+            # the current ``f_bar`` (=``f_out``) would use the wrong base and
+            # make the cut invalid.
+            master.add_cut(region, gen_point, cost_r, slopes)
             master.relax_eta_after_cut(region)
         msol = master.solve()
         prev_LB = LB
@@ -1627,48 +1740,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # read/stale-state bug and hard-fails.
         existing_cap_by_col = master._existing_cap_by_col
         solver_feas = msol.max_primal_infeasibility
-        max_clamp = 0.0
-        for a in arcs:
-            invested = C_by_conn.get(a.conn, 0.0)
-            for cid in a.f_col_ids:
-                cid = int(cid)
-                cap = invested + existing_cap_by_col.get(cid, 0.0)
-                f_val = new_f_bar[cid]
-                slack = f_val - cap
-                if slack <= 0.0:
-                    continue
-                # Gross overshoot ⇒ genuine bug, not solver slack.
-                gross_tol = max(
-                    1e-2 * max(1.0, abs(cap), abs(f_val)), 1e3 * solver_feas
-                )
-                if slack > gross_tol:
-                    raise RuntimeError(_benders_failure_message(
-                        summary=(
-                            f"Benders master chose a flow {f_val:.6e} on "
-                            f"connection '{a.conn}' that exceeds the capacity "
-                            f"{cap:.6e} it invested in (slack {slack:.3e} > "
-                            f"{gross_tol:.3e}, solver feasibility "
-                            f"{solver_feas:.3e}) at iteration {iterations}."
-                        ),
-                        meaning=(
-                            "The master picked a flow on this connection larger "
-                            "than the capacity it invested in, by far more than "
-                            "solver rounding can explain (small overshoots are "
-                            "absorbed automatically). That points to a real "
-                            "inconsistency on this connection — typically a "
-                            "units / normalisation mismatch or an extreme "
-                            "cost/capacity magnitude — rather than solver noise."
-                        ),
-                        how_to_avoid=(
-                            f"Check connection '{a.conn}' for an investment-cost, "
-                            "capacity, efficiency or unitsize inconsistency or "
-                            "extreme magnitude. Re-run to rule out a transient "
-                            "solver state. If it persists, please report it with "
-                            "the model."
-                        ),
-                    ))
-                new_f_bar[cid] = cap  # clamp to the supported capacity
-                max_clamp = max(max_clamp, slack)
+        max_clamp = _clamp_flow_to_capacity(
+            new_f_bar, arcs, C_by_conn, existing_cap_by_col, solver_feas,
+            iterations=iterations,
+        )
         if max_clamp > max(1e-9, solver_feas):
             _logger.debug(
                 "Benders iter %d: clamped master coupling flow to capacity "
@@ -1676,33 +1751,98 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                 iterations, max_clamp, solver_feas,
             )
 
-        # --- advance f̄ to the master optimum and solve the regions there to
-        # (a) get this iteration's recourse cost (→ a VALID UB, since C ≥ f̄ at
-        # the master optimum) and (b) produce the next iteration's cuts.
+        # --- advance f̄ to the master optimum ``f_out`` (used for the LB/eta
+        # bookkeeping and, with in-out OFF, the region pin) and solve the
+        # regions to (a) get this iteration's recourse cost (→ a VALID UB, since
+        # C ≥ f̄ at the master optimum / the clamped f_sep) and (b) produce the
+        # next iteration's cuts.
         f_bar = new_f_bar
+        f_out = new_f_bar  # the clamped master vertex (per-region separation ref)
         _cur_iter[0] = iterations  # label this pass's region-finish lines
+
+        # --- IN-OUT SEPARATION.  With ``λ>0`` each region is solved at its OWN
+        # interior separation point ``f_sep = λ·centre + (1-λ)·f_out`` (a
+        # per-region dict, since a shared arc column may carry different interior
+        # values for its two regions), re-clamped to the CURRENT capacity (the
+        # centre is an old incumbent flow feasible against a PAST cap, so
+        # ``f_sep`` can exceed the current cap — clamping DOWN keeps the UB
+        # valid).  The cut is then GENERATED at ``f_sep`` (its generation point),
+        # and a per-region separation test decides whether the stabilizer must
+        # force an exact-Benders out-step next.  With ``λ==0.0`` (OFF) this whole
+        # block is skipped and the region pin / gen-point are ``f_out`` verbatim
+        # ⇒ byte-identical to exact Benders.
+        f_sep_by_region: dict[str, dict[int, float]] = {}
+        if in_out_on:
+            for rm in regions_meta:
+                f_sep_r = stabilizers[rm.name].separation_point(f_out)
+                if f_sep_r is not f_out:
+                    # A genuine interior point — re-clamp a COPY to the current
+                    # capacity (leaves ``f_out`` untouched for the verbatim
+                    # out-step case, where ``separation_point`` returned it as-is).
+                    f_sep_r = dict(f_sep_r)
+                    _clamp_flow_to_capacity(
+                        f_sep_r, arcs, C_by_conn, existing_cap_by_col,
+                        solver_feas, iterations=iterations,
+                        hard_fail_gross=False,
+                    )
+                f_sep_by_region[rm.name] = f_sep_r
+
+        def _region_pin(i):
+            # Per-region pin point: the region's own clamped ``f_sep`` when
+            # in-out is on, else the shared ``f_out``.
+            return f_sep_by_region[regions_meta[i].name] if in_out_on else f_out
+
         region_costs: dict[str, float] = {}
-        next_cuts: list[tuple[str, float, dict[int, float]]] = []
-        # Per-region recovered primal at THIS f̄ (region-index aligned), for
-        # the TIER-1 whole-system invest assembly when this iteration becomes
+        next_cuts: list[tuple[str, dict[int, float], float, dict[int, float]]] = []
+        # Per-region recovered primal at THIS pin point (region-index aligned),
+        # for the TIER-1 whole-system invest assembly when this iteration becomes
         # the incumbent.  Each entry is the region Solution's ``col_value``.
         region_col_values: list[np.ndarray] = [None] * len(regions_meta)
-        for rm, (cost_r, slopes, sol_r) in zip(regions_meta, _solve_regions(f_bar)):
+        # Per-region slopes recovered this pass (keyed by region name), so the
+        # in-out separation test / register below need not re-scan ``next_cuts``.
+        slopes_by_region: dict[str, dict[int, float]] = {}
+        for rm, (cost_r, slopes, sol_r) in zip(
+            regions_meta, _solve_regions(_region_pin if in_out_on else f_out)
+        ):
+            gen_point = f_sep_by_region[rm.name] if in_out_on else f_out
+            slopes_by_region[rm.name] = slopes
             region_costs[rm.name] = cost_r
-            next_cuts.append((rm.name, cost_r, slopes))
+            next_cuts.append((rm.name, gen_point, cost_r, slopes))
             region_col_values[region_idx[rm.name]] = np.asarray(
                 sol_r.col_value
             ).copy()
 
-        # --- UB = master invest cost(C) + Σ cost_r(f̄) at the SAME (f̄, C).
+        # --- UB = master invest cost(C) + Σ cost_r(pin) at the SAME (pin, C).
         # All terms are in scaled space (region cost_r and master invest_cost
         # are both ×s), so UB and LB are directly comparable in scaled space.
+        # ``pin`` is ``f_out`` (OFF) or each region's clamped ``f_sep`` (ON);
+        # both are capacity-feasible, so the UB is valid either way.
         UB = master.invest_cost(C_by_conn) + sum(region_costs.values())
-        if UB < best_UB:
+        improved = UB < best_UB
+        if improved:
             best_UB = UB
+            # The incumbent trade-flow point.  With in-out OFF it is the single
+            # ``f_out``; with in-out ON each region was solved at its own
+            # ``f_sep``, so the incumbent flow on a column is that column's
+            # owning-region separation value.  ``read_master`` keys each arc
+            # column to exactly one export + one import region; taking the value
+            # from whichever region pinned it (they agree only when λ=0) — we use
+            # ``f_out`` as the base and overlay each region's own ``f_sep`` so a
+            # column reflects the flow actually solved for it.
+            if in_out_on:
+                incumbent_f_bar = dict(f_out)
+                for rm in regions_meta:
+                    fsr = f_sep_by_region[rm.name]
+                    for a, _rc, master_cols in rm.forward:
+                        for mc in master_cols:
+                            mc = int(mc)
+                            if mc in fsr:
+                                incumbent_f_bar[mc] = fsr[mc]
+            else:
+                incumbent_f_bar = dict(f_bar)
             best_incumbent = {
                 "C": dict(C_by_conn),
-                "f_bar": dict(f_bar),
+                "f_bar": incumbent_f_bar,
                 "region_costs": dict(region_costs),
                 # The master trade ``v_invest_p`` frame + per-region primal AT
                 # this incumbent, for the TIER-1 invest handoff (master trade
@@ -1847,6 +1987,28 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                 ),
             ))
 
+        # --- IN-OUT: feed each region's outcome back to its stabilizer.  The
+        # separation flag is PER-REGION (plan §1): the MOMENT a region's cut
+        # fails to separate its ``f_out``, that region's next
+        # ``separation_point`` returns ``f_out`` VERBATIM (λ=0 → exact Benders,
+        # guaranteed to separate unless already optimal).  ``improved`` (best_UB
+        # dropped this iteration) drives the serious step (centre ← incumbent).
+        if in_out_on:
+            incumbent_point = (
+                best_incumbent["f_bar"] if best_incumbent is not None else f_out
+            )
+            for rm in regions_meta:
+                separated = _cut_separates(
+                    region_costs[rm.name], slopes_by_region[rm.name],
+                    f_out, f_sep_by_region[rm.name], eta_by_region[rm.name],
+                )
+                stabilizers[rm.name].register(
+                    master_point=f_out,
+                    separated=separated,
+                    incumbent_point=incumbent_point,
+                    improved=improved,
+                )
+
         pending_cuts = next_cuts
 
     # --- assemble result from the incumbent.  UNSCALE cost-valued outputs back
@@ -1915,6 +2077,122 @@ def _flow_frames(arcs: list[_ArcMaster], f_bar: dict[int, float]) -> dict[tuple,
     return out
 
 
+def _clamp_flow_to_capacity(
+    f_dict: dict[int, float],
+    arcs: list[_ArcMaster],
+    C_by_conn: dict[str, float],
+    existing_cap_by_col: dict[int, float],
+    solver_feas: float,
+    *,
+    iterations: int,
+    hard_fail_gross: bool = True,
+) -> float:
+    """Clamp each coupling flow in ``f_dict`` DOWN to the capacity the master
+    chose (``invested + existing``), IN PLACE, and return the max clamp slack.
+
+    The master's chosen capacity must support its chosen flow: the coupling row
+    ``C − f ≥ 0`` (≡ ``f ≤ existing_cap + Σ v_invest_p``) holds at the master
+    optimum.  For a GREENFIELD arc the existing term is 0 (cap = invested C);
+    for an EXISTING-only arc the invested C is 0 (cap = existing/unitsize); for
+    a BOTH arc both contribute.
+
+    The solver returns a vertex only within its feasibility tolerance of the
+    active rows, and HiGHS enforces that on the INTERNALLY-SCALED problem — so
+    the UNSCALED slack on ``f ≤ cap`` can exceed BOTH the nominal tolerance AND
+    the reported ``max_primal_infeasibility`` (measured in scaled space), and it
+    grows as cuts accumulate and the master gets more ill-conditioned.  Tuning a
+    fixed tolerance is therefore chasing a moving target.  Instead CLAMP the
+    flow down to the capacity it chose: any UB evaluated at the clamped point
+    ``(C, min(f, cap))`` is a strictly capacity-feasible primal (a valid
+    whole-problem upper bound — clamping flow DOWN can only raise region
+    recourse cost, never invalidate it).  A GROSS overshoot — orders of
+    magnitude beyond any plausible solver slack — still signals a real
+    read/stale-state bug and hard-fails.
+
+    Used for BOTH the master vertex ``f_out`` and (with in-out separation on)
+    the interior separation point ``f_sep``.  For ``f_out`` a gross overshoot
+    signals a real read/stale-state bug and HARD-FAILS (``hard_fail_gross=True``,
+    the default — byte-identical to the original inline clamp).  For ``f_sep``
+    (``hard_fail_gross=False``) a large overshoot is EXPECTED and legitimate: the
+    interior centre is an OLD incumbent flow feasible against a PAST capacity, so
+    when a later master picks a much smaller cap the convex combo can sit far
+    above the CURRENT cap through no fault of the solver.  We just clamp it DOWN
+    (raising recourse, keeping the UB valid) without the gross-bug guard.
+    """
+    max_clamp = 0.0
+    for a in arcs:
+        invested = C_by_conn.get(a.conn, 0.0)
+        for cid in a.f_col_ids:
+            cid = int(cid)
+            cap = invested + existing_cap_by_col.get(cid, 0.0)
+            f_val = f_dict[cid]
+            slack = f_val - cap
+            if slack <= 0.0:
+                continue
+            # Gross overshoot ⇒ genuine bug, not solver slack (only for the
+            # master vertex; a stale-cap ``f_sep`` overshoot is legitimate).
+            gross_tol = max(
+                1e-2 * max(1.0, abs(cap), abs(f_val)), 1e3 * solver_feas
+            )
+            if hard_fail_gross and slack > gross_tol:
+                raise RuntimeError(_benders_failure_message(
+                    summary=(
+                        f"Benders master chose a flow {f_val:.6e} on "
+                        f"connection '{a.conn}' that exceeds the capacity "
+                        f"{cap:.6e} it invested in (slack {slack:.3e} > "
+                        f"{gross_tol:.3e}, solver feasibility "
+                        f"{solver_feas:.3e}) at iteration {iterations}."
+                    ),
+                    meaning=(
+                        "The master picked a flow on this connection larger "
+                        "than the capacity it invested in, by far more than "
+                        "solver rounding can explain (small overshoots are "
+                        "absorbed automatically). That points to a real "
+                        "inconsistency on this connection — typically a "
+                        "units / normalisation mismatch or an extreme "
+                        "cost/capacity magnitude — rather than solver noise."
+                    ),
+                    how_to_avoid=(
+                        f"Check connection '{a.conn}' for an investment-cost, "
+                        "capacity, efficiency or unitsize inconsistency or "
+                        "extreme magnitude. Re-run to rule out a transient "
+                        "solver state. If it persists, please report it with "
+                        "the model."
+                    ),
+                ))
+            f_dict[cid] = cap  # clamp to the supported capacity
+            max_clamp = max(max_clamp, slack)
+    return max_clamp
+
+
+def _cut_separates(
+    cost_r: float,
+    slopes: dict[int, float],
+    f_out: dict[int, float],
+    f_sep: dict[int, float],
+    eta_r: float,
+) -> bool:
+    """In-out separation test (plan §4 step 6): does the cut GENERATED at the
+    interior ``f_sep`` strictly separate the master vertex ``(f_out, eta_r)``?
+
+    The cut's value at the master point is ``cut_val = cost_r + Σ slope·(f_out −
+    f_sep)``; it lower-bounds the region recourse, so it separates iff the master
+    under-estimated it: ``cut_val > eta_r + tol_sep``.  ``tol_sep`` is the SAME
+    row-scale tolerance :func:`_check_cuts_satisfied` uses —
+    ``1e-6·max(1, |cut_val|, |eta_r|, row_scale)`` with ``row_scale = |cost_r| +
+    Σ|slope|·(|f_out| + |f_sep|)`` — reusing the identical arithmetic so the two
+    never drift.  The tolerance is LOAD-BEARING: a bare ``>`` reports spurious
+    "separated" on round-off, the forced out-step never fires, and the loop
+    livelocks on a degenerate vertex.  All quantities are in the same (scaled)
+    space and homogeneous, so no ``obj_scale`` division is needed."""
+    cut_val = cost_r + sum(g * (f_out[c] - f_sep[c]) for c, g in slopes.items())
+    row_scale = abs(cost_r) + sum(
+        abs(g) * (abs(f_out[c]) + abs(f_sep[c])) for c, g in slopes.items()
+    )
+    tol_sep = 1e-6 * max(1.0, abs(cut_val), abs(eta_r), row_scale)
+    return cut_val > eta_r + tol_sep
+
+
 def _check_cuts_satisfied(cuts, f_bar, new_f_bar, eta_by_region, *,
                           iterations, inv_s) -> None:
     """Mandatory self-check (critique Point 1): at the NEW master point each
@@ -1922,10 +2200,15 @@ def _check_cuts_satisfied(cuts, f_bar, new_f_bar, eta_by_region, *,
 
         eta_r  >=  cost_r(f̄) + Σ_cell slope[cell]·(f_master[cell] − f̄[cell])
 
-    ``cuts`` carry ``(region, cost_r, {master_f_col: slope})`` evaluated at the
-    OLD ``f_bar``; ``new_f_bar`` is the master's chosen flow.  We assert each
-    eta_r is finite AND clears its own cut RHS — a binding/active cut makes this
-    an equality, a slack cut an inequality.
+    ``cuts`` carry ``(region, cost_r, {master_f_col: slope})`` (evaluated at the
+    OLD ``f_bar``) OR, with in-out separation on, the 4-tuple ``(region,
+    gen_point, cost_r, slopes)`` carrying each cut's OWN GENERATION POINT — the
+    interior ``f_sep`` the cut was generated at, which differs per region and is
+    NOT the loop's ``f_bar`` (see the in-out wiring).  ``new_f_bar`` is the
+    master's chosen flow.  For a 3-tuple the shared ``f_bar`` is the generation
+    point (byte-identical to the exact-Benders path).  We assert each eta_r is
+    finite AND clears its own cut RHS — a binding/active cut makes this an
+    equality, a slack cut an inequality.
 
     TOLERANCE SCALE.  The cut is a literal row ``η_r − Σ g·f ≥ cost_r − Σ g·f̄``
     in the master LP (see :meth:`_BendersMaster.add_cut`), so at the master
@@ -1944,7 +2227,16 @@ def _check_cuts_satisfied(cuts, f_bar, new_f_bar, eta_by_region, *,
     numerical noise, hard-fail only a GROSS violation (a cut that failed to
     append, or a grossly infeasible master point — orders beyond any solver
     slack)."""
-    for region, cost_r, slopes in cuts:
+    for cut in cuts:
+        # Backward-compatible unpack: a 3-tuple ``(region, cost_r, slopes)``
+        # uses the shared ``f_bar`` as its generation point (exact-Benders /
+        # unit-test path); a 4-tuple ``(region, gen_point, cost_r, slopes)``
+        # carries its OWN interior generation point (in-out separation path).
+        if len(cut) == 4:
+            region, gen_point, cost_r, slopes = cut
+        else:
+            region, cost_r, slopes = cut
+            gen_point = f_bar
         er = eta_by_region.get(region)
         if er is None or not np.isfinite(er):
             raise RuntimeError(_benders_failure_message(
@@ -1970,13 +2262,14 @@ def _check_cuts_satisfied(cuts, f_bar, new_f_bar, eta_by_region, *,
                 ),
             ))
         rhs = cost_r + sum(
-            g * (new_f_bar[c] - f_bar[c]) for c, g in slopes.items()
+            g * (new_f_bar[c] - gen_point[c]) for c, g in slopes.items()
         )
         # Row conditioning: the constraint's coefficients (|cost_r|, |g·f|) set
         # the unscaled feasibility slack the solver may leave — they can be
         # ORDERS larger than the cancelled rhs.  Tolerance keyed off that scale.
         row_scale = abs(cost_r) + sum(
-            abs(g) * (abs(new_f_bar[c]) + abs(f_bar[c])) for c, g in slopes.items()
+            abs(g) * (abs(new_f_bar[c]) + abs(gen_point[c]))
+            for c, g in slopes.items()
         )
         tol_abs = 1e-6 * max(1.0, abs(rhs), abs(er), row_scale)
         if er >= rhs - tol_abs:
