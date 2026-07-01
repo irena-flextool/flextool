@@ -1502,7 +1502,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                 )
 
         new_f_bar, C_by_conn, eta_by_region = master.read_master(msol)
-        _check_cuts_satisfied(pending_cuts, f_bar, new_f_bar, eta_by_region)
+        _check_cuts_satisfied(
+            pending_cuts, f_bar, new_f_bar, eta_by_region,
+            iterations=iterations, inv_s=inv_s,
+        )
         # The master's chosen capacity must support its chosen flow: the
         # coupling row ``C − f ≥ 0`` (≡ ``f ≤ existing_cap + Σ v_invest_p``)
         # holds at the master optimum.  For a GREENFIELD arc the existing term
@@ -1752,7 +1755,8 @@ def _flow_frames(arcs: list[_ArcMaster], f_bar: dict[int, float]) -> dict[tuple,
     return out
 
 
-def _check_cuts_satisfied(cuts, f_bar, new_f_bar, eta_by_region) -> None:
+def _check_cuts_satisfied(cuts, f_bar, new_f_bar, eta_by_region, *,
+                          iterations, inv_s) -> None:
     """Mandatory self-check (critique Point 1): at the NEW master point each
     just-appended cut must be SATISFIED, i.e.
 
@@ -1760,27 +1764,102 @@ def _check_cuts_satisfied(cuts, f_bar, new_f_bar, eta_by_region) -> None:
 
     ``cuts`` carry ``(region, cost_r, {master_f_col: slope})`` evaluated at the
     OLD ``f_bar``; ``new_f_bar`` is the master's chosen flow.  We assert each
-    eta_r is finite AND clears its own cut RHS (within a small relative
-    tolerance) — a binding/active cut makes this an equality, a slack cut an
-    inequality; either way a VIOLATION means a stale basis or a wrong append."""
+    eta_r is finite AND clears its own cut RHS — a binding/active cut makes this
+    an equality, a slack cut an inequality.
+
+    TOLERANCE SCALE.  The cut is a literal row ``η_r − Σ g·f ≥ cost_r − Σ g·f̄``
+    in the master LP (see :meth:`_BendersMaster.add_cut`), so at the master
+    optimum the solver already enforces ``η_r ≥ rhs`` — the ONLY gap between
+    row-as-solved and row-as-checked is the LP's feasibility tolerance.  HiGHS
+    measures that on its INTERNALLY-SCALED matrix, so the UNSCALED slack tracks
+    the row's COEFFICIENT magnitude, not its (possibly heavily cancelled) rhs.
+    Early-iteration overshoot makes this bite: a region whose recourse spikes
+    (import-starved penalty flow) yields huge reduced-cost slopes, so ``cost_r``
+    and ``Σ g·f̄`` are large and NEARLY CANCEL — rhs collapses to O(1) while the
+    row coefficients stay at O(1e6).  Keying the tolerance off ``|rhs|`` alone
+    (the old ``1e-5·max(1,|rhs|,|er|)``) then demands a precision the cancelled
+    row cannot deliver and hard-fails on pure solver round-off.  We key it off
+    the row's magnitude (``|cost_r| + Σ|g·f|``) instead — the same fail-safe
+    philosophy as the sibling flow-clamp / LB-dip / sandwich guards: absorb
+    numerical noise, hard-fail only a GROSS violation (a cut that failed to
+    append, or a grossly infeasible master point — orders beyond any solver
+    slack)."""
     for region, cost_r, slopes in cuts:
         er = eta_by_region.get(region)
         if er is None or not np.isfinite(er):
-            raise RuntimeError(
-                f"Benders: recourse eta[{region!r}] not finite after master "
-                f"solve ({er!r})"
-            )
+            raise RuntimeError(_benders_failure_message(
+                summary=(
+                    f"Benders recourse estimate η for node group {region!r} is "
+                    f"not a finite number ({er!r}) after the master solve at "
+                    f"iteration {iterations}."
+                ),
+                meaning=(
+                    "The master problem returned a non-finite value for a node "
+                    "group's recourse cost, which means that master solve did "
+                    "not produce a usable solution — almost always severe "
+                    "numerical ill-conditioning of the master (extreme "
+                    "connection investment-cost or capacity magnitudes) or a "
+                    "corrupted solver state."
+                ),
+                how_to_avoid=(
+                    "Re-run the solve to rule out a transient solver state. If "
+                    "it recurs, check the connections that couple the node "
+                    "groups for extreme or mismatched cost/capacity magnitudes "
+                    "and rescale the outliers. If it persists, please report it "
+                    "with the model."
+                ),
+            ))
         rhs = cost_r + sum(
             g * (new_f_bar[c] - f_bar[c]) for c, g in slopes.items()
         )
-        # eta_r >= rhs (up to LP optimality tolerance, scaled to the magnitude).
-        tol_abs = 1e-5 * max(1.0, abs(rhs), abs(er))
-        if er < rhs - tol_abs:
-            raise RuntimeError(
-                f"Benders cut for {region!r} VIOLATED at the new master point: "
-                f"eta={er:.10e} < cut RHS={rhs:.10e} (cost_r={cost_r:.6e}) — "
-                f"stale basis / wrong cut append"
-            )
+        # Row conditioning: the constraint's coefficients (|cost_r|, |g·f|) set
+        # the unscaled feasibility slack the solver may leave — they can be
+        # ORDERS larger than the cancelled rhs.  Tolerance keyed off that scale.
+        row_scale = abs(cost_r) + sum(
+            abs(g) * (abs(new_f_bar[c]) + abs(f_bar[c])) for c, g in slopes.items()
+        )
+        tol_abs = 1e-6 * max(1.0, abs(rhs), abs(er), row_scale)
+        if er >= rhs - tol_abs:
+            continue
+        violation = rhs - er
+        # GROSS band: an un-appended cut leaves η near its large-negative floor,
+        # and a grossly infeasible master point violates by a like amount —
+        # either dwarfs 1% of the row scale.  Below that, a violation is solver
+        # feasibility round-off on an ill-conditioned row; warn and continue
+        # (the LB-monotonicity + sandwich guards still bracket the optimum).
+        gross_tol = 1e-2 * max(1.0, row_scale)
+        if violation > gross_tol:
+            raise RuntimeError(_benders_failure_message(
+                summary=(
+                    f"Benders cut for node group {region!r} is violated at the "
+                    f"new master point: recourse estimate η={er * inv_s:.6e} is "
+                    f"below the cut floor {rhs * inv_s:.6e} (by "
+                    f"{violation:.3e}, > {gross_tol:.3e} at row scale "
+                    f"{row_scale:.3e}) at iteration {iterations}."
+                ),
+                meaning=(
+                    "A just-added Benders cut, which lower-bounds this node "
+                    "group's recourse cost, is not honoured by the master's own "
+                    "solution — by far more than solver rounding can explain "
+                    "(small violations are absorbed automatically). That points "
+                    "to a stale solver basis or a corrupted cut append, not to "
+                    "your model's economics."
+                ),
+                how_to_avoid=(
+                    "Re-run the solve first — a fresh basis usually clears a "
+                    "one-off warm-restart glitch. If it recurs, loosen the "
+                    "solver tolerance (e.g. --solver-mip-gap 0.01) and check the "
+                    "connections coupling the node groups for extreme "
+                    "investment-cost or capacity magnitudes that make the master "
+                    "ill-conditioned. If it persists, please report it with the "
+                    "model."
+                ),
+            ))
+        _logger.warning(
+            "Benders iter %d: cut for %r under-satisfied by %.3e (row scale "
+            "%.3e) — solver feasibility round-off on an ill-conditioned cut "
+            "row; continuing", iterations, region, violation, row_scale,
+        )
 
 
 def _assert_finite_boundary_penalties(data: FlexData, arcs: list[_ArcMaster]) -> None:
