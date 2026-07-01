@@ -1,3 +1,24 @@
+## Release 4.0.0b22 (1.7.2026) — `benders_in_out_weight` solve parameter (schema v63)
+
+**Database migration v62 → v63** (automatic on load). Dependency floors
+unchanged (`polar-high>=3.4.0`, `polars>=1.40`, `highspy<=1.14.0`). Additive and
+OFF by default — the converged solution is unchanged on every model.
+
+### Decomposition (Benders)
+
+- **The in-out separation weight is now a per-solve database parameter,
+  `solve.benders_in_out_weight`** (previously only the machine-local environment
+  variable `FLEXTOOL_BENDERS_IN_OUT_WEIGHT` from b21). It is the weight `λ` in the
+  in-out separation point `f_sep = λ·centre + (1-λ)·f_out`: **`0.0` (the default)
+  = off** (exact Benders, byte-identical to before); values in `(0, 1)` turn the
+  stabilisation on, larger = more. Only used when `decomposition = 'benders'`. The
+  environment variable still works and, when set to a valid value, **overrides**
+  the database parameter (machine-local wins), mirroring the worker-count knob;
+  an out-of-range or malformed environment value is ignored with a warning and the
+  database value is used. The v63 migration adds the parameter to the `solve`
+  class (default `0.0`, `solve_advanced` group) — no authored data changes, and a
+  database with the parameter unset behaves exactly as before.
+
 ## Release 4.0.0b21 (1.7.2026) — Benders in-out stabilization (degeneracy tail-off)
 
 No database migration (schema stays **v62**). Dependency floor raised to
