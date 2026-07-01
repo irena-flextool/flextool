@@ -65,6 +65,7 @@ import polars as pl
 from polar_high import (
     Param,
     Problem,
+    StallMonitor,
     Sum,
     WarmProblem,
     resolve_worker_count,
@@ -198,6 +199,91 @@ def _resolve_benders_workers(n_regions: int, workers) -> int:
             if env_n > 0:
                 workers = env_n
     return resolve_worker_count(n_regions, workers)
+
+
+# Default trailing window ``K`` for the stall guard: the best feasible cost must
+# be frozen (no relative improvement) for this many consecutive iterations
+# BEFORE a stall can be declared (in conjunction with a high gap + a blown-up
+# incumbent; see :class:`polar_high.StallMonitor`).  Empirical, validated on
+# spatial-decomposition traces up to N=10 regions (benign frozen windows there
+# are <= 4 iters, so K=8 has a 2x margin).
+_STALL_WINDOW_DEFAULT = 8
+
+# Env override for the stall-guard window ``K`` (machine-local; NO schema/DB
+# knob — mirrors the ``FLEXTOOL_BENDERS_WORKERS`` design note, avoids another
+# migration).  Unset / <= 0 leaves the ``_STALL_WINDOW_DEFAULT``.  This is NOT a
+# whole-guard opt-out (a correctness guard must not be disableable): a user who
+# genuinely wants more iterations before the guard fires sets this HIGH.
+_BENDERS_MAX_STALL_ENV = "FLEXTOOL_BENDERS_MAX_STALL"
+
+
+def _resolve_benders_max_stall() -> int:
+    """Resolve the stall-guard trailing window ``K``.
+
+    Precedence: an explicit positive ``FLEXTOOL_BENDERS_MAX_STALL`` env wins;
+    otherwise the ``_STALL_WINDOW_DEFAULT``.  Mirrors
+    :func:`_resolve_benders_workers` EXACTLY, including the non-integer-warning
+    branch (a malformed value is ignored, not fatal).
+    """
+    k = _STALL_WINDOW_DEFAULT
+    env = os.environ.get(_BENDERS_MAX_STALL_ENV)
+    if env:
+        try:
+            env_n = int(env)
+        except ValueError:
+            _logger.warning(
+                "Benders: ignoring non-integer %s=%r", _BENDERS_MAX_STALL_ENV, env
+            )
+        else:
+            if env_n > 0:
+                k = env_n
+    return k
+
+
+def _stall_worst_offenders(
+    autarky_by_region: dict[str, float],
+    region_costs: dict[str, float],
+) -> tuple[str, float, str, float]:
+    """Pick the ROOT and SYMPTOM node groups for the stall diagnostic.
+
+    Both are derived purely from two ``{region: cost}`` maps — no solver state —
+    so this is unit-testable in isolation (à la ``_check_cuts_satisfied``).
+
+    * **Root** = ``argmax_r |autarky_r|``: the node group whose STAND-ALONE cost
+      dominates — the one that cannot meet its own demand without imports.  Its
+      ``autarky_ratio`` is ``|autarky_root| / max(1, second-largest |autarky|)``
+      (how many times larger than the next node group; ``1.0`` when there is
+      only one).
+    * **Symptom** = ``argmax_r ratio_r``, ``ratio_r = |region_cost_r| /
+      max(1, |autarky_r|)``: the node group forced worst into penalty/slack flow
+      at the failing iteration.  ``max(1, ·)`` guards a near-zero-autarky node
+      group from dividing by ~0.
+
+    Returns ``(root, autarky_ratio, symptom, symptom_ratio)``.  Ties break on
+    name (``sorted``) for determinism.  Empty inputs are not expected (the loop
+    only calls this with a populated bootstrap), but degrade gracefully to
+    ``("", 1.0, "", 1.0)``.
+    """
+    if not autarky_by_region:
+        return "", 1.0, "", 1.0
+
+    # Root: largest |autarky|, ties broken by name.
+    ranked = sorted(
+        autarky_by_region.items(), key=lambda kv: (-abs(kv[1]), kv[0])
+    )
+    root, root_autarky = ranked[0]
+    second = abs(ranked[1][1]) if len(ranked) > 1 else 0.0
+    autarky_ratio = abs(root_autarky) / max(1.0, second)
+
+    # Symptom: largest current-cost / autarky ratio, ties broken by name.
+    def _ratio(name: str) -> float:
+        return abs(region_costs.get(name, 0.0)) / max(1.0, abs(autarky_by_region[name]))
+
+    symptom = min(
+        autarky_by_region, key=lambda name: (-_ratio(name), name)
+    )
+    symptom_ratio = _ratio(symptom)
+    return root, autarky_ratio, symptom, symptom_ratio
 
 
 @dataclass
@@ -1411,6 +1497,20 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     for rm, (cost_r, slopes, _sol_r) in zip(regions_meta, _solve_regions(f_bar)):
         bootstrap_cuts.append((rm.name, cost_r, slopes))
     cost_scale = max((abs(c) for _, c, _ in bootstrap_cuts), default=1.0)
+    # Per-node-group STAND-ALONE (autarkic, f̄=0) cost, keyed by name.  Its sum
+    # is a "sane objective magnitude" reference for the stall guard, and its
+    # per-region values pick the worst-offender node group for the diagnostic.
+    # Kept in SCALED space (bootstrap cost_r is ×s), matching the loop's LB/UB.
+    autarky_by_region = {name: cost_r for name, cost_r, _ in bootstrap_cuts}
+    # Domain-free stall detector (polar-high).  reference_scale = Σ|autarky|; the
+    # window K is env-resolved (FLEXTOOL_BENDERS_MAX_STALL); the other thresholds
+    # keep the library defaults (gap-floor is raised below to max(20·tol, 0.02)
+    # so a loose ``tol`` never lets the floor fall below the gap it must clear).
+    stall_monitor = StallMonitor(
+        sum(abs(c) for c in autarky_by_region.values()),
+        window=_resolve_benders_max_stall(),
+        gap_floor=max(20.0 * tol, 0.02),
+    )
     # Floor in scaled space; ``max(cost_scale, obj_scale)`` keeps it from
     # collapsing to ~0 in the degenerate all-zero-cost case (the unscaled guard
     # was ``max(cost_scale, 1.0)``; ×s keeps that 1-unit guard at scale).
@@ -1686,6 +1786,66 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         if gap <= tol:
             converged = True
             break
+
+        # --- STALL GUARD (fail fast, don't silently exhaust the iter cap).
+        # Feed the domain-free monitor this iteration's (LB, best_UB); it holds
+        # the best_UB window internally and returns a verdict once K iterations
+        # have been seen.  A stall = incumbent frozen for K iters AND still
+        # blown up far above Σ|autarky| AND gap far from converged — mutually
+        # exclusive with the sandwich break above (which has gap≈0).  On a
+        # stall the frozen incumbent is garbage (best_UB can be orders above the
+        # true optimum), so returning it would hand a chained dispatch solve a
+        # catastrophically wrong plan: HARD-fail with a plain-English diagnostic
+        # that names the worst-offender node group(s), like the sibling guards.
+        verdict = stall_monitor.update(LB, best_UB)
+        if verdict.stalled:
+            root, autarky_ratio, symptom, symptom_ratio = _stall_worst_offenders(
+                autarky_by_region, region_costs
+            )
+            k = stall_monitor.window
+            # Name the ROOT primarily; add the SYMPTOM only if it differs.
+            root_clause = (
+                f"Node group {root!r} is the likely cause — its stand-alone "
+                f"cost is already {autarky_ratio:.0f}x the next largest, i.e. it "
+                f"cannot meet its own demand without imports."
+            )
+            symptom_clause = (
+                ""
+                if symptom == root
+                else (
+                    f" At the stalled iteration node group {symptom!r} is the "
+                    f"one forced worst into penalty/slack flow "
+                    f"({symptom_ratio:.0f}x its stand-alone cost)."
+                )
+            )
+            raise RuntimeError(_benders_failure_message(
+                summary=(
+                    f"Benders stalled at iteration {iterations}: the best "
+                    f"feasible cost has not improved for {k} iterations and the "
+                    f"relative gap is stuck at ~{gap:.2f}, far from the {tol} "
+                    "tolerance."
+                ),
+                meaning=(
+                    "The master keeps proposing node-group coupling flows that "
+                    "force one or more node groups into large penalty/slack "
+                    f"flow (recourse ~{symptom_ratio:.0f}x their stand-alone "
+                    "cost), so no improving feasible solution is found and the "
+                    f"bound cannot close. {root_clause}{symptom_clause}"
+                ),
+                how_to_avoid=(
+                    f"First, give the import/boundary nodes of {root!r} a "
+                    "finite, moderate import price (penalty) a small multiple "
+                    "above the real marginal supply cost — an over-large penalty "
+                    "is what inflates the recourse and freezes the bound (any "
+                    "price above the true import cost gives the same optimum). "
+                    f"Then check {root!r} in isolation for missing local "
+                    "capacity or imports, and rescale any extreme "
+                    "coupling-connection cost or capacity magnitudes. Only raise "
+                    "the iteration limit if the gap is still slowly improving "
+                    "(it is not here). If it persists, please report it with the "
+                    "model."
+                ),
+            ))
 
         pending_cuts = next_cuts
 

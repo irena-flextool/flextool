@@ -62,8 +62,12 @@ def _failure_message_strings() -> list[tuple[str, int, str]]:
 
 def test_user_facing_diagnostics_use_flextool_vocabulary():
     fields = _failure_message_strings()
-    # All real call sites (master/region not-optimal, LB dip, LB>UB, coupling).
-    assert len(fields) >= 5 * 3, f"too few diagnostic fields found: {len(fields)}"
+    # All real call sites (master/region not-optimal, LB dip, coupling
+    # overshoot, LB>UB sandwich, cut-check gross, cut-check non-finite, STALL) —
+    # each contributes 3 keyword fields (summary/meaning/how_to_avoid).  Bump
+    # this bound when a call site is added so a *removed* message is still
+    # caught here (the vocab walk below auto-covers any new site).
+    assert len(fields) >= 8 * 3, f"too few diagnostic fields found: {len(fields)}"
     offenders = [
         (arg, lineno, sorted({m.group(0).lower() for m in _FORBIDDEN.finditer(t)}))
         for arg, lineno, t in fields
