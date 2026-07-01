@@ -1,3 +1,51 @@
+## Release 4.0.0b19 (1.7.2026) — retiring-unit `existing` map read + Benders cut-tolerance fix
+
+No database migration (schema stays **v62**) and dependency floors unchanged
+(`polar-high>=3.2.0`, `polars>=1.40`, `highspy<=1.14.0`). Two independent
+fixes: one corrects an output/dispatch parameter for retiring units; the other
+removes a spurious hard-failure in the spatial-Benders decomposition solver.
+
+### Outputs / dispatch
+
+- **Read a retiring unit's `existing` capacity by the per-period MAX, not the
+  last row.** `_entity_unitsize_lf` gated the `existing`-map cascade input on
+  `"period" in columns`, but Spine names a Map's index column with its
+  silent-default `"x"`, so the gate never matched and every period row fell
+  through to a `unique(keep="last")` that kept the *last* period's value. For a
+  unit whose `existing` map decays to `0` at expiry, that collapsed the cascade
+  input to `0`, defaulted `unitsize` to `1000`, and turned
+  `existing_count = existing/unitsize` into a spurious fraction — capping
+  continuous online at that fraction and making integer online impossible to
+  commit. The reader now takes the per-entity MAX over whatever period rows
+  exist, index-name-agnostically (CLAUDE.md Invariant #2). Byte-identical for
+  scalar `existing` (a single-row group-by is a no-op) and for every existing
+  test fixture; corrects the reported online/count for retiring-unit models.
+  Adds regression tests in the silent-default-index coverage file and a dev-doc
+  audit of the readers that live outside the `_param_shapes` resolver.
+
+### Decomposition (Benders)
+
+- **The spatial-Benders cut self-check no longer hard-fails on solver
+  round-off.** After each master solve, `_check_cuts_satisfied` asserts every
+  just-appended optimality cut is honoured at the new master point. That check
+  re-derives a row already present in the master LP, so it can only differ from
+  the solved value by the solver's feasibility tolerance — which HiGHS measures
+  on its internally-scaled matrix, making the *unscaled* slack scale with the
+  cut row's coefficient magnitude, not its right-hand side. On early iterations
+  a node group whose recourse cost overshoots produces large reduced-cost
+  slopes, so `cost_r` and `Σ slope·f̄` nearly cancel: the rhs collapses to `O(1)`
+  while the coefficients stay at `O(1e6)`. The old tolerance keyed off the
+  cancelled rhs and demanded a precision the ill-conditioned row cannot deliver,
+  aborting an otherwise-converging solve (observed on a 7-node-group hydrogen-
+  trade model: a `7e-4` slack on a `2.66e6`-scale row — `2.7e-10` relative). The
+  tolerance is now keyed off the row magnitude, matching the fail-safe design of
+  the sibling flow-clamp / lower-bound / sandwich guards: numerical noise is
+  absorbed, a moderate gap is warned, and only a gross violation (a genuinely
+  un-appended cut, whose recourse estimate sits near its large-negative floor)
+  still hard-fails — now with the same three-section plain-English diagnostic as
+  the other guards. The affected model converges to the monolith objective
+  within tolerance.
+
 ## Release 4.0.0b18 (30.6.2026) — fix zeroed existing capacity for scalar+Map entity classes
 
 No database migration (schema stays **v62**) and dependency floors unchanged
