@@ -27,17 +27,22 @@ The child process has a clean address space — none of FlexTool's
 ~7-11 GB of polars frames, no glibc fragmentation from upstream
 preprocessing.  When it finishes, the parent reads the solution back:
 
-* HiGHS path uses ``highspy.Highs.readSolution`` against the
-  subprocess-written .sol.
+* HiGHS path parses the subprocess-written .sol directly
+  (:func:`_parse_highs_sol`) — the file already carries names + primal
+  + duals.
 * Commercial path parses the solver-native .sol with the parsers
   imported from polar-high's ``_mps_fallback`` (copied verbatim so the
   parsers stay free of the ``LpView`` materialisation polar-high uses
-  upstream of them — we already wrote MPS via the cheap polars path).
+  upstream of them — we already wrote MPS via the cheap polars path),
+  and rebuilds the ``col_id``-indexed variable names from the released
+  Problem's surviving ``_vars`` (:func:`_col_names_from_vars`).
 
-In both cases the parent constructs a fresh, read-only
-:class:`highspy.Highs` from the MPS and injects the parsed primal /
-dual arrays via :meth:`setSolution`.  This gives downstream output
-writers a uniform ``Solution.highs`` shape: they can keep doing
+Neither path re-reads the MPS through :meth:`highspy.Highs.readModel`
+in the parent: that used to spike tens of GB of RSS on large LPs, and
+hard-failed on FlexTool's own free-format MPS whenever an entity name
+contained a space.  Instead both wrap the parsed arrays in a
+:class:`_SolHighsShim`, giving downstream output writers a uniform
+``Solution.highs`` shape — they keep doing
 ``h.allVariableNames() + h.getSolution()`` regardless of which solver
 produced the result.
 
@@ -160,6 +165,62 @@ def _parse_mps_row_names(mps_path: Path) -> list[str]:
     except OSError:
         pass
     return names
+
+
+def _col_names_from_vars(problem: "Problem") -> list[str]:
+    """Rebuild the dense, ``col_id``-indexed column-name list from a
+    (possibly released) :class:`polar_high.Problem`.
+
+    ``Problem.write_mps(release=True)`` keeps ``self._vars`` alive
+    precisely so an external solver's solution can be mapped back to
+    user-space names.  This helper reproduces the *exact* naming
+    polar-high itself emits for ``Solution.col_names`` —
+    ``"<family>[<d0>,<d1>,…]"`` for dimensioned variables, the bare
+    family name for scalar ones — from those surviving
+    ``Var.frame['col_id']`` columns (mirrors the canonical-matrix name
+    pass in ``polar_high.engine.Problem._canonicalise``).
+
+    Preferred over re-reading the MPS through
+    ``highspy.Highs.readModel`` on the commercial-solver path: the result
+    is **complete** (columns the MPS COLUMNS section elides because they
+    carry no objective / matrix entry are still present here),
+    ``col_id``-aligned by construction, and immune to the free-format-MPS
+    whitespace fragility a text round-trip suffers when an entity name
+    contains a space.
+    """
+    import polars as pl
+
+    vars_map = getattr(problem, "_vars", {}) or {}
+    # Every column is created by exactly one ``add_var`` and lands in that
+    # variable's frame, so the max ``col_id`` across all frames + 1 is the
+    # exact dense column count — no dependence on the internal counter
+    # (which differs between ``Problem`` and ``WarmProblem``).
+    max_cid = -1
+    for v in vars_map.values():
+        ids = v.frame["col_id"].to_numpy()
+        if ids.size:
+            max_cid = max(max_cid, int(ids.max()))
+    n_cols = max_cid + 1
+
+    col_names: list[str] = [""] * n_cols
+    for v in vars_map.values():
+        ids = v.frame["col_id"].to_numpy()
+        if v.dims:
+            tagged = v.frame.select(
+                pl.format(
+                    "{}[{}]",
+                    pl.lit(v.name),
+                    pl.concat_str(
+                        [pl.col(d).cast(pl.String) for d in v.dims],
+                        separator=",",
+                    ),
+                ).alias("__name")
+            )["__name"].to_list()
+            for cid, nm in zip(ids.tolist(), tagged):
+                col_names[cid] = nm
+        elif ids.size:
+            col_names[int(ids[0])] = v.name
+    return col_names
 
 
 def _parse_highs_sol(
@@ -937,10 +998,10 @@ def solve_via_subprocess(
     Returns
     -------
     polar_high.Solution
-        Carries a live (read-only) ``highspy.Highs`` instance bound to
-        the LP and to the parsed primal/dual values via
-        :meth:`Highs.setSolution`.  Downstream writers see a uniform
-        ``sol.highs`` shape regardless of which solver actually ran.
+        Carries a :class:`_SolHighsShim` bound to the parsed
+        primal/dual arrays and the recovered column/row names.
+        Downstream writers see a uniform ``sol.highs`` shape regardless
+        of which solver actually ran.
     """
     if solver_name == "highs":
         return _solve_highs_subprocess(
@@ -1126,10 +1187,12 @@ def _solve_commercial_subprocess(
     3. Spawn the binary with the per-solver argv + stdin script
        (copied verbatim from polar-high's ``_mps_fallback``).
     4. Parse the .sol with the per-solver parser; map the primal dict
-       (keyed by LP variable names) onto the HiGHS column order via a
-       fresh read-only ``highspy.Highs`` constructed from the MPS.
-    5. Wrap as a :class:`polar_high.Solution` with the populated HiGHS
-       instance so the existing output writer paths Just Work.
+       (keyed by LP variable names) onto the ``col_id``-indexed name list
+       rebuilt from ``problem._vars`` by :func:`_col_names_from_vars`.
+    5. Wrap as a :class:`polar_high.Solution` backed by a
+       :class:`_SolHighsShim` so the existing output writer paths Just
+       Work — no parent-side ``highspy.Highs.readModel`` (which used to
+       OOM on large LPs and hard-fail on entity names containing spaces).
 
     ``options`` is fed to the solver via a per-solver native opt-file
     materialised next to the MPS in the per-solve temp dir.  The file
@@ -1144,7 +1207,6 @@ def _solve_commercial_subprocess(
     ``read``/``optimize`` pair).  ``time_limit`` is *also* honoured as
     the subprocess timeout when present in *options*.
     """
-    import highspy
     from polar_high import Solution
 
     binary = _find_solver_binary(solver_name)
@@ -1252,34 +1314,27 @@ def _solve_commercial_subprocess(
 
         optimal = status_str == "OPTIMAL"
 
-        # Read the MPS back into a fresh HiGHS so we can resolve LP
-        # variable names → column indices and feed downstream writers
-        # the same ``sol.highs`` shape as the HiGHS path.  This Highs
-        # is read-only (no ``run()`` call here); peak RSS is just the
-        # LP storage + the solution arrays we inject below.
-        h = highspy.Highs()
-        try:
-            h.silent()
-        except Exception:
-            pass
-        ok = (highspy.HighsStatus.kOk, highspy.HighsStatus.kWarning)
-        if h.readModel(str(mps_path)) not in ok:
-            raise RuntimeError(
-                f"parent failed to read MPS back from {mps_path} after "
-                f"{solver_name!r} subprocess solve",
-            )
-
-        col_names = list(h.allVariableNames())
+        # Recover column names WITHOUT re-reading the MPS through
+        # ``highspy.Highs.readModel``.  That parent-side re-read used to
+        # (a) cost tens of GB of RSS on large LPs and (b) hard-fail on
+        # FlexTool's own MPS whenever an entity name contained a space
+        # (or another character HiGHS' free-format MPS reader rejects):
+        # ``gurobi_cl`` would solve and write its ``.sol`` fine, then the
+        # parent choked re-parsing the very file it had just written.
+        # ``problem._vars`` survives ``write_mps(release=True)`` precisely
+        # so we can rebuild the ``col_id``-indexed name list here — it is
+        # complete, correctly ordered, and immune to that fragility.
+        col_names = _col_names_from_vars(problem)
         n_cols = len(col_names)
         col_value = np.zeros(n_cols, dtype=np.float64)
         primal_dict = primal or {}
         missing = 0
-        for i, nm in enumerate(col_names):
+        for cid, nm in enumerate(col_names):
             v = primal_dict.get(nm)
             if v is None:
                 missing += 1
                 continue
-            col_value[i] = float(v)
+            col_value[cid] = float(v)
         if missing and logger is not None:
             logger.warning(
                 "subprocess[%s]: %d/%d primal values missing from .sol "
@@ -1287,54 +1342,45 @@ def _solve_commercial_subprocess(
                 solver_name, missing, n_cols, solve_name,
             )
 
-        # Inject the recovered primal (and duals when available) into
-        # the HiGHS instance so downstream writers' ``getSolution()``
-        # calls see the values rather than zeros.  ``setSolution`` with
-        # a ``HighsSolution`` is the documented HiGHS API for this.
-        hs = highspy.HighsSolution()
-        hs.col_value = col_value.tolist()
-        hs.value_valid = True
-        # row_dual ordering: HiGHS' internal row order, matched against
-        # the parsed dual_dict by row name when we have one.
-        n_rows = h.getNumRow()
-        row_dual_arr = np.zeros(n_rows, dtype=np.float64)
+        # Duals: the Gurobi / COPT parsers return ``None`` here; CPLEX /
+        # Xpress may carry row duals keyed by constraint name.  When
+        # present, recover the ``row_id``-ordered constraint names from
+        # the MPS ROWS section (always complete — unlike COLUMNS it never
+        # elides rows) and map the duals onto them.
+        row_names: list[str] = []
         if dual:
-            # HiGHS exposes row names via writeModel; but the cleanest
-            # API here is ``getLp().row_names_``.  Fall back to
-            # ``getRowByName`` per row if needed.
-            try:
-                lp = h.getLp()
-                row_names = list(lp.row_names_)
-            except Exception:
-                row_names = []
-            if len(row_names) == n_rows:
-                for i, nm in enumerate(row_names):
-                    v = dual.get(nm)
-                    if v is not None:
-                        row_dual_arr[i] = float(v)
-                hs.row_dual = row_dual_arr.tolist()
-                hs.dual_valid = True
-        # col_dual: solver-specific (most commercial parsers don't read
-        # reduced costs from .sol).  Leave zeros, ``Solution`` accepts
-        # ``None`` and defaults itself.
-        try:
-            h.setSolution(hs)
-        except Exception as exc:  # pragma: no cover — version-specific
-            if logger is not None:
-                logger.warning(
-                    "subprocess[%s]: h.setSolution failed: %s — "
-                    "downstream getSolution() will return zeros",
-                    solver_name, exc,
-                )
+            row_names = _parse_mps_row_names(mps_path)
+        row_dual = np.zeros(len(row_names), dtype=np.float64)
+        if dual and row_names:
+            for i, nm in enumerate(row_names):
+                dv = dual.get(nm)
+                if dv is not None:
+                    row_dual[i] = float(dv)
+        col_dual = np.zeros(n_cols, dtype=np.float64)
+
+        # Wrap the parsed arrays in the same duck-typed shim the HiGHS
+        # save-memory path uses.  Downstream writers consume
+        # ``allVariableNames()`` / ``getSolution()`` / ``getLp().row_names_``
+        # / ``passColName()`` identically to a live ``highspy.Highs`` — no
+        # 33 GB sidecar ``readModel``, no MPS text round-trip.
+        obj = objective if objective is not None else 0.0
+        h = _SolHighsShim(
+            col_names=col_names,
+            row_names=row_names,
+            col_value=col_value,
+            col_dual=col_dual,
+            row_dual=row_dual,
+            objective=obj,
+        )
 
         return Solution(
             optimal=optimal,
-            obj=objective if objective is not None else 0.0,
+            obj=obj,
             col_value=col_value,
-            row_dual=row_dual_arr,
-            col_dual=np.zeros(n_cols, dtype=np.float64),
+            row_dual=row_dual,
+            col_dual=col_dual,
             col_names=col_names,
-            row_names=[],
+            row_names=row_names,
             vars=dict(problem._vars),
             highs=h,
         )
