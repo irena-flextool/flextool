@@ -17,6 +17,7 @@ os.environ.setdefault("MALLOC_ARENA_MAX", "4")
 import argparse
 import sys
 import logging
+import math
 import shutil
 import traceback
 from pathlib import Path
@@ -130,7 +131,26 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
     if not steps:
         logging.error("Native cascade produced no solve steps; aborting.")
         return 1, None
-    # Non-optimal in any sub-solve → infeasible/unbounded exit code.
+    return _scan_cascade_optimality(steps)
+
+
+def _scan_cascade_optimality(steps):
+    """Classify the cascade outcome into a ``(exit_code, last_step)`` pair.
+
+    Scans sub-solves for a non-optimal outcome.  Two distinct cases:
+
+    * A Benders-decomposed solve that found a FEASIBLE incumbent but did not
+      close the optimality gap to tolerance within its iteration cap is NOT
+      infeasible — every subproblem/master LP solved to optimality and the
+      written outputs are a valid feasible plan, just not certified optimal.
+      Surface a loud warning (with the actual gap vs the required tolerance)
+      and let the run SUCCEED (exit 0) so the parquet results are consumed
+      downstream.
+
+    * Anything else non-optimal (an LP HiGHS could not solve — infeasible /
+      unbounded / limit reached — or a Benders solve with no feasible
+      incumbent at all) is a genuine failure → exit 1.
+    """
     last_step = None
     for name, step in steps.items():
         last_step = step
@@ -139,15 +159,61 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
         # summary instead so the non-optimal check works without
         # ``keep_solutions=True``.  ``step.solution`` is only populated
         # for the LAST step (or every step under ``keep_solutions``).
-        if not step.optimal:
-            logging.error(
-                "Native cascade: solve %r non-optimal (status=%r); "
-                "exit=1 (infeasible/unbounded).",
-                name,
-                getattr(step.solution, "status", None) if step.solution else None,
-            )
-            return 1, step
+        if step.optimal:
+            continue
+        if step.is_benders and step.obj is not None and math.isfinite(step.obj):
+            # Non-convergence with a feasible incumbent — warn loudly, keep
+            # the written results, do NOT fail the run.
+            logging.error(_benders_nonconvergence_banner(name, step))
+            continue
+        logging.error(
+            "Native cascade: solve %r did not solve to optimality; exit=1 "
+            "(infeasible / unbounded / limit reached — no usable solution).",
+            name,
+        )
+        return 1, step
     return 0, last_step
+
+
+def _benders_nonconvergence_banner(name, step) -> str:
+    """A loud, plain-English banner for a Benders solve that found a feasible
+    incumbent but never met its convergence tolerance.
+
+    Kept in FlexTool class vocabulary (node group / connection / flow) — never
+    model-instance terms — mirroring the ``_benders_failure_message`` contract.
+    """
+    def _pct(x):
+        return f"{x * 100:.4g}%" if x is not None and math.isfinite(x) else "unknown"
+
+    gap = getattr(step, "benders_gap", None)
+    tol = getattr(step, "benders_tol", None)
+    iters = getattr(step, "benders_iterations", None)
+    bar = "#" * 76
+    return (
+        f"\n{bar}\n"
+        f"WARNING: decomposed solve {name!r} did NOT meet its convergence "
+        f"tolerance.\n"
+        f"{bar}\n"
+        f"  Relative gap reached : {_pct(gap)}\n"
+        f"  Required tolerance   : {_pct(tol)}\n"
+        f"  Iterations run       : {iters if iters is not None else 'unknown'}\n"
+        f"  Best feasible cost   : {step.obj:.6g}\n"
+        f"\n"
+        f"  The results ARE feasible and HAVE been written to the outputs "
+        f"(parquet /\n"
+        f"  results DB), but they are NOT certified optimal: the true optimum "
+        f"may be\n"
+        f"  up to the gap above cheaper than the reported cost.\n"
+        f"\n"
+        f"  To close the gap, try any of: raise the decomposition iteration "
+        f"limit,\n"
+        f"  loosen the convergence tolerance, set the in-out stabilization "
+        f"weight\n"
+        f"  (~0.3-0.7) to break a stalled plateau, or give any under-supplied "
+        f"node\n"
+        f"  group a finite fail-safe import price on its boundary nodes.\n"
+        f"{bar}"
+    )
 
 
 def resolve_output_path(input_db_url, flextool_location, output_location, cwd,

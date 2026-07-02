@@ -1397,6 +1397,16 @@ class OrchestrationStep:
     """True when this step was produced by the Benders region driver and
     carries only a :class:`SnapshotSolution` invest carrier, not a full
     :class:`Solution` (so it cannot yet drive processed outputs)."""
+    benders_gap: float | None = None
+    """Benders steps only — the relative optimality gap reached at the
+    incumbent ``(best_UB − LB)/max(1, |best_UB|)``.  Paired with
+    ``benders_tol`` / ``benders_iterations`` so the CLI exit-code scan can
+    report a NON-convergence (feasible incumbent, gap never met ``tol``) as a
+    loud warning rather than a bogus "infeasible/unbounded"."""
+    benders_tol: float | None = None
+    """Benders steps only — the relative-gap tolerance that was in force."""
+    benders_iterations: int | None = None
+    """Benders steps only — the number of master/subproblem iterations run."""
     captured_vars: "dict[str, pl.DataFrame]" = field(default_factory=dict)
     """Per-sub-solve snapshot of the decision-variable frames that
     end-of-cascade writers (``_entity_all_capacity`` and friends) need
@@ -2178,6 +2188,9 @@ def _drive_cascade(
                 optimal=result.converged,
                 warm_used=False,
                 is_benders=True,
+                benders_gap=result.gap,
+                benders_tol=result.tol,
+                benders_iterations=result.iterations,
                 flex_data=data,
                 flex_data_provider=getattr(
                     self.state, "current_provider", None,

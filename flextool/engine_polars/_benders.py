@@ -444,6 +444,13 @@ class BendersResult:
     # master trade-connection invest.  Empty dict when the model has no
     # investment.
     invest_solution_vars: dict[str, pl.DataFrame] = field(default_factory=dict)
+    # Convergence contract, carried so callers (the CLI exit-code scan) can
+    # report a NON-convergence — a feasible incumbent whose ``gap`` never fell
+    # to ``tol`` within ``max_iters`` — as a loud warning distinct from a
+    # genuine infeasible / unbounded LP.  ``tol`` is the relative-gap target;
+    # ``max_iters`` the iteration cap that was in force.
+    tol: float = 0.0
+    max_iters: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -2071,6 +2078,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         invest=inc["C"],
         trade_flow=trade_flow,
         invest_solution_vars=invest_solution_vars,
+        tol=tol,
+        max_iters=max_iters,
     )
 
 
