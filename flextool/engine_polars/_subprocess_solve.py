@@ -30,12 +30,16 @@ preprocessing.  When it finishes, the parent reads the solution back:
 * HiGHS path parses the subprocess-written .sol directly
   (:func:`_parse_highs_sol`) — the file already carries names + primal
   + duals.
-* Commercial path parses the solver-native .sol with the parsers
+* Commercial path writes the MPS with GENERIC ``C…``/``R…`` names
+  (``emit_names=False``) so real entity names — which routinely contain
+  spaces, illegal in whitespace-delimited free-format MPS — never
+  corrupt the file.  It parses the solver-native .sol with the parsers
   imported from polar-high's ``_mps_fallback`` (copied verbatim so the
   parsers stay free of the ``LpView`` materialisation polar-high uses
-  upstream of them — we already wrote MPS via the cheap polars path),
-  and rebuilds the ``col_id``-indexed variable names from the released
-  Problem's surviving ``_vars`` (:func:`_col_names_from_vars`).
+  upstream of them), then maps the generic-named primal/dual back by
+  *index* onto the real names rebuilt from the Problem's surviving
+  ``_vars`` (:func:`_col_names_from_vars`) and pre-release ``_cstrs``
+  (:func:`_row_names_from_cstrs`).
 
 Neither path re-reads the MPS through :meth:`highspy.Highs.readModel`
 in the parent: that used to spike tens of GB of RSS on large LPs, and
@@ -221,6 +225,74 @@ def _col_names_from_vars(problem: "Problem") -> list[str]:
         elif ids.size:
             col_names[int(ids[0])] = v.name
     return col_names
+
+
+def _row_names_from_cstrs(problem: "Problem") -> list[str]:
+    """Rebuild the ``row_id``-ordered constraint-name list from a Problem's
+    ``_cstrs`` families — the row analogue of :func:`_col_names_from_vars`.
+
+    Same ``"<family>[<d0>,<d1>,…]"`` format polar-high emits for
+    ``Solution.row_names`` (bare family name for a scalar constraint),
+    walking ``_cstrs`` in declaration order — which is the exact order the
+    canonical matrix assigns row ids (mirrors
+    ``polar_high.engine.Problem._canonicalise``'s row-name pass).
+
+    Unlike ``_vars``, ``_cstrs`` is **dropped** by
+    ``write_mps(release=True)``, so callers that need the real constraint
+    names (to map a solver's ``.sol`` duals back by name) must call this
+    *before* releasing.  Only the dual-returning commercial parsers
+    (:data:`_DUAL_CAPABLE_SOLVERS`) need it; Gurobi / COPT / Xpress ``.sol``
+    files carry no duals, so their path skips this entirely.
+    """
+    import polars as pl
+
+    names: list[str] = []
+    for cname, _proto, over in getattr(problem, "_cstrs", []) or []:
+        if over is None:
+            names.append(cname)
+            continue
+        axis_cols = list(over.columns)
+        names.extend(
+            over.select(
+                pl.format(
+                    "{}[{}]",
+                    pl.lit(cname),
+                    pl.concat_str(
+                        [pl.col(d).cast(pl.String) for d in axis_cols],
+                        separator=",",
+                    ),
+                ).alias("__rn")
+            )["__rn"].to_list()
+        )
+    return names
+
+
+# polar-high's ``write_mps(emit_names=False)`` emits generic, whitespace-safe
+# column / row names in strict id order: column ``col_id=j`` → ``f"C{j+1:07d}"``
+# and constraint ``row_id=i`` → ``f"R{i+2:07d}"`` (the objective row is the
+# reserved name ``cost`` and never appears in a solver ``.sol``'s variable or
+# dual list).  These regexes recover the id from such a name; the ``0*`` +
+# open ``[0-9]+`` tolerates the field widening past 7 digits on >10 M-col LPs.
+_GENERIC_COL_RE = re.compile(r"^C0*([0-9]+)$")
+_GENERIC_ROW_RE = re.compile(r"^R0*([0-9]+)$")
+
+
+def _generic_col_id(name: str) -> int | None:
+    """``"C0000001"`` → ``0``; ``None`` when *name* isn't a generic col id."""
+    m = _GENERIC_COL_RE.match(name)
+    return int(m.group(1)) - 1 if m else None
+
+
+def _generic_row_id(name: str) -> int | None:
+    """``"R0000002"`` → ``0``; ``None`` when *name* isn't a generic row id."""
+    m = _GENERIC_ROW_RE.match(name)
+    return int(m.group(1)) - 2 if m else None
+
+
+# Commercial ``.sol`` parsers that can return constraint duals.  Only these
+# pay the cost of rebuilding real row names before ``write_mps`` releases;
+# Gurobi / COPT / Xpress ResultFiles carry primal values only.
+_DUAL_CAPABLE_SOLVERS = frozenset({"cplex"})
 
 
 def _parse_highs_sol(
@@ -1180,15 +1252,22 @@ def _solve_commercial_subprocess(
 ) -> "Solution":
     """Solve via a commercial solver's CLI binary.
 
-    1. ``problem.write_mps(release=True)`` produces the MPS via the
-       cheap polars writer (peak ~2-3 GB on a 9.9 M-row LP).
+    1. ``problem.write_mps(release=True, emit_names=False)`` produces the
+       MPS via the cheap polars writer (peak ~2-3 GB on a 9.9 M-row LP),
+       using GENERIC ``C0000001`` / ``R0000002`` names.  Free-format MPS
+       is whitespace-delimited with no portable quoting, so real
+       FlexTool entity names — which routinely contain spaces (e.g.
+       ``Battery Farm``) — cannot go in the file without corrupting it.
+       We keep the real names in memory instead and map back by index.
     2. Locate ``gurobi_cl`` / ``cplex`` / ``optimizer`` / ``copt_cmd``
        via :func:`_find_solver_binary`.
     3. Spawn the binary with the per-solver argv + stdin script
        (copied verbatim from polar-high's ``_mps_fallback``).
-    4. Parse the .sol with the per-solver parser; map the primal dict
-       (keyed by LP variable names) onto the ``col_id``-indexed name list
-       rebuilt from ``problem._vars`` by :func:`_col_names_from_vars`.
+    4. Parse the .sol with the per-solver parser; map its generic-named
+       primal (and duals, for :data:`_DUAL_CAPABLE_SOLVERS`) back by
+       *index* onto the real ``col_id`` / ``row_id`` names rebuilt from
+       ``problem._vars`` (:func:`_col_names_from_vars`) and the pre-release
+       ``_cstrs`` snapshot (:func:`_row_names_from_cstrs`).
     5. Wrap as a :class:`polar_high.Solution` backed by a
        :class:`_SolHighsShim` so the existing output writer paths Just
        Work — no parent-side ``highspy.Highs.readModel`` (which used to
@@ -1248,7 +1327,27 @@ def _solve_commercial_subprocess(
                 "subprocess[%s]: building LP for %r, writing MPS to %s",
                 solver_name, solve_name, mps_path,
             )
-        problem.write_mps(str(mps_path), release=True)
+        # Capture the real constraint names BEFORE releasing.  Only the
+        # dual-returning parsers need them (Gurobi/COPT/Xpress ResultFiles
+        # carry primal values only), and ``write_mps(release=True)`` drops
+        # ``_cstrs``.  Real *column* names survive release via ``_vars`` and
+        # are rebuilt after the solve.
+        real_row_names: list[str] = (
+            _row_names_from_cstrs(problem)
+            if solver_name in _DUAL_CAPABLE_SOLVERS else []
+        )
+        # Emit GENERIC, whitespace-safe names (``C0000001`` / ``R0000002`` …)
+        # rather than the real entity-bearing names.  Free-format MPS is
+        # whitespace-delimited with no portable quoting, so a real name
+        # containing a space — common in FlexTool entity names, e.g. a node
+        # inside ``v_flow[Battery Farm,…]`` — would split mid-token and the
+        # solver silently mis-parses the column, returning a WRONG answer
+        # (verified: obj changes, primal unrecoverable).  We don't need real
+        # names in the file: the solution is mapped back by *index* below and
+        # the real names come from the in-memory Problem.  This makes the
+        # commercial path whitespace-agnostic, exactly like the in-process
+        # HiGHS path.
+        problem.write_mps(str(mps_path), release=True, emit_names=False)
 
         # Merge baseline ``solver_config/<solver>.opt`` with the scenario
         # options dict (raw entries win) and write the result to
@@ -1314,48 +1413,50 @@ def _solve_commercial_subprocess(
 
         optimal = status_str == "OPTIMAL"
 
-        # Recover column names WITHOUT re-reading the MPS through
-        # ``highspy.Highs.readModel``.  That parent-side re-read used to
-        # (a) cost tens of GB of RSS on large LPs and (b) hard-fail on
-        # FlexTool's own MPS whenever an entity name contained a space
-        # (or another character HiGHS' free-format MPS reader rejects):
-        # ``gurobi_cl`` would solve and write its ``.sol`` fine, then the
-        # parent choked re-parsing the very file it had just written.
-        # ``problem._vars`` survives ``write_mps(release=True)`` precisely
-        # so we can rebuild the ``col_id``-indexed name list here — it is
-        # complete, correctly ordered, and immune to that fragility.
+        # Real, ``col_id``-indexed column names come from the surviving
+        # ``_vars`` (never from the MPS — which now carries only generic
+        # names).  The ``.sol`` primal is keyed by those generic names, so
+        # we map each value back by *index*: ``C0000001`` → ``col_id`` 0.
+        # No real (possibly space-bearing) name is ever round-tripped
+        # through the whitespace-delimited MPS/.sol.
         col_names = _col_names_from_vars(problem)
         n_cols = len(col_names)
         col_value = np.zeros(n_cols, dtype=np.float64)
         primal_dict = primal or {}
-        missing = 0
-        for cid, nm in enumerate(col_names):
-            v = primal_dict.get(nm)
-            if v is None:
-                missing += 1
+        mapped = 0
+        unrecognised = 0
+        for gname, val in primal_dict.items():
+            cid = _generic_col_id(gname)
+            if cid is None or not (0 <= cid < n_cols):
+                unrecognised += 1
                 continue
-            col_value[cid] = float(v)
-        if missing and logger is not None:
+            col_value[cid] = float(val)
+            mapped += 1
+        if unrecognised and logger is not None:
             logger.warning(
-                "subprocess[%s]: %d/%d primal values missing from .sol "
-                "for solve %r (defaulted to 0.0)",
-                solver_name, missing, n_cols, solve_name,
+                "subprocess[%s]: %d/%d .sol entries had unrecognised "
+                "(non-generic) column names for solve %r — ignored",
+                solver_name, unrecognised, len(primal_dict), solve_name,
+            )
+        if mapped < n_cols and logger is not None:
+            logger.warning(
+                "subprocess[%s]: %d/%d columns absent from .sol for solve "
+                "%r (defaulted to 0.0)",
+                solver_name, n_cols - mapped, n_cols, solve_name,
             )
 
-        # Duals: the Gurobi / COPT parsers return ``None`` here; CPLEX /
-        # Xpress may carry row duals keyed by constraint name.  When
-        # present, recover the ``row_id``-ordered constraint names from
-        # the MPS ROWS section (always complete — unlike COLUMNS it never
-        # elides rows) and map the duals onto them.
-        row_names: list[str] = []
-        if dual:
-            row_names = _parse_mps_row_names(mps_path)
+        # Duals: only the dual-capable parsers return a dict (Gurobi/COPT/
+        # Xpress carry none).  Their ``.sol`` keys duals by the generic row
+        # name (``R0000002`` → ``row_id`` 0); map onto the real constraint
+        # names captured before release so downstream name-based dual
+        # lookups keep working.
+        row_names = real_row_names
         row_dual = np.zeros(len(row_names), dtype=np.float64)
         if dual and row_names:
-            for i, nm in enumerate(row_names):
-                dv = dual.get(nm)
-                if dv is not None:
-                    row_dual[i] = float(dv)
+            for gname, dv in dual.items():
+                rid = _generic_row_id(gname)
+                if rid is not None and 0 <= rid < len(row_names):
+                    row_dual[rid] = float(dv)
         col_dual = np.zeros(n_cols, dtype=np.float64)
 
         # Wrap the parsed arrays in the same duck-typed shim the HiGHS
