@@ -28,7 +28,12 @@ from flextool.engine_polars import load_flextool
 from flextool.engine_polars._benders import (
     _BendersMaster,
     _BENDERS_CUT_COMPACT_AT_ENV,
+    _BENDERS_CUT_POLICY_ENV,
+    _BENDERS_CUT_WINDOW_DEFAULT,
+    _BENDERS_CUT_WINDOW_ENV,
     _resolve_benders_cut_compact_at,
+    _resolve_benders_cut_policy,
+    _resolve_benders_cut_window,
     solve_benders,
 )
 
@@ -48,6 +53,21 @@ def test_compact_at_positive_env(monkeypatch):
     assert _resolve_benders_cut_compact_at() == 50
 
 
+def test_cut_policy_defaults_to_slack_when_unset(monkeypatch):
+    monkeypatch.delenv(_BENDERS_CUT_POLICY_ENV, raising=False)
+    assert _resolve_benders_cut_policy() == "slack"
+
+
+def test_cut_policy_dominance_opt_in(monkeypatch):
+    monkeypatch.setenv(_BENDERS_CUT_POLICY_ENV, "dominance")
+    assert _resolve_benders_cut_policy() == "dominance"
+
+
+def test_cut_policy_unrecognised_warns_and_defaults(monkeypatch):
+    monkeypatch.setenv(_BENDERS_CUT_POLICY_ENV, "bogus")
+    assert _resolve_benders_cut_policy() == "slack"
+
+
 def test_compact_at_zero_is_off(monkeypatch):
     monkeypatch.setenv(_BENDERS_CUT_COMPACT_AT_ENV, "0")
     assert _resolve_benders_cut_compact_at() == 0
@@ -64,6 +84,31 @@ def test_compact_at_non_integer_ignored_with_warning(monkeypatch, caplog):
     monkeypatch.setenv(_BENDERS_CUT_COMPACT_AT_ENV, "not-a-number")
     with caplog.at_level(logging.WARNING):
         assert _resolve_benders_cut_compact_at() == 0
+    assert any("non-integer" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_benders_cut_window — dominance-policy trial-point window resolver.
+# ---------------------------------------------------------------------------
+def test_cut_window_defaults_when_unset(monkeypatch):
+    monkeypatch.delenv(_BENDERS_CUT_WINDOW_ENV, raising=False)
+    assert _resolve_benders_cut_window() == _BENDERS_CUT_WINDOW_DEFAULT
+
+
+def test_cut_window_positive_env(monkeypatch):
+    monkeypatch.setenv(_BENDERS_CUT_WINDOW_ENV, "25")
+    assert _resolve_benders_cut_window() == 25
+
+
+def test_cut_window_zero_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv(_BENDERS_CUT_WINDOW_ENV, "0")
+    assert _resolve_benders_cut_window() == _BENDERS_CUT_WINDOW_DEFAULT
+
+
+def test_cut_window_non_integer_ignored_with_warning(monkeypatch, caplog):
+    monkeypatch.setenv(_BENDERS_CUT_WINDOW_ENV, "not-a-number")
+    with caplog.at_level(logging.WARNING):
+        assert _resolve_benders_cut_window() == _BENDERS_CUT_WINDOW_DEFAULT
     assert any("non-integer" in r.message for r in caplog.records)
 
 
@@ -103,15 +148,23 @@ def test_compaction_matches_off_and_bounds_cut_rows(ti_data, monkeypatch):
     res_off = solve_benders(ti_data, _REGIONS, max_iters=20, tol=1e-4)
     assert res_off.converged, "OFF baseline did not converge"
 
-    # --- ON at a low threshold, forcing >= 1 compaction. ---
+    # --- ON at a low threshold, forcing >= 1 compaction.  Opt in to the
+    # non-default DOMINANCE policy (default is 'slack') to exercise it e2e. ---
     threshold = 6
     monkeypatch.setenv(_BENDERS_CUT_COMPACT_AT_ENV, str(threshold))
+    monkeypatch.setenv(_BENDERS_CUT_POLICY_ENV, "dominance")
 
     reports: list[dict] = []
+    trial_lens: list[int] = []
+    policies: list[str] = []
     real_compact = _BendersMaster.compact_cuts
 
-    def spy_compact(self, solution):
-        res = real_compact(self, solution)
+    def spy_compact(self, solution, *, policy="slack", trial_col_values=None):
+        policies.append(policy)
+        trial_lens.append(0 if trial_col_values is None else len(trial_col_values))
+        res = real_compact(
+            self, solution, policy=policy, trial_col_values=trial_col_values
+        )
         reports.append(res)
         return res
 
@@ -133,6 +186,13 @@ def test_compaction_matches_off_and_bounds_cut_rows(ti_data, monkeypatch):
 
     # >= 1 compaction actually fired (the compaction path was exercised).
     assert len(reports) >= 1, "no cut compaction fired"
+    # The loop drove the DOMINANCE policy with a non-empty trial-point window.
+    assert policies and all(p == "dominance" for p in policies), (
+        f"expected dominance policy for every compaction, got {policies}"
+    )
+    assert all(n >= 1 for n in trial_lens), (
+        f"dominance compaction was handed an empty trial window: {trial_lens}"
+    )
     # A compaction genuinely DROPPED at least one slack cut (real work, not a
     # no-op keeping everything).  Cross-checked against the timing-line count.
     total_dropped = sum(r["dropped"] for r in reports)

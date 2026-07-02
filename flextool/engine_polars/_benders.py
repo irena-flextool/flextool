@@ -53,6 +53,7 @@ master objective (a valid lower bound — the whole point vs the Lagrangian bug)
 """
 from __future__ import annotations
 
+import collections
 import logging
 import os
 import time
@@ -285,6 +286,77 @@ def _resolve_benders_cut_compact_at() -> int:
                     "0 = OFF)", _BENDERS_CUT_COMPACT_AT_ENV, env,
                 )
     return compact_at
+
+
+# Default trial-point WINDOW ``W`` for the dominance cut-compaction policy.  The
+# ``compact_cuts(policy="dominance")`` selection keeps, per recourse group, the
+# oldest max-achiever at EACH of the last ``W`` master trial points — so ``W``
+# trades master size (≈ ``W``·regions retained) for convergence robustness (a
+# too-small window starves the recourse approximation and stalls).  Empirical
+# starting point; tune per model.
+_BENDERS_CUT_WINDOW_DEFAULT = 10
+
+# Env override for the dominance-policy trial-point window ``W`` (machine-local;
+# NO schema/DB knob — mirrors ``FLEXTOOL_BENDERS_CUT_COMPACT_AT`` /
+# ``FLEXTOOL_BENDERS_MAX_STALL``, avoids a migration).  Unset / <= 0 leaves the
+# ``_BENDERS_CUT_WINDOW_DEFAULT``; a malformed value is IGNORED with a warning.
+_BENDERS_CUT_WINDOW_ENV = "FLEXTOOL_BENDERS_CUT_WINDOW"
+
+
+def _resolve_benders_cut_window() -> int:
+    """Resolve the dominance-policy trial-point window ``W``.
+
+    Reads ``FLEXTOOL_BENDERS_CUT_WINDOW``: an explicit positive value wins;
+    otherwise the ``_BENDERS_CUT_WINDOW_DEFAULT``.  Mirrors
+    :func:`_resolve_benders_max_stall` EXACTLY, including the
+    non-integer-warning branch (a malformed value is ignored, not fatal).
+    """
+    w = _BENDERS_CUT_WINDOW_DEFAULT
+    env = os.environ.get(_BENDERS_CUT_WINDOW_ENV)
+    if env:
+        try:
+            env_n = int(env)
+        except ValueError:
+            _logger.warning(
+                "Benders: ignoring non-integer %s=%r", _BENDERS_CUT_WINDOW_ENV, env
+            )
+        else:
+            if env_n > 0:
+                w = env_n
+    return w
+
+
+# Cut-compaction SELECTION POLICY.  ``slack`` (the DEFAULT) drops cuts strictly
+# slack at the current optimum — cheap and LB-safe, effective when the master
+# carries genuinely-redundant cuts.  ``dominance`` is a NON-DEFAULT alternative
+# (env opt-in) that groups cuts by recourse column and keeps only the oldest
+# group-max achiever over the trailing window, dropping dominated cuts AND
+# degenerate ties; it costs a trial-point sweep + can trigger the verify-restore
+# re-solve, and it is INEFFECTIVE where the cuts are load-bearing (a degenerate
+# optimum with cheap inter-temporal storage, e.g. the H2-trade N=10 case), so it
+# is not the default.  An unrecognised value is IGNORED with a warning.
+_BENDERS_CUT_POLICY_DEFAULT = "slack"
+_BENDERS_CUT_POLICY_ENV = "FLEXTOOL_BENDERS_CUT_POLICY"
+
+
+def _resolve_benders_cut_policy() -> str:
+    """Resolve the cut-compaction selection policy (``slack`` | ``dominance``).
+
+    Reads ``FLEXTOOL_BENDERS_CUT_POLICY``; a recognised value wins, otherwise the
+    ``_BENDERS_CUT_POLICY_DEFAULT`` (``slack``).  An unrecognised value is ignored
+    with a warning (not fatal), mirroring the other benders env knobs."""
+    policy = _BENDERS_CUT_POLICY_DEFAULT
+    env = os.environ.get(_BENDERS_CUT_POLICY_ENV)
+    if env:
+        if env in ("slack", "dominance"):
+            policy = env
+        else:
+            _logger.warning(
+                "Benders: ignoring unrecognised %s=%r (expected 'slack' or "
+                "'dominance'); using %r",
+                _BENDERS_CUT_POLICY_ENV, env, _BENDERS_CUT_POLICY_DEFAULT,
+            )
+    return policy
 
 
 # Env override for the Benders in-out separation weight ``λ`` (machine-local; NO
@@ -941,17 +1013,30 @@ class _BendersMaster:
         rhs = float(rhs)
         return self._wp.add_cut_row(col_ids, coefs, rhs)
 
-    def compact_cuts(self, solution) -> dict:
+    def compact_cuts(
+        self, solution, *, policy: str = "slack", trial_col_values=None
+    ) -> dict:
         """Compact the master's accumulated cut rows via
         :meth:`polar_high.WarmProblem.compact_cuts`.
 
-        polar-high tracks every ``add_cut_row`` internally, classifies each by
-        PRIMAL slack at ``solution.col_value`` (binding iff slack ≤ tol),
-        deletes the strictly-slack rows, and (verify) re-solves + rolls back if
-        the objective drifted (the degenerate belt) — an LB-preserving
-        operation FlexTool no longer reimplements.  Returns the polar-high
-        ``{"kept", "dropped", "restored"}`` report verbatim."""
-        return self._wp.compact_cuts(solution)
+        polar-high tracks every ``add_cut_row`` internally and prunes rows by
+        one of two LB-preserving policies, then (verify) re-solves + rolls back
+        if the objective drifted (the degenerate belt) — an operation FlexTool
+        no longer reimplements:
+
+        * ``policy="slack"`` classifies each cut by PRIMAL slack at
+          ``solution.col_value`` and deletes the strictly-slack rows;
+        * ``policy="dominance"`` groups cuts by their recourse (``η``) column
+          and, over the ``trial_col_values`` window of recent master vertices,
+          keeps per group only the oldest max-achiever at each trial point,
+          dropping the dominated cuts AND the redundant degenerate ties that
+          the slack policy would keep.
+
+        Forwards ``policy`` / ``trial_col_values`` verbatim and returns the
+        polar-high ``{"kept", "dropped", "restored"}`` report."""
+        return self._wp.compact_cuts(
+            solution, policy=policy, trial_col_values=trial_col_values
+        )
 
     def read_master(self, sol) -> tuple[dict[str, dict[int, float]],
                                         dict[str, float], dict[str, float]]:
@@ -1732,6 +1817,14 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # benders_cut_aging_plan.md, FIRST SHIP).  polar-high owns the classify /
     # delete / verify-restore; FlexTool only triggers it and tracks the count.
     compact_at = _resolve_benders_cut_compact_at()
+    cut_policy = _resolve_benders_cut_policy()  # 'slack' (default) | 'dominance'
+    # Bounded trailing window of recent master vertices (``msol.col_value``,
+    # most-recent last) feeding the ``compact_cuts(policy="dominance")``
+    # selection.  Window size is env-resolved (``FLEXTOOL_BENDERS_CUT_WINDOW``).
+    # Only populated / consulted when compaction is ON; empty otherwise.
+    cut_window: collections.deque = collections.deque(
+        maxlen=_resolve_benders_cut_window()
+    )
 
     for it in range(max_iters):
         iterations = it + 1
@@ -1757,6 +1850,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         _t_master = time.perf_counter()
         msol = master.solve()
         _dt_master = time.perf_counter() - _t_master
+        # Record this master vertex in the dominance-policy trial-point window
+        # (most-recent last; bounded by the deque ``maxlen``).  Only consulted
+        # when compaction is ON.
+        cut_window.append(msol.col_value)
         prev_LB = LB
         LB = float(msol.obj)  # scaled space
         # LB monotone non-decreasing self-check.  In exact arithmetic the bound
@@ -2143,8 +2240,21 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # here simply shrinks the master for the NEXT iteration's ``solve()``
         # (which proceeds from the compacted state); ``compact_cuts`` re-solves
         # internally for its verify belt, so the master stays LB-safe.
+        #
+        # SELECTION POLICY (``cut_policy``): ``slack`` (default) drops cuts
+        # strictly slack at the current optimum; ``dominance`` (non-default,
+        # env opt-in) groups cuts by recourse (``η``) column and, over
+        # ``cut_window`` (the last ``W`` master vertices), keeps only the oldest
+        # group-max achiever at each trial point, dropping dominated cuts AND
+        # degenerate ties.  Dominance is INEFFECTIVE where the cuts are
+        # load-bearing (degenerate optimum + cheap inter-temporal storage), so
+        # ``slack`` is the default; both are LB-safe (verify-restore belt).
         if compact_at > 0 and _master_cut_rows >= compact_at:
-            _res = master.compact_cuts(msol)   # msol = raw pre-clamp master vertex
+            _res = master.compact_cuts(
+                msol,  # msol = raw pre-clamp master vertex (latest trial point)
+                policy=cut_policy,
+                trial_col_values=list(cut_window),
+            )
             _master_cut_rows = _res["kept"]
             _logger.info(
                 "[benders timing] iter %d: cut compaction kept=%d dropped=%d "
