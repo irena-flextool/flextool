@@ -26,6 +26,7 @@ a genuine solve of a model whose entity name contains a space.
 """
 from __future__ import annotations
 
+import importlib.util
 import stat
 import sys
 import textwrap
@@ -271,82 +272,157 @@ def test_commercial_path_no_real_names_in_mps(
     assert "C0000001" in mps_text          # generic names present
 
 
+
 # ---------------------------------------------------------------------------
-# 3. Real Gurobi (restricted 'free' licence) — the true whitespace test
+# 3. Real commercial solvers (community / restricted licences) — the true
+#    whitespace test, one parametrized case per solver.
 # ---------------------------------------------------------------------------
+#
+# FlexTool's commercial path spawns a *CLI binary* (gurobi_cl / cplex /
+# optimizer / copt_cmd), never the in-process Python API.  The pip wheels
+# (gurobipy / cplex / xpress / coptpy) ship the optimizer + a size-limited
+# community licence + the Python API but NOT that CLI binary.  Each shim
+# below is a CLI-shaped entry point backed by the wheel, so the real
+# subprocess path runs end-to-end with a genuine solve wherever the wheel is
+# installed; the case skips cleanly otherwise.  Each shim parses exactly the
+# argv / stdin script FlexTool's ``_SCRIPTS[solver]`` builder emits.
+
+_SOLVER_MODULE = {
+    "gurobi": "gurobipy",
+    "cplex": "cplex",
+    "xpress": "xpress",
+    "copt": "coptpy",
+}
+
+# Shim bodies (plain strings — no test-time interpolation; the shim reads
+# argv / stdin at its own runtime).  Shebang + sys.executable is prepended
+# when the file is written.
+_SHIM_BODY = {
+    "gurobi": '''
+import sys, gurobipy as gp
+model = result = None
+for a in sys.argv[1:]:
+    if a.startswith("ResultFile="):
+        result = a.split("=", 1)[1]
+    elif "=" not in a or a.lower().endswith((".mps", ".lp")):
+        model = a
+m = gp.read(model)
+m.setParam("OutputFlag", 0)
+m.optimize()
+if result is not None:
+    m.write(result)
+''',
+    "cplex": '''
+import sys, cplex
+c = cplex.Cplex()
+for s in (c.set_log_stream, c.set_results_stream,
+          c.set_warning_stream, c.set_error_stream):
+    s(None)
+for line in sys.stdin.read().splitlines():
+    t = line.split()
+    if not t:
+        continue
+    k = t[0].lower()
+    if k == "read":
+        c.read(t[1])
+    elif k == "optimize":
+        c.solve()
+    elif k == "write":
+        c.solution.write(t[1])
+''',
+    "xpress": '''
+import sys, xpress as xp
+p = xp.problem()
+p.controls.outputlog = 0
+for line in sys.stdin.read().splitlines():
+    t = line.split()
+    if not t:
+        continue
+    k = t[0].lower()
+    if k == "readprob":
+        p.readProb(t[1])
+    elif k == "lpoptimize":
+        p.optimize()
+    elif k == "writeslxsol":
+        p.writeSlxSol(t[1], "")
+    elif k == "writeprtsol":
+        p.writePrtSol(t[1])
+''',
+    "copt": '''
+import sys, coptpy as cp
+env = cp.Envr()
+m = env.createModel()
+try:
+    m.setParam("Logging", 0)
+except Exception:
+    pass
+for line in sys.stdin.read().splitlines():
+    t = line.split()
+    if not t:
+        continue
+    k = t[0].lower()
+    if k == "read":
+        m.read(t[1])
+    elif k == "optimize":
+        m.solve()
+    elif k == "write":
+        m.write(t[1])
+''',
+}
+
+_LICENCE_SKIP_HINTS = (
+    "license", "licence", "size-limited", "size limit",
+    "too large", "size limitations",
+)
 
 
-def _real_gurobi_cl_shim(tmp_path: Path) -> Path | None:
-    """Return an executable ``gurobi_cl`` shim backed by the installed
-    ``gurobipy`` (restricted licence solves ≤2000 vars), or ``None`` when
-    gurobipy is absent / unlicensed.
-
-    The pip ``gurobipy`` wheel ships the optimizer + a restricted licence
-    + the Python API but NOT the standalone ``gurobi_cl`` binary; this
-    shim provides a CLI-shaped entry point so FlexTool's real subprocess
-    path can run end-to-end with a genuine Gurobi solve.
-    """
-    try:
-        import gurobipy as gp  # noqa: F401
-        m = gp.Model()
-        m.setParam("OutputFlag", 0)
-        v = m.addVar()
-        m.setObjective(v)
-        m.addConstr(v >= 1)
-        m.optimize()
-        if m.Status != gp.GRB.OPTIMAL:
-            return None
-    except Exception:
+def _make_solver_shim(solver: str, tmp_path: Path) -> Path | None:
+    """Write a CLI shim for *solver* backed by its Python wheel, or return
+    ``None`` when the wheel isn't importable (→ skip)."""
+    if importlib.util.find_spec(_SOLVER_MODULE[solver]) is None:
         return None
-
-    body = textwrap.dedent(
-        f"""\
-        #!{sys.executable}
-        import sys, gurobipy as gp
-        model_file = result = None
-        for a in sys.argv[1:]:
-            if a.startswith("ResultFile="):
-                result = a.split("=", 1)[1]
-            elif "=" not in a or a.lower().endswith((".mps", ".lp")):
-                model_file = a
-        m = gp.read(model_file)
-        m.setParam("OutputFlag", 0)
-        m.optimize()
-        if result is not None:
-            m.write(result)
-        sys.exit(0)
-        """
+    stub = tmp_path / f"{solver}_cli"
+    stub.write_text(
+        "#!" + sys.executable + "\n" + textwrap.dedent(_SHIM_BODY[solver])
     )
-    stub = tmp_path / "gurobi_cl"
-    stub.write_text(body)
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
     return stub
 
 
-def test_real_gurobi_solves_model_with_spaces_in_names(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("solver", ["gurobi", "cplex", "xpress", "copt"])
+def test_real_commercial_solver_handles_spaces(
+    solver: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """End-to-end with a REAL Gurobi optimize: a model whose entity name
-    contains a space must solve to the correct optimum and map the primal
-    back onto the real names.  This is the case that silently produced a
-    WRONG answer before the generic-name fix."""
-    shim = _real_gurobi_cl_shim(tmp_path)
+    """End-to-end with a REAL solve per commercial solver: a model whose
+    entity name contains a space must solve to the correct optimum and map
+    the primal back onto the real names.  Before the generic-name fix a
+    space silently produced a WRONG answer (or crashed).  Skips where the
+    solver's wheel / licence is unavailable."""
+    shim = _make_solver_shim(solver, tmp_path)
     if shim is None:
-        pytest.skip("no usable gurobipy (restricted licence) available")
+        pytest.skip(f"{_SOLVER_MODULE[solver]} not installed")
     monkeypatch.setattr(sps, "_find_solver_binary", lambda name: shim)
 
     nodes = ["coal fired", "gas", "wind"]     # space in a real entity name
     pb = _cost_lp(nodes)
-    sol = _solve_commercial_subprocess(
-        pb, "gurobi", options=None, solve_name="real",
-        logger=None, work_folder=None,
-    )
+    try:
+        sol = _solve_commercial_subprocess(
+            pb, solver, options=None, solve_name="real",
+            logger=None, work_folder=None,
+        )
+    except RuntimeError as exc:
+        if any(h in str(exc).lower() for h in _LICENCE_SKIP_HINTS):
+            pytest.skip(f"{solver}: no usable licence ({exc})")
+        raise
+
     assert sol.optimal is True
-    # Correct model solved (space did NOT corrupt the MPS): obj == 20.
-    assert float(sol.obj) == pytest.approx(20.0, abs=1e-6)
+    assert isinstance(sol.highs, _SolHighsShim)
     assert list(sol.highs.allVariableNames()) == _expected_names(nodes)
-    # cheapest-first fill: coal 10, gas 5, wind 0 — mapped onto real names.
     by_name = dict(zip(sol.highs.allVariableNames(), sol.col_value))
+    # cheapest-first fill: coal 10, gas 5, wind 0 — mapped onto real names.
     assert by_name["x[coal fired,p0]"] == pytest.approx(10.0, abs=1e-6)
     assert by_name["x[gas,p0]"] == pytest.approx(5.0, abs=1e-6)
     assert by_name["x[wind,p0]"] == pytest.approx(0.0, abs=1e-6)
+    # Objective recovered for every solver (COPT via the '=?'-tolerant
+    # regex, Xpress via writeprtsol).
+    assert float(sol.obj) == pytest.approx(20.0, abs=1e-6)

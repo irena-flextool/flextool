@@ -630,7 +630,14 @@ def _xpress_script(
         + [
             f"readprob {mps_path}",
             "lpoptimize",
-            f"writesol {sol_path}",
+            # Force the MPS-like **SLX** solution (name-based, whitespace-
+            # safe) for the primal — Xpress' default ``writesol`` emits an
+            # index-based ``.asc``/``.hdr`` CSV pair with no usable
+            # name→value mapping.  ``writeprtsol`` carries the objective
+            # value SLX omits.  Xpress appends ``.slx`` / ``.prt`` to the
+            # base path; :func:`_parse_xpress_sol` looks for those.
+            f"writeslxsol {sol_path}",
+            f"writeprtsol {sol_path}",
             "quit",
             "",
         ]
@@ -859,7 +866,9 @@ def _parse_gurobi_sol(
             if not line:
                 continue
             if line.startswith("#"):
-                m = re.search(r"[Oo]bjective\s+value\s*=\s*([-\d.eE+inf]+)", line)
+                # Gurobi writes ``# Objective value = <v>``; COPT writes
+                # ``# Objective value <v>`` (no ``=``) — accept either.
+                m = re.search(r"[Oo]bjective\s+value\s*=?\s*([-\d.eE+inf]+)", line)
                 if m:
                     try:
                         objective = float(m.group(1))
@@ -948,55 +957,60 @@ def _parse_cplex_sol(
 def _parse_xpress_sol(
     path: Path,
 ) -> tuple[str, float | None, dict[str, float] | None, dict[str, float] | None]:
-    """Lenient Xpress tabular .sol parser."""
-    if not path.is_file():
-        return "OTHER", None, None, None
-    objective: float | None = None
+    """Parse the Xpress solution written by :func:`_xpress_script`.
+
+    We force Xpress to emit the MPS-like **SLX** solution (name-based,
+    whitespace-safe) for the primal plus the **print** solution for the
+    objective — rather than the default ``writesol`` output, which is an
+    index-based ``.asc``/``.hdr`` CSV pair carrying no usable name→value
+    mapping.  Xpress appends ``.slx`` / ``.prt`` to the base path passed
+    to ``writeslxsol`` / ``writeprtsol``, so look for those next to
+    *path* (with a couple of fallbacks for console-version differences).
+
+    SLX body lines look like ``  C C0000001   10`` (indicator, name,
+    value); the print solution carries one
+    ``Objective function value is <v>`` line.
+    """
+    def _first_existing(cands: list[Path]) -> Path | None:
+        for c in cands:
+            if c.is_file():
+                return c
+        return None
+
     primal: dict[str, float] = {}
-    in_vars = False
-    with path.open("r") as fh:
-        for raw in fh:
-            line = raw.strip()
-            if not line:
-                continue
-            low = line.lower()
-            if objective is None and "objective" in low:
-                m = re.search(r"objective.*?[:=]?\s*([-\d.eE+]+)", line)
-                if m:
-                    try:
-                        objective = float(m.group(1))
-                    except ValueError:
-                        pass
-                continue
-            if low.startswith("variables") or low.startswith("columns"):
-                in_vars = True
-                continue
-            if low.startswith("rows") or low.startswith("constraints"):
-                in_vars = False
-                continue
-            if not in_vars:
-                continue
-            parts = line.split()
+    slx = _first_existing(
+        [Path(str(path) + ".slx"), path, path.with_suffix(".slx")]
+    )
+    if slx is not None:
+        for raw in slx.read_text().splitlines():
+            parts = raw.split()
+            # Data rows carry a trailing numeric value and a name just
+            # before it; header lines (NAME/ENDATA/OBJSENSE) fail the
+            # float() and are skipped.  ``_generic_col_id`` downstream
+            # keeps only the ``C…`` column names.
             if len(parts) < 2:
                 continue
-            name = None
-            rest: list[str] = []
-            for i, tok in enumerate(parts):
-                try:
-                    float(tok)
-                    continue
-                except ValueError:
-                    name = tok
-                    rest = parts[i + 1:]
-                    break
-            if name is None:
+            try:
+                val = float(parts[-1])
+            except ValueError:
                 continue
-            for tok in rest:
-                try:
-                    primal[name] = float(tok)
-                    break
-                except ValueError:
-                    continue
+            primal[parts[-2]] = val
+
+    objective: float | None = None
+    prt = _first_existing(
+        [Path(str(path) + ".prt"), path.with_suffix(".prt")]
+    )
+    if prt is not None:
+        m = re.search(
+            r"[Oo]bjective\s+function\s+value\s+is\s+([-\d.eE+]+)",
+            prt.read_text(),
+        )
+        if m:
+            try:
+                objective = float(m.group(1))
+            except ValueError:
+                objective = None
+
     status = "OPTIMAL" if primal else "OTHER"
     return status, objective, (primal or None), None
 
@@ -1487,16 +1501,10 @@ def _solve_commercial_subprocess(
         )
     finally:
         if cleanup:
-            for p in (mps_path, sol_path, opt_path):
-                try:
-                    if p.exists():
-                        p.unlink()
-                except OSError:
-                    pass
-            try:
-                out_dir.rmdir()
-            except OSError:
-                pass
+            # out_dir is a dedicated per-solve tempdir; remove it wholesale
+            # so solver-written sidecars (Xpress' .slx/.prt, .hdr/.asc,
+            # per-solver logs) don't leak or block an rmdir.
+            shutil.rmtree(out_dir, ignore_errors=True)
 
 
 __all__ = ["solve_via_subprocess"]
