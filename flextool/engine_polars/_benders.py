@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -239,6 +240,51 @@ def _resolve_benders_max_stall() -> int:
             if env_n > 0:
                 k = env_n
     return k
+
+
+# Env knob for the periodic MASTER CUT COMPACTION threshold (machine-local; NO
+# schema/DB knob for the first ship — mirrors ``FLEXTOOL_BENDERS_WORKERS`` /
+# ``FLEXTOOL_BENDERS_MAX_STALL``, avoids a migration).  When the master's
+# accumulated cut-row count reaches this positive threshold, the master is
+# COMPACTED via ``WarmProblem.compact_cuts`` — polar-high classifies each
+# retained cut row by PRIMAL slack at the current master optimum, deletes the
+# strictly-slack rows in place (LB-preserving, with a verify-restore belt), and
+# keeps only the binding ones.  ``0`` / unset = OFF = today's unbounded cut
+# growth = byte-identical to the pre-compaction path.  A malformed or negative
+# value is IGNORED with a warning (OFF is used), mirroring the sibling resolvers.
+_BENDERS_CUT_COMPACT_AT_ENV = "FLEXTOOL_BENDERS_CUT_COMPACT_AT"
+
+
+def _resolve_benders_cut_compact_at() -> int:
+    """Resolve the master cut-compaction threshold.
+
+    Reads ``FLEXTOOL_BENDERS_CUT_COMPACT_AT``: unset or ``0`` (or negative)
+    ⇒ ``0`` = OFF (unbounded cut growth, byte-identical to the pre-compaction
+    path); a positive integer ⇒ the active cut-row count at which the master is
+    compacted (via ``WarmProblem.compact_cuts``) keeping only the
+    currently-binding cuts.  A non-integer OR negative value is IGNORED (not
+    fatal, warned), mirroring :func:`_resolve_benders_max_stall` EXACTLY,
+    including the malformed-value warning branch.
+    """
+    compact_at = 0
+    env = os.environ.get(_BENDERS_CUT_COMPACT_AT_ENV)
+    if env:
+        try:
+            env_n = int(env)
+        except ValueError:
+            _logger.warning(
+                "Benders: ignoring non-integer %s=%r",
+                _BENDERS_CUT_COMPACT_AT_ENV, env,
+            )
+        else:
+            if env_n >= 0:
+                compact_at = env_n
+            else:
+                _logger.warning(
+                    "Benders: ignoring negative %s=%r (must be >= 0; "
+                    "0 = OFF)", _BENDERS_CUT_COMPACT_AT_ENV, env,
+                )
+    return compact_at
 
 
 # Env override for the Benders in-out separation weight ``λ`` (machine-local; NO
@@ -892,7 +938,20 @@ class _BendersMaster:
             col_ids.append(int(fcol))
             coefs.append(-float(slope))
             rhs -= slope * f_bar[fcol]
-        return self._wp.add_cut_row(col_ids, coefs, float(rhs))
+        rhs = float(rhs)
+        return self._wp.add_cut_row(col_ids, coefs, rhs)
+
+    def compact_cuts(self, solution) -> dict:
+        """Compact the master's accumulated cut rows via
+        :meth:`polar_high.WarmProblem.compact_cuts`.
+
+        polar-high tracks every ``add_cut_row`` internally, classifies each by
+        PRIMAL slack at ``solution.col_value`` (binding iff slack ≤ tol),
+        deletes the strictly-slack rows, and (verify) re-solves + rolls back if
+        the objective drifted (the degenerate belt) — an LB-preserving
+        operation FlexTool no longer reimplements.  Returns the polar-high
+        ``{"kept", "dropped", "restored"}`` report verbatim."""
+        return self._wp.compact_cuts(solution)
 
     def read_master(self, sol) -> tuple[dict[str, dict[int, float]],
                                         dict[str, float], dict[str, float]]:
@@ -1660,6 +1719,19 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # ``f_sep`` with in-out ON).
     pending_cuts = bootstrap_cuts
     C_by_conn: dict[str, float] = {}
+    # DIAGNOSTIC: running total of cut rows appended to the master.  Surfaced in
+    # the per-iteration timing line so the master-solve cost can be read against
+    # the accumulated row count.  With cut compaction ON it is reset to the KEPT
+    # (binding) count at each compaction.
+    _master_cut_rows = 0
+    # Periodic MASTER CUT COMPACTION threshold (env-resolved; 0 = OFF =
+    # byte-identical to the pre-compaction path — the whole compaction call
+    # below is guarded by ``compact_at > 0``).  When the active cut-row count
+    # reaches this, ``WarmProblem.compact_cuts`` deletes the strictly-slack cut
+    # rows at the current master optimum, keeping only the binding ones (spec:
+    # benders_cut_aging_plan.md, FIRST SHIP).  polar-high owns the classify /
+    # delete / verify-restore; FlexTool only triggers it and tracks the count.
+    compact_at = _resolve_benders_cut_compact_at()
 
     for it in range(max_iters):
         iterations = it + 1
@@ -1676,7 +1748,15 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             # make the cut invalid.
             master.add_cut(region, gen_point, cost_r, slopes)
             master.relax_eta_after_cut(region)
+            _master_cut_rows += 1
+        # DIAGNOSTIC: the master accumulates cut rows unboundedly (one per region
+        # per iteration, never deleted), so its warm re-solve gets progressively
+        # slower — the dominant cost of a long Benders run.  Time it (and the
+        # region pass below) so ``_benders_quiet``-off runs surface where the
+        # per-iteration wall time goes and how it scales with the cut count.
+        _t_master = time.perf_counter()
         msol = master.solve()
+        _dt_master = time.perf_counter() - _t_master
         prev_LB = LB
         LB = float(msol.obj)  # scaled space
         # LB monotone non-decreasing self-check.  In exact arithmetic the bound
@@ -1737,6 +1817,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             pending_cuts, f_bar, new_f_bar, eta_by_region,
             iterations=iterations, inv_s=inv_s,
         )
+
         # The master's chosen capacity must support its chosen flow: the
         # coupling row ``C − f ≥ 0`` (≡ ``f ≤ existing_cap + Σ v_invest_p``)
         # holds at the master optimum.  For a GREENFIELD arc the existing term
@@ -1819,9 +1900,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # Per-region slopes recovered this pass (keyed by region name), so the
         # in-out separation test / register below need not re-scan ``next_cuts``.
         slopes_by_region: dict[str, dict[int, float]] = {}
-        for rm, (cost_r, slopes, sol_r) in zip(
-            regions_meta, _solve_regions(_region_pin if in_out_on else f_out)
-        ):
+        _t_regions = time.perf_counter()
+        _region_results = _solve_regions(_region_pin if in_out_on else f_out)
+        _dt_regions = time.perf_counter() - _t_regions
+        for rm, (cost_r, slopes, sol_r) in zip(regions_meta, _region_results):
             gen_point = f_sep_by_region[rm.name] if in_out_on else f_out
             slopes_by_region[rm.name] = slopes
             region_costs[rm.name] = cost_r
@@ -1926,6 +2008,18 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             "Benders iter %d: LB=%.6e UB=%.6e bestUB=%.6e gap=%.3e",
             iterations, LB, UB, best_UB, gap,
         )
+        # DIAGNOSTIC per-iteration timing: master-solve vs region-solve wall time
+        # against the accumulated master cut-row count.  The master row count
+        # grows by one-per-region-per-iteration and is never pruned, so this line
+        # makes the O(cuts) growth of the master solve (the dominant cost of a
+        # long run) directly observable; the region pass is ~flat (fixed-size,
+        # parallel).  Not gated behind DEBUG: it is a single INFO line per
+        # iteration surfacing where the wall time goes.
+        _logger.info(
+            "[benders timing] iter %d: master_solve=%.3fs regions=%.3fs "
+            "master_cut_rows=%d", iterations, _dt_master, _dt_regions,
+            _master_cut_rows,
+        )
 
         if progress_callback is not None:
             # Stream one live per-iteration summary.  Bounds are reported in
@@ -2028,6 +2122,35 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                 )
 
         pending_cuts = next_cuts
+
+        # --- PERIODIC MASTER CUT COMPACTION (spec: benders_cut_aging_plan.md,
+        # FIRST SHIP).  When the active cut-row count reaches ``compact_at``,
+        # ``WarmProblem.compact_cuts`` classifies every retained cut row by
+        # PRIMAL slack at the RAW master vertex ``msol.col_value`` (binding iff
+        # slack ≤ tol), deletes the strictly-slack rows in place, and re-solves
+        # + rolls back on any objective drift (its verify belt — LB-preserving).
+        # polar-high owns all of that; FlexTool only triggers it and tracks the
+        # kept count.  Guarded by ``compact_at > 0`` so the default (OFF) path
+        # is byte-identical to the pre-compaction loop.
+        #
+        # PLACEMENT + ``msol`` SAFETY.  We call at the VERY END of the loop
+        # body, AFTER ``pending_cuts = next_cuts``, so ``msol`` has already been
+        # FULLY consumed by THIS iteration (``read_master`` / the LB self-checks
+        # / ``_check_cuts_satisfied`` / the UB + sandwich/stall guards); nothing
+        # downstream in the iteration reads it again.  ``msol.col_value`` is the
+        # RAW master optimum — the flow-clamp above mutates ``new_f_bar``, NOT
+        # ``msol`` — which is the correct classification point.  Deleting rows
+        # here simply shrinks the master for the NEXT iteration's ``solve()``
+        # (which proceeds from the compacted state); ``compact_cuts`` re-solves
+        # internally for its verify belt, so the master stays LB-safe.
+        if compact_at > 0 and _master_cut_rows >= compact_at:
+            _res = master.compact_cuts(msol)   # msol = raw pre-clamp master vertex
+            _master_cut_rows = _res["kept"]
+            _logger.info(
+                "[benders timing] iter %d: cut compaction kept=%d dropped=%d "
+                "restored=%s", iterations, _res["kept"], _res["dropped"],
+                _res["restored"],
+            )
 
     # --- assemble result from the incumbent.  UNSCALE cost-valued outputs back
     # to real units (÷s): the loop's internal LB/UB/cost arithmetic ran in
