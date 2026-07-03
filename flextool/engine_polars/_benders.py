@@ -1818,6 +1818,23 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # delete / verify-restore; FlexTool only triggers it and tracks the count.
     compact_at = _resolve_benders_cut_compact_at()
     cut_policy = _resolve_benders_cut_policy()  # 'slack' (default) | 'dominance'
+    # Capability guard: master cut compaction needs
+    # ``polar_high.WarmProblem.compact_cuts`` (polar-high >= 3.5.0).  When the
+    # env flag is set but the installed polar-high predates it, disable
+    # compaction with a clear one-time message instead of crashing mid-solve
+    # with an ``AttributeError``; the run then proceeds exactly like the
+    # default (OFF) path.
+    if compact_at > 0 and not hasattr(
+        getattr(master, "_wp", None), "compact_cuts"
+    ):
+        _logger.warning(
+            "benders: master cut compaction was requested "
+            "(FLEXTOOL_BENDERS_CUT_COMPACT_AT=%d) but the installed "
+            "polar-high has no WarmProblem.compact_cuts (needs >= 3.5.0); "
+            "continuing without compaction.",
+            compact_at,
+        )
+        compact_at = 0
     # Bounded trailing window of recent master vertices (``msol.col_value``,
     # most-recent last) feeding the ``compact_cuts(policy="dominance")``
     # selection.  Window size is env-resolved (``FLEXTOOL_BENDERS_CUT_WINDOW``).

@@ -276,3 +276,33 @@ def caplog_active_rows():
     finally:
         logger.removeHandler(h)
         logger.setLevel(prev_level)
+
+
+# ---------------------------------------------------------------------------
+# Capability guard — compaction requested but polar-high lacks compact_cuts.
+# ---------------------------------------------------------------------------
+def test_compaction_guard_degrades_when_polar_high_lacks_compact_cuts(
+    ti_data, monkeypatch, caplog
+):
+    """With the compaction env flag set but an old polar-high that has no
+    ``WarmProblem.compact_cuts`` (< 3.5.0), the solve must NOT crash with an
+    AttributeError: the run-start guard disables compaction with a clear
+    warning and proceeds exactly like the default (OFF) path.
+
+    We simulate the old polar-high by removing the method the guard probes
+    for; ``compact_at`` is then forced back to 0 so ``compact_cuts`` is never
+    called, and a green (converged) solve proves the degradation is graceful.
+    """
+    from polar_high import WarmProblem
+
+    monkeypatch.delattr(WarmProblem, "compact_cuts", raising=False)
+    monkeypatch.setenv(_BENDERS_CUT_COMPACT_AT_ENV, "6")
+
+    with caplog.at_level(logging.WARNING):
+        res = solve_benders(ti_data, _REGIONS, max_iters=20, tol=1e-4)
+
+    assert res.converged, "guarded solve did not converge (crashed or diverged)"
+    assert any(
+        "compact_cuts" in r.message and "3.5.0" in r.message
+        for r in caplog.records
+    ), "expected a clear 'needs >= 3.5.0' warning when compaction is unavailable"
