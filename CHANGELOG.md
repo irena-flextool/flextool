@@ -1,4 +1,47 @@
-## Release 4.0.0b22 (1.7.2026) — `benders_in_out_weight` solve parameter (schema v63)
+## Release 4.0.0b23 (3.7.2026) — commercial solvers handle spaces in names; opt-in Benders cut compaction
+
+No schema change (still v63). Dependency floors unchanged (`polar-high>=3.4.0`,
+`polars>=1.40`, `highspy<=1.14.0`). The commercial-solver fixes below change no
+result on the default (HiGHS) path; the Benders additions are OFF by default.
+
+### Solvers — commercial CLIs (Gurobi / CPLEX / Xpress / COPT)
+
+- **Commercial solvers now handle entity names containing spaces** (common in
+  FlexTool models, e.g. a node named `Battery Farm`), matching the whitespace-
+  agnostic in-process HiGHS path. The subprocess path previously (a) crashed in
+  the parent with `parent failed to read MPS back` — it re-read the just-written
+  MPS through `highspy.Highs.readModel` purely to recover variable names — and
+  (b) once that was removed, could still return a **silently wrong answer**
+  because free-format MPS is whitespace-delimited and a spaced name corrupts the
+  column. The MPS is now written with generic, whitespace-safe names
+  (`write_mps(emit_names=False)`) and the solver's solution is mapped back **by
+  index** onto the real names held in memory (rebuilt from the released
+  `Problem`'s `_vars` / pre-release `_cstrs`). No parent-side `readModel` (which
+  also spiked tens of GB of RSS on large LPs).
+- **CPLEX / Xpress / COPT `.sol` parsing fixes** surfaced while adding real-solve
+  coverage: COPT writes `# Objective value <v>` with no `=` (objective is now
+  parsed); Xpress' default `writesol` emits an index-based `.asc`/`.hdr` CSV that
+  was never parseable, so the Xpress path is switched to the MPS-like **SLX**
+  solution (`writeslxsol`, name-based) for the primal plus `writeprtsol` for the
+  objective. The per-solve temp dir is now removed wholesale so solver sidecars
+  don't leak.
+- **New real-solve tests** exercise the full subprocess path for all four
+  commercial solvers on a model whose entity name contains a space, backed by
+  each solver's Python wheel via a CLI-shaped shim (skip cleanly where a wheel /
+  licence is absent).
+
+### Decomposition (Benders) — opt-in, OFF by default
+
+- **Periodic master cut compaction** (`FLEXTOOL_BENDERS_CUT_COMPACT_AT`, unset/0 =
+  OFF = byte-identical to before) prunes accumulated master cut rows via
+  `polar_high.WarmProblem.compact_cuts`, with a `slack` (default) or non-default
+  `dominance` selection policy (`FLEXTOOL_BENDERS_CUT_POLICY`). Note: this is an
+  experimental knob — on load-bearing cut pools it does not reduce iterations.
+- **Capability guard:** `compact_cuts` needs `polar-high>=3.5.0`. When the env
+  flag is set but an older polar-high is installed (the floor still allows 3.4.0),
+  compaction is disabled at run start with a clear `needs >= 3.5.0` warning
+  instead of crashing mid-solve. Default (OFF) solves are unaffected.
+
 
 **Database migration v62 → v63** (automatic on load). Dependency floors
 unchanged (`polar-high>=3.4.0`, `polars>=1.40`, `highspy<=1.14.0`). Additive and
