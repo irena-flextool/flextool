@@ -2310,29 +2310,131 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 and d.process_indirect is not None
                 and d.process_indirect.height > 0
                 and d.p_flow_upper is not None):
-            indirect_pss = (d.p_flow_upper.frame
-                .join(d.process_indirect, on="p", how="inner")
-                .select("p", "source", "sink", "d", "t", "value"))
+            # ── indirect maxFlow RHS: split by arc side ──────────────────
+            # Bug fix (indirect free-capacity): the .mod's capacity-enforcing
+            # constraint is ``maxToSink`` (RHS = built capacity =
+            # ``existing/unitsize`` with ``− v_invest`` on the LHS), NOT the
+            # variable bound ``p_flow_max`` (= ``p_flow_upper`` = the
+            # ``existing + invest_max`` ceiling).  Direct units already use
+            # ``p_flow_upper_existing``; indirect units wrongly wired the
+            # ceiling into every arc, so a greenfield converter (existing=0)
+            # got ``v_flow − Σv_invest ≤ invest_max/unitsize`` — free
+            # capacity at ``v_invest=0``.  Bind the indirect **OUTPUT** arc
+            # (``source == p``, i.e. ``process_output_flows``) with the
+            # maxToSink existing-only RHS so any output flow forces paid
+            # invest, matching direct units.  The **input/fuel** arcs
+            # (``sink == p``) and any zero-flow-coef aux arcs KEEP the loose
+            # ``p_flow_upper`` bound — pinning them to existing (=0) would
+            # make fuel hard-infeasible (``v_flow_in ≤ 0``); they are
+            # governed by the ``conversion_indirect`` balance + the now-tight
+            # output cap.
+            #
+            # S1 (sink-less indirect residual): a legal but unfixtured
+            # topology (≥2 inputs, 0 outputs → 1way_nvar sink-less) binds its
+            # capacity on a ``sink == p`` SOURCE arc via maxFromSource.  The
+            # output-arc-only rule would leave such a unit free.  No current
+            # fixture triggers it (the sole sink-less fixture unit is DIRECT
+            # 1way_1var), but we do NOT ship a silent hole: raise a clear
+            # error rather than emit a free-capacity converter (chose
+            # guard-and-raise over routing source arcs, because a correct
+            # source-arc maxFromSource RHS needs a source-side existing
+            # producer + source_capacity_max_coeff that this code path does
+            # not carry — implementing it untested would be a worse hole than
+            # a loud raise).
+            #
+            # S2 (2way_nvar residual): bidirectional multi-var indirect units
+            # (``method_2way_nvar_off``) allow negative arc flows, so the
+            # ``conversion_indirect`` equality (which ties the *weighted sum*
+            # of inputs to outputs) does NOT bound each input arc's
+            # magnitude — one input arc could exceed the output cap while the
+            # sum still balances.  Inputs are therefore only categorically
+            # safe for 1-way single-output converters (all the fixtures
+            # have).  No fixture authors ``no_losses_no_variable_cost`` /
+            # ``variable_cost_only`` (the 2way_nvar methods), so this is an
+            # uncovered residual, not a live bug — flagged loudly here.
+            out_arcs = d.process_output_flows
+            in_arcs = d.process_input_flows
+            # S1 guard: every indirect invest/divest-eligible process must
+            # have at least one output arc; otherwise its capacity binds on a
+            # source arc we do not tighten.
+            indir_ps = d.process_indirect.select("p").unique()
+            out_ps = (out_arcs.select("p").unique()
+                      if out_arcs is not None else
+                      indir_ps.head(0))
+            sinkless = indir_ps.join(out_ps, on="p", how="anti")
+            if sinkless.height > 0:
+                names = sorted(str(x) for x in
+                               sinkless.get_column("p").to_list())
+                raise NotImplementedError(
+                    "Indirect (multi-flow) process(es) without an output "
+                    f"arc are not supported: {names}. Such sink-less units "
+                    "bind their capacity on a source arc (maxFromSource), "
+                    "which the maxFlow existing-capacity RHS does not yet "
+                    "cover; emitting them would grant free (unpaid) "
+                    "capacity. Add an output node or extend the indirect "
+                    "maxFlow RHS to route source arcs through the "
+                    "existing-only bound.")
+            # (a) DIRECT arcs — existing-only bound (unchanged).
             direct_pss_d = (d.p_flow_upper_existing.frame
                 .join(d.process_indirect, on="p", how="anti"))
-            if indirect_pss.height > 0 and direct_pss_d.height > 0:
-                # Combine: indirect rows from p_flow_upper, direct rows
-                # from p_flow_upper_existing.  The latter has no `t` dim
-                # — broadcast over t by inner-joining on `d`.  Using a
-                # cross-join here would produce duplicates whenever the
-                # same ``t`` label is reused across periods (e.g. t0001
-                # in both p2020 and p2025), inflating the RHS by the
-                # multiplicity factor — see audit/objective_audit.md
-                # follow-up.
-                direct_pss_dt = (direct_pss_d
+            # (b) INDIRECT OUTPUT arcs — existing-only bound, densified over
+            #     ``process_output_flows × d`` with ``fill_null(0.0)`` so a
+            #     greenfield output arc (whose process authors no ``existing``
+            #     row, hence no p_flow_upper_existing row) still gets a
+            #     0-valued RHS → ``v_flow_out − Σv_invest ≤ 0`` fires.
+            #     (Mirrors ``p_process_existing_count``'s absent-existing=0.)
+            d_vals = d.dt.select("d").unique()
+            out_grid = (out_arcs.join(d_vals, how="cross")
+                        if out_arcs is not None and out_arcs.height > 0
+                        else None)
+            if out_grid is not None:
+                out_existing = (out_grid
+                    .join(d.p_flow_upper_existing.frame,
+                          on=("p", "source", "sink", "d"), how="left")
+                    .with_columns(value=pl.col("value").fill_null(0.0))
+                    .select("p", "source", "sink", "d", "value"))
+            else:
+                out_existing = None
+            # (c) INDIRECT INPUT + zero-coef aux arcs — loose ``p_flow_upper``
+            #     bound (unchanged).  Take all indirect arcs from
+            #     p_flow_upper, then anti-join the OUTPUT arcs out so ONLY
+            #     input/fuel arcs and residual (zero-coef) arcs remain loose.
+            #     B1 belt: this guarantees no input arc ever draws the
+            #     existing (=0) RHS.
+            indirect_loose = (d.p_flow_upper.frame
+                .join(d.process_indirect, on="p", how="inner")
+                .select("p", "source", "sink", "d", "t", "value"))
+            if out_arcs is not None and out_arcs.height > 0:
+                indirect_loose = indirect_loose.join(
+                    out_arcs, on=("p", "source", "sink"), how="anti")
+            # Broadcast the (p,source,sink,d) existing slices over t via
+            # inner-join on ``d`` (NOT cross-join — reused-t-across-periods
+            # would inflate the RHS by the period multiplicity).
+            existing_slices = [s for s in (direct_pss_d, out_existing)
+                               if s is not None and s.height > 0]
+            slices_dt: list[pl.DataFrame] = []
+            for s in existing_slices:
+                slices_dt.append(s
                     .join(d.dt, on="d", how="inner")
                     .select("p", "source", "sink", "d", "t", "value"))
-                combined = pl.concat([indirect_pss, direct_pss_dt])
+            if indirect_loose.height > 0:
+                slices_dt.append(indirect_loose)
+            if slices_dt:
+                combined = pl.concat(slices_dt)
+                # B1 assertion: no input arc drew from the existing slice —
+                # verified structurally (out_existing is filtered to
+                # process_output_flows; indirect_loose is anti-joined against
+                # it), but pin it so a future refactor can't reintroduce the
+                # infeasibility.
+                if (in_arcs is not None and in_arcs.height > 0
+                        and out_existing is not None):
+                    leaked = out_existing.join(
+                        in_arcs, on=("p", "source", "sink"), how="semi")
+                    assert leaked.height == 0, (
+                        "indirect input arc leaked into the existing-only "
+                        f"maxFlow slice (would force v_flow_in ≤ 0): {leaked}")
                 flow_upper_rhs = Param(
                     ("p", "source", "sink", "d", "t"), combined)
-            elif indirect_pss.height > 0:
-                flow_upper_rhs = Param(
-                    ("p", "source", "sink", "d", "t"), indirect_pss)
             else:
                 flow_upper_rhs = d.p_flow_upper_existing
         else:
@@ -2429,6 +2531,18 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 over=("d_divest",))
             flow_lhs["divest"] = divest_in_dispatch
         if has_invest_p:
+            # Indirect-fix sub-change (ii) — DEFERRED as safe.  The
+            # ``− Σv_invest`` term below is keyed on ``p`` and broadcasts to
+            # every arc in ``pss_dt``, including indirect INPUT arcs.  Per the
+            # critique (R1/S3) this is correct-and-safe to ship as-is ("(i)
+            # alone"): on an input arc ``v_flow_in − Σv_invest ≤ p_flow_max``
+            # is *looser* than ``v_flow_in ≤ p_flow_max`` (subtracting the
+            # non-negative invest count), so it never over-constrains the
+            # fuel side, and it cannot re-create free OUTPUT capacity because
+            # the output arc is now tightened to ``existing/unitsize`` (the
+            # RHS split above).  Scoping the invest term off input arcs would
+            # only remove a harmless slackening; not doing it keeps the blast
+            # radius minimal.
             # v_invest is also indexed by d_invest; sum over d_invest in
             # edd_invest with d_invest "alive" at d (already in edd_invest_set).
             v_inv_at = Var(
