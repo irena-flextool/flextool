@@ -258,7 +258,7 @@ def test_region_layer2_fires_and_matches_unscaled(
     # without this guard the whole suite could stay green while the fix
     # silently no-ops (e.g. a broken trigger gate).
     seen = {"regions": 0, "with_plan": 0}
-    _real_apply = _b._apply_region_layer2
+    _real_apply = _b._apply_region_autoscale
 
     def _spy_apply(pb, cfg, name):
         plan = _real_apply(pb, cfg, name)
@@ -266,7 +266,7 @@ def test_region_layer2_fires_and_matches_unscaled(
         seen["with_plan"] += int(plan is not None)
         return plan
 
-    monkeypatch.setattr(_b, "_apply_region_layer2", _spy_apply)
+    monkeypatch.setattr(_b, "_apply_region_autoscale", _spy_apply)
     monkeypatch.setenv("FLEXTOOL_SCALING", "full")
     scaled = solve_benders(
         ti_data, _REGIONS, max_iters=20, tol=1e-4,
@@ -293,7 +293,7 @@ def test_region_layer2_fires_and_matches_unscaled(
     # --- Unscaled run (Layer-2 OFF): must reach the same optimum.  The two
     # solves take different simplex paths (differently-scaled matrices), so
     # compare the OBJECTIVE strictly but do not require identical vertices.
-    monkeypatch.setattr(_b, "_apply_region_layer2", _real_apply)
+    monkeypatch.setattr(_b, "_apply_region_autoscale", _real_apply)
     monkeypatch.setenv("FLEXTOOL_SCALING", "off")
     unscaled = solve_benders(
         ti_data, _REGIONS, max_iters=20, tol=1e-4,
