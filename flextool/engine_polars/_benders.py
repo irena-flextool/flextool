@@ -82,6 +82,15 @@ from flextool.engine_polars._axis_enums import (
     reset_global_axis_enums,
     set_global_axis_enums,
 )
+from flextool.engine_polars.autoscale import (
+    Layer2Plan,
+    ScalingMode,
+    apply_layer2,
+    detect_ranges,
+    mode_enables_layer1,
+    resolve_scaling_config,
+    unscale_solution,
+)
 from flextool.engine_polars._region_filter import HalfFlow, RegionSplit
 from flextool.engine_polars.input import FlexData
 
@@ -394,6 +403,67 @@ def _resolve_benders_region_duals() -> str:
         )
         mode = "basic"
     return mode
+
+
+def _apply_region_layer2(pb: Problem, cfg, region_name: str) -> "Layer2Plan | None":
+    """Apply the monolith's Layer-2 (per-type var/constraint) autoscale to a
+    Benders region subproblem ``pb``, in place, and return the inverse
+    :class:`Layer2Plan` (or ``None`` when Layer-2 was skipped/failed).
+
+    Mirrors :func:`_orchestration._autoscale_apply_layer2_pre_solve`'s gating
+    exactly so the region subproblems condition like the monolith LP: fire only
+    in :class:`ScalingMode.FULL`, and only when the pre-solve Layer-1 range
+    detector trips.  The returned plan is a *fixed* transform that must persist
+    for the life of the region ``WarmProblem`` (built once, then only grown by
+    master cuts) — the caller stores it on the :class:`_Region`.
+
+    ``FLEXTOOL_AUTOSCALE_STRICT=1`` re-raises (CLAUDE.md invariant #1): a var/
+    cstr/parameter family missing from the autoscale registries would otherwise
+    be swallowed here and silently revert the region to an un-scaled LP,
+    defeating the whole fix.  Production runs leave STRICT unset and degrade
+    gracefully so a registry gap never blocks a user's solve.
+    """
+    if not mode_enables_layer1(cfg.mode):
+        return None
+    try:
+        ranges_pre = detect_ranges(pb, cfg)
+    except Exception:  # pragma: no cover — guard against future API drift
+        if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
+            raise
+        _logger.exception(
+            "Benders: Layer-2 range readout failed for region %r; "
+            "solving it un-scaled", region_name,
+        )
+        return None
+    if cfg.mode is not ScalingMode.FULL:
+        return None
+    if not ranges_pre.trigger:
+        return None
+    try:
+        plan = apply_layer2(pb, cfg)
+    except Exception:  # pragma: no cover
+        if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
+            raise
+        _logger.exception(
+            "Benders: Layer-2 apply failed for region %r; solving it "
+            "un-scaled", region_name,
+        )
+        return None
+    # Log the chosen per-type exponents.  The Benders splitter builds the
+    # cross-region half-flows with a 1e12 uncap sentinel (a bound the monolith
+    # LP never carries); this line lets us confirm on the benchmark that the
+    # sentinel is not hijacking the BOUND-range decision away from physical
+    # flows.
+    _logger.info(
+        "Benders Layer-2 [region %s]: exponents=%s, rows=%d, skipped_rows=%d, "
+        "integer_cols=%d",
+        region_name,
+        {t.value: e for t, e in plan.type_exponents.items()},
+        plan.row_factors.shape[0],
+        len(plan.skipped_rows),
+        len(plan.skipped_integer_cols),
+    )
+    return plan
 
 
 def _resolve_benders_in_out_weight(db_value: float = 0.0) -> float:
@@ -1138,6 +1208,12 @@ class _Region:
     forward: list[tuple[_ArcMaster, np.ndarray, np.ndarray]]  # (arc, region_cols, master_cols)
     # reverse half-flow region col-ids to pin to 0.
     reverse_cols: np.ndarray
+    # Layer-2 autoscale inverse plan for this region's subproblem (a FIXED
+    # transform for the life of ``wp``), or ``None`` when Layer-2 did not fire.
+    # Used to (a) scale the physical boundary-flow pins into the region's
+    # scaled column space before ``fix_cols`` and (b) unscale the region
+    # Solution (duals/cost/primal) back to master space after solve.
+    plan: "Layer2Plan | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -1533,8 +1609,20 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     )
     region_duals = _resolve_benders_region_duals()
     subproblems = [Problem() for _ in splits]
+    # Layer-2 (per-type var/constraint) autoscale plan per region, aligned to
+    # ``splits``/``subproblems`` order.  Applied here — after ``build_problem``
+    # populates the FlexTool families and BEFORE ``WarmProblem`` bakes the
+    # scaled bounds/coeffs into the canonical matrix — so each region conditions
+    # like the (autoscaled) monolith instead of grinding on raw 1e6-penalty
+    # columns.  ``apply_layer2`` sets no solver options, so it does not touch
+    # the ``run_crossover`` pin below.  ``resolve_scaling_config(None)`` reads
+    # ``FLEXTOOL_SCALING`` from the environment (same cascade-internal
+    # convention the monolith uses).
+    _scale_cfg = resolve_scaling_config(None)
+    region_plans: list[Layer2Plan | None] = []
     for s, pb in zip(splits, subproblems):
         build_problem(pb, s.data)
+        region_plans.append(_apply_region_layer2(pb, _scale_cfg, s.region))
         # PIN ``run_crossover=on`` on every region subproblem.  The Benders cut
         # slope is the reduced cost of the pinned boundary-flow column, which is
         # only a well-defined *basic* dual when the solve ends on a simplex basis.
@@ -1604,7 +1692,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             dtype=np.int64,
         )
         regions_meta.append(
-            _Region(name=s.region, wp=w, forward=forward, reverse_cols=reverse_cols)
+            _Region(
+                name=s.region, wp=w, forward=forward, reverse_cols=reverse_cols,
+                plan=region_plans[region_idx[s.region]],
+            )
         )
 
     # Pre-resolve dim-tuples for fix_cols (by region var frame, aligned to the
@@ -1634,6 +1725,15 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             vals = np.array(
                 [f_bar_local[int(mc)] for mc in master_cols], dtype=np.float64
             )
+            # ``f_bar_local`` is a PHYSICAL boundary flow in master space, but
+            # when the region is Layer-2 scaled the built model lives in scaled
+            # column coordinates (``x_scaled = col_factor·x``).  ``fix_cols`` →
+            # ``changeColsBounds`` writes the bound verbatim, so pin the SCALED
+            # value ``col_factor·f̄``.  ``plan.col_factors`` is the forward
+            # factor indexed by dense col-id; ``region_cols`` are those col-ids
+            # in the same order as ``vals``/``master_cols``.
+            if rm.plan is not None:
+                vals = vals * rm.plan.col_factors[region_cols]
             dt = pin_dim_cache.setdefault(
                 id(region_cols), _region_dim_tuples(w, region_cols)
             )
@@ -1645,7 +1745,11 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             w.fix_cols(
                 "v_flow", dt_rev, np.zeros(rm.reverse_cols.size, dtype=np.float64)
             )
-        sol_r = w.solve()
+        # ``retry_on_unknown=True`` mirrors the master's self-healing pattern
+        # (see ``_BendersMaster.solve``): on any non-certified WARM status
+        # (kUnknown/kSolveError off an ill-conditioned warm basis) drop the
+        # basis and re-solve once cold, instead of crashing immediately.
+        sol_r = w.solve(retry_on_unknown=True)
         if not sol_r.optimal:
             raise RuntimeError(_benders_failure_message(
                 summary=(
@@ -1671,6 +1775,21 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                     "it with the model."
                 ),
             ))
+        # Undo the Layer-2 transform IN PLACE so cost/duals/primal come back
+        # into master space: ``col_dual ×= col_factors`` (scaled reduced cost →
+        # physical-space cut slope), ``col_value ÷= col_factors`` (→ physical,
+        # what the TIER-1 invest handoff wants), ``obj`` invariant (already in
+        # ``obj_scale`` space, = ``cost_r``).  After this the cut math in
+        # ``_BendersMaster.add_cut`` is byte-consistent with the un-autoscaled
+        # path and needs no change.  Detach the live HiGHS handle first so
+        # ``unscale_solution``'s ``setSolution`` mirror is a no-op: the region
+        # ``Solution.highs`` handle is never read downstream (unlike the
+        # monolith's ``read_highs_solution`` path), and mirroring an unscaled
+        # primal onto the WARM handle every iteration would perturb the next
+        # warm re-solve — the exact conditioning this fix is protecting.
+        if rm.plan is not None:
+            sol_r.highs = None
+            unscale_solution(sol_r, rm.plan)
         slopes: dict[int, float] = {}
         for a, region_cols, master_cols in rm.forward:
             rc = sol_r.col_dual[region_cols]

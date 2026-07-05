@@ -230,3 +230,77 @@ def test_flextool_master_matches_hand_master(ti_data, monolith) -> None:
             f"invest[{conn}] mismatch: hand={hand.invest[conn]} "
             f"flex={flex.invest[conn]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# (5) Region subproblem Layer-2 autoscale: the scaled path FIRES on this
+#     fixture (guards against a silent no-op regression) AND yields the same
+#     optimum + valid LB as the un-autoscaled path.  The two "sharp edges" —
+#     the physical→scaled boundary-flow PIN (×col_factor) and the dual/cost
+#     UNSCALE (×col_factor) that keeps the cut math consistent — are exercised
+#     end-to-end here: a wrong factor direction breaks convergence or the
+#     objective/LB reconciliation below.  Run under FLEXTOOL_AUTOSCALE_STRICT=1
+#     so a missing autoscale-registry family is loud (CLAUDE.md invariant #1)
+#     rather than a silent revert to an un-scaled LP.
+# ---------------------------------------------------------------------------
+
+
+def test_region_layer2_fires_and_matches_unscaled(
+    ti_data, monolith, monkeypatch
+) -> None:
+    from flextool.engine_polars import _benders as _b
+
+    M = monolith.obj
+    monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
+
+    # --- Scaled run (default ScalingMode.FULL).  Spy on the region Layer-2
+    # apply so we can assert it ACTUALLY fired (non-None plan) on >= 1 region —
+    # without this guard the whole suite could stay green while the fix
+    # silently no-ops (e.g. a broken trigger gate).
+    seen = {"regions": 0, "with_plan": 0}
+    _real_apply = _b._apply_region_layer2
+
+    def _spy_apply(pb, cfg, name):
+        plan = _real_apply(pb, cfg, name)
+        seen["regions"] += 1
+        seen["with_plan"] += int(plan is not None)
+        return plan
+
+    monkeypatch.setattr(_b, "_apply_region_layer2", _spy_apply)
+    monkeypatch.setenv("FLEXTOOL_SCALING", "full")
+    scaled = solve_benders(
+        ti_data, _REGIONS, max_iters=20, tol=1e-4,
+        monolith_objective=M, master="flextool",
+    )
+
+    assert seen["regions"] == len(_REGIONS)
+    assert seen["with_plan"] >= 1, (
+        "Layer-2 did not fire on ANY region — the scaled path is a no-op, so "
+        "this fixture no longer guards the region-autoscale code; lower the "
+        "trigger threshold or pick a wider-spread fixture"
+    )
+    assert scaled.converged, (
+        f"autoscaled Benders did not converge: gap={scaled.gap:.3e} after "
+        f"{scaled.iterations} iters"
+    )
+    assert np.isclose(scaled.total_objective, M, rtol=1e-4), (
+        f"autoscaled UB {scaled.total_objective:.8e} != monolith M {M:.8e}"
+    )
+    assert scaled.lower_bound <= M * (1 + 1e-9), (
+        f"autoscaled LB {scaled.lower_bound:.8e} EXCEEDS M {M:.8e} — invalid"
+    )
+
+    # --- Unscaled run (Layer-2 OFF): must reach the same optimum.  The two
+    # solves take different simplex paths (differently-scaled matrices), so
+    # compare the OBJECTIVE strictly but do not require identical vertices.
+    monkeypatch.setattr(_b, "_apply_region_layer2", _real_apply)
+    monkeypatch.setenv("FLEXTOOL_SCALING", "off")
+    unscaled = solve_benders(
+        ti_data, _REGIONS, max_iters=20, tol=1e-4,
+        monolith_objective=M, master="flextool",
+    )
+    assert unscaled.converged
+    assert np.isclose(scaled.total_objective, unscaled.total_objective, rtol=1e-4), (
+        f"autoscaled UB {scaled.total_objective:.8e} != un-autoscaled "
+        f"{unscaled.total_objective:.8e} — Layer-2 changed the optimum"
+    )
