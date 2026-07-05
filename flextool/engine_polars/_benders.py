@@ -372,6 +372,29 @@ def _resolve_benders_cut_policy() -> str:
 # :func:`_resolve_benders_max_stall`.
 _BENDERS_IN_OUT_WEIGHT_ENV = "FLEXTOOL_BENDERS_IN_OUT_WEIGHT"
 
+# Experimental (specs/benders_research_master_stabilization.md §6): which dual
+# the region subproblems report for cut slopes.  ``basic`` (default) keeps the
+# ``run_crossover=on`` pin — reproducible vertex duals.  ``interior`` solves
+# regions with barrier and NO crossover: on a degenerate (storage-flat) optimal
+# face the barrier limit is a central point of the optimal-dual face, i.e. an
+# "averaged" cut slope instead of an arbitrary vertex choice.  Trade-offs: no
+# warm start (every region re-solve is a cold IPM), possible imprecise
+# termination (surfaces as the existing not-optimal subproblem error).  Any
+# other value is IGNORED with a warning and ``basic`` is used.
+_BENDERS_REGION_DUALS_ENV = "FLEXTOOL_BENDERS_REGION_DUALS"
+
+
+def _resolve_benders_region_duals() -> str:
+    """Resolve the region dual mode: ``basic`` (default) or ``interior``."""
+    mode = os.environ.get(_BENDERS_REGION_DUALS_ENV, "basic").strip().lower()
+    if mode not in ("basic", "interior"):
+        _logger.warning(
+            "Benders: ignoring unknown %s=%r (must be 'basic' or 'interior')",
+            _BENDERS_REGION_DUALS_ENV, mode,
+        )
+        mode = "basic"
+    return mode
+
 
 def _resolve_benders_in_out_weight(db_value: float = 0.0) -> float:
     """Resolve the Benders in-out separation weight ``λ``.
@@ -1508,6 +1531,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     splits = _region_filter.split(
         data, regions=regions, benders_uncap_cross_region=True
     )
+    region_duals = _resolve_benders_region_duals()
     subproblems = [Problem() for _ in splits]
     for s, pb in zip(splits, subproblems):
         build_problem(pb, s.data)
@@ -1525,7 +1549,15 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # build and the option persists across warm re-solves.  ``on`` is already
         # the HiGHS default, so this is byte-identical today — it is regression-
         # proofing, not a numerics change.
-        pb.set_solver_option("run_crossover", "on")
+        # EXPERIMENTAL override (env, default OFF): ``interior`` swaps the pin
+        # for barrier-without-crossover so cut slopes come from a central dual
+        # of the (possibly flat) optimal face — see _BENDERS_REGION_DUALS_ENV.
+        if region_duals == "interior":
+            pb.set_solver_option("solver", "ipm")
+            pb.set_solver_option("run_crossover", "off")
+            pb.set_solver_option("ipm_optimality_tolerance", 1e-9)
+        else:
+            pb.set_solver_option("run_crossover", "on")
     warm = [WarmProblem(p) for p in subproblems]
     # Silence each region's per-solve HiGHS log by default (output_flag
     # persists across the cold build below and every warm parallel re-solve).
