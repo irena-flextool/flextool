@@ -88,6 +88,7 @@ from polar_high.benders import (
     SubproblemHandle,
     SubproblemNotOptimal,
     SubproblemResult,
+    evaluate_at_point,
     solve_benders_loop,
 )
 from polar_high.benders import _check_cuts_satisfied as _ph_check_cuts_satisfied
@@ -1390,6 +1391,48 @@ class _BendersMaster:
         pre-coordinator in-module loop's call."""
         return self.master_native_cost(self._last_C_by_conn)
 
+    def native_cost_at(self, point: dict[int, float]) -> float:
+        """OPTIONAL coordinator protocol member (:meth:`polar_high.benders.
+        BendersMaster.native_cost_at`): the master's NATIVE cost with every
+        coupling flow PINNED at ``point`` (``{master f col-id -> value}``).
+
+        The exact machinery of :func:`_master_autarky_cost` (save the
+        coupling-column bounds, pin, solve once, read ``obj − Σ η``, restore
+        the bounds in a ``finally``), but pinned to ``point`` values instead
+        of 0 — so it evaluates the master's own cost at an ARBITRARY feasible
+        coupling point.  Used ONLY by the off-loop single-point pin
+        diagnostic (:func:`polar_high.benders.evaluate_at_point`); it is never
+        reached from :func:`solve_benders_loop` (which reads the native cost
+        at the master's own vertex via :meth:`native_cost`), so it adds no
+        byte-parity risk to the loop.  ``point`` must carry a value for every
+        coupling f col-id (the diagnostic supplies the full arc universe).
+        """
+        wp = self._wp
+        col_ids = np.concatenate(
+            [a.f_col_ids for a in self.arcs]
+        ).astype(np.int64)
+        vals = np.array(
+            [float(point[int(c)]) for c in col_ids], dtype=np.float64
+        )
+        lo, hi = wp.get_col_bounds(col_ids)
+        wp.fix_col_ids(col_ids, vals)
+        try:
+            sol = wp.solve(retry_on_unknown=True)
+            if not sol.optimal:
+                status = wp._h.getModelStatus()
+                raise RuntimeError(
+                    "Benders pin diagnostic: the master problem did not "
+                    "solve to optimality with every node-group coupling "
+                    "flow pinned at the diagnostic point (solver status "
+                    f"{status})."
+                )
+            eta_sum = sum(
+                float(sol.col_value[col]) for col in self._eta_col.values()
+            )
+            return float(sol.obj) - eta_sum
+        finally:
+            wp.set_col_bounds(col_ids, lo, hi)
+
     def project_point(self, f: dict[int, float], sol, *,
                       hard_fail: bool = True) -> float:
         """Coordinator protocol: clamp the coupling point ``f`` DOWN to the
@@ -1910,6 +1953,186 @@ def solve_benders(
             reset_global_axis_enums(_enums_token)
 
 
+_BENDERS_PIN_DIAGNOSTIC_ENV = "FLEXTOOL_BENDERS_PIN_DIAGNOSTIC"
+_BENDERS_PIN_MONOLITH_OBJ_ENV = "FLEXTOOL_BENDERS_PIN_MONOLITH_OBJ"
+_BENDERS_PIN_BLOWUP_MULT_ENV = "FLEXTOOL_BENDERS_PIN_BLOWUP_MULT"
+# Exactness band for the pin diagnostic's check (a): |Σcost − monolith| /
+# monolith must be within this to call the decomposition "exact at the
+# optimum".
+_BENDERS_PIN_EXACT_BAND = 1e-2
+
+
+def _maybe_run_pin_diagnostic(
+    *, master, sub_adapters, arcs, f_bar,
+    obj_scale: float, inv_s: float, eff_workers: int,
+) -> "BendersResult | None":
+    """The reusable go/no-go pin diagnostic (handoff §3).
+
+    Gated ENTIRELY by the ``FLEXTOOL_BENDERS_PIN_DIAGNOSTIC`` env var (a path
+    to a point file); UNSET ⇒ returns ``None`` and the caller runs the normal
+    loop, byte-identical to today.  When set, it does NOT run the Benders loop
+    — it evaluates the decomposed system ONCE at the pinned point and returns a
+    :class:`BendersResult` carrying the diagnostic totals.
+
+    The point file is a parquet with columns ``(p, source, sink, d, t,
+    value)`` — the monolith's optimal flows on the coupling connections, keyed
+    by the SAME ``(p, source, sink, d, t)`` identity each arc's ``dim_tuples``
+    carry.  We map those onto the master coupling col-ids via
+    ``zip(a.dim_tuples, a.f_col_ids)`` (the col-id ↔ (connection, source,
+    sink, d, t) map), build the full coupling point over every arc f col-id
+    (missing cells default to 0 and are counted), then:
+
+      1. evaluate at ZERO coupling (``f_bar``) → per-region stand-alone
+         reference cost;
+      2. evaluate at the monolith point → per-region cost + master native
+         cost, with each region flagged "blew up" iff it exceeds
+         ``blowup_mult × stand-alone``.
+
+    Verdict (handoff §3): (b) NO region blew up ⇒ the decomposition
+    reproduces the monolith at its optimum with bounded recourse ⇒ **GO**;
+    any region blew up ⇒ **STRUCTURAL**.  Check (a) — ``Σ region cost +
+    master native ≈ monolith`` — is a corroborating exactness re-proof,
+    printed when the monolith objective is supplied via
+    ``FLEXTOOL_BENDERS_PIN_MONOLITH_OBJ`` (real units).
+    """
+    point_path = os.environ.get(_BENDERS_PIN_DIAGNOSTIC_ENV)
+    if not point_path:
+        return None
+
+    blowup_mult = float(os.environ.get(_BENDERS_PIN_BLOWUP_MULT_ENV, "100"))
+    mono_env = os.environ.get(_BENDERS_PIN_MONOLITH_OBJ_ENV)
+    monolith_real = float(mono_env) if mono_env else None
+
+    def _emit(line: str) -> None:
+        print(line, flush=True)
+
+    _emit(
+        f"[benders pin-diagnostic] loading monolith handover flows from "
+        f"{point_path!r}"
+    )
+    pts = pl.read_parquet(point_path)
+    # Lookup keyed by the arc's (p, source, sink, d, t) identity.
+    lookup: dict[tuple, float] = {
+        (r["p"], r["source"], r["sink"], r["d"], r["t"]): float(r["value"])
+        for r in pts.iter_rows(named=True)
+    }
+    # Build the full coupling point over EVERY arc f col-id; missing cells
+    # default to 0 (the monolith carried no flow there) and are counted.
+    point: dict[int, float] = {}
+    n_cells = 0
+    n_missing = 0
+    for a in arcs:
+        for dt, cid in zip(a.dim_tuples, a.f_col_ids):
+            n_cells += 1
+            v = lookup.get(tuple(dt))
+            if v is None:
+                n_missing += 1
+                v = 0.0
+            point[int(cid)] = v
+    _emit(
+        f"[benders pin-diagnostic] mapped {n_cells} coupling cell(s) onto "
+        f"master col-ids ({n_missing} not present in the monolith flows → "
+        f"pinned to 0)"
+    )
+
+    # (1) stand-alone reference at zero coupling; (2) the monolith point.
+    ref = evaluate_at_point(
+        master, sub_adapters, dict(f_bar), workers=eff_workers,
+    )
+    res = evaluate_at_point(
+        master, sub_adapters, point,
+        reference_costs=ref.sub_costs, blowup_mult=blowup_mult,
+        workers=eff_workers,
+    )
+
+    # Report in REAL units (÷ obj_scale).
+    total_real = res.total_cost * inv_s
+    master_real = (
+        res.master_native_cost * inv_s
+        if res.master_native_cost is not None else None
+    )
+    _emit("[benders pin-diagnostic] === region + master breakdown "
+          "(monolith optimal handover flows pinned) ===")
+    for name in sorted(res.sub_costs):
+        cost_real = res.sub_costs[name] * inv_s
+        ref_real = ref.sub_costs.get(name, 0.0) * inv_s
+        ratio = (
+            abs(res.sub_costs[name]) / abs(ref.sub_costs[name])
+            if ref.sub_costs.get(name) else float("inf")
+        )
+        flag = "BLEW UP" if res.blew_up.get(name) else "ok"
+        _emit(
+            f"[benders pin-diagnostic]   region {name!r}: cost={cost_real:.6e} "
+            f"(stand-alone={ref_real:.6e}, ratio={ratio:.3g}×) [{flag}]"
+        )
+    if master_real is not None:
+        _emit(
+            f"[benders pin-diagnostic]   master native cost = {master_real:.6e}"
+        )
+    _emit(
+        f"[benders pin-diagnostic]   TOTAL (Σ region + master native) = "
+        f"{total_real:.6e}"
+    )
+
+    any_blew_up = any(res.blew_up.values())
+    # (a) exactness re-proof (corroborating).
+    if monolith_real is not None:
+        rel = abs(total_real - monolith_real) / max(1.0, abs(monolith_real))
+        exact_ok = rel <= _BENDERS_PIN_EXACT_BAND
+        _emit(
+            f"[benders pin-diagnostic]   (a) exactness: total {total_real:.6e} "
+            f"vs monolith {monolith_real:.6e} → rel diff {rel:.3e} "
+            f"({'MATCH' if exact_ok else 'MISMATCH'} at band "
+            f"{_BENDERS_PIN_EXACT_BAND:g})"
+        )
+    else:
+        exact_ok = None
+        _emit(
+            "[benders pin-diagnostic]   (a) exactness: monolith objective not "
+            f"supplied ({_BENDERS_PIN_MONOLITH_OBJ_ENV} unset) — skipping the "
+            "re-proof; (b) is the decisive check"
+        )
+    # (b) the decisive structural check.
+    _emit(
+        f"[benders pin-diagnostic]   (b) recourse: "
+        f"{'a region HIT its penalty (blew up)' if any_blew_up else 'no region hit its penalty'}"
+    )
+
+    verdict = "STRUCTURAL" if any_blew_up else "GO"
+    if verdict == "GO":
+        _emit(
+            "[benders pin-diagnostic] VERDICT: GO — the decomposed system "
+            "reproduces the monolith at its optimal handover flows with "
+            "bounded recourse; the stall is stabilization/volume, not "
+            "structural."
+        )
+        if exact_ok is False:
+            _emit(
+                "[benders pin-diagnostic]   NOTE: (b) holds but (a) mismatched "
+                "— check the point mapping / objective scale before trusting "
+                "the exactness re-proof."
+            )
+    else:
+        blown = sorted(n for n, b in res.blew_up.items() if b)
+        _emit(
+            "[benders pin-diagnostic] VERDICT: STRUCTURAL — region(s) "
+            f"{blown} cannot reproduce the monolith even at the optimal "
+            "handover flows (hit penalty/slack). Rank 1/2 will NOT save it; "
+            "re-open the partition. STOP and surface this."
+        )
+
+    return BendersResult(
+        converged=(verdict == "GO"),
+        iterations=0,
+        total_objective=total_real,
+        lower_bound=total_real,
+        upper_bound=total_real,
+        gap=0.0,
+        region_costs={n: c * inv_s for n, c in res.sub_costs.items()},
+        invest={},
+    )
+
+
 def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          build_problem, master="flextool",
                          obj_scale: float = 1.0,
@@ -2387,6 +2610,21 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             if monolith_objective is not None else None
         ),
     )
+
+    # --- OFF-LOOP pin diagnostic (handoff §3), env-gated by
+    # ``FLEXTOOL_BENDERS_PIN_DIAGNOSTIC``.  When set, evaluate the decomposed
+    # system ONCE at the monolith's optimal handover flows and return the
+    # go/no-go verdict WITHOUT running the loop; UNSET ⇒ ``None`` and the
+    # normal loop runs, byte-identical to today (nothing below reads the env
+    # var).  Placed AFTER the split/subproblems/master are built and BEFORE
+    # the coordinator, so it reuses the exact same adapters the loop would.
+    _pin_result = _maybe_run_pin_diagnostic(
+        master=master, sub_adapters=sub_adapters, arcs=arcs,
+        f_bar=f_bar, obj_scale=obj_scale,
+        inv_s=inv_s, eff_workers=eff_workers,
+    )
+    if _pin_result is not None:
+        return _pin_result
 
     # --- Run the generic coordinator.  Its structured exceptions are
     # rendered below into the exact plain-English diagnostics this driver has
