@@ -463,21 +463,34 @@ def test_mixed_resolution_coupling_raises_through_driver(_workdirs) -> None:
     assert "new_stepduration" in msg
 
 
-def test_in_out_weight_rejected_with_master_hosted(mh_data) -> None:
-    """λ>0 in-out separation evaluates the upper bound with the master
-    at its own vertex but the node groups at interior points — INVALID
-    once the master's native cost depends on the coupling flows (it
-    hosts real demand).  The driver must reject the combination up
-    front instead of producing an under-costed bound."""
-    with pytest.raises(RuntimeError) as excinfo:
-        solve_benders(
-            mh_data, REGIONS_AC, max_iters=5, tol=1e-4,
-            scale_the_objective=OBJ_SCALE, in_out_weight=0.5,
-        )
-    msg = str(excinfo.value)
-    assert "in-out" in msg
-    assert "master-hosted" in msg
-    assert "What this means:" in msg
+def test_in_out_with_master_hosted_converges_to_monolith(mh_data, monolith) -> None:
+    """λ>0 in-out separation IS supported with master-hosted nodes: the
+    coordinator scores the upper bound at one consistent overlay point
+    (``native_cost_at``) instead of the invalid mixed sum, so the run
+    produces a VALID bound and still converges to the monolith optimum.
+
+    ``_BendersMaster.native_cost_flow_dependent`` is True here (the master
+    hosts the lh2_B/elec_B balances), so the coordinator takes the
+    consistent-point UB path; the old up-front rejection is gone."""
+    M = monolith.obj
+    res = solve_benders(
+        mh_data, REGIONS_AC, max_iters=20, tol=1e-4,
+        monolith_objective=M, scale_the_objective=OBJ_SCALE,
+        in_out_weight=0.5,
+    )
+    assert res.converged, (
+        f"Benders (in-out λ=0.5, master-hosted) did not converge: "
+        f"gap={res.gap:.3e} after {res.iterations} iters "
+        f"(LB={res.lower_bound:.6e} UB={res.upper_bound:.6e})"
+    )
+    assert np.isclose(res.total_objective, M, rtol=1e-4), (
+        f"Benders in-out UB {res.total_objective:.8e} != monolith M "
+        f"{M:.8e} (LB={res.lower_bound:.8e}, gap={res.gap:.3e})"
+    )
+    # VALID lower bound: the consistent-point UB keeps LB <= M.
+    assert res.lower_bound <= M * (1 + 1e-9), (
+        f"Benders in-out LB {res.lower_bound:.8e} EXCEEDS M {M:.8e}"
+    )
 
 
 def test_missing_penalty_raises_plain_english_via_driver(mh_data) -> None:

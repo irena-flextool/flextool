@@ -1433,6 +1433,26 @@ class _BendersMaster:
         finally:
             wp.set_col_bounds(col_ids, lo, hi)
 
+    @property
+    def native_cost_flow_dependent(self) -> bool:
+        """OPTIONAL coordinator protocol member
+        (:attr:`polar_high.benders.BendersMaster.native_cost_flow_dependent`):
+        ``True`` iff the master's native cost DEPENDS on the coupling flow
+        columns, so the coordinator must score the in-out UB at one consistent
+        overlay point (via :meth:`native_cost_at`) instead of the mixed
+        ``native_cost(msol)`` sum.
+
+        Flow-dependent exactly when the master hosts balance/storage nodes:
+        those nodes' balances are filled by the coupling flows, so the
+        master's own cost (their penalty slack + storage terms) is a genuine
+        function of the coupling flow.  In the current (trade-invest)
+        partition ``self._master_hosted_nodes`` is empty and the master's
+        native cost is pure coupling-connection invest cost — independent of
+        the coupling FLOW columns — so this returns ``False`` and the
+        coordinator keeps its exact ``native_cost(msol)`` UB verbatim
+        (byte-parity)."""
+        return bool(self._master_hosted_nodes)
+
     def project_point(self, f: dict[int, float], sol, *,
                       hard_fail: bool = True) -> float:
         """Coordinator protocol: clamp the coupling point ``f`` DOWN to the
@@ -2430,41 +2450,26 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # coordinator by construction).
     in_out_weight = _resolve_benders_in_out_weight(in_out_weight)
     if in_out_weight > 0.0 and master_hosted:
-        # λ>0 evaluates the UB as master-native-cost(master vertex) +
-        # Σ cost_r(interior f_sep).  That mixed point is a valid bound
-        # only while the master's native cost is INDEPENDENT of the
-        # coupling flows; a master hosting balance/storage nodes serves
-        # real demand through them, so the mixed UB UNDER-COUNTS cost
-        # (measured: LB legitimately crosses it → sandwich hard-fail).
-        # Reject the combination up front — loud, never a silent
-        # invalid bound.
-        raise RuntimeError(_benders_failure_message(
-            summary=(
-                f"Benders in-out stabilization (weight "
-                f"{in_out_weight:g}) is not supported together with "
-                f"master-hosted nodes ({len(master_hosted)} balance/"
-                f"storage node(s) outside every node group)."
-            ),
-            meaning=(
-                "With in-out stabilization the node-group subproblems "
-                "are evaluated at interior points while the master "
-                "problem stays at its own solution. That mixed "
-                "evaluation is a valid upper bound only while the "
-                "master's own cost does not depend on the coupling "
-                "flows — but a master hosting balance/storage nodes "
-                "serves real demand through those flows, so the "
-                "combination reports upper bounds BELOW the true cost "
-                "(an invalid bound that later fails the bound checks) "
-                "instead of merely converging slower."
-            ),
-            how_to_avoid=(
-                "Set the solve's benders_in_out_weight to 0 (and unset "
-                "any FLEXTOOL_BENDERS_IN_OUT_WEIGHT override) when the "
-                "model has master-hosted nodes, or add every balance/"
-                "storage node to a node group so nothing is hosted in "
-                "the master."
-            ),
-        ))
+        # λ>0 with master-hosted nodes is SUPPORTED via the coordinator's
+        # consistent-point upper bound.  A master hosting balance/storage
+        # nodes serves real demand through the coupling flows, so its native
+        # cost DEPENDS on those flows; the naive UB
+        # ``native_cost(master vertex) + Σ cost_r(interior f_sep)`` is then a
+        # mixed-point sum that under-counts (measured: LB legitimately crosses
+        # it → sandwich hard-fail).  The coordinator detects this via
+        # :attr:`_BendersMaster.native_cost_flow_dependent` (True exactly when
+        # master-hosted nodes exist) and re-evaluates the master's native cost
+        # at the SAME overlay point the subproblems used
+        # (:meth:`_BendersMaster.native_cost_at`), so the UB is scored at one
+        # consistent feasible primal — a valid L-shaped feasible-point bound.
+        # No guard needed; the current (non-master-hosted) partition keeps its
+        # exact ``native_cost(msol)`` UB verbatim (flow_dependent = False).
+        _logger.info(
+            "Benders: in-out separation ON (weight λ=%.3f) with %d "
+            "master-hosted node(s); UB scored at the consistent overlay "
+            "point (native_cost_at) to keep the bound valid.",
+            in_out_weight, len(master_hosted),
+        )
     if in_out_weight > 0.0:
         _logger.info(
             "Benders: in-out separation ON (weight λ=%.3f) over %d region(s)",
