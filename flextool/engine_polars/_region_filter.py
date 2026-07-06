@@ -536,21 +536,23 @@ def _validate_no_straddling_units(
             )
 
 
-def _validate_user_constraints(
+def _user_constraint_sides(
     data: FlexData,
     all_region_nodes: set[str],
     master_nodes: "frozenset[str] | set[str]",
     master_local_procs: set[str],
-) -> None:
-    """Hard-error on any user constraint referencing both master-side
-    and region-side entities.
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Aggregate, per user-constraint id (``cn``), the decomposition
+    sides ("master" / "region") of every referenced entity across every
+    user-constraint frame.
 
-    Sides are aggregated per constraint id (``cn``) across every
-    user-constraint frame: a constraint mixing a master-hosted node (or
-    a master-local process) with a region node (or a region process)
-    cannot live whole on either side of the decomposition — splitting
-    it would silently lose terms.  Entities on neither side (shared
-    nodes, non-node tokens) are neutral.
+    Shared by the mixed-constraint hard error
+    (:func:`_validate_user_constraints`) and the master/region row
+    partition (:func:`_master_side_constraint_ids`).  Entities on
+    neither side (shared nodes, non-node tokens) are neutral.
+
+    Returns ``(sides_by_cn, refs_by_cn)``; ``refs_by_cn`` carries
+    human-readable ``"entity (side)"`` strings for error messages.
     """
     sides_by_cn: dict[str, set[str]] = {}
     refs_by_cn: dict[str, set[str]] = {}
@@ -618,6 +620,26 @@ def _validate_user_constraints(
             for side in proc_sides.get(r["p"], set()):
                 _add(r["cn"], r["p"], side)
 
+    return sides_by_cn, refs_by_cn
+
+
+def _validate_user_constraints(
+    data: FlexData,
+    all_region_nodes: set[str],
+    master_nodes: "frozenset[str] | set[str]",
+    master_local_procs: set[str],
+) -> None:
+    """Hard-error on any user constraint referencing both master-side
+    and region-side entities.
+
+    Sides are aggregated per constraint id (``cn``) across every
+    user-constraint frame (:func:`_user_constraint_sides`): a constraint
+    mixing a master-hosted node (or a master-local process) with a
+    region node (or a region process) cannot live whole on either side
+    of the decomposition — splitting it would silently lose terms.
+    """
+    sides_by_cn, refs_by_cn = _user_constraint_sides(
+        data, all_region_nodes, master_nodes, master_local_procs)
     for cn in sorted(sides_by_cn):
         if {"region", "master"} <= sides_by_cn[cn]:
             raise RuntimeError(
@@ -630,14 +652,159 @@ def _validate_user_constraints(
             )
 
 
+def _master_side_constraint_ids(
+    data: FlexData,
+    all_region_nodes: set[str],
+    master_nodes: "frozenset[str] | set[str]",
+    master_local_procs: set[str],
+) -> set[str]:
+    """User-constraint ids (``cn``) whose EVERY sided entity reference
+    is master-side.  Those constraints live whole in the Benders master:
+    :func:`master_network_data` keeps exactly their rows and
+    :func:`split` drops them from every region (a region copy would
+    degenerate to ``0 sense constant`` once its master-keyed coefficient
+    rows are scrubbed).  Assumes :func:`_validate_user_constraints` ran
+    (no mixed constraints)."""
+    sides_by_cn, _ = _user_constraint_sides(
+        data, all_region_nodes, master_nodes, master_local_procs)
+    return {cn for cn, sides in sides_by_cn.items() if sides == {"master"}}
+
+
+#: Group-feature SET fields (``(g,)``): a group present in one of these
+#: activates the corresponding group-level constraint family
+#: (capacity margin / inertia / non-sync).  Membership is ``group_node``.
+_GROUP_FEATURE_SET_FIELDS: tuple[str, ...] = (
+    "groupCapacityMargin", "groupInertia", "groupNonSync",
+)
+
+#: Group-feature PARAM fields (``(g,)`` / ``(g, d)``) filtered alongside
+#: the set fields when partitioning feature groups to the master.
+_GROUP_FEATURE_PARAM_FIELDS: tuple[str, ...] = (
+    "p_inv_group_cap", "p_group_capacity_for_scaling",
+    "pdGroup_capacity_margin",
+)
+
+
+def _master_side_feature_groups(
+    data: FlexData,
+    all_region_nodes: set[str],
+    master_nodes: "frozenset[str] | set[str]",
+) -> set[str]:
+    """Feature-carrying groups whose member nodes are ALL master-hosted.
+
+    A group in one of the :data:`_GROUP_FEATURE_SET_FIELDS` sets with
+    at least one master-hosted member must have EVERY member
+    master-hosted — the group constraint sums over its members and
+    cannot be enforced whole on either side otherwise (hard error,
+    never a silent degrade).  Groups with no master members are left to
+    the regions (today's semantics); bare ``group_node`` membership
+    rows of non-feature groups are filtered silently.
+    """
+    feature_gs: set[str] = set()
+    for fld in _GROUP_FEATURE_SET_FIELDS:
+        f = getattr(data, fld, None)
+        if f is not None and f.height > 0:
+            feature_gs |= set(f["g"].cast(pl.Utf8).to_list())
+    if not feature_gs:
+        return set()
+    members_by_g: dict[str, set[str]] = {}
+    gn = data.group_node
+    if gn is not None:
+        for r in gn.iter_rows(named=True):
+            members_by_g.setdefault(r["g"], set()).add(r["n"])
+    master = set(master_nodes)
+    kept: set[str] = set()
+    for g in sorted(feature_gs):
+        members = members_by_g.get(g, set())
+        master_hit = members & master
+        if not master_hit:
+            continue
+        if members <= master:
+            kept.add(g)
+            continue
+        raise RuntimeError(
+            f"split: feature-carrying group {g!r} straddles the "
+            f"region/master boundary — it has master-hosted member "
+            f"node(s) {sorted(master_hit)} AND non-master member(s) "
+            f"{sorted(members - master)}.  A group-level constraint "
+            f"(capacity margin / inertia / non-sync) sums over its "
+            f"members and cannot be split between a region subproblem "
+            f"and the Benders master — regroup the nodes so every "
+            f"member is on one side."
+        )
+    return kept
+
+
+def _co2_master_partition(
+    data: FlexData,
+    master_local_triples: set[tuple[str, str, str]],
+    region_master_triples: set[tuple[str, str, str]],
+) -> set[str]:
+    """Validate the CO2 frames against the master boundary and return
+    the CO2-capped groups whose EVERY capped flow is a master-local arc
+    (those cap constraints live whole in the master).
+
+    Hard errors (never a silent degrade):
+
+    * a CO2-priced flow row on a region↔master coupling arc — the arc's
+      flow lives natively in the master while the region holds the
+      half-flow, so neither side can carry the CO2 cost whole;
+    * a capped group mixing master-local and region-side flows — the
+      shared cap cannot be enforced on either side alone.
+    """
+    for fld in ("flow_from_co2_priced", "flow_from_co2_priced_noEff"):
+        df = getattr(data, fld, None)
+        if df is None or df.height == 0:
+            continue
+        for r in df.iter_rows(named=True):
+            t = (r["p"], r["source"], r["sink"])
+            if t in region_master_triples:
+                raise RuntimeError(
+                    f"split: CO2-priced flow {t} sits on a "
+                    f"region↔master coupling arc — the CO2 cost "
+                    f"cannot be split between a region subproblem and "
+                    f"the Benders master.  Keep CO2-priced flows off "
+                    f"the handover connections."
+                )
+    master_flags_by_g: dict[str, list[bool]] = {}
+    for fld in ("flow_from_co2_capped", "flow_from_co2_capped_noEff",
+                "flow_from_co2_capped_total",
+                "flow_from_co2_capped_total_noEff"):
+        df = getattr(data, fld, None)
+        if df is None or df.height == 0:
+            continue
+        for r in df.iter_rows(named=True):
+            t = (r["p"], r["source"], r["sink"])
+            master_flags_by_g.setdefault(r["g"], []).append(
+                t in master_local_triples)
+    kept: set[str] = set()
+    for g in sorted(master_flags_by_g):
+        flags = master_flags_by_g[g]
+        if all(flags):
+            kept.add(g)
+        elif any(flags):
+            raise RuntimeError(
+                f"split: CO2-capped group {g!r} straddles the "
+                f"region/master boundary — it caps both master-local "
+                f"and region-side flows.  A shared CO2 cap cannot be "
+                f"split between a region subproblem and the Benders "
+                f"master — regroup so every capped flow is on one side."
+            )
+    return kept
+
+
 def _drop_master_rows(
     rd: FlexData,
     master_nodes: "frozenset[str] | set[str]",
     master_procs: set[str],
+    master_cns: "frozenset[str] | set[str]" = frozenset(),
+    master_groups: "frozenset[str] | set[str]" = frozenset(),
 ) -> FlexData:
     """Scrub every region frame/Param of master-hosted content: rows
     keyed to a master-hosted node (``n`` axis), a master-local process
-    (``p`` axis), or either (entity ``e`` axis).
+    (``p`` axis), either (entity ``e`` axis), an all-master user
+    constraint (``cn`` axis) or an all-master feature / CO2-cap group
+    (``g`` axis).
 
     ``keep_nodes`` / ``keep_procs`` filtering already excludes master
     entities from the frames :func:`_build_region_data` filters
@@ -645,13 +812,22 @@ def _drop_master_rows(
     historically carried through whole under shared-replicate semantics
     (invest/annuity/cost frames, ``process_indirect``, node profiles,
     …) — regions must carry NO rows for master-hosted entities (F3).
+    The ``cn`` drop covers the constraint-id-only frames
+    (``p_constraint_constant``, ``cdt_eq/le/ge``) whose master-keyed
+    coefficient rows are scrubbed by the ``n``/``p`` drops — without it
+    a region copy of an all-master constraint degenerates to
+    ``0 sense constant``.  The ``g`` drop is the analogous guard for
+    all-master group features (a region copy with empty membership
+    would still charge the feature's slack penalty).
     Arc rows touching a master node are dropped separately via the
     coupling/master-local triples in ``cross_arcs_by_pss``.
     """
     node_drop = set(master_nodes)
     proc_drop = set(master_procs)
     entity_drop = node_drop | proc_drop
-    if not entity_drop:
+    cn_drop = set(master_cns)
+    g_drop = set(master_groups)
+    if not (entity_drop or cn_drop or g_drop):
         return rd
     for f in dataclasses.fields(rd):
         v = getattr(rd, f.name)
@@ -665,7 +841,8 @@ def _drop_master_rows(
             continue
         changed = False
         for col, drop in (("n", node_drop), ("p", proc_drop),
-                          ("e", entity_drop)):
+                          ("e", entity_drop), ("cn", cn_drop),
+                          ("g", g_drop)):
             if drop and col in frame.columns:
                 frame = frame.filter(~_is_in_keep(col, drop))
                 changed = True
@@ -694,6 +871,8 @@ def _build_region_data(
     *,
     master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
     master_local_procs: "set[str] | frozenset[str]" = frozenset(),
+    master_cns: "frozenset[str] | set[str]" = frozenset(),
+    master_groups: "frozenset[str] | set[str]" = frozenset(),
 ) -> FlexData:
     """Construct one region's :class:`FlexData` by filtering+rewriting
     the whole-system frames/Params.
@@ -703,10 +882,11 @@ def _build_region_data(
     REMOVE from this region's process frames (they're being replaced
     by half-flow virtual arcs; master-hosted mode also routes the
     region↔master coupling arcs and the master-local arcs through it).
-    ``master_hosted_nodes`` / ``master_local_procs`` (master-hosted
-    mode only; empty by default ⇒ byte-identical path) trigger the
-    :func:`_drop_master_rows` scrub so the region carries NO rows for
-    master-hosted entities.
+    ``master_hosted_nodes`` / ``master_local_procs`` / ``master_cns`` /
+    ``master_groups`` (master-hosted mode only; empty by default ⇒
+    byte-identical path) trigger the :func:`_drop_master_rows` scrub so
+    the region carries NO rows for master-hosted entities, all-master
+    user constraints or all-master feature/CO2-cap groups.
     """
     # Start by shallow-copying the dataclass and clearing fields we'll
     # explicitly rewrite.
@@ -868,9 +1048,11 @@ def _build_region_data(
     # splitter otherwise carries through whole (invest/annuity/cost,
     # process_indirect, node profiles, …).  No-op when both sets are
     # empty (the byte-identical default path).
-    if master_hosted_nodes or master_local_procs:
+    if (master_hosted_nodes or master_local_procs or master_cns
+            or master_groups):
         new = _drop_master_rows(
-            new, master_hosted_nodes, set(master_local_procs))
+            new, master_hosted_nodes, set(master_local_procs),
+            master_cns=master_cns, master_groups=master_groups)
 
     # ---- Inject virtual half-flow arcs ----
     if half_flows:
@@ -1490,11 +1672,90 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Master-hosted-mode partition of ``_MASTER_NODE_FIELDS``.  With a
+# non-empty ``master_hosted_nodes`` set the master KEEPS master-side
+# content instead of nulling everything: each tuple below routes its
+# fields through the matching keep-filter in ``master_network_data``.
+# Every ``_MASTER_NODE_FIELDS`` member appears in exactly one of these
+# groups (pinned by a test) so a schema addition to the legacy tuple
+# cannot silently skip the master-hosted path.
+# ---------------------------------------------------------------------------
+
+#: ``n``-keyed frames/Params → filter rows to the master-hosted nodes
+#: (balance/state/storage/profile/availability/fix/invest-set frames;
+#: ``group_node`` bare membership rows are filtered silently the same
+#: way, mirroring ``split``).
+_MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
+    "nodeBalance_dt", "nodeBalancePeriod",
+    "nodeState", "nodeState_dt", "nodeState_first_dt", "nodeState_last_dt",
+    "nodeState_rp", "nodeStateBlock",
+    "storage_bind_within_timeblock", "storage_bind_forward_only",
+    "storage_bind_within_solve", "storage_bind_within_solve_blended_weights",
+    "storage_bind_within_period_blended_weights",
+    "storage_bind_forward_only_blended_weights", "storage_fix_start",
+    "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
+    "p_state_start", "p_state_existing_capacity",
+    "storage_use_reference_value", "p_storage_state_reference_value",
+    "p_storage_state_reference_price",
+    "node_profile_upper", "node_profile_lower", "node_profile_fixed",
+    "p_node_availability", "p_roll_continue_state",
+    "n_fix_storage_quantity", "ndt_fix_storage_quantity",
+    "p_fix_storage_quantity", "n_fix_storage_usage",
+    "ndt_fix_storage_usage", "p_fix_storage_usage",
+    "p_node_capacity_for_scaling",
+    "nd_invest_set", "nd_divest_set",
+    "group_node",
+)
+
+#: ``cn``-keyed user-constraint frames/Params → keep rows of the
+#: all-master constraint ids (:func:`_master_side_constraint_ids`).
+_MASTER_CN_KEYED_FIELDS: tuple[str, ...] = (
+    "flow_constraint_idx", "p_flow_constraint_coef",
+    "p_constraint_constant", "cdt_eq", "cdt_le", "cdt_ge",
+    "p_node_constraint_invested_capacity_coeff",
+    "p_process_constraint_invested_capacity_coeff",
+    "p_node_constraint_state_coeff",
+    "p_node_constraint_prebuilt_capacity_coeff",
+    "p_process_constraint_prebuilt_capacity_coeff",
+)
+
+#: Arc-keyed CO2-priced flow frames → keep master-local arc rows
+#: (coupling-arc rows hard-error in :func:`_co2_master_partition`).
+_MASTER_CO2_ARC_FIELDS: tuple[str, ...] = (
+    "flow_from_co2_priced", "flow_from_co2_priced_noEff",
+)
+
+#: ``g``-keyed CO2-cap frames → keep rows of the all-master capped
+#: groups (:func:`_co2_master_partition`).
+_MASTER_CO2_GROUP_FIELDS: tuple[str, ...] = (
+    "group_co2_max_period", "flow_from_co2_capped",
+    "flow_from_co2_capped_noEff", "p_co2_max_period",
+    "group_d_co2_capped",
+    "group_co2_max_total", "flow_from_co2_capped_total",
+    "flow_from_co2_capped_total_noEff", "p_co2_max_total",
+)
+
+#: Pure lookup tables consumed by the kept CO2 rows via joins — carried
+#: whole (rows for un-kept groups/commodities are inert).
+_MASTER_CO2_LOOKUP_FIELDS: tuple[str, ...] = (
+    "p_co2_content", "p_co2_price",
+)
+
+#: ``p``-keyed group-feature side frames → filter to the master's
+#: kept processes (rows for absent flows are inert Where-filters).
+_MASTER_GROUP_PROC_FIELDS: tuple[str, ...] = (
+    "process_sink_inertia", "process_source_inertia",
+    "process_sink_nonSync", "process_group_inside_nonSync",
+)
+
+
 def master_network_data(
     data: FlexData,
     regions: list[str],
     *,
     region_membership: dict[str, dict[str, set[str]]] | None = None,
+    master_hosted_nodes: frozenset[str] = frozenset(),
 ) -> FlexData:
     """Build the Benders MASTER's reduced :class:`FlexData` — the INVERSE
     of :func:`split`.
@@ -1524,14 +1785,41 @@ def master_network_data(
     region_membership
         Pre-computed membership (see :func:`load_region_membership`); when
         omitted, re-derived from *data*.
+    master_hosted_nodes
+        Master-hosted node mode (see :func:`compute_master_hosted_nodes`
+        / :func:`split`).  With the default EMPTY set the function takes
+        today's exact path (explicit early branches — byte-identical).
+        Non-empty: the master KEEPS the master-side model instead of
+        emptying it — see Notes.
 
     Notes
     -----
-    The reduced FlexData KEEPS only cross-arc rows in the process / arc /
-    arc-cost / arc-block frames and the cross connections in the invest /
-    unitsize / max-units params; EVERY node-keyed frame (balance, state,
-    inflow, penalties, storage, profiles, CO2, groups, user constraints)
-    is emptied (``None``).  The solve-data-keyed timeline frames (``dt``,
+    With the default empty ``master_hosted_nodes``, the reduced FlexData
+    KEEPS only cross-arc rows in the process / arc / arc-cost /
+    arc-block frames and the cross connections in the invest / unitsize
+    / max-units params; EVERY node-keyed frame (balance, state, inflow,
+    penalties, storage, profiles, CO2, groups, user constraints) is
+    emptied (``None``).
+
+    With a NON-EMPTY ``master_hosted_nodes``:
+
+    * the arc keep-set widens to cross-region ∪ region↔master coupling
+      ∪ master-local arcs (and the proc/cost keep-sets follow), so
+      master-local connections AND units build natively in the master;
+    * ``n``-keyed frames are FILTERED to the master-hosted nodes instead
+      of nulled (balance, inflow, penalties, storage/state, profiles,
+      availability, fix-storage, node invest sets);
+    * the entity-keyed invest frames keep
+      ``procs-of-kept-arcs ∪ master_hosted_nodes`` (master storage
+      invest needs the ``e``-keyed annuity/lifetime/max-units rows);
+    * only the REGION-side endpoints of coupling arcs (and the
+      region↔region terminals) are omitted from balance — master-hosted
+      endpoints stay balanced;
+    * user constraints / CO2 caps / group features whose referenced
+      entities are ALL master-side are kept; straddling ones hard-error
+      (same validation family as :func:`split`).
+
+    In both modes the solve-data-keyed timeline frames (``dt``,
     ``p_step_duration``, ``p_timestep_weight``, ``p_inflation_op``,
     ``p_period_share``, the RP / block frames) carry through the
     ``dataclasses.replace`` shallow copy unchanged, so the master's
@@ -1551,19 +1839,88 @@ def master_network_data(
         )
 
     # Reuse the cross-region classification (same detection as ``split``).
-    # (Master-hosted keep-logic lands in a follow-up commit; with the
-    # default empty master set the extra classification frames are empty
-    # and this path is byte-identical.)
-    _pss_tagged, cross, _region_master, _master_local = _classify_arcs(
-        data.process_source_sink, region_nodes)
-    if cross.height == 0:
-        raise RuntimeError(
-            "master_network_data: no cross-region arcs found"
-        )
+    # With the default empty master set the extra classification frames
+    # are empty and this path is byte-identical to the historical 2-way
+    # behaviour.
+    master_mode = bool(master_hosted_nodes)
+    _pss_tagged, cross, region_master, master_local = _classify_arcs(
+        data.process_source_sink, region_nodes,
+        master_nodes=master_hosted_nodes,
+    )
     cross_keys: set[tuple[str, str, str]] = {
         (r["p"], r["source"], r["sink"]) for r in cross.iter_rows(named=True)
     }
+    master_cns: set[str] = set()
+    master_groups_feature: set[str] = set()
+    master_groups_co2: set[str] = set()
+    master_local_keys: set[tuple[str, str, str]] = set()
+    if not master_mode:
+        # Today's exact path: region↔region cross arcs are the only
+        # master content.
+        if cross.height == 0:
+            raise RuntimeError(
+                "master_network_data: no cross-region arcs found"
+            )
+    else:
+        all_region_nodes: set[str] = set()
+        for ns in region_nodes.values():
+            all_region_nodes |= ns
+        overlap = set(master_hosted_nodes) & all_region_nodes
+        if overlap:
+            raise RuntimeError(
+                f"master_network_data: master_hosted_nodes overlap "
+                f"region membership: {sorted(overlap)} — a node is "
+                f"either master-hosted (in no region group) or in "
+                f"exactly one region, never both."
+            )
+        region_master_keys = {
+            (r["p"], r["source"], r["sink"])
+            for r in region_master.iter_rows(named=True)
+        }
+        master_local_keys = {
+            (r["p"], r["source"], r["sink"])
+            for r in master_local.iter_rows(named=True)
+        }
+        master_balance_nodes = set()
+        for fld in ("nodeBalance", "nodeState"):
+            f = getattr(data, fld, None)
+            if f is not None and f.height > 0:
+                master_balance_nodes |= (
+                    set(f["n"].cast(pl.Utf8).to_list())
+                    & set(master_hosted_nodes))
+        if (not cross_keys and not region_master_keys
+                and not master_local_keys and not master_balance_nodes):
+            raise RuntimeError(
+                "master_network_data: no coupling arcs and no master "
+                "content — nothing to host in the Benders master"
+            )
+        # Same hard-validation family as ``split`` (D-a / R5): never
+        # silently mis-partition authored data.  The messages are
+        # identical to ``split``'s, so a driver run that already raised
+        # there cannot raise differently here.
+        _validate_no_straddling_units(
+            data, all_region_nodes, master_hosted_nodes)
+        _ml_procs = _master_local_procs(
+            data.process_source_sink, master_local)
+        _validate_user_constraints(
+            data, all_region_nodes, master_hosted_nodes, _ml_procs)
+        master_cns = _master_side_constraint_ids(
+            data, all_region_nodes, master_hosted_nodes, _ml_procs)
+        master_groups_feature = _master_side_feature_groups(
+            data, all_region_nodes, master_hosted_nodes)
+        master_groups_co2 = _co2_master_partition(
+            data, master_local_keys, region_master_keys)
+        # Arc keep-set = cross ∪ region↔master coupling ∪ master-local
+        # (audit 0.D: the coupling-arc-only case is load-bearing).
+        cross_keys = cross_keys | region_master_keys | master_local_keys
     cross_procs: set[str] = {k[0] for k in cross_keys}
+    # Entity keep-set for the ``e``-keyed invest frames: master-hosted
+    # STORAGE invest needs the node entities alongside the connections/
+    # units of the kept arcs.
+    entity_keep: set[str] = (
+        cross_procs | set(master_hosted_nodes) if master_mode
+        else cross_procs
+    )
 
     _enums = getattr(data, "_axis_enums", None) or get_global_axis_enums()
 
@@ -1608,24 +1965,26 @@ def master_network_data(
                      name=p.name)
 
     def _keep_entity_param(p: Param | None) -> Param | None:
-        """Keep only the cross connections on an entity-axis (``e``) param."""
+        """Keep only the cross connections (+ master-hosted nodes in
+        master mode) on an entity-axis (``e``) param."""
         if p is None:
             return None
         if "e" not in p.dims:
             return p
-        return Param(p.dims, p.frame.filter(_is_in_keep("e", cross_procs)),
+        return Param(p.dims, p.frame.filter(_is_in_keep("e", entity_keep)),
                      name=p.name)
 
     def _keep_entity_frame(df):
-        """Keep cross connections on an ``e``-axis frame OR Param (some
-        invest sets ship as plain DataFrames, others as Params)."""
+        """Keep cross connections (+ master-hosted nodes in master mode)
+        on an ``e``-axis frame OR Param (some invest sets ship as plain
+        DataFrames, others as Params)."""
         if df is None:
             return None
         if isinstance(df, Param):
             return _keep_entity_param(df)
         if "e" not in df.columns:
             return df
-        return df.filter(_is_in_keep("e", cross_procs))
+        return df.filter(_is_in_keep("e", entity_keep))
 
     # ---- Process / arc topology: KEEP only cross arcs ----
     new.process_source_sink = _keep_cross_triple(data.process_source_sink)
@@ -1717,11 +2076,88 @@ def master_network_data(
     new.p_entity_all_existing = _keep_entity_param(data.p_entity_all_existing)
     new.p_ed_fixed_cost = _keep_entity_param(data.p_ed_fixed_cost)
 
-    # ---- Drop in-region features that reference the OMITTED terminal nodes
-    # (or in-region recourse not part of the network-only master). ----
-    for fld in _MASTER_NODE_FIELDS:
-        if hasattr(new, fld):
-            setattr(new, fld, None)
+    # ---- Node-keyed / recourse frames ----
+    if not master_mode:
+        # Today's exact path: drop in-region features that reference the
+        # OMITTED terminal nodes (or in-region recourse not part of the
+        # network-only master).
+        for fld in _MASTER_NODE_FIELDS:
+            if hasattr(new, fld):
+                setattr(new, fld, None)
+    else:
+        # Master-hosted mode: KEEP the master-side content.  Every
+        # ``_MASTER_NODE_FIELDS`` member is routed through exactly one
+        # of the keep-filters below (partition pinned by test).
+        def _filter_field(obj, col: str, keep: set[str]):
+            """Filter a frame OR Param to ``col ∈ keep`` (no-op on
+            ``None`` / missing column, mirroring the region-side
+            helpers)."""
+            if obj is None:
+                return None
+            if isinstance(obj, Param):
+                return _filter_param(obj, col, keep)
+            return _filter_frame(obj, col, keep)
+
+        def _semi_triples(obj, keys: set[tuple[str, str, str]]):
+            """Keep only the rows whose (p, source, sink) is in *keys*
+            (frame or Param)."""
+            if obj is None:
+                return None
+            frame = obj.frame if isinstance(obj, Param) else obj
+            if not all(c in frame.columns for c in ("p", "source", "sink")):
+                return obj
+            key_df = pl.DataFrame(
+                {
+                    "p":      [t[0] for t in keys],
+                    "source": [t[1] for t in keys],
+                    "sink":   [t[2] for t in keys],
+                },
+                schema={"p": schema_dtype(_enums, "p"),
+                        "source": schema_dtype(_enums, "source"),
+                        "sink": schema_dtype(_enums, "sink")},
+            )
+            out = frame.join(key_df, on=("p", "source", "sink"), how="semi")
+            if isinstance(obj, Param):
+                return Param(obj.dims, out, name=obj.name)
+            return out
+
+        master_set = set(master_hosted_nodes)
+        for fld in _MASTER_N_KEYED_FIELDS:
+            if hasattr(new, fld):
+                setattr(new, fld,
+                        _filter_field(getattr(data, fld, None), "n",
+                                      master_set))
+        for fld in _MASTER_CN_KEYED_FIELDS:
+            if hasattr(new, fld):
+                setattr(new, fld,
+                        _filter_field(getattr(data, fld, None), "cn",
+                                      master_cns))
+        for fld in _MASTER_CO2_ARC_FIELDS:
+            if hasattr(new, fld):
+                setattr(new, fld,
+                        _semi_triples(getattr(data, fld, None),
+                                      master_local_keys))
+        for fld in _MASTER_CO2_GROUP_FIELDS:
+            if hasattr(new, fld):
+                setattr(new, fld,
+                        _filter_field(getattr(data, fld, None), "g",
+                                      master_groups_co2))
+        # ``_MASTER_CO2_LOOKUP_FIELDS`` (p_co2_content / p_co2_price):
+        # pure lookup tables joined by the kept CO2 rows — carried whole
+        # through the shallow copy (rows for un-kept groups are inert,
+        # and the PROCESSES feature requires presence).
+        for fld in (_GROUP_FEATURE_SET_FIELDS
+                    + _GROUP_FEATURE_PARAM_FIELDS):
+            if hasattr(new, fld):
+                setattr(new, fld,
+                        _filter_field(getattr(data, fld, None), "g",
+                                      master_groups_feature))
+        for fld in _MASTER_GROUP_PROC_FIELDS:
+            if hasattr(new, fld):
+                obj = getattr(data, fld, None)
+                setattr(new, fld,
+                        _keep_proc_param(obj) if isinstance(obj, Param)
+                        else _keep_proc(obj))
 
     # ``build_flextool``'s ALWAYS feature requires these four fields to be
     # PRESENT (not None) even when empty (model.py ``ALWAYS``).  Emptying
@@ -1750,9 +2186,24 @@ def master_network_data(
     # zero effect on the trade flow.  This satisfies the build precondition
     # while still omitting exactly the trade terminals.
     terminal_nodes: set[str] = set()
-    for k in cross_keys:
-        terminal_nodes.add(k[1])
-        terminal_nodes.add(k[2])
+    if not master_mode:
+        # Today's exact path: every cross-arc terminal is omitted.
+        for k in cross_keys:
+            terminal_nodes.add(k[1])
+            terminal_nodes.add(k[2])
+    else:
+        # Omit ONLY the region-side endpoints: both terminals of
+        # region↔region cross arcs (as today) plus the region-side
+        # endpoint of each region↔master coupling arc.  Master-hosted
+        # endpoints stay balanced (that is the whole point of the
+        # mode); master-local arc endpoints are all master-side and
+        # never omitted.
+        for r in cross.iter_rows(named=True):
+            terminal_nodes.add(r["source"])
+            terminal_nodes.add(r["sink"])
+        for r in region_master.iter_rows(named=True):
+            terminal_nodes.add(
+                r["source"] if r["_src_region"] is not None else r["sink"])
 
     def _drop_terminal_frame(df: pl.DataFrame | None) -> pl.DataFrame | None:
         if df is None or "n" not in df.columns:
@@ -1766,7 +2217,15 @@ def master_network_data(
                      name=p.name)
 
     new.nodeBalance = _drop_terminal_frame(data.nodeBalance)
-    new.p_inflow = _empty_like_param(data.p_inflow)
+    if not master_mode:
+        new.p_inflow = _empty_like_param(data.p_inflow)
+    else:
+        # The master keeps its own inflow; every other balance node in
+        # the reduced data stays structurally inert (no arcs, no
+        # inflow ⇒ balance collapses to ``slack = 0``, exactly as the
+        # legacy all-emptied path).
+        new.p_inflow = _filter_param(data.p_inflow, "n",
+                                     set(master_hosted_nodes))
     new.p_penalty_up = _drop_terminal_param(data.p_penalty_up)
     new.p_penalty_down = _drop_terminal_param(data.p_penalty_down)
 
@@ -1904,6 +2363,8 @@ def split(
     )
 
     master_local_procs: set[str] = set()
+    master_cns: set[str] = set()
+    master_groups: set[str] = set()
     if master_hosted_nodes:
         # Hard validation FIRST (D-a): never silently mis-partition
         # authored data.
@@ -1914,6 +2375,30 @@ def split(
         _validate_user_constraints(
             data, all_region_nodes, master_hosted_nodes,
             master_local_procs)
+        # All-master user constraints / feature groups / CO2-cap groups
+        # live whole in the master (kept there by
+        # ``master_network_data``): regions must drop their rows — a
+        # region copy would degenerate (constraint: ``0 sense
+        # constant``; feature group: empty membership still charging
+        # slack penalty).  The group/CO2 helpers also hard-error on
+        # straddling groups (same validation family as the unit /
+        # user-constraint checks above).
+        master_cns = _master_side_constraint_ids(
+            data, all_region_nodes, master_hosted_nodes,
+            master_local_procs)
+        _ml_triples = {
+            (r["p"], r["source"], r["sink"])
+            for r in master_local.iter_rows(named=True)
+        }
+        _rm_triples = {
+            (r["p"], r["source"], r["sink"])
+            for r in region_master.iter_rows(named=True)
+        }
+        master_groups = (
+            _master_side_feature_groups(
+                data, all_region_nodes, master_hosted_nodes)
+            | _co2_master_partition(data, _ml_triples, _rm_triples)
+        )
         # Master-local procs live wholly in the master (F3): regions
         # carry neither their arcs nor their entity rows.
         shared_procs -= master_local_procs
@@ -2009,6 +2494,8 @@ def split(
                 benders_uncap_cross_region=benders_uncap_cross_region,
                 master_hosted_nodes=master_hosted_nodes,
                 master_local_procs=master_local_procs,
+                master_cns=master_cns,
+                master_groups=master_groups,
             )
             splits.append(RegionSplit(
                 region=r,

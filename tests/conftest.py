@@ -30,6 +30,7 @@ import os
 os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
 
 import importlib.util
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -240,6 +241,59 @@ def lh2_trade_invest_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="session")
+def lh2_master_build_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Master-hosted build-through sibling of the trade-invest LH2
+    fixture (Benders C7).
+
+    Derived IN-MEMORY from ``lh2_three_region_trade_invest.json`` —
+    deriving (rather than committing a JSON sibling) keeps the
+    trade-invest fixture the single source of truth and auto-inherits
+    its migrations.  Three additions, all in the scenario's own
+    ``lh2_three_region_trade_invest`` alternative:
+
+    * node invest on ``lh2_B`` — a master-hosted STORAGE node invest,
+      so the reduced master build must emit ``v_invest_n``;
+    * unit invest on ``liquefier_B`` — a master-local UNIT invest;
+    * a second ``liquefier_B`` output arc (→ ``lh2_A``), which flips its
+      fork classification to INDIRECT (``method_1way_nvar``) so the
+      master-local-unit build-through test exercises the post-cf08c082
+      ``maxFlow`` output-arc RHS (plan F4, the shipping-composition
+      case).
+    """
+    import base64
+
+    from flextool.update_flextool.db_migration import migrate_database
+
+    spec = json.loads(
+        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text()
+    )
+    alt = "lh2_three_region_trade_invest"
+
+    def _val(v: "str | float") -> list:
+        return [base64.b64encode(json.dumps(v).encode()).decode(),
+                "float" if isinstance(v, float) else "str"]
+
+    spec["entities"].append(
+        ["unit__outputNode", ["liquefier_B", "lh2_A"], None])
+    spec["entity_alternatives"].append(
+        ["unit__outputNode", ["liquefier_B", "lh2_A"], alt, True])
+    spec["parameter_values"] += [
+        ["node", "lh2_B", "invest_method", _val("invest_no_limit"), alt],
+        ["node", "lh2_B", "invest_cost", _val(40.0), alt],
+        ["unit", "liquefier_B", "invest_method", _val("invest_no_limit"),
+         alt],
+        ["unit", "liquefier_B", "invest_cost", _val(25.0), alt],
+    ]
+    root = tmp_path_factory.mktemp("db_lh2mb")
+    json_path = root / "lh2_master_build.json"
+    json_path.write_text(json.dumps(spec))
+    db_path = root / "lh2_master_build.sqlite"
+    url = json_to_db(json_path, db_path)
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
 def lh2_rp_invest_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     """Benders Phase-3b representative-period invest LH2 fixture DB.
 
@@ -338,6 +392,7 @@ _DB_FIXTURE_NAMES: dict[str, str] = {
     "stochastic": "stochastic_db_url",
     "lh2": "lh2_db_url",
     "lh2_trade_invest": "lh2_trade_invest_db_url",
+    "lh2_master_build": "lh2_master_build_db_url",
     "lh2_rp_invest": "lh2_rp_invest_db_url",
     "h2_trade_parity": "h2_trade_parity_db_url",
     "stochastics_pbt_inflow": "stochastics_pbt_inflow_db_url",
@@ -377,6 +432,7 @@ def scenario_workdir(
     stochastic_db_url,
     lh2_db_url,
     lh2_trade_invest_db_url,
+    lh2_master_build_db_url,
     lh2_rp_invest_db_url,
     h2_trade_parity_db_url,
     stochastics_pbt_inflow_db_url,
@@ -429,6 +485,7 @@ def scenario_workdir(
         "stochastic": stochastic_db_url,
         "lh2": lh2_db_url,
         "lh2_trade_invest": lh2_trade_invest_db_url,
+        "lh2_master_build": lh2_master_build_db_url,
         "lh2_rp_invest": lh2_rp_invest_db_url,
         "h2_trade_parity": h2_trade_parity_db_url,
         "stochastics_pbt_inflow": stochastics_pbt_inflow_db_url,
