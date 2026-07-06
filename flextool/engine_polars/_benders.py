@@ -49,31 +49,49 @@ Architecture (per the spec's locked decisions):
 Loop (multi-cut Benders): bootstrap f̄=0 → first cuts → master → new f̄ → regions
 → cuts → master → … until ``gap = (best_UB − LB)/|best_UB| ≤ tol``.  ``LB`` =
 master objective (a valid lower bound — the whole point vs the Lagrangian bug);
-``UB`` = master invest cost(C) + Σ cost_r(f̄), incumbent = best (min) UB.
+``UB`` = master native cost + Σ cost_r(f̄), incumbent = best (min) UB.
+
+The loop MECHANICS (bootstrap pass, η-floor sizing, cut bookkeeping, LB/UB +
+sandwich/monotonicity self-checks, in-out stabilization, stall guard, cut
+compaction placement, parallel fan-out, convergence) live in the generic
+coordinator :func:`polar_high.benders.solve_benders_loop`.  This module keeps
+everything domain-specific: the split/build path (incl. the region autoscale
+stack), arc discovery, the subproblem adapter whose ``solve_at`` owns pin+solve
+(Layer-2 pin transform, ``fix_cols``, ``retry_on_unknown``, dual unscale, slope
+aggregation — order is load-bearing, plan risk R13), the FlexTool-built master
+adapter (:class:`_BendersMaster`), the capacity clamp (``project_point``), the
+Tier-1 invest handoff, env-knob resolution, and the rendering of the
+coordinator's structured exceptions into plain-English diagnostics.
 """
 from __future__ import annotations
 
-import collections
 import logging
 import os
-import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, NoReturn
 
 import highspy
 import numpy as np
 import polars as pl
 
 from polar_high import (
-    InOutStabilizer,
     Param,
     Problem,
-    StallMonitor,
     Sum,
     WarmProblem,
     resolve_worker_count,
-    solve_indexed_parallel,
 )
+from polar_high.benders import (
+    BendersBoundInvalid,
+    BendersLoopOptions,
+    BendersStalled,
+    SubproblemHandle,
+    SubproblemNotOptimal,
+    SubproblemResult,
+    solve_benders_loop,
+)
+from polar_high.benders import _check_cuts_satisfied as _ph_check_cuts_satisfied
+from polar_high.benders import _cut_separates as _ph_cut_separates
 
 from flextool.engine_polars import _region_filter
 from flextool.engine_polars import build_flextool as _build_flextool
@@ -138,10 +156,6 @@ _INVEST_VAR_NAMES = ("v_invest_p", "v_invest_n", "v_divest_p", "v_divest_n")
 # (non-fatal) canary warning.
 _NONOWNER_NONZERO_ABS_TOL = 1e-6
 
-# Slack on the "LB ≤ M" valid-bound assertion: LB is a true lower bound up to
-# the LP optimality tolerance, so allow a tiny relative overshoot.
-_LB_VALID_SLACK = 1e-9
-
 # Relative band that separates benign numerical noise from a GENUINE invalid-
 # bound bug on the lower-bound self-checks (LB monotonicity, LB ≤ best-UB
 # sandwich).  A drop/overshoot smaller than this (and smaller than the
@@ -170,9 +184,10 @@ def _benders_failure_message(summary: str, meaning: str, how_to_avoid: str) -> s
 # can be negative via commodity-sell / storage-revenue, so a blind 0 is unsafe).
 #
 # The floor is derived per-run from the bootstrap (autarkic, f̄=0) region costs:
-# ``eta_floor = -_ETA_FLOOR_MULT · max_r |cost_r^autarky|`` (see the bootstrap in
-# ``_solve_benders_inner``), computed in the SAME (scaled) space the master
-# objective lives in.  Validity: at the optimum ``η_r = cost_r(f̄*)``, the
+# ``eta_floor = -_ETA_FLOOR_MULT · max_r |cost_r^autarky|`` (sized by the
+# coordinator's bootstrap pass — ``BendersLoopOptions.eta_floor_mult`` carries
+# this constant), computed in the SAME (scaled) space the master objective
+# lives in.  Validity: at the optimum ``η_r = cost_r(f̄*)``, the
 # region's recourse cost at the optimal trade schedule.  ``cost_r^autarky``
 # (zero import) is the no-trade reference; trade only relaxes a region's balance
 # (a free injection it may ignore within finite slack), so the minimum
@@ -733,9 +748,13 @@ class _BendersMaster:
       Phase-2 acceptance gate and master-vs-master comparison.
 
     The public surface (``solve``, ``set_eta_floor``, ``add_cut``,
-    ``read_master``, ``invest_cost``, the ``_eta_col`` / ``a.f_col_ids`` /
-    ``_C_cols`` id maps) is identical across both paths so
-    :func:`solve_benders` is path-agnostic.
+    ``read_master``, ``master_native_cost``, the ``_eta_col`` /
+    ``a.f_col_ids`` / ``_C_cols`` id maps) is identical across both paths so
+    :func:`solve_benders` is path-agnostic.  On top of it the class
+    implements the :class:`polar_high.benders.BendersMaster` protocol
+    (``read_point`` / ``native_cost`` / ``project_point`` /
+    ``relax_recourse`` / ``set_recourse_floor`` / ``compact_cuts``) so the
+    generic coordinator can drive it directly.
     """
 
     def __init__(self, data: FlexData, arcs: list[_ArcMaster],
@@ -751,11 +770,24 @@ class _BendersMaster:
         # objective duals) are ∂(s·currency) and drop in homogeneously.  See
         # ``_build_flextool_master`` and ``solve_benders``.
         self._obj_scale = float(obj_scale)
-        # Master trade cost (invest annuity + flow cost) at the last
-        # ``read_master`` — stashed for the flextool path's ``invest_cost``
-        # (which reads it from the FlexTool objective rather than a hand
-        # coefficient sum).
-        self._last_trade_cost: float = 0.0
+        # Master NATIVE cost (its own FlexTool objective minus the recourse
+        # terms — invest annuity + flow cost today; master-hosted balance /
+        # penalty / storage terms too once those land) at the last
+        # ``read_master`` — stashed for the flextool path's
+        # ``master_native_cost`` (which reads it from the FlexTool objective
+        # rather than a hand coefficient sum).  Renamed from the misleading
+        # ``_last_trade_cost`` (plan D-d).
+        self._last_master_native_cost: float = 0.0
+        # ``C_by_conn`` at the last ``read_point`` — consumed by
+        # ``project_point`` (capacity clamp), ``native_cost`` and the
+        # incumbent capture, all of which the coordinator calls with the
+        # SAME master solution ``read_point`` just consumed.
+        self._last_C_by_conn: dict[str, float] = {}
+        # Count of LOOP master solves (``solve()``; the build-time solves go
+        # through ``self._wp.solve()`` directly) — equals the coordinator's
+        # 1-based iteration index, used to label ``project_point`` /
+        # compaction diagnostics exactly as the in-module loop did.
+        self._solve_count: int = 0
         if master == "flextool":
             self._build_flextool_master(data)
         elif master == "hand":
@@ -1090,6 +1122,10 @@ class _BendersMaster:
         relaxed.add(region)
 
     def solve(self):
+        # Loop-iteration counter (1-based, one master solve per iteration):
+        # labels the ``project_point`` clamp diagnostic and the compaction
+        # timing line with the same iteration index the loop reports.
+        self._solve_count += 1
         # Warm-restart: the master objective is scaled (scale_the_objective),
         # so appending a cut row and re-solving WARM stays kOptimal — no need
         # to throw away the basis every iteration.  WarmProblem.solve runs warm
@@ -1167,9 +1203,19 @@ class _BendersMaster:
 
         Forwards ``policy`` / ``trial_col_values`` verbatim and returns the
         polar-high ``{"kept", "dropped", "restored"}`` report."""
-        return self._wp.compact_cuts(
+        res = self._wp.compact_cuts(
             solution, policy=policy, trial_col_values=trial_col_values
         )
+        # FlexTool-logger compaction report (the coordinator logs its own on
+        # ``polar_high.benders``): log-following users and the compaction
+        # tests read the kept/dropped counts off THIS module's logger, so the
+        # line stays here after the loop extraction.
+        _logger.info(
+            "[benders timing] iter %d: cut compaction kept=%d dropped=%d "
+            "restored=%s", self._solve_count, res["kept"], res["dropped"],
+            res["restored"],
+        )
+        return res
 
     def read_master(self, sol) -> tuple[dict[str, dict[int, float]],
                                         dict[str, float], dict[str, float]]:
@@ -1189,13 +1235,14 @@ class _BendersMaster:
             cols = col if isinstance(col, (list, tuple, np.ndarray)) else [col]
             C_by_conn[c] = float(sum(sol.col_value[int(ci)] for ci in cols))
         eta_by_region = {r: float(sol.col_value[col]) for r, col in self._eta_col.items()}
-        # Stash the master TRADE cost (invest annuity + flow cost) at this
-        # solution.  On the flextool path it is FlexTool's own objective
-        # MINUS Σ η_r (each η enters obj with coef 1.0); on the hand path
-        # it is the invest-only coefficient sum (computed in invest_cost).
+        # Stash the master NATIVE cost at this solution.  On the flextool
+        # path it is FlexTool's own objective MINUS Σ η_r (each η enters obj
+        # with coef 1.0) — everything the master LP carries natively; on the
+        # hand path it is the invest-only coefficient sum (computed in
+        # ``master_native_cost``).
         if self._master_kind == "flextool":
             eta_sum = sum(eta_by_region.values())
-            self._last_trade_cost = float(sol.obj) - eta_sum
+            self._last_master_native_cost = float(sol.obj) - eta_sum
         return f_by_col, C_by_conn, eta_by_region
 
     def trade_invest_frame(self, sol) -> pl.DataFrame | None:
@@ -1220,18 +1267,69 @@ class _BendersMaster:
             return None
         return sol.value("v_invest_p")
 
-    def invest_cost(self, C_by_conn: dict[str, float]) -> float:
-        """Master trade cost (invest annuity + flow cost) at the last
-        ``read_master``.
+    def master_native_cost(self, C_by_conn: dict[str, float]) -> float:
+        """The master's OWN (native) cost at the last ``read_master`` — its
+        full objective minus the recourse terms (``sol.obj − Σ η_r``).
 
-        On the flextool path this is read from FlexTool's own objective
-        (``sol.obj − Σ η_r``), so it INCLUDES the connection flow cost the
-        hand master omits (Phase-3 §2.4 ``master_trade_cost``).  On the hand
-        path it is the invest-only hand coefficient sum (the prototype's
-        pipe flow cost is 0, so both agree)."""
+        On the flextool path this is read from FlexTool's own objective, so
+        it includes EVERYTHING the master LP carries natively: the coupling-
+        connection invest annuity AND flow cost today (Phase-3 §2.4), plus —
+        once master-hosted nodes land — their balance-penalty slack and
+        storage-invest terms, with no arithmetic change here.  That is why
+        the old name ``invest_cost`` (and the ``_last_trade_cost`` stash)
+        was misleading and was renamed (plan D-d).  On the hand path it is
+        the invest-only hand coefficient sum (the prototype's pipe flow cost
+        is 0, so both agree)."""
         if self._master_kind == "flextool":
-            return self._last_trade_cost
+            return self._last_master_native_cost
         return sum(self._conn_cost[c] * C_by_conn[c] for c in C_by_conn)
+
+    # -- polar_high.benders.BendersMaster protocol ------------------------
+    # Thin adapters over the per-iteration interface above, so the generic
+    # coordinator can drive this master directly.  All are called by the
+    # coordinator with the SAME master solution within one iteration, in the
+    # order read_point → project_point → native_cost.
+
+    def read_point(self, sol) -> tuple[dict[int, float], dict[str, float]]:
+        """Coordinator protocol: ``(coupling point by master f col-id,
+        recourse value η per node group)`` at ``sol``.  Wraps
+        :meth:`read_master` and stashes ``C_by_conn`` for
+        :meth:`project_point` / :meth:`native_cost` / the incumbent
+        capture."""
+        f_by_col, C_by_conn, eta_by_region = self.read_master(sol)
+        self._last_C_by_conn = C_by_conn
+        return f_by_col, eta_by_region
+
+    def native_cost(self, sol, recourse: dict[str, float]) -> float:
+        """Coordinator protocol: the master's own cost at ``sol`` (objective
+        minus recourse).  Delegates to :meth:`master_native_cost` at the
+        ``C_by_conn`` stashed by :meth:`read_point` — bit-identical to the
+        pre-coordinator in-module loop's call."""
+        return self.master_native_cost(self._last_C_by_conn)
+
+    def project_point(self, f: dict[int, float], sol, *,
+                      hard_fail: bool = True) -> float:
+        """Coordinator protocol: clamp the coupling point ``f`` DOWN to the
+        capacity the master chose (invested + existing), IN PLACE, returning
+        the max clamp slack.  ``hard_fail=True`` (the master vertex) hard-
+        fails on a GROSS overshoot with the domain diagnostic;
+        ``hard_fail=False`` (in-out interior separation points, legitimately
+        beyond the CURRENT capacity) clamps silently — see
+        :func:`_clamp_flow_to_capacity`."""
+        return _clamp_flow_to_capacity(
+            f, self.arcs, self._last_C_by_conn, self._existing_cap_by_col,
+            sol.max_primal_infeasibility,
+            iterations=self._solve_count,
+            hard_fail_gross=hard_fail,
+        )
+
+    def relax_recourse(self, sub_name: str) -> None:
+        """Coordinator protocol name for :meth:`relax_eta_after_cut`."""
+        self.relax_eta_after_cut(sub_name)
+
+    def set_recourse_floor(self, floor: float) -> None:
+        """Coordinator protocol name for :meth:`set_eta_floor`."""
+        self.set_eta_floor(floor)
 
 
 # ---------------------------------------------------------------------------
@@ -1793,7 +1891,13 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # basis and re-solve once cold, instead of crashing immediately.
         sol_r = w.solve(retry_on_unknown=True)
         if not sol_r.optimal:
-            raise RuntimeError(_benders_failure_message(
+            # Domain-side not-optimal: raised HERE, inside the adapter's
+            # ``solve_at`` — it never reaches the coordinator's own checks
+            # (which propagate it untouched, in region index order).  The
+            # structured ``SubproblemNotOptimal`` type (a RuntimeError) lets
+            # callers catch it while the message keeps the exact FlexTool
+            # prose.
+            raise SubproblemNotOptimal(rm.name, message=_benders_failure_message(
                 summary=(
                     f"Benders node-group subproblem for {rm.name!r} did not "
                     "solve to optimality."
@@ -1859,162 +1963,56 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             (a, region_cols, a.f_col_ids) for (a, region_cols, _old) in rm.forward
         ]
 
-    # --- f̄ state, keyed by the LIVE master f col-id.  Bootstrap f̄ = 0.
+    # --- f̄ bootstrap point, keyed by the LIVE master f col-id: the all-zero
+    # (autarky) dict over every arc's forward master columns.  Its KEY SET is
+    # the coupling column universe for the whole run — the coordinator derives
+    # the universe from nothing else (``initial_point`` contract).
     f_bar: dict[int, float] = {int(cid): 0.0 for a in arcs for cid in a.f_col_ids}
 
-    # --- Parallel region recourse: the N region subproblems are independent
-    # (each owns its own WarmProblem / HiGHS handle, and HiGHS run() releases
-    # the GIL), so they fan out across a thread pool.  Every region's cold first
-    # build already ran SEQUENTIALLY above (the ``for w in warm: w.solve()``
-    # loop), so ``solve_indexed_parallel`` only parallelizes WARM re-solves and
-    # the per-region solve is single-threaded + deterministic — the recovered
-    # ``(cost_r, slopes)`` are bit-identical to the sequential path.  The
-    # WarmProblem list is region-index aligned with ``regions_meta`` (both
-    # iterate ``splits`` in order).
-    region_warm = [rm.wp for rm in regions_meta]
+    # --- Parallel region recourse plumbing.  The N region subproblems are
+    # independent (each owns its own WarmProblem / HiGHS handle, and HiGHS
+    # run() releases the GIL); the coordinator fans the ``solve_at`` closures
+    # out over a thread pool via ``solve_indexed_parallel`` exactly as this
+    # driver's in-module loop used to.  Every region's cold first build
+    # already ran SEQUENTIALLY above (the ``for w in warm: w.solve()`` loop),
+    # so only WARM re-solves are parallelized and the per-region
+    # ``(cost_r, slopes)`` are bit-identical to the sequential path.
+    # ``_resolve_benders_workers`` applies the machine-local env override and
+    # clamps to ``[1, n]``; the coordinator's own ``resolve_worker_count`` is
+    # a fixed point on the resolved value, so the effective count is
+    # identical.
     eff_workers = _resolve_benders_workers(len(regions_meta), workers)
     _logger.info(
         "Benders: region recourse pass over %d region(s) with %d worker(s)",
         len(regions_meta), eff_workers,
     )
 
-    # Current outer-iteration index, surfaced to ``subsolve_callback`` so the
-    # orchestrator can label each region-finish line (bootstrap = 0).
-    _cur_iter = [0]
-
-    def _solve_regions(f_bar_local):
-        """Pin+solve every region and return a per-region-index list of
-        ``(cost_r, slopes, sol_r)`` in deterministic order (parallel when
-        ``eff_workers > 1``).  Fires ``subsolve_callback`` once per region as it
-        FINISHES (from the worker thread; the callback must be thread-safe).
-
-        ``f_bar_local`` is EITHER a single ``{master_col -> value}`` dict — every
-        region is pinned at the same point (the exact-Benders / bootstrap path,
-        byte-identical) — OR a callable ``i -> {master_col -> value}`` returning
-        region ``i``'s OWN pin point (the in-out path, where each region is
-        pinned at its own interior ``f_sep``).  A shared arc column is read by
-        BOTH its export- and import-region, at potentially different per-region
-        interior values, so a per-region callable — not one merged dict — is the
-        correct in-out interface."""
-        per_region = callable(f_bar_local)
-
-        def _fn(i):
-            point = f_bar_local(i) if per_region else f_bar_local
-            res = _pin_and_solve(regions_meta[i], point)
-            if subsolve_callback is not None:
-                try:
-                    subsolve_callback({
-                        "iter": _cur_iter[0],
-                        "region": regions_meta[i].name,
-                        "obj": res[0] / obj_scale,  # cost_r → REAL units
-                    })
-                except Exception:  # noqa: BLE001 — observer must not break solve
-                    pass
-            return res
-        return solve_indexed_parallel(region_warm, _fn, workers=eff_workers)
-
-    # --- BOOTSTRAP: solve regions autarkic (f̄=0) to (a) generate the first
-    # cuts and (b) size the TIGHT η floor = -1.1·max_r|cost_r^autarky|.  Because
-    # the regions are built at the same scale ``s``, ``cost_r`` is already in
-    # scaled space, so the floor is automatically in the master's scaled space —
-    # a provably valid global under-estimate (autarkic cost is the no-trade
-    # |cost| extreme; trade only relaxes a region's balance, so the minimum
-    # achievable cost_r is below it with margin) that is ~90× tighter than the
-    # old -100·max|cost|, narrowing the floor/cut-coef dynamic range that drives
-    # the warm post-append kUnknown.
-    # Each cut carries its GENERATION POINT (the ``f̄`` the region was solved at)
-    # as the 2nd element: ``(region, gen_point, cost_r, slopes)``.  The bootstrap
-    # regions are solved at autarky ``f̄=0``, so their generation point is the
-    # ``f_bar`` (all-zero) dict — snapshotted so a later ``f_bar`` reassignment
-    # cannot alias it.  With in-out separation OFF the generation point always
-    # equals the loop's current ``f_bar``, so threading it is byte-identical;
-    # with in-out ON it is the interior ``f_sep``, which differs per region.
-    bootstrap_gen = dict(f_bar)
-    bootstrap_cuts: list[tuple[str, dict[int, float], float, dict[int, float]]] = []
-    for rm, (cost_r, slopes, _sol_r) in zip(regions_meta, _solve_regions(f_bar)):
-        bootstrap_cuts.append((rm.name, bootstrap_gen, cost_r, slopes))
-    cost_scale = max((abs(c) for _, _, c, _ in bootstrap_cuts), default=1.0)
-    # Per-node-group STAND-ALONE (autarkic, f̄=0) cost, keyed by name.  Its sum
-    # is a "sane objective magnitude" reference for the stall guard, and its
-    # per-region values pick the worst-offender node group for the diagnostic.
-    # Kept in SCALED space (bootstrap cost_r is ×s), matching the loop's LB/UB.
-    autarky_by_region = {name: cost_r for name, _, cost_r, _ in bootstrap_cuts}
-    # Domain-free stall detector (polar-high).  reference_scale = Σ|autarky|; the
-    # window K is env-resolved (FLEXTOOL_BENDERS_MAX_STALL); the other thresholds
-    # keep the library defaults (gap-floor is raised below to max(20·tol, 0.02)
-    # so a loose ``tol`` never lets the floor fall below the gap it must clear).
-    stall_monitor = StallMonitor(
-        sum(abs(c) for c in autarky_by_region.values()),
-        window=_resolve_benders_max_stall(),
-        gap_floor=max(20.0 * tol, 0.02),
-    )
-    # Floor in scaled space; ``max(cost_scale, obj_scale)`` keeps it from
-    # collapsing to ~0 in the degenerate all-zero-cost case (the unscaled guard
-    # was ``max(cost_scale, 1.0)``; ×s keeps that 1-unit guard at scale).
-    eta_floor = -_ETA_FLOOR_MULT * max(cost_scale, obj_scale)
-    master.set_eta_floor(eta_floor)
-
-    best_UB = float("inf")
-    best_incumbent: dict | None = None
-    LB = float("-inf")
-    prev_LB = float("-inf")
-    iterations = 0
-    converged = False
-    gap = float("inf")
-    # Inverse objective scale: the loop's LB/UB arithmetic runs in scaled
-    # space (objectives built ×s); callers/tests (and the progress callback)
-    # expect REAL-unit costs (÷s).  s=1.0 ⇒ no-op.
+    # Inverse objective scale: the coordinator (like the old in-module loop)
+    # runs its LB/UB arithmetic in scaled space (objectives built ×s);
+    # callers/tests (and the progress callback) expect REAL-unit costs (÷s).
+    # s=1.0 ⇒ no-op.
     inv_s = 1.0 / obj_scale
 
-    # --- In-out separation (Ben-Ameur & Neto 2007) — PER-REGION stabilizer.
-    # ``λ`` (env-resolved; default 0.0 = OFF) is the weight on the stable
-    # interior centre in ``f_sep = λ·centre + (1-λ)·f_out``.  One stabilizer PER
-    # REGION (the correct BAN unit — a global λ lets a well-behaved region mask a
-    # degenerate one), each seeded with the AUTARKY centre ``f̄=0`` (guaranteed
-    # capacity-feasible against any C≥0, and matching the loop bootstrap).  When
-    # ``λ==0.0`` the whole in-out block below is skipped and the loop is
-    # byte-identical to exact Benders.
+    # In-out separation weight λ (machine-local env overrides the per-solve
+    # DB value; 0.0 = OFF = exact Benders, byte-identical inside the
+    # coordinator by construction).
     in_out_weight = _resolve_benders_in_out_weight(in_out_weight)
-    in_out_on = in_out_weight > 0.0
-    if in_out_on:
+    if in_out_weight > 0.0:
         _logger.info(
             "Benders: in-out separation ON (weight λ=%.3f) over %d region(s)",
             in_out_weight, len(regions_meta),
         )
-    autarky_centre = dict(f_bar)  # f̄=0 (snapshot, pre-loop)
-    stabilizers: dict[str, InOutStabilizer] = {}
-    if in_out_on:
-        for rm in regions_meta:
-            stab = InOutStabilizer(weight=in_out_weight)
-            stab.set_centre(autarky_centre)
-            stabilizers[rm.name] = stab
 
-    # ``pending_cuts`` are the cuts for the regions solved at the CURRENT f̄;
-    # they are appended at the top of each iteration before the master solve.
-    # Iter 0 uses the bootstrap cuts (regions at f̄=0).  Each entry is a
-    # ``(region, gen_point, cost_r, slopes)`` 4-tuple carrying its own
-    # generation point (= the loop ``f̄`` with in-out OFF; = the interior
-    # ``f_sep`` with in-out ON).
-    pending_cuts = bootstrap_cuts
-    C_by_conn: dict[str, float] = {}
-    # DIAGNOSTIC: running total of cut rows appended to the master.  Surfaced in
-    # the per-iteration timing line so the master-solve cost can be read against
-    # the accumulated row count.  With cut compaction ON it is reset to the KEPT
-    # (binding) count at each compaction.
-    _master_cut_rows = 0
     # Periodic MASTER CUT COMPACTION threshold (env-resolved; 0 = OFF =
-    # byte-identical to the pre-compaction path — the whole compaction call
-    # below is guarded by ``compact_at > 0``).  When the active cut-row count
-    # reaches this, ``WarmProblem.compact_cuts`` deletes the strictly-slack cut
-    # rows at the current master optimum, keeping only the binding ones (spec:
-    # benders_cut_aging_plan.md, FIRST SHIP).  polar-high owns the classify /
-    # delete / verify-restore; FlexTool only triggers it and tracks the count.
+    # byte-identical to the pre-compaction path — the coordinator skips the
+    # whole compaction block at 0).
     compact_at = _resolve_benders_cut_compact_at()
     cut_policy = _resolve_benders_cut_policy()  # 'slack' (default) | 'dominance'
     # Capability guard: master cut compaction needs
-    # ``polar_high.WarmProblem.compact_cuts`` (polar-high >= 3.5.0).  When the
-    # env flag is set but the installed polar-high predates it, disable
-    # compaction with a clear one-time message instead of crashing mid-solve
+    # ``polar_high.WarmProblem.compact_cuts`` (polar-high >= 3.5.0).  The
+    # pyproject pin now guarantees it for pip installs, but an editable / dev
+    # environment can still lag the pin — keep the belt so a stale install
+    # degrades with a clear one-time message instead of crashing mid-solve
     # with an ``AttributeError``; the run then proceeds exactly like the
     # default (OFF) path.
     if compact_at > 0 and not hasattr(
@@ -2028,463 +2026,144 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             compact_at,
         )
         compact_at = 0
-    # Bounded trailing window of recent master vertices (``msol.col_value``,
-    # most-recent last) feeding the ``compact_cuts(policy="dominance")``
-    # selection.  Window size is env-resolved (``FLEXTOOL_BENDERS_CUT_WINDOW``).
-    # Only populated / consulted when compaction is ON; empty otherwise.
-    cut_window: collections.deque = collections.deque(
-        maxlen=_resolve_benders_cut_window()
-    )
 
-    for it in range(max_iters):
-        iterations = it + 1
+    # --- Subproblem adapters.  ``solve_at`` is ``_pin_and_solve`` verbatim
+    # (plan risk R13: the pin ×col_factors → solve → highs detach →
+    # unscale_solution → read col_dual sequence is load-bearing and must not
+    # be split); the coordinator never touches a region column itself.
+    def _make_solve_at(rm: _Region):
+        def _solve_at(point: dict[int, float]) -> SubproblemResult:
+            cost_r, slopes, sol_r = _pin_and_solve(rm, point)
+            return SubproblemResult(cost=cost_r, slopes=slopes, payload=sol_r)
+        return _solve_at
 
-        # --- append the pending cuts and (warm) re-solve the master.  Each
-        # region that contributes a cut has its η relaxed to free (-inf): the
-        # cut now bounds η from below, so the bootstrap floor is no longer
-        # needed and dropping it tightens the master + narrows the bound range.
-        for region, gen_point, cost_r, slopes in pending_cuts:
-            # Pass each cut's OWN generation point (= ``f_bar`` with in-out OFF;
-            # = the interior ``f_sep`` with in-out ON) so the cut constant is
-            # computed against the point it was actually generated at.  Passing
-            # the current ``f_bar`` (=``f_out``) would use the wrong base and
-            # make the cut invalid.
-            master.add_cut(region, gen_point, cost_r, slopes)
-            master.relax_eta_after_cut(region)
-            _master_cut_rows += 1
-        # DIAGNOSTIC: the master accumulates cut rows unboundedly (one per region
-        # per iteration, never deleted), so its warm re-solve gets progressively
-        # slower — the dominant cost of a long Benders run.  Time it (and the
-        # region pass below) so ``_benders_quiet``-off runs surface where the
-        # per-iteration wall time goes and how it scales with the cut count.
-        _t_master = time.perf_counter()
-        msol = master.solve()
-        _dt_master = time.perf_counter() - _t_master
-        # Record this master vertex in the dominance-policy trial-point window
-        # (most-recent last; bounded by the deque ``maxlen``).  Only consulted
-        # when compaction is ON.
-        cut_window.append(msol.col_value)
-        prev_LB = LB
-        LB = float(msol.obj)  # scaled space
-        # LB monotone non-decreasing self-check.  In exact arithmetic the bound
-        # can only rise (cuts only tighten), so any drop is numerical.  FAIL-
-        # SAFE: a drop within the gross band is treated as noise — pin LB back
-        # to the (valid) previous bound and continue; only a GROSS drop signals
-        # a stale basis / corrupted cut append and hard-fails with guidance.
-        gross_band = max(tol, _LB_GROSS_SLACK)
-        if it > 0 and LB < prev_LB:
-            rel_drop = (prev_LB - LB) / max(1.0, abs(prev_LB))
-            if rel_drop > gross_band:
-                raise RuntimeError(_benders_failure_message(
-                    summary=(
-                        f"Benders lower bound dropped "
-                        f"{prev_LB * inv_s:.6e} → {LB * inv_s:.6e} "
-                        f"(by {rel_drop:.2e}, > {gross_band:.0e}) at iteration "
-                        f"{iterations}."
-                    ),
-                    meaning=(
-                        "The Benders lower bound must never decrease — each "
-                        "iteration only adds cuts, which can only tighten it. A "
-                        "large drop means the master problem returned an "
-                        "inconsistent solution, almost always from a stale "
-                        "solver basis (warm restart) or severe numerical ill-"
-                        "conditioning of that master — not from your model's "
-                        "economics."
-                    ),
-                    how_to_avoid=(
-                        "Re-run the solve first — a fresh basis usually clears a "
-                        "one-off warm-restart glitch. If it recurs: loosen the "
-                        "solver tolerance (e.g. --solver-mip-gap 0.01); check the "
-                        "connections that couple the node groups for extreme "
-                        "investment-cost or capacity magnitudes / unit "
-                        "mismatches that make the master ill-conditioned. If it "
-                        "persists, please report it with the model."
-                    ),
-                ))
-            if rel_drop > 1e-6:
-                _logger.warning(
-                    "Benders iter %d: LB dipped %.3e (numerical) — pinned to "
-                    "previous lower bound", iterations, rel_drop,
-                )
-            LB = prev_LB  # restore monotonicity (prev_LB is a valid bound)
-        # OPTIONAL test-time guard: LB ≤ M (M supplied in REAL units → compare
-        # in scaled space against M·s).  Skipped when monolith_objective is None
-        # (the at-scale driver passes None — no trustworthy/up-to-date M).
-        if monolith_objective is not None:
-            M_scaled = monolith_objective * obj_scale
-            if LB > M_scaled * (1 + _LB_VALID_SLACK):
-                raise RuntimeError(
-                    f"Benders LB {LB / obj_scale:.10e} exceeds monolith M "
-                    f"{monolith_objective:.10e} at iter {iterations} — "
-                    f"INVALID lower bound (the bug this scheme fixes)"
-                )
+    sub_adapters = [
+        SubproblemHandle(rm.name, rm.wp, _make_solve_at(rm))
+        for rm in regions_meta
+    ]
 
-        new_f_bar, C_by_conn, eta_by_region = master.read_master(msol)
-        _check_cuts_satisfied(
-            pending_cuts, f_bar, new_f_bar, eta_by_region,
-            iterations=iterations, inv_s=inv_s,
-        )
-
-        # The master's chosen capacity must support its chosen flow: the
-        # coupling row ``C − f ≥ 0`` (≡ ``f ≤ existing_cap + Σ v_invest_p``)
-        # holds at the master optimum.  For a GREENFIELD arc the existing term
-        # is 0 (cap = invested C); for an EXISTING-only arc the invested C is 0
-        # (cap = existing/unitsize); for a BOTH arc both contribute.
-        #
-        # The solver returns a vertex only within its feasibility tolerance of
-        # the active rows, and HiGHS enforces that on the INTERNALLY-SCALED
-        # problem — so the UNSCALED slack on ``f ≤ cap`` can exceed BOTH the
-        # nominal tolerance AND the reported ``max_primal_infeasibility``
-        # (measured in scaled space), and it grows as cuts accumulate and the
-        # master gets more ill-conditioned.  Tuning a fixed tolerance is
-        # therefore chasing a moving target.  Instead CLAMP the master flow
-        # down to the capacity it chose: the UB below is then evaluated at a
-        # strictly capacity-feasible primal point ``(C, min(f, cap))`` (a valid
-        # whole-problem upper bound — clamping flow DOWN can only raise region
-        # recourse cost, never invalidate it).  A GROSS overshoot — orders of
-        # magnitude beyond any plausible solver slack — still signals a real
-        # read/stale-state bug and hard-fails.
-        existing_cap_by_col = master._existing_cap_by_col
-        solver_feas = msol.max_primal_infeasibility
-        max_clamp = _clamp_flow_to_capacity(
-            new_f_bar, arcs, C_by_conn, existing_cap_by_col, solver_feas,
-            iterations=iterations,
-        )
-        if max_clamp > max(1e-9, solver_feas):
-            _logger.debug(
-                "Benders iter %d: clamped master coupling flow to capacity "
-                "(max slack %.3e, solver_feas %.3e)",
-                iterations, max_clamp, solver_feas,
-            )
-
-        # --- advance f̄ to the master optimum ``f_out`` (used for the LB/eta
-        # bookkeeping and, with in-out OFF, the region pin) and solve the
-        # regions to (a) get this iteration's recourse cost (→ a VALID UB, since
-        # C ≥ f̄ at the master optimum / the clamped f_sep) and (b) produce the
-        # next iteration's cuts.
-        f_bar = new_f_bar
-        f_out = new_f_bar  # the clamped master vertex (per-region separation ref)
-        _cur_iter[0] = iterations  # label this pass's region-finish lines
-
-        # --- IN-OUT SEPARATION.  With ``λ>0`` each region is solved at its OWN
-        # interior separation point ``f_sep = λ·centre + (1-λ)·f_out`` (a
-        # per-region dict, since a shared arc column may carry different interior
-        # values for its two regions), re-clamped to the CURRENT capacity (the
-        # centre is an old incumbent flow feasible against a PAST cap, so
-        # ``f_sep`` can exceed the current cap — clamping DOWN keeps the UB
-        # valid).  The cut is then GENERATED at ``f_sep`` (its generation point),
-        # and a per-region separation test decides whether the stabilizer must
-        # force an exact-Benders out-step next.  With ``λ==0.0`` (OFF) this whole
-        # block is skipped and the region pin / gen-point are ``f_out`` verbatim
-        # ⇒ byte-identical to exact Benders.
-        f_sep_by_region: dict[str, dict[int, float]] = {}
-        if in_out_on:
-            for rm in regions_meta:
-                f_sep_r = stabilizers[rm.name].separation_point(f_out)
-                if f_sep_r is not f_out:
-                    # A genuine interior point — re-clamp a COPY to the current
-                    # capacity (leaves ``f_out`` untouched for the verbatim
-                    # out-step case, where ``separation_point`` returned it as-is).
-                    f_sep_r = dict(f_sep_r)
-                    _clamp_flow_to_capacity(
-                        f_sep_r, arcs, C_by_conn, existing_cap_by_col,
-                        solver_feas, iterations=iterations,
-                        hard_fail_gross=False,
-                    )
-                f_sep_by_region[rm.name] = f_sep_r
-
-        def _region_pin(i):
-            # Per-region pin point: the region's own clamped ``f_sep`` when
-            # in-out is on, else the shared ``f_out``.
-            return f_sep_by_region[regions_meta[i].name] if in_out_on else f_out
-
-        region_costs: dict[str, float] = {}
-        next_cuts: list[tuple[str, dict[int, float], float, dict[int, float]]] = []
-        # Per-region recovered primal at THIS pin point (region-index aligned),
-        # for the TIER-1 whole-system invest assembly when this iteration becomes
-        # the incumbent.  Each entry is the region Solution's ``col_value``.
-        region_col_values: list[np.ndarray] = [None] * len(regions_meta)
-        # Per-region slopes recovered this pass (keyed by region name), so the
-        # in-out separation test / register below need not re-scan ``next_cuts``.
-        slopes_by_region: dict[str, dict[int, float]] = {}
-        _t_regions = time.perf_counter()
-        _region_results = _solve_regions(_region_pin if in_out_on else f_out)
-        _dt_regions = time.perf_counter() - _t_regions
-        for rm, (cost_r, slopes, sol_r) in zip(regions_meta, _region_results):
-            gen_point = f_sep_by_region[rm.name] if in_out_on else f_out
-            slopes_by_region[rm.name] = slopes
-            region_costs[rm.name] = cost_r
-            next_cuts.append((rm.name, gen_point, cost_r, slopes))
-            region_col_values[region_idx[rm.name]] = np.asarray(
-                sol_r.col_value
-            ).copy()
-
-        # --- UB = master invest cost(C) + Σ cost_r(pin) at the SAME (pin, C).
-        # All terms are in scaled space (region cost_r and master invest_cost
-        # are both ×s), so UB and LB are directly comparable in scaled space.
-        # ``pin`` is ``f_out`` (OFF) or each region's clamped ``f_sep`` (ON);
-        # both are capacity-feasible, so the UB is valid either way.
-        UB = master.invest_cost(C_by_conn) + sum(region_costs.values())
-        improved = UB < best_UB
-        if improved:
-            best_UB = UB
-            # The incumbent trade-flow point.  With in-out OFF it is the single
-            # ``f_out``; with in-out ON each region was solved at its own
-            # ``f_sep``, so the incumbent flow on a column is that column's
-            # owning-region separation value.  ``read_master`` keys each arc
-            # column to exactly one export + one import region; taking the value
-            # from whichever region pinned it (they agree only when λ=0) — we use
-            # ``f_out`` as the base and overlay each region's own ``f_sep`` so a
-            # column reflects the flow actually solved for it.
-            if in_out_on:
-                incumbent_f_bar = dict(f_out)
-                for rm in regions_meta:
-                    fsr = f_sep_by_region[rm.name]
-                    for a, _rc, master_cols in rm.forward:
-                        for mc in master_cols:
-                            mc = int(mc)
-                            if mc in fsr:
-                                incumbent_f_bar[mc] = fsr[mc]
-            else:
-                incumbent_f_bar = dict(f_bar)
-            best_incumbent = {
-                "C": dict(C_by_conn),
-                "f_bar": incumbent_f_bar,
-                "region_costs": dict(region_costs),
-                # The master trade ``v_invest_p`` frame + per-region primal AT
-                # this incumbent, for the TIER-1 invest handoff (master trade
-                # ∪ region in-region invest, owner-de-duplicated).  The master
-                # frame is MATERIALIZED here (a fresh DataFrame), not held as a
-                # Solution reference: the warm-restart reuses the master's
-                # ``col_value`` buffer across iterations, so a stashed Solution
-                # would read a later iteration's values.  ``region_col_values``
-                # are already per-region ``.copy()``-d above.
-                "master_trade_invest": master.trade_invest_frame(msol),
-                "region_col_values": region_col_values,
-            }
-
-        # ALWAYS-ON monolith-free sandwich guard: LB ≤ optimum ≤ best_UB must
-        # hold (best_UB is itself an upper bound on the optimum).  FAIL-SAFE: an
-        # overshoot within the gross band means LB has numerically MET best_UB —
-        # i.e. the bounds have closed, the incumbent is optimal — so treat it as
-        # converged and stop on the incumbent rather than aborting.  A GROSS
-        # overshoot is the genuine invalid-lower-bound pathology (the Lagrangian-
-        # style bug this scheme fixes) and hard-fails with guidance.
-        if LB > best_UB:
-            rel_over = (LB - best_UB) / max(1.0, abs(best_UB))
-            if rel_over > gross_band:
-                raise RuntimeError(_benders_failure_message(
-                    summary=(
-                        f"Benders lower bound {LB * inv_s:.6e} exceeds the best "
-                        f"feasible cost found {best_UB * inv_s:.6e} (by "
-                        f"{rel_over:.2e}, > {gross_band:.0e}) at iteration "
-                        f"{iterations}."
-                    ),
-                    meaning=(
-                        "The lower bound has risen above a solution we already "
-                        "know is achievable, which is impossible for a valid "
-                        "bound. A gap this large means the master's bound is "
-                        "invalid — typically from severe numerical ill-"
-                        "conditioning of the master problem (very large or very "
-                        "small connection investment costs / capacities), not "
-                        "from your model being wrong."
-                    ),
-                    how_to_avoid=(
-                        "Check the connections that couple the node groups "
-                        "(investment cost, capacity, efficiency) for extreme "
-                        "magnitudes or unit errors and rescale/correct the "
-                        "outliers so the master is better conditioned. Loosen "
-                        "the solver tolerance (e.g. --solver-mip-gap 0.01) and "
-                        "re-run to rule out a transient solver state. If it "
-                        "persists, please report it with the model."
-                    ),
-                ))
-            _logger.warning(
-                "Benders iter %d: LB met best UB within %.3e (numerical) — "
-                "treating as converged", iterations, rel_over,
-            )
-            converged = True
-            gap = 0.0
-            break
-
-        gap = (best_UB - LB) / max(1.0, abs(best_UB))
-        # DEBUG (not info): the orchestrator streams the user-facing per-iter
-        # line in REAL units via ``progress_callback``; this internal line
-        # carries the raw SCALED values and would otherwise duplicate it.
-        _logger.debug(
-            "Benders iter %d: LB=%.6e UB=%.6e bestUB=%.6e gap=%.3e",
-            iterations, LB, UB, best_UB, gap,
-        )
-        # DIAGNOSTIC per-iteration timing: master-solve vs region-solve wall time
-        # against the accumulated master cut-row count.  The master row count
-        # grows by one-per-region-per-iteration and is never pruned, so this line
-        # makes the O(cuts) growth of the master solve (the dominant cost of a
-        # long run) directly observable; the region pass is ~flat (fixed-size,
-        # parallel).  Not gated behind DEBUG: it is a single INFO line per
-        # iteration surfacing where the wall time goes.
+    def _on_iteration(info: dict) -> None:
+        # DIAGNOSTIC: surface the accumulated master cut-row count on THIS
+        # module's logger every iteration (the master row count grows by
+        # one-per-region-per-iteration, so this line makes the O(cuts) growth
+        # of the master solve directly observable; with compaction ON it is
+        # the post-append peak, before the loop-end compaction resets it).
+        # The per-solve wall times live on the coordinator's own
+        # ``polar_high.benders`` timing line.
         _logger.info(
-            "[benders timing] iter %d: master_solve=%.3fs regions=%.3fs "
-            "master_cut_rows=%d", iterations, _dt_master, _dt_regions,
-            _master_cut_rows,
+            "[benders timing] iter %d: master_cut_rows=%d",
+            info["iter"], info["cut_rows"],
         )
-
         if progress_callback is not None:
             # Stream one live per-iteration summary.  Bounds are reported in
             # REAL units (÷s) so the orchestrator's lines match the returned
             # ``BendersResult`` fields regardless of ``scale_the_objective``.
             progress_callback({
-                "iter": iterations,
-                "lower_bound": LB * inv_s,
-                "upper_bound": UB * inv_s,
-                "best_upper_bound": best_UB * inv_s,
-                "gap": gap,
-                "converged": gap <= tol,
-                "region_costs": {r: c * inv_s for r, c in region_costs.items()},
+                "iter": info["iter"],
+                "lower_bound": info["lower_bound"] * inv_s,
+                "upper_bound": info["upper_bound"] * inv_s,
+                "best_upper_bound": info["best_upper_bound"] * inv_s,
+                "gap": info["gap"],
+                "converged": info["converged"],
+                "region_costs": {
+                    r: c * inv_s for r, c in info["sub_costs"].items()
+                },
             })
 
-        if gap <= tol:
-            converged = True
-            break
+    _on_subsolve = None
+    if subsolve_callback is not None:
+        def _on_subsolve(info: dict) -> None:
+            # Per-region FINISH event (worker thread; iter 0 = bootstrap).
+            # ``cost`` arrives in scaled space → REAL units for the caller.
+            subsolve_callback({
+                "iter": info["iter"],
+                "region": info["sub"],
+                "obj": info["cost"] / obj_scale,  # cost_r → REAL units
+            })
 
-        # --- STALL GUARD (fail fast, don't silently exhaust the iter cap).
-        # Feed the domain-free monitor this iteration's (LB, best_UB); it holds
-        # the best_UB window internally and returns a verdict once K iterations
-        # have been seen.  A stall = incumbent frozen for K iters AND still
-        # blown up far above Σ|autarky| AND gap far from converged — mutually
-        # exclusive with the sandwich break above (which has gap≈0).  On a
-        # stall the frozen incumbent is garbage (best_UB can be orders above the
-        # true optimum), so returning it would hand a chained dispatch solve a
-        # catastrophically wrong plan: HARD-fail with a plain-English diagnostic
-        # that names the worst-offender node group(s), like the sibling guards.
-        verdict = stall_monitor.update(LB, best_UB)
-        if verdict.stalled:
-            root, autarky_ratio, symptom, symptom_ratio = _stall_worst_offenders(
-                autarky_by_region, region_costs
-            )
-            k = stall_monitor.window
-            # Name the ROOT primarily; add the SYMPTOM only if it differs.
-            root_clause = (
-                f"Node group {root!r} is the likely cause — its stand-alone "
-                f"cost is already {autarky_ratio:.0f}x the next largest, i.e. it "
-                f"cannot meet its own demand without imports."
-            )
-            symptom_clause = (
-                ""
-                if symptom == root
-                else (
-                    f" At the stalled iteration node group {symptom!r} is the "
-                    f"one forced worst into penalty/slack flow "
-                    f"({symptom_ratio:.0f}x its stand-alone cost)."
-                )
-            )
-            raise RuntimeError(_benders_failure_message(
-                summary=(
-                    f"Benders stalled at iteration {iterations}: the best "
-                    f"feasible cost has not improved for {k} iterations and the "
-                    f"relative gap is stuck at ~{gap:.2f}, far from the {tol} "
-                    "tolerance."
-                ),
-                meaning=(
-                    "The master keeps proposing node-group coupling flows that "
-                    "force one or more node groups into large penalty/slack "
-                    f"flow (recourse ~{symptom_ratio:.0f}x their stand-alone "
-                    "cost), so no improving feasible solution is found and the "
-                    f"bound cannot close. {root_clause}{symptom_clause}"
-                ),
-                how_to_avoid=(
-                    f"First, give the import/boundary nodes of {root!r} a "
-                    "finite, moderate import price (penalty) a small multiple "
-                    "above the real marginal supply cost — an over-large penalty "
-                    "is what inflates the recourse and freezes the bound (any "
-                    "price above the true import cost gives the same optimum). "
-                    f"Then check {root!r} in isolation for missing local "
-                    "capacity or imports, and rescale any extreme "
-                    "coupling-connection cost or capacity magnitudes. Only raise "
-                    "the iteration limit if the gap is still slowly improving "
-                    "(it is not here). If it persists, please report it with the "
-                    "model."
-                ),
-            ))
+    def _on_incumbent(msol, sub_results, info) -> dict:
+        # Incumbent capture for the TIER-1 invest handoff.  Everything is
+        # MATERIALIZED here: the master ``trade_invest_frame`` is a fresh
+        # DataFrame (the warm-restart reuses the master's ``col_value``
+        # buffer across iterations, so a stashed Solution would read a later
+        # iteration's values), and each region primal is ``.copy()``-d (the
+        # region Solutions' buffers are likewise reused by later warm
+        # re-solves).  ``sub_results`` is regions_meta/splits-index aligned
+        # (the coordinator returns subproblem results in adapter order).
+        return {
+            "C": dict(master._last_C_by_conn),
+            "master_trade_invest": master.trade_invest_frame(msol),
+            "region_col_values": [
+                np.asarray(r.payload.col_value).copy() for r in sub_results
+            ],
+        }
 
-        # --- IN-OUT: feed each region's outcome back to its stabilizer.  The
-        # separation flag is PER-REGION (plan §1): the MOMENT a region's cut
-        # fails to separate its ``f_out``, that region's next
-        # ``separation_point`` returns ``f_out`` VERBATIM (λ=0 → exact Benders,
-        # guaranteed to separate unless already optimal).  ``improved`` (best_UB
-        # dropped this iteration) drives the serious step (centre ← incumbent).
-        if in_out_on:
-            incumbent_point = (
-                best_incumbent["f_bar"] if best_incumbent is not None else f_out
-            )
-            for rm in regions_meta:
-                separated = _cut_separates(
-                    region_costs[rm.name], slopes_by_region[rm.name],
-                    f_out, f_sep_by_region[rm.name], eta_by_region[rm.name],
-                )
-                stabilizers[rm.name].register(
-                    master_point=f_out,
-                    separated=separated,
-                    incumbent_point=incumbent_point,
-                    improved=improved,
-                )
-
-        pending_cuts = next_cuts
-
-        # --- PERIODIC MASTER CUT COMPACTION (spec: benders_cut_aging_plan.md,
-        # FIRST SHIP).  When the active cut-row count reaches ``compact_at``,
-        # ``WarmProblem.compact_cuts`` classifies every retained cut row by
-        # PRIMAL slack at the RAW master vertex ``msol.col_value`` (binding iff
-        # slack ≤ tol), deletes the strictly-slack rows in place, and re-solves
-        # + rolls back on any objective drift (its verify belt — LB-preserving).
-        # polar-high owns all of that; FlexTool only triggers it and tracks the
-        # kept count.  Guarded by ``compact_at > 0`` so the default (OFF) path
-        # is byte-identical to the pre-compaction loop.
-        #
-        # PLACEMENT + ``msol`` SAFETY.  We call at the VERY END of the loop
-        # body, AFTER ``pending_cuts = next_cuts``, so ``msol`` has already been
-        # FULLY consumed by THIS iteration (``read_master`` / the LB self-checks
-        # / ``_check_cuts_satisfied`` / the UB + sandwich/stall guards); nothing
-        # downstream in the iteration reads it again.  ``msol.col_value`` is the
-        # RAW master optimum — the flow-clamp above mutates ``new_f_bar``, NOT
-        # ``msol`` — which is the correct classification point.  Deleting rows
-        # here simply shrinks the master for the NEXT iteration's ``solve()``
-        # (which proceeds from the compacted state); ``compact_cuts`` re-solves
-        # internally for its verify belt, so the master stays LB-safe.
-        #
-        # SELECTION POLICY (``cut_policy``): ``slack`` (default) drops cuts
-        # strictly slack at the current optimum; ``dominance`` (non-default,
-        # env opt-in) groups cuts by recourse (``η``) column and, over
-        # ``cut_window`` (the last ``W`` master vertices), keeps only the oldest
-        # group-max achiever at each trial point, dropping dominated cuts AND
-        # degenerate ties.  Dominance is INEFFECTIVE where the cuts are
-        # load-bearing (degenerate optimum + cheap inter-temporal storage), so
-        # ``slack`` is the default; both are LB-safe (verify-restore belt).
-        if compact_at > 0 and _master_cut_rows >= compact_at:
-            _res = master.compact_cuts(
-                msol,  # msol = raw pre-clamp master vertex (latest trial point)
-                policy=cut_policy,
-                trial_col_values=list(cut_window),
-            )
-            _master_cut_rows = _res["kept"]
-            _logger.info(
-                "[benders timing] iter %d: cut compaction kept=%d dropped=%d "
-                "restored=%s", iterations, _res["kept"], _res["dropped"],
-                _res["restored"],
-            )
-
-    # --- assemble result from the incumbent.  UNSCALE cost-valued outputs back
-    # to real units (÷s): the loop's internal LB/UB/cost arithmetic ran in
-    # scaled space (objectives built ×s), but callers/tests expect real-unit
-    # costs.  ``invest`` (capacity C, MW) and ``trade_flow`` (MW) are NOT costs
-    # and stay in their native (scale-invariant) units.  s=1.0 ⇒ no-op.
-    inc = best_incumbent if best_incumbent is not None else {
-        "C": C_by_conn, "f_bar": f_bar, "region_costs": region_costs,
-        "master_trade_invest": (
-            master.trade_invest_frame(msol) if iterations else None
+    options = BendersLoopOptions(
+        max_iters=max_iters,
+        tol=tol,
+        in_out_weight=in_out_weight,
+        workers=eff_workers,
+        stall_window=_resolve_benders_max_stall(),
+        # Raised gap floor so a loose ``tol`` never lets the floor fall below
+        # the gap it must clear (same derivation the coordinator would apply
+        # at None; passed explicitly to pin today's exact value).
+        gap_floor=max(20.0 * tol, 0.02),
+        compact_at=compact_at,
+        cut_policy=cut_policy,
+        cut_window=_resolve_benders_cut_window(),
+        eta_floor_mult=_ETA_FLOOR_MULT,
+        obj_scale=obj_scale,
+        lb_gross_slack=_LB_GROSS_SLACK,
+        # OPTIONAL test-time guard: M is supplied in REAL units; the
+        # coordinator compares in the caller's (scaled) space, so pass M·s.
+        monolith_objective=(
+            monolith_objective * obj_scale
+            if monolith_objective is not None else None
         ),
-        "region_col_values": region_col_values if iterations else None,
-    }
-    trade_flow = _flow_frames(arcs, inc["f_bar"])
+    )
+
+    # --- Run the generic coordinator.  Its structured exceptions are
+    # rendered below into the exact plain-English diagnostics this driver has
+    # always raised (one ``_benders_failure_message`` call site per failure
+    # kind — pinned by ``test_benders_failure_messages``).  The domain-side
+    # not-optimal errors (region ``solve_at`` / ``_BendersMaster.solve``) and
+    # the ``project_point`` capacity-clamp error carry their prose already
+    # and propagate through the coordinator untouched.
+    try:
+        loop = solve_benders_loop(
+            master,
+            sub_adapters,
+            options=options,
+            initial_point=f_bar,
+            on_iteration=_on_iteration,
+            on_subsolve=_on_subsolve,
+            on_incumbent=_on_incumbent,
+        )
+    except BendersBoundInvalid as exc:
+        _raise_bound_invalid(
+            exc, inv_s=inv_s, obj_scale=obj_scale,
+            monolith_objective=monolith_objective,
+        )
+    except BendersStalled as exc:
+        _raise_stalled(exc)
+
+    # --- assemble result from the incumbent.  UNSCALE cost-valued outputs
+    # back to real units (÷s): the loop's internal LB/UB/cost arithmetic ran
+    # in scaled space (objectives built ×s), but callers/tests expect
+    # real-unit costs.  ``invest`` (capacity C, MW) and ``trade_flow`` (MW)
+    # are NOT costs and stay in their native (scale-invariant) units.
+    # s=1.0 ⇒ no-op.
+    payload = loop.incumbent_payload
+    if payload is None:
+        # No incumbent was recorded — only reachable on a zero-iteration run
+        # (every real iteration improves the initial +inf best-UB).  Degrade
+        # to an empty handoff rather than crash.
+        payload = {
+            "C": dict(master._last_C_by_conn),
+            "master_trade_invest": None,
+            "region_col_values": None,
+        }
+    trade_flow = _flow_frames(arcs, loop.incumbent_point)
 
     # --- TIER-1 whole-system invest handoff (GAP-a).  Assemble the same-shaped
     # ``{v_invest_p/v_invest_n/v_divest_p/v_divest_n -> (entity, d, value)}``
@@ -2505,20 +2184,20 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         region_of_index=[s.region for s in splits],
         region_membership=_region_filter.load_region_membership(data, regions),
         regions=regions,
-        region_col_values=inc.get("region_col_values"),
-        master_trade_invest=inc.get("master_trade_invest"),
+        region_col_values=payload.get("region_col_values"),
+        master_trade_invest=payload.get("master_trade_invest"),
         trade_conns={a.conn for a in arcs},
     )
 
     return BendersResult(
-        converged=converged,
-        iterations=iterations,
-        total_objective=best_UB * inv_s,
-        lower_bound=LB * inv_s,
-        upper_bound=best_UB * inv_s,
-        gap=gap,
-        region_costs={r: c * inv_s for r, c in inc["region_costs"].items()},
-        invest=inc["C"],
+        converged=loop.converged,
+        iterations=loop.iterations,
+        total_objective=loop.best_upper_bound * inv_s,
+        lower_bound=loop.lower_bound * inv_s,
+        upper_bound=loop.best_upper_bound * inv_s,
+        gap=loop.gap,
+        region_costs={r: c * inv_s for r, c in loop.sub_costs.items()},
+        invest=payload["C"],
         trade_flow=trade_flow,
         invest_solution_vars=invest_solution_vars,
         tol=tol,
@@ -2635,148 +2314,248 @@ def _cut_separates(
     f_sep: dict[int, float],
     eta_r: float,
 ) -> bool:
-    """In-out separation test (plan §4 step 6): does the cut GENERATED at the
-    interior ``f_sep`` strictly separate the master vertex ``(f_out, eta_r)``?
+    """In-out separation test: does the cut GENERATED at the interior
+    ``f_sep`` strictly separate the master vertex ``(f_out, eta_r)``?
 
-    The cut's value at the master point is ``cut_val = cost_r + Σ slope·(f_out −
-    f_sep)``; it lower-bounds the region recourse, so it separates iff the master
-    under-estimated it: ``cut_val > eta_r + tol_sep``.  ``tol_sep`` is the SAME
-    row-scale tolerance :func:`_check_cuts_satisfied` uses —
-    ``1e-6·max(1, |cut_val|, |eta_r|, row_scale)`` with ``row_scale = |cost_r| +
-    Σ|slope|·(|f_out| + |f_sep|)`` — reusing the identical arithmetic so the two
-    never drift.  The tolerance is LOAD-BEARING: a bare ``>`` reports spurious
-    "separated" on round-off, the forced out-step never fires, and the loop
-    livelocks on a degenerate vertex.  All quantities are in the same (scaled)
-    space and homogeneous, so no ``obj_scale`` division is needed."""
-    cut_val = cost_r + sum(g * (f_out[c] - f_sep[c]) for c, g in slopes.items())
-    row_scale = abs(cost_r) + sum(
-        abs(g) * (abs(f_out[c]) + abs(f_sep[c])) for c, g in slopes.items()
-    )
-    tol_sep = 1e-6 * max(1.0, abs(cut_val), abs(eta_r), row_scale)
-    return cut_val > eta_r + tol_sep
+    Delegated verbatim to the coordinator's
+    :func:`polar_high.benders._cut_separates` — the arithmetic (row-scale
+    ``tol_sep``, load-bearing against livelock on a degenerate vertex) moved
+    there with the loop.  This wrapper keeps the FlexTool-side unit-test
+    surface (and its ``eta_r`` vocabulary) stable."""
+    return _ph_cut_separates(cost_r, slopes, f_out, f_sep, eta_r)
 
 
 def _check_cuts_satisfied(cuts, f_bar, new_f_bar, eta_by_region, *,
                           iterations, inv_s) -> None:
-    """Mandatory self-check (critique Point 1): at the NEW master point each
-    just-appended cut must be SATISFIED, i.e.
+    """Post-master cut self-check: at the NEW master point each just-appended
+    cut must be SATISFIED, i.e.
 
         eta_r  >=  cost_r(f̄) + Σ_cell slope[cell]·(f_master[cell] − f̄[cell])
 
-    ``cuts`` carry ``(region, cost_r, {master_f_col: slope})`` (evaluated at the
-    OLD ``f_bar``) OR, with in-out separation on, the 4-tuple ``(region,
-    gen_point, cost_r, slopes)`` carrying each cut's OWN GENERATION POINT — the
-    interior ``f_sep`` the cut was generated at, which differs per region and is
-    NOT the loop's ``f_bar`` (see the in-out wiring).  ``new_f_bar`` is the
-    master's chosen flow.  For a 3-tuple the shared ``f_bar`` is the generation
-    point (byte-identical to the exact-Benders path).  We assert each eta_r is
-    finite AND clears its own cut RHS — a binding/active cut makes this an
-    equality, a slack cut an inequality.
+    The arithmetic — row-scale tolerance (keyed off the cut ROW's coefficient
+    magnitude, not the possibly heavily-cancelled rhs), warn-and-continue
+    below the gross band, hard-fail beyond it — moved verbatim into the
+    coordinator (:func:`polar_high.benders._check_cuts_satisfied`), which the
+    loop now runs internally.  This wrapper is the DOMAIN-RENDERING surface
+    kept in FlexTool: it normalises the historical 3-tuple cut shape
+    (``(region, cost_r, slopes)``, generation point = the shared ``f_bar``)
+    to the coordinator's 4-tuple, delegates, and renders the structured
+    ``BendersBoundInvalid`` into this driver's exact plain-English
+    diagnostics — the same render sites the loop's exception handling uses.
+    """
+    norm = [
+        cut if len(cut) == 4 else (cut[0], f_bar, cut[1], cut[2])
+        for cut in cuts
+    ]
+    try:
+        _ph_check_cuts_satisfied(
+            norm, new_f_bar, eta_by_region, iteration=iterations
+        )
+    except BendersBoundInvalid as exc:
+        _raise_cut_check_failure(exc, inv_s=inv_s)
 
-    TOLERANCE SCALE.  The cut is a literal row ``η_r − Σ g·f ≥ cost_r − Σ g·f̄``
-    in the master LP (see :meth:`_BendersMaster.add_cut`), so at the master
-    optimum the solver already enforces ``η_r ≥ rhs`` — the ONLY gap between
-    row-as-solved and row-as-checked is the LP's feasibility tolerance.  HiGHS
-    measures that on its INTERNALLY-SCALED matrix, so the UNSCALED slack tracks
-    the row's COEFFICIENT magnitude, not its (possibly heavily cancelled) rhs.
-    Early-iteration overshoot makes this bite: a region whose recourse spikes
-    (import-starved penalty flow) yields huge reduced-cost slopes, so ``cost_r``
-    and ``Σ g·f̄`` are large and NEARLY CANCEL — rhs collapses to O(1) while the
-    row coefficients stay at O(1e6).  Keying the tolerance off ``|rhs|`` alone
-    (the old ``1e-5·max(1,|rhs|,|er|)``) then demands a precision the cancelled
-    row cannot deliver and hard-fails on pure solver round-off.  We key it off
-    the row's magnitude (``|cost_r| + Σ|g·f|``) instead — the same fail-safe
-    philosophy as the sibling flow-clamp / LB-dip / sandwich guards: absorb
-    numerical noise, hard-fail only a GROSS violation (a cut that failed to
-    append, or a grossly infeasible master point — orders beyond any solver
-    slack)."""
-    for cut in cuts:
-        # Backward-compatible unpack: a 3-tuple ``(region, cost_r, slopes)``
-        # uses the shared ``f_bar`` as its generation point (exact-Benders /
-        # unit-test path); a 4-tuple ``(region, gen_point, cost_r, slopes)``
-        # carries its OWN interior generation point (in-out separation path).
-        if len(cut) == 4:
-            region, gen_point, cost_r, slopes = cut
-        else:
-            region, cost_r, slopes = cut
-            gen_point = f_bar
-        er = eta_by_region.get(region)
-        if er is None or not np.isfinite(er):
-            raise RuntimeError(_benders_failure_message(
-                summary=(
-                    f"Benders recourse estimate η for node group {region!r} is "
-                    f"not a finite number ({er!r}) after the master solve at "
-                    f"iteration {iterations}."
-                ),
-                meaning=(
-                    "The master problem returned a non-finite value for a node "
-                    "group's recourse cost, which means that master solve did "
-                    "not produce a usable solution — almost always severe "
-                    "numerical ill-conditioning of the master (extreme "
-                    "connection investment-cost or capacity magnitudes) or a "
-                    "corrupted solver state."
-                ),
-                how_to_avoid=(
-                    "Re-run the solve to rule out a transient solver state. If "
-                    "it recurs, check the connections that couple the node "
-                    "groups for extreme or mismatched cost/capacity magnitudes "
-                    "and rescale the outliers. If it persists, please report it "
-                    "with the model."
-                ),
-            ))
-        rhs = cost_r + sum(
-            g * (new_f_bar[c] - gen_point[c]) for c, g in slopes.items()
-        )
-        # Row conditioning: the constraint's coefficients (|cost_r|, |g·f|) set
-        # the unscaled feasibility slack the solver may leave — they can be
-        # ORDERS larger than the cancelled rhs.  Tolerance keyed off that scale.
-        row_scale = abs(cost_r) + sum(
-            abs(g) * (abs(new_f_bar[c]) + abs(gen_point[c]))
-            for c, g in slopes.items()
-        )
-        tol_abs = 1e-6 * max(1.0, abs(rhs), abs(er), row_scale)
-        if er >= rhs - tol_abs:
-            continue
-        violation = rhs - er
-        # GROSS band: an un-appended cut leaves η near its large-negative floor,
-        # and a grossly infeasible master point violates by a like amount —
-        # either dwarfs 1% of the row scale.  Below that, a violation is solver
-        # feasibility round-off on an ill-conditioned row; warn and continue
-        # (the LB-monotonicity + sandwich guards still bracket the optimum).
-        gross_tol = 1e-2 * max(1.0, row_scale)
-        if violation > gross_tol:
-            raise RuntimeError(_benders_failure_message(
-                summary=(
-                    f"Benders cut for node group {region!r} is violated at the "
-                    f"new master point: recourse estimate η={er * inv_s:.6e} is "
-                    f"below the cut floor {rhs * inv_s:.6e} (by "
-                    f"{violation:.3e}, > {gross_tol:.3e} at row scale "
-                    f"{row_scale:.3e}) at iteration {iterations}."
-                ),
-                meaning=(
-                    "A just-added Benders cut, which lower-bounds this node "
-                    "group's recourse cost, is not honoured by the master's own "
-                    "solution — by far more than solver rounding can explain "
-                    "(small violations are absorbed automatically). That points "
-                    "to a stale solver basis or a corrupted cut append, not to "
-                    "your model's economics."
-                ),
-                how_to_avoid=(
-                    "Re-run the solve first — a fresh basis usually clears a "
-                    "one-off warm-restart glitch. If it recurs, loosen the "
-                    "solver tolerance (e.g. --solver-mip-gap 0.01) and check the "
-                    "connections coupling the node groups for extreme "
-                    "investment-cost or capacity magnitudes that make the master "
-                    "ill-conditioned. If it persists, please report it with the "
-                    "model."
-                ),
-            ))
-        _logger.warning(
-            "Benders iter %d: cut for %r under-satisfied by %.3e (row scale "
-            "%.3e) — solver feasibility round-off on an ill-conditioned cut "
-            "row; continuing", iterations, region, violation, row_scale,
-        )
 
+# ---------------------------------------------------------------------------
+# Structured-exception rendering: polar_high.benders → FlexTool prose.
+#
+# The coordinator raises structured exceptions carrying the numeric fields;
+# FlexTool renders them into the exact plain-English summary / what-it-means /
+# how-to-avoid texts this driver has always raised.  Each exception KIND gets
+# its OWN ``_benders_failure_message`` call site with literal keyword strings
+# (pinned by ``test_benders_failure_messages`` — the AST walk needs >= 8 such
+# sites; together with the domain-side region/master not-optimal and the
+# capacity-clamp sites above, these make up the full set).
+# ---------------------------------------------------------------------------
+
+
+def _raise_cut_check_failure(exc: BendersBoundInvalid, *, inv_s: float) -> NoReturn:
+    """Render the two cut-self-check kinds (``cut_nonfinite`` /
+    ``cut_violated``); re-raise anything else untouched."""
+    if exc.kind == "cut_nonfinite":
+        raise RuntimeError(_benders_failure_message(
+            summary=(
+                f"Benders recourse estimate η for node group {exc.sub_name!r} is "
+                f"not a finite number ({exc.recourse_value!r}) after the master "
+                f"solve at iteration {exc.iteration}."
+            ),
+            meaning=(
+                "The master problem returned a non-finite value for a node "
+                "group's recourse cost, which means that master solve did "
+                "not produce a usable solution — almost always severe "
+                "numerical ill-conditioning of the master (extreme "
+                "connection investment-cost or capacity magnitudes) or a "
+                "corrupted solver state."
+            ),
+            how_to_avoid=(
+                "Re-run the solve to rule out a transient solver state. If "
+                "it recurs, check the connections that couple the node "
+                "groups for extreme or mismatched cost/capacity magnitudes "
+                "and rescale the outliers. If it persists, please report it "
+                "with the model."
+            ),
+        )) from exc
+    if exc.kind == "cut_violated":
+        raise RuntimeError(_benders_failure_message(
+            summary=(
+                f"Benders cut for node group {exc.sub_name!r} is violated at the "
+                f"new master point: recourse estimate "
+                f"η={exc.recourse_value * inv_s:.6e} is "
+                f"below the cut floor {exc.cut_rhs * inv_s:.6e} (by "
+                f"{exc.violation:.3e}, > {exc.gross_tol:.3e} at row scale "
+                f"{exc.row_scale:.3e}) at iteration {exc.iteration}."
+            ),
+            meaning=(
+                "A just-added Benders cut, which lower-bounds this node "
+                "group's recourse cost, is not honoured by the master's own "
+                "solution — by far more than solver rounding can explain "
+                "(small violations are absorbed automatically). That points "
+                "to a stale solver basis or a corrupted cut append, not to "
+                "your model's economics."
+            ),
+            how_to_avoid=(
+                "Re-run the solve first — a fresh basis usually clears a "
+                "one-off warm-restart glitch. If it recurs, loosen the "
+                "solver tolerance (e.g. --solver-mip-gap 0.01) and check the "
+                "connections coupling the node groups for extreme "
+                "investment-cost or capacity magnitudes that make the master "
+                "ill-conditioned. If it persists, please report it with the "
+                "model."
+            ),
+        )) from exc
+    raise exc
+
+
+def _raise_bound_invalid(
+    exc: BendersBoundInvalid, *, inv_s: float, obj_scale: float,
+    monolith_objective: float | None,
+) -> NoReturn:
+    """Render a coordinator ``BendersBoundInvalid`` into the exact
+    plain-English diagnostics of the pre-coordinator in-module loop.
+
+    All numeric fields on ``exc`` are in the loop's SCALED space; the
+    cost-valued ones are unscaled (÷s) for display exactly as before.  The
+    ``monolith`` kind reproduces the historical bare-RuntimeError text using
+    the caller's REAL-unit ``monolith_objective`` (formatting the exception's
+    scaled field ×inv_s could drift in the last bit when s != 1)."""
+    if exc.kind == "lb_drop":
+        raise RuntimeError(_benders_failure_message(
+            summary=(
+                f"Benders lower bound dropped "
+                f"{exc.prev_lower_bound * inv_s:.6e} → "
+                f"{exc.lower_bound * inv_s:.6e} "
+                f"(by {exc.rel_drop:.2e}, > {exc.gross_band:.0e}) at iteration "
+                f"{exc.iteration}."
+            ),
+            meaning=(
+                "The Benders lower bound must never decrease — each "
+                "iteration only adds cuts, which can only tighten it. A "
+                "large drop means the master problem returned an "
+                "inconsistent solution, almost always from a stale "
+                "solver basis (warm restart) or severe numerical ill-"
+                "conditioning of that master — not from your model's "
+                "economics."
+            ),
+            how_to_avoid=(
+                "Re-run the solve first — a fresh basis usually clears a "
+                "one-off warm-restart glitch. If it recurs: loosen the "
+                "solver tolerance (e.g. --solver-mip-gap 0.01); check the "
+                "connections that couple the node groups for extreme "
+                "investment-cost or capacity magnitudes / unit "
+                "mismatches that make the master ill-conditioned. If it "
+                "persists, please report it with the model."
+            ),
+        )) from exc
+    if exc.kind == "sandwich":
+        raise RuntimeError(_benders_failure_message(
+            summary=(
+                f"Benders lower bound {exc.lower_bound * inv_s:.6e} exceeds the "
+                f"best feasible cost found {exc.best_upper_bound * inv_s:.6e} "
+                f"(by {exc.rel_over:.2e}, > {exc.gross_band:.0e}) at iteration "
+                f"{exc.iteration}."
+            ),
+            meaning=(
+                "The lower bound has risen above a solution we already "
+                "know is achievable, which is impossible for a valid "
+                "bound. A gap this large means the master's bound is "
+                "invalid — typically from severe numerical ill-"
+                "conditioning of the master problem (very large or very "
+                "small connection investment costs / capacities), not "
+                "from your model being wrong."
+            ),
+            how_to_avoid=(
+                "Check the connections that couple the node groups "
+                "(investment cost, capacity, efficiency) for extreme "
+                "magnitudes or unit errors and rescale/correct the "
+                "outliers so the master is better conditioned. Loosen "
+                "the solver tolerance (e.g. --solver-mip-gap 0.01) and "
+                "re-run to rule out a transient solver state. If it "
+                "persists, please report it with the model."
+            ),
+        )) from exc
+    if exc.kind == "monolith":
+        # OPTIONAL test-time guard (kept as the historical bare RuntimeError,
+        # not a 3-section diagnostic — it only fires when a caller supplies a
+        # known monolith optimum, i.e. in tests).
+        raise RuntimeError(
+            f"Benders LB {exc.lower_bound / obj_scale:.10e} exceeds monolith M "
+            f"{monolith_objective:.10e} at iter {exc.iteration} — "
+            f"INVALID lower bound (the bug this scheme fixes)"
+        ) from exc
+    _raise_cut_check_failure(exc, inv_s=inv_s)
+
+
+def _raise_stalled(exc: BendersStalled) -> NoReturn:
+    """Render the coordinator's ``BendersStalled`` into the plain-English
+    stall diagnostic, naming the worst-offender node group(s) exactly as the
+    pre-coordinator loop did (the exception carries the bootstrap/autarky and
+    stalled-iteration cost maps for :func:`_stall_worst_offenders`)."""
+    root, autarky_ratio, symptom, symptom_ratio = _stall_worst_offenders(
+        exc.sub_reference_costs, exc.sub_costs
+    )
+    k = exc.window
+    # Name the ROOT primarily; add the SYMPTOM only if it differs.
+    root_clause = (
+        f"Node group {root!r} is the likely cause — its stand-alone "
+        f"cost is already {autarky_ratio:.0f}x the next largest, i.e. it "
+        f"cannot meet its own demand without imports."
+    )
+    symptom_clause = (
+        ""
+        if symptom == root
+        else (
+            f" At the stalled iteration node group {symptom!r} is the "
+            f"one forced worst into penalty/slack flow "
+            f"({symptom_ratio:.0f}x its stand-alone cost)."
+        )
+    )
+    raise RuntimeError(_benders_failure_message(
+        summary=(
+            f"Benders stalled at iteration {exc.iteration}: the best "
+            f"feasible cost has not improved for {k} iterations and the "
+            f"relative gap is stuck at ~{exc.gap:.2f}, far from the {exc.tol} "
+            "tolerance."
+        ),
+        meaning=(
+            "The master keeps proposing node-group coupling flows that "
+            "force one or more node groups into large penalty/slack "
+            f"flow (recourse ~{symptom_ratio:.0f}x their stand-alone "
+            "cost), so no improving feasible solution is found and the "
+            f"bound cannot close. {root_clause}{symptom_clause}"
+        ),
+        how_to_avoid=(
+            f"First, give the import/boundary nodes of {root!r} a "
+            "finite, moderate import price (penalty) a small multiple "
+            "above the real marginal supply cost — an over-large penalty "
+            "is what inflates the recourse and freezes the bound (any "
+            "price above the true import cost gives the same optimum). "
+            f"Then check {root!r} in isolation for missing local "
+            "capacity or imports, and rescale any extreme "
+            "coupling-connection cost or capacity magnitudes. Only raise "
+            "the iteration limit if the gap is still slowly improving "
+            "(it is not here). If it persists, please report it with the "
+            "model."
+        ),
+    )) from exc
 
 def _assert_finite_boundary_penalties(data: FlexData, arcs: list[_ArcMaster]) -> None:
     """Optimality-cuts-only feasibility precondition: every boundary node

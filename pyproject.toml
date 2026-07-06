@@ -56,8 +56,11 @@ dependencies = [
     # "excessively small costs" warning that the legacy 1e-6 scale_the_objective
     # provokes).  3.3.0 adds polar_high.decomposition.StallMonitor (the Benders
     # stall guard).  3.4.0 adds decomposition.InOutStabilizer, the generic in-out
-    # separation picker the Benders in-out stabilization drives — the hard floor.
-    "polar-high>=3.4.0",
+    # separation picker the Benders in-out stabilization drives.  3.5.0 adds
+    # polar_high.benders (the generic multicut Benders coordinator the FlexTool
+    # driver now runs on), WarmProblem.compact_cuts + fix_col_ids/bounds
+    # accessors, and solve_with_fallback — the hard floor.
+    "polar-high>=3.5.0",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.
