@@ -62,6 +62,7 @@ from flextool.engine_polars._pdt_join import compute_pss_dt
 __all__ = [
     "HalfFlow",
     "RegionSplit",
+    "compute_master_hosted_nodes",
     "discover_regions",
     "split",
     "master_network_data",
@@ -226,6 +227,30 @@ def load_region_membership(
     return out
 
 
+def compute_master_hosted_nodes(
+    data: FlexData,
+    region_membership: dict[str, dict[str, set[str]]],
+) -> set[str]:
+    """Return the master-hosted node set: every node carrying a balance
+    or state row (``data.nodeBalance`` ∪ ``data.nodeState``) that is in
+    NO region's membership.
+
+    Nodes with no balance/state row (pure commodity/market nodes) are
+    deliberately NOT included — they keep today's shared-replicate
+    semantics (replication is safe for them: there is no balance row to
+    duplicate), pinned by the existing region-filter tests.
+    """
+    balance_state: set[str] = set()
+    if data.nodeBalance is not None and data.nodeBalance.height > 0:
+        balance_state |= set(data.nodeBalance["n"].to_list())
+    if data.nodeState is not None and data.nodeState.height > 0:
+        balance_state |= set(data.nodeState["n"].to_list())
+    region_all: set[str] = set()
+    for m in region_membership.values():
+        region_all |= m["nodes"]
+    return balance_state - region_all
+
+
 # ---------------------------------------------------------------------------
 # Helpers for filtering polars frames / Params
 # ---------------------------------------------------------------------------
@@ -287,13 +312,30 @@ def _filter_param(p: Param | None, col: str,
 
 def _classify_arcs(
     pss: pl.DataFrame, region_nodes: dict[str, set[str]],
-) -> tuple[pl.DataFrame, pl.DataFrame]:
+    master_nodes: "frozenset[str] | set[str]" = frozenset(),
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Tag each (p, source, sink) row with its source-region and
-    sink-region, then split into local and cross-region rows.
+    sink-region, then classify into four classes:
 
-    Nodes not in any region are "shared" — an arc with a shared endpoint
-    is treated as local-to-the-other-region (it stays in that region's
-    frames and is not a coupling).
+    * **local** — everything not in the three classes below (stays in
+      its region's frames);
+    * **cross-region** — both endpoints in (different) regions; severed
+      into an export + import half-flow pair (returned as ``cross``);
+    * **region↔master** — one endpoint in a region, the other a
+      master-hosted node; severed into exactly ONE half-flow on the
+      region side (returned as ``region_master``);
+    * **master-local** — at least one master-hosted endpoint and NO
+      region endpoint (the other side is master-hosted, shared, or a
+      non-node token); dropped from every region and NOT half-flowed —
+      the master keeps the whole arc (returned as ``master_local``).
+
+    Nodes not in any region (and not master-hosted) are "shared" — an
+    arc with a shared endpoint is treated as local-to-the-other-region
+    (it stays in that region's frames and is not a coupling).
+
+    With the default empty ``master_nodes`` the ``region_master`` /
+    ``master_local`` frames are empty and ``pss_tagged`` / ``cross``
+    are byte-identical to the historical 2-way behaviour.
     """
     # Build a node→region map; nodes outside any region map to None.
     node_region: dict[str, str | None] = {}
@@ -312,12 +354,41 @@ def _classify_arcs(
         pl.col("_snk_region").is_not_null() &
         (pl.col("_src_region") != pl.col("_snk_region"))
     )
-    return pss_tagged, cross
+    if not master_nodes:
+        empty = pss_tagged.head(0)
+        return pss_tagged, cross, empty, empty
+    # Vocab-independent membership test (mirror the map_elements-on-raw-
+    # strings robustness of the region tagging above: no Enum cast, so a
+    # stale global axis-enum vocabulary cannot null the master tokens).
+    src_m = pss["source"].cast(pl.Utf8).is_in(list(master_nodes))
+    snk_m = pss["sink"].cast(pl.Utf8).is_in(list(master_nodes))
+    pss_tagged = pss_tagged.with_columns(_src_master=src_m, _snk_master=snk_m)
+    region_master = pss_tagged.filter(
+        (pl.col("_src_region").is_not_null() & pl.col("_snk_master"))
+        | (pl.col("_src_master") & pl.col("_snk_region").is_not_null())
+    )
+    master_local = pss_tagged.filter(
+        (pl.col("_src_master") | pl.col("_snk_master"))
+        & pl.col("_src_region").is_null()
+        & pl.col("_snk_region").is_null()
+    )
+    return pss_tagged, cross, region_master, master_local
 
 
-def _make_half_flows(cross_arcs: pl.DataFrame) -> dict[str, list[HalfFlow]]:
+def _make_half_flows(
+    cross_arcs: pl.DataFrame,
+    region_master_arcs: pl.DataFrame | None = None,
+) -> dict[str, list[HalfFlow]]:
     """For each cross-region arc, produce two HalfFlow records (one
-    per region)."""
+    per region).
+
+    For each region↔master arc in *region_master_arcs* (master-hosted
+    mode), produce exactly ONE HalfFlow — on the region side: an
+    export when the region node is the arc's source, an import when it
+    is the sink.  Naming reuses the region-side stem of the paired
+    convention (the master side is implicit; no master-side virtual
+    entity exists — the master keeps the whole original arc).
+    """
     out: dict[str, list[HalfFlow]] = {}
     for r in cross_arcs.iter_rows(named=True):
         p = r["p"]
@@ -353,7 +424,258 @@ def _make_half_flows(cross_arcs: pl.DataFrame) -> dict[str, list[HalfFlow]]:
             virtual_arc_source=vi_node,
             virtual_arc_sink=k,
         ))
+    if region_master_arcs is not None and region_master_arcs.height > 0:
+        for r in region_master_arcs.iter_rows(named=True):
+            p = r["p"]
+            s = r["source"]
+            k = r["sink"]
+            ra = r["_src_region"]
+            rb = r["_snk_region"]
+            if ra is not None:
+                # Region node is the SOURCE ⇒ export half-flow in ra.
+                ve_node = f"{p}__{s}__{k}__export__{ra}"
+                ve_conn = f"hf_{p}__{s}__{k}__export__{ra}"
+                out.setdefault(ra, []).append(HalfFlow(
+                    region=ra, side="export",
+                    original_p=p, original_source=s, original_sink=k,
+                    in_region_node=s,
+                    virtual_node=ve_node,
+                    virtual_p=ve_conn,
+                    virtual_arc_source=s,
+                    virtual_arc_sink=ve_node,
+                ))
+            else:
+                # Region node is the SINK ⇒ import half-flow in rb.
+                vi_node = f"{p}__{s}__{k}__import__{rb}"
+                vi_conn = f"hf_{p}__{s}__{k}__import__{rb}"
+                out.setdefault(rb, []).append(HalfFlow(
+                    region=rb, side="import",
+                    original_p=p, original_source=s, original_sink=k,
+                    in_region_node=k,
+                    virtual_node=vi_node,
+                    virtual_p=vi_conn,
+                    virtual_arc_source=vi_node,
+                    virtual_arc_sink=k,
+                ))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Master-hosted-node validation + region scrubbing
+# ---------------------------------------------------------------------------
+
+
+def _master_local_procs(
+    pss: pl.DataFrame, master_local: pl.DataFrame,
+) -> set[str]:
+    """Processes whose EVERY ``process_source_sink`` arc is master-local
+    (critique F3).  Those procs live wholly in the master: regions must
+    carry neither their arcs NOR their entity rows (invest sets, annuity
+    params, cost rows)."""
+    if master_local.height == 0:
+        return set()
+    ml_triples: set[tuple[str, str, str]] = {
+        (r["p"], r["source"], r["sink"])
+        for r in master_local.iter_rows(named=True)
+    }
+    ml_procs = {t[0] for t in ml_triples}
+    triples_by_p: dict[str, set[tuple[str, str, str]]] = {}
+    for r in pss.iter_rows(named=True):
+        if r["p"] in ml_procs:
+            triples_by_p.setdefault(r["p"], set()).add(
+                (r["p"], r["source"], r["sink"]))
+    return {p for p, ts in triples_by_p.items() if ts <= ml_triples}
+
+
+def _validate_no_straddling_units(
+    data: FlexData,
+    all_region_nodes: set[str],
+    master_nodes: "frozenset[str] | set[str]",
+) -> None:
+    """Hard-error on any UNIT touching both a region node and a
+    master-hosted node (design decision D-a).
+
+    Aggregated PER PROCESS across ALL its ``process_source_sink`` rows —
+    NOT per arc: a unit with one master-local arc plus one purely
+    in-region arc straddles *as an entity* while having no individually
+    straddling arc, and severing any unit arc silently loses conversion
+    terms.  Never a silent degrade (the fix_start precedent is the
+    anti-pattern this guards against).
+    """
+    if data.process_source_sink is None:
+        return
+    units: set[str] = set()
+    if data.process_unit is not None and data.process_unit.height > 0:
+        units |= set(data.process_unit["p"].to_list())
+    if (getattr(data, "process_indirect", None) is not None
+            and data.process_indirect.height > 0):
+        units |= set(data.process_indirect["p"].to_list())
+    if not units:
+        return
+    endpoints_by_unit: dict[str, set[str]] = {}
+    for r in data.process_source_sink.iter_rows(named=True):
+        if r["p"] in units:
+            endpoints_by_unit.setdefault(r["p"], set()).update(
+                (r["source"], r["sink"]))
+    for unit in sorted(endpoints_by_unit):
+        eps = endpoints_by_unit[unit]
+        region_touch = eps & all_region_nodes
+        master_touch = eps & master_nodes
+        if region_touch and master_touch:
+            raise RuntimeError(
+                f"split: unit {unit!r} straddles the region/master "
+                f"boundary — across its arcs it touches region node(s) "
+                f"{sorted(region_touch)} AND master-hosted node(s) "
+                f"{sorted(master_touch)}.  A unit cannot be severed "
+                f"between a region subproblem and the Benders master.  "
+                f"Insert a handover CONNECTION between the region-side "
+                f"node and the master-hosted node (the handover-"
+                f"connection pattern) so every boundary arc is a "
+                f"connection, and keep the unit's arcs wholly on one "
+                f"side."
+            )
+
+
+def _validate_user_constraints(
+    data: FlexData,
+    all_region_nodes: set[str],
+    master_nodes: "frozenset[str] | set[str]",
+    master_local_procs: set[str],
+) -> None:
+    """Hard-error on any user constraint referencing both master-side
+    and region-side entities.
+
+    Sides are aggregated per constraint id (``cn``) across every
+    user-constraint frame: a constraint mixing a master-hosted node (or
+    a master-local process) with a region node (or a region process)
+    cannot live whole on either side of the decomposition — splitting
+    it would silently lose terms.  Entities on neither side (shared
+    nodes, non-node tokens) are neutral.
+    """
+    sides_by_cn: dict[str, set[str]] = {}
+    refs_by_cn: dict[str, set[str]] = {}
+
+    def _node_side(n: str) -> str | None:
+        if n in master_nodes:
+            return "master"
+        if n in all_region_nodes:
+            return "region"
+        return None
+
+    def _add(cn: str, entity: str, side: str | None) -> None:
+        if side is None:
+            return
+        sides_by_cn.setdefault(cn, set()).add(side)
+        refs_by_cn.setdefault(cn, set()).add(f"{entity} ({side})")
+
+    def _frame_of(obj) -> pl.DataFrame | None:
+        if obj is None:
+            return None
+        f = obj.frame if isinstance(obj, Param) else obj
+        return f if f.height > 0 else None
+
+    # Arc-keyed references: (p, source, sink, cn).  Each row contributes
+    # the sides of BOTH terminal nodes (a row on a region↔master
+    # coupling arc is itself mixed) plus the master-local proc side.
+    for fld in ("flow_constraint_idx", "p_flow_constraint_coef"):
+        f = _frame_of(getattr(data, fld, None))
+        if f is None or "cn" not in f.columns:
+            continue
+        for r in f.iter_rows(named=True):
+            cn = r["cn"]
+            _add(cn, r["source"], _node_side(r["source"]))
+            _add(cn, r["sink"], _node_side(r["sink"]))
+            if r["p"] in master_local_procs:
+                _add(cn, r["p"], "master")
+    # Node-keyed references: (n, cn).
+    for fld in ("p_node_constraint_state_coeff",
+                "p_node_constraint_invested_capacity_coeff",
+                "p_node_constraint_prebuilt_capacity_coeff"):
+        f = _frame_of(getattr(data, fld, None))
+        if f is None or "cn" not in f.columns:
+            continue
+        for r in f.iter_rows(named=True):
+            _add(r["cn"], r["n"], _node_side(r["n"]))
+    # Process-keyed references: (p, cn).  A process's side is the union
+    # of its arc-endpoint node sides (a master-local proc is master; a
+    # coupling connection contributes both sides and therefore raises).
+    proc_sides: dict[str, set[str]] = {}
+    if data.process_source_sink is not None:
+        for r in data.process_source_sink.iter_rows(named=True):
+            s = proc_sides.setdefault(r["p"], set())
+            for n in (r["source"], r["sink"]):
+                side = _node_side(n)
+                if side is not None:
+                    s.add(side)
+    for p in master_local_procs:
+        proc_sides.setdefault(p, set()).add("master")
+    for fld in ("p_process_constraint_invested_capacity_coeff",
+                "p_process_constraint_prebuilt_capacity_coeff"):
+        f = _frame_of(getattr(data, fld, None))
+        if f is None or "cn" not in f.columns:
+            continue
+        for r in f.iter_rows(named=True):
+            for side in proc_sides.get(r["p"], set()):
+                _add(r["cn"], r["p"], side)
+
+    for cn in sorted(sides_by_cn):
+        if {"region", "master"} <= sides_by_cn[cn]:
+            raise RuntimeError(
+                f"split: user constraint {cn!r} references both "
+                f"master-side and region-side entities: "
+                f"{sorted(refs_by_cn[cn])}.  A constraint cannot be "
+                f"split between a region subproblem and the Benders "
+                f"master — rewrite it to reference entities on one "
+                f"side only (e.g. via the handover-connection pattern)."
+            )
+
+
+def _drop_master_rows(
+    rd: FlexData,
+    master_nodes: "frozenset[str] | set[str]",
+    master_procs: set[str],
+) -> FlexData:
+    """Scrub every region frame/Param of master-hosted content: rows
+    keyed to a master-hosted node (``n`` axis), a master-local process
+    (``p`` axis), or either (entity ``e`` axis).
+
+    ``keep_nodes`` / ``keep_procs`` filtering already excludes master
+    entities from the frames :func:`_build_region_data` filters
+    explicitly; this pass additionally covers the frames the splitter
+    historically carried through whole under shared-replicate semantics
+    (invest/annuity/cost frames, ``process_indirect``, node profiles,
+    …) — regions must carry NO rows for master-hosted entities (F3).
+    Arc rows touching a master node are dropped separately via the
+    coupling/master-local triples in ``cross_arcs_by_pss``.
+    """
+    node_drop = set(master_nodes)
+    proc_drop = set(master_procs)
+    entity_drop = node_drop | proc_drop
+    if not entity_drop:
+        return rd
+    for f in dataclasses.fields(rd):
+        v = getattr(rd, f.name)
+        if v is None:
+            continue
+        if isinstance(v, Param):
+            frame = v.frame
+        elif isinstance(v, pl.DataFrame):
+            frame = v
+        else:
+            continue
+        changed = False
+        for col, drop in (("n", node_drop), ("p", proc_drop),
+                          ("e", entity_drop)):
+            if drop and col in frame.columns:
+                frame = frame.filter(~_is_in_keep(col, drop))
+                changed = True
+        if not changed:
+            continue
+        if isinstance(v, Param):
+            setattr(rd, f.name, Param(v.dims, frame, name=v.name))
+        else:
+            setattr(rd, f.name, frame)
+    return rd
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +691,9 @@ def _build_region_data(
     half_flows: list[HalfFlow],
     cross_arcs_by_pss: set[tuple[str, str, str]],
     benders_uncap_cross_region: bool = False,
+    *,
+    master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+    master_local_procs: "set[str] | frozenset[str]" = frozenset(),
 ) -> FlexData:
     """Construct one region's :class:`FlexData` by filtering+rewriting
     the whole-system frames/Params.
@@ -376,7 +701,12 @@ def _build_region_data(
     ``keep_nodes``/``keep_procs`` are the in-region+shared sets.
     ``cross_arcs_by_pss`` is the SET of (p, source, sink) tuples to
     REMOVE from this region's process frames (they're being replaced
-    by half-flow virtual arcs).
+    by half-flow virtual arcs; master-hosted mode also routes the
+    region↔master coupling arcs and the master-local arcs through it).
+    ``master_hosted_nodes`` / ``master_local_procs`` (master-hosted
+    mode only; empty by default ⇒ byte-identical path) trigger the
+    :func:`_drop_master_rows` scrub so the region carries NO rows for
+    master-hosted entities.
     """
     # Start by shallow-copying the dataclass and clearing fields we'll
     # explicitly rewrite.
@@ -533,6 +863,14 @@ def _build_region_data(
             _is_in_keep("n", keep_nodes)
         )
     new.process_unit = _filter_frame(src.process_unit, "p", keep_procs)
+
+    # ---- Master-hosted mode: scrub master entities from the frames the
+    # splitter otherwise carries through whole (invest/annuity/cost,
+    # process_indirect, node profiles, …).  No-op when both sets are
+    # empty (the byte-identical default path).
+    if master_hosted_nodes or master_local_procs:
+        new = _drop_master_rows(
+            new, master_hosted_nodes, set(master_local_procs))
 
     # ---- Inject virtual half-flow arcs ----
     if half_flows:
@@ -1213,7 +1551,11 @@ def master_network_data(
         )
 
     # Reuse the cross-region classification (same detection as ``split``).
-    _pss_tagged, cross = _classify_arcs(data.process_source_sink, region_nodes)
+    # (Master-hosted keep-logic lands in a follow-up commit; with the
+    # default empty master set the extra classification frames are empty
+    # and this path is byte-identical.)
+    _pss_tagged, cross, _region_master, _master_local = _classify_arcs(
+        data.process_source_sink, region_nodes)
     if cross.height == 0:
         raise RuntimeError(
             "master_network_data: no cross-region arcs found"
@@ -1442,6 +1784,7 @@ def split(
     regions: list[str] | None = None,
     region_membership: dict[str, dict[str, set[str]]] | None = None,
     benders_uncap_cross_region: bool = False,
+    master_hosted_nodes: frozenset[str] = frozenset(),
 ) -> list[RegionSplit]:
     """Slice a whole-system :class:`FlexData` into per-region splits.
 
@@ -1469,6 +1812,20 @@ def split(
         cross-region pipes, whose inherited ``existing`` is 0) sever the
         trade arc to zero — the false-convergence bug.  Default ``False``
         preserves today's inherit-from-original behaviour byte-for-byte.
+    master_hosted_nodes
+        Master-hosted node mode (see
+        :func:`compute_master_hosted_nodes`).  With the default empty
+        set the split is byte-identical to today's shared-replicate
+        behaviour.  Non-empty: the named nodes live in the Benders
+        MASTER — they are excluded from the shared-replicate set (no
+        region carries them), arcs are classified 4-way
+        (:func:`_classify_arcs`), region↔master coupling arcs get
+        exactly ONE half-flow on the region side, master-local arcs
+        (and the processes ALL of whose arcs are master-local) are
+        dropped from every region and NOT half-flowed, and authored
+        data that cannot be partitioned (a unit straddling the
+        boundary, a user constraint referencing both sides) raises a
+        hard error — never a silent degrade.
 
     Returns
     -------
@@ -1521,6 +1878,19 @@ def split(
     shared_nodes = all_nodes - all_region_nodes
     shared_procs = all_procs - all_region_procs
 
+    if master_hosted_nodes:
+        overlap = set(master_hosted_nodes) & all_region_nodes
+        if overlap:
+            raise RuntimeError(
+                f"split: master_hosted_nodes overlap region membership: "
+                f"{sorted(overlap)} — a node is either master-hosted "
+                f"(in no region group) or in exactly one region, never "
+                f"both."
+            )
+        # Master nodes are never shared-replicated: regions must not
+        # carry them.
+        shared_nodes -= set(master_hosted_nodes)
+
     # Classify cross-region arcs.
     if data.process_source_sink is None:
         return [
@@ -1528,15 +1898,38 @@ def split(
             for r in regions
         ]
 
-    pss_tagged, cross = _classify_arcs(
+    pss_tagged, cross, region_master, master_local = _classify_arcs(
         data.process_source_sink, region_nodes,
+        master_nodes=master_hosted_nodes,
     )
 
-    half_flows_by_region = _make_half_flows(cross)
+    master_local_procs: set[str] = set()
+    if master_hosted_nodes:
+        # Hard validation FIRST (D-a): never silently mis-partition
+        # authored data.
+        _validate_no_straddling_units(
+            data, all_region_nodes, master_hosted_nodes)
+        master_local_procs = _master_local_procs(
+            data.process_source_sink, master_local)
+        _validate_user_constraints(
+            data, all_region_nodes, master_hosted_nodes,
+            master_local_procs)
+        # Master-local procs live wholly in the master (F3): regions
+        # carry neither their arcs nor their entity rows.
+        shared_procs -= master_local_procs
+
+    half_flows_by_region = _make_half_flows(cross, region_master)
 
     cross_arcs_by_pss: set[tuple[str, str, str]] = set()
     for r in cross.iter_rows(named=True):
         cross_arcs_by_pss.add((r["p"], r["source"], r["sink"]))
+    # Region↔master coupling arcs are replaced by their single-sided
+    # half-flow; master-local arcs are dropped outright (the master
+    # keeps the whole original arc) — both classes must vanish from
+    # every region's process frames.
+    for frame in (region_master, master_local):
+        for r in frame.iter_rows(named=True):
+            cross_arcs_by_pss.add((r["p"], r["source"], r["sink"]))
 
     # Phase 4 — virtual half-flow entities ("hf_pipe_*" / "pipe_*__*__*")
     # are created at runtime by ``_make_half_flows``; they are not in the
@@ -1598,6 +1991,13 @@ def split(
             for hf in half_flows_by_region.get(r, []):
                 keep_procs.add(hf.original_p)
                 keep_procs.add(hf.virtual_p)
+            # Master-local procs are subtracted AFTER the half-flow
+            # additions: region membership may name them (e.g. a unit
+            # whose every arc moved master-side), but regions must
+            # carry no rows for them (F3).  Half-flow originals are
+            # never master-local (they have a region-side terminal).
+            if master_local_procs:
+                keep_procs -= master_local_procs
 
             rdata = _build_region_data(
                 src=data,
@@ -1607,6 +2007,8 @@ def split(
                 half_flows=half_flows_by_region.get(r, []),
                 cross_arcs_by_pss=cross_arcs_by_pss,
                 benders_uncap_cross_region=benders_uncap_cross_region,
+                master_hosted_nodes=master_hosted_nodes,
+                master_local_procs=master_local_procs,
             )
             splits.append(RegionSplit(
                 region=r,
