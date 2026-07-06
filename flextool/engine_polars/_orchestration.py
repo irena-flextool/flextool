@@ -2051,6 +2051,30 @@ def _drive_cascade(
                 f"start: {len(regions)} regions {regions}"
             )
 
+            # MASTER-HOSTED node announcement (plan C8 / risk R10 tripwire):
+            # balance/state nodes in NO region group are hosted natively in
+            # the Benders MASTER, and that re-partition must never happen
+            # silently — the driver's _logger.info is swallowed here (the
+            # cascade pins per-solve loggers to ERROR), so surface the list
+            # on the same print channel as the other Benders lines.  With
+            # every node grouped the set is empty and NOTHING extra is
+            # emitted (and the solve itself takes today's exact path — this
+            # announcement adds no solves either way, it is derived from
+            # the already-loaded input frames).
+            from flextool.engine_polars._region_filter import (
+                compute_master_hosted_nodes,
+                load_region_membership,
+            )
+
+            _master_hosted = sorted(compute_master_hosted_nodes(
+                data, load_region_membership(data, regions)
+            ))
+            if _master_hosted:
+                _emit(
+                    f"{_tag} Benders: {len(_master_hosted)} master-hosted "
+                    f"node(s): {_master_hosted}"
+                )
+
             # Live per-iteration callback — one line as each outer Benders
             # iteration completes, reporting the valid LB/UB sandwich + gap
             # (all in REAL units, ÷s).

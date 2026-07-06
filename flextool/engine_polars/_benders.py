@@ -611,11 +611,16 @@ class Coupling:
     :func:`_build_arcs` (and re-exported for tests).  The dual-subgradient
     ``lam`` multipliers that the old Lagrangian scheme stored here are NOT
     part of the Benders contract and have been dropped.
+
+    A region↔master coupling arc (master-hosted mode) is SINGLE-SIDED:
+    the master side has no half-flow (the master keeps the whole original
+    arc natively), so exactly one of ``export_region`` / ``import_region``
+    is ``None`` (= the master) and that side's cols array is empty.
     """
 
     pipeline_key: tuple[str, str, str]
-    export_region: str
-    import_region: str
+    export_region: str | None
+    import_region: str | None
     export_cols: np.ndarray = field(
         default_factory=lambda: np.zeros(0, dtype=np.int64)
     )
@@ -624,11 +629,22 @@ class Coupling:
     )
 
 
-def _identify_coupling_cols(splits: list[RegionSplit],
-                            warm: list[WarmProblem]) -> list[Coupling]:
+def _identify_coupling_cols(
+    splits: list[RegionSplit],
+    warm: list[WarmProblem],
+    master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+) -> list[Coupling]:
     """Pair :class:`HalfFlow`s on ``(p, source, sink)`` and resolve the
     ``v_flow`` column ids per region.  Used by :func:`_build_arcs` and by
-    the decomposition tests directly."""
+    the decomposition tests directly.
+
+    With a non-empty ``master_hosted_nodes`` the pair requirement relaxes
+    to SINGLE-SIDED for region↔master arcs: a half-flow whose off-region
+    terminal is master-hosted has no matching half-flow on the other side
+    (the master keeps the whole original arc), so it yields a Coupling
+    with the master side ``None``/empty.  With the default empty set the
+    behaviour is byte-identical to the historical pair-only path.
+    """
     by_e: dict[tuple, tuple[str, list[HalfFlow]]] = {}
     by_i: dict[tuple, tuple[str, list[HalfFlow]]] = {}
     for s in splits:
@@ -638,21 +654,37 @@ def _identify_coupling_cols(splits: list[RegionSplit],
                 key, (s.region, []))[1].append(hf)
 
     region_idx = {s.region: i for i, s in enumerate(splits)}
+
+    def _cols(vf, hf):
+        return (vf.frame.filter(
+            (pl.col("p") == hf.virtual_p)
+            & (pl.col("source") == hf.virtual_arc_source)
+            & (pl.col("sink") == hf.virtual_arc_sink)
+        ).sort("d", "t"))["col_id"].to_numpy().astype(np.int64)
+
     out: list[Coupling] = []
     for key, (er, hfs_e) in by_e.items():
         if key not in by_i:
+            # Single-sided EXPORT half-flow: a region node feeding a
+            # master-hosted sink (region↔master arc).  Anything else
+            # unpaired keeps today's silent skip.
+            if key[2] in master_hosted_nodes:
+                v_flow_e = warm[region_idx[er]]._p._vars["v_flow"]
+                e_cols = _cols(v_flow_e, hfs_e[0])
+                if e_cols.size == 0:
+                    raise RuntimeError(
+                        f"Benders: empty coupling columns for "
+                        f"region↔master arc {key!r} (export side)."
+                    )
+                out.append(Coupling(
+                    pipeline_key=key, export_region=er, import_region=None,
+                    export_cols=e_cols,
+                ))
             continue
         ir, hfs_i = by_i[key]
         v_flow_e = warm[region_idx[er]]._p._vars["v_flow"]
         v_flow_i = warm[region_idx[ir]]._p._vars["v_flow"]
         ehf, ihf = hfs_e[0], hfs_i[0]
-
-        def _cols(vf, hf):
-            return (vf.frame.filter(
-                (pl.col("p") == hf.virtual_p)
-                & (pl.col("source") == hf.virtual_arc_source)
-                & (pl.col("sink") == hf.virtual_arc_sink)
-            ).sort("d", "t"))["col_id"].to_numpy().astype(np.int64)
         e_cols, i_cols = _cols(v_flow_e, ehf), _cols(v_flow_i, ihf)
         if e_cols.size == 0 or i_cols.size == 0:
             raise RuntimeError(
@@ -666,17 +698,41 @@ def _identify_coupling_cols(splits: list[RegionSplit],
             pipeline_key=key, export_region=er, import_region=ir,
             export_cols=e_cols, import_cols=i_cols,
         ))
+    # Single-sided IMPORT half-flows: a master-hosted source feeding a
+    # region node.  Every by_i key already paired above was handled in
+    # the by_e loop.
+    for key, (ir, hfs_i) in by_i.items():
+        if key in by_e:
+            continue
+        if key[1] not in master_hosted_nodes:
+            continue
+        v_flow_i = warm[region_idx[ir]]._p._vars["v_flow"]
+        i_cols = _cols(v_flow_i, hfs_i[0])
+        if i_cols.size == 0:
+            raise RuntimeError(
+                f"Benders: empty coupling columns for region↔master "
+                f"arc {key!r} (import side)."
+            )
+        out.append(Coupling(
+            pipeline_key=key, export_region=None, import_region=ir,
+            import_cols=i_cols,
+        ))
     return out
 
 
 @dataclass
 class _ArcMaster:
-    """Master-side bookkeeping for one cross-region directed arc."""
+    """Master-side bookkeeping for one cross-region directed arc.
+
+    For a region↔master coupling arc (master-hosted mode) exactly one of
+    ``export_region`` / ``import_region`` is ``None`` — that side is the
+    MASTER (no region pin columns; its pin-cols array is empty).
+    """
 
     key: tuple  # (p, source, sink)
     conn: str  # the connection entity == key[0]
-    export_region: str
-    import_region: str
+    export_region: str | None
+    import_region: str | None
     # Ordered (by d,t) dim-tuples + master flow col-ids for f[arc, d, t].
     dim_tuples: list[tuple]
     f_col_ids: np.ndarray  # master f columns, aligned to dim_tuples
@@ -759,11 +815,26 @@ class _BendersMaster:
 
     def __init__(self, data: FlexData, arcs: list[_ArcMaster],
                  regions: list[str], eta_floor: float,
-                 *, master: str = "flextool", obj_scale: float = 1.0):
+                 *, master: str = "flextool", obj_scale: float = 1.0,
+                 master_hosted_nodes: frozenset[str] = frozenset(),
+                 region_membership: dict | None = None):
         self.arcs = arcs
         self.regions = list(regions)
         self._eta_floor = eta_floor
         self._master_kind = master
+        # Master-hosted node mode (empty default = byte-identical today's
+        # path): the named balance/state nodes live natively in THIS master
+        # (balances, penalties, storage, invest) — forwarded to
+        # ``master_network_data`` on the flextool path.  The hand path
+        # cannot host nodes (it builds only the trade layer).
+        self._master_hosted_nodes = frozenset(master_hosted_nodes)
+        self._region_membership = region_membership
+        if master == "hand" and self._master_hosted_nodes:
+            raise ValueError(
+                "_BendersMaster: master='hand' cannot host nodes "
+                f"(master_hosted_nodes={sorted(self._master_hosted_nodes)}); "
+                "use the flextool master path."
+            )
         # Objective scale ``s`` shared with the region subproblems.  The master
         # FlexTool objective is built ×s and each η enters at coef 1.0, so the
         # master objective lives in scaled space; the region cut slopes (region
@@ -806,7 +877,11 @@ class _BendersMaster:
         """Build the master trade layer via ``build_flextool`` over the
         network-only reduced FlexData, then append the ``η_r`` recourse
         columns and resolve the stable f / C / η col-id maps."""
-        reduced = _region_filter.master_network_data(data, self.regions)
+        reduced = _region_filter.master_network_data(
+            data, self.regions,
+            region_membership=self._region_membership,
+            master_hosted_nodes=self._master_hosted_nodes,
+        )
         m = Problem()
         # AUTOSCALE-OFF: ``build_flextool`` never applies Layer 2 (that lives
         # only in ``_orchestration``); the appended cut rows then sit on the
@@ -1245,27 +1320,35 @@ class _BendersMaster:
             self._last_master_native_cost = float(sol.obj) - eta_sum
         return f_by_col, C_by_conn, eta_by_region
 
-    def trade_invest_frame(self, sol) -> pl.DataFrame | None:
-        """Return the master's trade-connection ``v_invest_p`` as a long-form
-        ``(p, d, value)`` frame in the SAME ``Solution.value`` semantics /
-        unitsize-normalisation FlexTool emits — for the TIER-1 invest
-        handoff.  ``None`` on the hand master (no FlexTool ``v_invest_p``
-        Var).
+    def master_invest_frames(self, sol) -> dict[str, pl.DataFrame]:
+        """Return every invest/divest decision var PRESENT in the master
+        (``v_invest_p`` / ``v_invest_n`` / ``v_divest_p`` / ``v_divest_n``)
+        as long-form ``(entity, d, value)`` frames in the SAME
+        ``Solution.value`` semantics / unitsize-normalisation FlexTool
+        emits — for the TIER-1 invest handoff.  ``{}`` on the hand master
+        (no FlexTool invest Vars).
 
-        The frame is built directly from ``Solution.value("v_invest_p")``
-        (which indexes the master's ``v_invest_p`` Var frame by ``col_id``),
-        so it is byte-identical in shape/units to what the monolith's
-        ``v_invest_p`` value returns for the cross-region connections — the
-        master is FlexTool-built over the network-only reduced data, so its
-        ``v_invest_p`` is the very same normalised invest variable.  The
-        cross-region connections are the ONLY entities the master invests in,
-        so no extra filtering is needed (and they are disjoint from any
-        region's in-region invest by construction)."""
+        Generalises the historical ``trade_invest_frame`` (which returned
+        the trade-connection ``v_invest_p`` only): with master-hosted nodes
+        the master also invests in its hosted STORAGE nodes
+        (``v_invest_n``/``v_divest_n``) and in master-local units/
+        connections, all of which must ride the handoff.  Each frame is
+        built directly from ``Solution.value(name)`` (which indexes the
+        master's Var frame by ``col_id``), so it is byte-identical in
+        shape/units to what the monolith's value returns for those
+        entities.  Master entities are in NO region's membership, so they
+        are disjoint from every region's in-region invest by construction
+        (see :func:`_assemble_benders_invest_vars`)."""
         if self._master_kind != "flextool":
-            return None
-        if "v_invest_p" not in self._wp._p._vars:
-            return None
-        return sol.value("v_invest_p")
+            return {}
+        out: dict[str, pl.DataFrame] = {}
+        for name in _INVEST_VAR_NAMES:
+            if name not in self._wp._p._vars:
+                continue
+            frame = sol.value(name)
+            if frame is not None and frame.height > 0:
+                out[name] = frame
+        return out
 
     def master_native_cost(self, C_by_conn: dict[str, float]) -> float:
         """The master's OWN (native) cost at the last ``read_master`` — its
@@ -1330,6 +1413,76 @@ class _BendersMaster:
     def set_recourse_floor(self, floor: float) -> None:
         """Coordinator protocol name for :meth:`set_eta_floor`."""
         self.set_eta_floor(floor)
+
+
+def _master_autarky_cost(master: _BendersMaster) -> float:
+    """The master's NATIVE cost with every coupling flow pinned to 0 —
+    the D-c "master autarky" term of the stall-guard reference scale.
+
+    Definition (documented per plan D-c): *autarky is the cost of the
+    whole decomposed system with every coupling flow pinned to zero —
+    each node group self-supplies, and the master serves its hosted
+    demand from its own storage / penalty slack without any node-group
+    contribution.*  The master term is what this computes: pin all
+    coupling-arc master ``v_flow`` columns (``a.f_col_ids`` of every
+    coupling arc; master-local arcs stay free — they are the master's
+    own dispatch) to 0, solve the master once, and read
+    ``sol.obj − Σ η`` (each η enters the objective at coef 1.0, so the
+    subtraction is exact regardless of the provisional recourse floor).
+
+    The pinned bounds are captured beforehand (``get_col_bounds``) and
+    RESTORED afterwards (``set_col_bounds``) — in a ``finally`` so a
+    failed solve cannot leave the master corrupted for the rest of the
+    run (plan risk R6).  Called ONCE, post-bootstrap, and ONLY when
+    master-hosted nodes exist (the byte-parity gate: an extra master
+    solve perturbs warm-basis state, so the empty-set path never runs
+    this).  Feasibility of the pinned solve is guaranteed by the F9
+    precondition (:func:`_assert_finite_boundary_penalties`): every
+    master-hosted balance node carries finite penalty slack.
+    """
+    wp = master._wp
+    col_ids = np.concatenate(
+        [a.f_col_ids for a in master.arcs]
+    ).astype(np.int64)
+    lo, hi = wp.get_col_bounds(col_ids)
+    wp.fix_col_ids(col_ids, np.zeros(col_ids.size, dtype=np.float64))
+    try:
+        sol = wp.solve(retry_on_unknown=True)
+        if not sol.optimal:
+            status = wp._h.getModelStatus()
+            raise RuntimeError(_benders_failure_message(
+                summary=(
+                    f"Benders master problem did not solve to optimality "
+                    f"with all node-group coupling flows pinned to zero "
+                    f"(solver status {status})."
+                ),
+                meaning=(
+                    "Before the main iterations, the master problem is "
+                    "solved once with every flow between the node groups "
+                    "and the master-hosted nodes forced to zero, to "
+                    "measure the stand-alone cost of the master-hosted "
+                    "nodes (their demand served from their own storage "
+                    "and penalty slack). That solve failed, which "
+                    "normally points to a master-hosted node whose "
+                    "balance cannot be relaxed (missing or non-finite "
+                    "penalty prices) or to a numerical problem in the "
+                    "master."
+                ),
+                how_to_avoid=(
+                    "Give every master-hosted node finite, moderate "
+                    "penalty_up / penalty_down prices so its balance can "
+                    "always be met with slack. Re-run to rule out a "
+                    "transient solver state. If it persists, please "
+                    "report it with the model."
+                ),
+            ))
+        eta_sum = sum(
+            float(sol.col_value[col]) for col in master._eta_col.values()
+        )
+        return float(sol.obj) - eta_sum
+    finally:
+        # Restore the pre-pin coupling-column bounds unconditionally.
+        wp.set_col_bounds(col_ids, lo, hi)
 
 
 # ---------------------------------------------------------------------------
@@ -1504,12 +1657,12 @@ def _assemble_benders_invest_vars(
     region_membership: dict[str, dict[str, set[str]]],
     regions: list[str],
     region_col_values: list[np.ndarray] | None,
-    master_trade_invest: pl.DataFrame | None,
+    master_invest_frames: dict[str, pl.DataFrame] | None,
     trade_conns: set[str],
 ) -> dict[str, pl.DataFrame]:
     """Assemble the whole-system TIER-1 invest handoff: the UNION of each
     region's owner-selected in-region invest/divest frames and the master's
-    trade-connection ``v_invest_p``.
+    own invest/divest frames (:meth:`_BendersMaster.master_invest_frames`).
 
     The two contributions are DISJOINT by construction, but the partition is
     NOT pure region-membership ownership: a cross-region trade connection
@@ -1519,9 +1672,12 @@ def _assemble_benders_invest_vars(
     with that region's pinned half-flow model's ZERO invest var.  The MASTER
     owns the trade-connection invest (it is the variable the capacity
     coupling acts on), so we EXCLUDE the trade connections from the region
-    invest and take their value SOLELY from ``master_trade_invest``.  The
-    result is the disjoint union: in-region entities from the regions, the
-    cross-region pipes from the master.
+    invest and take their value SOLELY from the master frames.  The master's
+    OTHER invest entities — master-hosted storage nodes (``v_invest_n`` /
+    ``v_divest_n``) and master-local units/connections — are in NO region's
+    membership and carry no rows in any region frame (the splitter scrubs
+    them, F3), so their union is disjoint by construction too; the
+    defensive ``unique`` is a belt-and-braces guard only.
 
     Returns the same-shaped dict the downstream ``SnapshotSolution`` /
     ``build_handoff_from_solution`` expects (each frame's columns match
@@ -1542,46 +1698,66 @@ def _assemble_benders_invest_vars(
             subproblems, region_col_values, _owner_of_entity
         )
 
-    # (b) master trade-connection invest (``v_invest_p`` only — the master
-    # invests in cross-region connections, never nodes).  Union into the
-    # region ``v_invest_p`` frame.  The region part excluded these entities,
-    # so the union is disjoint by construction; the defensive ``unique`` is a
-    # belt-and-braces guard only.
-    trade = master_trade_invest
-    if trade is not None and trade.height > 0:
-        existing = out.get("v_invest_p")
-        if existing is not None:
-            ent_col = trade.columns[0]
-            trade = trade.select(existing.columns)
-            merged = pl.concat([existing, trade], how="vertical")
-            merged = merged.unique(
-                subset=[ent_col, "d"], keep="first", maintain_order=True
-            )
-            sort_cols = [c for c in (ent_col, "d") if c in merged.columns]
-            out["v_invest_p"] = (
-                merged.sort(sort_cols, maintain_order=True)
-                if sort_cols else merged
-            )
-        else:
-            out["v_invest_p"] = trade
+    # (b) master invest/divest frames — the trade-connection ``v_invest_p``
+    # plus (master-hosted mode) the hosted storage nodes' ``v_invest_n`` /
+    # ``v_divest_n`` and the master-local procs' invest.  Union each frame
+    # into the matching region frame; deterministic ``_INVEST_VAR_NAMES``
+    # order.  Ownership is disjoint (see docstring); ``unique`` is a belt.
+    frames = master_invest_frames or {}
+    for name in _INVEST_VAR_NAMES:
+        frame = frames.get(name)
+        if frame is None or frame.height == 0:
+            continue
+        existing = out.get(name)
+        if existing is None:
+            out[name] = frame
+            continue
+        ent_col = frame.columns[0]
+        frame = frame.select(existing.columns)
+        merged = pl.concat([existing, frame], how="vertical")
+        merged = merged.unique(
+            subset=[ent_col, "d"], keep="first", maintain_order=True
+        )
+        sort_cols = [c for c in (ent_col, "d") if c in merged.columns]
+        out[name] = (
+            merged.sort(sort_cols, maintain_order=True)
+            if sort_cols else merged
+        )
     return out
 
 
-def _build_arcs(splits, warm) -> list[_ArcMaster]:
-    """Discover the cross-region directed arcs + per-region pin columns."""
-    couplings = _identify_coupling_cols(splits, warm)
+def _build_arcs(
+    splits, warm,
+    master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+) -> list[_ArcMaster]:
+    """Discover the cross-region directed arcs + per-region pin columns.
+
+    ``master_hosted_nodes`` is forwarded to
+    :func:`_identify_coupling_cols`: non-empty, region↔master arcs come
+    back SINGLE-SIDED (one region side ``None``) and the ``(d, t)``
+    dim-tuples are recovered from whichever region side exists."""
+    couplings = _identify_coupling_cols(
+        splits, warm, master_hosted_nodes=master_hosted_nodes
+    )
     region_idx = {s.region: i for i, s in enumerate(splits)}
     arcs: list[_ArcMaster] = []
     for cpl in couplings:
-        # Recover the (d,t) dim-tuples in the export region's column order.
-        vf_e = warm[region_idx[cpl.export_region]]._p._vars["v_flow"]
-        ehf_rows = vf_e.frame.filter(
-            pl.col("col_id").is_in(cpl.export_cols)
+        # Recover the (d,t) dim-tuples in the export region's column order
+        # (import region's for a master→region single-sided arc — the only
+        # region side that exists there).
+        if cpl.export_region is not None:
+            vf = warm[region_idx[cpl.export_region]]._p._vars["v_flow"]
+            side_cols = cpl.export_cols
+        else:
+            vf = warm[region_idx[cpl.import_region]]._p._vars["v_flow"]
+            side_cols = cpl.import_cols
+        hf_rows = vf.frame.filter(
+            pl.col("col_id").is_in(side_cols)
         ).sort("d", "t")
         # Master arc dims use the ORIGINAL (p, source, sink) triple.
         p, s, k = cpl.pipeline_key
         dim_tuples = [
-            (p, s, k, r["d"], r["t"]) for r in ehf_rows.iter_rows(named=True)
+            (p, s, k, r["d"], r["t"]) for r in hf_rows.iter_rows(named=True)
         ]
         arcs.append(
             _ArcMaster(
@@ -1740,11 +1916,37 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          in_out_weight: float = 0.0,
                          progress_callback=None, subsolve_callback=None,
                          workers=None) -> BendersResult:
+    # --- master-hosted node set (plan §3 membership rule): every balance/
+    # state node in NO region group is hosted natively in the MASTER.
+    # Empty on every all-nodes-grouped model ⇒ every branch below keyed on
+    # it takes today's exact path (byte-parity gate).  Logged LOUDLY here
+    # (and _emit-announced by ``_run_benders_solve``, since the cascade pins
+    # per-solve loggers to ERROR): an unexpectedly non-empty set on a chain
+    # that groups everything is the R10 tripwire — a silently re-partitioned
+    # node (replicate → master-hosted) must never go unannounced.
+    region_membership = _region_filter.load_region_membership(data, regions)
+    master_hosted = frozenset(
+        _region_filter.compute_master_hosted_nodes(data, region_membership)
+    )
+    if master_hosted:
+        _logger.info(
+            "Benders: %d master-hosted node(s) — balance/state nodes in no "
+            "region group, hosted natively in the master: %s",
+            len(master_hosted), sorted(master_hosted),
+        )
+
     # --- split with the cross-region half-flows UNCAPPED so the master pin is
     # feasible (Phase-2 splitter Benders mode).
     splits = _region_filter.split(
-        data, regions=regions, benders_uncap_cross_region=True
+        data, regions=regions, region_membership=region_membership,
+        benders_uncap_cross_region=True,
+        master_hosted_nodes=master_hosted,
     )
+    # Mixed-resolution coupling guard (master-hosted mode only, before any
+    # LP build): a region↔master boundary connection must join SAME-time-
+    # resolution nodes, or the single-sided half-flow pin silently distorts
+    # the model (a leak, not a crash) — hard-error instead.
+    _assert_no_mixed_resolution_coupling(data, splits, master_hosted)
     region_duals = _resolve_benders_region_duals()
     subproblems = [Problem() for _ in splits]
     # Full autoscale (Layer-2 per-type rescale + Layer-3 HiGHS-native top-up)
@@ -1795,15 +1997,20 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     for w in warm:
         w.solve()
 
-    arcs = _build_arcs(splits, warm)
+    arcs = _build_arcs(splits, warm, master_hosted_nodes=master_hosted)
     if not arcs:
         raise RuntimeError(
             "Benders: no cross-region coupling arcs found — nothing to "
             "decompose"
         )
 
-    # Boundary-node penalty finiteness precondition (optimality-cuts-only).
-    _assert_finite_boundary_penalties(data, arcs)
+    # Boundary-node penalty finiteness precondition (optimality-cuts-only) —
+    # extended (F9) to master-hosted balance nodes, which must carry BOTH
+    # penalty params PRESENT and finite so the master's balance can always
+    # be met with slack (incl. the D-c autarky pin below).
+    _assert_finite_boundary_penalties(
+        data, arcs, master_hosted_nodes=master_hosted
+    )
 
     region_idx = {s.region: i for i, s in enumerate(splits)}
 
@@ -1956,6 +2163,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         data, arcs, [s.region for s in splits],
         eta_floor=-_ETA_FLOOR_MULT * 1e9 * obj_scale,
         master=master_kind, obj_scale=obj_scale,
+        master_hosted_nodes=master_hosted,
+        region_membership=region_membership,
     )
     # Re-bind the region-meta forward tuples to the master-rewritten f col-ids.
     for rm in regions_meta:
@@ -1997,6 +2206,42 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # DB value; 0.0 = OFF = exact Benders, byte-identical inside the
     # coordinator by construction).
     in_out_weight = _resolve_benders_in_out_weight(in_out_weight)
+    if in_out_weight > 0.0 and master_hosted:
+        # λ>0 evaluates the UB as master-native-cost(master vertex) +
+        # Σ cost_r(interior f_sep).  That mixed point is a valid bound
+        # only while the master's native cost is INDEPENDENT of the
+        # coupling flows; a master hosting balance/storage nodes serves
+        # real demand through them, so the mixed UB UNDER-COUNTS cost
+        # (measured: LB legitimately crosses it → sandwich hard-fail).
+        # Reject the combination up front — loud, never a silent
+        # invalid bound.
+        raise RuntimeError(_benders_failure_message(
+            summary=(
+                f"Benders in-out stabilization (weight "
+                f"{in_out_weight:g}) is not supported together with "
+                f"master-hosted nodes ({len(master_hosted)} balance/"
+                f"storage node(s) outside every node group)."
+            ),
+            meaning=(
+                "With in-out stabilization the node-group subproblems "
+                "are evaluated at interior points while the master "
+                "problem stays at its own solution. That mixed "
+                "evaluation is a valid upper bound only while the "
+                "master's own cost does not depend on the coupling "
+                "flows — but a master hosting balance/storage nodes "
+                "serves real demand through those flows, so the "
+                "combination reports upper bounds BELOW the true cost "
+                "(an invalid bound that later fails the bound checks) "
+                "instead of merely converging slower."
+            ),
+            how_to_avoid=(
+                "Set the solve's benders_in_out_weight to 0 (and unset "
+                "any FLEXTOOL_BENDERS_IN_OUT_WEIGHT override) when the "
+                "model has master-hosted nodes, or add every balance/"
+                "storage node to a node group so nothing is hosted in "
+                "the master."
+            ),
+        ))
     if in_out_weight > 0.0:
         _logger.info(
             "Benders: in-out separation ON (weight λ=%.3f) over %d region(s)",
@@ -2083,8 +2328,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
 
     def _on_incumbent(msol, sub_results, info) -> dict:
         # Incumbent capture for the TIER-1 invest handoff.  Everything is
-        # MATERIALIZED here: the master ``trade_invest_frame`` is a fresh
-        # DataFrame (the warm-restart reuses the master's ``col_value``
+        # MATERIALIZED here: the master ``master_invest_frames`` are fresh
+        # DataFrames (the warm-restart reuses the master's ``col_value``
         # buffer across iterations, so a stashed Solution would read a later
         # iteration's values), and each region primal is ``.copy()``-d (the
         # region Solutions' buffers are likewise reused by later warm
@@ -2092,11 +2337,32 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # (the coordinator returns subproblem results in adapter order).
         return {
             "C": dict(master._last_C_by_conn),
-            "master_trade_invest": master.trade_invest_frame(msol),
+            "master_invest_frames": master.master_invest_frames(msol),
             "region_col_values": [
                 np.asarray(r.payload.col_value).copy() for r in sub_results
             ],
         }
+
+    # --- D-c master-autarky stall reference — ONLY when master-hosted nodes
+    # exist (byte-parity gate: an extra master solve perturbs warm-basis
+    # state, so the empty-set path passes ``extra_reference_cost=None`` and
+    # the coordinator adds nothing).  The coordinator calls the closure ONCE,
+    # post-bootstrap, and folds |value| into the StallMonitor reference
+    # scale: Σ_r|autarky_r| + |master_autarky|.  The computed value is kept
+    # (``_master_autarky_holder``) so a later ``BendersStalled`` can carry
+    # the master pseudo-entry into the stall diagnostics (D-c/D-d).
+    _master_autarky_holder: list[float] = []
+    extra_reference_cost = None
+    if master_hosted:
+        def extra_reference_cost() -> float:
+            value = _master_autarky_cost(master)
+            _master_autarky_holder.append(value)
+            _logger.info(
+                "Benders: master autarky (native cost at zero coupling "
+                "flow) = %.6e (scaled space); added to the stall-guard "
+                "reference scale", value,
+            )
+            return value
 
     options = BendersLoopOptions(
         max_iters=max_iters,
@@ -2135,6 +2401,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             sub_adapters,
             options=options,
             initial_point=f_bar,
+            extra_reference_cost=extra_reference_cost,
             on_iteration=_on_iteration,
             on_subsolve=_on_subsolve,
             on_incumbent=_on_incumbent,
@@ -2145,7 +2412,19 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             monolith_objective=monolith_objective,
         )
     except BendersStalled as exc:
-        _raise_stalled(exc)
+        # D-c/D-d: hand the master pseudo-entry ("master-hosted nodes")
+        # into the stall rendering — its stand-alone (autarky) cost next
+        # to its per-iteration native cost, alongside the region maps —
+        # so the diagnostic can name the master as root/symptom.  Both
+        # are ``None`` (no entry injected) on the empty-set path.
+        _raise_stalled(
+            exc,
+            master_autarky=(
+                _master_autarky_holder[0]
+                if _master_autarky_holder else None
+            ),
+            master_native_cost=master._last_master_native_cost,
+        )
 
     # --- assemble result from the incumbent.  UNSCALE cost-valued outputs
     # back to real units (÷s): the loop's internal LB/UB/cost arithmetic ran
@@ -2160,7 +2439,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # to an empty handoff rather than crash.
         payload = {
             "C": dict(master._last_C_by_conn),
-            "master_trade_invest": None,
+            "master_invest_frames": {},
             "region_col_values": None,
         }
     trade_flow = _flow_frames(arcs, loop.incumbent_point)
@@ -2170,10 +2449,12 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # dict the downstream rolling-dispatch consumes, as the UNION of:
     #   (a) each REGION's in-region invest (owner-de-duplicated so each entity
     #       is claimed exactly once), AND
-    #   (b) the MASTER's trade-connection ``v_invest_p`` (the cross-region
-    #       pipes the master owns; disjoint from any region's in-region invest
-    #       since the splitter never assigns a cross-region connection to a
-    #       region's membership).
+    #   (b) the MASTER's own invest/divest frames — the coupling-connection
+    #       ``v_invest_p`` (disjoint from any region's in-region invest since
+    #       the splitter never assigns a coupling connection to a region's
+    #       membership) plus, with master-hosted nodes, the hosted storage
+    #       nodes' ``v_invest_n``/``v_divest_n`` and the master-local procs'
+    #       invest (in NO region's membership by construction).
     # NORMALISATION: both the region subproblems and the master are FlexTool-
     # built (``build_flextool``), so their ``v_invest_p`` carry IDENTICAL
     # p_unitsize-normalised units — the same units ``Solution.value("v_invest_p")``
@@ -2182,10 +2463,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     invest_solution_vars = _assemble_benders_invest_vars(
         subproblems=subproblems,
         region_of_index=[s.region for s in splits],
-        region_membership=_region_filter.load_region_membership(data, regions),
+        region_membership=region_membership,
         regions=regions,
         region_col_values=payload.get("region_col_values"),
-        master_trade_invest=payload.get("master_trade_invest"),
+        master_invest_frames=payload.get("master_invest_frames"),
         trade_conns={a.conn for a in arcs},
     )
 
@@ -2504,30 +2785,76 @@ def _raise_bound_invalid(
     _raise_cut_check_failure(exc, inv_s=inv_s)
 
 
-def _raise_stalled(exc: BendersStalled) -> NoReturn:
+#: Key of the MASTER pseudo-entry in the stall-diagnostic cost maps (plan
+#: D-c/D-d): with master-hosted nodes, the master's own stand-alone
+#: (autarky) cost and per-iteration native cost enter
+#: :func:`_stall_worst_offenders` under this literal key — rendered as
+#: "the master-hosted nodes", NEVER as a fake node-group name.
+_MASTER_STALL_KEY = "master-hosted nodes"
+
+
+def _raise_stalled(
+    exc: BendersStalled,
+    *,
+    master_autarky: float | None = None,
+    master_native_cost: float | None = None,
+) -> NoReturn:
     """Render the coordinator's ``BendersStalled`` into the plain-English
     stall diagnostic, naming the worst-offender node group(s) exactly as the
     pre-coordinator loop did (the exception carries the bootstrap/autarky and
-    stalled-iteration cost maps for :func:`_stall_worst_offenders`)."""
+    stalled-iteration cost maps for :func:`_stall_worst_offenders`).
+
+    With master-hosted nodes (``master_autarky`` not ``None``) the master
+    joins the offender selection as a pseudo-entry keyed
+    :data:`_MASTER_STALL_KEY` — its stand-alone (D-c autarky) cost against
+    its last-iteration native cost — so "the master is the blown-up side"
+    is expressible.  ``None`` (the empty-set path) injects nothing and the
+    rendering is byte-identical to before."""
+    reference_costs = dict(exc.sub_reference_costs)
+    current_costs = dict(exc.sub_costs)
+    if master_autarky is not None:
+        reference_costs[_MASTER_STALL_KEY] = master_autarky
+        current_costs[_MASTER_STALL_KEY] = (
+            master_native_cost if master_native_cost is not None else 0.0
+        )
     root, autarky_ratio, symptom, symptom_ratio = _stall_worst_offenders(
-        exc.sub_reference_costs, exc.sub_costs
+        reference_costs, current_costs
     )
     k = exc.window
-    # Name the ROOT primarily; add the SYMPTOM only if it differs.
-    root_clause = (
-        f"Node group {root!r} is the likely cause — its stand-alone "
-        f"cost is already {autarky_ratio:.0f}x the next largest, i.e. it "
-        f"cannot meet its own demand without imports."
+    # Name the ROOT primarily; add the SYMPTOM only if it differs.  The
+    # master pseudo-entry is rendered as "the master-hosted nodes" (its
+    # key), never as a node-group name.
+    root_disp = (
+        "the master-hosted nodes" if root == _MASTER_STALL_KEY
+        else repr(root)
     )
-    symptom_clause = (
-        ""
-        if symptom == root
-        else (
+    if root == _MASTER_STALL_KEY:
+        root_clause = (
+            f"The master-hosted nodes are the likely cause — their "
+            f"combined stand-alone cost is already {autarky_ratio:.0f}x "
+            f"the next largest, i.e. they cannot meet their own demand "
+            f"without flows from the node groups."
+        )
+    else:
+        root_clause = (
+            f"Node group {root!r} is the likely cause — its stand-alone "
+            f"cost is already {autarky_ratio:.0f}x the next largest, i.e. it "
+            f"cannot meet its own demand without imports."
+        )
+    if symptom == root:
+        symptom_clause = ""
+    elif symptom == _MASTER_STALL_KEY:
+        symptom_clause = (
+            f" At the stalled iteration the master-hosted nodes are the "
+            f"ones forced worst into penalty/slack flow "
+            f"({symptom_ratio:.0f}x their stand-alone cost)."
+        )
+    else:
+        symptom_clause = (
             f" At the stalled iteration node group {symptom!r} is the "
             f"one forced worst into penalty/slack flow "
             f"({symptom_ratio:.0f}x its stand-alone cost)."
         )
-    )
     raise RuntimeError(_benders_failure_message(
         summary=(
             f"Benders stalled at iteration {exc.iteration}: the best "
@@ -2543,12 +2870,12 @@ def _raise_stalled(exc: BendersStalled) -> NoReturn:
             f"bound cannot close. {root_clause}{symptom_clause}"
         ),
         how_to_avoid=(
-            f"First, give the import/boundary nodes of {root!r} a "
+            f"First, give the import/boundary nodes of {root_disp} a "
             "finite, moderate import price (penalty) a small multiple "
             "above the real marginal supply cost — an over-large penalty "
             "is what inflates the recourse and freezes the bound (any "
             "price above the true import cost gives the same optimum). "
-            f"Then check {root!r} in isolation for missing local "
+            f"Then check {root_disp} in isolation for missing local "
             "capacity or imports, and rescale any extreme "
             "coupling-connection cost or capacity magnitudes. Only raise "
             "the iteration limit if the gap is still slowly improving "
@@ -2557,10 +2884,106 @@ def _raise_stalled(exc: BendersStalled) -> NoReturn:
         ),
     )) from exc
 
-def _assert_finite_boundary_penalties(data: FlexData, arcs: list[_ArcMaster]) -> None:
+def _assert_no_mixed_resolution_coupling(
+    data: FlexData,
+    splits,
+    master_hosted_nodes: "frozenset[str] | set[str]",
+) -> None:
+    """Hard-error on a region↔master coupling arc whose two terminal
+    nodes live on DIFFERENT time resolutions (one on aggregated
+    ``new_stepduration`` blocks, the other on plain timesteps).
+
+    The single-sided half-flow injection mirrors the original arc's
+    cell-level terms per side, and for a MIXED-resolution arc the
+    monolith's emit is asymmetric (the block side aggregates to the
+    block-first cell while the fine side stays per-step), so the pinned
+    region cells and the master's native cells no longer describe the
+    same physical flow — the decomposition silently becomes a RELAXATION
+    (measured on the lh2 fixture: the exactness gap, not a crash).
+    Until the mirroring supports it, this is a loud unsupported-data
+    error, never a silent degrade (plan D-a / R5 family).  The C9
+    handover pattern side-steps it by design: the handover node MIRRORS
+    the hosted node's time-aggregation group memberships (plan F10), so
+    every boundary connection joins same-resolution nodes.
+
+    Block membership is read from ``data.nodeStateBlock`` (the set of
+    nodes whose balance/state lives on aggregated blocks).  Empty
+    ``master_hosted_nodes`` returns immediately (byte-parity gate);
+    region↔region arcs are untouched (both sides pinned — today's
+    proven machinery).
+    """
+    if not master_hosted_nodes:
+        return
+    nsb = getattr(data, "nodeStateBlock", None)
+    if nsb is None or nsb.height == 0:
+        return
+    block_nodes = set(nsb["n"].cast(pl.Utf8).to_list())
+    seen: set[tuple] = set()
+    for s in splits:
+        for hf in s.half_flows:
+            key = (hf.original_p, hf.original_source, hf.original_sink)
+            if key in seen:
+                continue
+            seen.add(key)
+            src, snk = hf.original_source, hf.original_sink
+            # Single-sided (region↔master) arcs only: exactly one
+            # terminal is master-hosted.
+            if (src in master_hosted_nodes) == (snk in master_hosted_nodes):
+                continue
+            if (src in block_nodes) == (snk in block_nodes):
+                continue
+            coarse = src if src in block_nodes else snk
+            fine = snk if coarse == src else src
+            raise RuntimeError(_benders_failure_message(
+                summary=(
+                    f"Benders coupling connection {hf.original_p!r} "
+                    f"joins nodes with different time resolutions "
+                    f"across the master boundary: node {coarse!r} is "
+                    f"on aggregated (multi-hour) time blocks while "
+                    f"node {fine!r} is on plain timesteps."
+                ),
+                meaning=(
+                    "A connection between a node group and a "
+                    "master-hosted node is decomposed into a pinned "
+                    "boundary flow, and that split is only exact when "
+                    "both end nodes share the same time resolution. "
+                    "With one end on aggregated time blocks, the "
+                    "pinned per-timestep flows and the aggregated "
+                    "block flows no longer describe the same physical "
+                    "quantity, which silently distorts costs instead "
+                    "of failing — so it is rejected up front."
+                ),
+                how_to_avoid=(
+                    "Give both end nodes of the boundary connection "
+                    "the same time resolution: put them in the same "
+                    "time-aggregation (new_stepduration) group — the "
+                    "recommended boundary pattern inserts a dedicated "
+                    "handover node that mirrors the hosted node's "
+                    "time-aggregation group memberships — or remove "
+                    "the aggregation from one side."
+                ),
+            ))
+
+
+def _assert_finite_boundary_penalties(
+    data: FlexData,
+    arcs: list[_ArcMaster],
+    *,
+    master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+) -> None:
     """Optimality-cuts-only feasibility precondition: every boundary node
     (source/sink of a cross-region arc) must carry FINITE up/down slack
-    penalties, so the recourse is always feasible."""
+    penalties, so the recourse is always feasible.
+
+    Extended (plan F9) to MASTER-HOSTED balance nodes: each must carry
+    BOTH penalty params PRESENT and finite — with the coupling flows at
+    zero (every early master iteration, and the D-c autarky reference
+    solve, which literally pins them there) the master can only serve a
+    hosted node's balance through priced slack, so a node whose penalty
+    rows are MISSING is the same authored mistake as one whose penalty
+    is infinite and gets the same plain-English error (the historical
+    boundary-node branch above deliberately SKIPS nodes with no penalty
+    rows — that skip must not carry over here)."""
     boundary_nodes = set()
     for a in arcs:
         _, s, k = a.key
@@ -2583,3 +3006,58 @@ def _assert_finite_boundary_penalties(data: FlexData, arcs: list[_ArcMaster]) ->
                 f"Benders: non-finite {pname} on a boundary node — "
                 f"optimality-cuts-only feasibility precondition violated:\n{bad}"
             )
+    if not master_hosted_nodes:
+        return
+    balance_nodes: set[str] = set()
+    if data.nodeBalance is not None and data.nodeBalance.height > 0:
+        balance_nodes = set(
+            data.nodeBalance["n"].cast(pl.Utf8).to_list()
+        )
+    schema_name = {"p_penalty_up": "penalty_up",
+                   "p_penalty_down": "penalty_down"}
+    for node in sorted(set(master_hosted_nodes) & balance_nodes):
+        for pname in ("p_penalty_up", "p_penalty_down"):
+            param = getattr(data, pname, None)
+            sub = None
+            if param is not None:
+                fr = param.frame
+                if "n" in fr.columns and "value" in fr.columns:
+                    sub = fr.filter(pl.col("n").cast(pl.Utf8) == node)
+            missing = sub is None or sub.height == 0
+            if not missing and bool(
+                np.all(np.isfinite(sub["value"].to_numpy()))
+            ):
+                continue
+            problem = (
+                "carries no value at all" if missing
+                else "is not finite"
+            )
+            raise RuntimeError(_benders_failure_message(
+                summary=(
+                    f"Benders master-hosted node {node!r} has no usable "
+                    f"{schema_name[pname]} penalty price — the value "
+                    f"{problem}."
+                ),
+                meaning=(
+                    "A balance node outside every node group is hosted "
+                    "in the Benders master, and the master must be able "
+                    "to serve or spill that node's balance with PRICED "
+                    "slack whenever the coupling flows are still zero "
+                    "(every early iteration, and the stand-alone "
+                    "reference solve that pins them there). Both "
+                    "penalty_up and penalty_down must therefore be "
+                    "present and finite on the node; a missing or "
+                    "infinite value would make those master solves "
+                    "infeasible and fail later with a raw solver error "
+                    "instead of this message."
+                ),
+                how_to_avoid=(
+                    f"Author finite, moderate penalty_up and "
+                    f"penalty_down prices on node {node!r} — a small "
+                    "multiple of its real marginal supply cost is "
+                    "enough (any price above the true cost gives the "
+                    "same optimum). Alternatively, add the node to one "
+                    "of the node groups so it is solved inside that "
+                    "group's subproblem instead of the master."
+                ),
+            ))

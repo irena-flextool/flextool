@@ -294,6 +294,89 @@ def lh2_master_build_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="session")
+def lh2_master_hourly_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Same-resolution (pure hourly) master-hosted driver sibling of the
+    trade-invest LH2 fixture (Benders C8).
+
+    Derived IN-MEMORY from ``lh2_three_region_trade_invest.json`` (same
+    single-source-of-truth rationale as :func:`lh2_master_build_db_url`).
+    Two changes, both in the scenario's own alternative:
+
+    * node invest on ``lh2_B`` and unit invest on ``liquefier_B`` — so a
+      Benders master hosting the B carrier chain invests in a hosted
+      STORAGE node (``v_invest_n``) and in a master-local UNIT;
+    * every ``daily_group`` membership row (nodes, units, connections)
+      and its ``new_stepduration`` parameter are REMOVED, putting the
+      whole model on the plain hourly grid.  Region↔master coupling
+      arcs must join SAME-resolution nodes — the driver hard-errors on
+      a mixed-resolution boundary (the C9 handover pattern mirrors the
+      hosted node's time-aggregation groups for exactly this reason) —
+      so the C8 exactness/driver tests run on this all-hourly sibling.
+    """
+    import base64
+
+    from flextool.update_flextool.db_migration import migrate_database
+
+    spec = json.loads(
+        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text()
+    )
+    alt = "lh2_three_region_trade_invest"
+
+    def _val(v: "str | float") -> list:
+        return [base64.b64encode(json.dumps(v).encode()).decode(),
+                "float" if isinstance(v, float) else "str"]
+
+    spec["parameter_values"] += [
+        ["node", "lh2_B", "invest_method", _val("invest_no_limit"), alt],
+        ["node", "lh2_B", "invest_cost", _val(40.0), alt],
+        ["unit", "liquefier_B", "invest_method", _val("invest_no_limit"),
+         alt],
+        ["unit", "liquefier_B", "invest_cost", _val(25.0), alt],
+        # Small DISTINCT flow costs on the (potential) coupling
+        # connections: the pure-hourly storage coupling is otherwise
+        # heavily degenerate (flat optimal-flow faces), which gives the
+        # Benders exactness gate a very long convergence tail.  Pricing
+        # each boundary flow uniquifies the optimal flows without
+        # changing the exactness property (monolith and Benders share
+        # the data).
+        ["connection", "electrolyser_A", "other_operational_cost",
+         _val(0.7), alt],
+        ["connection", "electrolyser_B", "other_operational_cost",
+         _val(0.9), alt],
+        ["connection", "electrolyser_C", "other_operational_cost",
+         _val(0.8), alt],
+        ["connection", "pipe_AB", "other_operational_cost", _val(0.3), alt],
+        ["connection", "pipe_BC", "other_operational_cost", _val(0.4), alt],
+    ]
+
+    def _mentions_daily(byname) -> bool:
+        if isinstance(byname, str):
+            return byname == "daily_group"
+        return "daily_group" in list(byname)
+
+    spec["entities"] = [
+        e for e in spec["entities"]
+        if not (e[0].startswith("group") and _mentions_daily(e[1]))
+    ]
+    spec["entity_alternatives"] = [
+        r for r in spec["entity_alternatives"]
+        if not (r[0].startswith("group") and _mentions_daily(r[1]))
+    ]
+    spec["parameter_values"] = [
+        r for r in spec["parameter_values"]
+        if not (r[0].startswith("group") and _mentions_daily(r[1]))
+    ]
+
+    root = tmp_path_factory.mktemp("db_lh2mh")
+    json_path = root / "lh2_master_hourly.json"
+    json_path.write_text(json.dumps(spec))
+    db_path = root / "lh2_master_hourly.sqlite"
+    url = json_to_db(json_path, db_path)
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
 def lh2_rp_invest_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     """Benders Phase-3b representative-period invest LH2 fixture DB.
 
@@ -393,6 +476,7 @@ _DB_FIXTURE_NAMES: dict[str, str] = {
     "lh2": "lh2_db_url",
     "lh2_trade_invest": "lh2_trade_invest_db_url",
     "lh2_master_build": "lh2_master_build_db_url",
+    "lh2_master_hourly": "lh2_master_hourly_db_url",
     "lh2_rp_invest": "lh2_rp_invest_db_url",
     "h2_trade_parity": "h2_trade_parity_db_url",
     "stochastics_pbt_inflow": "stochastics_pbt_inflow_db_url",
@@ -433,6 +517,7 @@ def scenario_workdir(
     lh2_db_url,
     lh2_trade_invest_db_url,
     lh2_master_build_db_url,
+    lh2_master_hourly_db_url,
     lh2_rp_invest_db_url,
     h2_trade_parity_db_url,
     stochastics_pbt_inflow_db_url,
@@ -486,6 +571,7 @@ def scenario_workdir(
         "lh2": lh2_db_url,
         "lh2_trade_invest": lh2_trade_invest_db_url,
         "lh2_master_build": lh2_master_build_db_url,
+        "lh2_master_hourly": lh2_master_hourly_db_url,
         "lh2_rp_invest": lh2_rp_invest_db_url,
         "h2_trade_parity": h2_trade_parity_db_url,
         "stochastics_pbt_inflow": stochastics_pbt_inflow_db_url,
