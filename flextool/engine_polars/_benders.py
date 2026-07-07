@@ -411,6 +411,19 @@ _BENDERS_IN_OUT_WEIGHT_ENV = "FLEXTOOL_BENDERS_IN_OUT_WEIGHT"
 # churn during proving.
 _BENDERS_TRUST_REGION_RADIUS_ENV = "FLEXTOOL_BENDERS_TRUST_REGION_RADIUS"
 
+# Machine-local LEVEL-METHOD stabilizer knob (EXPERIMENTAL de-risking spike;
+# specs/benders_step5_cut_selection_design.md §C.6 commit 1).  ``κ ∈ (0, 1)``
+# is the level fraction in ``ℓ = LB + κ·(best_UB − LB)``: each iteration the
+# subproblems are queried at the projection of the incumbent onto the level set
+# ``model(x) ≤ ℓ`` (an ∞-norm LP — the master stays an LP).  Unlike the trust
+# region (which decouples the query from the LB and leaves it frozen), the level
+# method couples the query to the LB so the generated cuts lift the LB-defining
+# corner.  Unset / empty / non-float / ``<= 0`` / ``>= 1`` ⇒ OFF ⇒ today's
+# behaviour verbatim (byte-identical).  MUTUALLY EXCLUSIVE with the trust region
+# (Δ₀ set) and in-out (λ>0).  No DB schema parameter yet — machine-local env
+# avoids migration / autoscale-registry churn during proving.
+_BENDERS_LEVEL_KAPPA_ENV = "FLEXTOOL_BENDERS_LEVEL_KAPPA"
+
 # Experimental (specs/benders_research_master_stabilization.md §6): which dual
 # the region subproblems report for cut slopes.  ``basic`` (default) keeps the
 # ``run_crossover=on`` pin — reproducible vertex duals.  ``interior`` solves
@@ -593,6 +606,43 @@ def _resolve_benders_trust_region_radius() -> float | None:
         # <= 0 is the OFF sentinel — no warning for the explicit-off case.
         return None
     return radius
+
+
+def _resolve_benders_level_kappa() -> float | None:
+    """Resolve the machine-local level-method κ, or ``None`` = OFF.
+
+    Reads ``FLEXTOOL_BENDERS_LEVEL_KAPPA`` (machine-local, no DB parameter
+    yet — EXPERIMENTAL spike).  A valid float in ``(0, 1)`` selects the
+    level-method stabilizer with that level fraction; unset, empty, a
+    non-float, or a value ``<= 0`` / ``>= 1`` ⇒ ``None`` = OFF = today's
+    behaviour verbatim (byte-identical).  An out-of-range value is IGNORED
+    (warned, not fatal): κ must sit strictly between the LB and the UB, so
+    ``<= 0`` (the OFF sentinel) and ``>= 1`` (level ≥ UB, no projection
+    pressure) both degrade to OFF rather than crashing a run.
+    """
+    env = os.environ.get(_BENDERS_LEVEL_KAPPA_ENV)
+    if not env:
+        return None
+    try:
+        kappa = float(env)
+    except ValueError:
+        _logger.warning(
+            "Benders: ignoring non-float %s=%r (level method OFF)",
+            _BENDERS_LEVEL_KAPPA_ENV, env,
+        )
+        return None
+    if not (0.0 < kappa < 1.0):
+        if kappa <= 0.0:
+            # <= 0 is the OFF sentinel — no warning for the explicit-off case.
+            return None
+        _logger.warning(
+            "Benders: ignoring out-of-range %s=%r (must be in (0, 1); "
+            ">= 1 puts the level at/above the UB — no projection pressure); "
+            "level method OFF",
+            _BENDERS_LEVEL_KAPPA_ENV, env,
+        )
+        return None
+    return kappa
 
 
 def _stall_worst_offenders(
@@ -1544,6 +1594,139 @@ class _BendersMaster:
             col_ids, lo, hi = saved
             self._wp.set_col_bounds(col_ids, lo, hi)
             self._coupling_box_saved = None
+
+    def solve_level_projection(
+        self, centre: dict[int, float], level: float
+    ) -> dict[int, float]:
+        """OPTIONAL coordinator protocol member (level-method stabilizer,
+        EXPERIMENTAL spike — specs/benders_step5_cut_selection_design.md §C.6
+        commit 1).  Return the level-set projection query point ``x⁺``::
+
+            x⁺ = argmin ‖f − centre‖_∞   s.t.  model(f) ≤ level
+
+        over the coupling ``f`` columns, where ``model(f)`` is the master's OWN
+        objective value (native cost + Σ η_r) and the minimisation is over the
+        FULL master feasible set (all cuts, capacity coupling, η floors, column
+        bounds).  The ∞-norm is realised with ONE aux column ``τ`` and two rows
+        per coupling column (``τ ≥ f_c − c̄_c``, ``τ ≥ c̄_c − f_c``) minimising
+        ``τ``; ``model(f) ≤ level`` is one row on the master objective
+        expression.
+
+        The projection is applied to the LIVE HiGHS handle, solved, read, then
+        FULLY RESTORED (added rows + ``τ`` column deleted, original objective
+        coefficients + offset re-installed) in a ``finally`` — the exact
+        save/restore discipline of :meth:`apply_coupling_box` /
+        :meth:`clear_coupling_box`, so the master is byte-identical afterwards.
+        Because this bypasses the ``WarmProblem`` cut bookkeeping (raw
+        ``addRow`` / ``addCol`` / ``deleteRows`` / ``deleteCols``, never
+        ``add_cut_row``), ``self._wp``'s cached row/col counts + cut registry
+        are untouched.  This method is NEVER called unless ``level_kappa`` is
+        set, so the default path carries zero byte-parity risk.
+
+        As a side effect stashes the projection's OWN invested capacity in
+        ``self._last_C_by_conn`` so the coordinator's subsequent
+        :meth:`project_point` clamps ``x⁺`` against the capacity the projection
+        LP chose (not the unboxed master's), exactly as the trust-region path
+        re-reads capacity from the boxed solve.
+        """
+        wp = self._wp
+        h = wp._h
+        col_ids = np.concatenate(
+            [a.f_col_ids for a in self.arcs]
+        ).astype(np.int64)
+        n_cols0 = int(h.getNumCol())
+        n_rows0 = int(h.getNumRow())
+        inf = highspy.kHighsInf
+
+        # --- Save the original objective (costs over ALL columns + offset).
+        all_idx = np.arange(n_cols0, dtype=np.int32)
+        _st, _num, costs0, _lo, _hi, _nnz = h.getCols(n_cols0, all_idx)
+        costs0 = np.asarray(costs0, dtype=np.float64).copy()
+        offset0 = float(h.getObjectiveOffset()[1])
+        try:
+            # --- Level row: Σ costs0_j·x_j ≤ level − offset0  (model(x) ≤ level;
+            # the offset moves to the RHS since the master obj is
+            # Σ costs·x + offset).  Only the nonzero-cost columns contribute.
+            nz = np.nonzero(costs0)[0].astype(np.int32)
+            h.addRow(
+                -inf, float(level) - offset0, int(nz.size), nz, costs0[nz]
+            )
+            # --- τ column (≥ 0; objective coef set to 1 below).
+            tau = int(h.getNumCol())
+            h.addCol(
+                0.0, 0.0, inf, 0,
+                np.empty(0, dtype=np.int32), np.empty(0, dtype=np.float64),
+            )
+            # --- ∞-norm rows (batched): per coupling col c,
+            #   f_c − τ ≤ c̄_c   and   −f_c − τ ≤ −c̄_c.
+            n = int(col_ids.size)
+            xbar = np.array(
+                [float(centre[int(c)]) for c in col_ids], dtype=np.float64
+            )
+            lowers = np.full(2 * n, -inf, dtype=np.float64)
+            uppers = np.empty(2 * n, dtype=np.float64)
+            uppers[0::2] = xbar
+            uppers[1::2] = -xbar
+            starts = np.arange(0, 2 * n * 2, 2, dtype=np.int32)
+            indices = np.empty(2 * n * 2, dtype=np.int32)
+            indices[0::4] = col_ids.astype(np.int32)  # even row: f_c
+            indices[1::4] = tau                        # even row: τ
+            indices[2::4] = col_ids.astype(np.int32)  # odd row: f_c
+            indices[3::4] = tau                        # odd row: τ
+            values = np.empty(2 * n * 2, dtype=np.float64)
+            values[0::4] = 1.0
+            values[1::4] = -1.0
+            values[2::4] = -1.0
+            values[3::4] = -1.0
+            h.addRows(
+                2 * n, lowers, uppers, 2 * n * 2, starts, indices, values
+            )
+            # --- Swap objective → min τ (zero every original cost + offset).
+            h.changeColsCost(n_cols0, all_idx, np.zeros(n_cols0, dtype=np.float64))
+            h.changeColCost(tau, 1.0)
+            h.changeObjectiveOffset(0.0)
+            # --- Solve the projection LP directly on the handle.
+            h.run()
+            status = h.getModelStatus()
+            if status != highspy.HighsModelStatus.kOptimal:
+                # Should not happen — the level set contains the master's own
+                # optimum (model = LB ≤ level), so the projection is feasible.
+                # Degrade fail-safe: query at the incumbent centre (the level
+                # method's own honest-caveat degeneracy), no capacity restash.
+                _logger.warning(
+                    "Benders level projection: HiGHS status %s (not optimal) "
+                    "at level %.6e — querying at the incumbent centre instead",
+                    status, level,
+                )
+                return {int(c): float(centre[int(c)]) for c in col_ids}
+            col_value = np.asarray(h.getSolution().col_value, dtype=np.float64)
+            point = {int(c): float(col_value[int(c)]) for c in col_ids}
+            # Stash the projection's own invested capacity for project_point.
+            C_by_conn: dict[str, float] = {}
+            for c, col in self._C_cols.items():
+                cols = col if isinstance(col, (list, tuple, np.ndarray)) else [col]
+                C_by_conn[c] = float(sum(col_value[int(ci)] for ci in cols))
+            self._last_C_by_conn = C_by_conn
+            return point
+        finally:
+            # --- Restore: delete the appended rows + τ column, re-install the
+            # original objective coefficients + offset.  Deleting the top
+            # contiguous ranges leaves the pre-existing rows/cols (incl. cut
+            # rows and η columns) at their original ids.
+            n_rows_now = int(h.getNumRow())
+            if n_rows_now > n_rows0:
+                h.deleteRows(
+                    n_rows_now - n_rows0,
+                    np.arange(n_rows0, n_rows_now, dtype=np.int32),
+                )
+            n_cols_now = int(h.getNumCol())
+            if n_cols_now > n_cols0:
+                h.deleteCols(
+                    n_cols_now - n_cols0,
+                    np.arange(n_cols0, n_cols_now, dtype=np.int32),
+                )
+            h.changeColsCost(n_cols0, all_idx, costs0)
+            h.changeObjectiveOffset(offset0)
 
     def project_point(self, f: dict[int, float], sol, *,
                       hard_fail: bool = True) -> float:
@@ -2604,6 +2787,29 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             trust_region_radius, n_coupling_cols, len(regions_meta),
         )
 
+    # --- Level-method stabilization (EXPERIMENTAL de-risking spike; machine-
+    # local env; §C.6 commit 1).  ``None`` ⇒ OFF ⇒ byte-identical.  Mutually
+    # exclusive with the trust region and in-out (all three own the query
+    # point).  Error FlexTool-side rather than letting a bad combination reach
+    # the coordinator's own guard.
+    level_kappa = _resolve_benders_level_kappa()
+    if level_kappa is not None:
+        if trust_region_radius is not None or in_out_weight > 0.0:
+            raise ValueError(
+                "Benders: the level method "
+                f"({_BENDERS_LEVEL_KAPPA_ENV}={level_kappa!r}), the trust region "
+                f"({_BENDERS_TRUST_REGION_RADIUS_ENV}={trust_region_radius!r}) "
+                f"and in-out separation (λ={in_out_weight!r}) are MUTUALLY "
+                "EXCLUSIVE stabilizers — select at most one (unset the others)."
+            )
+        _logger.info(
+            "Benders: level-method stabilization ON (EXPERIMENTAL) — level "
+            "fraction κ=%.6g over %d coupling column(s), %d region(s).",
+            level_kappa,
+            sum(int(a.f_col_ids.size) for a in arcs),
+            len(regions_meta),
+        )
+
     # Periodic MASTER CUT COMPACTION threshold (env-resolved; 0 = OFF =
     # byte-identical to the pre-compaction path — the coordinator skips the
     # whole compaction block at 0).
@@ -2726,6 +2932,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         in_out_weight=in_out_weight,
         trust_region_radius=trust_region_radius,
         trust_region_scale=trust_region_scale,
+        level_kappa=level_kappa,
         workers=eff_workers,
         stall_window=_resolve_benders_max_stall(),
         # Raised gap floor so a loose ``tol`` never lets the floor fall below

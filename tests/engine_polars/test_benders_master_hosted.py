@@ -513,6 +513,48 @@ def test_trust_region_converges_master_hosted(mh_data, monolith, monkeypatch) ->
     )
 
 
+def test_level_method_converges_master_hosted(mh_data, monolith, monkeypatch) -> None:
+    """End-to-end sanity check for the EXPERIMENTAL level-method stabilizer
+    (specs/benders_step5_cut_selection_design.md §C.6 commit 1): with
+    ``FLEXTOOL_BENDERS_LEVEL_KAPPA`` set (in-out + trust region OFF), the
+    master-hosted decomposition still converges to the monolith optimum with a
+    VALID lower bound — proving the ``solve_level_projection`` primitive drives
+    the coordinator's level-set query correctly on a small, known two-stage LP.
+    A broken projection LP would give a false negative on the masterfuel spike,
+    so this guards the prototype's correctness."""
+    monkeypatch.setenv("FLEXTOOL_BENDERS_LEVEL_KAPPA", "0.3")
+    M = monolith.obj
+    res = solve_benders(
+        mh_data, REGIONS_AC, max_iters=40, tol=1e-4,
+        monolith_objective=M, scale_the_objective=OBJ_SCALE,
+    )
+    assert res.converged, (
+        f"Benders (level method, master-hosted) did not converge: "
+        f"gap={res.gap:.3e} after {res.iterations} iters "
+        f"(LB={res.lower_bound:.6e} UB={res.upper_bound:.6e})"
+    )
+    assert np.isclose(res.total_objective, M, rtol=1e-4), (
+        f"Benders level-method UB {res.total_objective:.8e} != monolith M "
+        f"{M:.8e} (LB={res.lower_bound:.8e}, gap={res.gap:.3e})"
+    )
+    assert res.lower_bound <= M * (1 + 1e-9), (
+        f"Benders level-method LB {res.lower_bound:.8e} EXCEEDS M {M:.8e}"
+    )
+
+
+def test_level_method_and_trust_region_mutually_exclusive(mh_data, monkeypatch) -> None:
+    """Selecting BOTH the level method (env κ) and the trust region (env Δ₀) is
+    rejected up front with a clear FlexTool-side error — the two stabilizers
+    are mutually exclusive (both own the query point)."""
+    monkeypatch.setenv("FLEXTOOL_BENDERS_LEVEL_KAPPA", "0.3")
+    monkeypatch.setenv("FLEXTOOL_BENDERS_TRUST_REGION_RADIUS", "1.0")
+    with pytest.raises(ValueError, match=r"MUTUALLY EXCLUSIVE"):
+        solve_benders(
+            mh_data, REGIONS_AC, max_iters=5, tol=1e-4,
+            scale_the_objective=OBJ_SCALE,
+        )
+
+
 def test_trust_region_radius_is_absolute_box(mh_data, monkeypatch) -> None:
     """The trust-region radius is an HONEST ABSOLUTE box half-width: with the
     stabilizer ON, the coordinator receives ``trust_region_scale == 1.0`` and
