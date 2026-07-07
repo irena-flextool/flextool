@@ -426,6 +426,105 @@ def test_autarky_pin_restores_master_bounds() -> None:
     assert sol1.obj == pytest.approx(11.0, abs=1e-9)
 
 
+def test_coupling_box_intersects_and_restores() -> None:
+    """``apply_coupling_box`` intersects ``[center ± radius]`` with the
+    coupling columns' ORIGINAL bounds (never widens), and
+    ``clear_coupling_box`` restores those bounds EXACTLY — including across
+    repeated apply/clear cycles (the coordinator applies + clears around every
+    boxed solve)."""
+    wp = WarmProblem(_tiny_master_lp())
+    assert wp.solve().optimal
+
+    x_cols = np.asarray(
+        [wp.col_id_of_var("x", (0,)), wp.col_id_of_var("x", (1,))],
+        dtype=np.int64,
+    )
+    # Give the coupling cols a FINITE original box so the upper clamp is
+    # exercised too (the tiny LP's default upper is +inf).
+    wp.set_col_bounds(x_cols, np.array([1.0, 2.0]), np.array([10.0, 8.0]))
+    lo0, hi0 = wp.get_col_bounds(x_cols)
+
+    master = SimpleNamespace(
+        _wp=wp, arcs=[SimpleNamespace(f_col_ids=x_cols)],
+        _coupling_box_saved=None,
+    )
+    apply_box = fx_benders._BendersMaster.apply_coupling_box
+    clear_box = fx_benders._BendersMaster.clear_coupling_box
+    center = {int(x_cols[0]): 5.0, int(x_cols[1]): 5.0}
+
+    # (a) INTERSECTION: box [3,7],[3,7] ∩ original [1,10],[2,8] = [3,7],[3,7].
+    apply_box(master, center, 2.0)
+    blo, bhi = wp.get_col_bounds(x_cols)
+    np.testing.assert_array_equal(blo, [3.0, 3.0])
+    np.testing.assert_array_equal(bhi, [7.0, 7.0])
+    assert master._coupling_box_saved is not None
+
+    # Clear restores EXACTLY (finite bounds).
+    clear_box(master)
+    lo1, hi1 = wp.get_col_bounds(x_cols)
+    np.testing.assert_array_equal(lo1, lo0)
+    np.testing.assert_array_equal(hi1, hi0)
+    assert master._coupling_box_saved is None
+    # Double clear is a safe no-op.
+    clear_box(master)
+    assert master._coupling_box_saved is None
+
+    # (b) NEVER WIDEN: a huge radius must clamp back to the original bounds,
+    # not open them up ([−95,105] ∩ [1,10],[2,8] = the original box).
+    apply_box(master, center, 100.0)
+    wlo, whi = wp.get_col_bounds(x_cols)
+    np.testing.assert_array_equal(wlo, lo0)
+    np.testing.assert_array_equal(whi, hi0)
+    clear_box(master)
+    np.testing.assert_array_equal(wp.get_col_bounds(x_cols)[0], lo0)
+    np.testing.assert_array_equal(wp.get_col_bounds(x_cols)[1], hi0)
+
+    # (c) SAVE/RESTORE-SAFE across a second apply/clear cycle: re-reads the
+    # (restored) original bounds, so the box is re-derived from lo0/hi0.
+    apply_box(master, center, 2.0)
+    np.testing.assert_array_equal(wp.get_col_bounds(x_cols)[0], [3.0, 3.0])
+    clear_box(master)
+    np.testing.assert_array_equal(wp.get_col_bounds(x_cols)[0], lo0)
+    np.testing.assert_array_equal(wp.get_col_bounds(x_cols)[1], hi0)
+
+
+def test_trust_region_converges_master_hosted(mh_data, monolith, monkeypatch) -> None:
+    """End-to-end: with the trust-region stabilizer ON (machine-local env,
+    in-out OFF ⇒ λ=0), the master-hosted decomposition still converges to the
+    monolith optimum with a VALID lower bound — proving the coupling-box
+    primitives drive the coordinator's two-solve trust-region path correctly."""
+    monkeypatch.setenv("FLEXTOOL_BENDERS_TRUST_REGION_RADIUS", "1.0")
+    M = monolith.obj
+    res = solve_benders(
+        mh_data, REGIONS_AC, max_iters=20, tol=1e-4,
+        monolith_objective=M, scale_the_objective=OBJ_SCALE,
+    )
+    assert res.converged, (
+        f"Benders (trust region, master-hosted) did not converge: "
+        f"gap={res.gap:.3e} after {res.iterations} iters "
+        f"(LB={res.lower_bound:.6e} UB={res.upper_bound:.6e})"
+    )
+    assert np.isclose(res.total_objective, M, rtol=1e-4), (
+        f"Benders trust-region UB {res.total_objective:.8e} != monolith M "
+        f"{M:.8e} (LB={res.lower_bound:.8e}, gap={res.gap:.3e})"
+    )
+    assert res.lower_bound <= M * (1 + 1e-9), (
+        f"Benders trust-region LB {res.lower_bound:.8e} EXCEEDS M {M:.8e}"
+    )
+
+
+def test_trust_region_and_in_out_mutually_exclusive(mh_data, monkeypatch) -> None:
+    """Selecting BOTH the trust region (env) and in-out (λ>0) is rejected up
+    front with a clear FlexTool-side error — the two stabilizers are mutually
+    exclusive."""
+    monkeypatch.setenv("FLEXTOOL_BENDERS_TRUST_REGION_RADIUS", "1.0")
+    with pytest.raises(ValueError, match=r"MUTUALLY EXCLUSIVE"):
+        solve_benders(
+            mh_data, REGIONS_AC, max_iters=5, tol=1e-4,
+            scale_the_objective=OBJ_SCALE, in_out_weight=0.5,
+        )
+
+
 # ---------------------------------------------------------------------------
 # (vii) Authored-data validation reaches the user through the driver.
 # ---------------------------------------------------------------------------

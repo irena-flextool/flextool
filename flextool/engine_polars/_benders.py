@@ -400,6 +400,18 @@ def _resolve_benders_cut_policy() -> str:
 # :func:`_resolve_benders_max_stall`.
 _BENDERS_IN_OUT_WEIGHT_ENV = "FLEXTOOL_BENDERS_IN_OUT_WEIGHT"
 
+# Machine-local trust-region stabilizer knob (specs/
+# benders_masterfuel_convergence_theory.md §C, RANK 3).  A RELATIVE box
+# half-width Δ₀ = radius·scale where ``scale`` is derived from the coupling
+# columns' own physical magnitude (their upper-bound cap), so the knob is
+# expressed relative to the coupling variables' units, not a hardcoded
+# absolute.  Unset or ``<= 0`` ⇒ trust region OFF ⇒ today's behaviour verbatim
+# (byte-identical).  Mutually exclusive with in-out (λ>0).  No DB schema
+# parameter yet — productionizing it as a ``solve.*`` parameter is a later
+# commit; keeping it a machine-local env avoids migration / autoscale-registry
+# churn during proving.
+_BENDERS_TRUST_REGION_RADIUS_ENV = "FLEXTOOL_BENDERS_TRUST_REGION_RADIUS"
+
 # Experimental (specs/benders_research_master_stabilization.md §6): which dual
 # the region subproblems report for cut slopes.  ``basic`` (default) keeps the
 # ``run_crossover=on`` pin — reproducible vertex duals.  ``interior`` solves
@@ -554,6 +566,34 @@ def _resolve_benders_in_out_weight(db_value: float = 0.0) -> float:
                     _BENDERS_IN_OUT_WEIGHT_ENV, env,
                 )
     return weight
+
+
+def _resolve_benders_trust_region_radius() -> float | None:
+    """Resolve the machine-local trust-region RELATIVE radius, or ``None`` = OFF.
+
+    Reads ``FLEXTOOL_BENDERS_TRUST_REGION_RADIUS`` (machine-local, no DB
+    parameter yet).  A valid ``> 0`` float selects the trust-region stabilizer
+    with that relative radius (Δ₀ = radius · coupling-scale); unset, empty, a
+    non-float, or ``<= 0`` ⇒ ``None`` = OFF = today's behaviour verbatim
+    (byte-identical).  A non-float or ``<= 0`` value is IGNORED (warned, not
+    fatal): ``<= 0`` is the documented OFF sentinel, so it degrades to OFF
+    rather than crashing a run.
+    """
+    env = os.environ.get(_BENDERS_TRUST_REGION_RADIUS_ENV)
+    if not env:
+        return None
+    try:
+        radius = float(env)
+    except ValueError:
+        _logger.warning(
+            "Benders: ignoring non-float %s=%r (trust region OFF)",
+            _BENDERS_TRUST_REGION_RADIUS_ENV, env,
+        )
+        return None
+    if radius <= 0.0:
+        # <= 0 is the OFF sentinel — no warning for the explicit-off case.
+        return None
+    return radius
 
 
 def _stall_worst_offenders(
@@ -860,6 +900,13 @@ class _BendersMaster:
         # 1-based iteration index, used to label ``project_point`` /
         # compaction diagnostics exactly as the in-module loop did.
         self._solve_count: int = 0
+        # Save/restore state for the OPTIONAL trust-region coupling box
+        # (:meth:`apply_coupling_box` / :meth:`clear_coupling_box`): the
+        # coupling columns' ORIGINAL bounds captured at the most recent
+        # ``apply_coupling_box`` so ``clear_coupling_box`` restores them
+        # exactly.  ``None`` when no box is currently applied (the byte-parity
+        # default — trust region OFF never touches this).
+        self._coupling_box_saved: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         if master == "flextool":
             self._build_flextool_master(data)
         elif master == "hand":
@@ -1452,6 +1499,52 @@ class _BendersMaster:
         coordinator keeps its exact ``native_cost(msol)`` UB verbatim
         (byte-parity)."""
         return bool(self._master_hosted_nodes)
+
+    def apply_coupling_box(self, center: dict[int, float], radius: float) -> None:
+        """OPTIONAL coordinator protocol member (:meth:`polar_high.benders.
+        BendersMaster.apply_coupling_box`): temporarily BOX the coupling
+        columns to ``[center − radius, center + radius]`` INTERSECTED with each
+        column's original bounds (so the box never *widens* the feasible set).
+
+        Used by the trust-region stabilizer (``trust_region_radius`` set): the
+        coordinator calls this before the boxed ``solve`` and
+        :meth:`clear_coupling_box` after reading the boxed iterate.  Reuses the
+        SAME coupling col-id universe as :meth:`native_cost_at` /
+        :func:`_master_autarky_cost` (every coupling arc's ``f_col_ids``).  The
+        columns' pre-box bounds are captured (``get_col_bounds``) and stashed on
+        ``self._coupling_box_saved`` so :meth:`clear_coupling_box` restores them
+        exactly; because the coordinator applies + clears around EACH boxed
+        solve, every apply re-reads the (restored) original bounds, so repeated
+        apply/clear is save/restore-safe.  ``center`` must carry a value for
+        every coupling f col-id (the coordinator seeds it from the incumbent /
+        initial no-coupling point, which spans the full arc universe)."""
+        wp = self._wp
+        col_ids = np.concatenate(
+            [a.f_col_ids for a in self.arcs]
+        ).astype(np.int64)
+        lo, hi = wp.get_col_bounds(col_ids)
+        c = np.array(
+            [float(center[int(cid)]) for cid in col_ids], dtype=np.float64
+        )
+        r = float(radius)
+        # Intersect the box with the original bounds — NEVER widen.
+        wp.set_col_bounds(col_ids, np.maximum(lo, c - r), np.minimum(hi, c + r))
+        self._coupling_box_saved = (col_ids, lo, hi)
+
+    def clear_coupling_box(self) -> None:
+        """OPTIONAL coordinator protocol member (:meth:`polar_high.benders.
+        BendersMaster.clear_coupling_box`): restore the coupling columns'
+        pre-box bounds saved by the most recent :meth:`apply_coupling_box`.
+
+        The save/restore counterpart — called by the coordinator after the
+        boxed master solve, including on the error path (so a failed boxed
+        solve never leaves the master boxed).  A no-op when no box is applied
+        (``self._coupling_box_saved is None``), so a double clear is safe."""
+        saved = self._coupling_box_saved
+        if saved is not None:
+            col_ids, lo, hi = saved
+            self._wp.set_col_bounds(col_ids, lo, hi)
+            self._coupling_box_saved = None
 
     def project_point(self, f: dict[int, float], sol, *,
                       hard_fail: bool = True) -> float:
@@ -2476,6 +2569,54 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             in_out_weight, len(regions_meta),
         )
 
+    # --- Trust-region stabilization (machine-local env; RANK 3, theory §C).
+    # ``trust_region_radius`` is a RELATIVE half-width; the ABSOLUTE box Δ₀ is
+    # ``radius · trust_region_scale`` where ``scale`` is the coupling columns'
+    # own physical magnitude — the max finite |bound| over the coupling f
+    # col-id universe (the handover physical cap after the Step-2 converter
+    # bound).  This expresses the box relative to the coupling variables' units
+    # rather than a hardcoded absolute.  ``None`` ⇒ OFF ⇒ byte-identical.
+    trust_region_radius = _resolve_benders_trust_region_radius()
+    trust_region_scale = 1.0
+    if trust_region_radius is not None:
+        if in_out_weight > 0.0:
+            # Mutually exclusive (in-out stabilizes the oracle query, the trust
+            # region the master primal).  Error clearly FlexTool-side rather
+            # than letting both flow into the coordinator's own guard.
+            raise ValueError(
+                "Benders: the trust region "
+                f"({_BENDERS_TRUST_REGION_RADIUS_ENV}="
+                f"{trust_region_radius!r}) and in-out separation "
+                f"(λ={in_out_weight!r}) are MUTUALLY EXCLUSIVE stabilizers — "
+                "select at most one (unset one of the env knobs / the "
+                "solve.benders_in_out_weight parameter)."
+            )
+        tr_col_ids = np.concatenate(
+            [a.f_col_ids for a in arcs]
+        ).astype(np.int64)
+        tr_lo, tr_hi = master._wp.get_col_bounds(tr_col_ids)
+        tr_mags = np.abs(np.concatenate([tr_lo, tr_hi]))
+        tr_finite = tr_mags[np.isfinite(tr_mags) & (tr_mags > 0.0)]
+        if tr_finite.size:
+            trust_region_scale = float(tr_finite.max())
+        else:
+            # No finite coupling bound (uncapped coupling columns): fall back to
+            # an absolute radius (scale 1.0) and warn — the physical-cap derived
+            # scale (Step-2 handover cap) is expected under masterfuel.
+            _logger.warning(
+                "Benders: trust region ON but no finite coupling-column bound "
+                "found to derive the scale from; using scale=1.0 (Δ₀=radius "
+                "in absolute coupling units).",
+            )
+        _logger.info(
+            "Benders: trust-region stabilization ON — relative radius %.3g, "
+            "coupling scale %.6g ⇒ Δ₀=%.6g over %d coupling column(s), %d "
+            "region(s).",
+            trust_region_radius, trust_region_scale,
+            trust_region_radius * trust_region_scale,
+            tr_col_ids.size, len(regions_meta),
+        )
+
     # Periodic MASTER CUT COMPACTION threshold (env-resolved; 0 = OFF =
     # byte-identical to the pre-compaction path — the coordinator skips the
     # whole compaction block at 0).
@@ -2596,6 +2737,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         max_iters=max_iters,
         tol=tol,
         in_out_weight=in_out_weight,
+        trust_region_radius=trust_region_radius,
+        trust_region_scale=trust_region_scale,
         workers=eff_workers,
         stall_window=_resolve_benders_max_stall(),
         # Raised gap floor so a loose ``tol`` never lets the floor fall below
