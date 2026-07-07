@@ -513,6 +513,48 @@ def test_trust_region_converges_master_hosted(mh_data, monolith, monkeypatch) ->
     )
 
 
+def test_trust_region_radius_is_absolute_box(mh_data, monkeypatch) -> None:
+    """The trust-region radius is an HONEST ABSOLUTE box half-width: with the
+    stabilizer ON, the coordinator receives ``trust_region_scale == 1.0`` and
+    ``trust_region_radius`` equal to the env radius, so Δ₀ = radius·1.0 =
+    radius — no cap-derived inflation (the removed derivation always fell back
+    to 1.0 anyway, since the handover cap lives on the maxFlow constraint RHS,
+    not the coupling column bounds)."""
+    radius = 0.25
+    monkeypatch.setenv("FLEXTOOL_BENDERS_TRUST_REGION_RADIUS", str(radius))
+
+    captured: list = []
+
+    class _Stop(Exception):
+        pass
+
+    real_loop = fx_benders.solve_benders_loop
+
+    def _spy_loop(*args, options, **kwargs):
+        captured.append(options)
+        raise _Stop  # abort before the (heavy) loop — we only need `options`
+
+    monkeypatch.setattr(fx_benders, "solve_benders_loop", _spy_loop)
+    assert real_loop is not fx_benders.solve_benders_loop
+
+    with pytest.raises(_Stop):
+        solve_benders(
+            mh_data, REGIONS_AC, max_iters=5, tol=1e-4,
+            scale_the_objective=OBJ_SCALE,
+        )
+
+    assert len(captured) == 1
+    opts = captured[0]
+    assert opts.trust_region_scale == 1.0, (
+        f"trust_region_scale {opts.trust_region_scale!r} != 1.0 — the box must "
+        "be absolute, with no cap-derived scale factor"
+    )
+    assert opts.trust_region_radius == radius, (
+        f"trust_region_radius {opts.trust_region_radius!r} != env radius "
+        f"{radius!r} — Δ₀ must equal the env radius, not a cap-inflated box"
+    )
+
+
 def test_trust_region_and_in_out_mutually_exclusive(mh_data, monkeypatch) -> None:
     """Selecting BOTH the trust region (env) and in-out (λ>0) is rejected up
     front with a clear FlexTool-side error — the two stabilizers are mutually

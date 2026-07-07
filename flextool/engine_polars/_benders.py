@@ -401,11 +401,10 @@ def _resolve_benders_cut_policy() -> str:
 _BENDERS_IN_OUT_WEIGHT_ENV = "FLEXTOOL_BENDERS_IN_OUT_WEIGHT"
 
 # Machine-local trust-region stabilizer knob (specs/
-# benders_masterfuel_convergence_theory.md §C, RANK 3).  A RELATIVE box
-# half-width Δ₀ = radius·scale where ``scale`` is derived from the coupling
-# columns' own physical magnitude (their upper-bound cap), so the knob is
-# expressed relative to the coupling variables' units, not a hardcoded
-# absolute.  Unset or ``<= 0`` ⇒ trust region OFF ⇒ today's behaviour verbatim
+# benders_masterfuel_convergence_theory.md §C, RANK 3).  An ABSOLUTE box
+# half-width Δ₀ = radius (in normalised coupling-flow units): the value IS the
+# box half-width applied to the coupling columns, not a factor on any derived
+# scale.  Unset or ``<= 0`` ⇒ trust region OFF ⇒ today's behaviour verbatim
 # (byte-identical).  Mutually exclusive with in-out (λ>0).  No DB schema
 # parameter yet — productionizing it as a ``solve.*`` parameter is a later
 # commit; keeping it a machine-local env avoids migration / autoscale-registry
@@ -569,15 +568,15 @@ def _resolve_benders_in_out_weight(db_value: float = 0.0) -> float:
 
 
 def _resolve_benders_trust_region_radius() -> float | None:
-    """Resolve the machine-local trust-region RELATIVE radius, or ``None`` = OFF.
+    """Resolve the machine-local trust-region ABSOLUTE radius, or ``None`` = OFF.
 
     Reads ``FLEXTOOL_BENDERS_TRUST_REGION_RADIUS`` (machine-local, no DB
     parameter yet).  A valid ``> 0`` float selects the trust-region stabilizer
-    with that relative radius (Δ₀ = radius · coupling-scale); unset, empty, a
-    non-float, or ``<= 0`` ⇒ ``None`` = OFF = today's behaviour verbatim
-    (byte-identical).  A non-float or ``<= 0`` value is IGNORED (warned, not
-    fatal): ``<= 0`` is the documented OFF sentinel, so it degrades to OFF
-    rather than crashing a run.
+    with that absolute box half-width (Δ₀ = radius, in normalised coupling-flow
+    units); unset, empty, a non-float, or ``<= 0`` ⇒ ``None`` = OFF = today's
+    behaviour verbatim (byte-identical).  A non-float or ``<= 0`` value is
+    IGNORED (warned, not fatal): ``<= 0`` is the documented OFF sentinel, so it
+    degrades to OFF rather than crashing a run.
     """
     env = os.environ.get(_BENDERS_TRUST_REGION_RADIUS_ENV)
     if not env:
@@ -2570,12 +2569,18 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         )
 
     # --- Trust-region stabilization (machine-local env; RANK 3, theory §C).
-    # ``trust_region_radius`` is a RELATIVE half-width; the ABSOLUTE box Δ₀ is
-    # ``radius · trust_region_scale`` where ``scale`` is the coupling columns'
-    # own physical magnitude — the max finite |bound| over the coupling f
-    # col-id universe (the handover physical cap after the Step-2 converter
-    # bound).  This expresses the box relative to the coupling variables' units
-    # rather than a hardcoded absolute.  ``None`` ⇒ OFF ⇒ byte-identical.
+    # ``trust_region_radius`` is an ABSOLUTE box half-width: Δ₀ = radius·1.0 =
+    # radius, applied directly to the coupling columns in normalised
+    # coupling-flow units.  ``trust_region_scale`` stays fixed at 1.0 (the
+    # coordinator API keeps the field; there is no derived scale factor).
+    # A properly RELATIVE scale would need the OPERATING coupling-flow magnitude
+    # — NOT the Step-2 handover cap, which lives on the maxFlow constraint RHS
+    # (leaving the f-cols ±inf) and is a loose blow-up guard 3–6 decades above
+    # the O(1e-3) optimal flows, so a cap-derived box is non-binding — and no
+    # clean pre-loop coupling-flow reference exists in the production driver.
+    # The generic path (deferred) is adaptive self-calibration from the first
+    # unboxed master proposal, a coordinator / polar-high change.
+    # ``None`` ⇒ OFF ⇒ byte-identical.
     trust_region_radius = _resolve_benders_trust_region_radius()
     trust_region_scale = 1.0
     if trust_region_radius is not None:
@@ -2591,30 +2596,12 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                 "select at most one (unset one of the env knobs / the "
                 "solve.benders_in_out_weight parameter)."
             )
-        tr_col_ids = np.concatenate(
-            [a.f_col_ids for a in arcs]
-        ).astype(np.int64)
-        tr_lo, tr_hi = master._wp.get_col_bounds(tr_col_ids)
-        tr_mags = np.abs(np.concatenate([tr_lo, tr_hi]))
-        tr_finite = tr_mags[np.isfinite(tr_mags) & (tr_mags > 0.0)]
-        if tr_finite.size:
-            trust_region_scale = float(tr_finite.max())
-        else:
-            # No finite coupling bound (uncapped coupling columns): fall back to
-            # an absolute radius (scale 1.0) and warn — the physical-cap derived
-            # scale (Step-2 handover cap) is expected under masterfuel.
-            _logger.warning(
-                "Benders: trust region ON but no finite coupling-column bound "
-                "found to derive the scale from; using scale=1.0 (Δ₀=radius "
-                "in absolute coupling units).",
-            )
+        n_coupling_cols = sum(int(a.f_col_ids.size) for a in arcs)
         _logger.info(
-            "Benders: trust-region stabilization ON — relative radius %.3g, "
-            "coupling scale %.6g ⇒ Δ₀=%.6g over %d coupling column(s), %d "
-            "region(s).",
-            trust_region_radius, trust_region_scale,
-            trust_region_radius * trust_region_scale,
-            tr_col_ids.size, len(regions_meta),
+            "Benders: trust-region stabilization ON — absolute box half-width "
+            "Δ₀=%.6g (normalised coupling-flow units) over %d coupling "
+            "column(s), %d region(s).",
+            trust_region_radius, n_coupling_cols, len(regions_meta),
         )
 
     # Periodic MASTER CUT COMPACTION threshold (env-resolved; 0 = OFF =
