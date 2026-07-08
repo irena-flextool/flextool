@@ -3104,7 +3104,7 @@ def _drive_cascade(
                     pb, _active_solver_cfg, logger=state.logger,
                     save_memory=_save_memory,
                     solve_name=complete_solve_name,
-                    work_folder=getattr(state, "work_folder", None),
+                    work_folder=state.paths.work_folder,
                 )
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
