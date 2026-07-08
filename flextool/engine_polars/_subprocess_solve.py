@@ -74,6 +74,92 @@ if TYPE_CHECKING:
     from polar_high import Problem, Solution
 
 
+# Warm-start first-transfer A/B margin.  A supplied basis disables HiGHS'
+# presolve, so a *far* / stale seed can make the warm solve SLOWER than a
+# cold (presolve-on) solve (Landmine B).  On a family's first warm
+# transfer we time a cold reference run and only keep injecting the basis
+# when the warm run's wall time is within ``(1 + _WARM_AB_MARGIN)`` of the
+# cold time; otherwise the fingerprint is marked ``.nowarm`` and future
+# solves go cold.  Env-tunable; a NEGATIVE value forces a regression
+# verdict (used by tests to exercise the disable path deterministically).
+_WARM_AB_MARGIN = float(os.environ.get("FLEXTOOL_WARM_AB_MARGIN", "0.10"))
+
+
+def _warm_ab_margin() -> float:
+    """Effective A/B margin, re-read from the environment at decision time.
+
+    Falls back to the import-time :data:`_WARM_AB_MARGIN` default when the
+    env var is unset or unparseable.  Read at runtime (not once at import)
+    so ``FLEXTOOL_WARM_AB_MARGIN`` stays tunable within a live process —
+    the gate fires at most once per fingerprint, so the cost is trivial.
+    """
+    try:
+        return float(
+            os.environ.get("FLEXTOOL_WARM_AB_MARGIN", str(_WARM_AB_MARGIN))
+        )
+    except (TypeError, ValueError):
+        return _WARM_AB_MARGIN
+
+
+def _touch_marker(path: Path, logger: logging.Logger | None) -> None:
+    """Best-effort create an empty warm-start decision marker file.
+
+    Markers (``<fp>.nowarm`` / ``<fp>.abtested``) live in the persistent
+    basis cache dir and record the first-transfer A/B verdict.  A write
+    failure is logged and non-fatal — the gate degrades to re-probing on
+    the next solve, never breaking the solve itself.
+    """
+    try:
+        path.write_text("")
+    except OSError as exc:
+        if logger is not None:
+            logger.warning(
+                "save_memory: warm-start marker write failed for %s (%s)",
+                path, exc,
+            )
+
+
+def _run_cold_probe(
+    *,
+    mps_path: Path,
+    opts_path: Path,
+    probe_sol: Path,
+    probe_stats: Path,
+    logger: logging.Logger | None,
+) -> float | None:
+    """Spawn a throwaway COLD child solve purely to measure its wall time.
+
+    Used by the first-transfer A/B gate (see :data:`_WARM_AB_MARGIN`).
+    The child runs with the SAME ``--mps`` / ``--options`` but a throwaway
+    ``--solution`` and ``--stats`` and NO ``--warm-basis`` — a pure cold
+    reference solve.  Its solution is discarded; only ``run_time`` matters.
+
+    Returns the cold ``run_time`` in seconds, or ``None`` when the probe
+    could not run or produced no usable time (caller then skips gating).
+    Fully defensive — never raises.
+    """
+    try:
+        probe_cmd = [
+            sys.executable, "-m", "flextool.cli.cmd_solve_mps",
+            "--mps", str(mps_path),
+            "--solution", str(probe_sol),
+            "--options", str(opts_path),
+            "--stats", str(probe_stats),
+        ]
+        subprocess.run(probe_cmd)
+        if not probe_stats.exists():
+            return None
+        pstats = json.loads(probe_stats.read_text())
+        rt = pstats.get("run_time")
+        if rt is None:
+            return None
+        return float(rt)
+    except Exception as exc:  # noqa: BLE001 - probe is measurement-only
+        if logger is not None:
+            logger.debug("save_memory: cold A/B probe failed (%s)", exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # HiGHS .opt formatting / .sol parsing helpers (existing)
 # ---------------------------------------------------------------------------
@@ -1140,6 +1226,22 @@ def _solve_highs_subprocess(
     exception falls back to a correct cold solve.  Warm-start never
     breaks a solve.  This ``.bas`` cache is a separate branch from the
     in-memory ``WarmProblem`` reuse gate in ``_orchestration.py``.
+
+    **First-transfer A/B gate** (Landmine B): a supplied basis disables
+    HiGHS' presolve, so a stale/far seed can make the warm solve SLOWER
+    than a cold (presolve-on) one.  On a fingerprint's FIRST warm
+    transfer (cache hit, no verdict marker yet) we run one extra cold
+    timing PROBE child (throwaway ``.probe.sol`` / ``.probe.stats.json``,
+    no ``--warm-basis``) alongside the normal warm main run, then compare
+    wall times (``run_time`` from each stats sidecar).  Two marker files
+    in the cache dir record the verdict: ``<fp>.abtested`` (warm within
+    ``(1 + _WARM_AB_MARGIN)`` of cold → keep injecting, never re-probe)
+    or ``<fp>.nowarm`` (warm regressed → solve cold from now on, still
+    refreshing the captured basis).  If the probe can't produce a time we
+    write ``.abtested`` and proceed warm (no perpetual re-probing).  The
+    main run's Solution is always returned unchanged — the probe only
+    informs the decision, so the returned result is correct regardless of
+    the timing verdict.  Marker writes are best-effort and non-fatal.
     """
     from polar_high import Solution
 
@@ -1160,6 +1262,14 @@ def _solve_highs_subprocess(
     warm_cached: Path | None = None
     warm_tmp_bas: Path | None = None
     warm_stats_path: Path | None = None
+    # First-transfer A/B gate slots.
+    warm_probe_sol: Path | None = None
+    warm_probe_stats: Path | None = None
+    warm_nowarm_marker: Path | None = None
+    warm_abtested_marker: Path | None = None
+    warm_first_transfer = False
+    warm_cold_time: float | None = None
+    warm_run_time: float | None = None
 
     try:
         opts = options or {}
@@ -1207,17 +1317,58 @@ def _solve_highs_subprocess(
                         )
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     warm_cached = cache_dir / f"{fp}.bas"
+                    warm_nowarm_marker = cache_dir / f"{fp}.nowarm"
+                    warm_abtested_marker = cache_dir / f"{fp}.abtested"
+                    warm_stats_path = out_dir / f"{safe_name}.stats.json"
+
                     if warm_cached.exists():
-                        cmd += ["--warm-basis", str(warm_cached)]
-                        if logger is not None:
-                            logger.info(
-                                "save_memory: warm-basis cache hit %s", fp,
+                        if warm_nowarm_marker.exists():
+                            # This family regressed on its first A/B —
+                            # never inject the basis (solve cold); still
+                            # refresh the captured basis below.
+                            if logger is not None:
+                                logger.info(
+                                    "save_memory: warm-start disabled "
+                                    "(.nowarm) for %s — solving cold", fp,
+                                )
+                        elif warm_abtested_marker.exists():
+                            # Verdict already recorded as beneficial —
+                            # trust it, inject warm, no A/B probe.
+                            cmd += ["--warm-basis", str(warm_cached)]
+                            if logger is not None:
+                                logger.info(
+                                    "save_memory: warm-basis cache hit %s "
+                                    "(.abtested — trusting warm)", fp,
+                                )
+                        else:
+                            # FIRST warm transfer for this fingerprint: run
+                            # a cold timing probe now, then inject warm for
+                            # the main run and decide the verdict afterwards.
+                            warm_first_transfer = True
+                            warm_probe_sol = (
+                                out_dir / f"{safe_name}.probe.sol"
                             )
+                            warm_probe_stats = (
+                                out_dir / f"{safe_name}.probe.stats.json"
+                            )
+                            warm_cold_time = _run_cold_probe(
+                                mps_path=mps_path,
+                                opts_path=opts_path,
+                                probe_sol=warm_probe_sol,
+                                probe_stats=warm_probe_stats,
+                                logger=logger,
+                            )
+                            cmd += ["--warm-basis", str(warm_cached)]
+                            if logger is not None:
+                                logger.info(
+                                    "save_memory: warm-basis cache hit %s "
+                                    "(first transfer — A/B probing, "
+                                    "cold_time=%s)", fp, warm_cold_time,
+                                )
                     # Always refresh the cache this run: capture a fresh
                     # basis to a per-process tmp (atomic publish on success),
                     # plus a stats sidecar for later measurement.
                     warm_tmp_bas = cache_dir / f"{fp}.bas.tmp.{os.getpid()}"
-                    warm_stats_path = out_dir / f"{safe_name}.stats.json"
                     cmd += [
                         "--basis", str(warm_tmp_bas),
                         "--stats", str(warm_stats_path),
@@ -1229,6 +1380,8 @@ def _solve_highs_subprocess(
                         "solving cold", exc,
                     )
                 warm_cached = warm_tmp_bas = warm_stats_path = None
+                warm_probe_sol = warm_probe_stats = None
+                warm_first_transfer = False
 
         if logger is not None:
             logger.info(
@@ -1268,19 +1421,66 @@ def _solve_highs_subprocess(
             try:
                 if warm_stats_path.exists():
                     stats = json.loads(warm_stats_path.read_text())
+                    rt = stats.get("run_time")
+                    warm_run_time = float(rt) if rt is not None else None
                     if logger is not None:
                         logger.info(
                             "save_memory: warm-start stats for %r — "
-                            "simplex_iters=%s warm_basis_used=%s",
+                            "simplex_iters=%s warm_basis_used=%s run_time=%s",
                             solve_name,
                             stats.get("simplex_iteration_count"),
                             stats.get("warm_basis_used"),
+                            warm_run_time,
                         )
             except Exception as exc:  # noqa: BLE001 - measurement only
                 if logger is not None:
                     logger.warning(
                         "save_memory: warm-start stats parse failed (%s)",
                         exc,
+                    )
+
+        # --- First-transfer A/B verdict ---------------------------------
+        # Decide whether warm-start helped this family.  A supplied basis
+        # disables presolve, so compare wall times: keep injecting only
+        # when warm is within (1 + margin) of cold, else mark ``.nowarm``.
+        # No usable timing → trust warm and stop re-probing (``.abtested``).
+        if warm_first_transfer:
+            try:
+                cold_t = warm_cold_time
+                warm_t = warm_run_time
+                if (
+                    cold_t is not None and cold_t >= 0.0
+                    and warm_t is not None and warm_t >= 0.0
+                ):
+                    if warm_t > cold_t * (1.0 + _warm_ab_margin()):
+                        _touch_marker(warm_nowarm_marker, logger)
+                        if logger is not None:
+                            logger.info(
+                                "warm-start regressed for %s "
+                                "(warm=%ss vs cold=%ss) — disabling future "
+                                "injection", fp, warm_t, cold_t,
+                            )
+                    else:
+                        _touch_marker(warm_abtested_marker, logger)
+                        if logger is not None:
+                            logger.info(
+                                "save_memory: warm-start confirmed "
+                                "beneficial for %s (warm=%ss vs cold=%ss)",
+                                fp, warm_t, cold_t,
+                            )
+                else:
+                    # Probe gave no usable time — trust warm, don't re-probe.
+                    _touch_marker(warm_abtested_marker, logger)
+                    if logger is not None:
+                        logger.debug(
+                            "save_memory: A/B probe produced no usable time "
+                            "for %s — trusting warm (.abtested)", fp,
+                        )
+            except Exception as exc:  # noqa: BLE001 - gating is best-effort
+                if logger is not None:
+                    logger.warning(
+                        "save_memory: warm-start A/B gating failed (%s) — "
+                        "no verdict recorded", exc,
                     )
         if cp.returncode > 1:
             raise RuntimeError(
@@ -1356,12 +1556,16 @@ def _solve_highs_subprocess(
     finally:
         if cleanup:
             paths = [mps_path, sol_path, opts_path]
-            # The warm-start stats sidecar lives inside ``out_dir`` — sweep
-            # it too so the ``rmdir`` below succeeds.  The cache itself
-            # (``warm_cached`` / ``warm_tmp_bas``) lives OUTSIDE ``out_dir``
-            # and must survive.
+            # The warm-start stats sidecar and A/B probe throwaways live
+            # inside ``out_dir`` — sweep them too so the ``rmdir`` below
+            # succeeds.  The cache itself (``warm_cached`` / ``warm_tmp_bas``)
+            # and the verdict markers live OUTSIDE ``out_dir`` and survive.
             if warm_stats_path is not None:
                 paths.append(warm_stats_path)
+            if warm_probe_sol is not None:
+                paths.append(warm_probe_sol)
+            if warm_probe_stats is not None:
+                paths.append(warm_probe_stats)
             for p in paths:
                 try:
                     if p.exists():

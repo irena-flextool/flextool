@@ -135,11 +135,20 @@ def main(argv: list[str] | None = None) -> int:
         # A stats-write failure must never fail the solve.
         try:
             info = h.getInfo()
+            # Wall-clock solve time drives the parent's A/B warm-vs-cold
+            # gate.  Best-effort: a highspy build without ``getRunTime``
+            # (or one that returns junk on a tiny model) falls back to
+            # ``-1.0``, which the parent treats as "no timing → skip gate".
+            try:
+                run_time = float(h.getRunTime())
+            except Exception:
+                run_time = -1.0
             stats = {
                 "simplex_iteration_count": int(info.simplex_iteration_count),
                 "model_status": str(model_status),
                 "objective": float(h.getObjectiveValue()),
                 "warm_basis_used": warm_basis_used,
+                "run_time": run_time,
             }
             args.stats.write_text(json.dumps(stats))
         except Exception as exc:
