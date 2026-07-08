@@ -2320,6 +2320,18 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         if region_duals == "interior":
             pb.set_solver_option("solver", "ipm")
             pb.set_solver_option("run_crossover", "off")
+            # ``ipm_optimality_tolerance`` is the barrier's primal-dual gap
+            # target.  1e-9 is NOT an over-tight fantasy for crossover-off:
+            # measured on this fixture, barrier reaches a gap of ~1e-12 on
+            # essentially every pinned region solve and certifies kOptimal.
+            # It is kept tight on purpose — a central dual is only as good as
+            # the gap it was read at.  What actually crashed iter-N was a
+            # DIFFERENT failure mode: on a rare pinned instance barrier
+            # NUMERICALLY STALLS (kUnknown at a real ~3% primal-dual gap /
+            # complementarity ~1e2), and no tolerance value changes that
+            # (identical stall at 1e-9…1e-5).  That case is handled at the
+            # solve site by a crossover fallback (see ``_pin_and_solve``),
+            # which recovers a valid *basic* dual instead of crashing.
             pb.set_solver_option("ipm_optimality_tolerance", 1e-9)
         else:
             pb.set_solver_option("run_crossover", "on")
@@ -2432,6 +2444,20 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # (kUnknown/kSolveError off an ill-conditioned warm basis) drop the
         # basis and re-solve once cold, instead of crashing immediately.
         sol_r = w.solve(retry_on_unknown=True)
+        if region_duals == "interior" and not sol_r.optimal:
+            # EXPERIMENTAL interior mode only: barrier-without-crossover can
+            # NUMERICALLY STALL on a particular pinned instance — HiGHS returns
+            # kUnknown at a real ~1e-2 primal-dual gap (complementarity stuck at
+            # ~1e2), and loosening ``ipm_optimality_tolerance`` does NOT rescue
+            # it (the stall is identical from 1e-9 down to 1e-5).  Accepting that
+            # interior point would feed a garbage (non-optimal) dual into the
+            # cut.  Instead re-solve THIS region once with crossover ON: the
+            # simplex/crossover phase drives the same LP to a certified kOptimal
+            # basis and a valid *basic* cut dual.  The central-dual character of
+            # the knob is preserved wherever barrier does converge; this is only
+            # the recovery path for the instances where it cannot.  The default
+            # (basic) path never reaches here — it already pins crossover ON.
+            sol_r, _ = w.solve_with_fallback({"run_crossover": "on"})
         if not sol_r.optimal:
             # Domain-side not-optimal: raised HERE, inside the adapter's
             # ``solve_at`` — it never reaches the coordinator's own checks

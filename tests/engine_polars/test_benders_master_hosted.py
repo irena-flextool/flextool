@@ -214,6 +214,34 @@ def test_exactness_converges_to_monolith(benders_result, monolith) -> None:
     )
 
 
+def test_interior_region_duals_knob_does_not_crash(
+    mh_data, monolith, monkeypatch
+) -> None:
+    """EXPERIMENTAL ``FLEXTOOL_BENDERS_REGION_DUALS=interior`` must run the
+    whole loop, not crash.  It reads region cut duals from a barrier
+    (crossover-off) solve; on this fixture barrier NUMERICALLY STALLS on a
+    particular pinned region_C instance (HiGHS kUnknown at a real ~1e-2
+    primal-dual gap that no ``ipm_optimality_tolerance`` value rescues),
+    which used to raise ``SubproblemNotOptimal`` at that iterate.  The
+    crossover fallback in ``_pin_and_solve`` recovers a certified basic dual
+    for exactly those instances, so the solve iterates through to the
+    monolith optimum instead of aborting."""
+    monkeypatch.setenv("FLEXTOOL_BENDERS_REGION_DUALS", "interior")
+    assert fx_benders._resolve_benders_region_duals() == "interior"
+    res = solve_benders(
+        mh_data, REGIONS_AC, max_iters=20, tol=1e-4,
+        monolith_objective=monolith.obj, scale_the_objective=OBJ_SCALE,
+    )
+    assert res.converged, (
+        f"interior knob did not converge: gap={res.gap:.3e} after "
+        f"{res.iterations} iters"
+    )
+    assert np.isclose(res.total_objective, monolith.obj, rtol=1e-4), (
+        f"interior UB {res.total_objective:.8e} != monolith "
+        f"{monolith.obj:.8e} (gap={res.gap:.3e})"
+    )
+
+
 # ---------------------------------------------------------------------------
 # (iii) + master-local unit: the Tier-1 handoff carries the MASTER's invest.
 # ---------------------------------------------------------------------------
