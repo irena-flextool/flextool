@@ -56,6 +56,7 @@ Already documented on the ``--save-memory`` flag.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -1124,6 +1125,21 @@ def _solve_highs_subprocess(
     :mod:`flextool.cli.cmd_solve_mps`, parses the .sol back via
     :func:`_parse_highs_sol` + :class:`_SolHighsShim` — no parent-side
     ``highspy.Highs.readModel`` (which used to dominate cold-path RSS).
+
+    **Warm-start arm** (opt-in, active only when the save-memory
+    subprocess path runs *and* ``FLEXTOOL_WARM_START == "1"``): a native
+    HiGHS ``.bas`` basis is cached in a persistent directory that
+    survives the per-solve ``out_dir`` cleanup, keyed by the MPS
+    structural fingerprint (``problem._last_mps_fingerprint``).  On a
+    subsequent solve of the same structural model the cached basis is
+    injected via the child's ``--warm-basis`` (readBasis); every
+    warm-start run also captures a fresh basis (``--basis`` to a unique
+    tmp, atomically published via ``os.replace`` on success) and a stats
+    sidecar (``--stats``) for later measurement.  Every step is
+    defensive: a missing fingerprint, a rejected/garbage basis, or any
+    exception falls back to a correct cold solve.  Warm-start never
+    breaks a solve.  This ``.bas`` cache is a separate branch from the
+    in-memory ``WarmProblem`` reuse gate in ``_orchestration.py``.
     """
     from polar_high import Solution
 
@@ -1138,6 +1154,12 @@ def _solve_highs_subprocess(
     mps_path = out_dir / f"{safe_name}.mps"
     sol_path = out_dir / f"{safe_name}.sol"
     opts_path = out_dir / f"{safe_name}.opt"
+
+    # Warm-start basis-cache slots (populated only under FLEXTOOL_WARM_START;
+    # declared here so the ``finally`` cleanup can reference them safely).
+    warm_cached: Path | None = None
+    warm_tmp_bas: Path | None = None
+    warm_stats_path: Path | None = None
 
     try:
         opts = options or {}
@@ -1159,12 +1181,107 @@ def _solve_highs_subprocess(
             "--solution", str(sol_path),
             "--options", str(opts_path),
         ]
+
+        # --- Warm-start arm (opt-in) ------------------------------------
+        # Keyed by the MPS structural fingerprint.  Everything here is
+        # defensive: on any hiccup we drop the warm slots and solve cold.
+        if os.environ.get("FLEXTOOL_WARM_START") == "1":
+            try:
+                fp = getattr(problem, "_last_mps_fingerprint", None)
+                if fp is None:
+                    if logger is not None:
+                        logger.debug(
+                            "save_memory: no MPS fingerprint — warm-start "
+                            "skipped for %r", solve_name,
+                        )
+                else:
+                    cache_env = os.environ.get("FLEXTOOL_BASIS_CACHE_DIR")
+                    if cache_env:
+                        cache_dir = Path(cache_env)
+                    elif work_folder is not None:
+                        cache_dir = Path(work_folder) / "basis_cache"
+                    else:
+                        cache_dir = (
+                            Path(tempfile.gettempdir())
+                            / "flextool_basis_cache"
+                        )
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    warm_cached = cache_dir / f"{fp}.bas"
+                    if warm_cached.exists():
+                        cmd += ["--warm-basis", str(warm_cached)]
+                        if logger is not None:
+                            logger.info(
+                                "save_memory: warm-basis cache hit %s", fp,
+                            )
+                    # Always refresh the cache this run: capture a fresh
+                    # basis to a per-process tmp (atomic publish on success),
+                    # plus a stats sidecar for later measurement.
+                    warm_tmp_bas = cache_dir / f"{fp}.bas.tmp.{os.getpid()}"
+                    warm_stats_path = out_dir / f"{safe_name}.stats.json"
+                    cmd += [
+                        "--basis", str(warm_tmp_bas),
+                        "--stats", str(warm_stats_path),
+                    ]
+            except Exception as exc:  # noqa: BLE001 - fail safe to cold
+                if logger is not None:
+                    logger.warning(
+                        "save_memory: warm-start setup failed (%s) — "
+                        "solving cold", exc,
+                    )
+                warm_cached = warm_tmp_bas = warm_stats_path = None
+
         if logger is not None:
             logger.info(
                 "save_memory: spawning subprocess HiGHS for %r", solve_name,
             )
         cp = subprocess.run(cmd)
         optimal = cp.returncode == 0
+
+        # --- Warm-start publish + measurement ---------------------------
+        if warm_tmp_bas is not None:
+            try:
+                if cp.returncode == 0 and warm_tmp_bas.exists():
+                    # Atomic publish (write-tmp-then-rename); tmp and cache
+                    # share a directory so this is a same-FS rename.
+                    os.replace(str(warm_tmp_bas), str(warm_cached))
+                    if logger is not None:
+                        logger.info(
+                            "save_memory: published warm-basis cache %s",
+                            warm_cached.name,
+                        )
+                else:
+                    # Failed/partial solve — never publish; drop the tmp.
+                    if warm_tmp_bas.exists():
+                        warm_tmp_bas.unlink()
+            except Exception as exc:  # noqa: BLE001 - non-fatal
+                if logger is not None:
+                    logger.warning(
+                        "save_memory: warm-basis publish failed (%s) — "
+                        "cache not updated", exc,
+                    )
+                try:
+                    if warm_tmp_bas.exists():
+                        warm_tmp_bas.unlink()
+                except OSError:
+                    pass
+        if warm_stats_path is not None:
+            try:
+                if warm_stats_path.exists():
+                    stats = json.loads(warm_stats_path.read_text())
+                    if logger is not None:
+                        logger.info(
+                            "save_memory: warm-start stats for %r — "
+                            "simplex_iters=%s warm_basis_used=%s",
+                            solve_name,
+                            stats.get("simplex_iteration_count"),
+                            stats.get("warm_basis_used"),
+                        )
+            except Exception as exc:  # noqa: BLE001 - measurement only
+                if logger is not None:
+                    logger.warning(
+                        "save_memory: warm-start stats parse failed (%s)",
+                        exc,
+                    )
         if cp.returncode > 1:
             raise RuntimeError(
                 f"subprocess HiGHS for solve {solve_name!r} failed with "
@@ -1238,7 +1355,14 @@ def _solve_highs_subprocess(
         )
     finally:
         if cleanup:
-            for p in (mps_path, sol_path, opts_path):
+            paths = [mps_path, sol_path, opts_path]
+            # The warm-start stats sidecar lives inside ``out_dir`` — sweep
+            # it too so the ``rmdir`` below succeeds.  The cache itself
+            # (``warm_cached`` / ``warm_tmp_bas``) lives OUTSIDE ``out_dir``
+            # and must survive.
+            if warm_stats_path is not None:
+                paths.append(warm_stats_path)
+            for p in paths:
                 try:
                     if p.exists():
                         p.unlink()

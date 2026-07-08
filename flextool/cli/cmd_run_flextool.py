@@ -445,6 +445,12 @@ def main():
              'write). Off by default; use when models OOM on the default '
              'in-process path.',
     )
+    parser.add_argument(
+        '--warm-start', action='store_true',
+        help='Reuse a cached HiGHS basis across solves of the same '
+             'structural model (save-memory subprocess path only); safe '
+             'cold fallback on any mismatch.',
+    )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
                         choices=['plot', 'parquet', 'excel', 'csv', 'spinedb'],
@@ -679,6 +685,12 @@ def main():
     # extra kwarg on ``run_chain_from_db`` / ``_drive_cascade``.
     if args.save_memory:
         os.environ['FLEXTOOL_SAVE_MEMORY'] = '1'
+    # ``--warm-start`` — opt-in HiGHS basis reuse across structurally
+    # identical solves (save-memory subprocess path only).  Plumbed via
+    # env var like ``--save-memory``; the subprocess solver reads it
+    # directly and fails safe to a cold solve on any mismatch.
+    if args.warm_start:
+        os.environ['FLEXTOOL_WARM_START'] = '1'
 
     # Accept either a SQLAlchemy URL ("sqlite:///path") or a bare
     # filesystem path ("path/to.sqlite") for any DB argument. Downstream
