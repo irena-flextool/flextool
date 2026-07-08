@@ -6692,6 +6692,92 @@ def dtttdt_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
+def _repday_segment_map(
+    per_period: dict[str, list[tuple[str, int]]],
+) -> dict[tuple[str, str], int]:
+    """Map ``(period, fine_step_label) -> representative-period segment id``.
+
+    Representative periods are concatenated into a single FlexTool period
+    but are sampled non-adjacently; they appear as gaps (>1) in the fine
+    timeline rank.  The segment id increments at each such gap, so all
+    fine steps belonging to the same representative day share one id.  On
+    a plain contiguous timeline (no gaps) every step is segment 0.
+    """
+    out: dict[tuple[str, str], int] = {}
+    for d_key, steps in per_period.items():
+        seg = 0
+        prev_rank: int | None = None
+        for (t, rk) in steps:
+            if prev_rank is not None and rk - prev_rank > 1:
+                seg += 1
+            out[(d_key, t)] = seg
+            prev_rank = rk
+    return out
+
+
+def _guard_coarse_blocks_within_repday(
+    period_block_time: pl.DataFrame,
+    label_seg: dict[tuple[str, str], int],
+    coarse_blocks: list[str],
+) -> None:
+    """Reject coarse blocks that straddle a representative-period seam.
+
+    ``period_block_time`` maps each coarse block ``(d, b_first)`` to the
+    fine steps ``t`` it covers.  ``label_seg`` maps ``(d, t)`` to a
+    representative-period segment id.  If any coarse block covers fine
+    steps from more than one representative period, its aggregated energy
+    balance would combine flows from days that are months apart — the
+    result is meaningless — so we fail loud with an explanation.
+
+    Raised as :class:`FlexToolConfigError` so it surfaces as a
+    configuration problem the user can fix (choose a ``new_stepduration``
+    that evenly divides the representative-period length).
+    """
+    from flextool.engine_polars._solve_state import FlexToolConfigError
+
+    straddlers: list[tuple[str, str]] = []
+    for (dval, bfirst), grp in period_block_time.group_by(
+            ["d", "b_first"], maintain_order=True):
+        segs = {label_seg.get((dval, t)) for t in grp["t"].to_list()}
+        if len(segs) > 1:
+            straddlers.append((dval, bfirst))
+    if straddlers:
+        example_period, example_block = straddlers[0]
+        raise FlexToolConfigError(
+            "Coarse time resolution is not aligned with the representative "
+            "periods.\n\n"
+            f"The group(s) {sorted(coarse_blocks)} set a coarser time "
+            "resolution (new_stepduration) on their nodes, but that step "
+            "length does not evenly divide the length of a representative "
+            "period. As a result at least one coarse time step "
+            f"(period {example_period!r}, block starting {example_block!r}) "
+            "would span the boundary BETWEEN two representative periods.\n\n"
+            "Representative periods are individual days/weeks sampled from "
+            "across the year — they are not consecutive in real time. A "
+            "single coarse time step that reaches across that boundary would "
+            "average together flows from days that are months apart, which is "
+            "not a meaningful storage balance.\n\n"
+            "Fix: choose a new_stepduration that divides the representative-"
+            "period length exactly (e.g. for 24-hour representative days use "
+            "2, 3, 4, 6, 8, 12 or 24 hours — not 5), or remove the coarse "
+            "resolution from these nodes."
+        )
+
+
+def _fine_rank_map(
+    per_period: dict[str, list[tuple[str, int]]],
+) -> dict[tuple[str, str], int]:
+    """Map ``(period, fine_step_label) -> global fine-timeline rank`` so
+    coarse-block first-steps can be ordered chronologically within a
+    representative-period segment (string labels do not always sort in
+    time order across timelines)."""
+    out: dict[tuple[str, str], int] = {}
+    for d_key, steps in per_period.items():
+        for (t, rk) in steps:
+            out[(d_key, t)] = rk
+    return out
+
+
 def period_block_family_from_source(source: "InputSource",
                                        active_solve: str | None,
                                        workdir: Path | None = None,
@@ -6785,7 +6871,21 @@ def period_block_family_from_source(source: "InputSource",
                         new_pb = (bsd_c
                             .pipe(rename_to_axis, {"period": "d", "step": "b_first"})
                             .select("d", "b_first").unique())
-                        # period_block_succ: cyclic per (block, period).
+                        # period_block_succ: cyclic per (block, period),
+                        # SEGMENTED by representative period.  Representative
+                        # periods are concatenated into one FlexTool period
+                        # but are NOT temporally adjacent (they are days
+                        # sampled months apart); they show up as gaps in the
+                        # fine-timeline rank.  Closing one cyclic storage loop
+                        # over the whole period would let a coarse node carry
+                        # inventory across months-apart representative days as
+                        # if consecutive (the coarse-storage relaxation bug).
+                        # Instead we close one cyclic loop PER representative
+                        # period.  On a plain contiguous timeline there are no
+                        # gaps, so this collapses to the previous whole-period
+                        # loop (no-op).
+                        label_seg = _repday_segment_map(per_period)
+                        label_rank = _fine_rank_map(per_period)
                         succ_rows: list[tuple[str, str, str]] = []
                         bsd_sorted = bsd_c.pipe(
                             rename_to_axis,
@@ -6794,10 +6894,19 @@ def period_block_family_from_source(source: "InputSource",
                         for (blk, dval), grp in bsd_sorted.group_by(
                                 ["block", "d"], maintain_order=True):
                             bfs = grp["b_first"].to_list()
-                            n = len(bfs)
-                            for i in range(n):
-                                succ_rows.append(
-                                    (dval, bfs[i], bfs[(i + 1) % n]))
+                            segs: dict[int, list[str]] = {}
+                            for b in bfs:
+                                seg = label_seg.get((dval, b), 0)
+                                segs.setdefault(seg, []).append(b)
+                            for seg_id in sorted(segs):
+                                seg_bfs = sorted(
+                                    segs[seg_id],
+                                    key=lambda b: label_rank.get((dval, b), 0))
+                                n = len(seg_bfs)
+                                for i in range(n):
+                                    succ_rows.append(
+                                        (dval, seg_bfs[i],
+                                         seg_bfs[(i + 1) % n]))
                         new_pbs = (pl.DataFrame(
                             succ_rows,
                             schema=["d", "b_first", "b_next"],
@@ -6826,6 +6935,18 @@ def period_block_family_from_source(source: "InputSource",
                             if ov_keep.height > 0:
                                 new_pbt = ov_keep.select(
                                     "d", "b_first", "t").unique()
+                        # Guard (Option C): a coarse resolution block must lie
+                        # ENTIRELY within one representative period.  When
+                        # new_stepduration does not evenly divide the length of
+                        # a representative period, a coarse block straddles the
+                        # seam between two representative days — which are
+                        # sampled months apart, not consecutive — so its
+                        # aggregated energy balance would mix flows from
+                        # unrelated days.  Reject with a plain-English message
+                        # rather than silently produce a meaningless block.
+                        if new_pbt is not None and new_pbt.height > 0:
+                            _guard_coarse_blocks_within_repday(
+                                new_pbt, label_seg, coarse_use)
                         if new_pb is not None and new_pb.height > 0:
                             period_block = new_pb
                         if new_pbs is not None and new_pbs.height > 0:

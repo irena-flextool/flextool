@@ -659,6 +659,17 @@ def period_block_multi_resolution_lf(
     )
 
     # period_block_succ: cyclic per (block, period).
+    #
+    # WARNING — legacy mirror, NOT on any live path (this function is
+    # exported in ``__all__`` but has no caller; the live producer is
+    # ``_derived_params.period_block_family_from_source``).  The live
+    # producer segments the cyclic loop PER representative period so a
+    # coarse node cannot chain storage across months-apart representative
+    # days (the coarse-storage relaxation bug).  This mirror still closes
+    # ONE loop over the whole period.  If this function is ever revived it
+    # MUST replicate that seam segmentation (see ``_repday_segment_map``);
+    # doing it here needs the fine-timeline ranks, which this ``bundle``-
+    # only signature does not carry.
     succ_rows: list[tuple[str, str, str]] = []
     bsd_sorted = (
         bsd_c

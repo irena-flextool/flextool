@@ -161,6 +161,30 @@ def _daily_lh2_demand(daily_kw: float, hz: Horizon) -> dict[str, float]:
     return out
 
 
+def _perday_lh2_demand(kw_by_day: list[float], hz: Horizon) -> dict[str, float]:
+    """LH2 demand keyed at each daily block step with a PER-DAY kw value.
+
+    ``kw_by_day[d]`` is the daily demand (kW) on day ``d``; the map value
+    at that day's block step is ``-kw*24``.  Used by the Phase-3b RP fixture
+    to give the y2040 days a HIGHER (grown) LH2 demand than the y2030 days
+    on the SHARED 4-day timeline — the timeline-step lever that makes the
+    two FlexTool periods physically distinct (period-keyed ``inflow`` maps
+    are not supported by preprocessing; only ``pt_node_inflow`` node×time).
+    """
+    return {hz.daily_steps[d]: round(-kw_by_day[d] * 24, 4)
+            for d in range(hz.n_days)}
+
+
+def _perday_wind_profile(levels_by_day: list[float], hz: Horizon) -> dict[str, float]:
+    """Per-day CONSTANT wind availability: every hour of day ``d`` takes
+    ``levels_by_day[d]``.  Gives region A a cheap-wind representative day
+    (level 1.0) and an expensive coal-backed day (low level) within EACH
+    FlexTool period, so the two representative periods of a period carry a
+    genuine cost asymmetry for the RP weights to weight.
+    """
+    return {ts: float(levels_by_day[i // 24]) for i, ts in enumerate(hz.hourly_steps)}
+
+
 # --- Spine import helpers ---------------------------------------------------
 
 
@@ -458,14 +482,19 @@ def _build_trade_invest_overlay(
 
 
 # Representative-period weight variants emitted by the Phase-3b RP fixture.
-# Each is ``{rep_start: weight}`` per FlexTool period; the two reps start at
-# ``t0001`` (rep1) and ``t0025`` (rep2) of the 48h horizon.  A single base
-# period (``t0001``) folds to the two reps, so ``_compute_rp_frames``
-# normalises ``w_r[rep] = weight · n_rp/n_base = weight · 2`` (uniform
-# 0.5/0.5 ⇒ 1.0/1.0, the byte-identity baseline).
+# Each is ``{rep_start: weight}`` per FlexTool period — the two entries are
+# ORDERED (rep1, rep2) and are mapped onto that period's actual
+# representative-day starts in :func:`_build_rp_invest_overlay` (y2030 →
+# days 1-2 ``t0001``/``t0025``; y2040 → days 3-4 ``t0049``/``t0073`` of the
+# shared 4-day / 96h timeline).  A single base period folds to the two reps,
+# so ``_compute_rp_frames`` normalises ``w_r[rep] = weight · n_rp/n_base =
+# weight · 2`` (uniform 0.5/0.5 ⇒ 1.0/1.0, the byte-identity baseline).
+# The ``t0001``/``t0025`` keys below are LOGICAL (rep1/rep2) placeholders;
+# the actual timeline steps are assigned per period by the overlay.
 _RP_WEIGHT_VARIANTS: dict[str, dict[str, dict[str, float]]] = {
-    # Base case — cost-asymmetric reps (rep1 cheap free-wind, rep2 forced
-    # coal): non-unit weights so the RP fold strictly moves the objective.
+    # Base case — cost-asymmetric reps (rep1 cheap full-wind day, rep2 low-
+    # wind coal-backed day): non-unit weights so the RP fold strictly moves
+    # the objective.
     RP_INVEST_ALT: {
         "y2030": {"t0001": 0.7, "t0025": 0.3},
         "y2040": {"t0001": 0.55, "t0025": 0.45},
@@ -500,24 +529,39 @@ def _build_rp_invest_overlay(
     * ``lh2_three_region_rp_invest_swap``   — 0.3/0.7, 0.55/0.45 (reps swapped)
     * ``lh2_three_region_rp_invest_uniform``— 0.5/0.5, 0.5/0.5 (w≡1)
 
-    Topology (layered ON TOP of the base ``ALT``):
+    Topology (layered ON TOP of the base ``ALT``, on a SHARED 4-day / 96h
+    timeline):
 
     * Two FlexTool periods y2030+y2040, BOTH invest-eligible
       (``invest_periods=[y2030,y2040]``, ``years_represented={10,10}``).
-    * A SEPARATE RP timeset per period (``rp_y2030`` / ``rp_y2040``); each
-      splits the 48h horizon into two 24h representative blocks
-      (starts ``t0001`` / ``t0025``) via ``timeset_duration`` and carries
-      the variant's ``representative_period_weights``.
+    * A SEPARATE RP timeset per period.  ``rp_y2030`` selects DAYS 1-2
+      (rep starts ``t0001`` / ``t0025``); ``rp_y2040`` selects DAYS 3-4
+      (rep starts ``t0049`` / ``t0073``) via ``timeset_duration``; each
+      carries the variant's ``representative_period_weights`` (the two
+      ordered weights map onto that period's two representative-day starts,
+      so the folded ``p_timestep_weight`` set stays {1.4, 0.6, 1.1, 0.9}).
+    * **Period-distinct demand.** The y2040 days carry a HIGHER (grown, +50%)
+      LH2 demand than the y2030 days (C 120→180, B 60→90 kW/day).  Because
+      the two periods select DIFFERENT days of the shared timeline, this
+      makes them genuinely physically distinct WITHOUT period-keyed inflow
+      (unsupported): the invest optimum is UNIQUE per period (both pipes,
+      both periods, monolith == Benders to ~1e-7) and the finite-difference
+      RP-weight marginal is PERIOD-SPECIFIC (the y2040 growth pushes region
+      A into a higher supply tier, so imported-LH2 value differs by period —
+      no unserved-energy penalty is used).  This is the redesign that
+      removed the earlier degenerate equal-cost invest face + period-uniform
+      marginal (both symptoms of the two periods being economic twins on a
+      single shared 2-day timeline).
     * Greenfield investable pipes (``existing=0`` + ``invest_total``) with
       a NON-ZERO flow cost (``other_operational_cost=2.0``).
     * lh2 nodes bind with ``bind_within_period_blended_weights`` (the RP
       storage variant); battery left on the base ``bind_within_solve``.
-    * Asymmetry forcing A→B→C trade: region A has cheap temporal wind
-      (100/50/0 availability) + boosted existing wind/electrolyser/
-      liquefier to supply the corridor; regions B/C have their
+    * Asymmetry forcing A→B→C trade: region A has cheap per-day wind
+      (full 1.0 / low 0.3 within each period) + boosted existing wind/
+      electrolyser/liquefier to supply the corridor; regions B/C have their
       electrolyser+liquefier capped at 10 (cannot self-make LH2) and their
       coal sized to cover LOCAL elec only; region C has zero local wind and
-      a 120 kW/day lh2 demand it must import.
+      an import-only lh2 demand.
 
     Mirrors :func:`_build_trade_invest_overlay` structurally.  See
     ``specs/benders_option_c.md`` "RP-weight bug — fix design".
@@ -529,10 +573,30 @@ def _build_rp_invest_overlay(
     scenario_alternatives: list[tuple] = []
     ent_alts: list[tuple] = []
 
-    # --- RP timesets: one per period per variant.  The timeset entities
-    #     are SHARED across variants (same name) only when weights match;
-    #     to keep each scenario self-contained we name the timesets per
-    #     variant so swapping weights never bleeds across scenarios.
+    # --- Period → (base_period_start, [rep_start, rep_start]) on the shared
+    #     4-day (96h) timeline.  y2030 uses days 1-2 (t0001/t0025); y2040
+    #     uses days 3-4 (t0049/t0073).  Giving each FlexTool period its OWN
+    #     pair of representative days — where the y2040 days carry a HIGHER
+    #     (grown) LH2 demand — is what makes the two periods PHYSICALLY
+    #     distinct on the single shared timeline (period-keyed ``inflow`` is
+    #     not supported; only ``pt_node_inflow`` node×time, so demand growth
+    #     rides on the timeline STEP, selected by the period's timeset).
+    period_days: dict[str, tuple[str, list[str]]] = {
+        "y2030": (hz.daily_steps[0], [hz.daily_steps[0], hz.daily_steps[1]]),
+        "y2040": (hz.daily_steps[2], [hz.daily_steps[2], hz.daily_steps[3]]),
+    }
+    # Region-A wind availability per day: within EACH period a cheap
+    # full-wind representative day (1.0) and an expensive coal-backed day
+    # (0.3), so the two reps of a period carry a genuine cost asymmetry.
+    wind_A_by_day = [1.0, 0.3, 1.0, 0.3]
+    # Per-day LH2 demand (kW/day).  y2040's days (3-4) grow +50% over
+    # y2030's (1-2): C 120→180, B 60→90.  The growth pushes region A into a
+    # HIGHER supply tier in y2040 (its wind exhausts on the low-wind day),
+    # so the marginal value of imported LH2 — the finite-difference cut
+    # slope — is genuinely PERIOD-SPECIFIC (no penalty is used; verified).
+    lh2_C_by_day = [120.0, 120.0, 180.0, 180.0]
+    lh2_B_by_day = [60.0, 60.0, 90.0, 90.0]
+
     for alt_name, per_period_weights in _RP_WEIGHT_VARIANTS.items():
         scen_name = alt_name  # scenario name == alternative name
         alternatives.append(
@@ -546,14 +610,21 @@ def _build_rp_invest_overlay(
 
         period_timeset_rows: list[tuple[str, str]] = []
         for period, weights in per_period_weights.items():
+            base_start, rep_starts = period_days[period]
+            # The variant's two ordered rep weights map onto this period's
+            # two representative-day starts (values preserved so the folded
+            # p_timestep_weight set stays {1.4, 0.6, 1.1, 0.9}).
+            wvals = list(weights.values())
+            wmap = {rep_starts[0]: wvals[0], rep_starts[1]: wvals[1]}
             ts_name = f"rp_{period}__{alt_name}"
             new_entities.append(("timeset", ts_name))
             pv.extend([
                 ("timeset", ts_name, "timeline", "y2030_168h", alt_name),
                 ("timeset", ts_name, "timeset_duration",
-                 _map([("t0001", 24.0), ("t0025", 24.0)]), alt_name),
+                 _map([(rep_starts[0], 24.0), (rep_starts[1], 24.0)]),
+                 alt_name),
                 ("timeset", ts_name, "representative_period_weights",
-                 _rp_weights_map({"t0001": weights}), alt_name),
+                 _rp_weights_map({base_start: wmap}), alt_name),
             ])
             ent_alts.append(("timeset", (ts_name,), alt_name, True))
             period_timeset_rows.append((period, ts_name))
@@ -599,10 +670,11 @@ def _build_rp_invest_overlay(
             pv.append(
                 ("node", f"lh2_{r}", "storage_binding_method",
                  "bind_within_period_blended_weights", alt_name))
-        # Region A: cheap temporal wind + boosted supply chain.
+        # Region A: cheap per-day wind (full/low within each period) +
+        # boosted supply chain.
         pv.append(
             ("profile", "wind_profile_A", "profile",
-             _map(_step_wind_profile(hz)), alt_name))
+             _map(_perday_wind_profile(wind_A_by_day, hz)), alt_name))
         pv.append(("unit", "wind_A", "existing", 1600.0, alt_name))
         pv.append(
             ("connection", "electrolyser_A", "existing", 600.0, alt_name))
@@ -618,9 +690,13 @@ def _build_rp_invest_overlay(
         pv.append(
             ("profile", "wind_profile_C", "profile",
              _map(_zero_profile(hz)), alt_name))
+        # Period-distinct (growing) LH2 demand at B and C.
         pv.append(
             ("node", "lh2_C", "inflow",
-             _map(_daily_lh2_demand(120.0, hz)), alt_name))
+             _map(_perday_lh2_demand(lh2_C_by_day, hz)), alt_name))
+        pv.append(
+            ("node", "lh2_B", "inflow",
+             _map(_perday_lh2_demand(lh2_B_by_day, hz)), alt_name))
 
     return {
         "entities": new_entities,
@@ -1151,13 +1227,16 @@ def regenerate_trade_invest_json(out_path: Path = TRADE_INVEST_OUT) -> int:
 
 def regenerate_rp_invest_json(out_path: Path = RP_INVEST_OUT) -> int:
     """Rebuild the Benders Phase-3b RP-weight fixture
-    (``lh2_three_region_rp_invest.json``) at a 2-day / 48h horizon with
-    the representative-period invest overlay (non-unit RP weights).
+    (``lh2_three_region_rp_invest.json``) at a 4-day / 96h horizon with
+    the representative-period invest overlay (non-unit RP weights).  The
+    two FlexTool periods select different day-pairs of the shared timeline
+    (y2030 = days 1-2, y2040 = days 3-4 with grown demand), so they are
+    physically distinct — see :func:`_build_rp_invest_overlay`.
     Independent of ``lh2_three_region.json`` /
     ``lh2_three_region_trade_invest.json`` (never touched here)."""
     return regenerate_json(
         out_path,
-        hz=Horizon(n_hours=48, n_days=2),
+        hz=Horizon(n_hours=96, n_days=4),
         extra_overlay=_build_rp_invest_overlay,
     )
 

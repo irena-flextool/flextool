@@ -16,31 +16,35 @@ fixture (`lh2_three_region_rp_invest`):
   coupling `f ≤ Σ_{d'≤d} v_invest_p` must use the right period's cumulative
   capacity.  The FlexTool master emits this natively.
 
+The fixture was REDESIGNED to be non-degenerate: it runs on a SHARED 4-day
+(96h) timeline where y2030 uses days 1-2 and y2040 uses days 3-4 with a
+HIGHER (grown +50%) LH2 demand.  Giving each period its own day-pair with
+different demand makes the two periods genuinely physically distinct WITHOUT
+period-keyed inflow — which (i) makes the per-period invest optimum UNIQUE
+(both pipes, both periods; monolith == Benders to ~1e-6, not the old 2% band)
+and (ii) makes the finite-difference RP-weight marginal PERIOD-SPECIFIC (the
+symmetric single-2-day fixture made it period-uniform).  See
+`regen_lh2_three_region._build_rp_invest_overlay`.
+
 GATES (spec `benders_option_c.md` §3 + "Phase 3b impl — RP fixture"):
 
 1. **Convergence to the RP-weighted monolith.**  `solve_benders` (FlexTool
-   master) converges (≤15 iters, tol 1e-4) to `M_rp = 4.8859219264e10` with a
+   master) converges (≤15 iters, tol 1e-4) to `M_rp = _M_RP_EXPECTED` with a
    VALID lower bound `LB ≤ M_rp·(1+1e-9)`; recovered per-period invest `C` and
-   trade `f̄` match the monolith.
+   trade `f̄` match the monolith to a TIGHT tolerance (the UNIQUE optimum).
 
 2. **Finite-difference RP-weight LOCK (the key gate).**  For region_B's
    forward import arc (`pipe_AB lh2_A→lh2_B`), the Benders cut slope the LOOP
    ITSELF computes (`sol_r.col_dual[pinned v_flow col]`, captured live) equals
-   the true `∂(region cost)/∂f̄` measured by a direct finite difference
-   (perturb the pinned f̄, re-solve the region) to a tight tolerance.  And the
-   slope already carries the RP weight WITH NO EXTRA FACTOR:
-   `slope = nodeBalanceBlock_eq dual · p_unitsize`, where the block dual is set
-   by the period's `op_factor`-weighted clearing objective
+   the true `∂(region cost)/∂f̄` measured by a direct (two-sided, economic-side)
+   finite difference (perturb the pinned f̄, re-solve the region) to a tight
+   tolerance.  The slope is genuinely PERIOD-DISTINCT (different demand tier per
+   period) and REP-DISTINCT (different wind cost + RP weight per rep), and the
+   RP weight rides in through the `op_factor`-weighted clearing objective
    (`op_factor = step_duration · p_timestep_weight · inflation / period_share`,
-   `model.py:3664`).  Because `lh2_B` is a within-period-blended BLOCK node,
-   the trade couples through the SHARED period block, so the marginal is
-   period-uniform (identical across the two reps) and differs across periods —
-   exactly §3's auto-consistency: the RP weight rides in through the block dual,
-   the balance constraint itself carries only the physical block weight
-   (`model.py:2073-2169`, NO `p_timestep_weight`), and the cut uses the raw
-   col_dual with NO RP multiply/divide anywhere.  The loop's convergence to the
-   exact RP-weighted `M_rp` using these raw slopes is the end-to-end proof that
-   no factor is missing or extra.
+   `model.py:3664`) with the cut using the raw col_dual — NO RP multiply/divide
+   anywhere.  The loop's convergence to the exact RP-weighted `M_rp` using these
+   raw slopes is the end-to-end proof that no factor is missing or extra.
 
 The loop's Phase-2 self-checks (master kOptimal, LB monotone, each appended cut
 SATISFIED at the new master point, LB ≤ M, finite boundary penalties) run
@@ -69,8 +73,11 @@ from flextool.engine_polars._benders import (
 )
 
 _REGIONS = ["region_A", "region_B", "region_C"]
-# Post-fix RP-weighted monolith (spec "RP-weight fix — impl", base scenario).
-_M_RP_EXPECTED = 4.8859219264e10
+# RP-weighted monolith optimum of the (non-degenerate, 4-day) base scenario.
+# Derived from a real cascade+monolith solve of the regenerated fixture
+# (``tests/fixtures/lh2_three_region_rp_invest.json``); see
+# ``regen_lh2_three_region._build_rp_invest_overlay``.
+_M_RP_EXPECTED = 7.5779590452e9
 # Forward import arc with non-trivial flow in BOTH (non-unit-weight) reps.
 _ARC = ("pipe_AB", "lh2_A", "lh2_B")
 _IMPORT_REGION = "region_B"
@@ -82,15 +89,56 @@ _IMPORT_REGION = "region_B"
 
 
 @pytest.fixture(scope="module")
-def rp_workdir(scenario_workdir):
-    return scenario_workdir(
-        "lh2_three_region_rp_invest", db_fixture="lh2_rp_invest"
+def rp_workdir_and_provider(
+    tmp_path_factory, lh2_rp_invest_db_url, test_solver_config_dir
+):
+    """Run the full cascade for the RP-invest fixture and return
+    ``(workdir, provider)``.
+
+    Production threads the live in-memory sub-solve Provider into every
+    re-solve (``_orchestration.py`` ``load_flextool(work_folder, ...,
+    provider=_sub_solve_provider)``); the Benders decomposition sub-solves
+    do exactly that.  Building the workdir here (rather than via the
+    shared session ``scenario_workdir`` factory, which discards the
+    Provider after snapshotting to disk) lets the Benders tests exercise
+    that SAME in-memory Provider path instead of a bare-Path CSV reload —
+    ``keep_solutions=True`` keeps the Provider alive for the reload.
+    """
+    import shutil
+    from urllib.parse import urlparse
+
+    from flextool.engine_polars._orchestration import run_chain_from_db
+
+    parent = tmp_path_factory.mktemp("_root_rp_invest_benders")
+    wf = parent / "work_lh2_three_region_rp_invest"
+    wf.mkdir()
+    steps = run_chain_from_db(
+        input_db_url=lh2_rp_invest_db_url,
+        scenario_name="lh2_three_region_rp_invest",
+        work_folder=wf,
+        solver_config_dir=test_solver_config_dir,
+        csv_dump=True,
+        keep_solutions=True,
     )
+    shutil.copy(urlparse(lh2_rp_invest_db_url).path, wf / "tests.sqlite")
+    last_step = next(reversed(list(steps.values())))
+    provider = getattr(last_step, "flex_data_provider", None)
+    assert provider is not None, "cascade did not retain a sub-solve Provider"
+    provider.snapshot_processed_inputs(wf)
+    return wf, provider
 
 
 @pytest.fixture(scope="module")
-def rp_data(rp_workdir):
-    return load_flextool(rp_workdir)
+def rp_workdir(rp_workdir_and_provider):
+    return rp_workdir_and_provider[0]
+
+
+@pytest.fixture(scope="module")
+def rp_data(rp_workdir_and_provider):
+    # Thread the in-memory Provider (production path) rather than a
+    # bare-Path CSV reload — see ``rp_workdir_and_provider``.
+    wf, provider = rp_workdir_and_provider
+    return load_flextool(wf, provider=provider)
 
 
 @pytest.fixture(scope="module")
@@ -151,6 +199,41 @@ def test_monolith_is_rp_weighted(rp_data, monolith) -> None:
     assert {"y2030", "y2040"} <= inv_periods, (
         f"fixture must exercise multi-period invest; got {inv_periods}"
     )
+
+
+def _closure_rows(pb) -> int:
+    return sum(
+        pb.cstr_row_count(n) for n in pb.cstr_names()
+        if n.startswith("rp_inter_period_cyclic")
+    )
+
+
+def test_coarse_rp_storage_closure_fires(rp_data) -> None:
+    """The coarse ``daily_group`` rp-storage seasonal closure
+    (``rp_inter_period_cyclic``) fires with NON-EMPTY rows in BOTH the
+    monolith AND every region subproblem — the structure these Benders RP
+    tests exist to exercise (a nulled RP label would silently drop it and
+    under-constrain the LP; see ``test_rp_label_roundtrip``)."""
+    pbm = Problem()
+    build_flextool(pbm, rp_data)
+    assert _closure_rows(pbm) > 0, (
+        "rp_inter_period_cyclic did not fire in the monolith — the coarse "
+        "rp-storage seasonal closure is not exercised"
+    )
+
+    _enums = getattr(rp_data, "_axis_enums", None)
+    if _enums is not None and _enums != get_global_axis_enums():
+        set_global_axis_enums(_enums)
+    splits = _region_filter.split(
+        rp_data, regions=_REGIONS, benders_uncap_cross_region=True
+    )
+    for s in splits:
+        pbr = Problem()
+        build_flextool(pbr, s.data)
+        assert _closure_rows(pbr) > 0, (
+            f"rp_inter_period_cyclic did not fire in region {s.region} "
+            f"subproblem — coarse rp storage not exercised there"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -219,21 +302,38 @@ def test_rp_loop_recovers_per_period_invest_and_trade(rp_data, monolith) -> None
     C_ab = res.invest.get("pipe_AB", 0.0)
     C_bc = res.invest.get("pipe_BC", 0.0)
     assert C_ab > 1e-3 and C_bc > 1e-3, f"pipes not invested: {res.invest}"
-    assert np.isclose(C_ab, C_ab_total, rtol=2e-2, atol=1e-3), (
+    # UNIQUE optimum: the 4-day fixture has a strictly-pinned per-period
+    # invest (both periods invest a positive, distinct increment), so
+    # Benders must recover the SAME total capacity as the monolith to a
+    # TIGHT tolerance — the old 2% band existed only to paper over the
+    # degenerate equal-cost invest face, which this fixture removed.
+    assert np.isclose(C_ab, C_ab_total, rtol=1e-3, atol=1e-4), (
         f"pipe_AB total invest {C_ab} != monolith {C_ab_total} "
         f"(per-period y2030={C_ab_2030} y2040={C_ab_2040})"
     )
-    assert np.isclose(C_bc, C_bc_total, rtol=2e-2, atol=1e-3), (
-        f"pipe_BC total invest {C_bc} != monolith {C_bc_total}"
+    assert np.isclose(C_bc, C_bc_total, rtol=1e-3, atol=1e-4), (
+        f"pipe_BC total invest {C_bc} != monolith {C_bc_total} "
+        f"(per-period y2030={C_bc_2030} y2040={C_bc_2040})"
+    )
+    # Multi-period invest is genuinely exercised: BOTH periods build a
+    # positive increment of at least one pipe (y2040's grown demand needs
+    # more capacity than y2030 alone provides).
+    assert C_ab_2040 > 1e-3 or C_bc_2040 > 1e-3, (
+        f"y2040 invests nothing — the periods are not distinct: "
+        f"pipe_AB y2040={C_ab_2040}, pipe_BC y2040={C_bc_2040}"
+    )
+    assert C_ab_2030 > 1e-3 and C_bc_2030 > 1e-3, (
+        f"y2030 must build the base capacity: pipe_AB y2030={C_ab_2030}, "
+        f"pipe_BC y2030={C_bc_2030}"
     )
 
     # Forward trade f̄ ≈ f* (summed over the (d,t) grid).
     f_ab = float(res.trade_flow[("pipe_AB", "lh2_A", "lh2_B")]["value"].sum())
     f_bc = float(res.trade_flow[("pipe_BC", "lh2_B", "lh2_C")]["value"].sum())
-    assert np.isclose(f_ab, f_ab_star, rtol=2e-2, atol=1e-3), (
+    assert np.isclose(f_ab, f_ab_star, rtol=1e-3, atol=1e-4), (
         f"A→B trade {f_ab} != monolith {f_ab_star}"
     )
-    assert np.isclose(f_bc, f_bc_star, rtol=2e-2, atol=1e-3), (
+    assert np.isclose(f_bc, f_bc_star, rtol=1e-3, atol=1e-4), (
         f"B→C trade {f_bc} != monolith {f_bc_star}"
     )
 
@@ -284,9 +384,20 @@ def _finite_difference_region_cost(rp_data, res, arc_key, cells):
 
     Replicates the loop's region pin (every cross half-flow pinned to the
     Benders f̄, reverse → 0) on a fresh region WarmProblem, then for each cell
-    perturbs ONLY that pinned f̄ cell by −eps and re-solves, returning the
-    LEFT derivative ``(cost(f̄) − cost(f̄−eps))/eps`` (the side the degenerate
-    pinned vertex admits) plus the base region cost.
+    perturbs ONLY that pinned f̄ cell by ±eps and re-solves, returning the
+    ECONOMIC (displaced-cost) one-sided derivative — i.e. the reduced cost of
+    the pinned column, which is exactly what the Benders cut carries.
+
+    Two-sided is REQUIRED: at the pinned optimum f̄ is at a degenerate
+    vertex, so only ONE side stays in the economic (re-dispatch) regime while
+    the other forces an unserved-energy penalty (magnitude ≈ penalty ·
+    op_factor · unitsize, orders larger).  WHICH side is economic differs by
+    cell — a period whose region_B is import-tight (its grown demand consumes
+    every imported unit) admits the RIGHT derivative; a period with import
+    slack admits the LEFT.  Taking the smaller-|·| (non-penalty) side yields
+    the displaced-cost gradient the loop's ``col_dual`` reproduces, in BOTH
+    periods.  Also returns the per-period ``nodeBalanceBlock_eq`` dual at
+    lh2_B read at the same (settled) vertex.
     """
     _enums = getattr(rp_data, "_axis_enums", None)
     if _enums is not None and _enums != get_global_axis_enums():
@@ -354,20 +465,26 @@ def _finite_difference_region_cost(rp_data, res, arc_key, cells):
     eps = 1e-4
     out = {}
     block_dual: dict[str, float] = {}
+    # first rep step of each period → where we read the block dual once.
+    first_rep = {}
+    for (dd, tt) in cells:
+        first_rep.setdefault(dd, tt)
     for (dd, tt) in cells:
         base_f = fbar[(dd, tt)]
         solm = pin_and_solve((dd, tt), base_f - eps)
-        # LEFT derivative: ∂cost/∂f̄ on the side the degenerate pinned vertex
-        # admits (an extra unit of pinned inflow at one ISOLATED cell would
-        # have to be spilled, so the RIGHT derivative is the spill-penalty
-        # regime; the cut uses the displaced-cost (left) reduced cost).
+        solp = pin_and_solve((dd, tt), base_f + eps)
         fd_left = (cost0 - float(solm.obj)) / eps
-        out[(dd, tt)] = fd_left
-        # The −eps solve sits in the displaced-cost regime (the settled vertex)
-        # → its block dual is the one that scales the cut slope.  Record it per
-        # period (t0001 cell suffices; the block dual is period-level).
-        if tt == "t0001":
-            block_dual[dd] = float(solm.row_dual[block_rows[dd]])
+        fd_right = (float(solp.obj) - cost0) / eps
+        # The ECONOMIC (displaced-cost) side is the smaller-magnitude one; the
+        # other forces an unserved-energy penalty (orders larger).  That is the
+        # reduced cost the Benders cut carries.
+        econ_left = abs(fd_left) <= abs(fd_right)
+        out[(dd, tt)] = fd_left if econ_left else fd_right
+        # Read the region block dual at lh2_B at the settled (economic) vertex
+        # for this period — once, at its first rep cell.
+        if tt == first_rep[dd]:
+            sol_econ = solm if econ_left else solp
+            block_dual[dd] = float(sol_econ.row_dual[block_rows[dd]])
     return out, cost0, block_dual
 
 
@@ -390,22 +507,35 @@ def _settled_loop_slope(captured, arc_key, cells, fd):
 
 def test_finite_difference_rp_weight_lock(rp_data, monolith) -> None:
     """The Benders cut slope (the LOOP's own ``col_dual``) == ∂(region cost)/∂f̄
-    (independent finite difference) AND already carries the RP weight with NO
-    extra factor (slope = block_dual · p_unitsize; block dual period-uniform
-    across reps; loop converges to M_rp on the raw slopes)."""
-    # Two reps of y2030 (w=1.4, w=0.6) + two of y2040 (w=1.1, w=0.9) — all four
-    # carry NON-UNIT RP weight and non-trivial forward flow.
+    (independent finite difference) — the reduced cost of the pinned boundary
+    column — AND the slopes are genuinely PERIOD-DISTINCT and REP-DISTINCT,
+    with the loop converging to the RP-weighted monolith on those raw slopes.
+
+    On the (redesigned, non-degenerate) 4-day fixture the two FlexTool periods
+    select DIFFERENT days of the shared timeline with DIFFERENT (grown) demand,
+    so the marginal value of imported LH2 — the cut slope — differs by PERIOD;
+    and within a period the two representative days carry different wind cost
+    and different RP weight, so the slope differs by REP too.  This is the
+    corrected behaviour: the RP weight rides into the op_factor-weighted
+    clearing objective, and the raw ``col_dual`` the cut carries reproduces the
+    true region gradient with NO extra per-cell RP factor — the loop's exact
+    convergence to ``M_rp`` on these raw slopes is the end-to-end proof.
+    """
+    # y2030 reps: t0001 (w=1.4, full-wind day) / t0025 (w=0.6, low-wind day);
+    # y2040 reps: t0049 (w=1.1, full-wind day) / t0073 (w=0.9, low-wind day).
+    # All four carry NON-UNIT RP weight and non-trivial forward flow, and the
+    # y2040 days carry the grown demand that makes the periods distinct.
     cells = [("y2030", "t0001"), ("y2030", "t0025"),
-             ("y2040", "t0001"), ("y2040", "t0025")]
+             ("y2040", "t0049"), ("y2040", "t0073")]
 
     # (a) Run the loop; capture every region_B cut's per-cell slope (the live
     # ``sol_r.col_dual`` of the pinned forward column).
     res, captured = _capture_loop_slopes(rp_data, _IMPORT_REGION)
     assert res.converged and np.isclose(res.total_objective, monolith.obj, rtol=1e-4)
 
-    # (b) Independent finite difference of region_B's cost wrt the pinned f̄,
-    # plus the region's nodeBalanceBlock_eq dual at lh2_B at the displaced-cost
-    # (settled) vertex.
+    # (b) Independent finite difference of region_B's cost wrt the pinned f̄
+    # (two-sided → the economic/displaced-cost side per cell), plus the
+    # region's nodeBalanceBlock_eq dual at lh2_B at that settled vertex.
     fd, region_cost0, region_block_dual = _finite_difference_region_cost(
         rp_data, res, _ARC, cells
     )
@@ -429,69 +559,53 @@ def test_finite_difference_rp_weight_lock(rp_data, monolith) -> None:
         # The marginal value of imported H2 is a benefit (negative slope).
         assert sl < 0.0, f"expected negative import slope at ({dd},{tt}): {sl}"
 
-    # --- LOCK 2: slope already carries the RP weight, NO extra factor. -----
-    # lh2_B is a within-period-blended BLOCK node ⇒ ONE block balance per
-    # period, so the slope is PERIOD-uniform: identical across the two reps of
-    # a period (despite their DIFFERENT RP weights 1.4 vs 0.6 / 1.1 vs 0.9),
-    # and it differs ACROSS periods.  This is §3 auto-consistency: the RP
-    # weight rides into the block dual via the op_factor-weighted clearing
-    # objective; the cut uses the raw col_dual with no per-cell RP multiply.
-    s_2030_r1 = loop_slope[("y2030", "t0001")]   # w = 1.4
-    s_2030_r2 = loop_slope[("y2030", "t0025")]   # w = 0.6
-    s_2040_r1 = loop_slope[("y2040", "t0001")]   # w = 1.1
-    s_2040_r2 = loop_slope[("y2040", "t0025")]   # w = 0.9
-    assert np.isclose(s_2030_r1, s_2030_r2, rtol=1e-9), (
-        f"y2030 slope differs across reps (would mean a per-rep RP factor "
-        f"crept in): w=1.4 {s_2030_r1:.10e} vs w=0.6 {s_2030_r2:.10e}"
+    s_2030_r1 = loop_slope[("y2030", "t0001")]   # w = 1.4, full-wind day
+    s_2030_r2 = loop_slope[("y2030", "t0025")]   # w = 0.6, low-wind day
+    s_2040_r1 = loop_slope[("y2040", "t0049")]   # w = 1.1, full-wind day
+    s_2040_r2 = loop_slope[("y2040", "t0073")]   # w = 0.9, low-wind day
+
+    # --- LOCK 2: the slope is REP-DISTINCT within a period.  The two
+    # representative days of a period carry DIFFERENT wind cost AND different
+    # RP weight, so the op_factor-weighted marginal genuinely differs — the RP
+    # weight reaches the cut per rep (a silently-clobbered weight, or a blended
+    # single-block, would make the two reps coincide).
+    assert not np.isclose(s_2030_r1, s_2030_r2, rtol=1e-3), (
+        f"y2030 reps coincide — the per-rep RP weight did not reach the cut: "
+        f"w=1.4 {s_2030_r1:.10e} vs w=0.6 {s_2030_r2:.10e}"
     )
-    assert np.isclose(s_2040_r1, s_2040_r2, rtol=1e-9), (
-        f"y2040 slope differs across reps: w=1.1 {s_2040_r1:.10e} vs "
-        f"w=0.9 {s_2040_r2:.10e}"
-    )
-    # Across periods the slope DOES differ (the block dual is period-specific).
-    assert not np.isclose(s_2030_r1, s_2040_r1, rtol=1e-3), (
-        f"y2030 and y2040 slopes coincide — the period structure is not "
-        f"exercised: {s_2030_r1:.10e} vs {s_2040_r1:.10e}"
+    assert not np.isclose(s_2040_r1, s_2040_r2, rtol=1e-3), (
+        f"y2040 reps coincide: w=1.1 {s_2040_r1:.10e} vs w=0.9 "
+        f"{s_2040_r2:.10e}"
     )
 
-    # --- LOCK 3: slope = nodeBalanceBlock_eq dual · p_unitsize, EXACTLY, with
-    # the SAME p_unitsize factor in BOTH periods (no period/RP-dependent
-    # rescale).  This is the textbook reduced-cost identity for the pinned
-    # boundary column: the RP weight lives ENTIRELY in the BLOCK dual (set by
-    # the period's op_factor-weighted clearing objective), NOT in any explicit
-    # cut factor.  The block dual is read off the REGION subproblem at the
-    # displaced-cost (settled) vertex — the same vertex the settled slope is at.
-    ratio = {}
-    for d in ("y2030", "y2040"):
-        ratio[d] = loop_slope[(d, "t0001")] / region_block_dual[d]
-    assert np.isclose(ratio["y2030"], ratio["y2040"], rtol=1e-5), (
-        f"slope/block_dual differs across periods (would mean an extra "
-        f"period/RP factor): y2030 {ratio['y2030']!r} vs y2040 "
-        f"{ratio['y2040']!r}"
+    # --- LOCK 3: the slope is PERIOD-DISTINCT.  y2040's grown demand pushes
+    # region A into a higher supply tier, so the imported-LH2 marginal in
+    # region_B is genuinely different between the two periods (the degenerate
+    # symmetric fixture made this period-UNIFORM — the whole point of the
+    # redesign).  Assert at BOTH matched-rep positions to be robust.
+    assert not np.isclose(s_2030_r1, s_2040_r1, rtol=1e-2), (
+        f"y2030 and y2040 (full-wind rep) slopes coincide — the period "
+        f"structure is not exercised: {s_2030_r1:.10e} vs {s_2040_r1:.10e}"
     )
-    # The constant ratio is a clean PHYSICAL factor: ``p_unitsize · n_block``
-    # where ``n_block`` is the number of timesteps the representative block
-    # aggregates (the pinned flow enters the block balance with coefficient
-    # ``p_unitsize · p_step_duration`` summed over the block).  Both are purely
-    # PHYSICAL / PERIOD-INDEPENDENT — the RP weight is NOT in this factor, it is
-    # entirely inside the (period-specific) block dual.
-    us_param = {
-        r["p"]: float(r["value"])
-        for r in rp_data.p_unitsize.frame.iter_rows(named=True)
-    }
-    n_block = ratio["y2030"] / us_param["pipe_AB"]
-    assert np.isclose(n_block, round(n_block), atol=1e-6) and n_block > 1.0, (
-        f"slope/block_dual / p_unitsize = {n_block!r} is not a clean block "
-        f"step count — the slope is not block_dual·p_unitsize·n_block"
+    assert not np.isclose(s_2030_r2, s_2040_r2, rtol=1e-2), (
+        f"y2030 and y2040 (low-wind rep) slopes coincide: "
+        f"{s_2030_r2:.10e} vs {s_2040_r2:.10e}"
     )
-    # The SAME physical factor applies in BOTH periods (already asserted above
-    # via the constant ratio) — no period/RP rescale of the physical coefficient.
+    # The period-distinctness is also visible in the region block dual at
+    # lh2_B: read at the settled vertex it differs between the periods (it is
+    # set by the period's op_factor-weighted clearing objective).
+    assert not np.isclose(
+        region_block_dual["y2030"], region_block_dual["y2040"], rtol=1e-2
+    ), (
+        f"region block dual at lh2_B is period-uniform: "
+        f"{region_block_dual['y2030']!r} vs {region_block_dual['y2040']!r}"
+    )
 
     # --- LOCK 4 (end-to-end): the loop converged to the EXACT RP-weighted
     # M_rp using these raw slopes (no factor applied anywhere).  If an RP
     # factor were missing or extra, the cut would be mis-scaled and either cut
     # off the optimum (LB > M, the loop's valid-bound check would have raised)
-    # or fail to reconcile — neither happened.  §3 is LOCKED.
+    # or fail to reconcile — neither happened.
     assert np.isclose(res.total_objective, _M_RP_EXPECTED, rtol=1e-4), (
         f"loop UB {res.total_objective:.8e} != M_rp {_M_RP_EXPECTED:.8e}"
     )
