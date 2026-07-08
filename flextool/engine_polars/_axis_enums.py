@@ -216,6 +216,7 @@ def cast_frame_axes(
     enums: dict[str, pl.Enum],
     *,
     strict: bool = False,
+    skip_columns: "set[str] | frozenset[str] | None" = None,
 ) -> "pl.DataFrame | pl.LazyFrame":
     """Cast every dim column in ``frame`` whose name is in ``enums`` to
     the matching Enum dtype.  Columns absent from ``enums`` (value
@@ -234,6 +235,15 @@ def cast_frame_axes(
         on cast — useful during the Phase 3 rollout so a missing
         vocabulary entry surfaces as nulls rather than an exception.
         Flip to ``True`` once the loader cascade is clean.
+    skip_columns
+        Column names to leave completely untouched even when their
+        (synonym-resolved) axis is present in ``enums``.  Used for
+        columns whose *name* collides with a canonical axis but whose
+        *values* belong to a different vocabulary — e.g. the RP
+        base-period / rep-start label columns are named ``"b"`` / ``"r"``
+        (so the synonym table would cast them against the BRANCH / rep
+        enums) but actually hold timestep labels (``t0001`` …); casting
+        them to the branch enum would silently null every value.
 
     Notes
     -----
@@ -249,6 +259,8 @@ def cast_frame_axes(
 
     exprs = []
     for col in columns:
+        if skip_columns is not None and col in skip_columns:
+            continue
         # Resolve synonyms before enum lookup so ``source``/``sink`` /
         # ``node``/``period`` etc. all find their canonical axis enum.
         canonical = _resolve_axis(col)
@@ -552,7 +564,8 @@ def lit_axis(value: object, axis: str) -> "pl.Expr":
     return pl.lit(value).cast(dt, strict=False)
 
 
-def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False):
+def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False,
+                    skip_columns: "set[str] | frozenset[str] | None" = None):
     """Recursively cast a value's dim columns to the canonical Enums.
 
     Handles:
@@ -566,6 +579,10 @@ def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False):
     Used by :func:`load_flextool` to wrap the return values of each
     ``_load_*`` function in a single shot at the call site, so the
     interior of every loader doesn't need an individual cast injection.
+
+    ``skip_columns`` is forwarded to :func:`cast_frame_axes` (see there)
+    so callers can protect name-collides-axis-but-different-vocabulary
+    columns from being nulled on cast.
     """
     # Late import to avoid circular dependency.
     from polar_high import Param
@@ -576,22 +593,56 @@ def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False):
         # Operate on the lazy form to avoid forcing a collect() — every
         # Param keeps an internal ``lazy`` LazyFrame regardless of whether
         # ``.frame`` has been materialised yet.
-        cast_lazy = cast_frame_axes(value.lazy, enums, strict=strict)
+        cast_lazy = cast_frame_axes(value.lazy, enums, strict=strict,
+                                    skip_columns=skip_columns)
         if cast_lazy is value.lazy:
             return value
         return Param(value.dims, cast_lazy,
                       name=getattr(value, "name", None),
                       _sources=getattr(value, "_sources", None))
     if isinstance(value, (pl.DataFrame, pl.LazyFrame)):
-        return cast_frame_axes(value, enums, strict=strict)
+        return cast_frame_axes(value, enums, strict=strict,
+                               skip_columns=skip_columns)
     if isinstance(value, dict):
-        return {k: cast_value_axes(v, enums, strict=strict)
+        return {k: cast_value_axes(v, enums, strict=strict,
+                                   skip_columns=skip_columns)
                 for k, v in value.items()}
     if isinstance(value, list):
-        return [cast_value_axes(v, enums, strict=strict) for v in value]
+        return [cast_value_axes(v, enums, strict=strict,
+                                skip_columns=skip_columns) for v in value]
     if isinstance(value, tuple):
-        return tuple(cast_value_axes(v, enums, strict=strict) for v in value)
+        return tuple(cast_value_axes(v, enums, strict=strict,
+                                     skip_columns=skip_columns)
+                     for v in value)
     return value
+
+
+# Per-field column protection for the end-of-load FlexData → Enum
+# sweep.  The representative-period base-period / rep-start relations
+# name their label columns ``"b"`` (base-period start) and ``"r"``
+# (rep-block start) so ``model.py``'s inter-period-closure wiring can
+# join on the ``.mod`` symbols — but those labels are TIMESTEP tokens
+# (``t0001`` …), NOT branch / rep-axis tokens.  The synonym table maps
+# ``"b" → branch`` and treats ``"r"`` as the (rep) axis, so a blind
+# sweep casts these columns to the wrong enum and silently nulls every
+# value (branch vocab is e.g. ``{eff, noEff}``; the rep axis enum is
+# empty for a non-stochastic solve).  That nulls ``rp_base_period_set``
+# → ``v_state_inter``'s index collapses → the seasonal-closure
+# constraints (``rp_inter_period_cyclic`` / ``_balance``) are dropped
+# and the LP solves an under-constrained, too-cheap problem.  These
+# columns are left as the reader produced them (plain string labels);
+# ``model.py`` casts them explicitly against the correct timestep /
+# base-period vocabulary at each use site (model.py:1234-1291).  Mirrors
+# how coarse-block frames dodge the identical ``b``/branch collision by
+# using ``"bk"`` for the block axis.
+_FLEXDATA_SWEEP_SKIP_COLUMNS: "dict[str, frozenset[str]]" = {
+    "rp_base_period_set": frozenset({"b"}),
+    "rp_base_first": frozenset({"b"}),
+    "rp_base_last": frozenset({"b"}),
+    "rp_base_chain": frozenset({"b", "b_prev"}),
+    "rp_base__rep": frozenset({"b", "r"}),
+    "p_rp_last_step": frozenset({"r"}),
+}
 
 
 def cast_flexdata_axes(flex_data: "FlexData",
@@ -602,7 +653,10 @@ def cast_flexdata_axes(flex_data: "FlexData",
     same FlexData (mutated) for fluent use.
 
     Skips ``block_layout`` and other non-frame fields.  Skips fields
-    whose value is ``None``.
+    whose value is ``None``.  For the representative-period label
+    relations listed in :data:`_FLEXDATA_SWEEP_SKIP_COLUMNS` the
+    name-collides-but-different-vocabulary label columns (``b`` / ``r``)
+    are left untouched — see that constant for the full rationale.
     """
     from polar_high import Param
 
@@ -611,7 +665,9 @@ def cast_flexdata_axes(flex_data: "FlexData",
         if val is None:
             continue
         if isinstance(val, (Param, pl.DataFrame, pl.LazyFrame)):
-            new_val = cast_value_axes(val, enums, strict=strict)
+            skip = _FLEXDATA_SWEEP_SKIP_COLUMNS.get(f.name)
+            new_val = cast_value_axes(val, enums, strict=strict,
+                                      skip_columns=skip)
             if new_val is not val:
                 setattr(flex_data, f.name, new_val)
     return flex_data
