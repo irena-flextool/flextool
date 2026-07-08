@@ -2016,23 +2016,98 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 frame=v_state.frame.rename({"t": "b_first"}),
                 lower=v_state.lower, upper=v_state.upper,
             )
-            # state_change LHS: + Σ_{b_next} v_state[n,d,b_next] - v_state[n,d,b_first]
-            # over period_block_succ rows, restricted to nodeStateBlock.
-            # Where(v_state_b, succ) yields term over (n, d, b_next, b_first)
-            # since succ adds b_first; then Sum out b_next leaving (n, d, b_first).
+            # nodeStateBlock splits into two families with DIFFERENT state
+            # transitions:
+            #
+            #  * bind_intraperiod_blocks (non-rp) nodes keep the forward
+            #    cyclic transition Σ_{b_next}(v_state[b_next]-v_state[b_first]):
+            #    each representative period's coarse blocks close one cyclic
+            #    loop (period_block_succ is now segmented per representative
+            #    period, so the loop no longer spans months-apart days).
+            #
+            #  * blended-weights (rp) nodes coarsened onto a resolution block
+            #    must retain their representative-period storage semantics:
+            #    a FREE start state per representative day plus a seasonally
+            #    weighted inter-period chain (rp_inter_period_balance /
+            #    _cyclic).  The forward-cyclic transition would (a) close each
+            #    day on itself, forbidding the seasonal storage the fine model
+            #    uses, and (b) leave ``v_state_rp_start`` unbound, making the
+            #    seasonal chain vacuous.  We give these nodes a BACKWARD,
+            #    post-flow block transition (v_state[b] - v_state[b_prev]),
+            #    where the predecessor of each representative day's first
+            #    block is the free ``v_state_rp_start`` instead of the cyclic
+            #    wrap.  This matches the fine ``has_rp`` state-change exactly,
+            #    lifted to coarse blocks (v_state is constant within each
+            #    block via stateConstantWithinBlock_eq, so the fine
+            #    rep-day-first/last labels the seasonal chain references carry
+            #    the coarse block value).
+            if has_rp and d.nodeState_rp is not None and d.nodeState_rp.height > 0:
+                rp_nodes = d.nodeStateBlock.join(
+                    d.nodeState_rp.select("n"), on="n", how="inner")
+                nonrp_nodes = d.nodeStateBlock.join(
+                    d.nodeState_rp.select("n"), on="n", how="anti")
+            else:
+                rp_nodes = d.nodeStateBlock.clear()
+                nonrp_nodes = d.nodeStateBlock
+
+            # ── Non-rp (bind_intraperiod_blocks): forward cyclic ───────────
+            # + Σ_{b_next} v_state[n,d,b_next] - v_state[n,d,b_first], over
+            # period_block_succ, restricted to the non-rp nodeStateBlock set.
             state_next = Sum(
-                Where(Where(v_state_b, succ), d.nodeStateBlock),
+                Where(Where(v_state_b, succ), nonrp_nodes),
                 over=("b_next",),
             )
             state_curr = Sum(
-                Where(Where(v_state_a, succ), d.nodeStateBlock),
-                over=("b_next",),  # b_next is in succ but not in state_curr's dims; dropped
+                Where(Where(v_state_a, succ), nonrp_nodes),
+                over=("b_next",),
             )
-            # state_curr's term frame may not have b_next; over=("b_next",)
-            # is a no-op there.  But we still have multiple succ rows per
-            # (n, d, b_first) (only one in this fixture).  Sum over b_next
-            # ensures any duplicates collapse.
             nbb_terms["state_change"] = (state_next - state_curr) * d.p_state_unitsize
+
+            # ── rp (blended-weights) coarse nodes: backward, post-flow, with
+            #    a free representative-day start ──────────────────────────────
+            if rp_nodes.height > 0:
+                # Predecessor map from reversing the per-rep-day cyclic succ:
+                # pred(b) = the b_first whose b_next == b.  Blocks that are a
+                # representative day's FIRST block use v_state_rp_start instead
+                # of the wrap predecessor, so drop those from the interior map.
+                pred_full = succ.select(
+                    "d",
+                    pl.col("b_next").alias("b_first"),
+                    pl.col("b_first").alias("b_prev"),
+                )
+                rp_first_lbl = d.rp_block_first.select(
+                    "d", pl.col("t").alias("b_first"))
+                pred_interior = pred_full.join(
+                    rp_first_lbl, on=["d", "b_first"], how="anti")
+
+                # v_state at the interior predecessor block.
+                v_state_bp = Var(
+                    name=v_state.name + "__b_prev",
+                    dims=("n", "d", "b_prev"),
+                    frame=v_state.frame.rename({"t": "b_prev"}),
+                    lower=v_state.lower, upper=v_state.upper,
+                )
+                v_prev_rp = Sum(
+                    Where(Where(v_state_bp, pred_interior), rp_nodes),
+                    over=("b_prev",),
+                )
+                # v_state_rp_start at the representative-day first block.
+                v_rpstart_b = Var(
+                    name=v_state_rp_start.name + "__b_first",
+                    dims=("n", "d", "b_first"),
+                    frame=v_state_rp_start.frame.rename({"t": "b_first"}),
+                    lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
+                )
+                v_rpstart_rp = Where(
+                    Where(v_rpstart_b, rp_first_lbl), rp_nodes)
+                # v_state at the current block (all coarse blocks of rp nodes).
+                rp_block_over = (rp_nodes
+                                 .join(d.period_block, how="cross")
+                                 .select("n", "d", "b_first"))
+                v_now_rp = Where(v_state_a, rp_block_over)
+                nbb_terms["state_change_rp"] = (
+                    (v_now_rp - v_prev_rp - v_rpstart_rp)
+                    * d.p_state_unitsize)
 
             # The .mod's nodeBalanceBlock_eq is:
             #   state_change_mod  ==  sink - source_eff - source_noEff
