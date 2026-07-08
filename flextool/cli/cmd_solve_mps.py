@@ -11,13 +11,14 @@ process's Python footprint stays small.  Only depends on ``highspy``.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from flextool.cli._console import run_tool
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Solve an MPS file with HiGHS in a subprocess.",
     )
@@ -31,10 +32,18 @@ def main() -> int:
         help="Optional output basis file",
     )
     parser.add_argument(
+        "--warm-basis", type=Path, default=None,
+        help="Optional input basis file to warm-start from",
+    )
+    parser.add_argument(
+        "--stats", type=Path, default=None,
+        help="Optional output JSON file with solve measurement fields",
+    )
+    parser.add_argument(
         "--options", type=Path, default=None,
         help="Optional HiGHS options file (key=value per line)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     import highspy
 
@@ -72,6 +81,30 @@ def main() -> int:
         print(f"ERROR: HiGHS failed to read MPS {args.mps}", file=sys.stderr)
         return 3
 
+    # Warm-start injection.  A rejected / missing / corrupt basis is a
+    # safe silent-cold fallback: HiGHS' run() is correct after a failed
+    # readBasis, so we log and continue rather than abort the solve.
+    warm_basis_used = False
+    if args.warm_basis is not None:
+        try:
+            status = h.readBasis(str(args.warm_basis))
+            if status == highspy.HighsStatus.kOk:
+                warm_basis_used = True
+                print(
+                    f"INFO: warm-basis accepted from {args.warm_basis}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"WARNING: warm-basis rejected ({status}) — solving cold",
+                    file=sys.stderr,
+                )
+        except Exception as exc:
+            print(
+                f"WARNING: warm-basis read failed ({exc}) — solving cold",
+                file=sys.stderr,
+            )
+
     if not _ok(h.run(), "run"):
         print("ERROR: HiGHS run() returned non-OK status", file=sys.stderr)
         return 4
@@ -96,6 +129,21 @@ def main() -> int:
             _ok(h.writeBasis(str(args.basis)), "writeBasis")
         except Exception as exc:
             print(f"WARNING: writeBasis raised: {exc}", file=sys.stderr)
+
+    if args.stats is not None:
+        # Best-effort measurement sidecar for the parent's A/B gating.
+        # A stats-write failure must never fail the solve.
+        try:
+            info = h.getInfo()
+            stats = {
+                "simplex_iteration_count": int(info.simplex_iteration_count),
+                "model_status": str(model_status),
+                "objective": float(h.getObjectiveValue()),
+                "warm_basis_used": warm_basis_used,
+            }
+            args.stats.write_text(json.dumps(stats))
+        except Exception as exc:
+            print(f"WARNING: stats write failed: {exc}", file=sys.stderr)
 
     # Exit code carries the model status so the parent can branch on
     # optimality without parsing the solution file first.
