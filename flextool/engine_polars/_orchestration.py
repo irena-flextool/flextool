@@ -44,6 +44,7 @@ Design choices
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -586,6 +587,48 @@ def _autoscale_lp_shape_signature(pb: "Problem", base_solve_name: str) -> tuple:
         for cname, _proto, over in pb._cstrs
     )
     return (base_solve_name, int(pb._next_col), var_sig, cstr_sig)
+
+
+def _basis_cache_active(decomposition: "str | None", solver_name: str) -> bool:
+    """Gate for the Phase-4 in-process warm-start basis cache.
+
+    True only when (a) the operator opted in with ``FLEXTOOL_WARM_START=1``,
+    (b) the in-process solver is HiGHS — the only solver whose live handle
+    supports ``setBasis`` / ``getBasis`` for basis transfer, and (c) the
+    active solve is NOT Benders-decomposed.  A Benders solve never builds a
+    monolithic ``WarmProblem`` (it returns early through
+    ``_run_benders_solve`` before the warm branch), and its region
+    subproblems are not keyed by this cache; the ``decomposition`` check is
+    a belt-and-suspenders guard on top of that early return.
+
+    When this returns False the caller does nothing new, so the off-path
+    (and every non-HiGHS / Benders path) stays byte-identical.
+    """
+    return (
+        os.environ.get("FLEXTOOL_WARM_START") == "1"
+        and solver_name == "highs"
+        and decomposition != "benders"
+    )
+
+
+def _basis_cache_dir(work_folder: "Path | str | None") -> Path:
+    """Resolve the shared warm-start basis cache directory (Phase-2 pattern).
+
+    ``FLEXTOOL_BASIS_CACHE_DIR`` env > ``<work_folder>/basis_cache`` >
+    ``<tmp>/flextool_basis_cache``.  Mirrors the resolution used by the
+    subprocess ``.bas`` arm in :mod:`_subprocess_solve` so the in-process
+    ``.nbasis`` files land alongside their ``.bas`` counterparts.  Creates
+    the directory (``parents=True, exist_ok=True``).
+    """
+    cache_env = os.environ.get("FLEXTOOL_BASIS_CACHE_DIR")
+    if cache_env:
+        cache_dir = Path(cache_env)
+    elif work_folder is not None:
+        cache_dir = Path(work_folder) / "basis_cache"
+    else:
+        cache_dir = Path(tempfile.gettempdir()) / "flextool_basis_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 
 def _autoscale_emit_console_summary(
@@ -1712,7 +1755,7 @@ def _drive_cascade(
     from flextool.engine_polars._solver_base import SolverRunner
     from flextool.engine_polars._native_run_model import native_run_model
 
-    from polar_high import Problem, WarmProblem
+    from polar_high import NamedBasis, Problem, WarmProblem
     from flextool.engine_polars.input import (
         build_handoff_from_solution,
         load_flextool,
@@ -1939,6 +1982,18 @@ def _drive_cascade(
             self._autoscale_shape_cache: (
                 "dict[tuple, _AutoscaleShapeCacheEntry]"
             ) = {}
+            # Phase 4 Step 4b — in-process warm-start basis cache.  Keyed
+            # by the built LP's name-set fingerprint
+            # (``Problem.basis_name_fingerprint``); each value is a
+            # :class:`polar_high.NamedBasis` captured off a fresh build's
+            # optimal solve and re-injected into an identically-named fresh
+            # build on a later cross-run solve (UC2 sweep / UC3 resume).
+            # Populated only under ``FLEXTOOL_WARM_START=1`` on the
+            # in-process HiGHS fresh-build path and mirrored on disk as
+            # ``<cache_dir>/<fp>.nbasis`` (JSON) alongside the subprocess
+            # arm's ``<fp>.bas``.  Stays empty + untouched when the opt-in
+            # is off (byte-identical off-path).
+            self._inproc_basis_cache: "dict[str, NamedBasis]" = {}
             # v60/v62 per-solve decomposition — complete-solve names that
             # ran under ``decomposition=benders``.  Used by the consume-side
             # guard in :meth:`run` to raise loudly if a downstream solve
@@ -2586,6 +2641,15 @@ def _drive_cascade(
             )
             if warm_active:
                 fp = _fingerprint(data)
+                # Phase 4 Step 4b bookkeeping — ``did_fresh_build`` gates
+                # the post-solve basis CAPTURE to fresh builds only (a warm
+                # reuse re-run is already optimally warm and its inner-
+                # problem names are stale for rolling, so capturing there
+                # would be wrong-keyed); ``fresh_fp`` carries the name-set
+                # cache key from the inject block to the capture block.
+                # Both are inert unless the basis-cache gate is active.
+                did_fresh_build = False
+                fresh_fp = None
                 tried_warm = (
                     self._warm_problem is not None
                     and self._prior_data is not None
@@ -2800,6 +2864,57 @@ def _drive_cascade(
                         logger=self.state.logger,
                     )
                     _phase_prof("autoscale_done")
+                    # Phase 4 Step 4b — in-process warm-start basis
+                    # INJECT (fresh build only).  Keyed on the LP name-set
+                    # fingerprint, which is Layer-2-invariant, so it is
+                    # computed HERE — after Layer 2 — to reuse the memoized
+                    # ``canonicalise`` rather than assemble the names
+                    # twice.  On a cache hit (in-process dict first, else
+                    # the on-disk ``<fp>.nbasis``) we record the basis on
+                    # the WarmProblem; the actual ``setBasis`` fires once
+                    # in ``_initial_build`` before the first solve and
+                    # safely falls back to a cold solve on any fingerprint
+                    # mismatch.  Warm-start must NEVER break a solve, so
+                    # every step here is defensive — any failure logs and
+                    # continues cold.
+                    did_fresh_build = True
+                    if _basis_cache_active(
+                        state.solve.decomposition_for(base_solve_name),
+                        _active_solver_cfg.name,
+                    ):
+                        try:
+                            fresh_fp = inner_pb.basis_name_fingerprint()
+                            if fresh_fp:
+                                nb = self._inproc_basis_cache.get(fresh_fp)
+                                if nb is None:
+                                    _bc_dir = _basis_cache_dir(
+                                        self.state.paths.work_folder,
+                                    )
+                                    _nb_path = (
+                                        _bc_dir / f"{fresh_fp}.nbasis"
+                                    )
+                                    if _nb_path.exists():
+                                        _raw = json.loads(
+                                            _nb_path.read_text()
+                                        )
+                                        nb = NamedBasis(
+                                            col_status=_raw["col_status"],
+                                            row_status=_raw["row_status"],
+                                            fingerprint=_raw["fingerprint"],
+                                        )
+                                if nb is not None:
+                                    self._warm_problem.set_named_basis(
+                                        nb, policy="exact",
+                                    )
+                                    self.state.logger.info(
+                                        "in-process warm-basis cache hit "
+                                        "%s", fresh_fp,
+                                    )
+                        except Exception as _basis_exc:  # noqa: BLE001
+                            self.state.logger.warning(
+                                "in-process warm-basis inject skipped "
+                                "(%s); solving cold", _basis_exc,
+                            )
                 # ``WarmProblem.solve`` always keeps the HiGHS instance
                 # alive on ``Solution.highs`` — that's the whole point
                 # of warm reuse — so the output writer adapter
@@ -2859,6 +2974,51 @@ def _drive_cascade(
                         logger=self.state.logger,
                     )
                 _phase_prof("unscale_done")
+                # Phase 4 Step 4b — in-process warm-start basis CAPTURE
+                # (fresh build only).  ``sol.highs`` is the live retained
+                # handle (``WarmProblem.solve`` always keeps the solver),
+                # so ``get_named_basis`` succeeds.  Persist atomically to
+                # the shared cache dir so a later cross-run solve of the
+                # same structural model can inject it (UC2 sweep / UC3
+                # resume).  Never capture on the warm-reuse branch
+                # (``did_fresh_build`` stays False there) — those inner
+                # names are stale and the LP is already optimally warm.
+                # Capture failure is non-fatal (log + continue).
+                if (
+                    did_fresh_build
+                    and fresh_fp
+                    and _basis_cache_active(
+                        state.solve.decomposition_for(base_solve_name),
+                        _active_solver_cfg.name,
+                    )
+                ):
+                    try:
+                        nb_out = sol.get_named_basis()
+                        self._inproc_basis_cache[fresh_fp] = nb_out
+                        _bc_dir = _basis_cache_dir(
+                            self.state.paths.work_folder,
+                        )
+                        _tmp = (
+                            _bc_dir
+                            / f"{fresh_fp}.nbasis.tmp.{os.getpid()}"
+                        )
+                        _tmp.write_text(json.dumps({
+                            "col_status": nb_out.col_status,
+                            "row_status": nb_out.row_status,
+                            "fingerprint": nb_out.fingerprint,
+                        }))
+                        os.replace(
+                            _tmp, _bc_dir / f"{fresh_fp}.nbasis",
+                        )
+                        self.state.logger.info(
+                            "in-process warm-basis cache captured %s",
+                            fresh_fp,
+                        )
+                    except Exception as _basis_exc:  # noqa: BLE001
+                        self.state.logger.warning(
+                            "in-process warm-basis capture skipped (%s)",
+                            _basis_exc,
+                        )
                 self._prior_data = data
                 self._prior_fp = fp
             else:
