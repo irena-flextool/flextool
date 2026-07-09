@@ -49,13 +49,14 @@ import logging
 import math
 import os
 import re
+import shutil
 import tempfile
 import textwrap
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from flextool.engine_polars._solve_handoff import SolveHandoff
 from flextool.engine_polars._solve_state import (
@@ -96,6 +97,40 @@ def _wrap_log_prose(text: str, width: int = 100, indent: str = "  ") -> str:
         text, width=width, subsequent_indent=indent,
         break_long_words=False, break_on_hyphens=False,
     )
+
+
+def _format_solver_args_line(
+    effective_options: Mapping[str, Any] | None,
+    *,
+    prefer_first: "Sequence[str]" = (),
+) -> str | None:
+    """Render the effective solver options as a one-liner.
+
+    Emitted just before HiGHS' own "Running HiGHS …" banner so the run
+    log shows exactly the options the solver received — the full merged,
+    post-precedence set of everything the operator touched:
+    ``solver_config/highs.opt`` (project floor) ∪ the DB-authored
+    ``solver_arguments`` ∪ the CLI-flag overrides.  Engine-pinned
+    *baseline* options (determinism keys + the Curtis-Reid scale) are
+    deliberately excluded — they are internal and always present, so
+    listing them would bury the operator's intent.  Pass
+    ``effective_options`` already resolved with ``baseline=None`` so this
+    exclusion holds (see :func:`_resolve_effective_highs_options`).
+
+    *prefer_first* names keys (typically the ``solver_arguments`` keys)
+    to surface at the front of the line; the remaining keys follow in
+    ``effective_options`` order.  Each key's value is the winning one
+    after precedence resolution.
+
+    Returns ``None`` when *effective_options* is empty (nothing the
+    operator set → no line).
+    """
+    if not effective_options:
+        return None
+    order = [k for k in prefer_first if k in effective_options]
+    order += [k for k in effective_options if k not in order]
+    body = ", ".join(f"{k}={effective_options[k]}" for k in order)
+    return f"Solver args: {body}"
 
 
 # Legacy ``scale_the_objective`` default — historically the
@@ -1687,7 +1722,19 @@ def run_orchestration(
     """
     work_folder = Path(work_folder)
     work_folder.mkdir(parents=True, exist_ok=True)
-    state.paths = PathConfig(work_folder=work_folder)
+    # Rebuild ``paths`` for this run's work_folder, but CARRY FORWARD
+    # ``solver_config_dir`` from the incoming state — the per-solve loop
+    # reads it to resolve ``<dir>/highs.opt`` for the in-process HiGHS
+    # options.  ``run_chain_from_db`` sets it (to the work-folder
+    # ``solver_config`` copy); a bare ``PathConfig(work_folder=...)`` here
+    # would silently drop the ``highs.opt`` floor on the in-process path.
+    _prior_solver_config_dir = (
+        state.paths.solver_config_dir if state.paths is not None else None
+    )
+    state.paths = PathConfig(
+        work_folder=work_folder,
+        solver_config_dir=_prior_solver_config_dir,
+    )
 
     logger = state.logger
     _bootstrap_dirs(work_folder, logger)
@@ -2537,9 +2584,11 @@ def _drive_cascade(
                 complete_solve_name, {}
             )
             # ``solver_config/highs.opt`` floor parsed by the resolver.
-            # ``state.paths.solver_config_dir`` is None on direct native
-            # callers (the file is only present on the CLI path); the
-            # resolver treats that as an empty floor.
+            # ``run_chain_from_db`` seeds ``state.paths.solver_config_dir``
+            # to the work-folder ``solver_config`` copy, so the CLI path
+            # reads the floor; direct native callers that build a bare
+            # ``PathConfig`` leave it None and the resolver treats that as
+            # an empty floor.
             _highs_opt_path = (
                 state.paths.solver_config_dir / "highs.opt"
                 if state.paths.solver_config_dir is not None
@@ -2925,6 +2974,31 @@ def _drive_cascade(
                 # grey solver-output block in the GUI) separates from the
                 # scaling/LP-build rows above it.
                 print("", flush=True)
+                # Echo the effective solver options right before HiGHS'
+                # own banner: the full merged, post-precedence set the
+                # solver actually received (``highs.opt`` floor ∪ DB
+                # ``solver_arguments`` ∪ CLI overrides), so the run is
+                # replicable from the log alone.  Resolved with
+                # ``baseline=None`` so the engine-internal determinism /
+                # scale keys are excluded — only what the operator
+                # touched is shown.  Uses ``print`` (not the logger) to
+                # sit in the same stdout stream as the blank separator
+                # above and HiGHS' native banner below — the GUI's
+                # ``execution_window`` parses these printed markers.
+                from flextool.engine_polars._solver_dispatch import (
+                    _resolve_effective_highs_options,
+                )
+                _eff_touched = _resolve_effective_highs_options(
+                    solver_arguments_map=_solver_args_map,
+                    highs_opt_path=_highs_opt_path,
+                    cli_overrides=_build_cli_overrides(),
+                    baseline=None,
+                )
+                _sa_line = _format_solver_args_line(
+                    _eff_touched, prefer_first=list(_solver_args_map or {}),
+                )
+                if _sa_line:
+                    print(_sa_line, flush=True)
                 _t_solve_start = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
@@ -3259,6 +3333,28 @@ def _drive_cascade(
                 # grey solver-output block in the GUI) separates from the
                 # scaling/LP-build rows above it.
                 print("", flush=True)
+                # Echo the effective solver options right before HiGHS'
+                # own banner: the full merged, post-precedence set the
+                # solver actually received (``highs.opt`` floor ∪ DB
+                # ``solver_arguments`` ∪ CLI overrides), so the run is
+                # replicable from the log alone.  Resolved with
+                # ``baseline=None`` so the engine-internal determinism /
+                # scale keys are excluded — only what the operator
+                # touched is shown.  Uses ``print`` (not the logger) to
+                # sit in the same stdout stream as the blank separator
+                # above and HiGHS' native banner below — the GUI's
+                # ``execution_window`` parses these printed markers.
+                _eff_touched = _resolve_effective_highs_options(
+                    solver_arguments_map=_solver_args_map,
+                    highs_opt_path=_highs_opt_path,
+                    cli_overrides=_build_cli_overrides(),
+                    baseline=None,
+                )
+                _sa_line = _format_solver_args_line(
+                    _eff_touched, prefer_first=list(_solver_args_map or {}),
+                )
+                if _sa_line:
+                    print(_sa_line, flush=True)
                 _phase_prof("solve_start")
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,
@@ -3833,6 +3929,75 @@ def _drive_cascade(
 
 
 # ---------------------------------------------------------------------------
+# Solver-config work-folder seeding
+# ---------------------------------------------------------------------------
+
+# The five solvers whose ``<solver>.opt`` files FlexTool manages.  Kept in
+# sync with the seed list in
+# :func:`flextool.update_flextool.self_update.ensure_runtime_files`.
+_SOLVER_CONFIG_NAMES = ("highs", "gurobi", "cplex", "xpress", "copt")
+
+
+def _seed_work_folder_solver_config(
+    work_folder: Path,
+    source_dir: Path,
+    logger: logging.Logger,
+) -> Path:
+    """Populate ``<work_folder>/solver_config/`` with per-solver ``.opt`` files.
+
+    For each of :data:`_SOLVER_CONFIG_NAMES`, copy a ``<solver>.opt`` into
+    ``<work_folder>/solver_config/`` so the run is self-contained and
+    repeatable, and both the in-process and subprocess solve paths read the
+    *same* files.
+
+    Copy-if-missing: a ``<solver>.opt`` already present in the work folder is
+    left untouched, so a user can hand-tweak a work-folder opt file and re-run
+    with it.
+
+    Source per file (first that exists wins):
+
+    1. ``<source_dir>/<solver>.opt`` — the operator's active/edited file (or an
+       explicitly-passed ``solver_config_dir``).
+    2. the packaged ``solver_config/<solver>.opt.template``.
+
+    If neither exists for a given solver, that solver is skipped silently.
+
+    Returns the destination directory (``<work_folder>/solver_config``).  Any
+    failure is logged as a WARNING and swallowed — seeding must never fail the
+    run.
+    """
+    dest_dir = work_folder / "solver_config"
+    try:
+        from flextool._resources import package_data_path
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for _solver in _SOLVER_CONFIG_NAMES:
+            dest = dest_dir / f"{_solver}.opt"
+            if dest.exists():
+                # Do not clobber a work-folder file the user may have edited.
+                continue
+            src = source_dir / f"{_solver}.opt"
+            if not src.is_file():
+                try:
+                    src = Path(
+                        package_data_path(f"solver_config/{_solver}.opt.template")
+                    )
+                except Exception:
+                    src = None  # type: ignore[assignment]
+                if src is None or not src.is_file():
+                    # No operator file and no bundled template — skip silently.
+                    continue
+            shutil.copy2(str(src), str(dest))
+    except Exception as exc:  # pragma: no cover — defensive; never fail a run
+        logger.warning(
+            "Seeding %s failed (%s); solver options fall back to defaults.",
+            dest_dir,
+            exc,
+        )
+    return dest_dir
+
+
+# ---------------------------------------------------------------------------
 # run_chain_from_db — top-level entry point
 # ---------------------------------------------------------------------------
 
@@ -3955,9 +4120,37 @@ def run_chain_from_db(
         Path(flextool_dir) if flextool_dir is not None
         else package_data_path("")
     )
-    solver_config_dir_resolved = (
-        Path(solver_config_dir) if solver_config_dir is not None else Path.cwd() / "solver_config"
+    # Seeding SOURCE precedence: explicit ``solver_config_dir`` arg >
+    # a pre-existing ``$FLEXTOOL_SOLVER_CONFIG_DIR`` override (the hook the
+    # subprocess path already honours as its highest-priority source — read
+    # it BEFORE we overwrite it below, so a user/CI override's *content* is
+    # carried into the work-folder copy rather than silently lost) >
+    # ``<cwd>/solver_config``.
+    _env_solver_config = os.environ.get("FLEXTOOL_SOLVER_CONFIG_DIR")
+    if solver_config_dir is not None:
+        solver_config_dir_resolved = Path(solver_config_dir)
+    elif _env_solver_config:
+        solver_config_dir_resolved = Path(_env_solver_config)
+    else:
+        solver_config_dir_resolved = Path.cwd() / "solver_config"
+
+    # Make the run self-contained and repeatable: copy the active
+    # ``<solver>.opt`` files into ``<work_folder>/solver_config/`` (copy-if-
+    # missing so a hand-tweaked work-folder file survives a re-run), then
+    # point BOTH solve paths at that copy.  The GUI's cwd is frequently not
+    # the folder that holds the project's ``highs.opt``; reading from the
+    # work-folder copy instead of ``<cwd>/solver_config`` ensures project-
+    # level solver options are actually applied, and leaves a durable on-disk
+    # record of exactly which options the run used.
+    _workdir_solver_config = _seed_work_folder_solver_config(
+        work_folder, solver_config_dir_resolved, logger
     )
+    solver_config_dir_resolved = _workdir_solver_config
+    # The subprocess/commercial solve path resolves its config dir
+    # independently via ``_resolve_solver_config_dir()``, which honours
+    # ``$FLEXTOOL_SOLVER_CONFIG_DIR`` first; point it at the same work-folder
+    # copy so both paths read a single source of truth.
+    os.environ["FLEXTOOL_SOLVER_CONFIG_DIR"] = str(_workdir_solver_config)
 
     # Cascade-input Provider population from the Spine DB.  Pure
     # in-memory: ``write_workdir_inputs`` runs the input_derivation
@@ -4046,7 +4239,17 @@ def run_chain_from_db(
                        user_label="TimelineConfig constructed (from DB)")
 
     state = RunnerState(
-        paths=PathConfig(work_folder=work_folder),
+        # ``solver_config_dir`` MUST be carried here: this is the state the
+        # per-solve loop reads when it resolves ``<dir>/highs.opt`` for the
+        # in-process HiGHS options (``_highs_opt_path`` in the solve loop).
+        # Omitting it leaves ``solver_config_dir`` None, so the ``highs.opt``
+        # floor is silently dropped on the in-process path even though the
+        # factory runner below got the dir.  It points at the work-folder
+        # copy seeded above.
+        paths=PathConfig(
+            work_folder=work_folder,
+            solver_config_dir=solver_config_dir_resolved,
+        ),
         solve=sc,
         logger=logger,
         timeline=tc,
