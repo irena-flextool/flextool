@@ -7,7 +7,7 @@ name = "flextool"
 # restructure are in.  4.0.0 final follows after the remaining
 # minor-functionality additions, cleanup and testing land.  PEP 440
 # pre-release suffix: 4.0.0a1, 4.0.0a2, ... 4.0.0b1, 4.0.0rc1, then 4.0.0.
-version = "4.0.0b23"
+version = "4.0.0b24"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
@@ -59,8 +59,12 @@ dependencies = [
     # separation picker the Benders in-out stabilization drives.  3.5.0 adds
     # polar_high.benders (the generic multicut Benders coordinator the FlexTool
     # driver now runs on), WarmProblem.compact_cuts + fix_col_ids/bounds
-    # accessors, and solve_with_fallback — the hard floor.
-    "polar-high>=3.5.0",
+    # accessors, and solve_with_fallback.  3.6.0 adds TrustRegionStabilizer /
+    # native_cost_at (the Benders trust-region wiring) and the name-keyed
+    # warm-start basis primitives (get/set_named_basis, basis_name_fingerprint,
+    # seed_primal, write_mps fingerprint) that the b24 basis cache injects
+    # through — the hard floor.
+    "polar-high>=3.6.0",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.

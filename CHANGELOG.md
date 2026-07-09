@@ -1,3 +1,79 @@
+## Release 4.0.0b24 (9.7.2026) — warm-start basis cache; greenfield indirect-converter capacity fix; coarse rep-period storage fix
+
+No schema change (still v63). **The polar-high floor moves to `>=3.6.0`** (the
+warm-start basis cache and the Benders trust-region wiring call new 3.6.0
+primitives). Other floors unchanged (`polars>=1.40`, `highspy<=1.14.0`). Two
+result-changing correctness fixes below (indirect converters, coarse rep-period
+storage) affect models that use those features; everything else is OFF by
+default and byte-identical on models that don't opt in.
+
+### Model — correctness (changes results on affected models)
+
+- **Greenfield indirect (process-node) converters now pay for their capacity.**
+  An indirect converter (`H2 + elec -> [proc] -> NH3`) took its capacity-
+  enforcing `maxFlow` RHS from `p_flow_upper` (the `existing + invest_max`
+  ceiling) on every arc, so a greenfield unit (`existing = 0`) got **free,
+  unpaid capacity up to the investment ceiling** — the output constraint
+  `v_flow − Σ v_invest ≤ invest_max/unitsize` was satisfied at `v_invest = 0`.
+  The indirect `maxFlow` RHS is now split by arc side, mirroring the direct-
+  unit `maxToSink`/`maxFromSource` semantics: **output** arcs bind with the
+  existing-only RHS (any output flow forces paid `v_invest > 0`), while
+  input/fuel and zero-coef aux arcs keep the loose bound (pinning them to
+  `existing = 0` would make fuel hard-infeasible). Direct units are byte-
+  identical. Sink-less indirect invest units now raise a clear
+  `NotImplementedError` instead of silently emitting free capacity.
+
+### Representative periods — correctness
+
+- **Coarse representative-period nodes keep their seasonal storage structure.**
+  Coarsening a rep-period run previously dropped the per-representative-period
+  storage seams, collapsing the rep-period structure; storage now keeps per-
+  rep-day seams with a free-start balance. Fixes a companion bug where
+  representative-period labels were nulled on `FlexData` load (round-trip).
+
+### Warm-start — basis cache (opt-in, OFF by default)
+
+- **A solve can now reuse a related solve's HiGHS basis to warm-start.**
+  New, opt-in machinery keyed by a structural fingerprint of the model's
+  name-set (so a cached basis is only injected into a compatible model),
+  covering both solve paths:
+  - **save-memory subprocess path:** the basis is cached as a native HiGHS
+    `.bas` file and injected into the child via a new `cmd_solve_mps
+    --warm-basis` (`readBasis`) hook, with a per-transfer stats sidecar. No
+    variable-name state crosses into the parent (positional-by-construction
+    via the determinism wrapper).
+  - **in-process `WarmProblem` path:** the basis is cached in memory
+    (`get_named_basis` / `set_named_basis`) and re-injected on the next
+    compatible solve (sweep / resume — the "UC2/UC3" use cases).
+  - **Safety gate:** a first-transfer A/B harness measures the warm vs. cold
+    run and **disables warm-start on any regression**, so a stale or unhelpful
+    basis can never make a solve worse. All failure modes (added/dropped/
+    renamed column) fail safe to a correct cold solve. Also fixes a latent bug
+    where the configured `work_folder` never reached the subprocess.
+
+### Solvers — configuration
+
+- **`highs.opt` is now honoured on the in-process solve path** (it was silently
+  ignored — the option-file directory was clobbered mid-orchestration). The
+  work folder is also seeded with a `solver_config/` skeleton, and the full
+  merged effective solver options are logged before the solve (precedence:
+  baseline < `highs.opt` < `solver_arguments` < CLI).
+
+### Decomposition (Benders) — mostly experimental, OFF by default
+
+- **Region-subproblem autoscale fixes a large-`N` decomposition crash.**
+  Layer-2 (+ Layer-3 HiGHS-native top-up) numerical scaling is now applied to
+  the Benders region subproblems, with a region-solve retry. This resolves an
+  `N = 10` mid-solve crash that previously aborted the decomposition.
+- **Driver rewired onto the `polar_high.benders` coordinator** (byte-parity
+  with the previous in-line loop; pinned by a `λ = 0` reference trajectory).
+- **Master-primal trust-region stabilizer wiring** (an honest absolute box on
+  the master coupling point; env-gated, mutually exclusive with in-out) and
+  **experimental master-hosted-node mode** (`split()` 4-way arc classification,
+  invest handoff, go/no-go pin diagnostic) — both opt-in and off by default.
+- **Interior region-dual mode** (`FLEXTOOL_BENDERS_REGION_DUALS`, env-gated)
+  no longer crashes at iteration 1 (barrier primal-dual tolerance).
+
 ## Release 4.0.0b23 (3.7.2026) — commercial solvers handle spaces in names; opt-in Benders cut compaction
 
 No schema change (still v63). Dependency floors unchanged (`polar-high>=3.4.0`,
