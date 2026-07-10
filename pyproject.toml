@@ -63,8 +63,11 @@ dependencies = [
     # native_cost_at (the Benders trust-region wiring) and the name-keyed
     # warm-start basis primitives (get/set_named_basis, basis_name_fingerprint,
     # seed_primal, write_mps fingerprint) that the b24 basis cache injects
-    # through — the hard floor.
-    "polar-high>=3.6.0",
+    # through.  3.6.1 makes the coefficient floor scale-invariant (user-space)
+    # — required: the regenerated goldens for the battery/DR scenarios and the
+    # commodity-ladder trade model encode the corrected `full`-autoscale
+    # solutions, which the pre-3.6.1 (buggy) floor mis-computes — the hard floor.
+    "polar-high>=3.6.1",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.
