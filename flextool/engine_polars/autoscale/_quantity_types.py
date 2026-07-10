@@ -461,6 +461,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/kWh] Salvage value of the storage. Constant or period.
     ('salvage_value', 'unit'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/kW] Salvage value of the unit. Constant or period.
+    ('scaling', 'solve'): QuantityType.DIMENSIONLESS,
+    # Numerical LP-autoscaler mode for this solve: 'off'/'solver_only'/'basic'/'full' (default). Solver-config choice, never an LP coefficient.
     ('self_discharge_loss', 'node'): QuantityType.FRACTION,
     # [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
     ('sense', 'constraint'): QuantityType.DIMENSIONLESS,

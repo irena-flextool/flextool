@@ -1752,14 +1752,30 @@ def run_orchestration(
     # ``_drive_cascade`` can consult it (gates ``data.dump_csvs``).
     state.csv_dump = bool(csv_dump)  # type: ignore[attr-defined]
 
+    # Per-solve autoscaler mode (v64 ``solve.scaling``): capture whether
+    # the operator pinned the mode explicitly via ``--scaling`` /
+    # ``FLEXTOOL_SCALING`` (the CLI mirrors the flag into the env var)
+    # BEFORE the per-solve loop can overwrite it.  When set, the operator
+    # override wins over every solve's DB value; when unset, each solve's
+    # ``solve.scaling`` drives ``FLEXTOOL_SCALING`` in ``_drive_cascade``.
+    # Restore on exit so the DB-derived env never leaks to the caller.
+    state.scaling_user_env = os.environ.get(  # type: ignore[attr-defined]
+        "FLEXTOOL_SCALING")
+
     # The cascade solver runs polar_high on each solve and captures the
     # handoff.  We use flextool's orchestration loop driver because it
     # encodes the recursive/rolling/stochastic expansion + per-solve
     # preprocessing chain we still consume.  Our cascade solver is the
     # `solver.run(...)` callback inside that loop.
-    return _drive_cascade(state, work_folder, solves, runner_factory,
-                          db_url=db_url, scenario_name=scenario_name,
-                          warm=warm, keep_solutions=keep_solutions)
+    try:
+        return _drive_cascade(state, work_folder, solves, runner_factory,
+                              db_url=db_url, scenario_name=scenario_name,
+                              warm=warm, keep_solutions=keep_solutions)
+    finally:
+        if state.scaling_user_env is None:
+            os.environ.pop("FLEXTOOL_SCALING", None)
+        else:
+            os.environ["FLEXTOOL_SCALING"] = state.scaling_user_env
 
 
 def _drive_cascade(
@@ -2498,6 +2514,17 @@ def _drive_cascade(
                 _cli_ubs if _cli_ubs is not None
                 else state.solve.user_bound_scale.get(complete_solve_name)
             )
+            # Per-solve autoscaler mode (v64 ``solve.scaling``): unless the
+            # operator pinned it via ``--scaling`` / ``FLEXTOOL_SCALING``
+            # (captured in ``state.scaling_user_env`` before the loop), the
+            # solve's DB value drives ``FLEXTOOL_SCALING``.  Set it fresh
+            # each sub-solve (default ``full`` when the solve does not author
+            # it) so per-solve differences and the cascade-internal env
+            # readers below stay consistent.  Precedence: operator override >
+            # ``solve.scaling`` > default ``full``.
+            if getattr(state, "scaling_user_env", None) is None:
+                _db_scaling = state.solve.scaling_for(base_solve_name)
+                os.environ["FLEXTOOL_SCALING"] = _db_scaling or "full"
             # Resolve the autoscaler's mode once for this sub-solve so the
             # baseline-options builder, the cold/warm LP construction, and
             # the Layer 2 / Layer 3 helpers all see the same value.  Cascade-

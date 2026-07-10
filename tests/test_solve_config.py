@@ -104,3 +104,38 @@ class TestDuplicateSolve:
 
         # Should just not add anything, no error
         assert "dispatch_p2020" not in sc.realized_periods
+
+    def test_scaling_propagated(self) -> None:
+        """duplicate_solve carries the per-solve ``scaling`` mode over."""
+        sc = _make_solve_config(scaling={"dispatch": "basic"})
+
+        sc.duplicate_solve("dispatch", "dispatch_p2020")
+
+        assert sc.scaling.get("dispatch_p2020") == "basic"
+
+
+class TestScalingFor:
+    """scaling_for resolves the per-solve autoscaler mode (v64)."""
+
+    def test_authored_value_returned(self) -> None:
+        sc = _make_solve_config(scaling={"invest": "basic"})
+        assert sc.scaling_for("invest") == "basic"
+
+    def test_absent_returns_none(self) -> None:
+        """Unauthored solve -> None so the caller falls back to CLI/env/full."""
+        sc = _make_solve_config()
+        assert sc.scaling_for("invest") is None
+
+    def test_case_and_whitespace_normalised(self) -> None:
+        sc = _make_solve_config(scaling={"invest": "  Solver_Only "})
+        assert sc.scaling_for("invest") == "solver_only"
+
+    def test_unrecognised_value_returns_none(self) -> None:
+        """A typo / unknown mode falls through to None (defer to default)."""
+        sc = _make_solve_config(scaling={"invest": "aggressive"})
+        assert sc.scaling_for("invest") is None
+
+    def test_all_four_modes_recognised(self) -> None:
+        for mode in ("off", "solver_only", "basic", "full"):
+            sc = _make_solve_config(scaling={"invest": mode})
+            assert sc.scaling_for("invest") == mode

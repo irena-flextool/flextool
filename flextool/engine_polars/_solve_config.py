@@ -246,6 +246,7 @@ class SolveConfig:
         benders_max_iter: dict | None = None,
         benders_tolerance: dict | None = None,
         benders_in_out_weight: dict | None = None,
+        scaling: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -301,6 +302,12 @@ class SolveConfig:
         )
         self.benders_in_out_weight: dict = (
             benders_in_out_weight if benders_in_out_weight is not None else {}
+        )
+        # v64 per-solve autoscaler mode (solve-name -> "off"/"solver_only"/
+        # "basic"/"full"); only authored solves appear.  Resolved at access
+        # time via :meth:`scaling_for` (absent -> None -> CLI/env/default).
+        self.scaling: dict = (
+            scaling if scaling is not None else {}
         )
 
         # Computed fields — populated by load_from_db after construction.
@@ -509,6 +516,13 @@ class SolveConfig:
             db=db, cl="solve", par="benders_in_out_weight", mode=DictMode.DICT
         )
 
+        # v64 per-solve autoscaler mode.  Only solves that explicitly
+        # author solve.scaling appear; absent solves resolve to None via
+        # ``scaling_for`` (caller falls back to CLI/env/default "full").
+        scaling: dict = params_to_dict(
+            db=db, cl="solve", par="scaling", mode=DictMode.DICT
+        )
+
         # rolling_times: assemble per-solve [jump, horizon, duration].
         rolling_duration: dict = params_to_dict(
             db=db, cl="solve", par="rolling_duration", mode=DictMode.DICT
@@ -615,6 +629,7 @@ class SolveConfig:
             benders_max_iter=benders_max_iter,
             benders_tolerance=benders_tolerance,
             benders_in_out_weight=benders_in_out_weight,
+            scaling=scaling,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
@@ -811,6 +826,7 @@ class SolveConfig:
                 self.benders_max_iter,
                 self.benders_tolerance,
                 self.benders_in_out_weight,
+                self.scaling,
             ]
             for dup_map in dup_map_list:
                 if old_solve in dup_map.keys():
@@ -841,6 +857,25 @@ class SolveConfig:
             return "none"
         value = str(raw).strip().lower()
         return "benders" if value == "benders" else "none"
+
+    def scaling_for(self, solve_name: str) -> str | None:
+        """Resolve the autoscaler scaling mode authored on *solve_name*.
+
+        Returns the normalised lower-case mode string (one of
+        ``off`` / ``solver_only`` / ``basic`` / ``full``) when the solve
+        explicitly authors ``solve.scaling``; returns ``None`` when the
+        parameter is absent, blank, or unrecognised so the caller falls
+        back to the run-time ``--scaling`` / ``FLEXTOOL_SCALING``
+        override or the engine default (``full``).  Authoring case does
+        not matter.
+        """
+        raw = self.scaling.get(solve_name)
+        if raw is None:
+            return None
+        value = str(raw).strip().lower()
+        return value if value in (
+            "off", "solver_only", "basic", "full"
+        ) else None
 
     def benders_config_for(self, solve_name: str) -> tuple[int, float, float]:
         """Resolve ``(max_iter, tol, in_out_weight)`` for *solve_name*.

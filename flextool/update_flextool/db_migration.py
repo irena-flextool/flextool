@@ -1724,6 +1724,8 @@ def migrate_database(
                 _migrate_v62_benders_rename(db)
             elif next_version == 63:
                 _migrate_v63_add_in_out_weight(db)
+            elif next_version == 64:
+                _migrate_v64_add_solve_scaling(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3283,6 +3285,70 @@ def _migrate_v63_add_in_out_weight(db) -> None:
     _commit_step(db,
         "v63: added solve.benders_in_out_weight (in-out separation weight, "
         "default 0.0)."
+    )
+
+
+def _migrate_v64_add_solve_scaling(db) -> None:
+    """Add the ``solve.scaling`` autoscaler-mode knob (v63 -> v64).
+
+    Rationale
+    ---------
+    The numerical autoscaler mode was previously a run-time-only control
+    (``--scaling`` CLI flag / ``FLEXTOOL_SCALING`` env, resolved
+    globally, default ``full``).  This promotes it to a per-solve DB
+    parameter so a model can pin the mode that solves it correctly — in
+    particular ``basic`` (Layer 1 + Layer 3, no Layer 2) for models
+    whose Layer-2 physical-unit rescaling mis-solves (e.g. the H2
+    commodity-ladder trade model).  Precedence at run time:
+    ``--scaling`` / ``FLEXTOOL_SCALING`` (explicit operator override) >
+    ``solve.scaling`` (DB) > schema default ``full``.
+
+    Bound to a new ``scaling_modes`` value list mirroring the CLI's four
+    modes.  ``full`` is the default (unchanged behaviour for every
+    existing solve).  Grouped under ``solve_advanced`` when that group
+    exists, alongside ``solver`` / ``decomposition``.
+    """
+    add_value_list_manual(db, [
+        ["scaling_modes", "off"],
+        ["scaling_modes", "solver_only"],
+        ["scaling_modes", "basic"],
+        ["scaling_modes", "full"],
+    ])
+
+    default_val, default_type = to_database("full")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="scaling",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="scaling_modes",
+        description=(
+            "Numerical LP-autoscaler mode for this solve. 'full' (default) "
+            "runs Layer 1 (detection) + Layer 2 (per-quantity-type "
+            "column/row/cost rescaling) + Layer 3 (HiGHS user_*_scale). "
+            "'basic' drops Layer 2 (Layer 1 + Layer 3 only); 'solver_only' "
+            "leaves scaling to the solver; 'off' disables all scaling "
+            "including HiGHS-internal. Use 'basic' (or lower) for models "
+            "whose Layer-2 rescaling mis-solves. The run-time --scaling flag "
+            "/ FLEXTOOL_SCALING env override this per-solve value."
+        ),
+    )
+    has_solve_advanced = (
+        db.item(db.mapped_table("parameter_group"), name="solve_advanced")
+        is not None
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="scaling",
+            parameter_group_name="solve_advanced",
+        )
+
+    _commit_step(db,
+        "v64: added solve.scaling (autoscaler mode: off/solver_only/basic/"
+        "full, default full)."
     )
 
 

@@ -1097,6 +1097,34 @@
       ]
     ],
     [
+      "scaling_modes",
+      [
+        "Im9mZiI=",
+        "str"
+      ]
+    ],
+    [
+      "scaling_modes",
+      [
+        "InNvbHZlcl9vbmx5Ig==",
+        "str"
+      ]
+    ],
+    [
+      "scaling_modes",
+      [
+        "ImJhc2ljIg==",
+        "str"
+      ]
+    ],
+    [
+      "scaling_modes",
+      [
+        "ImZ1bGwi",
+        "str"
+      ]
+    ],
+    [
       "senses",
       [
         "ImVxdWFsIg==",
@@ -2425,7 +2453,7 @@
       "model",
       "version",
       [
-        "NjI=",
+        "NjQ=",
         "float"
       ],
       null,
@@ -3050,6 +3078,17 @@
     ],
     [
       "solve",
+      "benders_in_out_weight",
+      [
+        "MC4w",
+        "float"
+      ],
+      null,
+      "Benders decomposition: in-out separation stabilization weight (lambda) in f_sep = lambda*centre + (1-lambda)*f_out. 0.0 (default) = off (exact Benders); values in (0,1) turn it on, larger = more stabilization. Only used when decomposition = 'benders'. Default 0.0.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "benders_max_iter",
       [
         "NTAuMA==",
@@ -3200,6 +3239,17 @@
       ],
       null,
       "Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Should be smaller than the horizon",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "scaling",
+      [
+        "ImZ1bGwi",
+        "str"
+      ],
+      "scaling_modes",
+      "Numerical LP-autoscaler mode for this solve. 'full' (default) runs Layer 1 (detection) + Layer 2 (per-quantity-type column/row/cost rescaling) + Layer 3 (HiGHS user_*_scale). 'basic' drops Layer 2 (Layer 1 + Layer 3 only); 'solver_only' leaves scaling to the solver; 'off' disables all scaling including HiGHS-internal. Use 'basic' (or lower) for models whose Layer-2 rescaling mis-solves. The run-time --scaling flag / FLEXTOOL_SCALING env override this per-solve value.",
       "solve_advanced"
     ],
     [
@@ -5095,6 +5145,12 @@
     [
       "reserve__upDown__unit__node",
       "reliability",
+      "float",
+      0
+    ],
+    [
+      "solve",
+      "benders_in_out_weight",
       "float",
       0
     ],

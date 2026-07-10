@@ -1567,7 +1567,7 @@
       "model",
       "version",
       [
-        "62",
+        "64",
         "float"
       ],
       null,
@@ -2057,6 +2057,17 @@
     ],
     [
       "solve",
+      "benders_in_out_weight",
+      [
+        "0.0",
+        "float"
+      ],
+      null,
+      "Benders decomposition: in-out separation stabilization weight (lambda) in f_sep = lambda*centre + (1-lambda)*f_out. 0.0 (default) = off (exact Benders); values in (0,1) turn it on, larger = more stabilization. Only used when decomposition = 'benders'. Default 0.0.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "benders_max_iter",
       [
         "50.0",
@@ -2175,6 +2186,17 @@
       null,
       "(Optional) Timestamp from the timeline that is linked to the timeblockSet used. Starting point of the rolling. If this is not stated, it is assumed to be the first timestep",
       null
+    ],
+    [
+      "solve",
+      "scaling",
+      [
+        "\"full\"",
+        "str"
+      ],
+      "scaling_modes",
+      "Numerical LP-autoscaler mode for this solve. 'full' (default) runs Layer 1 (detection) + Layer 2 (per-quantity-type column/row/cost rescaling) + Layer 3 (HiGHS user_*_scale). 'basic' drops Layer 2 (Layer 1 + Layer 3 only); 'solver_only' leaves scaling to the solver; 'off' disables all scaling including HiGHS-internal. Use 'basic' (or lower) for models whose Layer-2 rescaling mis-solves. The run-time --scaling flag / FLEXTOOL_SCALING env override this per-solve value.",
+      "solve_advanced"
     ],
     [
       "solve",
@@ -3986,6 +4008,12 @@
     ],
     [
       "solve",
+      "benders_in_out_weight",
+      "float",
+      0
+    ],
+    [
+      "solve",
       "benders_max_iter",
       "float",
       0
@@ -5123,6 +5151,34 @@
       "results",
       [
         "\"summary_only\"",
+        "str"
+      ]
+    ],
+    [
+      "scaling_modes",
+      [
+        "\"off\"",
+        "str"
+      ]
+    ],
+    [
+      "scaling_modes",
+      [
+        "\"solver_only\"",
+        "str"
+      ]
+    ],
+    [
+      "scaling_modes",
+      [
+        "\"basic\"",
+        "str"
+      ]
+    ],
+    [
+      "scaling_modes",
+      [
+        "\"full\"",
         "str"
       ]
     ],
