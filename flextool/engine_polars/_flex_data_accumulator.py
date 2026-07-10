@@ -79,6 +79,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process__startup_method.csv",
     "node__inflow_method.csv",
     "node__storage_binding_method.csv",
+    "node__storage_nested_fix_method.csv",
     "commodity_node_co2.csv",
     "process__group_inside_group_nonSync.csv",
     "process_source_coeff_zero.csv",

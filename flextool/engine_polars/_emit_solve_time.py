@@ -102,6 +102,8 @@ def run(
     _ck("node_inflow_method")
     _mid.emit_node_storage_binding_method(input_dir, solve_data_dir, provider=provider)
     _ck("node_storage_binding_method")
+    _mid.emit_node_storage_nested_fix_method(input_dir, solve_data_dir, provider=provider)
+    _ck("node_storage_nested_fix_method")
     _mid.emit_process_group_inside_group_nonsync(input_dir, solve_data_dir, provider=provider)
     _ck("process_group_inside_group_nonsync")
     _mid.emit_process__sink_nonSync(input_dir, solve_data_dir, provider=provider)
