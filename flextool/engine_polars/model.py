@@ -1790,39 +1790,61 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 rhs_terms = {"target": rhs_param},
             )
 
-    # ─── node_storage_usage_fix_le (mod:2775-2800) ───────────────────────
+    # ─── node_storage_usage_fix_le (mod: storage_usage_fix, ~L2354) ──────
     # Storage-usage fix: the net energy drawn from the storage node n
-    # across the dispatch window must not exceed the storage-solve
-    # target usage handed off via ``p_fix_storage_usage``.
+    # over a fine PERIOD must not exceed the coarse-solve target usage
+    # summed over every coarse window overlapping that period.  This is a
+    # PER-PERIOD aggregate cap — NOT a per-terminal-window one.
     #
-    #   - Σ_{(p, source, n) ∈ pss, (d, t3) ∈ dt}
+    #   - Σ_{(p, source, n) ∈ pss, t3 ∈ period d}
     #         v_flow[p, source, n, d, t3] * unitsize * step_dur[d, t3]
-    #   + Σ_{(p, n, sink) ∈ pss_eff, (d, t3) ∈ dt}
+    #   + Σ_{(p, n, sink) ∈ pss_eff, t3 ∈ period d}
     #         (v_flow * unitsize * slope
     #          + (if min_load_efficiency) v_online * pdtProcess_section
     #                                       * unitsize) * step_dur
-    #   + Σ_{(p, n, sink) ∈ pss_noEff, (d, t3) ∈ dt}
+    #   + Σ_{(p, n, sink) ∈ pss_noEff, t3 ∈ period d}
     #         v_flow * unitsize * step_dur
-    #   ≤   Σ_{(n, d2, t2) ∈ ndt_fix_storage_usage,
-    #          (d, t3, t2) ∈ dtt_timeline_matching}
+    #   ≤   Σ_{(n, d2, t2) ∈ ndt_fix_storage_usage :
+    #          ∃ t3. (d, t3, t2) ∈ dtt_timeline_matching}
     #         p_fix_storage_usage[n, d2, t2]
     #
-    # for nodes n ∈ n_fix_storage_usage at the last (d, t) of each
-    # node's block, restricted to d ∈ period_last.
+    # for nodes n ∈ n_fix_storage_usage, one row per fine period d ∈
+    # period_last, anchored at that period's last (d, t) (nodeState_last_dt).
+    #
+    # SEMANTICS (bug fix — critique BLOCKER).  The reference model
+    # (flextool.mod ``s.t. storage_usage_fix``) sums the LHS flow over the
+    # WHOLE period d (``(d, t3) in dt``) and sums the RHS coarse usage over
+    # EVERY coarse window t2 for which ANY fine step t3 maps into period d
+    # (``exists{(d, t3, t2) in dtt_timeline_matching}``).  The previous
+    # engine port copied the fix_quantity RHS-build pattern verbatim: it
+    # joined ``dtt_timeline_matching`` on ``[d, t_upper]`` (pairing each
+    # coarse window with its specific fine step) and then
+    # ``nodeState_last_dt`` on ``[n, d, t]``, collapsing the RHS to only
+    # the ONE coarse window whose matched fine step is the period's
+    # terminal hour — while the LHS still aggregated flow over the entire
+    # roll.  For any fine roll spanning K>1 coarse windows (the entire
+    # seasonal mt_4h → hourly regime) this made the cap grossly too tight
+    # (whole-period LHS ≤ single-window RHS) → infeasibility/distortion.
+    #
+    # The fix restores the .mod's per-PERIOD aggregate: RHS sums over the
+    # DISTINCT coarse windows overlapping the period (``dtt_windows``
+    # drops the fine ``t`` before the join, so a window counts once no
+    # matter how many fine steps it holds), anchored onto the period's
+    # terminal row via a ``[n, d]`` join (not ``[n, d, t]``); and the LHS
+    # Sum leaves the ``d`` axis open (``over`` excludes ``d``) so each
+    # period is capped independently — matching fix_quantity/fix_price,
+    # which likewise follow the coarse trajectory per fine period.
     #
     # The LHS is the FULL legacy formula with efficiency corrections on
     # sink flows (slope, plus min_load_efficiency section term).  The
     # per-process sink/source flow-coefficient RATIO from the .mod
-    # (line 2786) is DEFERRED here, matching the engine's existing
-    # treatment of the same ratio in §5.2 var-cost (model.py:2742-2744):
-    # every current fixture has both coefficients = 1, so the ratio
-    # collapses to 1 and we follow the prevailing convention.  When a
-    # fixture exercises non-unit coefficients, both this constraint and
-    # §5.2 var-cost need the ratio wired in tandem.
-    #
-    # No fixture today exercises fix_storage_usage, so the populated
-    # constraint domain is empty everywhere; the LP machinery is wired
-    # for when B3's producer + B4-pre's loader populate the inputs.
+    # (``p_process_sink_coefficient * p_process_source_coefficient``) is
+    # DEFERRED here, matching the engine's existing treatment of the same
+    # ratio in §5.2 var-cost (model.py:2742-2744): every current fixture
+    # has both coefficients = 1, so the ratio collapses to 1 and we follow
+    # the prevailing convention.  When a fixture exercises non-unit
+    # coefficients, both this constraint and §5.2 var-cost need the ratio
+    # wired in tandem.
     if (has_proc
             and has_storage
             and d.n_fix_storage_usage is not None
@@ -1835,23 +1857,31 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             and d.period_last is not None
             and d.p_fix_storage_usage is not None
             and d.nodeState_last_dt is not None):
-        # RHS rows (n, d, t, value): sum p_fix_storage_usage[n, d2, t2]
-        # along (d2, d) ∈ period__branch and (d, t, t2) ∈
-        # dtt_timeline_matching, restricted to d ∈ period_last and
-        # n ∈ n_fix_storage_usage, pinned to nodeState_last_dt.  Mirror
-        # of the node_balance_fix_quantity_eq_lower RHS build.
+        # RHS rows (n, d, t, value): for each fine period d ∈ period_last,
+        # sum p_fix_storage_usage[n, d2, t2] over EVERY coarse window t2
+        # overlapping the period ((d2, d) ∈ period__branch and ∃ fine step
+        # with (d, ·, t2) ∈ dtt_timeline_matching), restricted to
+        # n ∈ n_fix_storage_usage, and pin the aggregate onto the period's
+        # terminal (d, t) anchor.  Unlike node_balance_fix_quantity_eq_lower
+        # (a point valuation that keeps the single terminal window), the
+        # coarse WINDOW dim is summed out here — a per-period throughput cap.
         fix_u_long = d.p_fix_storage_usage.frame.pipe(
             rename_to_axis, {"d": "d_upper", "t": "t_upper"}
         )
+        # Distinct coarse windows per fine period (the .mod's
+        # ``exists{(d, t3, t2) in dtt_timeline_matching}`` — a window
+        # counts once regardless of how many fine steps it holds).
+        dtt_windows = (d.dtt_timeline_matching
+                       .select("d", "t_upper").unique())
         rhs_rows = (d.n_fix_storage_usage
             .join(fix_u_long, on="n", how="inner")
             .join(d.period_branch, on="d_upper", how="inner")
-            .join(d.dtt_timeline_matching,
-                  left_on=["d", "t_upper"],
-                  right_on=["d", "t_upper"],
-                  how="inner")
+            .join(dtt_windows, on=["d", "t_upper"], how="inner")
             .join(d.period_last, on="d", how="inner")
-            .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
+            # Anchor onto the period's terminal (d, t) WITHOUT filtering
+            # windows by t — join on (n, d) only so every window in the
+            # period sums onto the single anchor row.
+            .join(d.nodeState_last_dt, on=["n", "d"], how="inner")
             .group_by(["n", "d", "t"])
             .agg(pl.col("value").sum())
             .select("n", "d", "t", "value"))
@@ -1859,10 +1889,11 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             cstr_over = rhs_rows.select("n", "d", "t").unique()
             rhs_param = Param(("n", "d", "t"), rhs_rows)
 
-            # ── Build LHS: composite flow sum, indexed only by n ──
-            # Each piece sums over (p, source, sink, d, t3) leaving the
-            # n dim open; the constraint's (n, d, t) ``over`` broadcasts
-            # the same per-n value onto the single anchor row.
+            # ── Build LHS: composite flow sum, indexed by (n, d) ──
+            # Each piece sums over (p, source, sink, t3) leaving the
+            # (n, d) dims open (the ``d`` axis is NOT summed out — the cap
+            # is per fine period); the constraint's (n, d, t) ``over``
+            # broadcasts the per-(n, d) value onto the period's anchor row.
             #
             # n-as-sink: every (p, source, n) row in process_source_sink.
             n_set = d.n_fix_storage_usage.select("n")
@@ -1893,14 +1924,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 lhs_terms["sink_flow"] = -Sum(
                     Where(v_flow * d.p_unitsize, sink_idx)
                     * d.p_step_duration,
-                    over=("p", "source", "sink", "d", "t"))
+                    over=("p", "source", "sink", "t"))
             # n-as-source (eff): add v_flow * unitsize * slope * step_dur.
             if (src_eff_idx is not None and src_eff_idx.height > 0
                     and d.p_slope is not None):
                 lhs_terms["source_eff"] = Sum(
                     Where(v_flow * d.p_unitsize * d.p_slope, src_eff_idx)
                     * d.p_step_duration,
-                    over=("p", "source", "sink", "d", "t"))
+                    over=("p", "source", "sink", "t"))
                 # min_load_efficiency section term (n-as-source side).
                 if has_minload_eff and d.p_section is not None:
                     section_idx = (src_eff_idx
@@ -1913,20 +1944,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                       * d.p_section * d.p_unitsize,
                                       section_idx)
                                 * d.p_step_duration,
-                                over=("p", "source", "sink", "d", "t"))
+                                over=("p", "source", "sink", "t"))
                         if has_online_int:
                             lhs_terms["source_section_int"] = Sum(
                                 Where(Where(v_online_int, d.process_min_load_eff)
                                       * d.p_section * d.p_unitsize,
                                       section_idx)
                                 * d.p_step_duration,
-                                over=("p", "source", "sink", "d", "t"))
+                                over=("p", "source", "sink", "t"))
             # n-as-source (noEff): add v_flow * unitsize * step_dur.
             if src_noEff_idx is not None and src_noEff_idx.height > 0:
                 lhs_terms["source_noEff"] = Sum(
                     Where(v_flow * d.p_unitsize, src_noEff_idx)
                     * d.p_step_duration,
-                    over=("p", "source", "sink", "d", "t"))
+                    over=("p", "source", "sink", "t"))
 
             if lhs_terms:
                 m.add_cstr(
