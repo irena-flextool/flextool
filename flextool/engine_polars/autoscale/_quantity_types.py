@@ -175,6 +175,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [factor] Efficiency of a unit. Constant or time.
     ('efficiency_at_min_load', 'unit'): QuantityType.FRACTION,
     # [e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.
+    ('energy_margin', 'node'): QuantityType.DIMENSIONLESS,
+    # [factor] Multiplier applied to this node's inflow in the investment solve only (ratio, consumed at preprocessing; 1 = off).
+    ('energy_margin_method', 'node'): QuantityType.DIMENSIONLESS,
+    # Method choice {none, inflow_multiplier} selecting whether energy_margin is applied.
     ('existing', 'connection'): QuantityType.POWER,
     # [MW] Existing capacity. Constant or Period
     ('existing', 'node'): QuantityType.ENERGY,

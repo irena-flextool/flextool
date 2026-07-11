@@ -252,6 +252,16 @@ def run(
     # ── L8 batch 54 ───────────────────────────────────────────────────
     _period.emit_pdtNodeInflow(input_dir, solve_data_dir, provider=provider)
     _ck("pdtNodeInflow")
+    # ── energy_margin: invest-only, positive-inflow demand margin ─────
+    # Multiplies matching nodes' pdtNodeInflow rows by their margin ONLY
+    # in the invest solve; runs BEFORE the positive/negative split (batch
+    # 58) so that split inherits the margin.  Early-returns (byte-identical
+    # to today) for dispatch solves or when no node sets a manual margin.
+    from flextool.engine_polars import _emit_energy_margin as _energy_margin
+    _energy_margin.emit_energy_margin_inflow(
+        state, solve_name, input_dir, solve_data_dir, provider=provider,
+    )
+    _ck("energy_margin_inflow")
     # ── L0 batch 55 ───────────────────────────────────────────────────
     _period.emit_pdtProfile(input_dir, solve_data_dir, provider=provider)
     _ck("pdtProfile")

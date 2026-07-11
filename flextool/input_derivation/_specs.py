@@ -195,6 +195,20 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/node__inflow_method.csv",
     },
     {
+        "cl_pars": [("node", "energy_margin_method")],
+        "header": "node,energy_margin_method",
+        "filename": "input/node__energy_margin_method.csv",
+    },
+    {
+        # Scalar-float only: a period-map energy_margin is a documented
+        # FUTURE extension (route through _param_shapes) and must NOT be
+        # silently mis-ingested by this scalar spec.
+        "cl_pars": [("node", "energy_margin")],
+        "header": "node,energy_margin",
+        "filename": "input/energy_margin.csv",
+        "filter_in_type": ["float"],
+    },
+    {
         "cl_pars": [("node__profile", "profile_method")],
         "header": "node,profile,profile_method",
         "filename": "input/node__profile__profile_method.csv",
