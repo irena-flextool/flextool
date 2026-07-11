@@ -147,6 +147,8 @@ Input data is set with the following parameters:
 - `inflow` - [MWh] Inflow into the node (negative is outflow). Constant or time series.
 - `annual_flow` - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.
 - `peak_inflow` - [MWh] Highest flow for scaling the inflow. Used only with `inflow_method = scale_to_annual_and_peak_flow`.
+- `energy_margin_method` - How the node's investment-stage energy margin is applied. Options: *none* (default, off, no scaling) and *inflow_multiplier* (multiply this node's inflow by `energy_margin` in the investment solve only). See [How to add an energy margin for investment adequacy](how_to.md#how-to-add-an-energy-margin-for-investment-adequacy).
+- `energy_margin` - [factor] Multiplier applied to the node's inflow in the investment solve only, when `energy_margin_method = inflow_multiplier`. Default 1 (no effect). A value of 1.1 makes the investment stage build for ~10% more demand, so the built capacity meets the true demand under the true (lower) annual VRE availability. Dispatch solves always see the true, un-margined inflow. Constant or period.
 - `existing` - [MWh] Existing storage capacity (requires `node_type=storage`). Constant or period.
 - `invest_cost` - [CUR/kWh] Investment cost for new storage capacity. Constant or period.
 - `salvage_value` - [CUR/kWh] Salvage value of the storage. Constant or period.
@@ -418,8 +420,8 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 - `has_non_synchronous` - A flag whether the group of nodes has the non-synchronous share constraint active.
 - `non_synchronous_limit` - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.
 - `penalty_non_synchronous` - [CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.
-- `has_capacity_margin` - A flag whether the group of nodes has a capacity margin constraint in the investment mode.
-- `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.
+- `capacity_margin_method` - How the group of nodes enforces a capacity margin constraint in the investment mode. Options: *none* (default, no constraint) and *manual* (require the group to have `capacity_margin` MW of capacity above the peak net load).
+- `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode when `capacity_margin_method = manual`. Constant or period.
 - `penalty_capacity_margin` - [CUR/kW] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Constant or period.
 - `share_loss_of_load` - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted
 

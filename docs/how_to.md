@@ -1038,6 +1038,21 @@ The sample one solve invest also invests too little, as the largest demand-suppl
 
 The split sample investment run produces in this case similar results as the one solve sample run. This is not always the case! Here the only difference between the periods was linearly increased demand.
 
+### How to add an energy margin for investment adequacy
+
+In a nested solve the investment stage is optimised over representative periods and the full-year dispatch is solved separately. The representative periods can be systematically optimistic about variable-renewable (VRE) availability: their average VRE availability tends to exceed the true annual average. The investment stage then under-builds, and the full-year dispatch has to cover the shortfall with large forced unserved-energy (upward-slack) penalties.
+
+The `energy_margin` lever lets you de-rate a node's energy balance in the investment stage so that it builds enough capacity to meet the true demand under the true (lower) annual VRE availability. It is set per node:
+
+- `energy_margin_method` - *none* (default, off) or *inflow_multiplier*.
+- `energy_margin` - the factor (default 1.0). When `energy_margin_method = inflow_multiplier`, the node's demand (inflow) is multiplied by this factor **in the investment solve only** — the dispatch solves always see the true demand. A value of 1.1 makes the investment stage build for about 10% more demand, so the real capacity is enough to meet the real demand under the true annual VRE. A value of 1.0 has no effect.
+
+For example, to build about 10% more into a demand node, set `energy_margin_method = inflow_multiplier` and `energy_margin = 1.1` on that node.
+
+The `energy_margin` is a per-node lever for regions whose adequacy gap is driven by VRE optimism and can be closed by building more of an investable response (more VRE, storage, or imports). It cannot help a region whose VRE collapses to near zero during the stress period when the only investable response is more VRE that serves the same demand — those regions need firm capacity or imports instead.
+
+It is complementary to the `capacity_margin_method` (see the [group reference](reference.md#limits-for-nodes)): `capacity_margin_method` targets peak-capacity adequacy (headroom above the peak net load), whereas `energy_margin` targets sustained-energy adequacy across the year.
+
 ### Peak memory in long rolling and nested chains
 
 The cascade keeps several solves' worth of state alive in RAM at once — the just-solved LP, the warm-start shell for the next roll, and the parked Provider state from earlier sub-solves. On continental-scale rolling or nested chains this can push peak RSS into the 10-30 GB range. Two CLI knobs help when peak RSS is the bottleneck rather than wall time:
