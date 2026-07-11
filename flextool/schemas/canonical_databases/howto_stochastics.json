@@ -998,6 +998,17 @@
     ],
     [
       "group",
+      "capacity_margin_method",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "capacity_margin_methods",
+      "Whether the node group enforces a capacity margin in the investment mode. 'none' (default) = no constraint. 'manual' requires the group to have 'capacity_margin' MW of capacity above the peak net load. Replaces the former has_capacity_margin yes/no flag; reserved for a future 'automatic' mode.",
+      "investment"
+    ],
+    [
+      "group",
       "co2_max_period",
       null,
       null,
@@ -1054,14 +1065,6 @@
       "decomposition_methods",
       "Decomposition strategy to apply to this group. Currently supported: 'none' (no decomposition — default), 'benders_regional' (group is solved as an independent region in the Benders master/subproblem decomposition, with shared-commodity trade coupling handled by the master).",
       "solve_advanced"
-    ],
-    [
-      "group",
-      "has_capacity_margin",
-      null,
-      "yes_no",
-      "A flag whether the group of nodes has a capacity margin constraint in the investment mode.",
-      "investment"
     ],
     [
       "group",
@@ -1307,7 +1310,7 @@
       "model",
       "version",
       [
-        "64",
+        "65",
         "float"
       ],
       null,
@@ -1382,6 +1385,28 @@
       ],
       null,
       "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "investment"
+    ],
+    [
+      "node",
+      "energy_margin",
+      [
+        "1.0",
+        "float"
+      ],
+      null,
+      "[factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method = 'inflow_multiplier'. Offsets representative-period VRE optimism (rep-period average VRE availability exceeds the annual average). 1 = off. e.g. 1.1 builds ~10% more capacity to serve the true annual demand under the true (lower) annual VRE. Constant or period.",
+      "investment"
+    ],
+    [
+      "node",
+      "energy_margin_method",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "energy_margin_methods",
+      "How the node's investment-stage energy margin is applied. 'none' (default) = off, no scaling. 'inflow_multiplier' multiplies this node's inflow by 'energy_margin' in the solve that carries investment periods only (dispatch solves are unaffected), to offset representative-period VRE optimism that would otherwise cause underinvestment. Reserved for a future 'inflow_adder' mode.",
       "investment"
     ],
     [
@@ -3073,12 +3098,6 @@
     ],
     [
       "group",
-      "has_capacity_margin",
-      "str",
-      0
-    ],
-    [
-      "group",
       "has_inertia",
       "str",
       0
@@ -4346,6 +4365,20 @@
   ],
   "parameter_value_lists": [
     [
+      "capacity_margin_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "capacity_margin_methods",
+      [
+        "\"manual\"",
+        "str"
+      ]
+    ],
+    [
       "co2_methods",
       [
         "\"none\"",
@@ -4447,6 +4480,20 @@
       "decomposition_schemes",
       [
         "\"benders\"",
+        "str"
+      ]
+    ],
+    [
+      "energy_margin_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "energy_margin_methods",
+      [
+        "\"inflow_multiplier\"",
         "str"
       ]
     ],

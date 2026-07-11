@@ -1726,6 +1726,8 @@ def migrate_database(
                 _migrate_v63_add_in_out_weight(db)
             elif next_version == 64:
                 _migrate_v64_add_solve_scaling(db)
+            elif next_version == 65:
+                _migrate_v65_energy_and_capacity_margin_methods(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3349,6 +3351,149 @@ def _migrate_v64_add_solve_scaling(db) -> None:
     _commit_step(db,
         "v64: added solve.scaling (autoscaler mode: off/solver_only/basic/"
         "full, default full)."
+    )
+
+
+def _migrate_v65_energy_and_capacity_margin_methods(db) -> None:
+    """Add ``node.energy_margin`` + method knobs and convert
+    ``group.has_capacity_margin`` to ``group.capacity_margin_method`` (v64 -> v65).
+
+    Two related additions, kept in one migration to minimise version churn:
+
+    1. **``node.energy_margin`` (+ ``node.energy_margin_method``).** A new
+       investment-stage lever: multiply a node's inflow (demand) in the
+       *investment* solve only, to offset representative-period VRE
+       optimism (the rep-period mean VRE availability exceeds the true
+       annual mean, so the invest stage underbuilds and the full-year
+       dispatch eats an unserved-energy penalty).  ``energy_margin_method``
+       selects behaviour: ``none`` (default, off, byte-identical) or
+       ``inflow_multiplier`` (apply the ``energy_margin`` factor).  The
+       enum leaves room for a future ``inflow_adder`` (additive margin)
+       without a further schema change.
+
+    2. **``group.capacity_margin_method`` replaces ``has_capacity_margin``.**
+       The former yes/no flag becomes a method enum for consistency with
+       (1) and to leave room for a future ``automatic`` peak-margin sizing.
+       ``has_capacity_margin = yes`` -> ``capacity_margin_method = manual``;
+       ``no``/absent -> ``none`` (the default, so no row needed).  The old
+       flag definition is then removed.
+    """
+    # --- 1. energy_margin_method value list + node params -------------
+    add_value_list_manual(db, [
+        ["energy_margin_methods", "none"],
+        ["energy_margin_methods", "inflow_multiplier"],
+    ])
+
+    em_default_val, em_default_type = to_database("none")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="node",
+        name="energy_margin_method",
+        default_value=em_default_val,
+        default_type=em_default_type,
+        parameter_value_list_name="energy_margin_methods",
+        description=(
+            "How the node's investment-stage energy margin is applied. "
+            "'none' (default) = off, no scaling. 'inflow_multiplier' "
+            "multiplies this node's inflow by 'energy_margin' in the solve "
+            "that carries investment periods only (dispatch solves are "
+            "unaffected), to offset representative-period VRE optimism that "
+            "would otherwise cause underinvestment. Reserved for a future "
+            "'inflow_adder' mode."
+        ),
+    )
+
+    em_val, em_type = to_database(1.0)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="node",
+        name="energy_margin",
+        default_value=em_val,
+        default_type=em_type,
+        description=(
+            "[factor] Multiplier applied to this node's inflow in the "
+            "investment solve only, when energy_margin_method = "
+            "'inflow_multiplier'. "
+            "Offsets representative-period VRE optimism (rep-period average "
+            "VRE availability exceeds the annual average). 1 = off. e.g. "
+            "1.1 builds ~10% more capacity to serve the true annual demand "
+            "under the true (lower) annual VRE. Constant or period."
+        ),
+    )
+
+    # --- 2. capacity_margin_method value list + group param ----------
+    add_value_list_manual(db, [
+        ["capacity_margin_methods", "none"],
+        ["capacity_margin_methods", "manual"],
+    ])
+
+    cm_default_val, cm_default_type = to_database("none")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="capacity_margin_method",
+        default_value=cm_default_val,
+        default_type=cm_default_type,
+        parameter_value_list_name="capacity_margin_methods",
+        description=(
+            "Whether the node group enforces a capacity margin in the "
+            "investment mode. 'none' (default) = no constraint. 'manual' "
+            "requires the group to have 'capacity_margin' MW of capacity "
+            "above the peak net load. Replaces the former has_capacity_margin "
+            "yes/no flag; reserved for a future 'automatic' mode."
+        ),
+    )
+
+    # Assign both new params to the 'investment' parameter group when it
+    # exists (mirrors capacity_margin's grouping).
+    has_investment_group = bool(
+        db.get_item("parameter_group", name="investment")
+    )
+    if has_investment_group:
+        for cls, pname in (
+            ("node", "energy_margin_method"),
+            ("node", "energy_margin"),
+            ("group", "capacity_margin_method"),
+        ):
+            db.add_update_item(
+                "parameter_definition",
+                entity_class_name=cls,
+                name=pname,
+                parameter_group_name="investment",
+            )
+
+    # --- 3. convert has_capacity_margin values -> capacity_margin_method
+    for pv in list(db.find_parameter_values(
+        entity_class_name="group",
+        parameter_definition_name="has_capacity_margin",
+    )):
+        parsed = pv.get("parsed_value")
+        if parsed is None or str(parsed).strip().lower() != "yes":
+            # 'no'/absent maps to the default 'none' — no row needed.
+            continue
+        new_val, new_type = to_database("manual")
+        db.add_update_item(
+            "parameter_value",
+            entity_class_name="group",
+            entity_byname=pv["entity_byname"],
+            parameter_definition_name="capacity_margin_method",
+            alternative_name=pv["alternative_name"],
+            value=new_val,
+            type=new_type,
+        )
+
+    # --- 4. drop the old has_capacity_margin definition --------------
+    has_cm_def = db.item(
+        db.mapped_table("parameter_definition"),
+        entity_class_name="group", name="has_capacity_margin",
+    )
+    if has_cm_def is not None:
+        db.remove_parameter_definition(id=has_cm_def["id"])
+
+    _commit_step(db,
+        "v65: added node.energy_margin (+ energy_margin_method) and "
+        "converted group.has_capacity_margin -> capacity_margin_method "
+        "(none/manual)."
     )
 
 
