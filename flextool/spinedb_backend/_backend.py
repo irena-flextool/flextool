@@ -91,10 +91,11 @@ _STRUCTURAL_PARAM_NAMES: frozenset[str] = frozenset({
     "storage_nested_fix_method", "storage_solve_horizon_method",
     "storage_start_end_method", "profile_method", "reserve_method",
     "co2_method", "loss_share_type", "price_method",
+    "capacity_margin_method",
     "solver", "solve_mode",
     "solver_precommand", "solver_arguments",
     # structural flags / references
-    "is_DC", "sense", "node_type", "has_capacity_margin",
+    "is_DC", "sense", "node_type",
     "has_inertia", "has_non_synchronous", "include_stochastics",
     "print_dispatch", "print_indicators",
     "flow_aggregator",

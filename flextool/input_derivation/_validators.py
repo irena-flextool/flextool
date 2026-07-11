@@ -85,15 +85,15 @@ def validate_timeline_timestep_duration(db) -> None:
 
 def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
     """Storage nodes are excluded from the capacity-margin constraint.
-    Raise if any has_capacity_margin group contains *only* storage
-    nodes (constraint would have no valid members); warn if a mix is
-    present.
+    Raise if any capacity_margin_method='manual' group contains *only*
+    storage nodes (constraint would have no valid members); warn if a
+    mix is present.
     """
     capacity_margin_groups: dict[str, list[str]] = {}
     for pv in db.find_parameter_values(
-        entity_class_name="group", parameter_definition_name="has_capacity_margin",
+        entity_class_name="group", parameter_definition_name="capacity_margin_method",
     ):
-        if pv["parsed_value"] == "yes":
+        if pv["parsed_value"] == "manual":
             capacity_margin_groups[pv["entity_byname"][0]] = []
     if not capacity_margin_groups:
         return

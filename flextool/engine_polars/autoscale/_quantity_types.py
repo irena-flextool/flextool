@@ -195,6 +195,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Used with group_unit_node or group_connection_node to combine the flows when producing the dispatch output of a node group. Renamed from out...
     ('has_capacity_margin', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has a capacity margin constraint in the investment mode.
+    ('capacity_margin_method', 'group'): QuantityType.DIMENSIONLESS,
+    # Method for the group's capacity-margin constraint (none|manual).
     ('has_inertia', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has an inertia constraint active.
     ('has_non_synchronous', 'group'): QuantityType.DIMENSIONLESS,

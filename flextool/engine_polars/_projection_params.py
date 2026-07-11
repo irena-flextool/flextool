@@ -1287,8 +1287,23 @@ def _group_yes(source: "InputSource", parameter_name: str) -> pl.DataFrame:
               .collect())
 
 
+def _group_param_equals(
+    source: "InputSource", parameter_name: str, match: str
+) -> pl.DataFrame:
+    """Distinct groups where ``parameter_name`` equals ``match``.  Schema: ``[g]``."""
+    df = _try_param(source, "group", parameter_name)
+    if df is None:
+        return _empty({"g": pl.Utf8})
+    return (df.lazy()
+              .filter(pl.col("value") == match)
+              .select(alias_to_axis("name", "g"))
+              .unique()
+              .sort("g")
+              .collect())
+
+
 def groupCapacityMargin(source: "InputSource") -> pl.DataFrame:
-    return _group_yes(source, "has_capacity_margin")
+    return _group_param_equals(source, "capacity_margin_method", "manual")
 
 
 def groupInertia(source: "InputSource") -> pl.DataFrame:

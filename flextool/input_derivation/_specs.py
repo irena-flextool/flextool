@@ -123,10 +123,10 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/group__loss_share_type.csv",
     },
     {
-        "cl_pars": [("group", "has_capacity_margin")],
+        "cl_pars": [("group", "capacity_margin_method")],
         "header": "groupCapacityMargin",
         "filename": "input/groupCapacityMargin.csv",
-        "filter_in_value": "yes",
+        "filter_in_value": "manual",
         "no_value": True,
     },
     {
