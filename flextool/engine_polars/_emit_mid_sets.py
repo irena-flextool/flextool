@@ -600,6 +600,45 @@ def emit_node_storage_binding_method(input_dir: Path, solve_data_dir: Path,
           derive_node_storage_binding_method(input_dir, provider=provider))
 
 
+def derive_node_storage_nested_fix_method(
+    input_dir: Path, *, provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Explicit node→method rows for the nested-solve storage handoff.
+
+    Reads ``input/node__storage_nested_fix_method.csv`` (cols
+    ``node, storage_nested_fix_method`` from the generic
+    ``_PARAMETER_SPECS`` emit) and renames the value column to the
+    ``method`` contract every solve-time consumer expects
+    (``_load_handoff_aux_pair`` in ``input.py`` and the
+    ``build_handoff_from_solution`` producer guards, which all check for
+    a column literally named ``method``).  This is the crux deviation
+    from the sibling ``derive_node_storage_binding_method``, whose
+    consumer reads positionally and so tolerates the value column's name.
+
+    Unlike the sibling this emits ONLY the explicit rows (no per-node
+    ``fix_nothing`` fallback): absence == ``fix_nothing`` == inert, and
+    every downstream consumer filters ``method == 'fix_<x>'``, so
+    unlisted nodes need no row.  The frame may be empty (header only) for
+    models with no nested-fix node; ``_emit`` still materialises it so
+    the coverage manifest is satisfied and the loader's
+    ``height == 0 -> None`` short-circuit keeps such models unchanged.
+    """
+    explicit = _read_csv(
+        input_dir / "node__storage_nested_fix_method.csv",
+        ["node", "storage_nested_fix_method"], provider=provider,
+    )
+    explicit = _drop_blank_rows(explicit, ["node", "storage_nested_fix_method"])
+    return explicit.rename({"storage_nested_fix_method": "method"})
+
+
+def emit_node_storage_nested_fix_method(input_dir: Path, solve_data_dir: Path,
+                                        *, provider) -> None:
+    """Emit ``node_storage_nested_fix_method`` to the Provider."""
+    del solve_data_dir
+    _emit(provider, "solve_data/node__storage_nested_fix_method.csv",
+          derive_node_storage_nested_fix_method(input_dir, provider=provider))
+
+
 # ===========================================================================
 # Family 11 — invest_total_sets (legacy: preprocessing/invest_total_sets.py)
 # ===========================================================================

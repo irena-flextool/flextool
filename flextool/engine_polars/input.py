@@ -6037,12 +6037,25 @@ def build_handoff_from_solution(
     # dual of ``nodeBalance_eq[n, d, t]`` and normalize:
     #
     #   p_fix_storage_price[n, d, t]
-    #     = -dual / p_inflation_op[d]
+    #     = +dual / p_inflation_op[d]
     #              * p_period_share[d]
     #              / scale_the_objective
     #
-    # Mirrors v3.32.0 ``write_fix_storage_price`` (handoff_writers.py
-    # :594-691) — same minus sign / same factor product.
+    # SIGN (bug fix — critique BLOCKER).  The reference AMPL model
+    # (flextool.mod ~L3827) writes ``-nodeBalance_eq[...].dual / ...``
+    # because GLPK/AMPL returns the equality-balance dual with the
+    # OPPOSITE sign to HiGHS.  polar_high's ``constraint_dual`` returns
+    # the HiGHS shadow price ∂obj/∂rhs directly, so for a storage node
+    # whose marginal energy value (water value) is +C the dual is +C
+    # (verified empirically).  The child objective's §10.1 reference-
+    # price term is a REVENUE term (``obj -= p_ref * v_state * ...``), so
+    # a high coarse water value must yield a POSITIVE reference price to
+    # reward keeping the child's terminal storage full.  Porting the
+    # AMPL ``-dual`` verbatim inverted this (negative price → the child
+    # was penalised for holding storage), so we take ``+dual`` here to
+    # match the HiGHS dual sign.  The legacy ``write_fix_storage_price``
+    # (handoff_writers.py) is fed an AMPL-convention dual and is not on
+    # the native solve path, so it is unchanged.
     # ``scale_the_objective`` comes from
     # ``solve_data/scale_the_objective.csv`` (emitted by the native
     # input writer; defaults to 1.0 when absent/unreadable).  This
@@ -6132,7 +6145,7 @@ def build_handoff_from_solution(
                     )
                     .with_columns(
                         p_fix_storage_price=(
-                            -pl.col("dual") / pl.col("infl")
+                            pl.col("dual") / pl.col("infl")
                             * pl.col("share") / pl.lit(scale_val)
                         ),
                     )
