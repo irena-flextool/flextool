@@ -1,26 +1,32 @@
-"""energy_margin — invest-only, positive-inflow demand margin emitter.
+"""energy_margin — invest-only, negative-inflow demand margin emitter.
 
 Runs per-solve from ``_emit_solve_time.run`` immediately AFTER
 ``emit_pdtNodeInflow`` (batch 54) and BEFORE the positive/negative inflow
 split (batch 58), so that split inherits the margin.
 
+FlexTool sign convention: DEMAND is NEGATIVE inflow (the exogenous
+outflow / ``p_negative_inflow`` term); SUPPLY / generation is POSITIVE
+inflow.  The energy_margin feature inflates demand in the invest solve, so
+it scales the negative (demand) rows.
+
 What it does
 ------------
-For a node with ``energy_margin_method == "manual"`` and an effective
+For a node with ``energy_margin_method == "inflow_multiplier"`` and an effective
 ``energy_margin`` factor ``!= 1.0``, multiply that node's ``pdtNodeInflow``
 rows by the factor — but ONLY:
 
 * in the solve that carries investment periods
   (``bool(state.solve.invest_periods.get(solve_name))``); and
-* on POSITIVE (demand) inflow rows (``value > 0``) — a ``> 1`` factor must
-  never scale a negative/zero net-inflow (generation) row.
+* on NEGATIVE (demand) inflow rows (``value < 0``) — a ``> 1`` factor makes
+  the demand row MORE negative (larger demand) and must never scale a
+  positive/zero (supply / net-zero) row.
 
 The dispatch solves see the true (un-margined) demand.
 
 Early-return byte-parity contract
 ----------------------------------
 If the solve is NOT an invest solve, OR no node has
-``energy_margin_method == "manual"`` with an effective factor ``!= 1.0``,
+``energy_margin_method == "inflow_multiplier"`` with an effective factor ``!= 1.0``,
 the emitter returns WITHOUT touching the provider — the batch-54
 ``pdtNodeInflow`` frame stands untouched, so the default (nobody sets a
 margin) is byte-identical to today.
@@ -56,7 +62,7 @@ def emit_energy_margin_inflow(
     *,
     provider,
 ) -> None:
-    """Apply the invest-only, positive-only energy_margin to pdtNodeInflow.
+    """Apply the invest-only, demand-only energy_margin to pdtNodeInflow.
 
     See the module docstring for the full contract.  A missing/empty
     method or value frame yields no manual nodes ⇒ early return.
@@ -74,7 +80,7 @@ def emit_energy_margin_inflow(
     #    entries whose margin == 1.0 (a no-op).
     manual: dict[str, float] = {}
     for node, method in method_for_node.items():
-        if method != "manual":
+        if method != "inflow_multiplier":
             continue
         margin = margin_for_node.get(node, 1.0)
         if margin == 1.0:
@@ -94,11 +100,11 @@ def emit_energy_margin_inflow(
     if df is None or df.height == 0:
         return
 
-    # 5. Multiply matching nodes' POSITIVE-value rows by their margin; leave
-    #    every other row (other nodes, and negative/zero rows) verbatim.
-    #    Parse value → float, join the per-node margin (1.0 for non-manual),
-    #    render the scaled float via repr, and select it only where the row
-    #    is a manual node AND value > 0.
+    # 5. Multiply matching nodes' NEGATIVE-value (demand) rows by their
+    #    margin; leave every other row (other nodes, and positive/zero supply
+    #    rows) verbatim.  Parse value → float, join the per-node margin (1.0
+    #    for non-manual), render the scaled float via repr, and select it only
+    #    where the row is a manual node AND value < 0.
     work = df.with_columns(
         pl.col("value").cast(pl.Float64).alias("__vf"),
         pl.col("node")
@@ -108,7 +114,7 @@ def emit_energy_margin_inflow(
     scaled_str = _render_value_column(work["__vf"] * work["__margin"])
     work = work.with_columns(scaled_str.alias("__scaled"))
     new_frame = work.with_columns(
-        pl.when((pl.col("__margin") != 1.0) & (pl.col("__vf") > 0.0))
+        pl.when((pl.col("__margin") != 1.0) & (pl.col("__vf") < 0.0))
         .then(pl.col("__scaled"))
         .otherwise(pl.col("value"))
         .alias("value"),
