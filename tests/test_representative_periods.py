@@ -184,7 +184,7 @@ class TestReadTimeSeriesScalarFiltering:
 
         with DatabaseMapping(url) as db:
             db.fetch_all("parameter_value")
-            profiles, inflows = _read_time_series(db)
+            profiles, inflows, demand_scalars = _read_time_series(db)
 
         # The Map-valued entries survive as list-of-tuple time series.
         assert "timeseries_inflow_node" in inflows, (
@@ -199,6 +199,13 @@ class TestReadTimeSeriesScalarFiltering:
             f"Scalar inflow leaked through; would crash _build_clustering_matrix. "
             f"Got: {inflows!r}"
         )
+
+        # The scalar inflow is instead collected as a demand level (coerced to
+        # float) for force-include's per-node demand weighting.
+        assert demand_scalars.get("scalar_demand_node") == -1500.0, (
+            f"Scalar demand level not collected. Got: {demand_scalars!r}"
+        )
+        assert "timeseries_inflow_node" not in demand_scalars
 
 
 # ---------------------------------------------------------------------------

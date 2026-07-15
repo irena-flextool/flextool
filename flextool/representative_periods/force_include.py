@@ -84,6 +84,64 @@ def _normalize(term: np.ndarray) -> np.ndarray:
     return term / scale
 
 
+def _weighted_vg_term(
+    profiles: dict[str, list[tuple[str, float]]],
+    timestep_keys: list[str],
+    region_profiles: dict[str, list[str]],
+    region_demand: dict[str, float],
+    n_hours: int,
+) -> np.ndarray | None:
+    """Node-group demand-weighted VG-shortfall term (design §2.0).
+
+    Implements ``vg_term_h = Σ_r D_r · mean_{p ∈ region r}(1 - avail_{p,h})`` —
+    the mean shortfall *within* each region, then a ``D_r``-weighted *sum*
+    across regions (NOT a flat weighted mean over all profiles). This up-weights
+    the shortfall of high-demand regions, which is what makes a coincident
+    trough in the big importers dominate the argmax.
+
+    Only profiles that (a) map to one of the named regions and (b) fully cover
+    the horizon contribute. Returns ``None`` (caller falls back to the
+    unweighted term with a warning) when no profile maps to a positive-``D_r``
+    region — i.e. the weighting carries no information.
+    """
+    vg_term = np.zeros(n_hours, dtype=np.float64)
+    used_profiles = 0
+    total_mapped = 0
+    for region, profile_names in region_profiles.items():
+        d_r = float(region_demand.get(region, 0.0))
+        # Stack the fully-covering profiles of this region.
+        region_series = {
+            name: profiles[name] for name in profile_names if name in profiles
+        }
+        total_mapped += len(region_series)
+        avail = _series_matrix(region_series, timestep_keys)
+        if avail is None:
+            continue
+        if d_r <= 0.0:
+            # A named region that owns profiles but has no scalar demand: warn,
+            # it contributes nothing to the weighted sum.
+            print(
+                f"  Force-include: region '{region}' owns "
+                f"{avail.shape[0]} profile(s) but D_r == 0 — it does not "
+                f"weight the net-load signal."
+            )
+            continue
+        vg_term += d_r * (1.0 - avail.mean(axis=0))
+        used_profiles += avail.shape[0]
+
+    if used_profiles == 0:
+        return None
+
+    n_profiles = sum(1 for _ in profiles)
+    unmapped = n_profiles - total_mapped
+    if unmapped > 0:
+        print(
+            f"  Force-include: {unmapped} profile(s) not mapped to any named "
+            f"region group — excluded from the demand-weighted VG term."
+        )
+    return vg_term
+
+
 def build_netload_hourly(
     profiles: dict[str, list[tuple[str, float]]],
     inflows: dict[str, list[tuple[str, float]]],
@@ -91,23 +149,35 @@ def build_netload_hourly(
     timestep_keys: list[str],
     *,
     vg_weight: float,
+    region_profiles: dict[str, list[str]] | None = None,
+    region_demand: dict[str, float] | None = None,
 ) -> np.ndarray:
     """Build the system-coincident net-load signal, one value per timestep.
 
     Implements the single-knob system aggregate of the net-load formula in
-    ``rp_force_include_build_decisions.md``. Because we ship system scope only
-    (no per-region demand weights ``D_r``, which would need forbidden name
-    parsing), the two per-region terms collapse to system aggregates:
+    ``rp_force_include_build_decisions.md``. There are two weighting modes for
+    the VG-shortfall term, selected by whether ``region_profiles`` /
+    ``region_demand`` are supplied:
 
-    * **VG-shortfall term** (time-varying): the mean over *all* profile series
-      of ``1 - availability_h`` (availability is 0-1). High when VRE is low
-      system-wide.
-    * **Inflow-demand term**: system net demand at hour ``h``,
-      ``Σ|demand_scalars| - Σ_nodes inflow_h`` over the time-varying inflow
-      nodes. The scalar sum is a constant demand *level* (demand is negative
-      inflow, so each scalar contributes ``+|value|``); the time-varying part
-      enters with a minus sign so that a more-negative (larger-demand) inflow
-      raises the term and a positive (supply) inflow lowers it.
+    * **Unweighted (default)** — the mean over *all* profile series of
+      ``1 - availability_h`` (availability is 0-1). High when VRE is low
+      system-wide. This is the byte-parity path.
+    * **Node-group demand-weighted** — when both ``region_profiles`` and
+      ``region_demand`` are given, ``vg_term_h = Σ_r D_r · mean_{p ∈ r}(1 -
+      avail_{p,h})`` (see :func:`_weighted_vg_term`): the within-region mean
+      shortfall, ``D_r``-weighted and *summed* into one coincident signal. This
+      up-weights high-demand regions so a coincident trough in the big
+      importers dominates. Falls back to the unweighted term (with a warning)
+      when no profile maps to a positive-``D_r`` region.
+
+    The inflow-demand term is unchanged in both modes: system net demand at
+    hour ``h``, ``Σ|demand_scalars| - Σ_nodes inflow_h`` over the time-varying
+    inflow nodes. The scalar sum is a constant demand *level* (demand is
+    negative inflow, so each scalar contributes ``+|value|``); the time-varying
+    part enters with a minus sign so that a more-negative (larger-demand)
+    inflow raises the term and a positive (supply) inflow lowers it. It is
+    already in demand/energy units, so only the dimensionless VG availability
+    term needs ``D_r`` scaling.
 
     Each term is normalised by its own mean-absolute value (see
     :func:`_normalize`) so they are comparably scaled, then blended:
@@ -129,18 +199,32 @@ def build_netload_hourly(
         timestep_keys: Ordered timestep keys defining the horizon.
         vg_weight: Convex blend weight in [0, 1] on the VG term; the inflow
             term gets ``1 - vg_weight``.
+        region_profiles: Optional region -> profile names mapping. When given
+            together with ``region_demand``, enables demand-weighting.
+        region_demand: Optional region -> demand level ``D_r`` mapping.
 
     Returns:
         1-D array of length ``len(timestep_keys)``.
     """
     n_hours = len(timestep_keys)
 
-    # VG-shortfall term: 1 - mean availability over all profile series.
-    avail = _series_matrix(profiles, timestep_keys)
-    if avail is not None:
-        vg_term = 1.0 - avail.mean(axis=0)
-    else:
-        vg_term = np.zeros(n_hours, dtype=np.float64)
+    # VG-shortfall term: unweighted mean, or node-group demand-weighted sum.
+    vg_term: np.ndarray | None = None
+    if region_profiles is not None and region_demand is not None:
+        vg_term = _weighted_vg_term(
+            profiles, timestep_keys, region_profiles, region_demand, n_hours
+        )
+        if vg_term is None:
+            print(
+                "  Force-include: no profile mapped to a positive-demand "
+                "region group — falling back to unweighted VG term."
+            )
+    if vg_term is None:
+        avail = _series_matrix(profiles, timestep_keys)
+        if avail is not None:
+            vg_term = 1.0 - avail.mean(axis=0)
+        else:
+            vg_term = np.zeros(n_hours, dtype=np.float64)
 
     # Inflow-demand term: constant scalar demand level minus time-varying inflow.
     scalar_demand = sum(abs(float(v)) for v in demand_scalars.values())
@@ -230,6 +314,8 @@ def compute_forced_indices(
     force_highest_net_load: bool,
     force_window: int | None,
     vg_weight: float,
+    region_profiles: dict[str, list[str]] | None = None,
+    region_demand: dict[str, float] | None = None,
 ) -> list[int]:
     """Orchestrate net-load scoring and return the forced base-period indices.
 
@@ -249,6 +335,9 @@ def compute_forced_indices(
         force_highest_net_load: Enable Flag B (sustained net load).
         force_window: Sub-window length for Flag B (``None`` = whole period).
         vg_weight: Convex blend weight on the VG term.
+        region_profiles: Optional region -> profile names mapping for the
+            node-group demand-weighted VG term.
+        region_demand: Optional region -> demand level ``D_r`` mapping.
 
     Returns:
         Sorted, deduplicated list of forced base-period indices.
@@ -257,7 +346,13 @@ def compute_forced_indices(
         return []
 
     netload = build_netload_hourly(
-        profiles, inflows, demand_scalars, timestep_keys, vg_weight=vg_weight
+        profiles,
+        inflows,
+        demand_scalars,
+        timestep_keys,
+        vg_weight=vg_weight,
+        region_profiles=region_profiles,
+        region_demand=region_demand,
     )
 
     forced: set[int] = set()

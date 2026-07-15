@@ -182,6 +182,101 @@ class TestTimeVaryingInflow:
 
 
 # ---------------------------------------------------------------------------
+# Node-group demand-weighting of the VG term
+# ---------------------------------------------------------------------------
+
+class TestDemandWeighting:
+    def test_weighting_shifts_argmax_to_high_demand_region(self):
+        """Unweighted argmax follows the many-profile region's trough; the
+        node-group demand-weighted signal shifts it to the high-demand region.
+
+        Region A: 4 profiles, small demand, trough in period 1.
+        Region B: 1 profile, large demand, trough in period 3.
+
+        Unweighted (mean over ALL 5 profiles) is dominated by A's 4 profiles →
+        argmax = period 1. Demand-weighted (Σ_r D_r·mean_within_r(shortfall))
+        is dominated by B's huge D_r → argmax = period 3.
+        """
+        n_base, period_length = 5, 6
+        keys = _keys(n_base * period_length)
+        n = n_base * period_length
+
+        a_trough, b_trough = 1, 3
+
+        def _flat_with_trough(trough: int) -> list[float]:
+            arr = np.full(n, 1.0)
+            arr[trough * period_length:(trough + 1) * period_length] = 0.0
+            return [float(v) for v in arr]
+
+        profiles = {}
+        a_names = [f"pA{i}" for i in range(4)]
+        for name in a_names:
+            profiles[name] = list(zip(keys, _flat_with_trough(a_trough)))
+        b_names = ["pB0"]
+        profiles["pB0"] = list(zip(keys, _flat_with_trough(b_trough)))
+
+        region_profiles = {"A": a_names, "B": b_names}
+        region_demand = {"A": 10.0, "B": 1000.0}
+
+        # Unweighted: A's trough (more profiles) wins.
+        nl_unw = build_netload_hourly(profiles, {}, {}, keys, vg_weight=1.0)
+        assert int(np.argmax(score_net(nl_unw, period_length, n_base))) == a_trough
+
+        # Demand-weighted: B's trough (huge D_r) wins.
+        nl_w = build_netload_hourly(
+            profiles,
+            {},
+            {},
+            keys,
+            vg_weight=1.0,
+            region_profiles=region_profiles,
+            region_demand=region_demand,
+        )
+        assert int(np.argmax(score_net(nl_w, period_length, n_base))) == b_trough
+
+        # Same through the orchestrator.
+        forced_w = compute_forced_indices(
+            profiles,
+            {},
+            {},
+            keys,
+            period_length,
+            n_base,
+            force_peak_load=False,
+            force_highest_net_load=True,
+            force_window=None,
+            vg_weight=1.0,
+            region_profiles=region_profiles,
+            region_demand=region_demand,
+        )
+        assert forced_w == [b_trough]
+
+    def test_all_zero_demand_falls_back_to_unweighted(self):
+        """When every named region has D_r == 0, the signal falls back to the
+        unweighted VG term (identical to passing no region maps)."""
+        n_base, period_length = 4, 6
+        keys = _keys(n_base * period_length)
+        avail = np.full(n_base * period_length, 0.9)
+        trough = 2
+        avail[trough * period_length:(trough + 1) * period_length] = 0.1
+        profiles = {"pA0": list(zip(keys, [float(v) for v in avail]))}
+
+        nl_fallback = build_netload_hourly(
+            profiles,
+            {},
+            {},
+            keys,
+            vg_weight=1.0,
+            region_profiles={"A": ["pA0"]},
+            region_demand={"A": 0.0},
+        )
+        nl_unweighted = build_netload_hourly(
+            profiles, {}, {}, keys, vg_weight=1.0
+        )
+        assert np.allclose(nl_fallback, nl_unweighted)
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator: dedup, sort, empty
 # ---------------------------------------------------------------------------
 
