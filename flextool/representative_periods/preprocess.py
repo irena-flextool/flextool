@@ -85,7 +85,7 @@ def _read_region_maps(
     db: DatabaseMapping,
     region_groups: list[str],
     demand_scalars: dict[str, float],
-) -> tuple[dict[str, list[str]], dict[str, float]]:
+) -> tuple[dict[str, list[str]], dict[str, float], dict[str, list[str]]]:
     """Build node-group demand-weighting maps for force-include (structural).
 
     For each named region group, resolve its member nodes via ``group__node``
@@ -95,6 +95,8 @@ def _read_region_maps(
       to a node that is a member of region ``r``.
     * ``region_demand[r]`` = ``Σ|demand_scalars[node]|`` over region ``r``'s
       member nodes (the scalar demand already collected by ``_read_time_series``).
+    * ``region_nodes[r]`` = the member node names of region ``r`` (used by the
+      per-region force-include mode to filter inflow / demand series per region).
 
     Purely structural — no name parsing. ``group__node`` ``element_name_list`` is
     ``(group, node)`` (dimension order group=0, node=1); ``unit__node__profile``
@@ -106,16 +108,16 @@ def _read_region_maps(
         demand_scalars: Node name -> scalar demand level (from ``_read_time_series``).
 
     Returns:
-        Tuple of ``(region_profiles, region_demand)``.
+        Tuple of ``(region_profiles, region_demand, region_nodes)``.
     """
     wanted = set(region_groups)
 
     # region -> set of member node names
-    region_nodes: dict[str, set[str]] = {r: set() for r in region_groups}
+    region_node_sets: dict[str, set[str]] = {r: set() for r in region_groups}
     for item in db.get_entity_items(entity_class_name="group__node"):
         group_name, node_name = item["element_name_list"]
         if group_name in wanted:
-            region_nodes[group_name].add(node_name)
+            region_node_sets[group_name].add(node_name)
 
     # node -> profiles attached to it
     node_profiles: dict[str, list[str]] = {}
@@ -125,12 +127,14 @@ def _read_region_maps(
 
     region_profiles: dict[str, list[str]] = {}
     region_demand: dict[str, float] = {}
+    region_nodes: dict[str, list[str]] = {}
     for region in region_groups:
-        nodes = region_nodes[region]
+        nodes = region_node_sets[region]
         profs: list[str] = []
         for node_name in nodes:
             profs.extend(node_profiles.get(node_name, []))
         region_profiles[region] = profs
+        region_nodes[region] = sorted(nodes)
         region_demand[region] = sum(
             abs(demand_scalars[n]) for n in nodes if n in demand_scalars
         )
@@ -139,7 +143,7 @@ def _read_region_maps(
             f"{len(profs)} profile(s), D_r = {region_demand[region]:.3f}"
         )
 
-    return region_profiles, region_demand
+    return region_profiles, region_demand, region_nodes
 
 
 def _get_timeline_keys(db: DatabaseMapping) -> list[str]:
@@ -426,6 +430,8 @@ def preprocess_representative_periods(
     force_count_mode: str = "grow",
     vg_weight: float = 0.5,
     region_groups: list[str] | None = None,
+    force_region_scope: bool = False,
+    force_region_budget: int | None = None,
 ) -> str:
     """Select representative periods and write results to database.
 
@@ -447,6 +453,15 @@ def preprocess_representative_periods(
         region_groups: Optional list of node-group names for demand-weighting
             the VG term (``Σ_r D_r · mean_{p∈r}(1 - avail)``). ``None`` (default)
             keeps the unweighted system aggregate — the byte-parity path.
+        force_region_scope: Opt in to the per-region budgeted force-include mode
+            (requires ``region_groups``). ``False`` (default) keeps the
+            single system-coincident signal — the byte-parity path. When ``True``,
+            net load is scored independently per region group and the forced set
+            is chosen by greedy budgeted coverage of each region's worst lull.
+        force_region_budget: Cap on the number of forced periods under region
+            scope. ``None`` (default) derives a sane cap from ``n_rp`` as
+            ``max(1, n_rp // 2)`` so forced periods never dominate the
+            representative set; ignored when ``force_region_scope`` is ``False``.
 
     Returns:
         Name of the created timeset entity.
@@ -486,11 +501,13 @@ def preprocess_representative_periods(
             db=db, cl="solve", par="period_timeset", mode=DictMode.DICT
         )
 
-        # Node-group demand-weighting maps (only when region groups requested).
+        # Node-group demand-weighting / per-region maps (only when region
+        # groups requested).
         region_profiles: dict[str, list[str]] | None = None
         region_demand: dict[str, float] | None = None
+        region_nodes: dict[str, list[str]] | None = None
         if region_groups:
-            region_profiles, region_demand = _read_region_maps(
+            region_profiles, region_demand, region_nodes = _read_region_maps(
                 db, region_groups, demand_scalars
             )
 
@@ -519,6 +536,11 @@ def preprocess_representative_periods(
     # Augment-not-substitute (design §3): add the forced extremes as extra hull
     # vertices, then re-fit ALL weights over the union. Empty forced set (no
     # flag) leaves rep_indices == hull_indices → byte-parity default path.
+    # Under region scope, resolve the None budget to an n_rp-derived cap so
+    # forced periods never dominate the representative set (documented default).
+    effective_region_budget = force_region_budget
+    if force_region_scope and effective_region_budget is None:
+        effective_region_budget = max(1, n_rp // 2)
     forced_indices = force_include.compute_forced_indices(
         profiles,
         inflows,
@@ -532,6 +554,9 @@ def preprocess_representative_periods(
         vg_weight=vg_weight,
         region_profiles=region_profiles,
         region_demand=region_demand,
+        force_region_scope=force_region_scope,
+        force_region_budget=effective_region_budget,
+        region_nodes=region_nodes,
     )
 
     if not forced_indices:
@@ -706,6 +731,20 @@ def main() -> None:
         "VG term (e.g. 'decomp_AUS,decomp_JAP,decomp_KOR'). Omitted → unweighted "
         "system aggregate (byte-parity default).",
     )
+    parser.add_argument(
+        "--force-region-scope",
+        action="store_true",
+        help="Score net load PER region group and greedily force each region's "
+        "worst lull under a budget cap, instead of forcing the single "
+        "system-coincident worst period. Requires --region-groups.",
+    )
+    parser.add_argument(
+        "--force-region-budget",
+        type=int,
+        default=None,
+        help="Max forced periods under --force-region-scope (default: derived "
+        "from n_rp as max(1, n_rp // 2)).",
+    )
 
     args = parser.parse_args()
     region_groups = (
@@ -726,6 +765,8 @@ def main() -> None:
             force_count_mode=args.force_count_mode,
             vg_weight=args.vg_weight,
             region_groups=region_groups,
+            force_region_scope=args.force_region_scope,
+            force_region_budget=args.force_region_budget,
         )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

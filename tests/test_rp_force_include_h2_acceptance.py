@@ -72,7 +72,7 @@ def _read_inputs(url: str):
         db.fetch_all("parameter_value")
         profiles, inflows, demand_scalars = _read_time_series(db)
         timestep_keys = _get_timeline_keys(db)
-        region_profiles, region_demand = _read_region_maps(
+        region_profiles, region_demand, _region_nodes = _read_region_maps(
             db, REGION_GROUPS, demand_scalars
         )
     return (

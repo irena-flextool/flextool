@@ -302,6 +302,157 @@ def score_net(
     return windows.mean(axis=2).max(axis=1)
 
 
+def _greedy_region_cover(
+    region_candidates: dict[str, list[int]],
+    region_scores: dict[str, np.ndarray],
+    budget: int,
+) -> list[int]:
+    """Greedy budgeted max-coverage of regions by forced base periods.
+
+    A generic weighted set-cover: each region contributes a small candidate set
+    of base periods (its worst-lull period(s)); a base period *covers* every
+    region whose candidate set contains it. Repeatedly pick the not-yet-selected
+    period covering the most still-uncovered regions, adding it to the forced
+    set, until the ``budget`` cap is spent or every region is covered.
+
+    A single period that is the coincident worst-lull of several regions covers
+    all of them at once — that is the dedup the design calls for (it is never
+    forced twice, and covering many regions makes it win the greedy pick).
+
+    Determinism: ties on coverage are broken by the greater summed score over
+    the newly-covered regions (prefer the deeper lull), then by the lower period
+    index. No hidden dependence on dict iteration order.
+
+    Args:
+        region_candidates: region -> list of covering base-period indices.
+        region_scores: region -> per-period score array (for tie-breaking).
+        budget: maximum number of forced periods (cap on the returned set).
+
+    Returns:
+        Sorted list of forced base-period indices (length <= ``budget``).
+    """
+    uncovered: set[str] = set(region_candidates)
+    period_regions: dict[int, set[str]] = {}
+    for region, cands in region_candidates.items():
+        for p in cands:
+            period_regions.setdefault(p, set()).add(region)
+
+    selected: list[int] = []
+    selected_set: set[int] = set()
+    while uncovered and len(selected) < budget:
+        best_p: int | None = None
+        best_key: tuple[int, float, int] | None = None
+        for p, regs in period_regions.items():
+            if p in selected_set:
+                continue
+            newly = regs & uncovered
+            if not newly:
+                continue
+            score_sum = sum(float(region_scores[r][p]) for r in newly)
+            # maximize coverage, then summed score, then prefer lower index.
+            key = (len(newly), score_sum, -p)
+            if best_key is None or key > best_key:
+                best_key = key
+                best_p = p
+        if best_p is None:
+            break
+        selected.append(best_p)
+        selected_set.add(best_p)
+        uncovered -= period_regions[best_p]
+    return sorted(selected)
+
+
+def _region_scope_forced_indices(
+    profiles: dict[str, list[tuple[str, float]]],
+    inflows: dict[str, list[tuple[str, float]]],
+    demand_scalars: dict[str, float],
+    timestep_keys: list[str],
+    period_length: int,
+    n_base: int,
+    *,
+    force_peak_load: bool,
+    force_highest_net_load: bool,
+    force_window: int | None,
+    vg_weight: float,
+    region_profiles: dict[str, list[str]],
+    region_nodes: dict[str, list[str]],
+    budget: int | None,
+    region_top_k: int = 1,
+) -> list[int] | None:
+    """Per-region budgeted force-include (generic, opt-in).
+
+    Scores net load *independently per region* — each region's own profiles
+    (VG-shortfall term), time-varying inflows, and scalar demand — via the same
+    :func:`build_netload_hourly` used system-wide, then :func:`score_net` (when
+    ``force_highest_net_load``) or :func:`score_peak`. Each region's
+    ``region_top_k`` worst base periods become its candidate cover set, and
+    :func:`_greedy_region_cover` selects the forced periods under ``budget``.
+
+    This is fully generic: no region names, no period indices, no hemisphere or
+    period-length assumptions — the picks emerge from each region's own
+    net-load data. It works identically for 3, 18, or 35 regions and any
+    ``period_length`` / ``n_base``.
+
+    Args:
+        profiles/inflows/demand_scalars/timestep_keys: system-wide series;
+            filtered to each region by membership below.
+        period_length/n_base: base-period geometry.
+        force_peak_load/force_highest_net_load: which per-period scorer to use
+            (sustained :func:`score_net` preferred when both set).
+        force_window: sub-window for :func:`score_net`.
+        vg_weight: convex blend weight on the VG term (per region).
+        region_profiles: region -> profile names attached to that region.
+        region_nodes: region -> member node names (filters inflow / demand).
+        budget: max forced periods; ``None`` covers every region (no cap).
+        region_top_k: candidate periods per region (default 1 = its worst lull).
+
+    Returns:
+        Sorted forced base-period indices, or ``None`` when no region carries a
+        usable signal (caller then falls back to the system-coincident path).
+    """
+    use_net = bool(force_highest_net_load)
+    region_scores: dict[str, np.ndarray] = {}
+    region_candidates: dict[str, list[int]] = {}
+    top_k = max(1, int(region_top_k))
+
+    for region, prof_names in region_profiles.items():
+        node_set = set(region_nodes.get(region, []))
+        prof_r = {n: profiles[n] for n in prof_names if n in profiles}
+        inflow_r = {n: v for n, v in inflows.items() if n in node_set}
+        demand_r = {n: v for n, v in demand_scalars.items() if n in node_set}
+        # A region with no profile, no inflow and no scalar demand carries no
+        # net-load information — skip it (it cannot be scored or covered).
+        if not prof_r and not inflow_r and not demand_r:
+            continue
+        netload_r = build_netload_hourly(
+            prof_r,
+            inflow_r,
+            demand_r,
+            timestep_keys,
+            vg_weight=vg_weight,
+        )
+        if use_net:
+            scores_r = score_net(netload_r, period_length, n_base, force_window)
+        else:
+            scores_r = score_peak(netload_r, period_length, n_base)
+        # A flat (all-equal) score carries no lull to force — skip so it does
+        # not consume budget covering a meaningless argmax.
+        if float(scores_r.max() - scores_r.min()) < _SCALE_EPS:
+            continue
+        region_scores[region] = scores_r
+        # Top-k worst periods (descending score); stable for ties via argsort.
+        order = np.argsort(scores_r)[::-1]
+        region_candidates[region] = [int(order[i]) for i in range(min(top_k, order.size))]
+
+    if not region_candidates:
+        return None
+
+    effective_budget = (
+        len(region_candidates) if budget is None else max(0, int(budget))
+    )
+    return _greedy_region_cover(region_candidates, region_scores, effective_budget)
+
+
 def compute_forced_indices(
     profiles: dict[str, list[tuple[str, float]]],
     inflows: dict[str, list[tuple[str, float]]],
@@ -316,13 +467,28 @@ def compute_forced_indices(
     vg_weight: float,
     region_profiles: dict[str, list[str]] | None = None,
     region_demand: dict[str, float] | None = None,
+    force_region_scope: bool = False,
+    force_region_budget: int | None = None,
+    region_nodes: dict[str, list[str]] | None = None,
 ) -> list[int]:
     """Orchestrate net-load scoring and return the forced base-period indices.
 
-    Builds the net-load signal once, computes each requested score, and takes
-    the ``argmax`` of every enabled flag. Returns the deduplicated, sorted list
-    of base-period indices to force-include. Empty list when no flag is set
-    (the default byte-parity path).
+    Two modes:
+
+    * **System-coincident (default, ``force_region_scope=False``)** — builds one
+      system net-load signal (optionally node-group demand-weighted via
+      ``region_profiles`` / ``region_demand``) and takes the ``argmax`` of every
+      enabled flag. This is the byte-parity path; its result is unchanged by the
+      region-scope parameters when they are left at their defaults.
+    * **Per-region budgeted (``force_region_scope=True``)** — scores net load
+      independently per region (:func:`_region_scope_forced_indices`) and
+      greedily selects forced periods to cover the most regions' worst lulls
+      under ``force_region_budget`` (:func:`_greedy_region_cover`). Requires
+      ``region_profiles`` + ``region_nodes``; falls back to the system path when
+      no region carries a usable signal.
+
+    Returns the deduplicated, sorted list of base-period indices to
+    force-include. Empty list when no flag is set.
 
     Args:
         profiles: VRE availability series.
@@ -335,15 +501,47 @@ def compute_forced_indices(
         force_highest_net_load: Enable Flag B (sustained net load).
         force_window: Sub-window length for Flag B (``None`` = whole period).
         vg_weight: Convex blend weight on the VG term.
-        region_profiles: Optional region -> profile names mapping for the
-            node-group demand-weighted VG term.
-        region_demand: Optional region -> demand level ``D_r`` mapping.
+        region_profiles: Optional region -> profile names mapping (demand-weighted
+            system term, or per-region VG term under region scope).
+        region_demand: Optional region -> demand level ``D_r`` mapping (system
+            demand-weighting only).
+        force_region_scope: Opt in to the per-region budgeted mode.
+        force_region_budget: Max forced periods under region scope (``None`` =
+            cover every region).
+        region_nodes: Optional region -> member node names mapping; required for
+            region scope to filter inflow / demand per region.
 
     Returns:
         Sorted, deduplicated list of forced base-period indices.
     """
     if not (force_peak_load or force_highest_net_load):
         return []
+
+    if force_region_scope:
+        if region_profiles and region_nodes:
+            region_forced = _region_scope_forced_indices(
+                profiles,
+                inflows,
+                demand_scalars,
+                timestep_keys,
+                period_length,
+                n_base,
+                force_peak_load=force_peak_load,
+                force_highest_net_load=force_highest_net_load,
+                force_window=force_window,
+                vg_weight=vg_weight,
+                region_profiles=region_profiles,
+                region_nodes=region_nodes,
+                budget=force_region_budget,
+            )
+            if region_forced is not None:
+                return region_forced
+        # No usable region maps → fall through to the system-coincident path
+        # (fail safe, never crash) rather than returning nothing.
+        print(
+            "  Force-include: region scope requested but no region carried a "
+            "usable per-region signal — falling back to the system aggregate."
+        )
 
     netload = build_netload_hourly(
         profiles,

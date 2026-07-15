@@ -277,6 +277,230 @@ class TestDemandWeighting:
 
 
 # ---------------------------------------------------------------------------
+# Per-region budgeted force-include (opt-in force_region_scope)
+# ---------------------------------------------------------------------------
+
+class TestRegionScope:
+    """Generic per-region greedy-coverage mode.
+
+    No region names, period indices, or period-length assumptions appear in
+    the assertions — the planted troughs are placed at arbitrary offsets and
+    the picks must emerge from the per-region net-load data alone.
+    """
+
+    @staticmethod
+    def _region_fixture(n_base, period_length, troughs):
+        """Build (profiles, region_profiles, region_nodes) with one profile per
+        region, each flat-high except a deep trough at that region's offset.
+
+        ``troughs`` maps region name -> trough base-period index. Each region
+        owns a single node carrying a single profile.
+        """
+        keys = _keys(n_base * period_length)
+        n = n_base * period_length
+        profiles = {}
+        region_profiles = {}
+        region_nodes = {}
+        for region, trough in troughs.items():
+            arr = np.full(n, 1.0)
+            arr[trough * period_length:(trough + 1) * period_length] = 0.0
+            pname = f"prof_{region}"
+            nname = f"node_{region}"
+            profiles[pname] = list(zip(keys, [float(v) for v in arr]))
+            region_profiles[region] = [pname]
+            region_nodes[region] = [nname]
+        return profiles, region_profiles, region_nodes, keys
+
+    def test_distinct_region_lulls_each_covered(self):
+        """Three regions with troughs at distinct offsets → all three forced."""
+        n_base, period_length = 8, 6
+        troughs = {"R0": 1, "R1": 4, "R2": 6}
+        profiles, region_profiles, region_nodes, keys = self._region_fixture(
+            n_base, period_length, troughs
+        )
+        idx = compute_forced_indices(
+            profiles,
+            {},
+            {},
+            keys,
+            period_length,
+            n_base,
+            force_peak_load=False,
+            force_highest_net_load=True,
+            force_window=None,
+            vg_weight=1.0,
+            region_profiles=region_profiles,
+            region_nodes=region_nodes,
+            force_region_scope=True,
+            force_region_budget=None,  # cover all
+        )
+        assert idx == sorted(troughs.values())
+
+    def test_budget_cap_honored(self):
+        """Budget caps the number of forced periods even with more regions."""
+        n_base, period_length = 10, 4
+        troughs = {"R0": 0, "R1": 3, "R2": 5, "R3": 8}
+        profiles, region_profiles, region_nodes, keys = self._region_fixture(
+            n_base, period_length, troughs
+        )
+        idx = compute_forced_indices(
+            profiles,
+            {},
+            {},
+            keys,
+            period_length,
+            n_base,
+            force_peak_load=False,
+            force_highest_net_load=True,
+            force_window=None,
+            vg_weight=1.0,
+            region_profiles=region_profiles,
+            region_nodes=region_nodes,
+            force_region_scope=True,
+            force_region_budget=2,
+        )
+        assert len(idx) == 2
+        assert set(idx) <= set(troughs.values())
+        assert idx == sorted(idx)
+
+    def test_coincident_lull_deduped(self):
+        """Two regions sharing a trough offset are covered by ONE forced period
+        (dedup), so the total distinct forced count is < the region count."""
+        n_base, period_length = 7, 5
+        # R0 and R2 share offset 2; R1 has its own at 5.
+        troughs = {"R0": 2, "R1": 5, "R2": 2}
+        profiles, region_profiles, region_nodes, keys = self._region_fixture(
+            n_base, period_length, troughs
+        )
+        idx = compute_forced_indices(
+            profiles,
+            {},
+            {},
+            keys,
+            period_length,
+            n_base,
+            force_peak_load=False,
+            force_highest_net_load=True,
+            force_window=None,
+            vg_weight=1.0,
+            region_profiles=region_profiles,
+            region_nodes=region_nodes,
+            force_region_scope=True,
+            force_region_budget=None,
+        )
+        # Three regions, but only two DISTINCT trough periods.
+        assert idx == [2, 5]
+        assert len(idx) < len(troughs)
+
+    def test_default_system_path_untouched_by_region_params(self):
+        """With force_region_scope=False the region params are inert — the
+        result matches the plain system-coincident call byte-for-byte."""
+        n_base, period_length = 6, 6
+        troughs = {"R0": 1, "R1": 4}
+        profiles, region_profiles, region_nodes, keys = self._region_fixture(
+            n_base, period_length, troughs
+        )
+        base = compute_forced_indices(
+            profiles,
+            {},
+            {},
+            keys,
+            period_length,
+            n_base,
+            force_peak_load=False,
+            force_highest_net_load=True,
+            force_window=None,
+            vg_weight=1.0,
+        )
+        with_inert = compute_forced_indices(
+            profiles,
+            {},
+            {},
+            keys,
+            period_length,
+            n_base,
+            force_peak_load=False,
+            force_highest_net_load=True,
+            force_window=None,
+            vg_weight=1.0,
+            region_profiles=region_profiles,
+            region_nodes=region_nodes,
+            force_region_scope=False,  # inert
+            force_region_budget=3,
+        )
+        assert base == with_inert
+
+    def test_falls_back_when_no_region_maps(self):
+        """force_region_scope=True but no region maps → system fallback, not a
+        crash or empty result."""
+        n_base, period_length = 5, 6
+        avail = np.full(n_base * period_length, 0.9)
+        trough = 2
+        avail[trough * period_length:(trough + 1) * period_length] = 0.1
+        profiles = _profile_from_array(avail, _keys(n_base * period_length))
+        keys = _keys(n_base * period_length)
+        idx = compute_forced_indices(
+            profiles,
+            {},
+            {},
+            keys,
+            period_length,
+            n_base,
+            force_peak_load=False,
+            force_highest_net_load=True,
+            force_window=None,
+            vg_weight=1.0,
+            force_region_scope=True,
+            force_region_budget=2,
+        )
+        assert idx == [trough]
+
+    def test_partition_of_unity_after_region_augmentation(self):
+        """Augmenting the hull with region-forced periods and re-fitting weights
+        keeps the partition of unity (|W.sum − n_base| < 1e-9)."""
+        from flextool.representative_periods.clustering import (
+            greedy_convex_hull_clustering,
+        )
+        from flextool.representative_periods.weights import compute_weight_matrix
+
+        n_base, period_length = 8, 6
+        troughs = {"R0": 1, "R1": 4, "R2": 6}
+        profiles, region_profiles, region_nodes, keys = self._region_fixture(
+            n_base, period_length, troughs
+        )
+        # Build the clustering matrix the same way preprocess does.
+        n = n_base * period_length
+        blocks = []
+        for pname in sorted(profiles):
+            vals = np.array([v for _k, v in profiles[pname]], dtype=np.float64)
+            vmin, vmax = vals.min(), vals.max()
+            vals = (vals - vmin) / (vmax - vmin)
+            blocks.append(vals[:n].reshape(n_base, period_length))
+        C = np.hstack(blocks).T
+        hull = sorted(greedy_convex_hull_clustering(C, 3))
+        forced = compute_forced_indices(
+            profiles,
+            {},
+            {},
+            keys,
+            period_length,
+            n_base,
+            force_peak_load=False,
+            force_highest_net_load=True,
+            force_window=None,
+            vg_weight=1.0,
+            region_profiles=region_profiles,
+            region_nodes=region_nodes,
+            force_region_scope=True,
+            force_region_budget=None,
+        )
+        rep_indices = sorted(set(hull) | set(forced))
+        W = compute_weight_matrix(C, rep_indices)
+        assert abs(W.sum() - n_base) < 1e-9
+        assert float(np.max(np.abs(W.sum(axis=1) - 1.0))) < 1e-9
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator: dedup, sort, empty
 # ---------------------------------------------------------------------------
 
