@@ -1,3 +1,80 @@
+## Release 4.0.0b25 (15.7.2026) — per-solve autoscaler mode; energy/capacity margins; rep-period force-include; storage-handoff & scale-invariant-floor fixes
+
+**Database migration v63 → v65** (two steps, automatic on load). **The
+polar-high floor moves to `>=3.6.1`** (the scale-invariant coefficient floor —
+without it, `full`-autoscale re-solves of some battery / demand-response and
+wide-coefficient-range models are mis-computed). Other floors unchanged
+(`polars>=1.40`,
+`highspy<=1.14.0`). The new schema parameters are additive and default to
+prior behaviour; the correctness fixes below (scale-invariant floor,
+storage-handoff, space-mangled names) change results only on the models that
+exercise those paths.
+
+### Numerical scaling — correctness
+
+- **Per-solve autoscaler mode: `solve.scaling` (schema v64).** The LP
+  autoscaler mode (`off` / `solver_only` / `basic` / `full`) is now a per-solve
+  database parameter, not just the run-wide `--scaling` / `FLEXTOOL_SCALING`
+  control, so a model can pin the mode that solves it correctly. Motivation:
+  some models with a very wide coefficient range are mis-scaled by autoscale
+  Layer 2 and return a grossly wrong all-slack solution even though the LP is
+  correct (HiGHS solves it directly to the right answer); `solve.scaling = basic`
+  lets the DB carry that workaround per model. Default is `full` (unchanged
+  behaviour). Precedence: operator override (`--scaling` / env) > `solve.scaling`
+  > default.
+- **Scale-invariant coefficient floor** (requires `polar-high>=3.6.1`). In
+  `full` autoscale mode the coefficient floor previously floored structurally-
+  essential matrix coefficients whose *Layer-2-scaled* magnitude fell below the
+  threshold, silently mis-solving several battery / demand-response models. The
+  floor is now applied in user-space, so `full` agrees with `off` / `basic`
+  again. Five scenario goldens (`dr_shift_demand`, `test_a_lot`,
+  `multi_fullYear_battery_nested_*`) were regenerated to the corrected
+  solutions; `off` / `basic` outputs are byte-identical to before.
+
+### Adequacy — representative-period bias levers (opt-in)
+
+- **`node.energy_margin` + `energy_margin_method` (schema v65).** An invest-
+  stage-only lever that scales a node's demand inflow upward during the
+  *investment* solve to offset representative-period VRE optimism (so the model
+  builds enough firm capacity), while dispatch still runs on the true inflow.
+  `energy_margin_method`: `none` (default, off) or `inflow_multiplier` (apply the
+  `energy_margin` factor). Note FlexTool represents demand as *negative* inflow,
+  so a factor > 1 correctly deepens demand.
+- **`group.capacity_margin_method` replaces `has_capacity_margin` (schema v65).**
+  The yes/no `has_capacity_margin` flag becomes a method enum `none` / `manual`
+  (migrated `yes → manual`), consistent with `energy_margin_method` and leaving
+  room for a future automatic mode.
+- **Representative-period net-load force-include.** New opt-in CLI flags on the
+  representative-period preprocessor force adequacy-critical base periods (peak-
+  load / highest sustained net-load) into the representative set, fixing rep-
+  period under-investment when the sampled periods miss a seasonal stress window
+  (e.g. a coincident low-VRE / high-demand week). Supports
+  grow / fixed count modes, a `vg_weight` knob, `+f{n}` naming, and optional
+  **node-group demand-weighting** (`--region-groups`) so the net-load signal is
+  weighted by regional demand. Default (no flags / no region groups) is the
+  unweighted, byte-parity path.
+
+### Fixes
+
+- **Storage nested-fix handoff was inert / inverted.** Three fixes to the
+  multi-solve coarse→fine storage handoff: (1) the
+  `node__storage_nested_fix_method` emit used the wrong column contract
+  (`storage_nested_fix_method` vs the consumer's `method`), so every fix-node
+  set was empty and the handoff did nothing; (2) the `fix_usage` throughput cap
+  was collapsed to a single coarse window instead of summing over every coarse
+  window overlapping the fine period (too tight for any roll spanning >1 coarse
+  window); (3) the `fix_price` water-value reference price carried the AMPL/GLPK
+  dual *sign*, which is inverted relative to HiGHS — the child was penalised for
+  holding storage instead of rewarded. `multi_fullYear_battery_nested_*` goldens
+  regenerated now that the handoff is active.
+- **Space-bearing entity names in output after an in-process solve.** HiGHS'
+  `writeSolution` permanently rewrites spaces to underscores in the live LP
+  column/row names; the output extractors then failed to join a node whose name
+  contains a space (e.g. `Coastal Grid`) against the originals (`KeyError` in
+  `calc_capacity_flows`, silently-empty dual columns). The un-mangled names are
+  now restored from the polars-rendered `Solution.col_names` / `.row_names`.
+  Models without spaces in entity names are byte-identical.
+
 ## Release 4.0.0b24 (9.7.2026) — warm-start basis cache; greenfield indirect-converter capacity fix; coarse rep-period storage fix
 
 No schema change (still v63). **The polar-high floor moves to `>=3.6.0`** (the
