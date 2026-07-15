@@ -141,6 +141,43 @@ def _rename_invest_columns(sol: "Solution") -> None:
             sol.col_names[cid] = new_name
 
 
+def _restore_space_mangled_names(sol: "Solution") -> None:
+    """Restore original entity names that HiGHS' solution-file writer
+    mangled (spaces → underscores) on the live in-process LP.
+
+    ``writeSolution`` (triggered by ``write_solution_to_file``) rewrites
+    every space in the LP's column/row names to an underscore, in place,
+    and the output extractors read those mutated names back via
+    ``allVariableNames()`` / ``getLp().row_names_``.  :class:`Solution`
+    keeps the un-mangled originals in ``col_names`` / ``row_names``
+    (rendered from the polars Var frames, position-aligned with the LP),
+    so we re-pass the ones that contain a space.
+
+    HiGHS mangles *only* the space character — tabs, slashes, commas,
+    quotes and brackets survive verbatim — so a ``' ' in name`` test
+    covers exactly the affected names.  Models with no spaces do zero
+    ``passColName`` / ``passRowName`` calls, keeping byte-parity for
+    every existing fixture.  Gated on ``passRowName`` so it runs only for
+    a real ``highspy.Highs`` (the cold-path ``_SolHighsShim`` never
+    mangles names and exposes no such method).
+    """
+    h = getattr(sol, "highs", None)
+    if h is None or not hasattr(h, "passRowName"):
+        return  # cold/subprocess shim (immune) or no live solver
+
+    col_names = getattr(sol, "col_names", None)
+    if col_names is not None:
+        for cid, name in enumerate(col_names):
+            if name is not None and " " in name:
+                h.passColName(cid, name)
+
+    row_names = getattr(sol, "row_names", None)
+    if row_names is not None:
+        for rid, name in enumerate(row_names):
+            if name is not None and " " in name:
+                h.passRowName(rid, name)
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -201,6 +238,25 @@ def write_outputs_for_solve(
     # HiGHS; safe because the Solution is read-only post-solve and the
     # adapter consumes it once.
     _rename_invest_columns(sol)
+
+    # Undo HiGHS' space→underscore name mangling.  When the in-process
+    # solve writes a solution file (``write_solution_to_file=true``,
+    # highs.opt.template), HiGHS' ``writeSolution`` permanently rewrites
+    # spaces to underscores in the live LP's column/row names (it happens
+    # for every solution style — the GLPSOL/pretty writers are whitespace-
+    # delimited).  The output extractors below read ``h.allVariableNames()``
+    # / ``h.getLp().row_names_`` from that same mutated LP, so any entity
+    # whose name contains a space (e.g. a node "AY. ATHANASIOS") comes back
+    # with an underscore and no longer joins against ``flex_data``'s
+    # original names — a KeyError in calc_capacity_flows / silently-empty
+    # dual columns.  ``Solution.col_names`` / ``.row_names`` are rendered
+    # from the polars Var frames (never round-tripped through the mangling
+    # writer), so they are the authoritative, position-aligned originals;
+    # restore them onto the live HiGHS.  The cold/subprocess path is immune
+    # by construction (generic MPS names, index-mapped back — see
+    # _subprocess_solve) and its shim exposes no ``passRowName``, so gate
+    # on that to run only for the real in-process ``highspy.Highs``.
+    _restore_space_mangled_names(sol)
 
     # ``scale_the_objective`` — the polars LP now applies the resolved
     # per-solve ``scale_the_objective`` at LP construction (engine_polars/

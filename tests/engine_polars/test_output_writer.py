@@ -212,3 +212,92 @@ def test_write_outputs_for_solve_skips_when_no_highs(tmp_path) -> None:
     # Nothing should be written.
     output_raw = tmp_path / "output_raw"
     assert not output_raw.exists() or not any(output_raw.iterdir())
+
+
+# ---------------------------------------------------------------------------
+# Space→underscore name-mangling repair
+# ---------------------------------------------------------------------------
+#
+# HiGHS' ``writeSolution`` (triggered in-process by
+# ``write_solution_to_file``) permanently rewrites spaces to underscores
+# in the live LP's column/row names.  The output extractors then read
+# those mutated names back, so any entity whose name contains a space
+# (e.g. a node "AY. ATHANASIOS") no longer joins against ``flex_data``'s
+# original names — the KeyError reproduced on the Cyprus grid model.
+# ``_restore_space_mangled_names`` re-pins the un-mangled originals from
+# ``Solution.col_names`` / ``.row_names``.
+
+
+def test_restore_space_mangled_names_repairs_highs_after_write(tmp_path) -> None:
+    """After ``writeSolution`` mangles spaces, the restore helper re-pins
+    the original names onto the live ``highspy.Highs`` for both cols and
+    rows."""
+    import highspy
+    import numpy as np
+    from polar_high.engine import Solution
+
+    from flextool.engine_polars._output_writer import (
+        _restore_space_mangled_names,
+    )
+
+    inf = highspy.kHighsInf
+    col_names = ["v_flow[AAT-MGS,AY. ATHANASIOS,MONI-GIS,p,t]", "no_space"]
+    row_names = ["nodeBalance[AY. ATHANASIOS,p,t]", "plain_row"]
+    h = highspy.Highs()
+    h.silent()
+    for i, name in enumerate(col_names):
+        h.addVar(0.0, inf)
+        h.passColName(i, name)
+        h.changeColCost(i, 1.0)
+    h.addRow(1.0, inf, 2, [0, 1], [1.0, 1.0])
+    h.addRow(0.0, inf, 1, [0], [1.0])
+    h.passRowName(0, row_names[0])
+    h.passRowName(1, row_names[1])
+    h.run()
+
+    # Writing the solution mangles the spaces in the live LP names.
+    h.writeSolution(str(tmp_path / "flextool.sol"), 2)
+    assert h.allVariableNames()[0] == \
+        "v_flow[AAT-MGS,AY._ATHANASIOS,MONI-GIS,p,t]"
+    assert h.getLp().row_names_[0] == "nodeBalance[AY._ATHANASIOS,p,t]"
+
+    sol = Solution(
+        optimal=True, obj=0.0,
+        col_value=np.zeros(2), row_dual=np.zeros(2),
+        col_names=list(col_names), row_names=list(row_names), vars={},
+        highs=h,
+    )
+    _restore_space_mangled_names(sol)
+
+    # Both the space-bearing col and row names are restored; the
+    # space-free ones are untouched.
+    assert h.allVariableNames() == col_names
+    assert list(h.getLp().row_names_) == row_names
+
+
+def test_restore_space_mangled_names_noop_on_shim() -> None:
+    """The cold-path shim (no ``passRowName``) is immune by construction;
+    the helper must skip it without error and leave names untouched."""
+    import numpy as np
+    from polar_high.engine import Solution
+
+    from flextool.engine_polars._output_writer import (
+        _restore_space_mangled_names,
+    )
+    from flextool.engine_polars._subprocess_solve import _SolHighsShim
+
+    names = ["v_flow[c,a b,d]"]
+    shim = _SolHighsShim(
+        col_names=list(names), row_names=list(names),
+        col_value=np.zeros(1), col_dual=np.zeros(1), row_dual=np.zeros(1),
+    )
+    assert not hasattr(shim, "passRowName")
+    sol = Solution(
+        optimal=True, obj=0.0,
+        col_value=np.zeros(1), row_dual=np.zeros(1),
+        col_names=list(names), row_names=list(names), vars={},
+        highs=shim,
+    )
+    # No exception, shim names unchanged.
+    _restore_space_mangled_names(sol)
+    assert shim.allVariableNames() == names
