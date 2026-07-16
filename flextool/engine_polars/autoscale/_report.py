@@ -289,15 +289,20 @@ def format_console_summary(
     return parts[0] + "".join(f"\n  -> {p}" for p in parts[1:])
 
 
-def format_nonoptimal_hint(ranges_pre: RangeReport) -> str:
-    """Compose the non-optimal scaling-related hint string.
+def format_nonoptimal_hint(ranges: RangeReport) -> str:
+    """Compose the scaling-related *possibility* hint for a rejected solve.
 
-    Triggers ONLY when the LP was poorly scaled (``ranges_pre.trigger``
-    is ``True``).  Returns the empty string when the LP was inside
-    HiGHS' comfort zone — printing scaling advice on a well-conditioned
-    LP would be misleading.
+    Returns the empty string unless ``ranges.trigger`` is ``True``.  The
+    caller must pass the ranges of the *actually solved* (post-autoscale)
+    LP — a still-tripped trigger there means the autoscaler could NOT tame
+    the range spread, so scaling is a plausible (not proven) contributor to
+    the failure.  Framed as a possibility with remediations, never as the
+    certified cause: a wide range does not by itself explain a non-optimal
+    status, and passing the raw pre-autoscale ranges here (which are always
+    wide for FlexTool's commodity ladders) would make the hint fire on
+    essentially every failure regardless of cause.
     """
-    if not ranges_pre.trigger:
+    if not ranges.trigger:
         return ""
 
     def _span_decades(span: tuple[float, float]) -> str:
@@ -306,12 +311,13 @@ def format_nonoptimal_hint(ranges_pre: RangeReport) -> str:
             return "empty"
         return f"{d:.1f} decades"
 
-    rhs_span = _span_decades(ranges_pre.rhs)
-    cost_span = _span_decades(ranges_pre.cost)
+    rhs_span = _span_decades(ranges.rhs)
+    cost_span = _span_decades(ranges.cost)
 
     return (
-        "HiGHS reported non-optimal on a poorly-scaled LP "
-        f"(RHS spans {rhs_span}, Cost spans {cost_span}). Suggestions:\n"
+        "The solved (post-autoscale) LP is still wide-ranged "
+        f"(RHS spans {rhs_span}, Cost spans {cost_span}), so scaling MAY be "
+        "a contributing factor. Possible remediations:\n"
         "  - Check unit conventions on commodity-ladder entities "
         "(set unitsize so quantity/unitsize <= 1e+6)\n"
         "  - Re-run with --highs-threads 1 to bypass parallel-mode "

@@ -58,6 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
+from flextool.engine_polars._solve_acceptance import classify_acceptance
 from flextool.engine_polars._solve_handoff import SolveHandoff
 from flextool.engine_polars._solve_state import (
     FlexToolConfigError,
@@ -80,7 +81,6 @@ from flextool.engine_polars.autoscale import (
     apply_scaling as _autoscale_apply_scaling,
     detect_ranges as _autoscale_compute_ranges,
     format_console_summary as _autoscale_format_console_summary,
-    format_nonoptimal_hint as _autoscale_format_nonoptimal_hint,
     mode_enables_layer1 as _autoscale_mode_enables_layer1,
     mode_enables_layer3 as _autoscale_mode_enables_layer3,
     recommend_scaling as _autoscale_recommend_scaling,
@@ -718,29 +718,6 @@ def _autoscale_emit_console_summary(
             pass
     already_emitted.add(solve_name)
 
-
-def _autoscale_emit_nonoptimal_hint(
-    *,
-    ranges_pre: "_AutoscaleRangeReport | None",
-    sol: "Solution | None",
-) -> None:
-    """Emit the scaling-related hint when HiGHS reports non-optimal.
-
-    Only fires when (a) the solve genuinely returned non-optimal AND
-    (b) the autoscaler's Layer-1 detector had flagged poor scaling on
-    the pre-solve LP.  Printing scaling advice on a well-conditioned
-    LP that simply happened to be infeasible would be misleading, so
-    we keep the trigger conjunctive.
-    """
-    if sol is None:
-        return
-    if ranges_pre is None:
-        return
-    if sol.optimal:
-        return
-    hint = _autoscale_format_nonoptimal_hint(ranges_pre)
-    if hint:
-        print(hint, flush=True)
 
 
 def _autoscale_unscale_post_solve(
@@ -3508,19 +3485,27 @@ def _drive_cascade(
                     seconds=time.perf_counter() - _t_scale_start,
                     t_start=_t_scale_start,
                 )
-            if not sol.optimal:
-                self.state.logger.error(
-                    f"non-optimal solve for {complete_solve_name}"
-                )
-                # When poor scaling was detected on the pre-solve LP,
-                # surface an actionable hint explaining the suspected
-                # cause and three concrete remediation paths (unit
-                # conventions, single-thread HiGHS, disable autoscaler).
-                _autoscale_emit_nonoptimal_hint(
-                    ranges_pre=locals().get("_autoscale_ranges_pre"),
-                    sol=sol,
-                )
+            # Accept/reject the solve on its actual solver diagnostics, not
+            # a bare ``kOptimal`` check.  An interior-point solve run without
+            # crossover (the model generator's ``run_crossover`` choice) can
+            # return a feasible, in-practice-optimal primal that HiGHS refuses
+            # to *certify* (status Unknown) because postsolve left the dual
+            # objective slightly inconsistent.  ``classify_acceptance`` accepts
+            # that case (using the feasible primal) while still rejecting
+            # genuine failures — and reports only what the diagnostics
+            # actually show, never a raw-range scaling guess as the cause.
+            _acc = classify_acceptance(
+                sol,
+                ranges_post=locals().get("_autoscale_ranges_post"),
+                solve_name=complete_solve_name,
+            )
+            if not _acc.accepted:
+                self.state.logger.error(_acc.message)
+                if _acc.scaling_hint:
+                    print(_acc.scaling_hint, flush=True)
                 return 1
+            if _acc.near_optimal:
+                self.state.logger.info(_acc.message)
 
             prior = prior_for_load
             # ``--csv-dump``: gate ``data.dump_csvs`` behind the

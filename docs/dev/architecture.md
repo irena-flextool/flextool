@@ -815,8 +815,12 @@ slack semantics.
    ranges, the Layer 2 plan (per-type exponents + post-L2 ranges),
    and the Layer 3 plan (`user_bound_scale`, escape-tier).
    A 1-line console summary echoes via `format_console_summary`; the
-   non-optimal hint (`format_nonoptimal_hint`) fires only when HiGHS
-   returns non-optimal on a poorly-scaled LP.
+   non-optimal hint (`format_nonoptimal_hint`) fires only when a *rejected*
+   solve's **post-autoscale** LP is still wide-ranged (i.e. the autoscaler
+   could not tame the spread), and even then it is framed as a possibility
+   — never as the certified cause. Accept/reject itself is decided by
+   `engine_polars/_solve_acceptance.py` from the solver's own diagnostics
+   (see "Solve acceptance" below), not by the range report.
 7. **Manual override.** `--user-bound-scale N` (or DB
    `solve.user_bound_scale`) pins Layer 3's bound-scale exponent and
    disables the auto-pick. Useful when the audit hints at a value the
@@ -825,6 +829,35 @@ slack semantics.
    Every `VariableSpec` carries an `unscale_by` field; the Layer 2 +
    Layer 3 reverse maps are applied in the writer so downstream
    consumers see absolute units regardless of which layers fired.
+
+### Solve acceptance
+
+The cascade does **not** gate on a bare `kOptimal`. An interior-point
+solve run without crossover (the model generator's `run_crossover`
+choice) can return a genuinely feasible, in-practice-optimal *primal* that
+HiGHS refuses to *certify* — post-solve leaves the dual objective slightly
+inconsistent, so HiGHS reports `kUnknown` rather than a failure. FlexTool
+consumes the primal for every output, so such a solve is usable.
+
+`engine_polars/_solve_acceptance.py::classify_acceptance` decides from the
+solver's own diagnostics (`polar_high.Solution.solve_diagnostics()`, a
+snapshot of `getModelStatus()` + `getInfo()`):
+
+- `kOptimal` → accept.
+- a genuine failure status (`kInfeasible`, `kUnbounded`, `kTimeLimit`,
+  `kSolveError`, …) → reject, naming the precise cause.
+- `kUnknown` → accept as **near-optimal** iff the primal is feasible
+  (HiGHS' own verdict + a scale-invariant relative check + a
+  tolerance-derived absolute backstop) *and* `primal_dual_objective_error`
+  is within the accepted optimality gap; otherwise reject.
+
+Thresholds default to primal-relative `1e-6`, absolute margin `10×` the
+solver's `primal_feasibility_tolerance`, and P-D gap `1e-2` (the same
+order as the `mip_rel_gap` models routinely accept); each has a
+`FLEXTOOL_ACCEPT_*` env override, and `FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0`
+restores the legacy hard-fail. The subprocess/commercial path exposes no
+queryable handle, so `solve_diagnostics()` returns `None` and the solve is
+never near-optimal-accepted — it falls back to the strict `kOptimal` gate.
 
 ## Test layout and fixture architecture
 

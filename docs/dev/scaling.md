@@ -94,9 +94,13 @@ sections:
 | `layer2` | per-quantity-type power-of-2 exponents; post-Layer-2 ranges per type; list of quantity-types actually present in the LP. |
 | `layer3` | `user_bound_scale` exponent applied to HiGHS; escape-tier plan. |
 
-A single-line console summary echoes after each solve. On HiGHS
-non-optimal a poorly-scaled-LP hint also prints; the YAML shows which
-layer (or which quantity-type) could not compress the spread.
+A single-line console summary echoes after each solve. When a solve is
+*rejected* and its **post-autoscale** LP is still wide-ranged, a hint also
+prints — framed as a possibility, since a wide range does not by itself
+explain a non-optimal status; the YAML shows which layer (or which
+quantity-type) could not compress the spread. (Note a solve HiGHS could
+not certify as optimal is not automatically rejected — see the solve
+acceptance policy in `_solve_acceptance.py`.)
 
 ## Limitations to be aware of
 

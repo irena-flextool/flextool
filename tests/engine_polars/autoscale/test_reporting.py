@@ -165,18 +165,21 @@ def test_console_summary_no_trigger() -> None:
 
 
 def test_nonoptimal_hint_triggered() -> None:
-    """Layer-1 trigger=True must produce a multi-line hint with the three
-    documented remediation paths.
+    """A still-tripped POST-autoscale trigger must produce a multi-line hint
+    with the three documented remediation paths — framed as a possibility,
+    NOT as the certified cause.
 
     The decade-count strings are computed from the same ``hi/lo`` ratio
     the formatter uses, so we can assert on the exact substrings without
     re-deriving the log.
     """
-    ranges_pre = _range_report(trigger=True)
-    hint = format_nonoptimal_hint(ranges_pre)
+    ranges_post = _range_report(trigger=True)
+    hint = format_nonoptimal_hint(ranges_post)
     assert hint, "non-empty hint expected when trigger=True"
-    # Key substrings the spec mandates.
-    assert re.search(r"poorly-scaled", hint)
+    # The hint must NOT claim scaling is the proven cause.
+    assert "poorly-scaled" not in hint
+    # It states scaling as a possibility, not a certainty.
+    assert re.search(r"scaling MAY be", hint)
     assert re.search(r"RHS spans \d+\.\d decades", hint)
     assert re.search(r"Cost spans \d+\.\d decades", hint)
     assert "Check unit conventions" in hint
@@ -186,15 +189,16 @@ def test_nonoptimal_hint_triggered() -> None:
 
 def test_nonoptimal_hint_not_triggered_when_well_scaled() -> None:
     """trigger=False must produce no scaling hint — printing one on a
-    well-conditioned LP would be misleading."""
-    ranges_pre = _range_report(
+    well-conditioned LP (the accepted crossover-off case) would be
+    misleading."""
+    ranges_post = _range_report(
         matrix=(1.0, 1e3),
         cost=(1.0, 1e3),
         bound=(math.nan, math.nan),
         rhs=(1.0, 1e3),
         trigger=False,
     )
-    hint = format_nonoptimal_hint(ranges_pre)
+    hint = format_nonoptimal_hint(ranges_post)
     assert hint == ""
 
 

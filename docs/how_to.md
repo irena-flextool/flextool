@@ -1332,7 +1332,7 @@ Auto-scaling never changes the LP optimum: every variable and constraint is unsc
 - HiGHS reports numerical trouble (ill-conditioning warnings, suspect infeasibility)
 - you are about to file a bug — attaching the YAML saves a round-trip
 - you are tuning a freshly-converted model and want to spot unit-mix mistakes early
-- a non-optimal hint pointed you at a poorly-scaled LP — the YAML shows which layer (or which quantity type) could not compress the spread
+- a rejected solve's hint flagged the *post-autoscale* LP as still wide-ranged (scaling *may* be implicated) — the YAML shows which layer (or which quantity type) could not compress the spread
 
 The autoscale package lives at `flextool/engine_polars/autoscale/` (`_ranges.py` / `_layer2.py` / `_layer3.py` / `_report.py`). For the user-facing guide and tuning tips, see [dev/scaling.md](dev/scaling.md).
 
