@@ -139,6 +139,14 @@ def _scan_cascade_optimality(steps):
 
     Scans sub-solves for a non-optimal outcome.  Two distinct cases:
 
+    * A solve accepted as *near-optimal* by
+      :func:`classify_acceptance` — a crossover-off interior-point solve
+      HiGHS would not certify ``kOptimal`` but whose primal is feasible with
+      a small primal--dual gap — already wrote a usable solution and returned
+      success from the per-solve driver.  Its strict ``optimal`` mirror is
+      ``False`` (HiGHS status Unknown), so it is recognised here via
+      ``step.near_optimal`` and must NOT be treated as a failure.
+
     * A Benders-decomposed solve that found a FEASIBLE incumbent but did not
       close the optimality gap to tolerance within its iteration cap is NOT
       infeasible — every subproblem/master LP solved to optimality and the
@@ -147,9 +155,13 @@ def _scan_cascade_optimality(steps):
       and let the run SUCCEED (exit 0) so the parquet results are consumed
       downstream.
 
-    * Anything else non-optimal (an LP HiGHS could not solve — infeasible /
-      unbounded / limit reached — or a Benders solve with no feasible
-      incumbent at all) is a genuine failure → exit 1.
+    * Anything else non-optimal (a Benders solve with no feasible incumbent
+      at all, or a step whose solution the cascade never accepted) is a
+      genuine failure → exit 1.  A monolithic LP that HiGHS genuinely could
+      not solve is rejected earlier at the solve site (``classify_acceptance``
+      → ``FlexToolSolveError``, which names the precise cause) and never
+      reaches this scan; if one does, it is reported here with the facts the
+      slim step carries rather than a guessed "infeasible/unbounded" cause.
     """
     last_step = None
     for name, step in steps.items():
@@ -159,7 +171,12 @@ def _scan_cascade_optimality(steps):
         # summary instead so the non-optimal check works without
         # ``keep_solutions=True``.  ``step.solution`` is only populated
         # for the LAST step (or every step under ``keep_solutions``).
-        if step.optimal:
+        #
+        # ``optimal`` is the STRICT HiGHS verdict; ``near_optimal`` flags a
+        # solve ``classify_acceptance`` accepted despite a non-``kOptimal``
+        # status (crossover-off interior point).  Both mean "usable
+        # solution written" — treat either as success.
+        if step.optimal or getattr(step, "near_optimal", False):
             continue
         if step.is_benders and step.obj is not None and math.isfinite(step.obj):
             # Non-convergence with a feasible incumbent — warn loudly, keep
@@ -167,9 +184,18 @@ def _scan_cascade_optimality(steps):
             logging.error(_benders_nonconvergence_banner(name, step))
             continue
         logging.error(
-            "Native cascade: solve %r did not solve to optimality; exit=1 "
-            "(infeasible / unbounded / limit reached — no usable solution).",
+            "Native cascade: solve %r did not solve to optimality; exit=1. "
+            "This solve's solution was not accepted for consumption "
+            "(strict-optimal=%r, near-optimal-accepted=%r, benders=%r, "
+            "objective=%r). A genuine LP failure names its precise cause "
+            "(infeasible / unbounded / limit reached) at the solve site; a "
+            "Benders solve reaching here found no feasible incumbent. See the "
+            "solve log above for the solver's reported status.",
             name,
+            step.optimal,
+            getattr(step, "near_optimal", False),
+            step.is_benders,
+            step.obj,
         )
         return 1, step
     return 0, last_step

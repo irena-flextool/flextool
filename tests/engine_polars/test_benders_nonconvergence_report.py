@@ -32,7 +32,7 @@ from flextool.engine_polars._orchestration import OrchestrationStep
 _FORBIDDEN = re.compile(r"\b(trade|pipe|pipeline|line|region|regions)\b", re.I)
 
 
-def _step(name, *, optimal, is_benders=False, obj=1.0,
+def _step(name, *, optimal, near_optimal=False, is_benders=False, obj=1.0,
           gap=None, tol=None, iters=None):
     return OrchestrationStep(
         solve_name=name,
@@ -40,6 +40,7 @@ def _step(name, *, optimal, is_benders=False, obj=1.0,
         handoff=None,
         obj=obj,
         optimal=optimal,
+        near_optimal=near_optimal,
         is_benders=is_benders,
         benders_gap=gap,
         benders_tol=tol,
@@ -82,6 +83,42 @@ def test_genuine_infeasible_exits_one(caplog):
         code, _ = _scan_cascade_optimality(steps)
     assert code == 1
     assert "did not solve to optimality" in caplog.text
+    # The message reports the step's actual state (no bald catch-all).
+    assert "near-optimal-accepted=False" in caplog.text
+
+
+def test_near_optimal_accepted_solve_succeeds(caplog):
+    """A crossover-off interior-point solve HiGHS reported ``Unknown`` (so its
+    strict ``optimal`` mirror is ``False``) but ``classify_acceptance`` accepted
+    as near-optimal must NOT be re-rejected by the cascade scan.
+
+    Regression for the 18-region ``st_roll_y2050_roll_5`` false failure: the
+    solve wrote a usable solution (total_cost finite) yet the scan flagged
+    ``exit=1`` off the strict ``optimal`` flag alone.
+    """
+    steps = {
+        "st_roll_y2050_roll_5": _step(
+            "st_roll_y2050_roll_5", optimal=False, near_optimal=True,
+        ),
+        "st_roll_y2050_roll_6": _step("st_roll_y2050_roll_6", optimal=True),
+    }
+    with caplog.at_level(logging.ERROR):
+        code, last = _scan_cascade_optimality(steps)
+    assert code == 0
+    assert last.solve_name == "st_roll_y2050_roll_6"
+    assert "did not solve to optimality" not in caplog.text
+
+
+def test_near_optimal_reports_first_offender_only_when_unaccepted():
+    """near_optimal is per-step: an accepted near-optimal step is skipped, a
+    later genuinely-unaccepted non-benders step still fails."""
+    steps = {
+        "accepted": _step("accepted", optimal=False, near_optimal=True),
+        "bad": _step("bad", optimal=False, near_optimal=False),
+    }
+    code, step = _scan_cascade_optimality(steps)
+    assert code == 1
+    assert step.solve_name == "bad"
 
 
 def test_benders_without_incumbent_exits_one():

@@ -68,6 +68,19 @@ def test_near_optimal_accept_does_not_abort_cascade(
     for name, step in steps.items():
         assert step.solution is not None, f"{name}: solution discarded"
         assert step.obj is not None, f"{name}: obj is None"
+        # The near-optimal verdict propagated onto the deposited step so the
+        # CLI exit-code scan can recognise the accepted solve (regression for
+        # the 18-region roll_5 false failure: strict ``optimal`` is False for
+        # a crossover-off Unknown solve, but ``near_optimal`` records the
+        # accept).
+        assert step.near_optimal is True, f"{name}: near_optimal not recorded"
+
+    # End-to-end: the CLI scan over these accepted-near-optimal steps must
+    # SUCCEED (exit 0), not re-reject them off the strict ``optimal`` flag.
+    from flextool.cli.cmd_run_flextool import _scan_cascade_optimality
+
+    code, _ = _scan_cascade_optimality(steps)
+    assert code == 0
 
 
 def test_reject_still_raises(scenario_workdir, monkeypatch) -> None:

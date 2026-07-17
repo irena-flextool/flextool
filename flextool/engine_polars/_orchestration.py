@@ -1413,11 +1413,20 @@ class OrchestrationStep:
     optimal : bool | None
         Phase C.5 — slim summary mirror of ``solution.optimal`` that
         survives the per-step memory release.  ``None`` only on the
-        failed-solve path (where ``solution`` is also ``None``).
-        Consumers that only need the optimal/non-optimal status (e.g.
-        CLI exit-code branch in ``cmd_run_flextool.py``) should read
-        this instead of ``solution.optimal`` so they work without
-        ``keep_solutions=True``.
+        failed-solve path (where ``solution`` is also ``None``).  This is
+        the STRICT solver verdict (HiGHS ``kOptimal``): a near-optimal
+        crossover-off solve that :func:`classify_acceptance` accepted for
+        consumption is ``False`` here — read :attr:`near_optimal` (or the
+        ``optimal or near_optimal`` union) when the question is "is this
+        step's solution usable?", not "did the solver certify optimality?".
+    near_optimal : bool
+        True when the solve was NOT strictly ``kOptimal`` yet
+        :func:`classify_acceptance` accepted it as in-practice-optimal
+        (feasible primal, small primal--dual gap) — the crossover-off
+        interior-point case.  Such a solve wrote a usable solution and must
+        NOT be treated as a failure by the CLI exit-code scan.  Always
+        ``False`` for the Benders path (its acceptance is governed by
+        ``is_benders`` + gap/tol) and for the failed-solve path.
     warm_used : bool
         Δ.12d — True if this solve was produced by warm-updating the
         prior solve's :class:`polar_high.WarmProblem` instance; False
@@ -1445,6 +1454,7 @@ class OrchestrationStep:
     handoff: SolveHandoff
     obj: float | None = None
     optimal: bool | None = None
+    near_optimal: bool = False
     warm_used: bool = False
     flex_data: "FlexData | None" = None
     flex_data_provider: "object | None" = None
@@ -3694,6 +3704,12 @@ def _drive_cascade(
                 handoff=handoff,
                 obj=unscaled_obj,
                 optimal=bool(getattr(sol, "optimal", False)) if sol is not None else None,
+                # ``_acc`` (from ``classify_acceptance`` above) is authoritative:
+                # reaching here means the solve was accepted (a reject returned 1
+                # and raised before this point).  Record the near-optimal verdict
+                # so the CLI exit-code scan does not re-reject a usable, accepted
+                # crossover-off solve off the strict ``optimal`` mirror alone.
+                near_optimal=bool(getattr(_acc, "near_optimal", False)),
                 warm_used=warm_used,
                 flex_data=data,
                 flex_data_provider=getattr(
