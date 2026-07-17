@@ -205,3 +205,167 @@ def test_period_indexed_period_map_resolves_and_emits_support() -> None:
         pl.col("t").cast(pl.Utf8),
     )
     assert _rows(over) == {("fg1", "p2025", "t01"), ("fg1", "p2025", "t02")}
+
+
+# ---------------------------------------------------------------------------
+# Mixed-authoring regression — one flowGroup authors a 1d Map(period) floor
+# while a SIBLING flowGroup authors a 2d Map(period, time) floor on the same
+# ``min_instant_flow`` parameter.
+#
+# Reproduces the reported correctness bug (Cyprus_Grid): a baseline solve
+# floors "Vassiliko Thermal"=150 / "Dhekelia ST1_ST2"=60 as period maps;
+# adding a period-time Map floor on a third flowGroup ("All thermal units")
+# flipped the WHOLE parameter's resolved shape to MAP_PERIOD_TIME (Spine's
+# ``parameter_shape_info`` reports the deepest row; ``_unroll_rows``
+# discovers index columns from the widest row).  The period-map rows then
+# arrived with a NULL ``t`` and the old ``broadcast_to_period_time``
+# MAP_PERIOD_TIME branch inner-joined them away on (d, t) — silently
+# DELETING the pre-existing floors.  The floored model became CHEAPER than
+# the un-floored baseline (mathematically impossible for a floor), because
+# generation dropped two of the three obligations.
+#
+# ``broadcast_to_period_time`` now carries the same null-index mixed-
+# authoring guard the MAP_PERIOD / MAP_TIME branches have: period-only rows
+# (null t) broadcast across every active timestep; time-only rows (null d)
+# broadcast across every active period; fully-keyed rows keep the (d, t)
+# inner-join.  All three floors must survive.
+# ---------------------------------------------------------------------------
+
+
+class _MixedShapeFlowGroupStub:
+    """Surfaces ``flowGroup.min_instant_flow`` where some flowGroups are
+    authored as a 1d Map(period) and one as a 2d Map(period, time),
+    mirroring the flat frame SpineDbReader emits for a mixed-depth
+    parameter under one scenario:
+
+    * ``parameter_shape_info`` returns the DEEPEST row's raw labels
+      (``["x", "x"]`` — spinedb_api's silent default on both levels).
+    * ``parameter_explicit`` returns a flat frame with two index columns
+      (``x`` = period, ``x_2`` = time); the period-map rows carry a NULL
+      ``x_2`` because the widest (2d) row fixed the column set.
+    """
+
+    def __init__(self,
+                 period_maps: dict[str, dict[str, float]],
+                 period_time_maps: dict[str, dict[tuple[str, str], float]],
+                 frame_index_cols: tuple[str, str] = ("x", "x_2")) -> None:
+        self._period_maps = period_maps
+        self._pt_maps = period_time_maps
+        self._ix = frame_index_cols
+
+    def parameter_explicit(self, entity_class: str, parameter_name: str):
+        if entity_class != "flowGroup" or parameter_name != "min_instant_flow":
+            raise KeyError((entity_class, parameter_name))
+        ix0, ix1 = self._ix
+        names: list[str] = []
+        col0: list[str] = []
+        col1: list[str | None] = []
+        vals: list[float] = []
+        # 1d period maps → NULL second index (the mixed-shape signature).
+        for g, pv in self._period_maps.items():
+            for d, v in pv.items():
+                names.append(g)
+                col0.append(d)
+                col1.append(None)
+                vals.append(v)
+        # 2d period-time maps → both indices populated.
+        for g, ptv in self._pt_maps.items():
+            for (d, t), v in ptv.items():
+                names.append(g)
+                col0.append(d)
+                col1.append(t)
+                vals.append(v)
+        return pl.DataFrame(
+            {"name": names, ix0: col0, ix1: col1, "value": vals},
+            schema={"name": pl.Utf8, ix0: pl.Utf8, ix1: pl.Utf8,
+                    "value": pl.Float64},
+        )
+
+    def parameter(self, entity_class: str, parameter_name: str):
+        return self.parameter_explicit(entity_class, parameter_name)
+
+    def parameter_shape_info(self, entity_class: str, parameter_name: str):
+        # Deepest row is the 2d Map — two silent-default "x" levels.
+        return ["x", "x"]
+
+    def entities(self, entity_class: str):
+        if entity_class == "flowGroup":
+            groups = list(self._period_maps) + list(self._pt_maps)
+            return pl.DataFrame({"name": groups})
+        return pl.DataFrame({"name": []}, schema={"name": pl.Utf8})
+
+
+def _mixed_min_instant_flow_param():
+    """Resolve the mixed-authoring ``pdt_min_instant_flow`` cap over a
+    2-period × 2-timestep grid and return (Param, dt_grid)."""
+    import flextool.engine_polars._direct_params as dp
+    pf = _period_filter()
+    stub = _MixedShapeFlowGroupStub(
+        period_maps={
+            # baseline period-scalar floors (as 1d period maps)
+            "Vassiliko Thermal": {"p2025": 150.0, "p2030": 150.0},
+            "Dhekelia ST1_ST2": {"p2025": 60.0, "p2030": 60.0},
+        },
+        period_time_maps={
+            # the added period-time floor that flips the frame shape
+            "All thermal units": {
+                ("p2025", "t01"): 10.0, ("p2025", "t02"): 10.0,
+                ("p2030", "t01"): 10.0, ("p2030", "t02"): 10.0,
+            },
+        },
+    )
+    cap = dp.pdt_min_instant_flow_from_source(stub, period_filter=pf)
+    assert cap is not None, "mixed-authoring cap resolved to None"
+    return cap, pf
+
+
+def test_mixed_period_and_period_time_floors_all_survive() -> None:
+    """The load-bearing assertion: the resolved ``pdt_min_instant_flow``
+    Param must retain BOTH the period-map floors AND the period-time
+    floor over the full active (d, t) grid.  Pre-fix, the two period-map
+    floors were inner-joined away (NULL ``t``) — reproducing the reported
+    lower-than-baseline optimum."""
+    cap, _ = _mixed_min_instant_flow_param()
+    frame = _collect(cap).with_columns(
+        pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+        pl.col("t").cast(pl.Utf8),
+    )
+    got = {(g, d, t): v for g, d, t, v in
+           frame.select("g", "d", "t", "value").iter_rows()}
+
+    full_grid = {("p2025", "t01"), ("p2025", "t02"),
+                 ("p2030", "t01"), ("p2030", "t02")}
+    # Vassiliko period floor (150) broadcast across every active timestep.
+    for d, t in full_grid:
+        assert got.get(("Vassiliko Thermal", d, t)) == 150.0, (
+            f"Vassiliko floor dropped/altered at ({d}, {t}); got {got}"
+        )
+        assert got.get(("Dhekelia ST1_ST2", d, t)) == 60.0, (
+            f"Dhekelia floor dropped/altered at ({d}, {t}); got {got}"
+        )
+        assert got.get(("All thermal units", d, t)) == 10.0, (
+            f"period-time floor missing at ({d}, {t}); got {got}"
+        )
+    # No spurious extra rows.
+    assert len(got) == 3 * len(full_grid), got
+
+
+def test_mixed_floors_emit_constraint_support_for_all_groups() -> None:
+    """Finer-grained localisation: the emitted ``minInstant_flow``
+    constraint *support* (``_instant_flow_support`` over the resolved
+    cap) must cover all three flowGroups across the full grid — i.e. the
+    obligation is generated for the period-map floors, not silently
+    skipped."""
+    cap, pf = _mixed_min_instant_flow_param()
+    over = _instant_flow_support(
+        _collect(cap), pf.select("d", "t").unique()
+    ).with_columns(
+        pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+        pl.col("t").cast(pl.Utf8),
+    )
+    groups = {g for g, _, _ in _rows(over)}
+    assert groups == {"Vassiliko Thermal", "Dhekelia ST1_ST2",
+                      "All thermal units"}, (
+        f"constraint support lost a flowGroup: {groups}"
+    )
+    assert len(_rows(over)) == 3 * 4, _rows(over)

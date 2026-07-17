@@ -1311,22 +1311,61 @@ def broadcast_to_period_time(
         lf = cast_frame_axes(lf, _enums)
 
     shape = resolved.shape
-    if shape == Shape.MAP_PERIOD_TIME:
-        # Direct fill — already (d, t)-keyed.  Inner-join on dt to
-        # restrict to the active solve's periods.
+    if shape in (Shape.MAP_PERIOD_TIME, Shape.MAP_TIME_PERIOD):
+        # (d, t)-keyed fill.  Both authoring orders unroll to the same
+        # flat frame carrying ``period`` + ``t`` columns (the
+        # SpineDbReader flattens a 2d_map regardless of index order), so
+        # the two shapes share one code path.  Inner-join on dt to
+        # restrict to the active solve's (d, t) grid.
+        #
+        # Mixed-authoring guard (mirrors the MAP_PERIOD / MAP_TIME
+        # branches below): when SOME flowGroups author a full 2d
+        # Map(period, time) while OTHERS author only a 1d Map(period)
+        # (or a scalar) for the same parameter, the whole frame's
+        # resolved shape becomes MAP_PERIOD_TIME — SpineDbReader's
+        # ``parameter_shape_info`` reports the DEEPEST row's nesting and
+        # ``_unroll_rows`` discovers index columns from the widest row,
+        # so the shallower rows arrive with a NULL ``t`` (period-only
+        # default) or NULL ``d`` (time-only default).  A plain inner-join
+        # on (d, t) SILENTLY DROPS every such row — annihilating those
+        # entities' floors/caps entirely (the reported ``min_instant_flow``
+        # correctness bug: adding one period-time floor on a new
+        # flowGroup made the pre-existing period-scalar floors on other
+        # flowGroups vanish, LOWERING the optimum below the un-floored
+        # baseline).  Split by which index axes are populated and
+        # broadcast the missing axis across the active grid instead of
+        # dropping.  For a non-mixed (pure 2d) frame every row is fully
+        # keyed, so only the ``lf_full`` branch is non-empty and the
+        # result is byte-identical to the old inner-join.
         dt_lf = period_filter.lazy().select("d", "t").unique()
-        out_lf = (lf.pipe(rename_to_axis, {"period": "d"})
-                    .select(*entity_keys, "d", "t", "value")
-                    .join(dt_lf, on=["d", "t"], how="inner"))
-        return Param((*entity_keys, "d", "t"), out_lf)
-    elif shape == Shape.MAP_TIME_PERIOD:
-        # Same as MAP_PERIOD_TIME — column renames.  The frame already
-        # has both ``period`` and ``t`` columns regardless of authoring
-        # order (the SpineDbReader unrolls a 2d_map into a flat frame).
-        dt_lf = period_filter.lazy().select("d", "t").unique()
-        out_lf = (lf.pipe(rename_to_axis, {"period": "d"})
-                    .select(*entity_keys, "d", "t", "value")
-                    .join(dt_lf, on=["d", "t"], how="inner"))
+        lf_dt = (lf.pipe(rename_to_axis, {"period": "d"})
+                    .select(*entity_keys, "d", "t", "value"))
+        # Fully-keyed rows: exact (d, t) match against the active grid.
+        lf_full = (lf_dt.filter(pl.col("d").is_not_null()
+                                & pl.col("t").is_not_null())
+                        .join(dt_lf, on=["d", "t"], how="inner")
+                        .select(*entity_keys, "d", "t", "value"))
+        # Period-only default (null t): broadcast across every active
+        # timestep of the matching active period.
+        lf_period = (lf_dt.filter(pl.col("d").is_not_null()
+                                  & pl.col("t").is_null())
+                          .select(*entity_keys, "d", "value")
+                          .join(dt_lf, on="d", how="inner")
+                          .select(*entity_keys, "d", "t", "value"))
+        # Time-only default (null d): broadcast across every active
+        # period of the matching active timestep.
+        lf_time = (lf_dt.filter(pl.col("d").is_null()
+                                & pl.col("t").is_not_null())
+                        .select(*entity_keys, "t", "value")
+                        .join(dt_lf, on="t", how="inner")
+                        .select(*entity_keys, "d", "t", "value"))
+        # Scalar default (both null): broadcast across the whole grid.
+        lf_scalar = (lf_dt.filter(pl.col("d").is_null()
+                                  & pl.col("t").is_null())
+                          .select(*entity_keys, "value")
+                          .join(dt_lf, how="cross")
+                          .select(*entity_keys, "d", "t", "value"))
+        out_lf = pl.concat([lf_full, lf_period, lf_time, lf_scalar])
         return Param((*entity_keys, "d", "t"), out_lf)
     elif shape == Shape.MAP_PERIOD:
         # 1d_map(period) → (entity, d) Param.  Phase E.1: do NOT
