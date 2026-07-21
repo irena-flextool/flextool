@@ -1068,7 +1068,7 @@
       "model",
       "version",
       [
-        "65",
+        "66",
         "float"
       ],
       null,
@@ -1147,13 +1147,13 @@
     ],
     [
       "node",
-      "energy_margin",
+      "energy_margin_adder",
       [
-        "1.0",
+        "0.0",
         "float"
       ],
       null,
-      "[factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method = 'inflow_multiplier'. Offsets representative-period VRE optimism (rep-period average VRE availability exceeds the annual average). 1 = off. e.g. 1.1 builds ~10% more capacity to serve the true annual demand under the true (lower) annual VRE. Constant or period.",
+      "[MWh] Extra demand (negative inflow) added to this node in the investment solve only, when energy_margin_method = 'inflow_adder'. Raises adequacy headroom without changing dispatch demand. 0 = off. Constant or period.",
       "investment"
     ],
     [
@@ -1164,7 +1164,18 @@
         "str"
       ],
       "energy_margin_methods",
-      "How the node's investment-stage energy margin is applied. 'none' (default) = off, no scaling. 'inflow_multiplier' multiplies this node's inflow by 'energy_margin' in the solve that carries investment periods only (dispatch solves are unaffected), to offset representative-period VRE optimism that would otherwise cause underinvestment. Reserved for a future 'inflow_adder' mode.",
+      "How the node's investment-stage energy margin is applied. 'none' (default) = off, no scaling. 'inflow_multiplier' multiplies this node's inflow by 'energy_margin_multiplier' in the solve that carries investment periods only (dispatch solves are unaffected). 'inflow_adder' instead adds 'energy_margin_adder' MWh of extra demand (negative inflow) in that same investment solve. Both offset representative-period VRE optimism that would otherwise cause underinvestment.",
+      "investment"
+    ],
+    [
+      "node",
+      "energy_margin_multiplier",
+      [
+        "1.0",
+        "float"
+      ],
+      null,
+      "[factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method = 'inflow_multiplier'. Offsets representative-period VRE optimism (rep-period average VRE availability exceeds the annual average). 1 = off. e.g. 1.1 builds ~10% more capacity to serve the true annual demand under the true (lower) annual VRE. Constant or period.",
       "investment"
     ],
     [
@@ -4255,6 +4266,13 @@
       "energy_margin_methods",
       [
         "\"inflow_multiplier\"",
+        "str"
+      ]
+    ],
+    [
+      "energy_margin_methods",
+      [
+        "\"inflow_adder\"",
         "str"
       ]
     ],

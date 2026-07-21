@@ -1,4 +1,4 @@
-"""energy_margin — invest-only, negative-inflow demand margin emitter.
+"""energy_margin_multiplier — invest-only, negative-inflow demand margin emitter.
 
 Runs per-solve from ``_emit_solve_time.run`` immediately AFTER
 ``emit_pdtNodeInflow`` (batch 54) and BEFORE the positive/negative inflow
@@ -12,7 +12,7 @@ it scales the negative (demand) rows.
 What it does
 ------------
 For a node with ``energy_margin_method == "inflow_multiplier"`` and an effective
-``energy_margin`` factor ``!= 1.0``, multiply that node's ``pdtNodeInflow``
+``energy_margin_multiplier`` factor ``!= 1.0``, multiply that node's ``pdtNodeInflow``
 rows by the factor — but ONLY:
 
 * in the solve that carries investment periods
@@ -26,7 +26,8 @@ The dispatch solves see the true (un-margined) demand.
 Early-return byte-parity contract
 ----------------------------------
 If the solve is NOT an invest solve, OR no node has
-``energy_margin_method == "inflow_multiplier"`` with an effective factor ``!= 1.0``,
+``energy_margin_method == "inflow_multiplier"`` with an effective
+``energy_margin_multiplier`` factor ``!= 1.0``,
 the emitter returns WITHOUT touching the provider — the batch-54
 ``pdtNodeInflow`` frame stands untouched, so the default (nobody sets a
 margin) is byte-identical to today.
@@ -62,7 +63,7 @@ def emit_energy_margin_inflow(
     *,
     provider,
 ) -> None:
-    """Apply the invest-only, demand-only energy_margin to pdtNodeInflow.
+    """Apply the invest-only, demand-only energy_margin_multiplier to pdtNodeInflow.
 
     See the module docstring for the full contract.  A missing/empty
     method or value frame yields no manual nodes ⇒ early return.
@@ -73,7 +74,7 @@ def emit_energy_margin_inflow(
     )
     method_for_node = {n: m for (n, m) in method_pairs}
     margin_for_node = _read_keyed_float(
-        input_dir / "energy_margin.csv", provider=provider,
+        input_dir / "energy_margin_multiplier.csv", provider=provider,
     )
 
     # 2. manual = {node: margin}; margin = value if present else 1.0; drop

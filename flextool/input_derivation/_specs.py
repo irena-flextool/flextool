@@ -200,13 +200,22 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/node__energy_margin_method.csv",
     },
     {
-        # Scalar-float only: a period-map energy_margin is a documented
-        # FUTURE extension (route through _param_shapes) and must NOT be
-        # silently mis-ingested by this scalar spec.
-        "cl_pars": [("node", "energy_margin")],
-        "header": "node,energy_margin",
-        "filename": "input/energy_margin.csv",
+        # Scalar-float only: a period-map energy_margin_multiplier is a
+        # documented FUTURE extension (route through _param_shapes) and must
+        # NOT be silently mis-ingested by this scalar spec.
+        "cl_pars": [("node", "energy_margin_multiplier")],
+        "header": "node,energy_margin_multiplier",
+        "filename": "input/energy_margin_multiplier.csv",
         "filter_in_type": ["float"],
+    },
+    {
+        # Additive energy margin [MWh].  No ``filter_in_type`` so a
+        # SCALAR (constant) or a period Map both ingest — the emitter
+        # (_emit_energy_margin_adder) broadcasts the authored shape over
+        # the invest (d, t) grid via _param_shapes' promote_param_to_dt.
+        "cl_pars": [("node", "energy_margin_adder")],
+        "header": "node,energy_margin_adder",
+        "filename": "input/energy_margin_adder.csv",
     },
     {
         "cl_pars": [("node__profile", "profile_method")],

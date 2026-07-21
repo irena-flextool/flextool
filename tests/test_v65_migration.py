@@ -22,11 +22,6 @@ from spinedb_api import DatabaseMapping, from_database, import_data
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
 
-from tests.db_utils import json_to_db
-
-TEST_DIR = Path(__file__).resolve().parent
-FIXTURES_DIR = TEST_DIR / "fixtures"
-
 
 def test_v65_version_constant_is_at_least_65() -> None:
     """The engine must report a schema version >= 65 — the energy-margin /
@@ -37,10 +32,21 @@ def test_v65_version_constant_is_at_least_65() -> None:
 
 
 def _migrated_db(tmp_path: Path) -> DatabaseMapping:
-    """Build a fixture DB from JSON, migrate it, and return an open mapping."""
-    db_path = tmp_path / "lh2.sqlite"
-    url = json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
-    migrate_database(url)
+    """Build a pre-v65 (version 64) DB from scratch, migrate it *exactly* to
+    v65, and return an open mapping.
+
+    Version-pinned on purpose: the checked-in JSON fixtures are regenerated
+    to the current head schema, so loading one and migrating to head would
+    assert against head, not the v65 checkpoint.  Building a v64 DB (via
+    ``_build_v64_group_flag_db``, which also gives the ``node`` and
+    ``group`` classes the v65 step writes into) and stopping at v65
+    (``up_to=65``) keeps this a faithful v65 test even as later migrations
+    extend the chain.
+    """
+    db_path = tmp_path / "v64_base.sqlite"
+    url = f"sqlite:///{db_path.resolve()}"
+    _build_v64_group_flag_db(url)
+    migrate_database(url, up_to=65)
     db = DatabaseMapping(url, create=False)
     db.fetch_all()
     return db
@@ -233,13 +239,14 @@ def test_value_conversion_yes_to_manual(tmp_path: Path) -> None:
 
 
 def test_migration_is_idempotent(tmp_path: Path) -> None:
-    """Re-running the migration over an already-current DB is a no-op: the
-    new definitions stay single and at their defaults.
+    """Migrating a freshly-built v64 DB to v65 twice is a no-op: the new
+    definitions stay single and at their defaults.
     """
-    db_path = tmp_path / "lh2.sqlite"
-    url = json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
-    migrate_database(url)
-    migrate_database(url)
+    db_path = tmp_path / "v64_base.sqlite"
+    url = f"sqlite:///{db_path.resolve()}"
+    _build_v64_group_flag_db(url)
+    migrate_database(url, up_to=65)
+    migrate_database(url, up_to=65)
 
     db = DatabaseMapping(url, create=False)
     try:
