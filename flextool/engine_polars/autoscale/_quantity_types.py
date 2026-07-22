@@ -377,6 +377,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, Period or Time.
     ('penalty_inertia', 'group'): QuantityType.PRICE_PER_INERTIA,
     # [CUR/MWs] Penalty for violating the inertia constraint. Cost scales with the duration of the violation. Constant or period.
+    ('penalty_method', 'node'): QuantityType.DIMENSIONLESS,
+    # Per-node toggle: 'regular' keeps balance-slack (penalty) vars, 'off' removes them.
     ('penalty_non_synchronous', 'group'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.
     ('penalty_reserve', 'reserve__upDown__group'): QuantityType.PRICE_PER_CAPACITY,

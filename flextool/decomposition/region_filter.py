@@ -358,6 +358,7 @@ def _build_column_specs() -> dict[str, list[tuple[int, str]]]:
     for name, kind0 in (
         ("commodity__node.csv", "node_col1"),  # special: commodity,node
         ("node__inflow_method.csv", "node"),
+        ("node__penalty_method.csv", "node"),
         ("node__storage_binding_method.csv", "node"),
         ("node__storage_nested_fix_method.csv", "node"),
         ("node__storage_solve_horizon_method.csv", "node"),

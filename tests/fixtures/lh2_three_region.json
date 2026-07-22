@@ -3014,6 +3014,20 @@
       ]
     ],
     [
+      "penalty_methods",
+      [
+        "InJlZ3VsYXIi",
+        "str"
+      ]
+    ],
+    [
+      "penalty_methods",
+      [
+        "Im9mZiI=",
+        "str"
+      ]
+    ],
+    [
       "price_method",
       [
         "InByaWNlIg==",
@@ -4482,7 +4496,7 @@
       "model",
       "version",
       [
-        "NjY=",
+        "Njc=",
         "float"
       ],
       null,
@@ -4785,6 +4799,17 @@
       null,
       "[CUR/MW] Penalty cost for increasing consumption in the node. Constant, Period or Time.",
       "basics"
+    ],
+    [
+      "node",
+      "penalty_method",
+      [
+        "InJlZ3VsYXIi",
+        "str"
+      ],
+      "penalty_methods",
+      "Whether this node has balance penalty (unserved-energy / over-supply slack) variables. 'regular' (default) keeps the penalty_up / penalty_down slack variables that let the node balance be violated at a cost. 'off' removes those slack variables entirely, making the node balance a hard equality (the solve becomes infeasible if the node cannot balance). Use 'off' to force true adequacy on selected nodes instead of letting expensive slack hide infeasibility.",
+      null
     ],
     [
       "node",

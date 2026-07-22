@@ -110,6 +110,81 @@ from flextool.engine_polars._vectorize import _render_value_column
 # The pdtNodeInflow frame is all-Utf8: node, period, time, value.
 _PDT_COLS = ("node", "period", "time", "value")
 
+# The authored adder ingests through three specs (see _specs.py): a
+# scalar float, a period Map (1d), and a period-time Map (2d).  Each lands
+# in its own CSV / Provider key; the emitter reads all three and unions
+# the broadcast frames.  A node has a scalar OR a map adder, never both.
+_ADDER_FILES = (
+    "energy_margin_adder.csv",       # scalar float → shape (node,)
+    "pd_energy_margin_adder.csv",    # 1d Map       → shape (node, d)
+    "pdt_energy_margin_adder.csv",   # 2d Map       → shape (node, d, t)
+)
+
+
+def _broadcast_authored_adder(adder_df, manual_nodes, dt_grid):
+    """Broadcast one authored adder frame over the invest (d, t) grid.
+
+    *adder_df* is an all-Utf8 ingested frame whose FIRST column is the
+    node and whose LAST column is the value; any middle columns are the
+    authored Map index axes (``period`` and/or ``time``).  Returns a frame
+    with columns ``node, period, time, __adder`` (Float64 adder) restricted
+    to *manual_nodes*, or ``None`` when there is nothing to apply (empty
+    frame, an unrecognised index axis, or all-zero / null adders).
+    """
+    if adder_df is None or adder_df.height == 0:
+        return None
+    cols = adder_df.columns
+    if len(cols) < 2:
+        return None
+
+    # Resolve the authored shape from the frame's explicit index columns
+    # and build the rename → canonical (node, d, t) Param dims.  Any index
+    # column that is neither ``period`` nor ``time`` is an unrecognised
+    # axis for this parameter — skip this frame rather than guessing a
+    # broadcast (byte-parity).
+    node_col, value_col = cols[0], cols[-1]
+    rename: dict[str, str] = {node_col: "node"}
+    dims: list[str] = ["node"]
+    for c in cols[1:-1]:
+        cl = c.strip().lower()
+        if cl == "period":
+            rename[c] = "d"
+            dims.append("d")
+        elif cl in ("time", "t"):
+            rename[c] = "t"
+            dims.append("t")
+        else:
+            return None
+
+    # Restrict to the manual (inflow_adder) nodes, cast the value to
+    # Float64, and drop null / zero adders (a zero adder is a no-op).
+    work = (
+        adder_df.rename(rename)
+        .with_columns(
+            pl.col(value_col).cast(pl.Float64, strict=False).alias("value"),
+        )
+        .filter(pl.col("node").is_in(list(manual_nodes)))
+        .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0))
+        .select([*dims, "value"])
+    )
+    if work.height == 0:
+        return None
+
+    # Broadcast the authored shape over the invest solve's (d, t) grid.
+    # Route through _param_shapes' promote_param_to_dt (invariant #2 —
+    # never a hand-rolled column-name cross-join): a SCALAR (node,) Param
+    # cross-joins the whole grid; a (node, d) / (node, d, t) Param joins on
+    # its authored axis.
+    adder_dt = (
+        promote_param_to_dt(Param(tuple(dims), work), dt_grid)
+        .select("node", "d", "t", "value")
+        .collect()
+        .rename({"d": "period", "t": "time", "value": "__adder"})
+    )
+    if adder_dt.height == 0:
+        return None
+    return adder_dt
+
 
 def emit_energy_margin_adder(
     state,

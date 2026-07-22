@@ -452,6 +452,13 @@ class FlexData:
     # FlexData(...) constructors that omit it stay valid and unchanged.
     nodeBalancePeriod: pl.DataFrame | None = None  # set: (n,)
 
+    # Companion to ``nodeBalance``: the subset of balance nodes whose
+    # ``penalty_method == 'off'`` — these get NO balance-slack
+    # (``vq_state_up`` / ``vq_state_down``) variables, so their node
+    # balance is a hard equality.  ``None`` (default) or empty means every
+    # balance node keeps its slack (byte-identical legacy behaviour).
+    nodeBalance_penalty_off: pl.DataFrame | None = None  # set: (n,)
+
     # Model-wide small-coefficient cutoff (``model.small_number_threshold``).
     # Any LP constraint-matrix coefficient or RHS term with
     # ``abs(value) < threshold`` is floored to 0.0 inside polar_high at LP
@@ -1099,12 +1106,34 @@ def _load_node(sd: Path, dt: pl.DataFrame,
             if dn.height > 0:
                 pen_dn_df = dn
 
+    # Nodes with penalty_method == 'off' get NO balance-slack (penalty)
+    # variables -> hard node balance.  Absent CSV / no 'off' rows -> None
+    # (byte-identical legacy behaviour: every node keeps its slack).
+    penalty_off = None
+    if _provider_has(provider, "solve_data/node__penalty_method",
+                     sd / "node__penalty_method.csv"):
+        pm = _provider_read(provider, "solve_data/node__penalty_method",
+                            sd / "node__penalty_method.csv")
+        # Emitted header is `node,penalty_method`; tolerate a `method`
+        # value-column too (mirrors storage_binding_method's dual schema).
+        if "penalty_method" in pm.columns:
+            pm = pm.pipe(rename_to_axis, {"node": "n", "penalty_method": "method"})
+        elif "method" in pm.columns:
+            pm = pm.pipe(rename_to_axis, {"node": "n"})
+        off = pm.filter(pl.col("method") == "off").select("n").unique()
+        if off.height > 0:
+            # Align n dtype to nb's axis so the model-side anti-join matches.
+            if off.schema["n"] != nb.schema["n"]:
+                off = off.with_columns(pl.col("n").cast(nb.schema["n"], strict=False))
+            penalty_off = off
+
     # Phase E.3: ``nodeBalance_dt`` no longer materialised; consumers
     # call ``_pdt_join.compute_nodeBalance_dt`` on demand.
     return (nb, nbp, None,
             Param(("n","d","t"), inflow_long.select("n","d","t","value")),
             Param(("n","d","t"), pen_up_df),
-            Param(("n","d","t"), pen_dn_df))
+            Param(("n","d","t"), pen_dn_df),
+            penalty_off)
 
 
 # ---------------------------------------------------------------------------
@@ -4235,7 +4264,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         block_layout = BlockLayout.load_from_solve_data(sd, provider=provider)
 
         dt, step_dur, tsw, infl, psh = _load_time(sd, provider=provider)
-        nb, nbp, nb_dt, inflow, pen_up, pen_dn = _load_node(sd, dt, provider=provider)
+        nb, nbp, nb_dt, inflow, pen_up, pen_dn, penalty_off = _load_node(sd, dt, provider=provider)
         _load_mem("load_node_end", "load_flextool: time + node loaded")
 
         proc = _load_process_topology(inp, sd, dt, block_layout=block_layout,
@@ -4469,6 +4498,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
             nodeBalance = nb,
             nodeBalancePeriod = nbp,
+            nodeBalance_penalty_off = penalty_off,
             nodeBalance_dt = nb_dt,
             p_inflow = inflow,
             p_penalty_up = pen_up,

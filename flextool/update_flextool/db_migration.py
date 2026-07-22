@@ -1730,6 +1730,8 @@ def migrate_database(
                 _migrate_v65_energy_and_capacity_margin_methods(db)
             elif next_version == 66:
                 _migrate_v66_energy_margin_adder(db)
+            elif next_version == 67:
+                _migrate_v67_node_penalty_method(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3584,6 +3586,59 @@ def _migrate_v66_energy_margin_adder(db) -> None:
     _commit_step(db,
         "v66: renamed node.energy_margin -> energy_margin_multiplier; "
         "added node.energy_margin_adder + energy_margin_methods.inflow_adder."
+    )
+
+
+def _migrate_v67_node_penalty_method(db) -> None:
+    """Add ``node.penalty_method`` to toggle balance-penalty slack (v66 -> v67).
+
+    FlexTool nodes carry ``penalty_up`` / ``penalty_down`` slack variables
+    on their balance equation: unserved-energy and over-supply slacks that
+    let the node balance be violated at a (usually large) cost.  This keeps
+    solves feasible, but on adequacy studies that same slack can silently
+    absorb a genuine shortfall — the solve reports an expensive but
+    "optimal" result instead of the infeasibility that would reveal
+    inadequate capacity.
+
+    ``penalty_method`` is a per-node enum (value list ``penalty_methods``):
+
+    * ``regular`` (default, byte-identical to prior behaviour) keeps the
+      ``penalty_up`` / ``penalty_down`` slack variables.
+    * ``off`` removes those slack variables entirely, turning the node
+      balance into a hard equality — the solve becomes infeasible if the
+      node cannot balance, forcing true adequacy on the selected nodes.
+
+    The parameter is deliberately left out of any parameter group: a
+    penalty toggle is not investment-specific.
+    """
+    add_value_list_manual(db, [
+        ["penalty_methods", "regular"],
+        ["penalty_methods", "off"],
+    ])
+
+    pm_default_val, pm_default_type = to_database("regular")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="node",
+        name="penalty_method",
+        default_value=pm_default_val,
+        default_type=pm_default_type,
+        parameter_value_list_name="penalty_methods",
+        description=(
+            "Whether this node has balance penalty (unserved-energy / "
+            "over-supply slack) variables. 'regular' (default) keeps the "
+            "penalty_up / penalty_down slack variables that let the node "
+            "balance be violated at a cost. 'off' removes those slack "
+            "variables entirely, making the node balance a hard equality "
+            "(the solve becomes infeasible if the node cannot balance). "
+            "Use 'off' to force true adequacy on selected nodes instead of "
+            "letting expensive slack hide infeasibility."
+        ),
+    )
+
+    _commit_step(db,
+        "v67: added node.penalty_method (penalty_methods: regular/off); "
+        "'off' removes node balance slack (penalty) variables."
     )
 
 

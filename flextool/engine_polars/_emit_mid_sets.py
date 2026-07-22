@@ -387,6 +387,7 @@ _CT_METHOD_REGULAR = "regular"
 _CT_METHOD_CONSTANT = "constant_efficiency"
 _STARTUP_METHOD_NO = "no_startup"
 _INFLOW_METHOD_DEFAULT = "use_original"
+_PENALTY_METHOD_DEFAULT = "regular"
 _STORAGE_BINDING_METHOD_DEFAULT = "bind_forward_only"
 
 
@@ -502,6 +503,23 @@ def derive_node_inflow_method(input_dir: Path,
     )
 
 
+def derive_node_penalty_method(input_dir: Path,
+                                *, provider: "object | None" = None,
+                                ) -> pl.DataFrame:
+    explicit = _read_csv(
+        input_dir / "node__penalty_method.csv", ["node", "penalty_method"],
+        provider=provider,
+    )
+    explicit = _drop_blank_rows(explicit, ["node", "penalty_method"])
+    nodes = _read_csv(input_dir / "node.csv", ["node"], provider=provider)
+    nodes = _drop_blank_rows(nodes, ["node"])
+    defaults = {n: _PENALTY_METHOD_DEFAULT
+                for n in nodes.get_column("node").to_list()}
+    return _per_entity_fallback(
+        explicit, nodes, defaults, ("node", "penalty_method"),
+    )
+
+
 def derive_node_storage_binding_method(input_dir: Path,
                                         *, provider: "object | None" = None,
                                         ) -> pl.DataFrame:
@@ -590,6 +608,14 @@ def emit_node_inflow_method(input_dir: Path, solve_data_dir: Path,
     del solve_data_dir
     _emit(provider, "solve_data/node__inflow_method.csv",
           derive_node_inflow_method(input_dir, provider=provider))
+
+
+def emit_node_penalty_method(input_dir: Path, solve_data_dir: Path,
+                             *, provider) -> None:
+    """Emit ``node_penalty_method`` to the Provider."""
+    del solve_data_dir
+    _emit(provider, "solve_data/node__penalty_method.csv",
+          derive_node_penalty_method(input_dir, provider=provider))
 
 
 def emit_node_storage_binding_method(input_dir: Path, solve_data_dir: Path,
