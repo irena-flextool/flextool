@@ -3631,8 +3631,11 @@ def _migrate_v67_node_penalty_method(db) -> None:
             "balance be violated at a cost. 'off' removes those slack "
             "variables entirely, making the node balance a hard equality "
             "(the solve becomes infeasible if the node cannot balance). "
-            "Use 'off' to force true adequacy on selected nodes instead of "
-            "letting expensive slack hide infeasibility."
+            "Use 'off' only if certain that it will not make the model "
+            "infeasible (a real solution exists) - infeasible models can be "
+            "very difficult to debug. At the same time, 'off' will reduce "
+            "variables and can direct infeasibilities to other, more "
+            "desirable, nodes."
         ),
     )
 
