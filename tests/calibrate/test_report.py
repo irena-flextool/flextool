@@ -97,11 +97,12 @@ def test_write_report_summary_csv(tmp_path: Path):
     assert body[0][2] == "2.0"
     assert body[0][3] == "2"  # n_shedding
     assert body[0][4] == "1"  # n_flagged (run-level count)
-    assert body[0][5] == "False"  # not converged
+    # body[*][5] is solve_seconds (0.0 for synthetic records).
+    assert body[0][6] == "False"  # not converged
     # iteration 1: only west sheds now.
     assert body[1][1] == "80.0"
     assert body[1][3] == "1"
-    assert body[1][5] == "False"
+    assert body[1][6] == "False"
 
 
 def test_write_report_creates_out_dir(tmp_path: Path):

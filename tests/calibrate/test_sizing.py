@@ -43,6 +43,7 @@ from db_utils import json_to_db  # noqa: E402
 from flextool.calibrate._sizing import (  # noqa: E402
     invest_weight_W,
     scalar_adder,
+    size_timed,
     sized_increments,
     w_from_grids,
 )
@@ -128,6 +129,179 @@ def test_sized_increments_math_and_skip():
 def test_sized_increments_guards_nonpositive_W():
     with pytest.raises(ValueError):
         sized_increments({"n": 1.0}, W=0.0, lam=1.0)
+
+
+def test_sized_increments_overshoot_multiplies():
+    # overshoot scales the per-node increment linearly; default (1.0) is off.
+    W, lam = 35040.0, 0.5
+    residual = {"shed": 358.0}
+    base = sized_increments(residual, W=W, lam=lam)
+    over = sized_increments(residual, W=W, lam=lam, overshoot=1.2)
+    assert base["shed"] == pytest.approx(lam * 358.0 / W)
+    assert over["shed"] == pytest.approx(1.2 * lam * 358.0 / W)
+    # Byte-parity of the default path: overshoot=1.0 == omitting it.
+    assert sized_increments(residual, W=W, lam=lam, overshoot=1.0) == base
+
+
+# ---------------------------------------------------------------------------
+# 1b. Pure timed sizer — the T2 fold + per-cell sizing (no DB, no solver)
+# ---------------------------------------------------------------------------
+
+# A synthetic two-base-block / two-rep-block hull fold over one period "p".
+# Timeline offsets h=0,1,2 within each block.  Hull weights (sum to 1 per base
+# block): b0(t0..t2) -> {r0:0.6, r1:0.4}; b1(t3..t5) -> {r0:0.2, r1:0.8}.
+# Every base cell folds onto the rep cell that SHARES its within-block offset.
+_TIMED_EDGES = [
+    # base b0 -> r0 (weight 0.6), offset-preserving
+    ("p", "t0", "t0", 0.6), ("p", "t1", "t1", 0.6), ("p", "t2", "t2", 0.6),
+    # base b0 -> r1 (weight 0.4)
+    ("p", "t0", "t3", 0.4), ("p", "t1", "t4", 0.4), ("p", "t2", "t5", 0.4),
+    # base b1 -> r0 (weight 0.2)
+    ("p", "t3", "t0", 0.2), ("p", "t4", "t1", 0.2), ("p", "t5", "t2", 0.2),
+    # base b1 -> r1 (weight 0.8)
+    ("p", "t3", "t3", 0.8), ("p", "t4", "t4", 0.8), ("p", "t5", "t5", 0.8),
+]
+# Engine per-cell timestep weight: w_r[rep] = Σ_base·n_rp/n_base (n_rp=n_base=2
+# here → factor 1).  r0 cells: 0.6+0.2=0.8; r1 cells: 0.4+0.8=1.2.
+_TIMED_TW = {
+    ("p", "t0"): 0.8, ("p", "t1"): 0.8, ("p", "t2"): 0.8,
+    ("p", "t3"): 1.2, ("p", "t4"): 1.2, ("p", "t5"): 1.2,
+}
+
+
+def test_size_timed_energy_conservation():
+    # The load-bearing property: the fold gives only the per-cell SHAPE, and
+    # ``size_timed`` NORMALISES it to the TRUE annual residual — so the injected
+    # energy equals λ·annual_residual REGARDLESS of the raw dt-slack total.
+    #
+    # Here annual_residual (30) ≠ Σ dt_slack (15): the dt table is on the
+    # representative grid (its total is a fraction of the annual residual), so a
+    # sizer that merely conserved the raw dt total would inject 15 and
+    # under-provision 2×.  The old tautological test set residual == Σ dt_slack
+    # so this gap could never surface.
+    dt_slack = {"n": {("p", "t1"): 10.0, ("p", "t4"): 5.0}}  # Σ = 15
+    annual_residual = 30.0                                    # ≠ Σ dt_slack
+    residual = {"n": annual_residual}
+    lam = 1.0
+    out = size_timed(dt_slack, residual, _TIMED_EDGES, _TIMED_TW, lam=lam)
+
+    adder = out["n"]
+    injected = sum(a * _TIMED_TW[cell] for cell, a in adder.items())
+    # Normalisation target: Σ adder·tw_rep == λ·annual_residual (== 30), NOT
+    # λ·Σ(dt_slack) (== 15) that the un-normalised fold would give.
+    assert injected == pytest.approx(lam * annual_residual, rel=1e-12)
+    assert injected != pytest.approx(lam * 15.0, rel=1e-3)
+
+    # Shape preserved: slack_rep(t1)=0.6·10+0.2·5=7; (t4)=0.4·10+0.8·5=8; the
+    # shape is scaled by annual_residual/Σshape = 30/15 = 2 then /tw_rep.
+    shape_total = 7.0 + 8.0
+    scale = lam * annual_residual / shape_total
+    assert adder[("p", "t1")] == pytest.approx(scale * 7.0 / 0.8, rel=1e-12)
+    assert adder[("p", "t4")] == pytest.approx(scale * 8.0 / 1.2, rel=1e-12)
+    # The per-cell ENERGY split still follows the stress shape (7:8).
+    e_t1 = adder[("p", "t1")] * 0.8
+    e_t4 = adder[("p", "t4")] * 1.2
+    assert e_t1 / e_t4 == pytest.approx(7.0 / 8.0, rel=1e-12)
+
+
+def test_size_timed_unfolded_dt_is_unchanged_by_normalisation():
+    # When the dt table IS pre-unfolded (Σ dt_slack == annual_residual, the H2
+    # model), normalisation is a no-op: scale == λ and the per-cell adder is
+    # exactly λ·slack_rep/tw_rep — byte-identical to the naive fold.
+    dt_slack = {"n": {("p", "t1"): 10.0, ("p", "t4"): 5.0}}
+    residual = {"n": 15.0}  # == Σ dt_slack (unfolded onto the base timeline)
+    lam = 0.5
+    out = size_timed(dt_slack, residual, _TIMED_EDGES, _TIMED_TW, lam=lam)
+    adder = out["n"]
+    assert adder[("p", "t1")] == pytest.approx(lam * 7.0 / 0.8, rel=1e-12)
+    assert adder[("p", "t4")] == pytest.approx(lam * 8.0 / 1.2, rel=1e-12)
+    injected = sum(a * _TIMED_TW[cell] for cell, a in adder.items())
+    assert injected == pytest.approx(lam * 15.0, rel=1e-12)
+
+
+def test_size_timed_overshoot_scales_injected_energy():
+    # The overshoot safety multiplier scales the injected energy linearly:
+    # Σ adder·tw_rep == overshoot·λ·annual_residual, shape unchanged.
+    dt_slack = {"n": {("p", "t1"): 10.0, ("p", "t4"): 5.0}}
+    residual = {"n": 30.0}
+    lam = 1.0
+    base = size_timed(dt_slack, residual, _TIMED_EDGES, _TIMED_TW, lam=lam)["n"]
+    over = size_timed(
+        dt_slack, residual, _TIMED_EDGES, _TIMED_TW, lam=lam, overshoot=1.2,
+    )["n"]
+    inj_over = sum(a * _TIMED_TW[c] for c, a in over.items())
+    assert inj_over == pytest.approx(1.2 * lam * 30.0, rel=1e-12)
+    # Every cell is scaled by exactly 1.2 relative to overshoot=1.0.
+    assert set(over) == set(base)
+    for cell in base:
+        assert over[cell] == pytest.approx(1.2 * base[cell], rel=1e-12)
+
+
+def test_size_timed_mass_lands_at_stressed_cells():
+    # Stress only at base offset 1 → mass only at the rep cells sharing that
+    # offset (t1, t4); the unstressed rep cells get NO adder.
+    dt_slack = {"n": {("p", "t1"): 10.0, ("p", "t4"): 5.0}}
+    residual = {"n": 15.0}
+    out = size_timed(dt_slack, residual, _TIMED_EDGES, _TIMED_TW, lam=1.0)
+    assert set(out["n"]) == {("p", "t1"), ("p", "t4")}
+    for cell in (("p", "t0"), ("p", "t2"), ("p", "t3"), ("p", "t5")):
+        assert cell not in out["n"]
+
+
+def test_size_timed_skips_nonshedding_and_absent():
+    dt_slack = {
+        "shed": {("p", "t1"): 10.0},
+        "dust": {("p", "t1"): 10.0},   # below tol → skipped
+        "noprofile": {},               # shedding but no dt rows → skipped
+    }
+    residual = {"shed": 20.0, "dust": 1e-9, "noprofile": 50.0}
+    out = size_timed(dt_slack, residual, _TIMED_EDGES, _TIMED_TW, lam=1.0)
+    assert set(out) == {"shed"}
+
+
+def test_size_timed_degenerate_single_rep_is_identity():
+    # Identity fold: each invest cell maps to itself (weight 1), tw≡1 → the
+    # per-cell adder is just λ·slack at that cell (the sensible reduction).
+    edges = [("p", "t0", "t0", 1.0), ("p", "t1", "t1", 1.0)]
+    tw = {("p", "t0"): 1.0, ("p", "t1"): 1.0}
+    dt_slack = {"n": {("p", "t0"): 3.0, ("p", "t1"): 7.0}}
+    residual = {"n": 10.0}
+    out = size_timed(dt_slack, residual, edges, tw, lam=0.5)
+    assert out["n"][("p", "t0")] == pytest.approx(0.5 * 3.0)
+    assert out["n"][("p", "t1")] == pytest.approx(0.5 * 7.0)
+    injected = sum(a * tw[c] for c, a in out["n"].items())
+    assert injected == pytest.approx(0.5 * 10.0, rel=1e-12)
+
+
+def test_rp_fold_edges_conserve_and_match_tw(tmp_path):
+    """``_rp_fold_edges_and_tw`` on the RP fixture: every base cell's out-edge
+    weights sum to 1 (total-conserving fold) and ``tw_rep`` reproduces the
+    engine writer's per-period ``timestep_weight`` sum."""
+    from flextool.calibrate._sizing import (
+        _rp_fold_edges_and_tw,
+        _rp_weight_sum_by_period,
+    )
+    from flextool.engine_polars._solve_config import SolveConfig
+    from flextool.engine_polars._timeline import TimelineConfig
+
+    url = json_to_db(RP_FIXTURE_JSON, tmp_path / "c.sqlite")
+    sc = SolveConfig.load_from_db_url(url, RP_SCENARIO)
+    tc = TimelineConfig.load_from_db_url(url, RP_SCENARIO)
+
+    for period, ts in sc.timesets_used_by_solves[RP_INVEST_SOLVE]:
+        if ts not in tc.rp_weights:
+            continue
+        edges, tw_rep = _rp_fold_edges_and_tw(tc, str(period), ts)
+        # Per base cell (period, base_time), Σ out-edge weight == 1.
+        by_base: dict[tuple[str, str], float] = {}
+        for p, bt, _rt, w in edges:
+            by_base[(p, bt)] = by_base.get((p, bt), 0.0) + w
+        for key, total in by_base.items():
+            assert total == pytest.approx(1.0, rel=1e-9), key
+        # tw_rep total for the period matches the uniform-sizer weight sum.
+        want = _rp_weight_sum_by_period(tc, str(period), ts)[str(period)]
+        got = sum(v for (p, _t), v in tw_rep.items() if p == str(period))
+        assert got == pytest.approx(want, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +511,11 @@ def test_run_calibration_drives_slack_down(tmp_path_factory):
         damping_first=1.0,
         damping_remaining=1.0,
         over_build_tightness=0.0,
+        # stall_fraction=0.0 makes the guard a strict no-op: freezing needs
+        # ΔSlack < 0 (residual GREW), which never happens while slack is
+        # monotone improving — so the guard cannot flag on this converging
+        # fixture (the role tightness=0.0 played under the old η gate).
+        stall_fraction=0.0,
         warm_start_cache_dir=root / "cache",
         work_dir=root / "work",
         out_root=root / "out",
@@ -368,11 +547,98 @@ def test_run_calibration_drives_slack_down(tmp_path_factory):
         f"unserved did not move toward the threshold: {totals}"
     )
 
-    # C1c over-build guard is a NO-OP here: with tightness=0.0 the freeze
-    # condition ``η < 0.0`` can never hold while slack is IMPROVING (ΔSlack>0
-    # ⇒ η≥0), so no node is resource-capped and monotone progress is
+    # C1c over-build guard is a NO-OP here: with stall_fraction=0.0 the freeze
+    # condition ``ΔSlack < 0.0`` can never hold while slack is IMPROVING
+    # (ΔSlack>0), so no node is resource-capped and monotone progress is
     # untouched.  The guard must not have flagged anything on this fixture.
     assert result.guard_flagged_nodes == [], (
         f"guard wrongly flagged nodes on a converging fixture: "
         f"{result.guard_flagged_nodes}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. EMPIRICAL uniform-vs-timed on a fresh v67 3-region hull model (solver/slow)
+# ---------------------------------------------------------------------------
+
+_H2_TRADE_DB = (
+    _TESTS_DIR.parent
+    / "projects" / "test-engine" / "input_sources" / "H2_trade.sqlite"
+)
+
+
+def _build_cal_5rp(tmp_path_factory) -> str:
+    """Fresh v67 3-region DB with scenario ``cal_5rp`` = shared > pipelines >
+    hull_5rp_168h+f1 (never touches the checked-in DB)."""
+    import shutil
+
+    from spinedb_api import DatabaseMapping, import_data
+
+    from flextool.update_flextool.db_migration import migrate_database
+
+    root = tmp_path_factory.mktemp("cal_5rp")
+    db_path = root / "H2_trade_cal.sqlite"
+    shutil.copy(_H2_TRADE_DB, db_path)
+    migrate_database(str(db_path))  # -> head (v67)
+    url = f"sqlite:///{db_path}"
+    with DatabaseMapping(url) as db:
+        _n, errors = import_data(
+            db,
+            scenarios=["cal_5rp"],
+            scenario_alternatives=[
+                ("cal_5rp", "hull_5rp_168h+f1", None),
+                ("cal_5rp", "pipelines", "hull_5rp_168h+f1"),
+                ("cal_5rp", "shared", "pipelines"),
+            ],
+        )
+        assert not errors, errors
+        db.commit_session("add cal_5rp")
+    return url, root
+
+
+@pytest.mark.solver
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not _H2_TRADE_DB.is_file(), reason="H2_trade project DB not present"
+)
+def test_empirical_timed_beats_uniform(tmp_path_factory):
+    """PROVE the ``timed`` sizer closes MORE unserved energy than ``uniform``
+    in the SAME iterations on the 3-region hull model, by landing the additive
+    margin at the low-VRE stress hours instead of spreading it flat."""
+    from flextool.calibrate._loop import CalibConfig, run_calibration
+
+    url, root = _build_cal_5rp(tmp_path_factory)
+
+    def _run(sizing: str) -> list[float]:
+        cfg = CalibConfig(
+            iterations=4,
+            slack_threshold_mwh=1.0,
+            damping_first=1.0,
+            damping_remaining=1.0,
+            over_build_tightness=0.0,
+            # Keep the guard out of the uniform-vs-timed comparison: a strict
+            # no-op (freeze needs ΔSlack < 0) so both runs bump every shedding
+            # node every iteration and only the sizing mode differs.
+            stall_fraction=0.0,
+            warm_start_cache_dir=root / f"{sizing}_cache",
+            work_dir=root / f"{sizing}_work",
+            out_root=root / f"{sizing}_out",
+            debug=False,
+            sizing=sizing,
+        )
+        result = run_calibration(url, "cal_5rp", cfg)
+        return [r.total_unserved for r in result.trajectory]
+
+    uni = _run("uniform")
+    tim = _run("timed")
+    print(f"\n[empirical uniform] {[round(x, 1) for x in uni]}")
+    print(f"[empirical timed]   {[round(x, 1) for x in tim]}")
+
+    assert uni[0] > 0.0 and tim[0] > 0.0, "baseline must shed to be meaningful"
+    # Same baseline model (only the sizing mode differs) → identical iter-0.
+    assert tim[0] == pytest.approx(uni[0], rel=1e-6)
+    # Timed places demand at the stressed cells, so it must close a LARGER
+    # fraction of the residual in the same iteration budget.
+    assert tim[-1] < uni[-1], (
+        f"timed did not beat uniform: uniform {uni} vs timed {tim}"
     )

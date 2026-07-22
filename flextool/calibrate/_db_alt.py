@@ -22,11 +22,36 @@ SpineDB.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from spinedb_api import DatabaseMapping, import_data
 from spinedb_api.exception import NothingToCommit
+from spinedb_api.parameter_value import Map
 
 # Suffix appended to a scenario name to form its calibration alternative.
 _CALIB_ALT_SUFFIX = "_adeq_calib"
+
+
+def _adder_map(cells: dict[tuple[str, str], float]) -> Map:
+    """Build a 2-D ``(period → time → float)`` Map from per-cell adders.
+
+    *cells* is ``{(period, time): adder}`` (the ``timed`` sizer's output for
+    one node).  The nested ``Map`` round-trips through ``import_data`` into the
+    ``pdt_energy_margin_adder.csv`` spec the emitter reads, placing each cell's
+    value at exactly that invest ``(period, time)``.  Periods and times are
+    emitted in sorted order for a deterministic, idempotent write.
+    """
+    by_period: dict[str, dict[str, float]] = defaultdict(dict)
+    for (period, time), value in cells.items():
+        by_period[str(period)][str(time)] = float(value)
+    periods = sorted(by_period)
+    inner_maps = []
+    for period in periods:
+        times = sorted(by_period[period])
+        inner_maps.append(
+            Map(times, [by_period[period][t] for t in times], index_name="time")
+        )
+    return Map(periods, inner_maps, index_name="period")
 
 
 def calib_alt_name(scenario: str) -> str:
@@ -49,15 +74,24 @@ def _normalise_url(url: str) -> str:
 
 
 def write_calib_alt(
-    url: str, scenario: str, per_node_adder: dict[str, float],
+    url: str,
+    scenario: str,
+    per_node_adder: "dict[str, float | dict[tuple[str, str], float]]",
 ) -> None:
     """Write (or update) the calibration alternative for *scenario*.
 
     For every ``node -> adder`` in *per_node_adder*, set both
-    ``energy_margin_method = inflow_adder`` and the float
-    ``energy_margin_adder`` on that node under the ``<scenario>_adeq_calib``
-    alternative, and append that alternative to *scenario*'s stack at the
-    top rank (higher rank wins; the existing stack is left intact).
+    ``energy_margin_method = inflow_adder`` and ``energy_margin_adder`` on that
+    node under the ``<scenario>_adeq_calib`` alternative, and append that
+    alternative to *scenario*'s stack at the top rank (higher rank wins; the
+    existing stack is left intact).
+
+    The adder value is EITHER a scalar float (the ``uniform`` sizer — a
+    constant per-timestep margin) OR a ``{(period, time): float}`` map (the
+    ``timed`` sizer — per-cell margin), written as a 2-D
+    ``period → time → float`` :class:`spinedb_api.parameter_value.Map` that
+    the emitter ingests as ``pdt_energy_margin_adder.csv``.  Both share the
+    idempotent-overwrite path.
 
     Idempotent: re-writing a changed adder UPDATEs the single row in place
     (``import_data`` merges on conflict); re-writing an identical state
@@ -82,7 +116,8 @@ def write_calib_alt(
     pvs: list[tuple] = []
     for node, adder in per_node_adder.items():
         pvs.append(("node", node, "energy_margin_method", "inflow_adder", alt))
-        pvs.append(("node", node, "energy_margin_adder", float(adder), alt))
+        value = _adder_map(adder) if isinstance(adder, dict) else float(adder)
+        pvs.append(("node", node, "energy_margin_adder", value, alt))
 
     with DatabaseMapping(_normalise_url(url)) as db:
         _count, errors = import_data(

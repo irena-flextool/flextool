@@ -72,14 +72,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--stall-fraction",
+        type=float,
+        default=0.05,
+        dest="stall_fraction",
+        help=(
+            "Over-build guard STALL fraction [0..1]. A shedding node whose "
+            "residual unserved energy drops by LESS than this fraction of its "
+            "prior gap in response to its own bump is frozen as resource-capped "
+            "(margin buys it no adequacy) and reported as needing firm "
+            "capacity / imports / storage. HIGHER freezes a stalled node "
+            "SOONER; 0.0 disables the guard. Default: 0.05."
+        ),
+    )
+    parser.add_argument(
         "--over-build-tightness",
         type=float,
         default=0.05,
         dest="over_build_tightness",
         help=(
-            "Over-build guard tightness [0..1]; HIGHER freezes a stalled "
-            "node as resource-capped SOONER (less margin-induced spill "
-            "tolerated before it stops being bumped). Default: 0.05."
+            "DEPRECATED / no-op: retained for compatibility only. The "
+            "over-build guard now freezes on residual STALL (see "
+            "--stall-fraction), not curtailment efficiency, so this value is "
+            "not consulted. Default: 0.05."
         ),
     )
     parser.add_argument(
@@ -101,6 +116,32 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Damping factor lambda applied to every correction AFTER the "
             "first; lower damps oscillation as slack nears zero. Default: 0.5."
+        ),
+    )
+    parser.add_argument(
+        "--overshoot",
+        type=float,
+        default=1.0,
+        dest="overshoot",
+        help=(
+            "Planning-margin SAFETY multiplier on the sized margin (default "
+            "1.0 = off). A single-year (or single-year representative-period) "
+            "model under-estimates true multi-year severity, so a value >1 "
+            "deliberately over-provisions: overshoot=1.2 builds ~20%% beyond "
+            "the measured slack. Higher builds more headroom for unmodeled "
+            "multi-year risk; the right value is MODEL-DEPENDENT."
+        ),
+    )
+    parser.add_argument(
+        "--sizing",
+        choices=("uniform", "timed"),
+        default="uniform",
+        dest="sizing",
+        help=(
+            "Adder placement mode. 'uniform' (default): a constant "
+            "per-timestep margin sized lambda*residual/W. 'timed': the SAME "
+            "total energy placed per-cell at the low-VRE stress hours, folded "
+            "from node_slack_up_dt_e onto the representative timeline."
         ),
     )
     parser.add_argument(
@@ -164,6 +205,9 @@ def _config_from_args(args: argparse.Namespace) -> CalibConfig:
         work_dir=Path(args.work_dir),
         out_root=Path(args.out_root),
         debug=args.debug,
+        sizing=args.sizing,
+        overshoot=args.overshoot,
+        stall_fraction=args.stall_fraction,
     )
 
 

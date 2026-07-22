@@ -50,6 +50,52 @@ def test_build_parser_defaults():
     assert args.work_dir == _cli.DEFAULT_WORK_DIR
     assert args.out_root == _cli.DEFAULT_OUT_ROOT
     assert args.debug is False
+    # Sizing defaults to the uniform (constant per-timestep) placement.
+    assert args.sizing == "uniform"
+    # Overshoot safety multiplier defaults to off (1.0); guard stall fraction
+    # defaults to 0.05.
+    assert args.overshoot == 1.0
+    assert args.stall_fraction == 0.05
+
+
+def test_overshoot_and_stall_fraction_parse_and_thread():
+    parser = _cli.build_parser()
+    args = parser.parse_args(
+        [
+            "db.sqlite", "scen", "--iterations", "1",
+            "--overshoot", "1.2", "--stall-fraction", "0.2",
+        ]
+    )
+    assert args.overshoot == 1.2
+    assert args.stall_fraction == 0.2
+    cfg = _cli._config_from_args(args)
+    assert cfg.overshoot == 1.2
+    assert cfg.stall_fraction == 0.2
+
+
+def test_overshoot_and_stall_fraction_config_defaults():
+    parser = _cli.build_parser()
+    args = parser.parse_args(["db.sqlite", "scen", "--iterations", "1"])
+    cfg = _cli._config_from_args(args)
+    assert cfg.overshoot == 1.0
+    assert cfg.stall_fraction == 0.05
+
+
+def test_sizing_flag_parses_and_threads():
+    parser = _cli.build_parser()
+    args = parser.parse_args(
+        ["db.sqlite", "scen", "--iterations", "1", "--sizing", "timed"]
+    )
+    assert args.sizing == "timed"
+    assert _cli._config_from_args(args).sizing == "timed"
+
+
+def test_sizing_flag_rejects_unknown():
+    parser = _cli.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["db.sqlite", "scen", "--iterations", "1", "--sizing", "bogus"]
+        )
 
 
 def test_build_parser_all_flags():

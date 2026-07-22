@@ -153,3 +153,63 @@ def test_empty_adder_still_materialises_alt(db_url: str):
     write_calib_alt(db_url, SCENARIO, {})
     ranked = _ranked_alts(db_url, SCENARIO)
     assert calib_alt_name(SCENARIO) == ranked[-1][0]
+
+
+# --- timed (Map-valued) adder ----------------------------------------------
+
+
+def _materialized_map(url: str, scenario: str, node: str):
+    """Decode the materialised ``energy_margin_adder`` as ``{(period,time): float}``.
+
+    Reads the value under the scenario filter and, when it is a 2-D
+    ``period → time → float`` Map, flattens it to a per-cell dict so the test
+    can assert the authored values round-tripped.
+    """
+    from spinedb_api import DatabaseMapping, export_data
+    from spinedb_api.filters.scenario_filter import (
+        apply_scenario_filter_to_subqueries,
+    )
+    from spinedb_api.parameter_value import Map
+
+    with DatabaseMapping(url) as db:
+        apply_scenario_filter_to_subqueries(db, scenario)
+        data = export_data(db)
+        for cls, ent, p, value, *_rest in data.get("parameter_values", []):
+            name = ent[0] if isinstance(ent, (list, tuple)) else ent
+            if p == "energy_margin_adder" and name == node:
+                assert isinstance(value, Map), f"expected a Map, got {type(value)}"
+                cells: dict[tuple[str, str], float] = {}
+                for period, inner in zip(value.indexes, value.values):
+                    for t, v in zip(inner.indexes, inner.values):
+                        cells[(str(period), str(t))] = float(v)
+                return cells
+    return None
+
+
+def test_timed_map_adder_round_trips(db_url: str):
+    """A ``timed`` per-cell increment writes a period→time Map that reads back
+    as exactly the authored per-cell values."""
+    cells = {
+        ("y2020", "t0001"): 12.5,
+        ("y2020", "t0002"): 7.25,
+        ("y2030", "t0001"): 3.0,
+    }
+    write_calib_alt(db_url, SCENARIO, {NODE: cells})
+    got = _materialized_map(db_url, SCENARIO, NODE)
+    assert got == pytest.approx(cells)
+    # Method still set to inflow_adder.
+    assert (
+        _materialized(db_url, SCENARIO, NODE, "energy_margin_method")
+        == "inflow_adder"
+    )
+
+
+def test_timed_map_adder_idempotent_overwrite(db_url: str):
+    """Re-writing a changed per-cell map overwrites in place (one row)."""
+    alt = calib_alt_name(SCENARIO)
+    write_calib_alt(db_url, SCENARIO, {NODE: {("y2020", "t0001"): 1.0}})
+    write_calib_alt(db_url, SCENARIO, {NODE: {("y2020", "t0001"): 9.0,
+                                              ("y2020", "t0002"): 4.0}})
+    got = _materialized_map(db_url, SCENARIO, NODE)
+    assert got == pytest.approx({("y2020", "t0001"): 9.0, ("y2020", "t0002"): 4.0})
+    assert _row_count(db_url, alt, NODE, "energy_margin_adder") == 1

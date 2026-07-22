@@ -92,10 +92,13 @@ def _install_scripted_solve(monkeypatch, signals):
 
 def test_run_calibration_stalls_and_stops_early(tmp_path, monkeypatch):
     """Guard flags the last shedding node -> loop STOPS below the budget."""
-    # k=0 baseline sheds (bumped, no guard yet); k=1 makes real progress (not
-    # flagged, keeps bumping); k=2 the gap has stalled while spill jumped above
-    # the iteration-0 baseline, so the guard freezes 'west' -> next round would
-    # bump nothing -> stall.
+    # k=0 baseline sheds (bumped, no guard yet); k=1 makes real progress
+    # (ΔSlack = 40, 40% of the prior gap → not stalled, keeps bumping); k=2 the
+    # residual has stalled (ΔSlack = 1, only ~1.7% of the prior 60 → below the
+    # 5% stall fraction) despite the bump, so the guard freezes 'west' -> next
+    # round would bump nothing -> stall.  Curtailment is irrelevant to the
+    # freeze now (kept in the signals only because the loop reads it for the
+    # report).
     signals = [
         {"residual": {"west": 100.0}, "curtailment": {"west": 0.0}},   # k=0
         {"residual": {"west": 60.0}, "curtailment": {"west": 10.0}},   # k=1
@@ -138,12 +141,14 @@ def test_run_calibration_converged(tmp_path, monkeypatch):
 
 def test_run_calibration_budget_exhausted(tmp_path, monkeypatch):
     """Progress without convergence or a flag runs the full budget."""
-    # Curtailment stays at the iteration-0 baseline (0), so cond_induced_spill
-    # never holds and no node is ever flagged; residual stays high so it never
-    # converges -> the loop must run every iteration.
+    # Residual keeps DROPPING by 10% of the prior gap each round (100→90→80→70),
+    # comfortably above the 5% stall fraction, so the guard never freezes; but
+    # it stays well above the threshold so it never converges -> the loop must
+    # run every iteration.  (A FLAT residual would now correctly read as a
+    # stall, so budget-exhausted requires genuine ongoing progress.)
     signals = [
-        {"residual": {"west": 100.0}, "curtailment": {"west": 0.0}}
-        for _ in range(4)  # iterations=3 -> 4 solves
+        {"residual": {"west": r}, "curtailment": {"west": 0.0}}
+        for r in (100.0, 90.0, 80.0, 70.0)  # iterations=3 -> 4 solves
     ]
     _install_scripted_solve(monkeypatch, signals)
 
@@ -162,17 +167,19 @@ def test_budget_exhausted_final_adders_match_last_solved_state(
     """No phantom final increment: final_adders == adders SOLVED at the last
     iteration.
 
-    iterations=3 → 4 solves at k=0..3.  The sizing step is applied only at
-    k=0,1,2 (each injects residual/W = 100/1000 = 0.1); on the FINAL
-    iteration k=3 no further solve validates a step, so it is skipped.  Thus
-    the adders written and solved at k=3 (three corrections = 0.3) are exactly
-    what ``final_adders`` returns — and the trajectory's last residual pairs
-    against those solved adders, not a phantom fourth increment (0.4) that the
-    old loop applied but never validated.
+    iterations=3 → 4 solves at k=0..3.  The residual drops each round
+    (100→90→80→70, always above the 5% stall fraction so nothing freezes).
+    The sizing step is applied only at k=0,1,2 (injecting residual/W of
+    100/1000, 90/1000, 80/1000 = 0.1, 0.09, 0.08); on the FINAL iteration k=3
+    no further solve validates a step, so it is skipped.  Thus the adders
+    written and solved at k=3 (three corrections = 0.27) are exactly what
+    ``final_adders`` returns — and the trajectory's last residual pairs against
+    those solved adders, not a phantom fourth increment that the old loop
+    applied but never validated.
     """
     signals = [
-        {"residual": {"west": 100.0}, "curtailment": {"west": 0.0}}
-        for _ in range(4)
+        {"residual": {"west": r}, "curtailment": {"west": 0.0}}
+        for r in (100.0, 90.0, 80.0, 70.0)
     ]
     _install_scripted_solve(monkeypatch, signals)
 
@@ -181,11 +188,11 @@ def test_budget_exhausted_final_adders_match_last_solved_state(
 
     assert result.stop_reason == "budget_exhausted"
     assert result.iterations_run == 4
-    # Three validated corrections of residual/W = 100/1000 = 0.1 each; the
-    # phantom fourth (0.4) is gone.
-    assert result.final_adders == {"west": pytest.approx(0.3)}
+    # Three validated corrections of residual/W (0.1 + 0.09 + 0.08 = 0.27); the
+    # phantom fourth increment is gone.
+    assert result.final_adders == {"west": pytest.approx(0.27)}
     # final_adders equals the adders that were WRITTEN and SOLVED at the last
     # iteration (captured in the trajectory before any step is applied).
     assert result.trajectory[-1].adders == pytest.approx(result.final_adders)
     # …and pairs with the last solve's residual (the report's per-node pairing).
-    assert result.trajectory[-1].residual == {"west": 100.0}
+    assert result.trajectory[-1].residual == {"west": 70.0}

@@ -45,6 +45,7 @@ SUMMARY_COLUMNS = [
     "total_penalty_meur",
     "n_shedding",
     "n_flagged",
+    "solve_seconds",
     "converged",
 ]
 
@@ -65,6 +66,19 @@ def _record_nodes(record: IterRecord) -> list[str]:
 def _n_shedding(record: IterRecord) -> int:
     """Count of nodes with strictly-positive residual unserved energy."""
     return sum(1 for v in record.residual.values() if v > 0.0)
+
+
+def _adder_scalar(adder: "float | dict") -> float:
+    """Collapse a node's adder to one scalar MWh for reporting.
+
+    A ``uniform`` adder is already the scalar per-timestep value; a ``timed``
+    adder is a ``{(period, time): float}`` map — reported as the SUM of its
+    per-cell values (its total per-timestep adder mass), so the CSV/summary
+    stay single-valued and sortable across both modes.
+    """
+    if isinstance(adder, dict):
+        return float(sum(adder.values()))
+    return float(adder)
 
 
 def write_report(result: CalibResult, *, out_dir: Path) -> list[Path]:
@@ -92,7 +106,7 @@ def write_report(result: CalibResult, *, out_dir: Path) -> list[Path]:
                         record.iteration,
                         node,
                         record.residual.get(node, 0.0),
-                        record.adders.get(node, 0.0),
+                        _adder_scalar(record.adders.get(node, 0.0)),
                         record.curtailment.get(node, 0.0),
                         record.penalty_by_node.get(node, 0.0),
                         node in flagged,
@@ -117,6 +131,7 @@ def write_report(result: CalibResult, *, out_dir: Path) -> list[Path]:
                     record.penalty_total,
                     _n_shedding(record),
                     len(result.guard_flagged_nodes),
+                    record.solve_seconds,
                     row_converged,
                 ]
             )
@@ -177,6 +192,15 @@ def format_summary(result: CalibResult) -> str:
                 f"Slack penalty:         {first.penalty_total:,.3f} M-EUR "
                 f"(baseline) -> {last.penalty_total:,.3f} M-EUR (final)."
             )
+        if any(r.solve_seconds for r in trajectory):
+            per_iter = ", ".join(
+                f"#{r.iteration}:{r.solve_seconds:,.1f}s" for r in trajectory
+            )
+            total_s = sum(r.solve_seconds for r in trajectory)
+            lines.append(
+                f"Solve time:            {total_s:,.1f} s total "
+                f"({per_iter})."
+            )
 
     # Final per-node adders, largest first; pair each with its final residual.
     final_residual = trajectory[-1].residual if trajectory else {}
@@ -184,11 +208,12 @@ def format_summary(result: CalibResult) -> str:
     if result.final_adders:
         lines.append("Final energy-margin adders (MWh/timestep), largest first:")
         for node, adder in sorted(
-            result.final_adders.items(), key=lambda kv: (-kv[1], kv[0])
+            result.final_adders.items(),
+            key=lambda kv: (-_adder_scalar(kv[1]), kv[0]),
         ):
             resid = final_residual.get(node, 0.0)
             lines.append(
-                f"  {node:<24} adder={adder:>14,.4f}   "
+                f"  {node:<24} adder={_adder_scalar(adder):>14,.4f}   "
                 f"final residual={resid:>14,.1f} MWh"
             )
     else:

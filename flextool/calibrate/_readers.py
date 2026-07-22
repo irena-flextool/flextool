@@ -40,6 +40,7 @@ from flextool.lean_parquet import read_lean_parquet
 # basenames through P2's registry helper so a schema rename breaks loudly
 # here rather than silently missing a file.
 _SLACK_KEY = "node_slack_up_d_e"
+_SLACK_KEY_DT = "node_slack_up_dt_e"
 _CURTAILMENT_KEY = "unit_curtailment_outputNode_d_ee"
 _COST_KEY = "cost_node_discounted_d_ec"
 
@@ -76,6 +77,36 @@ def read_residual_unserved(assess_dir: Path) -> dict[str, float]:
     # collapse any scenario level so the key is the node name.
     totals = df.sum(axis=0).groupby(level="node").sum()
     return {str(node): float(val) for node, val in totals.items()}
+
+
+def read_residual_unserved_dt(assess_dir: Path) -> dict[str, "object"]:
+    """Return ``{node: DataFrame[period, time, value]}`` from ``node_slack_up_dt_e``.
+
+    The per-``(period, time)`` companion to :func:`read_residual_unserved`:
+    where that reader collapses the up-slack to one annual MWh per node, this
+    one keeps the FULL per-timestep profile UNFOLDED onto the base timeline —
+    the stress SHAPE the ``timed`` sizer redistributes the additive margin
+    over.  ``node_slack_up_dt_e`` has row index ``(period, time)`` and column
+    levels ``(scenario, node)``; per node the scenario level is collapsed
+    (summed) and the result returned as a tidy pandas frame with columns
+    ``period``, ``time``, ``value`` (one row per non-null base cell).
+
+    Read with :func:`read_lean_parquet` (never ``pd.read_parquet``) so the
+    ``(period, time)`` / ``(scenario, node)`` MultiIndex is reconstructed.
+    A node absent from the table (no slack rows) simply has no key.
+    """
+    path = Path(assess_dir) / _resolve_filename(_SLACK_KEY_DT)
+    df = read_lean_parquet(path)
+    out: dict[str, object] = {}
+    node_level = df.columns.get_level_values("node")
+    for node in dict.fromkeys(node_level):  # ordered-unique node names
+        sub = df.loc[:, node_level == node]
+        # Collapse any scenario level → one value per (period, time) row.
+        series = sub.sum(axis=1)
+        frame = series.reset_index()
+        frame.columns = ["period", "time", "value"]
+        out[str(node)] = frame
+    return out
 
 
 def read_curtailment_by_sink(assess_dir: Path) -> dict[str, float]:
@@ -125,5 +156,6 @@ def read_slack_penalty(assess_dir: Path) -> tuple[float, dict[str, float]]:
 __all__ = [
     "read_curtailment_by_sink",
     "read_residual_unserved",
+    "read_residual_unserved_dt",
     "read_slack_penalty",
 ]
