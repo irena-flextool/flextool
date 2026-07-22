@@ -128,6 +128,50 @@ def _build_db(
     return url
 
 
+# Period-Map adder for the end-to-end map case.  ``invest_24h`` carries
+# invest periods p2020/p2025/p2030/p2035; a distinct per-period value proves
+# the Map's period axis survives DB→ingestion→emit→solve at per-period
+# granularity (a flattened/dropped axis would apply one value or none).
+MAP_PERIOD_VALUES = {
+    "p2020": 1000.0,
+    "p2025": 1500.0,
+    "p2030": 2000.0,
+    "p2035": 2500.0,
+}
+
+
+def _build_db_period_map(tmp_path_factory, tag: str) -> str:
+    """Build a fresh SQLite from the JSON fixture with a period (1d) Map
+    ``energy_margin_adder`` (+ ``inflow_adder`` method) on ``TARGET_C1``.
+
+    Exercises the full ingestion wiring: the ``["1d_map"]`` spec added in
+    ``_specs.py`` routes the Map into ``input/pd_energy_margin_adder`` and
+    the emitter broadcasts each period's value over that period's (d, t)."""
+    from spinedb_api import DatabaseMapping, Map, import_data
+
+    from flextool.update_flextool.db_migration import migrate_database
+
+    root = tmp_path_factory.mktemp(tag)
+    url = json_to_db(FIXTURE_JSON, root / "tests.sqlite")
+    migrate_database(url)
+
+    periods = list(MAP_PERIOD_VALUES)
+    value = Map(
+        periods, [MAP_PERIOD_VALUES[p] for p in periods], index_name="period",
+    )
+    with DatabaseMapping(url) as db:
+        _count, errors = import_data(
+            db,
+            parameter_values=[
+                ("node", TARGET_C1, "energy_margin_adder", value, ALT),
+                ("node", TARGET_C1, "energy_margin_method", "inflow_adder", ALT),
+            ],
+        )
+        assert not errors, f"import_data errors: {errors}"
+        db.commit_session(f"energy_margin_adder period-map: {tag}")
+    return url
+
+
 def _run(url: str, work_folder: Path) -> dict:
     """Drive the full cascade, retaining per-step providers for the
     emitted-``pdtNodeInflow`` assertions and per-step objectives."""
@@ -171,6 +215,20 @@ def case1_cascades(tmp_path_factory):
     adder_steps = _run(adder, tmp_path_factory.mktemp("c1_on_work"))
     assert list(base_steps) == list(adder_steps), (
         "baseline and adder cascades produced different sub-solve chains"
+    )
+    return base_steps, adder_steps
+
+
+@pytest.fixture(scope="module")
+def period_map_cascades(tmp_path_factory):
+    """Baseline vs. period-Map-adder cascades (existing negative-demand
+    node, per-period Map value)."""
+    base = _build_db(tmp_path_factory, "adder_map_base")
+    adder = _build_db_period_map(tmp_path_factory, "adder_map_on")
+    base_steps = _run(base, tmp_path_factory.mktemp("map_base_work"))
+    adder_steps = _run(adder, tmp_path_factory.mktemp("map_on_work"))
+    assert list(base_steps) == list(adder_steps), (
+        "baseline and period-map cascades produced different sub-solve chains"
     )
     return base_steps, adder_steps
 
@@ -274,6 +332,79 @@ def test_case1_west_demand_deepened_builds_and_gated(case1_cascades):
         break
     assert checked is not None, (
         f"no dispatch sub-solve carried {TARGET_C1!r} — cannot prove gate"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Period-Map case — a per-period Map adder round-trips end-to-end and
+# deepens west's invest demand by that period's value (not a flat scalar)
+# ---------------------------------------------------------------------------
+
+def test_period_map_adder_deepens_per_period(period_map_cascades):
+    """A period (1d) Map ``energy_margin_adder`` survives DB → ingestion →
+    emit → solve: in ``invest_24h`` every ``west`` demand row in period
+    ``pX`` is deepened by exactly that period's Map value (distinct per
+    period), no other node is touched, and the objective rises.
+
+    This is the end-to-end guard for the ingestion fix: a mangled Map (the
+    pre-fix behaviour) would deepen by one flat value or nothing at all, so
+    the DISTINCT per-period deltas below are the load-bearing assertion."""
+    base_steps, adder_steps = period_map_cascades
+    base = _inflow(base_steps[INVEST_SOLVE])
+    adder = _inflow(adder_steps[INVEST_SOLVE])
+
+    assert base.select(KEYS).equals(adder.select(KEYS)), (
+        "invest-solve pdtNodeInflow (node,period,time) keys diverged"
+    )
+    joined = base.join(
+        adder.rename({"value": "value_a"}), on=list(KEYS), how="inner",
+    ).with_columns(
+        pl.col("value").cast(pl.Float64).alias("bf"),
+        pl.col("value_a").cast(pl.Float64).alias("af"),
+    )
+    tgt = joined.filter(pl.col("node") == TARGET_C1)
+    assert tgt.height > 0, f"{TARGET_C1!r} carried no invest-solve inflow rows"
+
+    # At least two DISTINCT periods must be present on the target so the
+    # per-period distinction is actually exercised (not vacuously one value).
+    tgt_periods = set(tgt["period"].to_list())
+    covered = tgt_periods & set(MAP_PERIOD_VALUES)
+    assert len(covered) >= 2, (
+        f"{TARGET_C1!r} invest rows span < 2 mapped periods ({tgt_periods!r}); "
+        f"the per-period Map distinction would be vacuous"
+    )
+
+    # Every target demand row is deepened by EXACTLY its own period's value.
+    for row in tgt.iter_rows(named=True):
+        period = row["period"]
+        b, a = row["bf"], row["af"]
+        assert period in MAP_PERIOD_VALUES, (
+            f"unexpected invest period {period!r} not in the authored Map"
+        )
+        delta = MAP_PERIOD_VALUES[period]
+        assert a < b, (
+            f"period {period!r}: adder REDUCED demand ({a!r} !< {b!r}) — "
+            f"inverted sign"
+        )
+        assert abs(a - (b - delta)) <= 1e-6 * max(1.0, abs(b)), (
+            f"period {period!r}: west demand not deepened by that period's "
+            f"Map value {delta}: base={b!r} adder={a!r} (Δ={b - a!r})"
+        )
+
+    # No other node changed (the Map RHS did not leak).
+    ob = base.filter(pl.col("node") != TARGET_C1)
+    oa = adder.filter(pl.col("node") != TARGET_C1)
+    assert ob.equals(oa), "period-map adder leaked onto non-target nodes"
+
+    # Build response: strictly higher invest objective, both optimal.
+    assert base_steps[INVEST_SOLVE].optimal, "baseline invest solve not optimal"
+    assert adder_steps[INVEST_SOLVE].optimal, "adder invest solve not optimal"
+    b_obj = base_steps[INVEST_SOLVE].obj
+    a_obj = adder_steps[INVEST_SOLVE].obj
+    assert b_obj is not None and a_obj is not None
+    assert a_obj > b_obj + 1.0, (
+        f"invest objective did not rise with the per-period Map demand: "
+        f"base={b_obj!r} adder={a_obj!r}"
     )
 
 

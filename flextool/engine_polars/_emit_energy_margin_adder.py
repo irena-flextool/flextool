@@ -211,56 +211,9 @@ def emit_energy_margin_adder(
     if not is_invest or not manual_nodes:
         return
 
-    # 3. Read the adder frame from the provider (Utf8 columns; the last
-    #    column is the value, the middle columns — if any — are the
-    #    authored Map index axes: ``period`` and/or ``time``).
-    adder_df = provider.get(_provider_key(input_dir / "energy_margin_adder.csv"))
-    if adder_df is None or adder_df.height == 0:
-        return
-    cols = adder_df.columns
-    if len(cols) < 2:
-        return
-
-    # 4. Resolve the authored shape from the frame's explicit index columns
-    #    and build the rename → canonical (node, d, t) Param dims.  Any
-    #    index column that is neither ``period`` nor ``time`` is an
-    #    unrecognised axis for this parameter — return without touching the
-    #    provider rather than guessing a broadcast (byte-parity).
-    node_col, value_col = cols[0], cols[-1]
-    rename: dict[str, str] = {node_col: "node"}
-    dims: list[str] = ["node"]
-    for c in cols[1:-1]:
-        cl = c.strip().lower()
-        if cl == "period":
-            rename[c] = "d"
-            dims.append("d")
-        elif cl in ("time", "t"):
-            rename[c] = "t"
-            dims.append("t")
-        else:
-            return
-
-    # 5. Restrict to the manual (inflow_adder) nodes, cast the value to
-    #    Float64, and drop null / zero adders (a zero adder is a no-op).
-    work = (
-        adder_df.rename(rename)
-        .with_columns(
-            pl.col(value_col).cast(pl.Float64, strict=False).alias("value"),
-        )
-        .filter(pl.col("node").is_in(list(manual_nodes)))
-        .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0))
-        .select([*dims, "value"])
-    )
-    if work.height == 0:
-        return
-
-    # 6. Broadcast the authored shape over the invest solve's (d, t) grid.
-    #    ``steps_in_use.csv`` is the current (invest) solve's active
-    #    (period, time) grid — the same grid every pdtX emitter expands
-    #    over.  Route the broadcast through _param_shapes' promote_param_to_dt
-    #    (invariant #2 — never a hand-rolled column-name cross-join): a
-    #    SCALAR (node,) Param cross-joins the whole grid; a (node, d) /
-    #    (node, t) / (node, d, t) Param joins on its authored axis.
+    # 3. Build the invest solve's (d, t) grid once.  ``steps_in_use.csv``
+    #    is the current (invest) solve's active (period, time) grid — the
+    #    same grid every pdtX emitter expands over.
     dt_pairs = _read_pairs(
         solve_data_dir / "steps_in_use.csv", provider=provider,
     )
@@ -270,12 +223,22 @@ def emit_energy_margin_adder(
         {"d": [d for d, _t in dt_pairs], "t": [t for _d, t in dt_pairs]},
         schema={"d": pl.Utf8, "t": pl.Utf8},
     )
-    adder_dt = (
-        promote_param_to_dt(Param(tuple(dims), work), dt_grid)
-        .select("node", "d", "t", "value")
-        .collect()
-        .rename({"d": "period", "t": "time", "value": "__adder"})
-    )
+
+    # 4. Read every authored adder file (scalar float, period Map, and
+    #    period-time Map — each in its own Provider key) and broadcast each
+    #    over the (d, t) grid via _broadcast_authored_adder.  A node carries
+    #    a scalar OR a map adder, never both, so the per-file frames are
+    #    disjoint by node; union them into one (node, period, time, __adder)
+    #    frame.  No authored value anywhere → early return (byte-parity).
+    parts = []
+    for fname in _ADDER_FILES:
+        adder_df = provider.get(_provider_key(input_dir / fname))
+        part = _broadcast_authored_adder(adder_df, manual_nodes, dt_grid)
+        if part is not None:
+            parts.append(part)
+    if not parts:
+        return
+    adder_dt = pl.concat(parts) if len(parts) > 1 else parts[0]
     if adder_dt.height == 0:
         return
 
