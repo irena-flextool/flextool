@@ -288,6 +288,29 @@ def add_variables(m, d) -> dict:
 # ---------------------------------------------------------------------------
 # Constraints
 
+def _flow_node_view(v_flow: "Var", side: str) -> "Var":
+    """Return a ``v_flow`` *view* whose native ``side`` axis
+    (``"source"`` or ``"sink"``) is relabelled to ``n``.
+
+    The dynamic / n-1 reserve RHS sum ``v_flow`` over flows whose landing
+    node coincides with a reserve node ``n``.  ``v_flow`` is declared over
+    ``(p, source, sink, d, t)``; joining its restriction frame on a
+    separately-renamed ``n`` column leaves the flow's own ``source`` /
+    ``sink`` axis untied and un-summed, so ``canonicalise()`` rejects the
+    term with an *open dims* error.  Relabelling the relevant flow axis to
+    ``n`` here ties it to the reserve node (and to the ratio Param's ``n``)
+    so the enclosing ``Sum`` collapses it cleanly.  ``rename_to_axis``
+    preserves the underlying LP column ids, so the view references the
+    same ``v_flow`` columns and keeps the ``"v_flow"`` name for autoscale.
+    """
+    dims = tuple("n" if c == side else c for c in v_flow.dims)
+    return Var(
+        name=v_flow.name,
+        dims=dims,
+        frame=v_flow.frame.pipe(rename_to_axis, {side: "n"}),
+    )
+
+
 def add_constraints(m, d, vars: dict) -> None:
     """Emit reserve constraints.  ``vars`` is the dict returned by
     ``add_variables`` (keys ``v_reserve``, ``vq_reserve``).  ``m``,
@@ -415,16 +438,22 @@ def add_constraints(m, d, vars: dict) -> None:
                 # full RHS additionally splits noEff/eff and applies slope
                 # to the eff sink-side rows.  Listed in manifest TODO.
                 pieces = []
-                # n on the "sink" side: pss has columns (p, source, sink)
+                # n on the "sink" side: the reserve node is the flow's
+                # sink.  Relabel v_flow's ``sink`` axis to ``n`` so it ties
+                # to the reserve node (see _flow_node_view).
+                v_flow_sink_n = _flow_node_view(v_flow, "sink")
                 pss_as_sink = pss.pipe(rename_to_axis, {"sink": "n"}).select("p", "source", "n")
                 pieces.append(Sum(
-                    Where(v_flow * p_unitsize * irr_param,
+                    Where(v_flow_sink_n * p_unitsize * irr_param,
                           pss_as_sink.join(irr_g, on=["p", "n"], how="inner")),
                     over=("p", "source", "n"),
                 ))
+                # n on the "source" side: the reserve node is the flow's
+                # source.  Relabel v_flow's ``source`` axis to ``n``.
+                v_flow_source_n = _flow_node_view(v_flow, "source")
                 pss_as_source = pss.pipe(rename_to_axis, {"source": "n"}).select("p", "n", "sink")
                 pieces.append(Sum(
-                    Where(v_flow * p_unitsize * irr_param,
+                    Where(v_flow_source_n * p_unitsize * irr_param,
                           pss_as_source.join(irr_g, on=["p", "n"], how="inner")),
                     over=("p", "sink", "n"),
                 ))
@@ -483,18 +512,23 @@ def add_constraints(m, d, vars: dict) -> None:
                 if lfr_g.height > 0:
                     pss = d.process_source_sink
                     if ud_filter == "up":
-                        # n is the failing-process sink (delivering side)
+                        # n is the failing-process sink (delivering side).
+                        # Relabel v_flow's ``sink`` axis to ``n`` so it ties
+                        # to the failing node (see _flow_node_view).
+                        v_flow_n = _flow_node_view(v_flow, "sink")
                         pss_idx = pss.pipe(rename_to_axis, {"sink": "n"}).select("p", "source", "n")
                         rhs_terms["n_1_failure"] = Sum(
-                            Where(v_flow * p_unitsize * lfr_param,
+                            Where(v_flow_n * p_unitsize * lfr_param,
                                   pss_idx.join(lfr_g, on=["p", "n"], how="inner")),
                             over=("p", "source", "n"),
                         )
                     else:
-                        # n is the failing-process source (consuming side)
+                        # n is the failing-process source (consuming side).
+                        # Relabel v_flow's ``source`` axis to ``n``.
+                        v_flow_n = _flow_node_view(v_flow, "source")
                         pss_idx = pss.pipe(rename_to_axis, {"source": "n"}).select("p", "n", "sink")
                         rhs_terms["n_1_failure"] = Sum(
-                            Where(v_flow * p_unitsize * lfr_param,
+                            Where(v_flow_n * p_unitsize * lfr_param,
                                   pss_idx.join(lfr_g, on=["p", "n"], how="inner")),
                             over=("p", "sink", "n"),
                         )
