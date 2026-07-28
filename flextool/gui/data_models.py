@@ -141,6 +141,27 @@ class ProjectSettings:
     # gate, which does not go through this CLI path).  Default "choose".
     presolve: str = "choose"
 
+    # ── Calibrate-investments dialog settings (surfaced via the
+    # "Calibrate investments…" dialog).  Representative-period build knobs
+    # (calib_rp_*), the set of solves the calibrator iterates over
+    # (calib_selected_solves), and the iteration / sizing / damping /
+    # stall-guard controls.  Persisted so the dialog reopens with the
+    # user's last choices.
+    calib_rp_n_rp: int = 20
+    calib_rp_period_length: int = 108
+    calib_rp_force_sustained: bool = True
+    calib_rp_force_peak: bool = False
+    calib_rp_force_window: int = 24
+    calib_rp_count_mode: str = "grow"  # "grow" | "fixed"
+    calib_selected_solves: list[str] = field(default_factory=list)
+    calib_max_iterations: int = 8
+    calib_sizing: str = "timed"  # "timed" | "uniform"
+    calib_overshoot_pct: float = 0.0
+    calib_damping_first: float = 1.0
+    calib_damping_remaining: float = 0.5
+    calib_stall_fraction: float = 0.05
+    calib_keep_artifacts: bool = False
+
     # Plot settings
     single_plot_settings: PlotSettings = field(default_factory=PlotSettings)
     comparison_plot_settings: PlotSettings = field(default_factory=PlotSettings)

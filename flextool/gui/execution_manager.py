@@ -228,13 +228,13 @@ class MemoryWatchdog:
         while not self._stop.wait(self.POLL_INTERVAL_S):
             with self._manager._lock:
                 snapshot = [
-                    (j, j.process, j.memory_cap_gb)
+                    (j, j.process, j.memory_cap_gb, j.watchdog_exempt)
                     for j in self._manager._jobs
                     if j.status == JobStatus.RUNNING and j.process is not None
                 ]
 
             measured: list[tuple[ExecutionJob, int, int]] = []
-            for job, proc, est_gb in snapshot:
+            for job, proc, est_gb, exempt in snapshot:
                 if proc.poll() is not None:
                     continue
                 try:
@@ -252,6 +252,11 @@ class MemoryWatchdog:
                     if rss_mb > job.peak_rss_mb:
                         job.peak_rss_mb = rss_mb
                     self._maybe_mark_warmed(job, rss_mb)
+                # Exempt jobs (calibrator / RP aux jobs) still have their peak
+                # RSS tracked above, but are never eligible to be killed: keep
+                # them out of the victim-selection candidate list.
+                if exempt:
+                    continue
                 est_bytes = int(est_gb * (1024 ** 3))
                 measured.append((job, rss, est_bytes))
 
@@ -381,6 +386,14 @@ class ExecutionJob:
     killed_for_memory: bool = False  # set by watchdog just before SIGTERM
     kill_reason: str = ""  # populated by watchdog: "exceeded estimate" / "global memory pressure" / "global swap pressure"
     force_start: bool = False  # user override: admit despite the memory-reserve check (watchdog still applies)
+    # ``watchdog_exempt`` removes a RUNNING job from the watchdog's kill-victim
+    # selection. Long calibrator / RP auxiliary jobs run with no reliable
+    # ``memory_cap_gb`` estimate (0), so their ``rss - estimate`` overage would
+    # equal their whole RSS and make them the automatic victim under global
+    # memory pressure — killed mid-run through no fault of their own. Their peak
+    # RSS is still tracked; they are only excluded from being chosen to kill.
+    # Set by ``flextool/gui/calibrate_jobs.py``. See MemoryWatchdog._loop.
+    watchdog_exempt: bool = False
     native_fault: bool = False  # set on finalize when the process died from a native crash (segfault / illegal instruction)
     # Opaque per-platform handle returned by `_wrap_for_memory_cap` post_spawn
     # (e.g. Windows Job Object). Must outlive the Popen, else the cap is
