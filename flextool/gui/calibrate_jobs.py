@@ -56,7 +56,7 @@ import queue
 import re
 import subprocess
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -94,6 +94,15 @@ class RpJobSpec:
     count_mode: str = ""
     solves: Sequence[str] = field(default_factory=list)
     alternative_name: str | None = None
+    # Optional post-success hook, invoked with this spec's ``scenario`` AFTER
+    # the RP subprocess exits 0 and the job is finalised SUCCESS. The dialog
+    # uses it to append the freshly written RP alternative onto the scenario's
+    # stack (``add_alternative_to_scenario``) — a step that must NOT run before
+    # the async subprocess finishes, or "Run calibrations" would not see the
+    # new periods. It runs on the RP worker thread (off the Tk thread); any
+    # exception it raises is caught and streamed into the job log rather than
+    # crashing the worker (see ``_run_aux_subprocess``).
+    on_success: Callable[[str], None] | None = None
 
 
 @dataclass
@@ -232,6 +241,7 @@ def _run_aux_subprocess(
     action_key: str,
     argv: list[str],
     cwd: str,
+    on_success: Callable[[], None] | None = None,
 ) -> None:
     """Register an auxiliary job, run ``argv`` as a subprocess, stream + finalise.
 
@@ -239,6 +249,13 @@ def _run_aux_subprocess(
     stream, and the job is finalised FAILED — this never raises out of the
     worker thread. A nonzero exit (including the known intermittent exit-144)
     finalises FAILED with the streamed log left intact.
+
+    ``on_success`` (optional) is a zero-arg callable run AFTER the job is
+    finalised SUCCESS, on this same worker thread. It is where post-run wiring
+    (e.g. appending the RP alternative to the scenario stack) belongs, so it
+    cannot run before the subprocess has actually finished. Its own failure is
+    caught and streamed into the job log — it never propagates out of the
+    worker and never flips the already-recorded SUCCESS.
     """
     job = mgr.add_auxiliary_job(JobType.OUTPUT_ACTION, display_name, action_key)
     # Mark exempt from the memory watchdog (long run, no cap estimate).
@@ -280,6 +297,18 @@ def _run_aux_subprocess(
             job.process = None
         mgr.finish_job(job.job_id, success)
 
+    # Post-success wiring runs only after a clean, finalised success. A
+    # failure here is surfaced in the job log (not raised) so a broken scenario
+    # hand-off is visible without killing the worker or the other queued jobs.
+    if success and on_success is not None:
+        try:
+            on_success()
+        except Exception as exc:
+            logger.exception("Post-success hook for '%s' failed", display_name)
+            mgr.append_stdout(
+                job.job_id, f"Post-run wiring failed: {exc}"
+            )
+
 
 # --------------------------------------------------------------------------- #
 # Public entry points
@@ -317,10 +346,20 @@ def launch_rp_jobs(
         )
         display_name = f"RP: {spec.scenario}"
         action_key = f"rp:{spec.scenario}"
+        # Bind the spec's (scenario)->None hook into the zero-arg callable the
+        # worker invokes, capturing this spec's scenario name. ``None`` when no
+        # hook was supplied.
+        hook = spec.on_success
+        scenario = spec.scenario
+        on_success = (
+            (lambda h=hook, s=scenario: h(s)) if hook is not None else None
+        )
         run.submit(
-            lambda mgr=mgr, dn=display_name, ak=action_key, av=argv: (
+            lambda mgr=mgr, dn=display_name, ak=action_key, av=argv,
+            os_=on_success: (
                 _run_aux_subprocess(
-                    mgr, display_name=dn, action_key=ak, argv=av, cwd=cwd
+                    mgr, display_name=dn, action_key=ak, argv=av, cwd=cwd,
+                    on_success=os_,
                 )
             )
         )

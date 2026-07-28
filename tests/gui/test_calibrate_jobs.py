@@ -127,6 +127,77 @@ def test_rp_job_streams_and_succeeds(tmp_path: Path, monkeypatch) -> None:
     assert "rp preprocess done" in job.stdout_lines
 
 
+def test_rp_on_success_hook_runs_after_success(tmp_path: Path, monkeypatch) -> None:
+    """The RP ``on_success(scenario)`` hook fires once, with the scenario name,
+    only after the subprocess exits 0."""
+    script = "import sys; print('rp ok'); sys.exit(0)"
+    monkeypatch.setattr(cj, "build_rp_command", lambda *a, **k: _fake_argv(script))
+    mgr = _make_manager(tmp_path)
+    runner = _SerialRunner("test")
+    calls: list[str] = []
+
+    launch_rp_jobs(
+        mgr, python_exe=sys.executable, project_path=tmp_path,
+        jobs=[RpJobSpec(
+            db_url="sqlite:///m.sqlite", scenario="base", n_rp=4,
+            period_length=24, on_success=calls.append,
+        )],
+        runner=runner,
+    )
+    runner.wait(timeout=30)
+
+    assert _find_job(mgr, "rp:base").status == JobStatus.SUCCESS
+    assert calls == ["base"]
+
+
+def test_rp_on_success_hook_skipped_on_failure(tmp_path: Path, monkeypatch) -> None:
+    """A failed RP subprocess must NOT run the post-success hook."""
+    script = "import sys; sys.exit(1)"
+    monkeypatch.setattr(cj, "build_rp_command", lambda *a, **k: _fake_argv(script))
+    mgr = _make_manager(tmp_path)
+    runner = _SerialRunner("test")
+    calls: list[str] = []
+
+    launch_rp_jobs(
+        mgr, python_exe=sys.executable, project_path=tmp_path,
+        jobs=[RpJobSpec(
+            db_url="sqlite:///m.sqlite", scenario="base", n_rp=4,
+            period_length=24, on_success=calls.append,
+        )],
+        runner=runner,
+    )
+    runner.wait(timeout=30)
+
+    assert _find_job(mgr, "rp:base").status == JobStatus.FAILED
+    assert calls == []
+
+
+def test_rp_on_success_hook_error_surfaces_in_log(tmp_path: Path, monkeypatch) -> None:
+    """A hook that raises is caught and streamed into the job log, and does
+    not flip the recorded success or crash the worker."""
+    script = "import sys; print('rp ok'); sys.exit(0)"
+    monkeypatch.setattr(cj, "build_rp_command", lambda *a, **k: _fake_argv(script))
+    mgr = _make_manager(tmp_path)
+    runner = _SerialRunner("test")
+
+    def _boom(_scenario: str) -> None:
+        raise RuntimeError("wiring exploded")
+
+    launch_rp_jobs(
+        mgr, python_exe=sys.executable, project_path=tmp_path,
+        jobs=[RpJobSpec(
+            db_url="sqlite:///m.sqlite", scenario="base", n_rp=4,
+            period_length=24, on_success=_boom,
+        )],
+        runner=runner,
+    )
+    runner.wait(timeout=30)
+
+    job = _find_job(mgr, "rp:base")
+    assert job.status == JobStatus.SUCCESS
+    assert any("wiring exploded" in line for line in job.stdout_lines)
+
+
 # --------------------------------------------------------------------------- #
 # Concurrency cap: calibration jobs never overlap
 # --------------------------------------------------------------------------- #

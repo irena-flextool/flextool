@@ -11,6 +11,8 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox, simpledialog
+from types import SimpleNamespace
+from typing import Any
 
 from flextool._resources import package_data_path
 from flextool.gui.project_utils import (
@@ -38,6 +40,7 @@ from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.result_viewer import ResultViewer
 from flextool.gui.db_version_check import check_and_upgrade_database
 from flextool.gui.dialogs.migration_consent_dialog import ask_external_migration_consent
+from flextool.gui.dialogs.calibrate_dialog import CalibrateDialog
 from flextool.gui.dialogs.migration_progress_dialog import MigrationProgressDialog
 from flextool.gui.dialogs.plot_dialog import PlotDialog
 from flextool.gui.error_handling import safe_callback
@@ -288,6 +291,7 @@ class MainWindow(tk.Tk):
         self.exec_scenario_mgr: ExecutedScenarioManager | None = None
         self.execution_mgr: ExecutionManager | None = None
         self.execution_window: ExecutionWindow | None = None
+        self._calibrate_dialog: CalibrateDialog | None = None
         self._result_viewer: ResultViewer | None = None
         self.output_action_mgr: OutputActionManager | None = None
         self._output_action_failed: set[str] = set()
@@ -965,6 +969,12 @@ class MainWindow(tk.Tk):
             command=self._on_add_to_execution,
         )
         self.add_to_execution_btn.grid(row=0, column=2, padx=(0, 10))
+
+        self.calibrate_btn = ttk.Button(
+            bottom_left, text="Calibrate\ninvestments…",
+            command=self._open_calibrate_dialog,
+        )
+        self.calibrate_btn.grid(row=0, column=3, padx=(0, 10))
 
         bottom_right = ttk.Frame(outer)
         bottom_right.grid(row=row, column=2, columnspan=5, sticky="e", pady=(8, 0))
@@ -2049,6 +2059,7 @@ class MainWindow(tk.Tk):
             self.delete_source_btn,
             self.refresh_btn,
             self.add_to_execution_btn,
+            self.calibrate_btn,
             self.delete_results_btn,
             self.plot_menu_btn,
             self.execution_menu_btn,
@@ -2872,6 +2883,7 @@ class MainWindow(tk.Tk):
                 style="TButton",
                 text="Add checked scenarios to\nthe execution list [F9]",
             )
+            self.calibrate_btn.configure(state="disabled")
             return
 
         self.add_to_execution_btn.configure(
@@ -2879,6 +2891,7 @@ class MainWindow(tk.Tk):
             style="Accent.TButton",
             text="Add checked scenarios to\nthe execution list [F9]",
         )
+        self.calibrate_btn.configure(state="normal")
 
     def _update_execution_menu_style(self) -> None:
         """Highlight 'Execution jobs' when there are jobs and the window is not open."""
@@ -5031,6 +5044,79 @@ class MainWindow(tk.Tk):
         # ExecutionManager seeds max_workers from ProjectSettings (with
         # the legacy GlobalSettings.max_workers as fallback) in its
         # constructor, so no extra apply step is needed here.
+
+    @safe_callback
+    def _open_calibrate_dialog(self) -> None:
+        """Open (or raise) the non-modal 'Calibrate investments' dialog.
+
+        Operates on the checked available scenarios. The button is gated on
+        the checked count by ``_update_add_to_execution_style`` (mirroring the
+        Add-to-execution button), so an empty selection cannot reach here; the
+        empty guard below is defensive only.
+        """
+        if not self.avail_scenario_mgr or not self.current_project:
+            return
+
+        # Single instance: raise an already-open dialog instead of stacking.
+        existing = getattr(self, "_calibrate_dialog", None)
+        if existing is not None and existing.winfo_exists():
+            existing.deiconify()
+            existing.lift()
+            existing.focus_force()
+            return
+
+        checked = self.avail_scenario_mgr.get_checked_scenarios(self.available_tree)
+        if not checked:
+            return
+
+        self._ensure_execution_mgr()
+        if self.execution_mgr is None:
+            return
+        mgr = self.execution_mgr
+        project_path = get_projects_dir() / self.current_project
+
+        def _is_xlsx(source_name: str) -> bool:
+            return source_name.lower().endswith((".xlsx", ".xls", ".ods"))
+
+        def _resolve_db_url(scenario: Any) -> str:
+            # Mirrors ExecutionManager.add_jobs: xlsx sources run against the
+            # regenerated intermediate sqlite, sqlite sources against the
+            # resolved source path (honouring external refs).
+            source_path = mgr._resolve_source_path(scenario.source_name)
+            if scenario.is_xlsx:
+                stem = Path(scenario.source_name).stem
+                return "sqlite:///" + str(
+                    project_path / "intermediate" / f"{stem}.sqlite"
+                )
+            return "sqlite:///" + str(source_path)
+
+        # The dialog reads only ``name`` and ``is_xlsx`` off each scenario, and
+        # ``resolve_db_url`` reads ``source_name``; wrap each ScenarioInfo so it
+        # exposes exactly those.
+        scenarios = [
+            SimpleNamespace(
+                name=info.name,
+                is_xlsx=_is_xlsx(info.source_name),
+                source_name=info.source_name,
+            )
+            for info in checked
+        ]
+
+        dialog = CalibrateDialog(
+            self,
+            scenarios=scenarios,
+            project_path=project_path,
+            settings=self.project_settings,
+            execution_mgr=mgr,
+            python_exe=sys.executable,
+            resolve_db_url=_resolve_db_url,
+            save_settings=lambda: save_project_settings(
+                project_path, self.project_settings
+            ),
+        )
+        # Keep a reference so the Toplevel is not garbage-collected while open,
+        # and so a second click raises this instance instead of stacking.
+        self._calibrate_dialog = dialog
 
     def _open_or_raise_execution_window(self) -> None:
         """Open a new ExecutionWindow or raise an existing one."""
