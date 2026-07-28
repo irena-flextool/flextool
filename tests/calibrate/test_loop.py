@@ -196,3 +196,42 @@ def test_budget_exhausted_final_adders_match_last_solved_state(
     assert result.trajectory[-1].adders == pytest.approx(result.final_adders)
     # …and pairs with the last solve's residual (the report's per-node pairing).
     assert result.trajectory[-1].residual == {"west": 70.0}
+
+
+def test_run_calibration_streams_progress_banners(tmp_path, monkeypatch, capsys):
+    """The loop prints greppable per-iteration progress banners to stdout.
+
+    Reuses the scripted-solve harness (no real solve) and asserts the three
+    banner shapes reach the streamed console: the baseline pre-solve banner,
+    an adjustment-iteration pre-solve banner (recalling prior unserved and the
+    bump count), the per-iteration ``done:`` summary, and the final status
+    line. Assertions key off STABLE substrings, not exact whitespace.
+    """
+    # Progress each round (100→90→80→70) so the loop runs the full budget:
+    # baseline k=0 plus adjustment iterations k=1..3, then a final status line.
+    signals = [
+        {"residual": {"west": r}, "curtailment": {"west": 0.0}}
+        for r in (100.0, 90.0, 80.0, 70.0)  # iterations=3 -> 4 solves
+    ]
+    _install_scripted_solve(monkeypatch, signals)
+
+    config = _config(tmp_path, iterations=3, tightness=0.1)
+    run_calibration("db.sqlite", "scenA", config)
+
+    out = capsys.readouterr().out
+
+    # Scenario name is threaded into the banners.
+    assert "scenA" in out
+    # Baseline pre-solve banner (k=0).
+    assert "iteration 0/3" in out
+    assert "baseline" in out
+    # At least one adjustment-iteration pre-solve banner recalling the prior
+    # unserved energy and the number of nodes bumped into this solve.
+    assert "iteration 1/3" in out
+    assert "prior unserved" in out
+    assert "bumping" in out
+    # Per-iteration post-solve summary line.
+    assert "done:" in out
+    assert "MWh unserved" in out
+    # Final status line reflecting the stop reason.
+    assert "finished: budget_exhausted" in out

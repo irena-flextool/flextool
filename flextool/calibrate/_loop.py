@@ -380,8 +380,34 @@ def run_calibration(
     # sets it (threshold met -> "converged"; no bump possible -> "stalled").
     stop_reason = "budget_exhausted"
     iterations_run = 0
+    # How many nodes were bumped by the PRIOR iteration's step; drives the
+    # "bumping N node(s)" figure in the next iteration's pre-solve banner
+    # (purely observational — see the progress prints below).
+    last_bump_count = 0
 
     for k in range(config.iterations + 1):
+        # Progress banner (streamed to the GUI's live console). k=0 is the
+        # baseline; from k=1 on it recalls the prior iteration's unserved and
+        # how many nodes were bumped into this solve. print(flush=True) is
+        # DELIBERATE: the deep solve dispatch redirects stdout for its own
+        # banner and swallows logger.info, so only a flushed print reliably
+        # reaches the streamed console.
+        if k == 0:
+            print(
+                f"====== calibrate[{scenario}] iteration "
+                f"0/{config.iterations} — baseline solve ======",
+                flush=True,
+            )
+        else:
+            prior_unserved = trajectory[-1].total_unserved
+            print(
+                f"====== calibrate[{scenario}] iteration "
+                f"{k}/{config.iterations} — prior unserved "
+                f"{prior_unserved:.1f} MWh, bumping {last_bump_count} "
+                f"node(s) ======",
+                flush=True,
+            )
+
         # 1. Materialise the current adders in the calibration alternative
         #    (k=0 writes an empty/zero alt so the scenario is solved THROUGH
         #    the calib alt from the very first iteration; the alt stack is
@@ -432,10 +458,22 @@ def run_calibration(
         )
         trajectory.append(record)
 
+        def _emit_summary(newly_flagged_count: int) -> None:
+            """Print this iteration's one-line post-solve summary (streamed)."""
+            print(
+                f"------ iteration {k}/{config.iterations} done: "
+                f"{record.total_unserved:.1f} MWh unserved, "
+                f"{record.penalty_total:.1f} M€ penalty, "
+                f"{newly_flagged_count} node(s) newly flagged, "
+                f"{solve_seconds:.1f} s ------",
+                flush=True,
+            )
+
         # 5. Converge on total residual unserved energy.
         if record.total_unserved <= config.slack_threshold_mwh:
             converged = True
             stop_reason = "converged"
+            _emit_summary(0)
             break
 
         # 6. Size the next step, apply the over-build guard, and accumulate —
@@ -457,6 +495,7 @@ def run_calibration(
             # so no future iteration bumps it again.  Union FIRST so the
             # flagged set is complete before the stall check reads it.
             flagged |= newly_flagged
+            _emit_summary(len(newly_flagged))
 
             # Early stop — STALLED.  An empty increment set means no node will
             # be bumped this round: either every remaining shedding node is
@@ -475,6 +514,20 @@ def run_calibration(
             for node, inc in increments.items():
                 _accumulate_adder(adders, node, inc)
             prev_record = record
+            last_bump_count = len(increments)
+        else:
+            # Final iteration: no subsequent solve validates a step, so none is
+            # taken — but the solve still happened, so summarise it (no node can
+            # be newly flagged here).
+            _emit_summary(0)
+
+    # Final status line reflecting how the loop terminated (streamed).
+    print(
+        f"====== calibrate[{scenario}] finished: {stop_reason} "
+        f"(converged={converged}), {iterations_run} iteration(s), "
+        f"{len(flagged)} node(s) flagged resource-capped ======",
+        flush=True,
+    )
 
     return CalibResult(
         converged=converged,
