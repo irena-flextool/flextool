@@ -196,11 +196,17 @@ def classify_acceptance(
             accepted=True, near_optimal=False, message="", scaling_hint=None,
         )
 
-    diag = sol.solve_diagnostics()
+    # ``solve_diagnostics`` landed in polar-high 3.7.0 (pyproject pins it).
+    # Guard the call so an environment that somehow has an older polar-high
+    # degrades to the honest "cannot diagnose → reject" path below instead of
+    # crashing the whole cascade with an AttributeError.
+    diag_fn = getattr(sol, "solve_diagnostics", None)
+    diag = diag_fn() if callable(diag_fn) else None
 
     # No queryable solver handle (synthesised Solution, or the read-only
-    # subprocess/commercial shim): we cannot verify the solution, so we must
-    # NOT accept it.  Reject with an honest "cannot diagnose" message.
+    # subprocess/commercial shim), or a polar-high too old to diagnose: we
+    # cannot verify the solution, so we must NOT accept it.  Reject with an
+    # honest "cannot diagnose" message.
     if diag is None:
         return Acceptance(
             accepted=False,

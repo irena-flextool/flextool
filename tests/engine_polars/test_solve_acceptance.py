@@ -238,6 +238,25 @@ def test_no_diagnostics_rejected_honestly() -> None:
     assert acc.scaling_hint is None
 
 
+def test_missing_solve_diagnostics_method_degrades_not_crashes() -> None:
+    """A polar-high too old to expose ``solve_diagnostics`` must degrade to the
+    honest 'cannot diagnose → reject' path, never AttributeError the cascade."""
+
+    class _OldSolution:
+        optimal = False
+        primal_feasibility_tolerance = 1e-7
+        # deliberately no ``solve_diagnostics`` attribute
+
+    acc = classify_acceptance(
+        _OldSolution(),
+        ranges_post=None,
+        solve_name="s",
+    )
+    assert not acc.accepted
+    assert "no solver diagnostics are available" in acc.message
+    assert acc.scaling_hint is None
+
+
 # --- scaling-hint gating ----------------------------------------------------
 
 
