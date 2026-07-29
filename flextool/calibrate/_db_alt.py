@@ -11,10 +11,21 @@ scenario already sets while leaving that baseline untouched.
 The write is idempotent by construction: :func:`spinedb_api.import_data`
 defaults to ``on_conflict='merge'`` (an UPDATE in place), so re-writing a
 changed adder updates the single existing row rather than creating a
-duplicate, and appending an already-present ``(scenario, alt)`` link is a
-no-op.  Re-writing an *identical* state leaves nothing to commit, which
+duplicate.  Re-writing an *identical* state leaves nothing to commit, which
 :meth:`DatabaseMapping.commit_session` signals by raising
 :class:`NothingToCommit` — caught and treated as success.
+
+The scenario link is wired SEPARATELY from the parameter import, by adding
+only the single new ``(scenario, alt)`` row at the top rank.  We must NOT
+route it through ``import_data(scenario_alternatives=...)``: that path
+re-derives the scenario's ENTIRE ordered stack and re-yields every existing
+link with freshly recomputed *1-based* ranks.  On a database whose stack is
+stored with a different rank base (real FlexTool models use *0-based* ranks),
+every existing link's rank then shifts by one and collides on the
+``(scenario, rank)`` unique key — surfacing as spurious "already a
+scenario_alternative" errors for the untouched baseline alternatives.  The
+single-row append below is base-agnostic and idempotent (mirrors
+``representative_periods.scenario_stack.add_alternative_to_scenario``).
 
 This module never solves and never touches the network beyond the target
 SpineDB.
@@ -120,10 +131,13 @@ def write_calib_alt(
         pvs.append(("node", node, "energy_margin_adder", value, alt))
 
     with DatabaseMapping(_normalise_url(url)) as db:
+        # 1. Materialise the calibration alternative and its per-node adders.
+        #    Deliberately NO ``scenario_alternatives`` here — see the module
+        #    docstring: routing the link through import_data re-ranks the whole
+        #    stack (1-based) and collides on 0-based real-model stacks.
         _count, errors = import_data(
             db,
             alternatives=[alt],
-            scenario_alternatives=[(scenario, alt)],
             parameter_values=pvs,
         )
         assert not errors, errors
@@ -132,6 +146,21 @@ def write_calib_alt(
         except NothingToCommit:
             # Re-writing an identical state changes nothing to persist.
             pass
+
+        # 2. Append the calibration alternative to the scenario's stack at the
+        #    TOP rank (max existing rank + 1, so its values WIN over the
+        #    baseline).  Idempotent + base-agnostic: touch ONLY the single new
+        #    (scenario, alt) row, leaving every existing link's rank untouched.
+        existing = db.get_scenario_alternative_items(scenario_name=scenario)
+        if not any(sa["alternative_name"] == alt for sa in existing):
+            next_rank = max((sa["rank"] for sa in existing), default=0) + 1
+            db.add_scenario_alternative(
+                scenario_name=scenario, alternative_name=alt, rank=next_rank
+            )
+            try:
+                db.commit_session("adeq_calib scenario link")
+            except NothingToCommit:
+                pass
 
 
 __all__ = ["calib_alt_name", "write_calib_alt"]

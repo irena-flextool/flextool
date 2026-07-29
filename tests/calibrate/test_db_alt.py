@@ -155,6 +155,74 @@ def test_empty_adder_still_materialises_alt(db_url: str):
     assert calib_alt_name(SCENARIO) == ranked[-1][0]
 
 
+# --- 0-based-rank stacks (real FlexTool models) -----------------------------
+
+
+def _shift_stack_zero_based(url: str, scenario: str) -> None:
+    """Rewrite *scenario*'s stack so its ranks start at 0 (real-model layout).
+
+    ``import_data``-built fixtures rank a scenario's alternatives 1-based, but
+    real FlexTool databases store the stack 0-based.  We reproduce that by
+    dropping the scenario's links and re-adding them in the same order at ranks
+    ``0..N-1``.  (In-place rank decrements can't be used: the whole session
+    commits as one batch, so the transient ``(scenario, rank)`` states collide
+    on the unique key regardless of update order.)
+    """
+    from spinedb_api import DatabaseMapping
+
+    with DatabaseMapping(url) as db:
+        items = db.get_scenario_alternative_items(scenario_name=scenario)
+        ordered = [it["alternative_name"] for it in sorted(items, key=lambda x: x["rank"])]
+        for it in list(items):
+            it.remove()
+        db.commit_session("drop stack links")
+        for i, name in enumerate(ordered):
+            db.add_scenario_alternative(
+                scenario_name=scenario, alternative_name=name, rank=i
+            )
+        db.commit_session("rebuild stack 0-based")
+
+
+def test_writes_onto_zero_based_stack(db_url: str):
+    """Regression: ``write_calib_alt`` must not crash on a 0-based stack.
+
+    Routing the scenario link through ``import_data(scenario_alternatives=...)``
+    re-derives and re-ranks the ENTIRE stack 1-based, which collides on the
+    ``(scenario, rank)`` unique key when the DB stores it 0-based — the real
+    SouthAfrica-model crash.  The single-row append must be base-agnostic.
+    """
+    _shift_stack_zero_based(db_url, SCENARIO)
+    before = _ranked_alts(db_url, SCENARIO)
+    assert before[0][1] == 0, f"precondition: stack must be 0-based; got {before}"
+
+    # Baseline (empty) then a real node adder — both on the 0-based stack.
+    write_calib_alt(db_url, SCENARIO, {})
+    write_calib_alt(db_url, SCENARIO, {NODE: 1234.0})
+
+    after = _ranked_alts(db_url, SCENARIO)
+    calib = calib_alt_name(SCENARIO)
+    # Calib alt appended at the TOP, exactly once.
+    assert after[-1][0] == calib, f"calib alt must be top of stack; got {after}"
+    assert sum(1 for name, _ in after if name == calib) == 1
+    # Every pre-existing link is preserved at its original 0-based rank.
+    assert [(n, r) for n, r in after if n != calib] == before
+    # And its value still WINS under the scenario filter.
+    assert _materialized(db_url, SCENARIO, NODE, "energy_margin_adder") == 1234.0
+
+
+def test_zero_based_stack_rewrite_is_idempotent(db_url: str):
+    """On a 0-based stack, a second iteration re-writes without a dup link."""
+    _shift_stack_zero_based(db_url, SCENARIO)
+    write_calib_alt(db_url, SCENARIO, {NODE: 1234.0})
+    write_calib_alt(db_url, SCENARIO, {NODE: 5678.0})
+    after = _ranked_alts(db_url, SCENARIO)
+    calib = calib_alt_name(SCENARIO)
+    assert sum(1 for name, _ in after if name == calib) == 1, (
+        f"calib link must not duplicate across iterations; stack: {after}"
+    )
+    assert _materialized(db_url, SCENARIO, NODE, "energy_margin_adder") == 5678.0
+
+
 # --- timed (Map-valued) adder ----------------------------------------------
 
 
