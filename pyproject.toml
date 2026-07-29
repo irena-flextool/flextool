@@ -67,7 +67,10 @@ dependencies = [
     # — required: the regenerated goldens for the battery/DR scenarios and the
     # commodity-ladder trade model encode the corrected `full`-autoscale
     # solutions, which the pre-3.6.1 (buggy) floor mis-computes — the hard floor.
-    "polar-high>=3.6.1",
+    # 3.7.0 adds Solution.solve_diagnostics(), which the cascade solve-acceptance
+    # path (engine_polars/_solve_acceptance.py) calls to decide whether a
+    # HiGHS-uncertified solve is usable — required, or that call AttributeErrors.
+    "polar-high>=3.7.0",
     # Cap pins the install default to 1.14.0 (the highest tested
     # version) while leaving room for users to downgrade to older
     # 1.x releases that have been validated against their setup.
