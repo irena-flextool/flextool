@@ -175,10 +175,14 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [factor] Efficiency of a unit. Constant or time.
     ('efficiency_at_min_load', 'unit'): QuantityType.FRACTION,
     # [e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.
-    ('energy_margin', 'node'): QuantityType.DIMENSIONLESS,
+    ('energy_margin_multiplier', 'node'): QuantityType.DIMENSIONLESS,
     # [factor] Multiplier applied to this node's inflow in the investment solve only (ratio, consumed at preprocessing; 1 = off).
+    ('energy_margin', 'node'): QuantityType.DIMENSIONLESS,
+    # Deprecated v65 name for energy_margin_multiplier; carried during the v65->v66 migration window so a pre-migration DB read is not silently un-scaled.
+    ('energy_margin_adder', 'node'): QuantityType.ENERGY,
+    # [MWh] Extra demand (negative inflow) added to this node in the investment solve only (real energy; consumed at preprocessing; 0 = off).
     ('energy_margin_method', 'node'): QuantityType.DIMENSIONLESS,
-    # Method choice {none, inflow_multiplier} selecting whether energy_margin is applied.
+    # Method choice {none, inflow_multiplier, inflow_adder} selecting whether/how the energy margin is applied.
     ('existing', 'connection'): QuantityType.POWER,
     # [MW] Existing capacity. Constant or Period
     ('existing', 'node'): QuantityType.ENERGY,
@@ -373,6 +377,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, Period or Time.
     ('penalty_inertia', 'group'): QuantityType.PRICE_PER_INERTIA,
     # [CUR/MWs] Penalty for violating the inertia constraint. Cost scales with the duration of the violation. Constant or period.
+    ('penalty_method', 'node'): QuantityType.DIMENSIONLESS,
+    # Per-node toggle: 'regular' keeps balance-slack (penalty) vars, 'off' removes them.
     ('penalty_non_synchronous', 'group'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period.
     ('penalty_reserve', 'reserve__upDown__group'): QuantityType.PRICE_PER_CAPACITY,

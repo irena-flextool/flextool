@@ -262,6 +262,19 @@ def run(
         state, solve_name, input_dir, solve_data_dir, provider=provider,
     )
     _ck("energy_margin_inflow")
+    # ── energy_margin_adder: invest-only, additive demand margin ──────
+    # Runs multiply-THEN-add, after the multiplier and before the
+    # positive/negative split (batch 58).  Unlike the multiplier it CREATES
+    # negative demand rows on zero-inflow slack nodes (value = -adder at each
+    # invest (d, t)).  Early-returns (byte-identical) for dispatch solves or
+    # when no node uses the ``inflow_adder`` method with a non-zero adder.
+    from flextool.engine_polars import (
+        _emit_energy_margin_adder as _energy_margin_adder,
+    )
+    _energy_margin_adder.emit_energy_margin_adder(
+        state, solve_name, input_dir, solve_data_dir, provider=provider,
+    )
+    _ck("energy_margin_adder")
     # ── L0 batch 55 ───────────────────────────────────────────────────
     _period.emit_pdtProfile(input_dir, solve_data_dir, provider=provider)
     _ck("pdtProfile")

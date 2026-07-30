@@ -60,8 +60,8 @@ def _provider(
         )
     if margin is not None:
         prov.put(
-            "input/energy_margin",
-            _utf8({"node": ["nodeA"], "energy_margin": [repr(margin)]}),
+            "input/energy_margin_multiplier",
+            _utf8({"node": ["nodeA"], "energy_margin_multiplier": [repr(margin)]}),
         )
     return prov
 
@@ -118,7 +118,7 @@ def test_margin_one_is_byte_identical() -> None:
 
 
 def test_missing_margin_value_defaults_to_one() -> None:
-    # method=inflow_multiplier but no energy_margin value → effective margin 1.0 → no-op.
+    # method=inflow_multiplier but no energy_margin_multiplier value → effective margin 1.0 → no-op.
     prov = _provider(method="inflow_multiplier", margin=None)
     _run(prov, invest=True)
     assert prov.get(PDT_KEY).equals(_inflow_frame())

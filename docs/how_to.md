@@ -1040,7 +1040,7 @@ The split sample investment run produces in this case similar results as the one
 
 ### How to force-include adequacy-critical weeks in representative-period selection
 
-When a nested solve builds its investment stage on representative periods (see [How to use Nested Rolling window solves](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)), those periods are picked by greedy convex-hull clustering, which optimises a whole-year approximation of the *shape* of the profiles and inflows. A sustained low-VRE / high-demand stress week can have an unremarkable within-period shape and so never get selected — the investment stage then never sees that week as a hard balance constraint and under-builds. Force-include fixes the *representation*: it injects the worst base period under an explicit net-load signal so the stress week becomes a hard row in the invest LP. This is complementary to the `energy_margin` lever below — force-include corrects *which* weeks the invest stage sees, whereas `energy_margin` applies a deliberate margin on top of whatever weeks are chosen.
+When a nested solve builds its investment stage on representative periods (see [How to use Nested Rolling window solves](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)), those periods are picked by greedy convex-hull clustering, which optimises a whole-year approximation of the *shape* of the profiles and inflows. A sustained low-VRE / high-demand stress week can have an unremarkable within-period shape and so never get selected — the investment stage then never sees that week as a hard balance constraint and under-builds. Force-include fixes the *representation*: it injects the worst base period under an explicit net-load signal so the stress week becomes a hard row in the invest LP. This is complementary to the energy-margin lever below — force-include corrects *which* weeks the invest stage sees, whereas the energy margin applies a deliberate margin on top of whatever weeks are chosen.
 
 The selection runs from the command line:
 
@@ -1073,16 +1073,19 @@ The `+f{n}` suffix marks the forced periods. With no `--force-*` flag the run is
 
 In a nested solve the investment stage is optimised over representative periods and the full-year dispatch is solved separately. The representative periods can be systematically optimistic about variable-renewable (VRE) availability: their average VRE availability tends to exceed the true annual average. The investment stage then under-builds, and the full-year dispatch has to cover the shortfall with large forced unserved-energy (upward-slack) penalties.
 
-The `energy_margin` lever lets you de-rate a node's energy balance in the investment stage so that it builds enough capacity to meet the true demand under the true (lower) annual VRE availability. It is set per node:
+The energy-margin lever lets you de-rate a node's energy balance in the investment stage so that it builds enough capacity to meet the true demand under the true (lower) annual VRE availability. It is set per node with a method and one of two value parameters:
 
-- `energy_margin_method` - *none* (default, off) or *inflow_multiplier*.
-- `energy_margin` - the factor (default 1.0). When `energy_margin_method = inflow_multiplier`, the node's demand (inflow) is multiplied by this factor **in the investment solve only** — the dispatch solves always see the true demand. A value of 1.1 makes the investment stage build for about 10% more demand, so the real capacity is enough to meet the real demand under the true annual VRE. A value of 1.0 has no effect.
+- `energy_margin_method` - *none* (default, off), *inflow_multiplier*, or *inflow_adder*.
+- `energy_margin_multiplier` - the factor (default 1.0). When `energy_margin_method = inflow_multiplier`, the node's demand (inflow) is multiplied by this factor **in the investment solve only** — the dispatch solves always see the true demand. A value of 1.1 makes the investment stage build for about 10% more demand, so the real capacity is enough to meet the real demand under the true annual VRE. A value of 1.0 has no effect.
+- `energy_margin_adder` - the extra demand in MWh (default 0.0). When `energy_margin_method = inflow_adder`, this many MWh of extra demand (negative inflow) is added at the node **in the investment solve only**; the dispatch solves always see the true demand. A value of 0.0 has no effect.
 
-For example, to build about 10% more into a demand node, set `energy_margin_method = inflow_multiplier` and `energy_margin = 1.1` on that node.
+For example, to build about 10% more into a demand node, set `energy_margin_method = inflow_multiplier` and `energy_margin_multiplier = 1.1` on that node.
 
-The `energy_margin` is a per-node lever for regions whose adequacy gap is driven by VRE optimism and can be closed by building more of an investable response (more VRE, storage, or imports). It cannot help a region whose VRE collapses to near zero during the stress period when the only investable response is more VRE that serves the same demand — those regions need firm capacity or imports instead.
+Use `inflow_adder` as the additive alternative to the multiplier. Because the multiplier scales the node's *existing* demand, it is a no-op on a node whose native inflow is zero — a common shape for a bare adequacy / slack node that carries no demand series of its own. `inflow_adder` instead adds a fixed block of demand at the node: it deepens the node's demand where it already has inflow and, crucially, **creates** the demand where the node had none, spreading the MWh uniformly across every investment-stage timestep (a constant adder), or placing per-period values if authored as a period map. Set `energy_margin_method = inflow_adder` and `energy_margin_adder = <MWh>` on the node to raise investment-stage adequacy headroom without touching dispatch demand.
 
-It is complementary to the `capacity_margin_method` (see the [group reference](reference.md#limits-for-nodes)): `capacity_margin_method` targets peak-capacity adequacy (headroom above the peak net load), whereas `energy_margin` targets sustained-energy adequacy across the year.
+The energy margin is a per-node lever for regions whose adequacy gap is driven by VRE optimism and can be closed by building more of an investable response (more VRE, storage, or imports). It cannot help a region whose VRE collapses to near zero during the stress period when the only investable response is more VRE that serves the same demand — those regions need firm capacity or imports instead.
+
+It is complementary to the `capacity_margin_method` (see the [group reference](reference.md#limits-for-nodes)): `capacity_margin_method` targets peak-capacity adequacy (headroom above the peak net load), whereas the energy margin targets sustained-energy adequacy across the year.
 
 ### Peak memory in long rolling and nested chains
 

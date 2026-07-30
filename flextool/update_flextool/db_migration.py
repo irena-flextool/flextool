@@ -1728,6 +1728,10 @@ def migrate_database(
                 _migrate_v64_add_solve_scaling(db)
             elif next_version == 65:
                 _migrate_v65_energy_and_capacity_margin_methods(db)
+            elif next_version == 66:
+                _migrate_v66_energy_margin_adder(db)
+            elif next_version == 67:
+                _migrate_v67_node_penalty_method(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3494,6 +3498,150 @@ def _migrate_v65_energy_and_capacity_margin_methods(db) -> None:
         "v65: added node.energy_margin (+ energy_margin_method) and "
         "converted group.has_capacity_margin -> capacity_margin_method "
         "(none/manual)."
+    )
+
+
+def _migrate_v66_energy_margin_adder(db) -> None:
+    """Rename ``node.energy_margin`` -> ``energy_margin_multiplier`` and add
+    the additive counterpart ``node.energy_margin_adder`` (v65 -> v66).
+
+    The v65 energy-margin lever was a single multiplicative factor
+    (``energy_margin`` applied via ``energy_margin_method =
+    'inflow_multiplier'``).  v66 makes the two modes symmetric:
+
+    1. The multiplicative parameter is renamed to the self-documenting
+       ``energy_margin_multiplier`` (a plain definition rename preserves
+       any FK'd ``parameter_value`` rows, so no value migration is needed).
+    2. A new additive lever ``energy_margin_adder`` [MWh] is added, applied
+       via the freshly-live ``energy_margin_methods`` value ``inflow_adder``
+       — extra demand (negative inflow) added to the node in the investment
+       solve only, raising adequacy headroom without changing dispatch
+       demand.  The ``inflow_adder`` enum value, reserved-but-unused in v65,
+       is now populated and the ``energy_margin_method`` description is
+       updated to reflect that it is live.
+    """
+    # --- 1. rename energy_margin -> energy_margin_multiplier ----------
+    _rename_or_drop_parameter_definition(
+        db, "node", "energy_margin", "energy_margin_multiplier",
+        description=(
+            "[factor] Multiplier applied to this node's inflow in the "
+            "investment solve only, when energy_margin_method = "
+            "'inflow_multiplier'. "
+            "Offsets representative-period VRE optimism (rep-period average "
+            "VRE availability exceeds the annual average). 1 = off. e.g. "
+            "1.1 builds ~10% more capacity to serve the true annual demand "
+            "under the true (lower) annual VRE. Constant or period."
+        ),
+    )
+
+    # --- 2. populate the inflow_adder enum value ----------------------
+    add_value_list_manual(db, [["energy_margin_methods", "inflow_adder"]])
+
+    # --- 3. energy_margin_method description now that inflow_adder is live
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="node",
+        name="energy_margin_method",
+        description=(
+            "How the node's investment-stage energy margin is applied. "
+            "'none' (default) = off, no scaling. 'inflow_multiplier' "
+            "multiplies this node's inflow by 'energy_margin_multiplier' in "
+            "the solve that carries investment periods only (dispatch solves "
+            "are unaffected). 'inflow_adder' instead adds "
+            "'energy_margin_adder' MWh of extra demand (negative inflow) in "
+            "that same investment solve. Both offset representative-period "
+            "VRE optimism that would otherwise cause underinvestment."
+        ),
+    )
+
+    # --- 4. add node.energy_margin_adder ------------------------------
+    ema_val, ema_type = to_database(0.0)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="node",
+        name="energy_margin_adder",
+        default_value=ema_val,
+        default_type=ema_type,
+        description=(
+            "[MWh] Extra demand (negative inflow) added to this node in the "
+            "investment solve only, when energy_margin_method = "
+            "'inflow_adder'. Raises adequacy headroom without changing "
+            "dispatch demand. 0 = off. Constant or period."
+        ),
+    )
+
+    # Assign the new param to the 'investment' parameter group when it
+    # exists (mirrors the v65 energy_margin grouping).
+    has_investment_group = bool(
+        db.get_item("parameter_group", name="investment")
+    )
+    if has_investment_group:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="node",
+            name="energy_margin_adder",
+            parameter_group_name="investment",
+        )
+
+    _commit_step(db,
+        "v66: renamed node.energy_margin -> energy_margin_multiplier; "
+        "added node.energy_margin_adder + energy_margin_methods.inflow_adder."
+    )
+
+
+def _migrate_v67_node_penalty_method(db) -> None:
+    """Add ``node.penalty_method`` to toggle balance-penalty slack (v66 -> v67).
+
+    FlexTool nodes carry ``penalty_up`` / ``penalty_down`` slack variables
+    on their balance equation: unserved-energy and over-supply slacks that
+    let the node balance be violated at a (usually large) cost.  This keeps
+    solves feasible, but on adequacy studies that same slack can silently
+    absorb a genuine shortfall — the solve reports an expensive but
+    "optimal" result instead of the infeasibility that would reveal
+    inadequate capacity.
+
+    ``penalty_method`` is a per-node enum (value list ``penalty_methods``):
+
+    * ``regular`` (default, byte-identical to prior behaviour) keeps the
+      ``penalty_up`` / ``penalty_down`` slack variables.
+    * ``off`` removes those slack variables entirely, turning the node
+      balance into a hard equality — the solve becomes infeasible if the
+      node cannot balance, forcing true adequacy on the selected nodes.
+
+    The parameter is deliberately left out of any parameter group: a
+    penalty toggle is not investment-specific.
+    """
+    add_value_list_manual(db, [
+        ["penalty_methods", "regular"],
+        ["penalty_methods", "off"],
+    ])
+
+    pm_default_val, pm_default_type = to_database("regular")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="node",
+        name="penalty_method",
+        default_value=pm_default_val,
+        default_type=pm_default_type,
+        parameter_value_list_name="penalty_methods",
+        description=(
+            "Whether this node has balance penalty (unserved-energy / "
+            "over-supply slack) variables. 'regular' (default) keeps the "
+            "penalty_up / penalty_down slack variables that let the node "
+            "balance be violated at a cost. 'off' removes those slack "
+            "variables entirely, making the node balance a hard equality "
+            "(the solve becomes infeasible if the node cannot balance). "
+            "Use 'off' only if certain that it will not make the model "
+            "infeasible (a real solution exists) - infeasible models can be "
+            "very difficult to debug. At the same time, 'off' will reduce "
+            "variables and can direct infeasibilities to other, more "
+            "desirable, nodes."
+        ),
+    )
+
+    _commit_step(db,
+        "v67: added node.penalty_method (penalty_methods: regular/off); "
+        "'off' removes node balance slack (penalty) variables."
     )
 
 

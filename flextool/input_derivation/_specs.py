@@ -200,13 +200,50 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/node__energy_margin_method.csv",
     },
     {
-        # Scalar-float only: a period-map energy_margin is a documented
-        # FUTURE extension (route through _param_shapes) and must NOT be
-        # silently mis-ingested by this scalar spec.
-        "cl_pars": [("node", "energy_margin")],
-        "header": "node,energy_margin",
-        "filename": "input/energy_margin.csv",
+        # Scalar-float only: a period-map energy_margin_multiplier is a
+        # documented FUTURE extension (route through _param_shapes) and must
+        # NOT be silently mis-ingested by this scalar spec.
+        "cl_pars": [("node", "energy_margin_multiplier")],
+        "header": "node,energy_margin_multiplier",
+        "filename": "input/energy_margin_multiplier.csv",
         "filter_in_type": ["float"],
+    },
+    {
+        # Additive energy margin [MWh] — SCALAR (constant) only.  The
+        # ``["float"]`` filter is load-bearing: without it a period /
+        # period-time Map written to this param would be silently mangled
+        # here (``_rows_to_frame`` truncates the flattened map row to this
+        # 2-col header, dropping the time axis and value).  Map-shaped
+        # adders ingest through the ``pd_``/``pdt_`` specs below; the
+        # emitter (_emit_energy_margin_adder) reads all three files and
+        # broadcasts each authored shape over the invest (d, t) grid via
+        # _param_shapes' promote_param_to_dt.  A node has a scalar OR a
+        # map adder, never both.
+        "cl_pars": [("node", "energy_margin_adder")],
+        "header": "node,energy_margin_adder",
+        "filename": "input/energy_margin_adder.csv",
+        "filter_in_type": ["float"],
+    },
+    {
+        # Additive energy margin [MWh] — period Map (1d).  Places a
+        # per-period constant demand adder; the emitter broadcasts each
+        # period's value over that period's (d, t) cells.
+        "cl_pars": [("node", "energy_margin_adder")],
+        "header": "node,period,energy_margin_adder",
+        "filename": "input/pd_energy_margin_adder.csv",
+        "filter_in_type": ["1d_map"],
+    },
+    {
+        # Additive energy margin [MWh] — period-time Map (2d).  Places a
+        # per-(period, time) demand adder — the timed-sizing shape the
+        # calibrator relies on.  ``convert_map_to_table`` emits the outer
+        # (period) index, then the inner (time) index, then the value, so
+        # the flattened row is [node, period, time, value] — matching this
+        # 4-col header exactly.
+        "cl_pars": [("node", "energy_margin_adder")],
+        "header": "node,period,time,energy_margin_adder",
+        "filename": "input/pdt_energy_margin_adder.csv",
+        "filter_in_type": ["2d_map"],
     },
     {
         "cl_pars": [("node__profile", "profile_method")],
@@ -232,6 +269,11 @@ _PARAMETER_SPECS: list[dict] = [
         "cl_pars": [("node", "storage_start_end_method")],
         "header": "node,storage_start_end_method",
         "filename": "input/node__storage_start_end_method.csv",
+    },
+    {
+        "cl_pars": [("node", "penalty_method")],
+        "header": "node,penalty_method",
+        "filename": "input/node__penalty_method.csv",
     },
     {
         "cl_pars": [("node", "penalty_down"), ("node", "self_discharge_loss"), ("node", "availability"),

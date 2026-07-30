@@ -181,5 +181,12 @@ def compute_group_flows(par, s, v, r) -> None:
     r.group_node_down_slack__dt = pd.DataFrame(index=s.dt_realize_dispatch)
     for g in s.nodeGroupDispatch:
         g_node = s.group_node[s.group_node.get_level_values('node').isin(s.node_balance) & s.group_node.get_level_values('group').isin([g])].get_level_values('node')
-        r.group_node_up_slack__dt[g] = r.upward_node_slack_dt[g_node].sum(axis=1)
-        r.group_node_down_slack__dt[g] = r.downward_node_slack_dt[g_node].sum(axis=1)
+        # Nodes with penalty_method == 'off' carry NO balance-slack variables,
+        # so they have no column in the slack frames.  Intersect (order-
+        # preserving) with the available columns rather than raising
+        # ``KeyError: None of [...] are in the columns`` — a hardened node
+        # simply contributes 0 to the group slack.
+        g_node_up = g_node.intersection(r.upward_node_slack_dt.columns)
+        g_node_down = g_node.intersection(r.downward_node_slack_dt.columns)
+        r.group_node_up_slack__dt[g] = r.upward_node_slack_dt[g_node_up].sum(axis=1)
+        r.group_node_down_slack__dt[g] = r.downward_node_slack_dt[g_node_down].sum(axis=1)

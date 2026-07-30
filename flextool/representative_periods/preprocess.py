@@ -339,11 +339,14 @@ def _write_results_to_db(
     timeset_duration_map: Map,
     weights_map: Map,
     solve_period_timesets: dict,
+    alternative_description: str | None = None,
 ) -> None:
     """Write clustering results to the database in a new alternative.
 
     Also updates each solve's period_timeset to point to the new RP timeset.
-    Opens a NEW connection WITHOUT scenario filter.
+    Opens a NEW connection WITHOUT scenario filter. ``alternative_description``
+    overrides the alternative's description text; ``None`` (default) keeps the
+    byte-parity ``Representative periods: <timeset>`` string.
     """
     with DatabaseMapping(db_url) as db:
         # Ensure parameter definition exists for representative_period_weights
@@ -352,7 +355,12 @@ def _write_results_to_db(
         ]
 
         # Create alternative
-        alternatives = [(alternative_name, f"Representative periods: {timeset_name}")]
+        description = (
+            alternative_description
+            if alternative_description
+            else f"Representative periods: {timeset_name}"
+        )
+        alternatives = [(alternative_name, description)]
 
         # Create timeset entity
         entities = [("timeset", timeset_name)]
@@ -432,6 +440,9 @@ def preprocess_representative_periods(
     region_groups: list[str] | None = None,
     force_region_scope: bool = False,
     force_region_budget: int | None = None,
+    solves: list[str] | None = None,
+    alternative_name: str | None = None,
+    alternative_description: str | None = None,
 ) -> str:
     """Select representative periods and write results to database.
 
@@ -462,6 +473,22 @@ def preprocess_representative_periods(
             scope. ``None`` (default) derives a sane cap from ``n_rp`` as
             ``max(1, n_rp // 2)`` so forced periods never dominate the
             representative set; ignored when ``force_region_scope`` is ``False``.
+        solves: Optional subset of solve names whose ``period_timeset`` should
+            be repointed at the new RP timeset. ``None`` (default) updates every
+            solve that carries a ``period_timeset`` param — the current
+            behaviour. A non-``None`` list restricts the update (and the
+            per-solve print) to exactly those solves; a name not present in the
+            database raises ``ValueError``.
+        alternative_name: Optional override for the output alternative name. It
+            also names the ``timeset`` entity (kept equal, as in the default
+            path), so distinct overrides yield distinct alternatives *and*
+            distinct timeset entities — the guard against two scenarios sharing
+            an ``n_rp``/``period_length`` colliding on the same names. ``None``
+            (default) derives both from ``n_rp``/``period_length`` (plus any
+            force suffix), byte-identical to the current behaviour.
+        alternative_description: Optional override for the alternative's
+            description text. ``None`` (default) keeps the byte-parity
+            ``Representative periods: <timeset>`` string.
 
     Returns:
         Name of the created timeset entity.
@@ -500,6 +527,21 @@ def preprocess_representative_periods(
         solve_period_timesets: dict = params_to_dict(
             db=db, cl="solve", par="period_timeset", mode=DictMode.DICT
         )
+
+        # Optionally restrict the update to a named subset of solves. A
+        # requested solve that has no period_timeset in the DB is a user error
+        # (typo / wrong scenario) — fail loudly rather than silently no-op.
+        if solves is not None:
+            missing = [s for s in solves if s not in solve_period_timesets]
+            if missing:
+                raise ValueError(
+                    f"--solves named solve(s) with no period_timeset in the "
+                    f"database: {missing}. Available solves: "
+                    f"{sorted(solve_period_timesets)}."
+                )
+            solve_period_timesets = {
+                s: solve_period_timesets[s] for s in solves
+            }
 
         # Node-group demand-weighting / per-region maps (only when region
         # groups requested).
@@ -626,8 +668,13 @@ def preprocess_representative_periods(
     # a hull pick) the name is unchanged, preserving byte-parity of the default
     # path and not overwriting the pure-hull timeset.
     suffix = f"+f{n_forced}" if n_forced > 0 else ""
-    timeset_name = f"hull_{n_rp}rp_{period_length}h{suffix}"
-    alternative_name = timeset_name
+    default_name = f"hull_{n_rp}rp_{period_length}h{suffix}"
+    if alternative_name is None:
+        # Byte-parity default: derive both names from n_rp/period_length.
+        alternative_name = default_name
+    # Tie the timeset ENTITY name to the alternative so distinct callers never
+    # collide on the entity either (the entity is not alternative-scoped).
+    timeset_name = alternative_name
 
     timeset_duration_map = _build_timeset_duration_map(
         rep_indices, timestep_keys, period_length
@@ -648,6 +695,7 @@ def preprocess_representative_periods(
         timeset_duration_map,
         weights_map,
         solve_period_timesets,
+        alternative_description=alternative_description,
     )
 
     # ------------------------------------------------------------------
@@ -745,11 +793,40 @@ def main() -> None:
         help="Max forced periods under --force-region-scope (default: derived "
         "from n_rp as max(1, n_rp // 2)).",
     )
+    parser.add_argument(
+        "--solves",
+        type=str,
+        default=None,
+        help="Comma-separated solve names whose period_timeset should point at "
+        "the new RP timeset (e.g. 'invest_solve'). Omitted → update every solve "
+        "with a period_timeset. A name absent from the DB is an error.",
+    )
+    parser.add_argument(
+        "--alternative-name",
+        type=str,
+        default=None,
+        help="Override the output alternative name (also names the timeset "
+        "entity). Give distinct scenarios distinct names so they don't collide "
+        "on the alternative or the timeset entity. Omitted → derive from "
+        "n_rp/period_length (plus any force suffix).",
+    )
+    parser.add_argument(
+        "--alternative-description",
+        type=str,
+        default=None,
+        help="Override the created alternative's description text. Omitted → "
+        "'Representative periods: <timeset>'.",
+    )
 
     args = parser.parse_args()
     region_groups = (
         [g.strip() for g in args.region_groups.split(",") if g.strip()]
         if args.region_groups
+        else None
+    )
+    solves = (
+        [s.strip() for s in args.solves.split(",") if s.strip()]
+        if args.solves
         else None
     )
 
@@ -767,6 +844,9 @@ def main() -> None:
             region_groups=region_groups,
             force_region_scope=args.force_region_scope,
             force_region_budget=args.force_region_budget,
+            solves=solves,
+            alternative_name=args.alternative_name,
+            alternative_description=args.alternative_description,
         )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

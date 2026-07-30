@@ -628,6 +628,18 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 nbp_dt = nbp_dt.with_columns(
                     pl.col(col).cast(ref_schema[col], strict=False))
         vq_idx = pl.concat([nodeBalance_dt, nbp_dt]).unique()
+    # penalty_method == 'off' nodes carry NO balance-slack variables:
+    # drop them from the slack-var index so vq_state_up/down (and every
+    # downstream Where/Sum + the objective penalty term) simply omit them,
+    # making the node balance a hard equality.  Guarded so an absent/empty
+    # off-set leaves vq_idx byte-identical (see the parity note above).
+    penalty_off = getattr(d, "nodeBalance_penalty_off", None)
+    if penalty_off is not None and penalty_off.height > 0:
+        off_n = penalty_off.select("n")
+        if off_n.schema["n"] != vq_idx.schema["n"]:
+            off_n = off_n.with_columns(
+                pl.col("n").cast(vq_idx.schema["n"], strict=False))
+        vq_idx = vq_idx.join(off_n, on="n", how="anti")
     vq_up   = m.add_var("vq_state_up",   ("n","d","t"), vq_idx, lower=0.0)
     vq_down = m.add_var("vq_state_down", ("n","d","t"), vq_idx, lower=0.0)
     if has_storage:

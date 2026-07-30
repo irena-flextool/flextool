@@ -2,7 +2,7 @@
 
 The feature (``flextool/engine_polars/_emit_energy_margin.py``, wired into
 ``_emit_solve_time.run`` right after ``emit_pdtNodeInflow``) multiplies a
-node's ``pdtNodeInflow`` by its ``energy_margin`` factor, but ONLY:
+node's ``pdtNodeInflow`` by its ``energy_margin_multiplier`` factor, but ONLY:
 
 * in the solve that carries investment periods
   (``bool(state.solve.invest_periods.get(solve_name))``); and
@@ -67,7 +67,8 @@ pytestmark = [pytest.mark.solver, pytest.mark.slow]
 
 def _build_db(tmp_path_factory, *, with_margin: bool) -> str:
     """Build a fresh SQLite from the JSON fixture; optionally set the
-    ``energy_margin`` on ``west`` via the spinedb API (not the JSON)."""
+    ``energy_margin_multiplier`` on ``west`` via the spinedb API (not the
+    JSON)."""
     from flextool.update_flextool.db_migration import migrate_database
 
     root = tmp_path_factory.mktemp(
@@ -86,7 +87,8 @@ def _build_db(tmp_path_factory, *, with_margin: bool) -> str:
                 parameter_values=[
                     ("node", TARGET, "energy_margin_method", "inflow_multiplier",
                      MARGIN_ALT),
-                    ("node", TARGET, "energy_margin", MARGIN, MARGIN_ALT),
+                    ("node", TARGET, "energy_margin_multiplier", MARGIN,
+                     MARGIN_ALT),
                 ],
             )
             assert not errors, f"import_data errors: {errors}"
@@ -277,7 +279,7 @@ def test_autoscale_strict_completes_with_margin(
 ):
     """With ``FLEXTOOL_AUTOSCALE_STRICT=1`` a margin-carrying solve
     completes without the autoscale silent-revert — proving the
-    ``('energy_margin','node')`` / ``('energy_margin_method','node')``
+    ``('energy_margin_multiplier','node')`` / ``('energy_margin_method','node')``
     PARAMETER_TYPES entries are registered (CLAUDE.md invariant #1).
 
     Under strict mode an autoscale-registry gap re-raises (see

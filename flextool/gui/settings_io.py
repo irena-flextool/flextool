@@ -110,6 +110,60 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     if _ps in ("on", "off", "choose"):
         settings.presolve = _ps
 
+    # Calibrate-investments dialog — validate each field against its
+    # allowed set / type and fall back to the dataclass default on
+    # anything malformed so a hand-edited settings.yaml can't break the
+    # GUI.  bool is an int subclass, so ints/floats exclude it explicitly.
+    _c_n_rp = data.get("calib_rp_n_rp", settings.calib_rp_n_rp)
+    if isinstance(_c_n_rp, int) and not isinstance(_c_n_rp, bool):
+        settings.calib_rp_n_rp = _c_n_rp
+    _c_plen = data.get("calib_rp_period_length", settings.calib_rp_period_length)
+    if isinstance(_c_plen, int) and not isinstance(_c_plen, bool):
+        settings.calib_rp_period_length = _c_plen
+    _c_sust = data.get("calib_rp_force_sustained", settings.calib_rp_force_sustained)
+    if isinstance(_c_sust, bool):
+        settings.calib_rp_force_sustained = _c_sust
+    _c_peak = data.get("calib_rp_force_peak", settings.calib_rp_force_peak)
+    if isinstance(_c_peak, bool):
+        settings.calib_rp_force_peak = _c_peak
+    _c_win = data.get("calib_rp_force_window", settings.calib_rp_force_window)
+    if isinstance(_c_win, int) and not isinstance(_c_win, bool):
+        settings.calib_rp_force_window = _c_win
+    _c_mode = data.get("calib_rp_count_mode", settings.calib_rp_count_mode)
+    if _c_mode in ("grow", "fixed"):
+        settings.calib_rp_count_mode = _c_mode
+    _c_add = data.get(
+        "calib_rp_add_to_scenario", settings.calib_rp_add_to_scenario
+    )
+    if isinstance(_c_add, bool):
+        settings.calib_rp_add_to_scenario = _c_add
+    _c_solves = data.get("calib_selected_solves", settings.calib_selected_solves)
+    if isinstance(_c_solves, list):
+        settings.calib_selected_solves = [
+            s for s in _c_solves if isinstance(s, str) and s
+        ]
+    _c_iter = data.get("calib_max_iterations", settings.calib_max_iterations)
+    if isinstance(_c_iter, int) and not isinstance(_c_iter, bool):
+        settings.calib_max_iterations = _c_iter
+    _c_sizing = data.get("calib_sizing", settings.calib_sizing)
+    if _c_sizing in ("timed", "uniform"):
+        settings.calib_sizing = _c_sizing
+    _c_over = data.get("calib_overshoot_pct", settings.calib_overshoot_pct)
+    if isinstance(_c_over, (int, float)) and not isinstance(_c_over, bool):
+        settings.calib_overshoot_pct = float(_c_over)
+    _c_damp1 = data.get("calib_damping_first", settings.calib_damping_first)
+    if isinstance(_c_damp1, (int, float)) and not isinstance(_c_damp1, bool):
+        settings.calib_damping_first = float(_c_damp1)
+    _c_dampr = data.get("calib_damping_remaining", settings.calib_damping_remaining)
+    if isinstance(_c_dampr, (int, float)) and not isinstance(_c_dampr, bool):
+        settings.calib_damping_remaining = float(_c_dampr)
+    _c_stall = data.get("calib_stall_fraction", settings.calib_stall_fraction)
+    if isinstance(_c_stall, (int, float)) and not isinstance(_c_stall, bool):
+        settings.calib_stall_fraction = float(_c_stall)
+    _c_keep = data.get("calib_keep_artifacts", settings.calib_keep_artifacts)
+    if isinstance(_c_keep, bool):
+        settings.calib_keep_artifacts = _c_keep
+
     settings.input_source_numbers = data.get(
         "input_source_numbers", settings.input_source_numbers
     )

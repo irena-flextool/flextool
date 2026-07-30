@@ -224,6 +224,7 @@ def run(
         _mid.emit_process_startup_method(input_dir, solve_data_dir, provider=provider)
         _mid.emit_node_inflow_method(input_dir, solve_data_dir, provider=provider)
         _mid.emit_node_storage_binding_method(input_dir, solve_data_dir, provider=provider)
+        _mid.emit_node_penalty_method(input_dir, solve_data_dir, provider=provider)
         _mid.emit_process_group_inside_group_nonsync(input_dir, solve_data_dir, provider=provider)
         _mid.emit_process__sink_nonSync(input_dir, solve_data_dir, provider=provider)
         _mid.emit_group_entity(input_dir, solve_data_dir, provider=provider)
