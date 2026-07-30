@@ -212,8 +212,8 @@ def test_period_indexed_period_map_resolves_and_emits_support() -> None:
 # while a SIBLING flowGroup authors a 2d Map(period, time) floor on the same
 # ``min_instant_flow`` parameter.
 #
-# Reproduces the reported correctness bug (Cyprus_Grid): a baseline solve
-# floors "Vassiliko Thermal"=150 / "Dhekelia ST1_ST2"=60 as period maps;
+# Reproduces the reported correctness bug on a real grid model: a baseline
+# solve floors two thermal units (=150 / =60) as period maps;
 # adding a period-time Map floor on a third flowGroup ("All thermal units")
 # flipped the WHOLE parameter's resolved shape to MAP_PERIOD_TIME (Spine's
 # ``parameter_shape_info`` reports the deepest row; ``_unroll_rows``
@@ -303,8 +303,8 @@ def _mixed_min_instant_flow_param():
     stub = _MixedShapeFlowGroupStub(
         period_maps={
             # baseline period-scalar floors (as 1d period maps)
-            "Vassiliko Thermal": {"p2025": 150.0, "p2030": 150.0},
-            "Dhekelia ST1_ST2": {"p2025": 60.0, "p2030": 60.0},
+            "Thermal Plant A": {"p2025": 150.0, "p2030": 150.0},
+            "Thermal Plant B": {"p2025": 60.0, "p2030": 60.0},
         },
         period_time_maps={
             # the added period-time floor that flips the frame shape
@@ -335,13 +335,13 @@ def test_mixed_period_and_period_time_floors_all_survive() -> None:
 
     full_grid = {("p2025", "t01"), ("p2025", "t02"),
                  ("p2030", "t01"), ("p2030", "t02")}
-    # Vassiliko period floor (150) broadcast across every active timestep.
+    # Plant-A period floor (150) broadcast across every active timestep.
     for d, t in full_grid:
-        assert got.get(("Vassiliko Thermal", d, t)) == 150.0, (
-            f"Vassiliko floor dropped/altered at ({d}, {t}); got {got}"
+        assert got.get(("Thermal Plant A", d, t)) == 150.0, (
+            f"Plant-A floor dropped/altered at ({d}, {t}); got {got}"
         )
-        assert got.get(("Dhekelia ST1_ST2", d, t)) == 60.0, (
-            f"Dhekelia floor dropped/altered at ({d}, {t}); got {got}"
+        assert got.get(("Thermal Plant B", d, t)) == 60.0, (
+            f"Plant-B floor dropped/altered at ({d}, {t}); got {got}"
         )
         assert got.get(("All thermal units", d, t)) == 10.0, (
             f"period-time floor missing at ({d}, {t}); got {got}"
@@ -364,7 +364,7 @@ def test_mixed_floors_emit_constraint_support_for_all_groups() -> None:
         pl.col("t").cast(pl.Utf8),
     )
     groups = {g for g, _, _ in _rows(over)}
-    assert groups == {"Vassiliko Thermal", "Dhekelia ST1_ST2",
+    assert groups == {"Thermal Plant A", "Thermal Plant B",
                       "All thermal units"}, (
         f"constraint support lost a flowGroup: {groups}"
     )

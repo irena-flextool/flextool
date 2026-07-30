@@ -222,8 +222,8 @@ def test_write_outputs_for_solve_skips_when_no_highs(tmp_path) -> None:
 # ``write_solution_to_file``) permanently rewrites spaces to underscores
 # in the live LP's column/row names.  The output extractors then read
 # those mutated names back, so any entity whose name contains a space
-# (e.g. a node "AY. ATHANASIOS") no longer joins against ``flex_data``'s
-# original names — the KeyError reproduced on the Cyprus grid model.
+# (e.g. a node whose name contains a space) no longer joins against
+# ``flex_data``'s original names — the KeyError reproduced on a real grid model.
 # ``_restore_space_mangled_names`` re-pins the un-mangled originals from
 # ``Solution.col_names`` / ``.row_names``.
 
@@ -241,8 +241,8 @@ def test_restore_space_mangled_names_repairs_highs_after_write(tmp_path) -> None
     )
 
     inf = highspy.kHighsInf
-    col_names = ["v_flow[AAT-MGS,AY. ATHANASIOS,MONI-GIS,p,t]", "no_space"]
-    row_names = ["nodeBalance[AY. ATHANASIOS,p,t]", "plain_row"]
+    col_names = ["v_flow[UNIT-A,GEN NODE,CONN-B,p,t]", "no_space"]
+    row_names = ["nodeBalance[GEN NODE,p,t]", "plain_row"]
     h = highspy.Highs()
     h.silent()
     for i, name in enumerate(col_names):
@@ -258,8 +258,8 @@ def test_restore_space_mangled_names_repairs_highs_after_write(tmp_path) -> None
     # Writing the solution mangles the spaces in the live LP names.
     h.writeSolution(str(tmp_path / "flextool.sol"), 2)
     assert h.allVariableNames()[0] == \
-        "v_flow[AAT-MGS,AY._ATHANASIOS,MONI-GIS,p,t]"
-    assert h.getLp().row_names_[0] == "nodeBalance[AY._ATHANASIOS,p,t]"
+        "v_flow[UNIT-A,GEN_NODE,CONN-B,p,t]"
+    assert h.getLp().row_names_[0] == "nodeBalance[GEN_NODE,p,t]"
 
     sol = Solution(
         optimal=True, obj=0.0,

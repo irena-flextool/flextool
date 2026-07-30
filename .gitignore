@@ -53,6 +53,12 @@ venv/
 specs/
 projects/
 tests/unitTests.txt
+# Local-only tests that read PROPRIETARY project datasets (H2/SouthAfrica/
+# Cyprus) from the gitignored `projects/` tree.  They run locally where the
+# DB exists (skipif-guarded) and must never ship in the public repo or CI.
+tests/test_rp_force_include_h2_acceptance.py
+tests/engine_polars/test_benders_stall_e2e.py
+tests/calibrate/test_sizing_h2trade_local.py
 rivendell/
 .aider*
 # Local audit / investigation handoffs — meant for personal note-taking,

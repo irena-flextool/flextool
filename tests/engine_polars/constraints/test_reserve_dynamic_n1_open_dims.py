@@ -63,7 +63,7 @@ def test_reserve_dynamic_canonicalises(toy_group_reserve):
     d = _add_increase_reserve_ratio(toy_group_reserve)
     pb = Problem()
     build_flextool(pb, d)
-    # This is what crashed for Cyprus (MPS write / commercial subprocess).
+    # This is what crashed on a real model (MPS write / commercial subprocess).
     m = pb.canonicalise()
     assert "reserveBalance_dynamic_eq" in set(pb.cstr_names())
 

@@ -9,7 +9,7 @@ used to ``.select(pl.col("p"))`` unconditionally — which raised
 ["e","value"]`` for every model that actually reaches this code path
 (an active ``co2_method=total`` cap on a rolling solve).  No shipped
 fixture used ``co2_method=total``, so the bug was latent from the v4
-root until the SouthAfrica model exercised it.
+root until a real production model exercised it.
 
 This test crafts the minimal frames that drive the emission branch and
 hand-checks the resulting cumulative-CO2 tonnage, with the unitsize

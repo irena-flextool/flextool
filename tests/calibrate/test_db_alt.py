@@ -189,7 +189,7 @@ def test_writes_onto_zero_based_stack(db_url: str):
     Routing the scenario link through ``import_data(scenario_alternatives=...)``
     re-derives and re-ranks the ENTIRE stack 1-based, which collides on the
     ``(scenario, rank)`` unique key when the DB stores it 0-based — the real
-    SouthAfrica-model crash.  The single-row append must be base-agnostic.
+    production-model crash.  The single-row append must be base-agnostic.
     """
     _shift_stack_zero_based(db_url, SCENARIO)
     before = _ranked_alts(db_url, SCENARIO)

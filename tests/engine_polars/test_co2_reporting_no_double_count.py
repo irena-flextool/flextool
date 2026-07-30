@@ -10,7 +10,7 @@ Two invariants are pinned here:
 
 1. **Total-cap is wired in** — a ``co2_method = total`` model (only the
    ``*_capped_total`` frames populated) must still contribute emitting
-   flows, else the CO2 reports read 0 (the SouthAfrica regression).
+   flows, else the CO2 reports read 0 (a real-model regression).
 2. **No double-count across overlapping groups** — a process whose flow
    appears in several CO2 frames (because it belongs to several CO2
    groups) collapses to a single ``(process, commodity, node)`` row, so
