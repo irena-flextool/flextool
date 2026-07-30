@@ -1,3 +1,93 @@
+## Release 4.0.0b26 (30.7.2026) — adequacy calibrator + Calibrate-investments GUI; additive energy-margin & hard node balance; near-optimal IPM acceptance
+
+**Database migration v65 → v67** (two steps, automatic on load). **The
+polar-high floor moves to `>=3.7.0`** (the near-optimal solve-acceptance
+diagnostics below rely on it). Other floors unchanged (`polars>=1.40`,
+`highspy<=1.14.0`). Every new schema parameter is additive and defaults to
+prior behaviour, and the two migration steps preserve existing values, so a
+migrated database solves byte-identically until you opt into the new levers.
+
+### Adequacy — calibration & margins
+
+- **Adequacy-margin calibrator (new CLI `python -m flextool.calibrate <db>
+  <scenario>`).** An iterative helper that repeatedly solves a scenario and
+  raises a per-node energy-margin adder until the system reaches an adequate
+  capacity margin, so investments are neither over- nor under-built. Each
+  iteration reads the previous solve's unserved-energy slack and resizes the
+  margin; the result is written into a dedicated `<scenario>_adeq_calib`
+  alternative appended to the scenario's stack (originals untouched — delete
+  the alternative to undo). Controls include `--iterations`, `--sizing`
+  (`timed`, placing margin only in the periods/steps that fell short, or
+  `uniform`), a planning-safety `--overshoot`, first/remaining-iteration
+  damping, and a resource-cap stall guard (`--stall-fraction`) that stops
+  chasing a target a hard limit makes unreachable. Runs are warm-started
+  between iterations for speed.
+- **`node.energy_margin_adder` + `energy_margin_method = inflow_adder`
+  (schema v66).** An additive companion to the multiplicative margin from
+  b25: extra demand [MWh] added to a node in the *investment* solve only,
+  raising adequacy headroom without changing dispatch demand. The b25
+  multiplicative `energy_margin` parameter is renamed to the self-documenting
+  `energy_margin_multiplier` (a definition rename; existing values are
+  preserved), and the previously reserved `inflow_adder` method value is now
+  live.
+- **Representative periods — per-region budgeted force-include.** The
+  net-load force-include gains an opt-in per-region-group scope
+  (`--force-region-scope` / `--force-region-budget`) that scores net load
+  independently per region group and greedily forces each region's worst
+  lull under a budget cap, instead of forcing a single system-coincident
+  period. Default (no flags) is unchanged, byte-parity behaviour.
+
+### GUI — Calibrate investments
+
+- **New "Calibrate investments" dialog.** A non-modal dialog (opened from the
+  main window for the checked scenarios) that hosts two tools: a
+  representative-periods builder and the adequacy calibrator above. It never
+  renders its own command lines — the live CLI previews it shows are the exact
+  commands it runs, with a Copy button each. Representative periods are written
+  into a scenario-named alternative (`<scenario>_rp_<n>rp_<len>h`, de-duplicated
+  on repeat builds) with a descriptive note, and an opt-in checkbox appends
+  that alternative to the selected scenario(s). Every control carries a
+  plain-English hover explanation; launching either tool opens the Execution
+  window so the run is visible. The dialog is scenario-aware (each scenario is
+  clustered from its own series and only receives the solves that belong to it)
+  and fits small screens (bounded, scrollable solve list; the body scrolls
+  within a height-capped window). xlsx-backed scenarios are excluded, since
+  their database is regenerated on each run.
+
+### Node balance — hard-balance option
+
+- **`node.penalty_method` (schema v67).** A per-node toggle for the balance
+  slack. `regular` (default, byte-identical to before) keeps the
+  `penalty_up` / `penalty_down` unserved-energy / over-supply slack variables;
+  `off` removes them, making the node balance a hard equality so a node that
+  cannot balance turns the solve infeasible instead of silently absorbing the
+  shortfall at penalty cost. Useful on adequacy studies where that hidden
+  slack would otherwise mask inadequate capacity.
+
+### Solver — near-optimal acceptance
+
+- **Accept in-practice-optimal crossover-off interior-point solves** (requires
+  `polar-high>=3.7.0`). When the interior-point method returns a feasible
+  primal with a negligible primal–dual gap but the status stays "unknown"
+  (crossover disabled), the solve is now accepted as optimal instead of being
+  treated as a failure, and this acceptance is propagated to the multi-solve
+  cascade's exit scan. Tunable via `FLEXTOOL_ACCEPT_*` knobs; default
+  thresholds are conservative.
+
+### Fixes
+
+- **Reserve balance crashed on dynamic / N-1 reserves.** The dynamic and
+  N-1 reserve-balance right-hand side left the flow variable's native
+  source/sink axis open, which could abort canonicalisation on some models;
+  the axis is now tied correctly.
+- **Mixed-shape group floors were dropped in `(period, time)` broadcasting.**
+  A group with a mix of period-scalar and period-time floor Maps had the
+  other groups' floors inner-joined away, letting the optimum fall below the
+  intended floor; the broadcast now preserves every group's rows.
+- **Calibrator alternative write crashed on 0-based scenario stacks.** The
+  calibration-alternative append no longer collides on real models whose
+  scenario_alternative ranks are stored 0-based.
+
 ## Release 4.0.0b25 (15.7.2026) — per-solve autoscaler mode; energy/capacity margins; rep-period force-include; storage-handoff & scale-invariant-floor fixes
 
 **Database migration v63 → v65** (two steps, automatic on load). **The
