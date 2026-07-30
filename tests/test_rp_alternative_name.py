@@ -97,6 +97,12 @@ def _alternative_names(url: str) -> set[str]:
         return {a["name"] for a in db.get_items("alternative")}
 
 
+def _alternative_description(url: str, name: str) -> str:
+    with DatabaseMapping(url) as db:
+        item = db.get_alternative_item(name=name)
+        return item["description"] if item else ""
+
+
 def _timeset_entity_names(url: str) -> set[str]:
     with DatabaseMapping(url) as db:
         return {
@@ -133,6 +139,29 @@ def test_default_none_derives_hull_name(tmp_path):
     assert name == expected
     assert expected in _alternative_names(url)
     assert expected in _timeset_entity_names(url)
+    # Default (no override) keeps the byte-parity description string.
+    assert _alternative_description(url, expected) == (
+        f"Representative periods: {expected}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 1b. alternative_description override lands on the created alternative.
+# ---------------------------------------------------------------------------
+
+def test_description_override(tmp_path):
+    url = _build_controlled_db(str(tmp_path / "desc.sqlite"))
+    desc = "Built with the calibrate tool; delete to undo."
+    name = preprocess_representative_periods(
+        url,
+        SCENARIO,
+        n_rp=N_RP,
+        period_length=PERIOD_LENGTH,
+        alternative_name="rp_desc",
+        alternative_description=desc,
+    )
+    assert name == "rp_desc"
+    assert _alternative_description(url, "rp_desc") == desc
 
 
 # ---------------------------------------------------------------------------

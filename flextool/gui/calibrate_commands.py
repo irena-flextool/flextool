@@ -49,6 +49,7 @@ def build_rp_command(
     count_mode: str,
     solves: Sequence[str],
     alternative_name: str | None,
+    alternative_description: str | None = None,
 ) -> list[str]:
     """Build the argv for the representative-periods preprocess CLI.
 
@@ -56,7 +57,8 @@ def build_rp_command(
     load") and ``force_peak`` to ``--force-peak-load`` ("instantaneous
     peak"). Boolean flags are emitted only when True; ``--solves`` only when
     the list is non-empty (comma-joined); ``--alternative-name`` only when
-    truthy.
+    truthy. ``--alternative-description`` is emitted only when a description
+    is supplied (single argv element, so ``shlex`` quotes the spaces).
     """
     argv: list[str] = [
         python_exe,
@@ -79,6 +81,8 @@ def build_rp_command(
         argv += ["--solves", ",".join(solves)]
     if alternative_name:
         argv += ["--alternative-name", str(alternative_name)]
+    if alternative_description:
+        argv += ["--alternative-description", str(alternative_description)]
     return argv
 
 

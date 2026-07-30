@@ -14,6 +14,8 @@ from spinedb_api import DatabaseMapping, import_data
 from flextool._resources import package_data_path
 from flextool.representative_periods.scenario_stack import (
     add_alternative_to_scenario,
+    dedup_alternative_name,
+    existing_alternative_names,
 )
 from flextool.update_flextool import initialize_database
 
@@ -92,6 +94,28 @@ def test_idempotent(tmp_path):
     # An alternative already present but NOT at the top is also left untouched.
     add_alternative_to_scenario(url, SCENARIO, BASE_ALT)
     assert _stack(url, SCENARIO) == stack_after_first
+
+
+def test_existing_alternative_names(tmp_path):
+    url = _build_db(str(tmp_path / "existing.sqlite"))
+    names = existing_alternative_names(url)
+    assert {BASE_ALT, MID_ALT, RP_ALT} <= names
+
+
+def test_dedup_alternative_name():
+    # Free base name is returned unchanged.
+    assert dedup_alternative_name("lt_rp_40rp_54h", set()) == "lt_rp_40rp_54h"
+    # First collision → _2; then _3, skipping already-taken suffixes.
+    assert (
+        dedup_alternative_name("lt_rp_40rp_54h", {"lt_rp_40rp_54h"})
+        == "lt_rp_40rp_54h_2"
+    )
+    assert (
+        dedup_alternative_name(
+            "lt_rp_40rp_54h", {"lt_rp_40rp_54h", "lt_rp_40rp_54h_2"}
+        )
+        == "lt_rp_40rp_54h_3"
+    )
 
 
 def test_missing_scenario_raises(tmp_path):

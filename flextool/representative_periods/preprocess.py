@@ -339,11 +339,14 @@ def _write_results_to_db(
     timeset_duration_map: Map,
     weights_map: Map,
     solve_period_timesets: dict,
+    alternative_description: str | None = None,
 ) -> None:
     """Write clustering results to the database in a new alternative.
 
     Also updates each solve's period_timeset to point to the new RP timeset.
-    Opens a NEW connection WITHOUT scenario filter.
+    Opens a NEW connection WITHOUT scenario filter. ``alternative_description``
+    overrides the alternative's description text; ``None`` (default) keeps the
+    byte-parity ``Representative periods: <timeset>`` string.
     """
     with DatabaseMapping(db_url) as db:
         # Ensure parameter definition exists for representative_period_weights
@@ -352,7 +355,12 @@ def _write_results_to_db(
         ]
 
         # Create alternative
-        alternatives = [(alternative_name, f"Representative periods: {timeset_name}")]
+        description = (
+            alternative_description
+            if alternative_description
+            else f"Representative periods: {timeset_name}"
+        )
+        alternatives = [(alternative_name, description)]
 
         # Create timeset entity
         entities = [("timeset", timeset_name)]
@@ -434,6 +442,7 @@ def preprocess_representative_periods(
     force_region_budget: int | None = None,
     solves: list[str] | None = None,
     alternative_name: str | None = None,
+    alternative_description: str | None = None,
 ) -> str:
     """Select representative periods and write results to database.
 
@@ -477,6 +486,9 @@ def preprocess_representative_periods(
             an ``n_rp``/``period_length`` colliding on the same names. ``None``
             (default) derives both from ``n_rp``/``period_length`` (plus any
             force suffix), byte-identical to the current behaviour.
+        alternative_description: Optional override for the alternative's
+            description text. ``None`` (default) keeps the byte-parity
+            ``Representative periods: <timeset>`` string.
 
     Returns:
         Name of the created timeset entity.
@@ -683,6 +695,7 @@ def preprocess_representative_periods(
         timeset_duration_map,
         weights_map,
         solve_period_timesets,
+        alternative_description=alternative_description,
     )
 
     # ------------------------------------------------------------------
@@ -797,6 +810,13 @@ def main() -> None:
         "on the alternative or the timeset entity. Omitted → derive from "
         "n_rp/period_length (plus any force suffix).",
     )
+    parser.add_argument(
+        "--alternative-description",
+        type=str,
+        default=None,
+        help="Override the created alternative's description text. Omitted → "
+        "'Representative periods: <timeset>'.",
+    )
 
     args = parser.parse_args()
     region_groups = (
@@ -826,6 +846,7 @@ def main() -> None:
             force_region_budget=args.force_region_budget,
             solves=solves,
             alternative_name=args.alternative_name,
+            alternative_description=args.alternative_description,
         )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

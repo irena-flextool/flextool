@@ -132,6 +132,11 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     _c_mode = data.get("calib_rp_count_mode", settings.calib_rp_count_mode)
     if _c_mode in ("grow", "fixed"):
         settings.calib_rp_count_mode = _c_mode
+    _c_add = data.get(
+        "calib_rp_add_to_scenario", settings.calib_rp_add_to_scenario
+    )
+    if isinstance(_c_add, bool):
+        settings.calib_rp_add_to_scenario = _c_add
     _c_solves = data.get("calib_selected_solves", settings.calib_selected_solves)
     if isinstance(_c_solves, list):
         settings.calib_selected_solves = [

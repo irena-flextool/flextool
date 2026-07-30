@@ -31,6 +31,7 @@ _CALIB_FIELDS = (
     "calib_rp_force_peak",
     "calib_rp_force_window",
     "calib_rp_count_mode",
+    "calib_rp_add_to_scenario",
     "calib_selected_solves",
     "calib_max_iterations",
     "calib_sizing",
@@ -51,6 +52,7 @@ def test_calib_settings_round_trip(tmp_path: Path):
         calib_rp_force_peak=True,
         calib_rp_force_window=48,
         calib_rp_count_mode="fixed",
+        calib_rp_add_to_scenario=False,
         calib_selected_solves=["solve_a", "solve_b"],
         calib_max_iterations=15,
         calib_sizing="uniform",
@@ -90,6 +92,7 @@ def test_calib_settings_malformed_tolerated(tmp_path: Path):
                 "calib_max_iterations": True,  # bool, not a plain int
                 "calib_overshoot_pct": True,   # bool, not a number
                 "calib_keep_artifacts": "yes",  # not a bool
+                "calib_rp_add_to_scenario": "sure",  # not a bool
                 "calib_selected_solves": ["ok", 5, ""],
             }
         ),
@@ -103,5 +106,6 @@ def test_calib_settings_malformed_tolerated(tmp_path: Path):
     assert loaded.calib_max_iterations == defaults.calib_max_iterations
     assert loaded.calib_overshoot_pct == defaults.calib_overshoot_pct
     assert loaded.calib_keep_artifacts == defaults.calib_keep_artifacts
+    assert loaded.calib_rp_add_to_scenario == defaults.calib_rp_add_to_scenario
     # Non-string / empty elements dropped; the valid one is kept.
     assert loaded.calib_selected_solves == ["ok"]

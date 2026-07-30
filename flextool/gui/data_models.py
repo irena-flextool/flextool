@@ -153,6 +153,10 @@ class ProjectSettings:
     calib_rp_force_peak: bool = False
     calib_rp_force_window: int = 24
     calib_rp_count_mode: str = "grow"  # "grow" | "fixed"
+    # When True (default) the freshly built RP alternative is appended to each
+    # selected scenario's alternative stack so its investment solve uses the
+    # new periods; when False the alternative is created but left detached.
+    calib_rp_add_to_scenario: bool = True
     calib_selected_solves: list[str] = field(default_factory=list)
     calib_max_iterations: int = 8
     calib_sizing: str = "timed"  # "timed" | "uniform"

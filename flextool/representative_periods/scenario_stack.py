@@ -20,6 +20,46 @@ from __future__ import annotations
 from spinedb_api import DatabaseMapping
 
 
+def existing_alternative_names(db_url: str) -> set[str]:
+    """Return the set of alternative names already present in the database.
+
+    A read-only helper the GUI uses to de-duplicate a freshly derived RP
+    alternative name (append ``_2``, ``_3``, … when the base is taken) so a
+    repeated build never silently overwrites an earlier one.
+
+    Args:
+        db_url: Spine database URL (e.g. ``'sqlite:///path.sqlite'``).
+
+    Returns:
+        The names of every alternative in the (unfiltered) database.
+    """
+    with DatabaseMapping(db_url) as db:
+        return {alt["name"] for alt in db.get_alternative_items()}
+
+
+def dedup_alternative_name(base: str, taken: set[str]) -> str:
+    """Return *base*, or the first free ``base_2`` / ``base_3`` / … suffix.
+
+    Pure helper (no DB access) so the GUI can compute the de-duplicated name
+    against a cached name set both for the live CLI preview and for the launch,
+    keeping the two in lock-step.
+
+    Args:
+        base: The desired alternative name.
+        taken: Names already in use (case-sensitive).
+
+    Returns:
+        *base* if free, else ``f"{base}_{n}"`` for the smallest ``n >= 2`` that
+        is not in *taken*.
+    """
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base}_{n}" in taken:
+        n += 1
+    return f"{base}_{n}"
+
+
 def add_alternative_to_scenario(
     db_url: str,
     scenario_name: str,
@@ -69,4 +109,8 @@ def add_alternative_to_scenario(
         )
 
 
-__all__ = ["add_alternative_to_scenario"]
+__all__ = [
+    "add_alternative_to_scenario",
+    "dedup_alternative_name",
+    "existing_alternative_names",
+]

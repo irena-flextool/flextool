@@ -5113,6 +5113,7 @@ class MainWindow(tk.Tk):
             save_settings=lambda: save_project_settings(
                 project_path, self.project_settings
             ),
+            show_execution_window=self._open_or_raise_execution_window,
         )
         # Keep a reference so the Toplevel is not garbage-collected while open,
         # and so a second click raises this instance instead of stacking.

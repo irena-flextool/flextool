@@ -107,6 +107,7 @@ def _make_host(tk_root, tmp_path: Path, monkeypatch, checked):
     host.project_settings = ProjectSettings()
     host._calibrate_dialog = None
     host._ensure_execution_mgr = lambda: None
+    host._open_or_raise_execution_window = lambda: None
     return host
 
 

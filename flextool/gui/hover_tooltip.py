@@ -14,9 +14,14 @@ class HoverTooltip:
 
     _DELAY_MS = 400  # delay before showing
 
-    def __init__(self, widget: tk.Widget, text: str) -> None:
+    def __init__(
+        self, widget: tk.Widget, text: str, *, wraplength: int = 0
+    ) -> None:
         self._widget = widget
         self._text = text
+        # 0 (Tk default) disables wrapping; a positive pixel width wraps long
+        # verbose tooltips so they don't run off the screen edge.
+        self._wraplength = wraplength
         self._tip: tk.Toplevel | None = None
         self._after_id: str | None = None
 
@@ -63,6 +68,7 @@ class HoverTooltip:
             borderwidth=1,
             padx=8,
             pady=6,
+            wraplength=self._wraplength,
         )
         label.pack()
 
@@ -94,6 +100,12 @@ class HoverTooltip:
             self._tip = None
 
 
-def attach_tooltip(widget: tk.Widget, text: str) -> HoverTooltip:
-    """Attach a hover tooltip to *widget* showing *text*."""
-    return HoverTooltip(widget, text)
+def attach_tooltip(
+    widget: tk.Widget, text: str, *, wraplength: int = 0
+) -> HoverTooltip:
+    """Attach a hover tooltip to *widget* showing *text*.
+
+    *wraplength* (pixels) wraps long text; ``0`` (default) keeps the
+    single-line behaviour of the existing call sites.
+    """
+    return HoverTooltip(widget, text, wraplength=wraplength)

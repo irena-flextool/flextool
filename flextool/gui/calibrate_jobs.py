@@ -94,6 +94,7 @@ class RpJobSpec:
     count_mode: str = ""
     solves: Sequence[str] = field(default_factory=list)
     alternative_name: str | None = None
+    alternative_description: str | None = None
     # Optional post-success hook, invoked with this spec's ``scenario`` AFTER
     # the RP subprocess exits 0 and the job is finalised SUCCESS. The dialog
     # uses it to append the freshly written RP alternative onto the scenario's
@@ -144,7 +145,9 @@ def _safe_name(scenario: str) -> str:
     return slug or "scenario"
 
 
-def _calib_dirs(project_path: Path, scenario: str) -> tuple[str, str, str]:
+def _calib_dirs(
+    project_path: Path, scenario: str, *, create: bool = True
+) -> tuple[str, str, str]:
     """Return ``(warm_start_cache_dir, work_dir, output_location)`` for a scenario.
 
     * ``work_dir`` — ``<project>/work/calibrate_<scenario>`` (per-scenario, so
@@ -157,15 +160,18 @@ def _calib_dirs(project_path: Path, scenario: str) -> tuple[str, str, str]:
       CSVs under ``<output-location>/report/``, matching the scenario runner's
       convention of one shared output root.
 
-    All three directories are created eagerly so the subprocess never races to
-    ``mkdir`` a parent.
+    When ``create`` is True (the launch path) all three directories are created
+    eagerly so the subprocess never races to ``mkdir`` a parent. The live CLI
+    preview passes ``create=False`` so refreshing it on every keystroke does
+    not litter empty directories.
     """
     safe = _safe_name(scenario)
     work_dir = project_path / "work" / f"calibrate_{safe}"
     warm_start = work_dir / "warm_start_cache"
     output_location = project_path
-    for d in (work_dir, warm_start, output_location / "output_parquet"):
-        d.mkdir(parents=True, exist_ok=True)
+    if create:
+        for d in (work_dir, warm_start, output_location / "output_parquet"):
+            d.mkdir(parents=True, exist_ok=True)
     return str(warm_start), str(work_dir), str(output_location)
 
 
@@ -343,6 +349,7 @@ def launch_rp_jobs(
             count_mode=spec.count_mode,
             solves=list(spec.solves),
             alternative_name=spec.alternative_name,
+            alternative_description=spec.alternative_description,
         )
         display_name = f"RP: {spec.scenario}"
         action_key = f"rp:{spec.scenario}"
