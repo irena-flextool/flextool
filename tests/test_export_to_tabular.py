@@ -993,7 +993,7 @@ class TestRoundTripGenericRegressions:
                 _ladder([("1", 5.0, 0.5), ("2", 9.0, float("inf"))]))
 
             # solve: decomposition knob + an empty contains_solves override.
-            put("solve", ("s_main",), "decomposition", "base", "lagrangian")
+            put("solve", ("s_main",), "decomposition", "base", "benders")
             put("solve", ("s_main",), "contains_solves", "base", Array(["s_child"]))
             put("solve", ("s_main",), "contains_solves", "override", Array([]))
             db.commit_session("setup")
@@ -1037,7 +1037,7 @@ class TestRoundTripGenericRegressions:
         assert list(val.indexes) == ["1", "2", "10"]
 
     def test_decomposition_survives(self, round_tripped: dict) -> None:
-        assert round_tripped.get(("decomposition", ("s_main",), "base")) == "lagrangian"
+        assert round_tripped.get(("decomposition", ("s_main",), "base")) == "benders"
 
     def test_empty_contains_solves_override_survives(self, round_tripped: dict) -> None:
         from spinedb_api import Array
