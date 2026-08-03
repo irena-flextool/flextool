@@ -613,49 +613,74 @@ def migrate_database(
                     )
 
                 # Preserve the pre-v38 'no balance' default for nodes that
-                # don't have an explicit node_type in a given alternative.
-                # The new schema default is 'balance', so without this step
-                # those nodes would silently gain a balance constraint.
-                # Strategy: for every (node, alternative) pair where the
-                # node's entity_alternative makes it active AND no
-                # node_type value yet exists for that pair, write
-                # node_type='commodity'.  Pairs where has_balance=yes or
-                # has_storage=yes were set (and therefore got balance /
-                # storage written above) are excluded via the running
-                # ``written_keys`` set.
-                written_keys = set(all_keys_with_flags)  # everything migrated above
-                written_keys |= existing_node_type_keys  # pre-existing bwp entries
+                # have no explicit node_type.  The new schema default is
+                # 'balance', so without this step a node that was
+                # 'no balance' in v25 (no has_balance flag) would silently
+                # gain a per-timestep balance constraint.
+                #
+                # Strategy — a single dedicated FLOOR alternative, never a
+                # blanket 'Base' rewrite.  Create one alternative
+                # (``default_node_type_from_migration``), add it to every
+                # scenario at a rank STRICTLY BELOW all existing
+                # alternatives, and write node_type='commodity' for every
+                # node into it.  Because the floor sits at the lowest rank
+                # in EVERY scenario, any real 'balance'/'storage' (written
+                # above from the flags) or pre-existing
+                # 'balance_within_period' always outranks and overrides it.
+                # This reproduces the old 'absent flag ⇒ commodity' default
+                # exactly, without the old 'Base' hazard — 'Base' floats to
+                # the TOP in some scenarios and there overrode the physics;
+                # a bottom-pinned dedicated alternative cannot, in any
+                # scenario or across shared scenarios.  (Note: this does not
+                # repair databases already migrated by the previous, buggy
+                # v38 step — those need the stray node_type values cleaned
+                # up by hand.)
+                floor_alt = "default_node_type_from_migration"
+                db.add_update_item(
+                    "alternative",
+                    name=floor_alt,
+                    description=(
+                        "Auto-created by the v38 migration: carries the "
+                        "'commodity' fallback node_type (pre-v38 'no "
+                        "balance' default).  Pinned to the lowest rank of "
+                        "every scenario so any explicit 'balance'/'storage'/"
+                        "'balance_within_period' overrides it."
+                    ),
+                )
+
+                # Add the floor alternative to every scenario at a rank
+                # strictly below the scenario's current minimum.
+                scen_name_by_id = {
+                    s["id"]: s["name"] for s in db.find_scenarios()
+                }
+                min_rank_by_scenario: dict = {}
+                for sa in db.find_scenario_alternatives():
+                    sid = sa["scenario_id"]
+                    r = sa["rank"]
+                    if sid not in min_rank_by_scenario or r < min_rank_by_scenario[sid]:
+                        min_rank_by_scenario[sid] = r
+                for sid, min_rank in min_rank_by_scenario.items():
+                    db.add_update_item(
+                        "scenario_alternative",
+                        scenario_name=scen_name_by_id[sid],
+                        alternative_name=floor_alt,
+                        rank=min_rank - 1,
+                    )
+
+                # Write the 'commodity' floor for every node.  Nodes that
+                # got 'balance'/'storage' from the flags (or carry
+                # 'balance_within_period') keep those in higher-ranked
+                # alternatives and are unaffected here.
                 commodity_val, commodity_type = to_database("commodity")
-                # Collect (node, alt) activations from entity_alternative rows.
-                node_active_by_alt: dict[tuple, set[str]] = {}
-                for ea in db.find_entity_alternatives(entity_class_name="node"):
-                    if not ea.get("active", True):
-                        continue
-                    node_active_by_alt.setdefault(
-                        ea["entity_byname"], set()
-                    ).add(ea["alternative_name"])
-                # Also cover Base for every node, as the catch-all default.
-                # (Spine scenarios don't all include Base, but many do, and
-                # even when they don't, the entity_alternative loop above
-                # covers the alts they DO include.)
-                all_node_entities = [
-                    ent["entity_byname"]
-                    for ent in db.find_entities(entity_class_name="node")
-                ]
-                for byname in all_node_entities:
-                    alts = node_active_by_alt.get(byname, set()) | {"Base"}
-                    for alt in alts:
-                        if (byname, alt) in written_keys:
-                            continue
-                        db.add_update_item(
-                            "parameter_value",
-                            entity_class_name="node",
-                            entity_byname=byname,
-                            parameter_definition_name="node_type",
-                            alternative_name=alt,
-                            value=commodity_val, type=commodity_type,
-                        )
-                        written_keys.add((byname, alt))
+                for ent in db.find_entities(entity_class_name="node"):
+                    db.add_update_item(
+                        "parameter_value",
+                        entity_class_name="node",
+                        entity_byname=ent["entity_byname"],
+                        parameter_definition_name="node_type",
+                        alternative_name=floor_alt,
+                        value=commodity_val, type=commodity_type,
+                    )
 
                 # 4. Remove the old has_balance / has_storage parameter
                 #    definitions and their single-entry value lists.

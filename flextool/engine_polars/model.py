@@ -589,6 +589,30 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     _build_prof("before:compute_dt_index_sets")
     pss_dt = compute_pss_dt(d) if has_proc else None
     nodeBalance_dt = compute_nodeBalance_dt(d)
+    # A model with no balanced node of any kind (every node resolved to
+    # ``node_type = commodity`` / ``none``) has nothing to conserve: the
+    # per-(d,t) balance set ``nodeBalance``, the period-balance set
+    # ``nodeBalancePeriod`` and the storage set ``nodeState`` are all
+    # empty.  Historically this fell straight through to
+    # ``m.add_var("vq_state_up", …, vq_idx=None)`` and died deep inside
+    # polar-high with an opaque ``'NoneType' object has no attribute
+    # 'columns'``.  Fail loud here instead, pointing at the real cause —
+    # almost always a scenario whose highest-ranked alternative forces
+    # every ``node.node_type`` to ``commodity``.
+    _nbp = getattr(d, "nodeBalancePeriod", None)
+    _has_period_balance = _nbp is not None and _nbp.height > 0
+    if nodeBalance_dt is None and not _has_period_balance:
+        raise ValueError(
+            "No node has an energy balance: every node resolved to "
+            "node_type = 'commodity' (or 'none'), so there is no "
+            "per-time-step balance ('balance'/'storage') and no period "
+            "balance ('balance_within_period') to solve.  Check the "
+            "node_type of your nodes and the alternative ranking of the "
+            "active scenario — a high-ranked alternative (e.g. 'Base') "
+            "that sets node_type = 'commodity' will override the "
+            "'balance'/'storage' assignments of lower-ranked "
+            "alternatives."
+        )
     nodeState_dt = compute_nodeState_dt(d) if has_storage else None
     process_indirect_dt = (compute_process_indirect_dt(d)
                             if has_indirect else None)
