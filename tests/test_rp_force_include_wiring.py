@@ -7,7 +7,7 @@ opt-in contract of ``specs/repperiod_forceinclude_design.md`` §8:
 
 1. byte-parity of the default (no-force) path,
 2. weight conservation (partition-of-unity) after augmentation,
-3. grow vs fixed count modes + dedup,
+3. seeded selection pinned at n_rp + dedup,
 4. the ``+f{n}`` naming rule.
 
 The synthetic fixture is a controlled 6-week (period_length=24) horizon with a
@@ -217,7 +217,7 @@ class TestWeightConservation:
 
 
 # ---------------------------------------------------------------------------
-# 3. grow vs fixed count modes + dedup.
+# 3. Seeded selection: total pinned at n_rp + dedup.
 # ---------------------------------------------------------------------------
 
 class TestCountModes:
@@ -225,42 +225,37 @@ class TestCountModes:
         dur_map, _ = _read_timeset_map(url, name, "timeset_duration")
         return len(dur_map.indexes)
 
-    def test_grow_appends_forced_period(self, tmp_path):
+    def _rep_start_keys(self, url, name) -> list[str]:
+        dur_map, _ = _read_timeset_map(url, name, "timeset_duration")
+        return [str(k) for k in dur_map.indexes]
+
+    def test_forced_period_seeded_total_pinned_at_n_rp(self, tmp_path):
+        # Forcing SEEDS the greedy hull with base period 5 and keeps the total
+        # at n_rp: the forced period consumes one of the n_rp slots, it never
+        # grows the set beyond n_rp (the single, seeded behaviour).
         url_default = _build_controlled_db(str(tmp_path / "d.sqlite"))
-        url_grow = _build_controlled_db(str(tmp_path / "g.sqlite"))
+        url_forced = _build_controlled_db(str(tmp_path / "f.sqlite"))
 
         default_name = preprocess_representative_periods(
             url_default, SCENARIO, n_rp=2, period_length=PERIOD_LENGTH
         )
-        grow_name = preprocess_representative_periods(
-            url_grow,
+        forced_name = preprocess_representative_periods(
+            url_forced,
             SCENARIO,
             n_rp=2,
             period_length=PERIOD_LENGTH,
             force_highest_net_load=True,
-            force_count_mode="grow",
         )
 
-        n_default = self._rep_count(url_default, default_name)
-        n_grow = self._rep_count(url_grow, grow_name)
-
-        # Forced period 5 is not a hull pick → grow appends exactly one.
-        assert grow_name == "hull_2rp_24h+f1"
-        assert n_grow == n_default + 1
-
-    def test_fixed_keeps_total_at_n_rp(self, tmp_path):
-        url_fixed = _build_controlled_db(str(tmp_path / "f.sqlite"))
-        fixed_name = preprocess_representative_periods(
-            url_fixed,
-            SCENARIO,
-            n_rp=2,
-            period_length=PERIOD_LENGTH,
-            force_highest_net_load=True,
-            force_count_mode="fixed",
-        )
-        # Fixed mode displaces one marginal hull pick but keeps the total = n_rp.
-        assert fixed_name == "hull_2rp_24h+f1"
-        assert self._rep_count(url_fixed, fixed_name) == 2
+        # Forced period 5 is not a pure-hull pick → it displaces one → +f1, but
+        # the total stays pinned at n_rp for both the default and forced runs.
+        assert default_name == "hull_2rp_24h"
+        assert forced_name == "hull_2rp_24h+f1"
+        assert self._rep_count(url_default, default_name) == 2
+        assert self._rep_count(url_forced, forced_name) == 2
+        # The forced trough (base period 5, start key t120) is in the seeded set.
+        forced_key = _timestep_keys()[5 * PERIOD_LENGTH]
+        assert forced_key in self._rep_start_keys(url_forced, forced_name)
 
     def test_dedup_forced_already_in_hull_adds_nothing(self, tmp_path):
         # With n_rp == n_base every base period is already a hull pick, so the
@@ -272,7 +267,6 @@ class TestCountModes:
             n_rp=N_PERIODS,
             period_length=PERIOD_LENGTH,
             force_highest_net_load=True,
-            force_count_mode="grow",
         )
         assert name == f"hull_{N_PERIODS}rp_24h"
         assert "+f" not in name

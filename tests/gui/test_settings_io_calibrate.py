@@ -30,7 +30,6 @@ _CALIB_FIELDS = (
     "calib_rp_force_sustained",
     "calib_rp_force_peak",
     "calib_rp_force_window",
-    "calib_rp_count_mode",
     "calib_rp_add_to_scenario",
     "calib_selected_solves",
     "calib_max_iterations",
@@ -51,7 +50,6 @@ def test_calib_settings_round_trip(tmp_path: Path):
         calib_rp_force_sustained=False,
         calib_rp_force_peak=True,
         calib_rp_force_window=48,
-        calib_rp_count_mode="fixed",
         calib_rp_add_to_scenario=False,
         calib_selected_solves=["solve_a", "solve_b"],
         calib_max_iterations=15,
@@ -88,7 +86,6 @@ def test_calib_settings_malformed_tolerated(tmp_path: Path):
         yaml.safe_dump(
             {
                 "calib_sizing": "bogus",
-                "calib_rp_count_mode": "nonsense",
                 "calib_max_iterations": True,  # bool, not a plain int
                 "calib_overshoot_pct": True,   # bool, not a number
                 "calib_keep_artifacts": "yes",  # not a bool
@@ -102,7 +99,6 @@ def test_calib_settings_malformed_tolerated(tmp_path: Path):
     defaults = ProjectSettings()
 
     assert loaded.calib_sizing == defaults.calib_sizing
-    assert loaded.calib_rp_count_mode == defaults.calib_rp_count_mode
     assert loaded.calib_max_iterations == defaults.calib_max_iterations
     assert loaded.calib_overshoot_pct == defaults.calib_overshoot_pct
     assert loaded.calib_keep_artifacts == defaults.calib_keep_artifacts

@@ -79,8 +79,6 @@ logger = logging.getLogger(__name__)
 # job with the same action_key).
 _GUARD_MS = 2500
 
-_COUNT_MODES = ("grow", "fixed")
-
 # Pixel width used to wrap the (verbose) hover tooltips so they never run off
 # the screen edge.
 _TIP_WRAP = 380
@@ -142,12 +140,6 @@ _TIPS = {
         "'sustained net load' above. A smaller window reacts to short sharp "
         "lulls; a larger one favours long multi-day droughts. Only relevant "
         "when 'Force highest sustained net load' is ticked."
-    ),
-    "count_mode": (
-        "How forced periods interact with the target count. 'grow' ADDS the "
-        "forced peak/sustained periods on top of the clustered ones (the total "
-        "can exceed 'Periods'). 'fixed' keeps the total at 'Periods' by "
-        "dropping the least-important clustered periods to make room."
     ),
     "solves": (
         "Which solves get their periods rebuilt. Only these solves have their "
@@ -289,7 +281,6 @@ class CalibrateDialog(tk.Toplevel):
         self._var_force_sustained = tk.BooleanVar()
         self._var_force_peak = tk.BooleanVar()
         self._var_force_window = tk.StringVar()
-        self._var_count_mode = tk.StringVar()
         self._var_add_to_scenario = tk.BooleanVar()
         self._var_max_iterations = tk.StringVar()
         self._var_sizing = tk.StringVar()
@@ -337,7 +328,6 @@ class CalibrateDialog(tk.Toplevel):
         self._var_force_sustained.set(bool(s.calib_rp_force_sustained))
         self._var_force_peak.set(bool(s.calib_rp_force_peak))
         self._var_force_window.set(str(s.calib_rp_force_window))
-        self._var_count_mode.set(s.calib_rp_count_mode or "grow")
         self._var_add_to_scenario.set(bool(s.calib_rp_add_to_scenario))
         self._var_max_iterations.set(str(s.calib_max_iterations))
         self._var_sizing.set(s.calib_sizing or "timed")
@@ -569,17 +559,8 @@ class CalibrateDialog(tk.Toplevel):
         w_lbl.pack(side="left")
         w_ent = ttk.Entry(wrow, textvariable=self._var_force_window, width=8)
         w_ent.pack(side="left", padx=(4, 16))
-        cm_lbl = ttk.Label(wrow, text="Count mode:")
-        cm_lbl.pack(side="left")
-        cm_box = ttk.Combobox(
-            wrow, textvariable=self._var_count_mode,
-            values=list(_COUNT_MODES), width=8, state="readonly",
-        )
-        cm_box.pack(side="left", padx=(4, 0))
         for w in (w_lbl, w_ent):
             attach_tooltip(w, _TIPS["force_window"], wraplength=_TIP_WRAP)
-        for w in (cm_lbl, cm_box):
-            attach_tooltip(w, _TIPS["count_mode"], wraplength=_TIP_WRAP)
 
         # Solve checklist (bounded, scrollable — a long solve list must not
         # push the dialog past small-screen height).
@@ -899,7 +880,7 @@ class CalibrateDialog(tk.Toplevel):
         """Flush to settings on every widget change (and, later, on close)."""
         every = [
             self._var_n_rp, self._var_period_length, self._var_force_sustained,
-            self._var_force_peak, self._var_force_window, self._var_count_mode,
+            self._var_force_peak, self._var_force_window,
             self._var_add_to_scenario,
             self._var_max_iterations, self._var_sizing, self._var_overshoot_pct,
             self._var_damping_first, self._var_damping_remaining,
@@ -939,9 +920,6 @@ class CalibrateDialog(tk.Toplevel):
         s.calib_rp_force_window = self._as_int(
             self._var_force_window, s.calib_rp_force_window
         )
-        mode = self._var_count_mode.get()
-        if mode in _COUNT_MODES:
-            s.calib_rp_count_mode = mode
         s.calib_rp_add_to_scenario = bool(self._var_add_to_scenario.get())
         s.calib_max_iterations = self._as_int(
             self._var_max_iterations, s.calib_max_iterations
@@ -1070,7 +1048,6 @@ class CalibrateDialog(tk.Toplevel):
                     force_sustained=s.calib_rp_force_sustained,
                     force_peak=s.calib_rp_force_peak,
                     force_window=s.calib_rp_force_window,
-                    count_mode=s.calib_rp_count_mode,
                     solves=applicable,
                     alternative_name=alt,
                     alternative_description=desc,
@@ -1142,7 +1119,6 @@ class CalibrateDialog(tk.Toplevel):
                 force_sustained=s.calib_rp_force_sustained,
                 force_peak=s.calib_rp_force_peak,
                 force_window=s.calib_rp_force_window,
-                count_mode=s.calib_rp_count_mode,
                 solves=applicable,
                 alternative_name=alt,
                 alternative_description=desc,

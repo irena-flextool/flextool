@@ -129,9 +129,6 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     _c_win = data.get("calib_rp_force_window", settings.calib_rp_force_window)
     if isinstance(_c_win, int) and not isinstance(_c_win, bool):
         settings.calib_rp_force_window = _c_win
-    _c_mode = data.get("calib_rp_count_mode", settings.calib_rp_count_mode)
-    if _c_mode in ("grow", "fixed"):
-        settings.calib_rp_count_mode = _c_mode
     _c_add = data.get(
         "calib_rp_add_to_scenario", settings.calib_rp_add_to_scenario
     )

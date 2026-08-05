@@ -348,6 +348,41 @@ def _write_results_to_db(
     overrides the alternative's description text; ``None`` (default) keeps the
     byte-parity ``Representative periods: <timeset>`` string.
     """
+    # Clean overwrite (separate connection, committed BEFORE the import below).
+    # Spine's ``import_data`` MERGES the indexes of a Map value into any existing
+    # value for the same (entity, parameter, alternative) rather than replacing
+    # it. Without this purge, re-running the generator into an existing timeset
+    # would UNION the fresh representative periods with the stale ones (leaving
+    # orphaned periods in ``timeset_duration`` / ``representative_period_weights``).
+    # The purge must be its own committed session: a same-session
+    # remove-then-import restores the removed item and merges anyway. Scalar
+    # params (``timeline``) overwrite cleanly and need no purge.
+    with DatabaseMapping(db_url) as db:
+        db.fetch_all("parameter_value")
+        _purged = False
+        for _map_param in ("timeset_duration", "representative_period_weights"):
+            try:
+                _existing = list(
+                    db.find_parameter_values(
+                        entity_class_name="timeset",
+                        parameter_definition_name=_map_param,
+                    )
+                )
+            except Exception:
+                # Parameter definition not present yet (fresh DB) → nothing to purge.
+                _existing = []
+            for _pv in _existing:
+                if (
+                    _pv["entity_name"] == timeset_name
+                    and _pv["alternative_name"] == alternative_name
+                ):
+                    _pv.remove()
+                    _purged = True
+        if _purged:
+            db.commit_session(
+                f"Clear stale representative periods before rewrite: {timeset_name}"
+            )
+
     with DatabaseMapping(db_url) as db:
         # Ensure parameter definition exists for representative_period_weights
         parameter_definitions = [
@@ -435,7 +470,6 @@ def preprocess_representative_periods(
     force_peak_load: bool = False,
     force_highest_net_load: bool = False,
     force_window: int | None = None,
-    force_count_mode: str = "grow",
     vg_weight: float = 0.5,
     region_groups: list[str] | None = None,
     force_region_scope: bool = False,
@@ -456,9 +490,6 @@ def preprocess_representative_periods(
             period (Flag B — the energy-adequacy fix).
         force_window: Sub-window length (timesteps) for Flag B; ``None`` means
             the whole-period mean.
-        force_count_mode: ``"grow"`` (default) appends forced periods on top of
-            the hull picks; ``"fixed"`` keeps the total at ``n_rp`` by dropping
-            the most-marginal hull tail picks to make room.
         vg_weight: Convex blend weight in [0, 1] on the VG-shortfall term of the
             net-load signal; the inflow-demand term gets ``1 - vg_weight``.
         region_groups: Optional list of node-group names for demand-weighting
@@ -562,22 +593,9 @@ def preprocess_representative_periods(
     )
 
     # ------------------------------------------------------------------
-    # 4. Run clustering
+    # 4. Force-include adequacy-critical base periods (opt-in) — computed
+    #    BEFORE clustering so the greedy hull can be SEEDED with them.
     # ------------------------------------------------------------------
-    print(f"Running greedy convex hull clustering (selecting {n_rp} from {n_base_periods} periods)...")
-    # Keep the UNSORTED greedy selection order: greedy appends the most-marginal
-    # pick last, which the "fixed" count mode needs in order to drop from the
-    # tail. Sort a copy for the (order-insensitive) hull-index set/logging.
-    hull_order = list(greedy_convex_hull_clustering(C, n_rp))
-    hull_indices = sorted(hull_order)
-    print(f"Selected representative period indices: {hull_indices}")
-
-    # ------------------------------------------------------------------
-    # 4b. Force-include adequacy-critical base periods (opt-in)
-    # ------------------------------------------------------------------
-    # Augment-not-substitute (design §3): add the forced extremes as extra hull
-    # vertices, then re-fit ALL weights over the union. Empty forced set (no
-    # flag) leaves rep_indices == hull_indices → byte-parity default path.
     # Under region scope, resolve the None budget to an n_rp-derived cap so
     # forced periods never dominate the representative set (documented default).
     effective_region_budget = force_region_budget
@@ -601,45 +619,45 @@ def preprocess_representative_periods(
         region_nodes=region_nodes,
     )
 
+    # ------------------------------------------------------------------
+    # 4b. Run clustering (seeded by the forced periods when forcing is active)
+    # ------------------------------------------------------------------
+    # The pure (unseeded) hull is always computed: with no force flag it IS the
+    # representative set (byte-parity default path); when forcing is active it is
+    # only the naming baseline (how many forced periods displaced a clustered
+    # pick). Empty forced set → rep_indices == pure_hull → byte-parity default.
+    print(
+        f"Running greedy convex hull clustering (selecting {n_rp} from "
+        f"{n_base_periods} periods)..."
+    )
+    pure_hull = sorted(greedy_convex_hull_clustering(C, n_rp))
+    print(f"Selected representative period indices: {pure_hull}")
+
     if not forced_indices:
-        # No forcing requested (or nothing scored) → unchanged, byte-identical.
-        rep_indices = hull_indices
+        rep_indices = pure_hull
         n_forced = 0
-    elif force_count_mode == "fixed":
-        # Keep the total at n_rp. Add the forced indices, then drop the
-        # most-marginal hull picks (the TAIL of the greedy selection order) to
-        # compensate — but never drop a forced index, and never drop below the
-        # forced set. Walk the greedy order from the tail (most-marginal first),
-        # dropping hull picks that are not themselves forced, until the union is
-        # back down to n_rp.
-        forced_set = set(forced_indices)
-        keep = set(hull_indices) | forced_set
-        # candidates to drop: hull picks not in the forced set, most-marginal
-        # (greedy tail) first.
-        droppable = [idx for idx in reversed(hull_order) if idx not in forced_set]
-        di = 0
-        while len(keep) > n_rp and di < len(droppable):
-            keep.discard(droppable[di])
-            di += 1
-        rep_indices = sorted(keep)
-        # Forced periods that displaced hull picks = forced periods newly added
-        # (i.e. not already hull picks). This is what names the timeset.
-        n_forced = len(forced_set - set(hull_indices))
     else:
-        # "grow" (default): rep = hull ∪ forced, dedup. n_forced counts only
-        # the periods that ACTUALLY entered the set after dedup (a forced index
-        # already in the hull adds 0).
-        rep_indices = sorted(set(hull_indices) | set(forced_indices))
-        n_forced = len(rep_indices) - len(hull_indices)
+        # Seed the greedy hull with the forced periods so the remaining
+        # (n_rp - |forced|) picks are chosen to COMPLEMENT them — the clustering
+        # never spends budget on a period a forced extreme already represents.
+        # The total stays pinned at n_rp: forced periods consume part of the
+        # budget, they never grow it beyond n_rp.
+        rep_indices = sorted(
+            greedy_convex_hull_clustering(C, n_rp, seed_indices=forced_indices)
+        )
+        # Suffix count = forced periods that displaced a pure-hull pick (i.e.
+        # were not already selected by the unseeded clustering). Zero leaves the
+        # pure-hull name untouched, preserving the default-path name.
+        n_forced = len(set(forced_indices) - set(pure_hull))
 
     if forced_indices:
         forced_start_keys = [
             timestep_keys[idx * period_length] for idx in forced_indices
         ]
         print(
-            f"Force-include ({force_count_mode}): forced base periods "
+            f"Force-include (seeded): forced base periods "
             f"{forced_indices} (starts {forced_start_keys}); "
-            f"{n_forced} entered the representative set."
+            f"{n_forced} displaced a clustered pick."
         )
         print(f"Final representative period indices: {rep_indices}")
 
@@ -661,12 +679,11 @@ def preprocess_representative_periods(
     # 6. Build output
     # ------------------------------------------------------------------
     # Naming rule: base is the pure-hull name ``hull_{n_rp}rp_{PL}h``. Append a
-    # ``+f{n_forced}`` suffix whenever forced periods actually entered/displaced
-    # the set (``n_forced > 0``) — in "grow" mode that is the post-dedup count
-    # appended, in "fixed" mode the count of forced periods that displaced hull
-    # picks. When ``n_forced == 0`` (default, or a forced index that was already
-    # a hull pick) the name is unchanged, preserving byte-parity of the default
-    # path and not overwriting the pure-hull timeset.
+    # ``+f{n_forced}`` suffix whenever forced periods displaced a clustered pick
+    # (``n_forced > 0`` = forced periods the unseeded hull would not have
+    # selected). When ``n_forced == 0`` (default, or a forced index that was
+    # already a hull pick) the name is unchanged, preserving byte-parity of the
+    # default path and not overwriting the pure-hull timeset.
     suffix = f"+f{n_forced}" if n_forced > 0 else ""
     default_name = f"hull_{n_rp}rp_{period_length}h{suffix}"
     if alternative_name is None:
@@ -758,13 +775,6 @@ def main() -> None:
         "(default: whole period).",
     )
     parser.add_argument(
-        "--force-count-mode",
-        choices=("grow", "fixed"),
-        default="grow",
-        help="'grow' (default) appends forced periods on top of the hull picks; "
-        "'fixed' keeps the total at n_rp by dropping the most-marginal hull picks.",
-    )
-    parser.add_argument(
         "--vg-weight",
         type=float,
         default=0.5,
@@ -839,7 +849,6 @@ def main() -> None:
             force_peak_load=args.force_peak_load,
             force_highest_net_load=args.force_highest_net_load,
             force_window=args.force_window,
-            force_count_mode=args.force_count_mode,
             vg_weight=args.vg_weight,
             region_groups=region_groups,
             force_region_scope=args.force_region_scope,

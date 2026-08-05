@@ -26,7 +26,6 @@ def test_rp_command_full_options_exact() -> None:
         force_sustained=True,
         force_peak=True,
         force_window=48,
-        count_mode="fixed",
         solves=["invest_solve", "y2050"],
         alternative_name="rp12_alt",
     )
@@ -42,8 +41,6 @@ def test_rp_command_full_options_exact() -> None:
         "--force-peak-load",
         "--force-window",
         "48",
-        "--force-count-mode",
-        "fixed",
         "--solves",
         "invest_solve,y2050",
         "--alternative-name",
@@ -61,7 +58,6 @@ def test_rp_command_booleans_omitted_when_false() -> None:
         force_sustained=False,
         force_peak=False,
         force_window=None,
-        count_mode="grow",
         solves=[],
         alternative_name=None,
     )
@@ -73,8 +69,6 @@ def test_rp_command_booleans_omitted_when_false() -> None:
         "sc",
         "4",
         "168",
-        "--force-count-mode",
-        "grow",
     ]
     assert "--force-highest-net-load" not in argv
     assert "--force-peak-load" not in argv
@@ -86,7 +80,7 @@ def test_rp_solves_empty_omitted_and_joined_otherwise() -> None:
         "python", "db", "sc",
         n_rp=4, period_length=24,
         force_sustained=False, force_peak=False,
-        force_window=None, count_mode="grow",
+        force_window=None,
         solves=[], alternative_name=None,
     )
     assert "--solves" not in empty
@@ -95,7 +89,7 @@ def test_rp_solves_empty_omitted_and_joined_otherwise() -> None:
         "python", "db", "sc",
         n_rp=4, period_length=24,
         force_sustained=False, force_peak=False,
-        force_window=None, count_mode="grow",
+        force_window=None,
         solves=["a", "b", "c"], alternative_name=None,
     )
     assert joined[joined.index("--solves") + 1] == "a,b,c"
@@ -107,7 +101,7 @@ def test_rp_alternative_name_omitted_when_falsy() -> None:
             "python", "db", "sc",
             n_rp=4, period_length=24,
             force_sustained=False, force_peak=False,
-            force_window=None, count_mode="grow",
+            force_window=None,
             solves=[], alternative_name=name,
         )
         assert "--alternative-name" not in argv
@@ -237,7 +231,6 @@ def test_display_string_round_trips_rp_argv() -> None:
         force_sustained=True,
         force_peak=False,
         force_window=48,
-        count_mode="fixed",
         solves=["invest_solve", "y2050"],
         alternative_name="rp12_alt",
     )

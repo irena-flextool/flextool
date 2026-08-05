@@ -91,7 +91,6 @@ class RpJobSpec:
     force_sustained: bool = False
     force_peak: bool = False
     force_window: int | None = None
-    count_mode: str = ""
     solves: Sequence[str] = field(default_factory=list)
     alternative_name: str | None = None
     alternative_description: str | None = None
@@ -346,7 +345,6 @@ def launch_rp_jobs(
             force_sustained=spec.force_sustained,
             force_peak=spec.force_peak,
             force_window=spec.force_window,
-            count_mode=spec.count_mode,
             solves=list(spec.solves),
             alternative_name=spec.alternative_name,
             alternative_description=spec.alternative_description,

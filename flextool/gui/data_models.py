@@ -152,7 +152,6 @@ class ProjectSettings:
     calib_rp_force_sustained: bool = True
     calib_rp_force_peak: bool = False
     calib_rp_force_window: int = 24
-    calib_rp_count_mode: str = "grow"  # "grow" | "fixed"
     # When True (default) the freshly built RP alternative is appended to each
     # selected scenario's alternative stack so its investment solve uses the
     # new periods; when False the alternative is created but left detached.

@@ -1053,7 +1053,6 @@ The force-include options (all off by default):
 - `--force-highest-net-load` — force-include the base period with the greatest *sustained* net load (Flag B, energy-adequacy — the main fix; rewards a whole low-VRE / high-demand week rather than one spiky hour).
 - `--force-peak-load` — force-include the base period with the highest *instantaneous* net load (Flag A, capacity-adequacy; noisier for energy-constrained systems).
 - `--force-window N` — sub-window length in timesteps for the sustained score (default: the whole period).
-- `--force-count-mode {grow,fixed}` — `grow` (default) adds the forced periods on top of `n_rp`; `fixed` keeps the total at `n_rp` by dropping the most-marginal hull picks to make room.
 - `--vg-weight W` — convex blend in [0,1] between the VG-shortfall term and the inflow-demand term of the net-load signal; the inflow term gets `1 - W` (default 0.5).
 - `--region-groups G1,G2,…` — opt-in node-group demand-weighting of the VG term (see below).
 
@@ -1065,9 +1064,9 @@ For example, on the H2_trade model:
 python -m flextool.representative_periods.preprocess <db_url> y2050_rp 5 168 --force-highest-net-load --region-groups decomp_AUS,decomp_JAP,decomp_KOR
 ```
 
-adds the low-VRE week starting 2050-10-15 (base period 41), which the pure-hull picks {3, 8, 14, 22, 49} miss entirely, and the timeset is written as `hull_5rp_168h+f1`. Without `--region-groups` on this multi-region trade model the top-scoring week happens to already be a hull pick, so the timeset name is unchanged — a documented limitation of the unweighted signal on such systems; use `--region-groups` there.
+forces the low-VRE week starting 2050-10-15 (base period 41), which the unseeded hull ({3, 8, 14, 22, 49}) misses entirely, and the timeset is written as `hull_5rp_168h+f1`. Without `--region-groups` on this multi-region trade model the top-scoring week happens to already be a hull pick, so the timeset name is unchanged — a documented limitation of the unweighted signal on such systems; use `--region-groups` there.
 
-The `+f{n}` suffix marks the forced periods. With no `--force-*` flag the run is byte-identical to the pure-hull selection and keeps the plain `hull_{n_rp}rp_{period_length}h` timeset name, so force-include never overwrites the pure-hull timeset.
+Forced periods **seed** the greedy hull: they are guaranteed into the set as its initial vertices, and the clustering then fills the remaining slots to *complement* them (never re-selecting a period a forced extreme already represents). The total stays pinned at `n_rp` — a forced period consumes one of the `n_rp` slots, it never grows the set beyond `n_rp`. The `+f{n}` suffix counts the forced periods that displaced a clustered pick (i.e. that the unseeded hull would not have selected). With no `--force-*` flag the run is byte-identical to the pure-hull selection and keeps the plain `hull_{n_rp}rp_{period_length}h` timeset name, so force-include never overwrites the pure-hull timeset.
 
 ### How to add an energy margin for investment adequacy
 

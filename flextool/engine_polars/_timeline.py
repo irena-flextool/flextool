@@ -1001,6 +1001,12 @@ def get_active_time(
     # Pre-build index for O(1) timestep-to-position lookup per timeline.
     timeline_index_cache: dict[str, dict[str, int]] = {}
 
+    # Track which (timeset, block-start) first claimed each (period,
+    # timestep) so an overlap can name the two colliding blocks.
+    seen_by_period: dict[str, dict[str, tuple[str, str]]] = defaultdict(dict)
+    # (period, timestep, incumbent (timeset, block_start), colliding (…)).
+    overlaps: list[tuple[str, str, tuple[str, str], tuple[str, str]]] = []
+
     for period, timeset_id in timesets_used_by_solves[current_solve]:
         timeline_id = timesets__timelines.get(timeset_id)
         if not timeline_id:
@@ -1014,12 +1020,28 @@ def get_active_time(
                 for idx, (time_val, _) in enumerate(timeline_data)
             }
         time_val_to_idx = timeline_index_cache[timeline_id]
+        seen = seen_by_period[period]
         for start_time, duration in timesets[timeset_id]:
             idx = time_val_to_idx.get(start_time)
             if idx is not None:
                 for step in range(int(float(duration))):
                     if idx + step < len(timeline_data):
                         entry = timeline_data[idx + step]
+                        # An overlap means a single calendar timestep would
+                        # belong to two representative-period blocks at once.
+                        # We cannot silently collapse it: the timeline
+                        # (``steps_in_use``) needs each timestep exactly once,
+                        # but its representation weight is emitted per block
+                        # (:func:`_compute_rp_frames` → ``timestep_weight``),
+                        # so a collapse would keep one block's weight and drop
+                        # the other — a silently wrong annualisation rather
+                        # than the sum.  Refuse and point at the source data.
+                        if entry[0] in seen:
+                            overlaps.append(
+                                (period, entry[0], seen[entry[0]],
+                                 (timeset_id, start_time)))
+                            continue
+                        seen[entry[0]] = (timeset_id, start_time)
                         active_time[period].append(
                             ActiveTimeEntry(
                                 timestep=entry[0],
@@ -1027,6 +1049,33 @@ def get_active_time(
                                 duration=entry[1],
                             )
                         )
+
+    if overlaps:
+        n = len(overlaps)
+
+        def _block(b: tuple[str, str]) -> str:
+            ts, start = b
+            return f"block starting {start!r}" + (
+                f" (timeset {ts!r})" if ts != overlaps[0][3][0] else "")
+
+        sample = "; ".join(
+            f"period {p!r} timestep {t!r} is in both {_block(a)} and "
+            f"{_block(c)}"
+            for p, t, a, c in overlaps[:5]
+        )
+        more = "" if n <= 5 else f" (+{n - 5} more)"
+        bad_timesets = sorted(
+            {o[2][0] for o in overlaps} | {o[3][0] for o in overlaps})
+        raise ValueError(
+            f"{current_solve}: overlapping timeset_duration blocks put the "
+            f"same timestep into more than one representative period. "
+            f"{n} overlapping timestep(s) in timeset(s) "
+            f"{', '.join(repr(ts) for ts in bad_timesets)}: {sample}{more}. "
+            "Each timestep may belong to exactly one representative period — "
+            "adjust the timeset_duration start/length values so the blocks "
+            "do not overlap (a shorter block wholly inside a longer one, or "
+            "two blocks whose windows intersect, both trigger this)."
+        )
 
     if not active_time:
         raise ValueError(

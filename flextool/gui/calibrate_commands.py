@@ -46,7 +46,6 @@ def build_rp_command(
     force_sustained: bool,
     force_peak: bool,
     force_window: int | None,
-    count_mode: str,
     solves: Sequence[str],
     alternative_name: str | None,
     alternative_description: str | None = None,
@@ -75,8 +74,6 @@ def build_rp_command(
         argv.append("--force-peak-load")
     if force_window is not None:
         argv += ["--force-window", str(force_window)]
-    if count_mode:
-        argv += ["--force-count-mode", str(count_mode)]
     if solves:
         argv += ["--solves", ",".join(solves)]
     if alternative_name:

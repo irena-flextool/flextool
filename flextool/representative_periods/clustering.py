@@ -19,6 +19,7 @@ from .weights import distance_to_hull
 def greedy_convex_hull_clustering(
     C: np.ndarray,
     n_rp: int,
+    seed_indices: list[int] | None = None,
 ) -> list[int]:
     """Select representative periods using greedy convex hull clustering.
 
@@ -30,10 +31,19 @@ def greedy_convex_hull_clustering(
          the cached hull distance is still valid (the hull only gets
          closer or stays the same when a point is added, never farther).
 
+    When ``seed_indices`` is supplied, steps 1–2 are skipped: those columns
+    form the *initial* hull (force-included periods), and the greedy loop
+    fills the remaining ``n_rp - len(seed)`` slots so the clustered picks
+    COMPLEMENT the seed rather than duplicating what it already represents.
+    The total is always pinned at ``n_rp`` (a seed longer than ``n_rp`` is
+    truncated). With no seed the behaviour is byte-identical to the original.
+
     Args:
         C: Clustering matrix, shape (n_features, n_base_periods).
            Each column is one base period's feature vector.
         n_rp: Number of representative periods to select.
+        seed_indices: Optional base-period indices to force into the set as
+            the initial hull. ``None``/empty → the unseeded default path.
 
     Returns:
         List of selected column indices (representative period indices).
@@ -52,37 +62,71 @@ def greedy_convex_hull_clustering(
     if n_rp >= n_base:
         return list(range(n_base))
 
-    # ------------------------------------------------------------------
-    # Step 1: compute mean column vector
-    # ------------------------------------------------------------------
-    mean_col = C.mean(axis=1)  # shape (n_features,)
+    if seed_indices:
+        # ------------------------------------------------------------------
+        # Seeded start: the forced periods form the initial hull.
+        # ------------------------------------------------------------------
+        # De-duplicate while preserving order, drop out-of-range indices, and
+        # cap at n_rp (forced periods can never exceed the target budget).
+        rep_indices = []
+        _seen: set = set()
+        for _raw in seed_indices:
+            _idx = int(_raw)
+            if 0 <= _idx < n_base and _idx not in _seen:
+                _seen.add(_idx)
+                rep_indices.append(_idx)
+            if len(rep_indices) >= n_rp:
+                break
+        if len(rep_indices) >= n_rp:
+            # Seed already fills (or overfills) the budget — nothing to add.
+            return rep_indices[:n_rp]
+        print(
+            f"Seeded hull with {len(rep_indices)} forced period(s): "
+            f"{rep_indices}"
+        )
+        # Exact distance of every base period to the (multi-point) seed hull.
+        # This is the cached-distance invariant the greedy loop relies on: it
+        # only ever decreases as points are added, never increases.
+        R_seed = C[:, rep_indices]
+        cached_dist = np.array(
+            [distance_to_hull(R_seed, C[:, d])[0] for d in range(n_base)]
+        )
+        for _r in rep_indices:
+            cached_dist[_r] = -1.0
+        first_k = len(rep_indices) + 1
+    else:
+        # ------------------------------------------------------------------
+        # Step 1: compute mean column vector
+        # ------------------------------------------------------------------
+        mean_col = C.mean(axis=1)  # shape (n_features,)
 
-    # ------------------------------------------------------------------
-    # Step 2: first RP = column furthest from the mean
-    # ------------------------------------------------------------------
-    dists_to_mean = np.linalg.norm(C - mean_col[:, np.newaxis], axis=0)
-    first_rp = int(np.argmax(dists_to_mean))
-    rep_indices: list[int] = [first_rp]
-    print(
-        f"Selected RP 1/{n_rp}, max distance to mean: "
-        f"{dists_to_mean[first_rp]:.6f}"
-    )
+        # ------------------------------------------------------------------
+        # Step 2: first RP = column furthest from the mean
+        # ------------------------------------------------------------------
+        dists_to_mean = np.linalg.norm(C - mean_col[:, np.newaxis], axis=0)
+        first_rp = int(np.argmax(dists_to_mean))
+        rep_indices: list[int] = [first_rp]
+        print(
+            f"Selected RP 1/{n_rp}, max distance to mean: "
+            f"{dists_to_mean[first_rp]:.6f}"
+        )
 
-    # ------------------------------------------------------------------
-    # Initialise cached hull distances for step 3
-    # ------------------------------------------------------------------
-    # After picking the first RP, the "hull" is a single point.
-    # dist(c_d, hull) = ||c_d - c_{first_rp}||
-    cached_dist = np.linalg.norm(
-        C - C[:, first_rp : first_rp + 1], axis=0
-    )  # shape (n_base,)
-    # Mark selected indices so they are never picked again
-    cached_dist[first_rp] = -1.0
+        # ------------------------------------------------------------------
+        # Initialise cached hull distances for step 3
+        # ------------------------------------------------------------------
+        # After picking the first RP, the "hull" is a single point.
+        # dist(c_d, hull) = ||c_d - c_{first_rp}||
+        cached_dist = np.linalg.norm(
+            C - C[:, first_rp : first_rp + 1], axis=0
+        )  # shape (n_base,)
+        # Mark selected indices so they are never picked again
+        cached_dist[first_rp] = -1.0
+        first_k = 2
 
     # ------------------------------------------------------------------
     # Step 3: greedily add the column furthest from current hull
     # ------------------------------------------------------------------
-    for k in range(2, n_rp + 1):
+    for k in range(first_k, n_rp + 1):
         # The previous iteration chose rep_indices[-1] as r_new.
         r_new = rep_indices[-1]
         c_new = C[:, r_new]
