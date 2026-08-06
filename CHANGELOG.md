@@ -1,3 +1,7 @@
+## Unreleased
+
+- **Fixed** representative-period blended-weights inter-period storage state being mis-scaled by unit size for storage nodes with unit size ≠ 1.
+
 ## Release 4.0.0b26 (30.7.2026) — adequacy calibrator + Calibrate-investments GUI; additive energy-margin & hard node balance; near-optimal IPM acceptance
 
 **Database migration v65 → v67** (two steps, automatic on load). **The
