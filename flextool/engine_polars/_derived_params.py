@@ -4107,8 +4107,10 @@ def p_entity_max_units_from_source(source: "InputSource",
                              if "cumulative_limits" in methods_by_e.get(e, set())}
 
     # p_max_flow_for_unconstrained_variables: per-model max → take max.
+    # DB stores the model param as ``max_flow_for_unconstrained_variables``
+    # (no ``p_`` prefix — that prefix is only the CSV-emit alias).
     p_unc = 1000000.0  # default per ``entity_period_calc_params.py:1689``.
-    df_unc = _try_param(source, "model", "p_max_flow_for_unconstrained_variables")
+    df_unc = _try_param(source, "model", "max_flow_for_unconstrained_variables")
     if df_unc is not None and df_unc.height > 0:
         try:
             p_unc = max(p_unc, float(df_unc["value"].max()))
@@ -4650,8 +4652,10 @@ def p_flow_upper_from_source(source: "InputSource",
     sink_coef_lf = _arc_max_capacity_coef_lf(source, "sink")
 
     # ── 4. p_unconstrained_flow_cap ────────────────────────────────
+    # DB stores the model param as ``max_flow_for_unconstrained_variables``
+    # (no ``p_`` prefix — that prefix is only the CSV-emit alias).
     p_unc = 1_000_000.0
-    df_unc = _try_param(source, "model", "p_max_flow_for_unconstrained_variables")
+    df_unc = _try_param(source, "model", "max_flow_for_unconstrained_variables")
     if df_unc is not None and df_unc.height > 0:
         try:
             p_unc = max(p_unc, float(df_unc["value"].max()))
