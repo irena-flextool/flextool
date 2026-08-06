@@ -50,6 +50,11 @@ def test_build_parser_defaults():
     assert args.work_dir == _cli.DEFAULT_WORK_DIR
     assert args.out_root == _cli.DEFAULT_OUT_ROOT
     assert args.debug is False
+    # Final outputs default to regenerating csv from the surviving parquet; the
+    # skip flag defaults off and no explicit results-db is set.
+    assert args.final_write_methods == ["csv"]
+    assert args.skip_final_outputs is False
+    assert args.results_db_url is None
     # Sizing defaults to the uniform (constant per-timestep) placement.
     assert args.sizing == "uniform"
     # Overshoot safety multiplier defaults to off (1.0); guard stall fraction
@@ -149,6 +154,52 @@ def test_config_from_args_warm_start_default():
     assert isinstance(config, CalibConfig)
     # Warm-start cache defaults relative to the work dir.
     assert config.warm_start_cache_dir == Path("/tmp/wk") / "warm_start_cache"
+    # Final outputs default to csv (regenerated from parquet post-loop).
+    assert config.final_write_methods == ("csv",)
+
+
+def test_config_from_args_final_write_methods_explicit():
+    parser = _cli.build_parser()
+    args = parser.parse_args(
+        [
+            "db.sqlite",
+            "scen",
+            "--iterations",
+            "1",
+            "--final-write-methods",
+            "excel",
+            "spinedb",
+        ]
+    )
+    config = _cli._config_from_args(args)
+    assert config.final_write_methods == ("excel", "spinedb")
+
+
+def test_config_from_args_skip_final_outputs_wins():
+    parser = _cli.build_parser()
+    args = parser.parse_args(
+        [
+            "db.sqlite",
+            "scen",
+            "--iterations",
+            "1",
+            "--final-write-methods",
+            "excel",
+            "--skip-final-outputs",
+        ]
+    )
+    config = _cli._config_from_args(args)
+    # The skip flag overrides any requested formats.
+    assert config.final_write_methods == ()
+
+
+def test_final_write_methods_rejects_parquet():
+    parser = _cli.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["db.sqlite", "scen", "--iterations", "1",
+             "--final-write-methods", "parquet"]
+        )
 
 
 def test_main_success_writes_report_and_prints(tmp_path, monkeypatch, capsys):
@@ -161,6 +212,19 @@ def test_main_success_writes_report_and_prints(tmp_path, monkeypatch, capsys):
         return _canned_result()
 
     monkeypatch.setattr(_cli, "run_calibration", _stub)
+
+    # Stub the parquet replay: this suite never solves, so there is no parquet
+    # tree to regenerate from. Record the call to assert the wiring.
+    final = {}
+
+    def _final(out_root, scenario, methods, *, results_db_url=None):
+        final["out_root"] = out_root
+        final["scenario"] = scenario
+        final["methods"] = methods
+        final["results_db_url"] = results_db_url
+        return list(methods)
+
+    monkeypatch.setattr(_cli, "write_final_outputs", _final)
 
     out_root = tmp_path / "out"
     rc = _cli.main(
@@ -181,6 +245,10 @@ def test_main_success_writes_report_and_prints(tmp_path, monkeypatch, capsys):
     )
 
     assert rc == 0
+    # The default final-write step ran with the scenario's parquet tree.
+    assert final["scenario"] == "scenA"
+    assert final["out_root"] == out_root
+    assert final["methods"] == ("csv",)
     # The config passed to the (stubbed) solve carries the parsed flags.
     cfg = captured["config"]
     assert captured["url"] == "db.sqlite"
@@ -191,14 +259,69 @@ def test_main_success_writes_report_and_prints(tmp_path, monkeypatch, capsys):
     assert cfg.out_root == out_root
     assert cfg.warm_start_cache_dir == (tmp_path / "wk") / "warm_start_cache"
 
-    # Report CSVs were written under <out_root>/report/.
-    report_dir = out_root / "report"
+    # Report CSVs were written under <out_root>/calibration_reports/<scenario>/.
+    report_dir = out_root / "calibration_reports" / "scenA"
     assert (report_dir / LONG_FILENAME).exists()
     assert (report_dir / SUMMARY_FILENAME).exists()
 
     # Summary printed to stdout.
     out = capsys.readouterr().out
     assert "CONVERGED" in out
+
+
+def test_main_skip_final_outputs_does_not_replay(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        _cli, "run_calibration", lambda url, sc, cfg: _canned_result()
+    )
+
+    called = {"n": 0}
+
+    def _final(*a, **k):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(_cli, "write_final_outputs", _final)
+
+    rc = _cli.main(
+        [
+            "db.sqlite",
+            "scenA",
+            "--iterations",
+            "1",
+            "--output-location",
+            str(tmp_path / "out"),
+            "--skip-final-outputs",
+        ]
+    )
+    assert rc == 0
+    # An empty final_write_methods short-circuits before the replay call.
+    assert called["n"] == 0
+
+
+def test_main_final_output_failure_does_not_fail_run(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        _cli, "run_calibration", lambda url, sc, cfg: _canned_result()
+    )
+
+    def _boom(*a, **k):
+        raise FileNotFoundError("no parquet to replay")
+
+    monkeypatch.setattr(_cli, "write_final_outputs", _boom)
+
+    rc = _cli.main(
+        [
+            "db.sqlite",
+            "scenA",
+            "--iterations",
+            "1",
+            "--output-location",
+            str(tmp_path / "out"),
+        ]
+    )
+    # The solve succeeded; a replay failure is a warning, not a run failure.
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "could not regenerate final outputs" in err
 
 
 def test_main_calib_error_returns_nonzero(tmp_path, monkeypatch, capsys):

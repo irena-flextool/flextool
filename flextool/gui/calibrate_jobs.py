@@ -156,8 +156,9 @@ def _calib_dirs(
       copied command line is self-contained).
     * ``output_location`` — the project root. The calibrate CLI writes solve
       results under ``<output-location>/output_parquet/<scenario>/`` and report
-      CSVs under ``<output-location>/report/``, matching the scenario runner's
-      convention of one shared output root.
+      CSVs under ``<output-location>/calibration_reports/<scenario>/``, matching
+      the scenario runner's convention of one shared output root (both trees are
+      per-scenario so calibrating several scenarios never overwrites).
 
     When ``create`` is True (the launch path) all three directories are created
     eagerly so the subprocess never races to ``mkdir`` a parent. The live CLI
