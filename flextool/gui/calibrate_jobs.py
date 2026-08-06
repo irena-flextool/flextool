@@ -126,6 +126,11 @@ class CalibJobSpec:
     damping_remaining: float = 0.5
     stall_fraction: float = 0.05
     debug: bool = False
+    # Which formats the calibrator regenerates from the final parquet after the
+    # loop (the project's "File outputs" choices, parquet excluded — always
+    # present). ``None`` = inherit the CLI default (csv); ``[]`` = skip (leave
+    # results parquet-only); non-empty = those formats.
+    final_write_methods: list[str] | None = None
     warm_start_cache_dir: str | None = None
     work_dir: str | None = None
     output_location: str | None = None
@@ -406,6 +411,7 @@ def launch_calibration_jobs(
             work_dir=spec.work_dir or work_dir,
             output_location=spec.output_location or output_location,
             debug=spec.debug,
+            final_write_methods=spec.final_write_methods,
         )
         display_name = f"Calibrate: {spec.scenario}"
         action_key = f"calibrate:{spec.scenario}"
