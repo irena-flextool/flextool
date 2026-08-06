@@ -389,3 +389,63 @@ Fix:
 
 Regenerated `costs__dt.csv` (49 → 193 rows) and `summary_solve.csv`.
 Gate at 64/65 (was 63/65).
+
+## 2026-08-07 — `unit_capacity__d.csv` `existing` column on five multi-solve invest scenarios
+
+**Files.** `multi_year`, `wind_battery_invest_lifetime_renew_4solve`,
+`multi_fullYear_battery_nested_24h_invest_one_solve`,
+`multi_fullYear_battery_nested_multi_invest`,
+`multi_fullYear_battery_nested_sample_invest_one_solve` —
+`unit_capacity__d.csv`.
+
+**Context.** The capacity output's `existing` column read
+`par.entity_all_existing` — the *cumulative* chain-sum
+(`pre_existing + Σ prior-solve invest − Σ prior divest`).  On a multi-
+solve run the invest→dispatch handoff folds each earlier solve's
+`v_invest` into `p_entity_all_existing`, so a later (dispatch or
+rolling) sub-solve reported previously-invested capacity under
+`existing` — e.g. `multi_year` coal_plant `p2035` shipped
+`existing=823.3178` when the true pre-invest baseline is `500`.  The
+frozen v3.32.0 goldens encode this (the legacy GMPL writer folded the
+same way), but it is misleading: "existing" should mean the original
+pre-investment capacity, not "capacity present at the start of this
+sub-solve".  Reported by the user as a bug.
+
+**Fix** (`flextool/process_outputs/out_capacity.py` +
+`read_parameters.py`).  `unit_capacity` / `connection_capacity` /
+`node_capacity` now source the `existing` column from
+`par.entity_pre_existing` (the static pre-invest baseline) instead of
+`entity_all_existing`.  `invested` stays the per-sub-solve/roll
+`v_invest` (marginal), `divested` and `total` are unchanged — so the
+cumulative capacity still shows in `total`, consistent with how
+single-solve multi-period runs already report (e.g. `y2020_2029_2x5y`,
+unchanged).  `entity_pre_existing` is densified across the entity
+universe in `read_parameters.py` so it is indexable exactly like
+`entity_all_existing`.  The correction lands in the derived
+`output_parquet/<scenario>/unit_capacity_ed_p.parquet` (the primary
+source) and therefore propagates to CSV / Excel / SpineDB / plots /
+GUI viewer / scenario-comparison in a fresh run.
+
+**Diff shape** (- old cumulative, + regenerated baseline); only the
+`existing` column moves (renew_4solve also picks up sub-1e-4 re-solve
+jitter on `invested`/`total`, within `round_for_comparison + rtol=1e-4`):
+
+```
+-coal_plant,y2030_5week,p2030,567.8406,255.4772,,823.3178
+-coal_plant,y2035_5week,p2035,823.3178,0.0,,823.3178
++coal_plant,y2030_5week,p2030,500.0,255.4772,,823.3178
++coal_plant,y2035_5week,p2035,500.0,0.0,,823.3178
+```
+
+**Decision** (user, 2026-08-07): accept — `existing` = original
+pre-invest baseline is the intended semantics; the v3.32.0 fold was the
+bug.  Single-solve scenarios and all non-capacity goldens are
+byte-unaffected (full `tests/test_scenarios.py` sweep: only these five
+`unit_capacity__d.csv` files changed).
+
+**Not changed.** `handoff_writers._write_capacity_per_period` still
+writes `output_raw/*capacity__period.csv` with `existing` from the
+cumulative `entity_all_existing` — a legacy byte-for-byte phase-3
+parity artifact with no live consumer in the rendering pipeline (it is
+not read back into `write_outputs`).  Left as-is to preserve its
+documented parity intent; flagged here as a divergent source.

@@ -1317,12 +1317,14 @@ def read_parameters(
         from polar_high import Param  # local import — Param is heavy
         p.entity_pre_existing = _pdX_per_entity(
             Param(("e", "d"), pre_existing), solve_name=solve_name,
-            entity_dim="e", col_name="entity",
+            entity_dim="e", col_name="entity", flex_data=flex_data,
+            densify_entities=_entity_universe,
         )
     else:
         p.entity_pre_existing = _pdX_per_entity(
             flex_data.p_entity_all_existing, solve_name=solve_name,
             entity_dim="e", col_name="entity", flex_data=flex_data,
+            densify_entities=_entity_universe,
         )
 
     # entity_all_capacity — post-solve derived.
