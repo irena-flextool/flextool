@@ -15,6 +15,10 @@ crash that can bubble to a nonzero exit even when every output is present.
 
 from __future__ import annotations
 
+from flextool.calibrate._final_outputs import (
+    FINAL_WRITE_METHOD_CHOICES,
+    write_final_outputs,
+)
 from flextool.calibrate._loop import (
     CalibConfig,
     CalibError,
@@ -31,6 +35,7 @@ from flextool.calibrate._solve_status import (
 )
 
 __all__ = [
+    "FINAL_WRITE_METHOD_CHOICES",
     "CalibConfig",
     "CalibError",
     "CalibResult",
@@ -41,5 +46,6 @@ __all__ = [
     "default_required_outputs",
     "format_summary",
     "run_calibration",
+    "write_final_outputs",
     "write_report",
 ]

@@ -7,13 +7,27 @@ from the argv the ExecutionManager actually runs.
 from __future__ import annotations
 
 import shlex
+from types import SimpleNamespace
 
 from flextool.gui.calibrate_commands import (
     build_calibrate_command,
     build_rp_command,
     command_to_display_string,
+    final_write_methods_from_settings,
     overshoot_pct_to_multiplier,
 )
+
+
+def _file_output_settings(
+    *, plots=False, excels=False, csvs=False, spinedb=False
+) -> SimpleNamespace:
+    """Minimal stand-in for the ProjectSettings "File outputs" booleans."""
+    return SimpleNamespace(
+        auto_generate_scen_plots=plots,
+        auto_generate_scen_excels=excels,
+        auto_generate_scen_csvs=csvs,
+        auto_generate_comp_spinedb=spinedb,
+    )
 
 
 def test_rp_command_full_options_exact() -> None:
@@ -193,6 +207,56 @@ def test_calibrate_optional_dirs_omitted_when_none() -> None:
     assert "--warm-start-cache-dir" not in argv
     assert "--work-dir" not in argv
     assert "--output-location" not in argv
+
+
+def _base_calib_kwargs():
+    return dict(
+        iterations=3, sizing="uniform", overshoot=1.0,
+        damping_first=1.0, damping_remaining=0.5, stall_fraction=0.05,
+        warm_start_cache_dir=None, work_dir=None, output_location=None,
+        debug=False,
+    )
+
+
+def test_final_write_methods_none_emits_nothing() -> None:
+    # None ⇒ inherit the CLI default (csv); no final-output flag on the argv.
+    argv = build_calibrate_command(
+        "python", "db", "sc", **_base_calib_kwargs(), final_write_methods=None
+    )
+    assert "--final-write-methods" not in argv
+    assert "--skip-final-outputs" not in argv
+
+
+def test_final_write_methods_empty_emits_skip() -> None:
+    # [] ⇒ operator unchecked every File output ⇒ leave results parquet-only.
+    argv = build_calibrate_command(
+        "python", "db", "sc", **_base_calib_kwargs(), final_write_methods=[]
+    )
+    assert "--skip-final-outputs" in argv
+    assert "--final-write-methods" not in argv
+
+
+def test_final_write_methods_listed_emits_flag() -> None:
+    argv = build_calibrate_command(
+        "python", "db", "sc", **_base_calib_kwargs(),
+        final_write_methods=["csv", "excel"],
+    )
+    i = argv.index("--final-write-methods")
+    assert argv[i + 1:i + 3] == ["csv", "excel"]
+    assert "--skip-final-outputs" not in argv
+
+
+def test_final_write_methods_from_settings_maps_file_outputs() -> None:
+    # Mirrors the regular-run write-method assembly (order + flags), minus the
+    # always-present parquet.
+    s = _file_output_settings(plots=True, csvs=True)  # the GUI defaults
+    assert final_write_methods_from_settings(s) == ["plot", "csv"]
+
+    s = _file_output_settings(excels=True, spinedb=True)
+    assert final_write_methods_from_settings(s) == ["excel", "spinedb"]
+
+    s = _file_output_settings()  # everything unchecked
+    assert final_write_methods_from_settings(s) == []
 
 
 def test_overshoot_pct_to_multiplier() -> None:

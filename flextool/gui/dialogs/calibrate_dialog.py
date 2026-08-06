@@ -54,6 +54,7 @@ from flextool.gui.calibrate_commands import (
     build_calibrate_command,
     build_rp_command,
     command_to_display_string,
+    final_write_methods_from_settings,
     overshoot_pct_to_multiplier,
 )
 from flextool.gui.calibrate_jobs import (
@@ -1085,6 +1086,9 @@ class CalibrateDialog(tk.Toplevel):
                     damping_remaining=s.calib_damping_remaining,
                     stall_fraction=s.calib_stall_fraction,
                     debug=s.calib_keep_artifacts,
+                    # Regenerate the same formats a regular run would (the
+                    # project's "File outputs" choices), from the final parquet.
+                    final_write_methods=final_write_methods_from_settings(s),
                 )
             )
         launch_calibration_jobs(
@@ -1149,6 +1153,7 @@ class CalibrateDialog(tk.Toplevel):
                 work_dir=work,
                 output_location=out,
                 debug=s.calib_keep_artifacts,
+                final_write_methods=final_write_methods_from_settings(s),
             )
             lines.append(command_to_display_string(argv))
         return "\n".join(lines)
