@@ -2,6 +2,37 @@ import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
 
+# Storage node is surfaced in the node balance/price outputs only if it is
+# wired to more than this many distinct processes.  A battery (one inverter,
+# or separate charge + discharge units ⇒ ≤2 processes) stays hidden to avoid
+# cluttering the outputs; a multi-use hub (e.g. a hydrogen node feeding an
+# electrolyser, a turbine and several conversion routes ⇒ many processes) is
+# surfaced automatically.
+MULTI_USE_STORAGE_PROCESS_THRESHOLD = 2
+
+
+def _multi_use_storage_nodes(s):
+    """Storage nodes wired to more than the threshold of distinct processes.
+
+    Counts distinct process *names* across the node's source- and sink-side
+    arcs (``s.process_source`` / ``s.process_sink``), so a bidirectional unit
+    appearing on both sides counts once.  Arc-level only — never touches the
+    ``(d, t)`` timeline.  Returns a ``node``-named Index that is a subset of
+    ``s.node_state``; the complement (boring storage) is what gets hidden.
+    """
+    if len(s.node_state) == 0:
+        return s.node_state
+    src = s.process_source.to_frame(index=False).rename(columns={"source": "node"})
+    snk = s.process_sink.to_frame(index=False).rename(columns={"sink": "node"})
+    arcs = pd.concat([src, snk], ignore_index=True)
+    arcs = arcs[arcs["node"].isin(s.node_state)]
+    if arcs.empty:
+        return pd.Index([], name="node", dtype=s.node_state.dtype)
+    counts = arcs.groupby("node")["process"].nunique()
+    return pd.Index(
+        counts.index[counts > MULTI_USE_STORAGE_PROCESS_THRESHOLD], name="node",
+    )
+
 
 def node_summary(par, s, v, r, debug):
     """Node balance summaries for periods and timesteps"""
@@ -13,7 +44,9 @@ def node_summary(par, s, v, r, debug):
     if debug:
         nodes = s.node
     else:
-        nodes = balanced_nodes.difference(s.node_state)
+        # Hide boring storage nodes (batteries); keep multi-use storage hubs.
+        hidden_storage = s.node_state.difference(_multi_use_storage_nodes(s))
+        nodes = balanced_nodes.difference(hidden_storage)
     nodes_sink = s.node.copy().intersection(nodes)
     nodes_sink.name = 'sink'
     nodes_source = s.node.copy().intersection(nodes)
@@ -123,7 +156,14 @@ def node_additional_results(par, s, v, r, debug):
     # has a dual, but if a node genuinely lacks one (e.g. a future balance
     # mode without a dual writer) this omits it rather than raising
     # ``KeyError: None of [...] are in the columns``.
-    price_nodes = s.node_balance.difference(s.node_state).intersection(
+    # Mirror the node-balance summary: hide boring storage nodes (batteries),
+    # keep multi-use storage hubs.  For a battery the balance dual is largely
+    # redundant with the connected electricity node's price (and most prone to
+    # degeneracy at the storage margin); for a multi-use hub (e.g. a hydrogen
+    # node) it is the genuine, otherwise-unavailable marginal value of that
+    # commodity — the case worth reporting.
+    hidden_storage = s.node_state.difference(_multi_use_storage_nodes(s))
+    price_nodes = s.node_balance.difference(hidden_storage).intersection(
         v.dual_node_balance.columns)
     results.append((v.dual_node_balance[price_nodes], 'node_prices_dt_e'))
 
