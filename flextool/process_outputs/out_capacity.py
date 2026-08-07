@@ -27,13 +27,16 @@ def unit_capacity(par, s, v, r, debug):
     results.columns.name = 'parameter'
 
     # Existing capacity - filter to process_unit only.  Uses
-    # ``par.entity_all_existing`` which read_parameters_multi has
-    # filtered per-step to each solve's own realized periods (so the
-    # nested-cascade parent invest step's pre_existing baseline wins
-    # over the children's later_existing on shared (entity, period)
-    # cells — see the comment block in
-    # ``read_parameters.py:read_parameters_multi``).
-    existing = par.entity_all_existing[processes].unstack()
+    # ``par.entity_pre_existing`` (the static pre-invest baseline), NOT
+    # ``entity_all_existing`` (the cumulative chain-sum).  On a multi-
+    # solve handoff (e.g. an invest solve feeding a dispatch solve) the
+    # handoff folds the prior solve's ``v_invest`` into
+    # ``entity_all_existing``; reading that here would misreport newly
+    # invested capacity under "existing" in the dispatch solve.  The
+    # invested capacity is reported in the ``invested`` column (this
+    # solve's / roll's ``v_invest``) and the ``total`` column carries
+    # the cumulative sum; ``existing`` stays at the original baseline.
+    existing = par.entity_pre_existing[processes].unstack()
     results['existing'] = existing
 
     # Invested capacity - default to None, overwrite if data exists
@@ -85,10 +88,10 @@ def connection_capacity(par, s, v, r, debug):
     results = pd.DataFrame(index=index)
     results.columns.name = 'parameter'
 
-    # Existing capacity - filter to process_connection only.  See
-    # unit_capacity above for the read_parameters_multi per-step
-    # filter that ensures correct dedup semantics on nested cascades.
-    existing = par.entity_all_existing[connections].unstack()
+    # Existing capacity - filter to process_connection only.  Uses
+    # ``entity_pre_existing`` (pre-invest baseline); see unit_capacity
+    # above for why carried-forward invest must not land here.
+    existing = par.entity_pre_existing[connections].unstack()
     results['existing'] = existing
 
     # Invested capacity - default to empty, overwrite if data exists
@@ -138,10 +141,11 @@ def node_capacity(par, s, v, r, debug):
     results = pd.DataFrame(index=index)
     results.columns.name = 'parameter'
 
-    # Existing capacity - filter to node_state only.  See unit_capacity
-    # above for the read_parameters_multi per-step filter.
+    # Existing capacity - filter to node_state only.  Uses
+    # ``entity_pre_existing`` (pre-invest baseline); see unit_capacity
+    # above for why carried-forward invest must not land here.
     if nodes:
-        existing = par.entity_all_existing[nodes].unstack()
+        existing = par.entity_pre_existing[nodes].unstack()
         results['existing'] = existing
     else:
         results['existing'] = pd.Series(dtype=float)
