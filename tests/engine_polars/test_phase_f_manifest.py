@@ -257,12 +257,28 @@ def test_write_parquet_glob_filename_raises(tmp_path: Path) -> None:
         write_parquet("v_obj", df, tmp_path)
 
 
-def test_write_parquet_validates_columns(tmp_path: Path) -> None:
+def test_write_parquet_validates_columns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When the spec declares a non-empty ``columns`` list, write_parquet
     rejects frames whose columns don't match (set-equality)."""
-    # Use a non-glob spec.  The handoff capacity CSV specs
-    # (``entity_all_capacity`` etc.) declare seven columns; supply
-    # something different and confirm the validator fires.
+    # Register a throwaway non-glob spec with a declared ``columns`` list
+    # so the validator branch fires, then supply a frame whose columns
+    # don't match.  (A temporary spec keeps this test independent of any
+    # particular production key's column layout.)
+    monkeypatch.setitem(
+        REGISTRY,
+        "_tmp_validate_columns",
+        ParquetSpec(
+            key="_tmp_validate_columns",
+            category="processed",
+            filename="_tmp_validate_columns.parquet",
+            columns=("a", "b", "c"),
+            indices=("a",),
+            note="test-only spec",
+            producer="tests.test_phase_f_manifest",
+        ),
+    )
     df = pl.DataFrame({"unrelated": [1.0]})
     with pytest.raises(ValueError, match="columns"):
-        write_parquet("entity_all_capacity", df, tmp_path)
+        write_parquet("_tmp_validate_columns", df, tmp_path)

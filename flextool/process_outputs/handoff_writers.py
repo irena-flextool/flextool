@@ -1170,61 +1170,6 @@ def _load_unitsize_map(
         return {}
     df = pd.read_csv(path, index_col=0)
     return df.loc["value"].astype(float).to_dict() if "value" in df.index else {}
-
-
-def _load_pd_map(
-    work_folder: Path, csv_name: str, roll: str,
-) -> set[tuple[str, str]]:
-    """Load ``{(entity, period)}`` from a ``solve,entity,period`` CSV,
-    filtered to the given roll."""
-    path = work_folder / "solve_data" / csv_name
-    if not path.exists():
-        return set()
-    df = pd.read_csv(path, dtype=str)
-    if df.empty or not {"entity", "period"}.issubset(df.columns):
-        return set()
-    df = df[df["solve"] == roll]
-    return {(str(r.entity), str(r.period)) for r in df.itertuples(index=False)}
-
-
-def _load_edd_invest(
-    work_folder: Path, roll: str,
-) -> list[tuple[str, str, str]]:
-    """Return ``[(entity, d_invest, d), ...]`` for this roll."""
-    path = work_folder / "solve_data" / "solve__edd_invest.csv"
-    if not path.exists():
-        return []
-    df = pd.read_csv(path, dtype=str)
-    if df.empty:
-        return []
-    df = df[df["solve"] == roll]
-    return [
-        (str(r.entity), str(r.d_invest), str(r.d))
-        for r in df.itertuples(index=False)
-    ]
-
-
-def _load_p_entity_all_existing(
-    work_folder: Path, roll: str,
-) -> dict[tuple[str, str], float]:
-    """Return ``{(entity, period): p_entity_all_existing[e, d]}`` for the
-    given roll (``solve`` column filtered)."""
-    path = work_folder / "solve_data" / "solve__p_entity_all_existing.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path, index_col=[0, 1]).astype(float)
-    df.index.names = ["solve", "period"]
-    if roll not in df.index.get_level_values("solve"):
-        return {}
-    sub = df.xs(roll, level="solve")
-    out: dict[tuple[str, str], float] = {}
-    for period, row in sub.iterrows():
-        for entity, value in row.items():
-            if pd.notna(value):
-                out[(str(entity), str(period))] = float(value)
-    return out
-
-
 def _load_period_capacity(work_folder: Path) -> set[str]:
     """Periods already output by a previous roll's capacity dump."""
     path = work_folder / "solve_data" / "period_capacity.csv"
@@ -1247,20 +1192,6 @@ def _load_drdi(work_folder: Path, roll: str) -> list[str]:
         return []
     df = df[df["solve"] == roll]
     return df["period"].tolist()
-
-
-def _load_years_map(work_folder: Path, roll: str) -> dict[str, float]:
-    """Return ``{period: p_years_d}`` for this roll."""
-    path = work_folder / "solve_data" / "p_years_from_start_d.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path)
-    if df.empty:
-        return {}
-    df = df[df["solve"] == roll]
-    return dict(zip(df["period"].astype(str), df["value"].astype(float)))
-
-
 def _append_period_capacity(
     work_folder: Path, new_periods: list[str],
     writer_state: "OutputWriterState | None" = None,
@@ -1283,289 +1214,18 @@ def _append_period_capacity(
         f.write("period\n")
         for p in sorted(union):
             f.write(p + "\n")
-
-
-def _compute_entity_all_capacity(
-    *,
-    roll: str,
-    entities: list[str],
-    periods_to_emit: list[str],
-    unitsize: dict[str, float],
-    existing: dict[tuple[str, str], float],
-    edd_invest: list[tuple[str, str, str]],
-    ed_divest_set: set[tuple[str, str]],
-    years_map: dict[str, float],
-    v_invest_df: pd.DataFrame,
-    v_divest_df: pd.DataFrame,
-) -> dict[tuple[str, str], float]:
-    """Compute ``entity_all_capacity[e, d]`` for the (entity, period)
-    product ``entities × periods_to_emit``.
-
-    Formula mirrors ``param entity_all_capacity`` in ``flextool.mod``::
-
-        existing[e, d]
-          + sum_{(e, d_inv, d) in edd_invest}   v_invest[e, d_inv] * unitsize[e]
-          - sum_{(e, d_dv)   in ed_divest,
-                 years[d_dv] <= years[d]}       v_divest[e, d_dv]  * unitsize[e]
-    """
-    def _v(df: pd.DataFrame, entity: str, period: str) -> float:
-        if entity not in df.columns or period not in df.index:
-            return 0.0
-        return float(df.loc[period, entity])
-
-    # invest contributions keyed by (e, d)
-    invest_contrib: dict[tuple[str, str], float] = {}
-    for e, d_inv, d in edd_invest:
-        contribution = _v(v_invest_df, e, d_inv) * unitsize.get(e, 0.0)
-        invest_contrib[(e, d)] = invest_contrib.get((e, d), 0.0) + contribution
-
-    # divest — evaluate v_divest × unitsize per (e, d_divest) then
-    # distribute to each d in periods_to_emit with years[d] >= years[d_dv].
-    per_divest: dict[tuple[str, str], float] = {}
-    for e, d_dv in ed_divest_set:
-        per_divest[(e, d_dv)] = _v(v_divest_df, e, d_dv) * unitsize.get(e, 0.0)
-    divest_contrib: dict[tuple[str, str], float] = {}
-    for (e, d_dv), val in per_divest.items():
-        yrs_dd = years_map.get(d_dv)
-        if yrs_dd is None:
-            continue
-        for d in periods_to_emit:
-            yrs_d = years_map.get(d)
-            if yrs_d is not None and yrs_dd <= yrs_d:
-                divest_contrib[(e, d)] = divest_contrib.get((e, d), 0.0) + val
-
-    out: dict[tuple[str, str], float] = {}
-    for e in entities:
-        for d in periods_to_emit:
-            out[(e, d)] = (
-                existing.get((e, d), 0.0)
-                + invest_contrib.get((e, d), 0.0)
-                - divest_contrib.get((e, d), 0.0)
-            )
-    return out
-
-
-def _write_capacity_per_period(
-    h: "highspy.Highs",
-    *,
-    solve_name: str,
-    work_folder: Path,
-    entity_class_set: str,
-    first_header_col: str,
-    csv_filename: str,
-    is_first_solve: bool | None = None,
-    writer_state: "OutputWriterState | None" = None,
-    flex_data: "FlexData | None" = None,
-) -> Path:
-    """Shared implementation for unit/connection/node capacity dumps.
-
-    Mirrors phase 3's per-class printf block byte-for-byte:
-    header line ``<class>,solve,period,existing,invested,divested,total``
-    on the first solve, data rows appended on every solve for
-    ``(entity, period)`` where the period is in
-    ``d_realize_dispatch_or_invest`` but not yet in ``period_capacity``.
-    """
-    out_path = work_folder / "output_raw" / csv_filename
-    roll = _actual_solve_name(work_folder, solve_name)
-
-    entities = _load_entity_class_set(work_folder, entity_class_set)
-    # Phase G — prefer the in-memory ``writer_state.periods_already_emitted``
-    # over a CSV re-read.  The set is populated by ``_bump_period_capacity``
-    # at the end of every solve and accumulates across the cascade.  When
-    # ``writer_state`` is supplied, trust it even when empty (matches the
-    # missing-file fallback's empty-set return).
-    if writer_state is not None:
-        period_seen = set(writer_state.periods_already_emitted)
-    else:
-        period_seen = _load_period_capacity(work_folder)
-    periods_to_emit = [d for d in _load_drdi(work_folder, roll) if d not in period_seen]
-
-    unitsize = _load_unitsize_map(work_folder, flex_data=flex_data)
-    existing = _load_p_entity_all_existing(work_folder, roll)
-    pd_invest = _load_pd_map(work_folder, "solve__ed_invest.csv", roll)
-    pd_divest = _load_pd_map(work_folder, "solve__ed_divest.csv", roll)
-    edd_invest = _load_edd_invest(work_folder, roll)
-    years_map = _load_years_map(work_folder, roll)
-
-    v_invest_df = extract_variable(
-        h, "v_invest", ("entity",), solve_name=solve_name, has_time=False,
-    )
-    v_divest_df = extract_variable(
-        h, "v_divest", ("entity",), solve_name=solve_name, has_time=False,
-    )
-    if not v_invest_df.empty:
-        v_invest_df = v_invest_df.droplevel("solve")
-    if not v_divest_df.empty:
-        v_divest_df = v_divest_df.droplevel("solve")
-
-    entity_all_cap = _compute_entity_all_capacity(
-        roll=roll, entities=entities, periods_to_emit=periods_to_emit,
-        unitsize=unitsize, existing=existing,
-        edd_invest=edd_invest, ed_divest_set=pd_divest,
-        years_map=years_map,
-        v_invest_df=v_invest_df, v_divest_df=v_divest_df,
-    )
-
-    def _v(df: pd.DataFrame, e: str, d: str) -> float:
-        if e not in df.columns or d not in df.index:
-            return 0.0
-        return float(df.loc[d, e])
-
-    is_first = _resolve_is_first_solve(work_folder, is_first_solve)
-    mode = "w" if is_first else "a"
-    with open(out_path, mode, encoding="utf-8") as f:
-        if is_first:
-            f.write(
-                f"{first_header_col},solve,period,existing,invested,divested,total\n"
-            )
-        for e in entities:
-            usize = unitsize.get(e, 0.0)
-            for d in periods_to_emit:
-                exist = existing.get((e, d), 0.0)
-                inv = _v(v_invest_df, e, d) * usize if (e, d) in pd_invest else 0.0
-                div = _v(v_divest_df, e, d) * usize if (e, d) in pd_divest else 0.0
-                total = entity_all_cap.get((e, d), 0.0)
-                f.write(
-                    f"{e},{roll},{d},"
-                    f"{format(exist, '.8g')},"
-                    f"{format(inv, '.8g')},"
-                    f"{format(div, '.8g')},"
-                    f"{format(total, '.8g')}\n"
-                )
-    _logger.info(
-        "wrote %s (roll '%s', %d × %d rows)",
-        out_path, roll, len(entities), len(periods_to_emit),
-    )
-    return out_path
-
-
-def write_unit_capacity(
-    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
-    is_first_solve: bool | None = None,
-    writer_state: "OutputWriterState | None" = None,
-    flex_data: "FlexData | None" = None,
-) -> Path:
-    """Write ``solve_data/unit_capacity__period.csv``.  Replaces the
-    phase-3 unit-capacity block in ``flextool.mod``."""
-    return _write_capacity_per_period(
-        h, solve_name=solve_name, work_folder=work_folder,
-        entity_class_set="process_unit",
-        first_header_col="unit",
-        csv_filename="unit_capacity__period.csv",
-        is_first_solve=is_first_solve,
-        writer_state=writer_state,
-        flex_data=flex_data,
-    )
-
-
-def write_connection_capacity(
-    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
-    is_first_solve: bool | None = None,
-    writer_state: "OutputWriterState | None" = None,
-    flex_data: "FlexData | None" = None,
-) -> Path:
-    """Write ``solve_data/connection_capacity__period.csv``."""
-    return _write_capacity_per_period(
-        h, solve_name=solve_name, work_folder=work_folder,
-        entity_class_set="process_connection",
-        first_header_col="connection",
-        csv_filename="connection_capacity__period.csv",
-        is_first_solve=is_first_solve,
-        writer_state=writer_state,
-        flex_data=flex_data,
-    )
-
-
-def write_node_capacity(
-    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
-    is_first_solve: bool | None = None,
-    writer_state: "OutputWriterState | None" = None,
-    flex_data: "FlexData | None" = None,
-) -> Path:
-    """Write ``solve_data/node_capacity__period.csv``.  Iterates the
-    ``nodeState`` set, not ``node``."""
-    return _write_capacity_per_period(
-        h, solve_name=solve_name, work_folder=work_folder,
-        entity_class_set="nodeState",
-        first_header_col="node",
-        csv_filename="node_capacity__period.csv",
-        is_first_solve=is_first_solve,
-        writer_state=writer_state,
-        flex_data=flex_data,
-    )
-
-
-def write_entity_all_capacity(
-    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
-    is_first_solve: bool | None = None,
-    flex_data: "FlexData | None" = None,
-) -> Path:
-    """Write ``solve_data/entity_all_capacity.csv`` — wide CSV with
-    ``solve,period`` index + entity columns.
-
-    Computes ``entity_all_capacity``: for every
-    ``d in d_realize_dispatch_or_invest`` the value is existing +
-    cumulative invest − divest.  On the first solve the header is
-    written (truncate); later solves append only the current solve's
-    rows.
-    """
-    out_path = work_folder / "output_raw" / "entity_all_capacity.csv"
-    roll = _actual_solve_name(work_folder, solve_name)
-
-    entities = _load_entity_class_set(work_folder, "entity")
-    unitsize = _load_unitsize_map(work_folder, flex_data=flex_data)
-    existing = _load_p_entity_all_existing(work_folder, roll)
-    edd_invest = _load_edd_invest(work_folder, roll)
-    ed_divest_set = _load_pd_map(work_folder, "solve__ed_divest.csv", roll)
-    years_map = _load_years_map(work_folder, roll)
-    drdi = _load_drdi(work_folder, roll)
-
-    v_invest_df = extract_variable(
-        h, "v_invest", ("entity",), solve_name=solve_name, has_time=False,
-    )
-    v_divest_df = extract_variable(
-        h, "v_divest", ("entity",), solve_name=solve_name, has_time=False,
-    )
-    if not v_invest_df.empty:
-        v_invest_df = v_invest_df.droplevel("solve")
-    if not v_divest_df.empty:
-        v_divest_df = v_divest_df.droplevel("solve")
-
-    cap = _compute_entity_all_capacity(
-        roll=roll, entities=entities, periods_to_emit=drdi,
-        unitsize=unitsize, existing=existing,
-        edd_invest=edd_invest, ed_divest_set=ed_divest_set,
-        years_map=years_map,
-        v_invest_df=v_invest_df, v_divest_df=v_divest_df,
-    )
-
-    is_first = _resolve_is_first_solve(work_folder, is_first_solve)
-    mode = "w" if is_first else "a"
-    with open(out_path, mode, encoding="utf-8") as f:
-        if is_first:
-            f.write("solve,period")
-            for e in entities:
-                f.write("," + e)
-        for d in drdi:
-            f.write("\n" + roll + "," + d)
-            for e in entities:
-                f.write("," + format(cap.get((e, d), 0.0), ".8g"))
-    _logger.info(
-        "wrote %s (roll '%s', %d periods × %d entities)",
-        out_path, roll, len(drdi), len(entities),
-    )
-    return out_path
-
-
 def _bump_period_capacity(
     work_folder: Path, solve_name: str,
     writer_state: "OutputWriterState | None" = None,
 ) -> None:
     """Accumulate this solve's realized periods into ``period_capacity.csv``.
 
-    Called once per solve AFTER the four capacity writers above.  Later
-    rolls read this set via :func:`_load_period_capacity` to skip periods
-    already emitted.
+    Called once per solve at the end of :func:`write_all_handoffs`.  This
+    set used to let the per-period capacity dumps skip already-emitted
+    periods; those writers were removed 2026-08-07, so the accumulator is
+    now vestigial (kept pending a separate teardown of the
+    ``period_capacity`` machinery, which ripples into orchestration and
+    several tests).  Still read via :func:`_load_period_capacity`.
 
     When ``writer_state`` is supplied, ALSO push the newly
     accumulated periods into ``writer_state.periods_already_emitted``
@@ -1625,11 +1285,6 @@ def write_all_handoffs(
     # below routes per-writer.
     written: list[Path] = []
     fd_kwargs = {"flex_data": flex_data, "is_first_solve": is_first_solve}
-    cap_kwargs = {
-        "is_first_solve": is_first_solve,
-        "writer_state": writer_state,
-        "flex_data": flex_data,
-    }
     dispatch: list[tuple[object, dict]] = [
         (write_p_entity_divested,
          {**fd_kwargs, "prior_handoff": prior_handoff}),
@@ -1641,11 +1296,6 @@ def write_all_handoffs(
         (write_fix_storage_price,
          {**fd_kwargs, "scale_the_objective": scale_the_objective}),
         (write_fix_storage_usage, fd_kwargs),
-        (write_entity_all_capacity,
-         {"is_first_solve": is_first_solve, "flex_data": flex_data}),
-        (write_unit_capacity, cap_kwargs),
-        (write_connection_capacity, cap_kwargs),
-        (write_node_capacity, cap_kwargs),
     ]
     for fn, extra in dispatch:
         try:
@@ -1654,8 +1304,10 @@ def write_all_handoffs(
             ))
         except Exception as exc:  # noqa: BLE001
             _logger.warning("handoff writer %s failed: %s", fn.__name__, exc)
-    # Accumulate this solve's realized periods for the next roll's
-    # capacity dump (see ``_write_capacity_per_period``'s period filter).
+    # Accumulate this solve's realized periods into ``period_capacity.csv``
+    # for the next roll (vestigial: the per-period capacity dumps that
+    # consumed this set were removed 2026-08-07; the accumulator is kept
+    # pending a separate teardown of the ``period_capacity`` machinery).
     try:
         _bump_period_capacity(work_folder, solve_name, writer_state=writer_state)
     except Exception as exc:  # noqa: BLE001

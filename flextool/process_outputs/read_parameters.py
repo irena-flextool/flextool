@@ -522,9 +522,10 @@ def _entity_all_capacity(
     """Compute ``entity_all_capacity[(solve, period), entity]`` from
     FlexData + the live solution.
 
-    Mirrors :func:`flextool.process_outputs.handoff_writers.
-    _compute_entity_all_capacity` but uses polars long-form frames
-    end-to-end.
+    This is the in-memory ``total``-capacity parameter consumed by the
+    rendering layer (``out_capacity`` etc.).  It is independent of the
+    removed legacy ``handoff_writers`` capacity CSVs, using polars
+    long-form frames end-to-end.
 
     Formula::
 

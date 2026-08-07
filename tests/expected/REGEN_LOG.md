@@ -443,9 +443,17 @@ bug.  Single-solve scenarios and all non-capacity goldens are
 byte-unaffected (full `tests/test_scenarios.py` sweep: only these five
 `unit_capacity__d.csv` files changed).
 
-**Not changed.** `handoff_writers._write_capacity_per_period` still
-writes `output_raw/*capacity__period.csv` with `existing` from the
-cumulative `entity_all_existing` — a legacy byte-for-byte phase-3
-parity artifact with no live consumer in the rendering pipeline (it is
-not read back into `write_outputs`).  Left as-is to preserve its
-documented parity intent; flagged here as a divergent source.
+**Follow-up (done same day).** The second, divergent producer —
+`handoff_writers._write_capacity_per_period` / `write_entity_all_capacity`,
+which wrote `output_raw/{unit,connection,node}_capacity__period.csv` and
+`entity_all_capacity.csv` with `existing` from the cumulative
+`entity_all_existing` — was a legacy phase-3 byte-parity artifact with no
+live consumer (an exhaustive repo sweep found no production reader; the
+engine, GUI, scenario-comparison and replay paths read only
+`output_parquet/*.parquet`).  It was **removed**: the four writers, their
+exclusive helpers, the four `_parquet_bundle` registry entries, and the
+dispatch tuples in `write_all_handoffs`.  The solve-to-solve handoff
+parameter feeders (`write_p_entity_period_existing_capacity`, the
+`p_entity_*` chain params) and the in-memory `par.entity_all_capacity`
+path are untouched.  The `period_capacity` / `periods_already_emitted`
+dedup machinery is now vestigial and left for a separate teardown.
