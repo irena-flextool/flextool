@@ -208,9 +208,19 @@ def _plot_grouped_bars(
 
     cat_labels = [_label_for(gb) for gb in grouped_bars]
 
-    # Bar geometry: identical to the original formula.
-    bar_w = SOLO_BAR_THICKNESS if n_grouped == 1 else REFERENCE_BAR_THICKNESS
-    bar_w *= thickness_mult
+    # Bar geometry. A single bar per slot (n_grouped == 1) is effectively a
+    # solo bar: keep it at SOLO_BAR_THICKNESS and do NOT apply thickness_mult.
+    # This mirrors _slot_height_for_n_grouped's n==1 branch (slot sized from
+    # SOLO_BAR_THICKNESS / slot_floor, unmultiplied) and _plot_simple_bars.
+    # thickness_mult only fattens genuinely grouped bars (n_grouped > 1), which
+    # pack several value labels into one slot and need the extra pitch; a solo
+    # bar gets its label room from the (value-label-aware) slot_floor instead.
+    # Fattening the solo bar here would overflow its 0.18" slot (0.1116×2.5 =
+    # 0.279") and overlap every neighbouring row.
+    if n_grouped == 1:
+        bar_w = SOLO_BAR_THICKNESS
+    else:
+        bar_w = REFERENCE_BAR_THICKNESS * thickness_mult
     step = bar_w * (1 + BAR_GAP_FRACTION)
     total_w = bar_w * n_grouped + bar_w * BAR_GAP_FRACTION * max(0, n_grouped - 1)
 
