@@ -4159,13 +4159,14 @@ class ResultViewer(tk.Toplevel):
                 df_dispatch[col] = 0.0
         df_dispatch = df_dispatch[[c for c in self._dispatch_columns[node_group] if c in df_dispatch.columns]]
 
-        # Also apply pre-computed metadata from comparison pipeline if available
-        dispatch_meta = self._load_dispatch_metadata()
-        if dispatch_meta:
-            ng_meta = dispatch_meta.get("nodeGroups", {}).get(node_group)
-            if ng_meta and "ylim" in ng_meta:
-                pre_min, pre_max = ng_meta["ylim"]
-                ylim = (min(ylim[0], pre_min), max(ylim[1], pre_max))
+        # Scale the y-axis to THIS scenario's own dispatch, mirroring the
+        # per-node path (_display_node_dispatch).  We deliberately do NOT merge
+        # the cross-scenario comparison-metadata ylim here: unioning ylims
+        # across scenarios of very different magnitude (e.g. a represented-
+        # period solve vs an 8760 h trade-only snapshot ~1000x larger) forces
+        # the smaller scenario onto the larger one's axis and squashes its
+        # flows into a flat line at the bottom.  Per-scenario scaling keeps
+        # every nodeGroup dispatch plot readable.
 
         # Load break times
         break_times = self._load_break_times(scenario)
