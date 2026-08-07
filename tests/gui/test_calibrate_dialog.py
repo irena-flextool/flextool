@@ -147,8 +147,8 @@ def test_dialog_cli_previews_and_rp_naming(tk_root, tmp_path: Path):
         assert "--final-write-methods excel csv" in calib_text
         assert "--skip-final-outputs" not in calib_text
 
-        # The add-to-scenario checkbox mirrors the (default True) setting.
-        assert dialog._var_add_to_scenario.get() is True
+        # The disposition radio mirrors the (default "add") setting.
+        assert dialog._var_rp_mode.get() == "add"
 
         # A second (post-launch) allocation would advance to _2 once the first
         # name is reserved; simulate the reservation the launch performs.

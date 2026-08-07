@@ -14,6 +14,7 @@ from spinedb_api import DatabaseMapping, import_data
 from flextool._resources import package_data_path
 from flextool.representative_periods.scenario_stack import (
     add_alternative_to_scenario,
+    create_scenario_with_alternative,
     dedup_alternative_name,
     existing_alternative_names,
 )
@@ -116,6 +117,47 @@ def test_dedup_alternative_name():
         )
         == "lt_rp_40rp_54h_3"
     )
+
+
+def test_create_scenario_clones_stack_and_appends(tmp_path):
+    url = _build_db(str(tmp_path / "new_scen.sqlite"))
+    new_scen = f"{SCENARIO}_{RP_ALT}"
+
+    create_scenario_with_alternative(url, SCENARIO, new_scen, RP_ALT)
+
+    # The base scenario is left completely untouched.
+    assert _stack(url, SCENARIO) == [BASE_ALT, MID_ALT]
+    # The new scenario clones the base stack and appends the RP alt on top.
+    assert _stack(url, new_scen) == [BASE_ALT, MID_ALT, RP_ALT]
+    assert _ranks(url, new_scen) == [1, 2, 3]
+
+
+def test_create_scenario_idempotent(tmp_path):
+    url = _build_db(str(tmp_path / "new_scen_idem.sqlite"))
+    new_scen = f"{SCENARIO}_{RP_ALT}"
+    create_scenario_with_alternative(url, SCENARIO, new_scen, RP_ALT)
+    stack_after_first = _stack(url, new_scen)
+
+    # Second call: no duplicate rows, no rank churn.
+    create_scenario_with_alternative(url, SCENARIO, new_scen, RP_ALT)
+    assert _stack(url, new_scen) == stack_after_first
+    assert stack_after_first.count(RP_ALT) == 1
+
+
+def test_create_scenario_missing_base_raises(tmp_path):
+    url = _build_db(str(tmp_path / "new_scen_missing.sqlite"))
+    with pytest.raises(ValueError, match="no_such_scenario"):
+        create_scenario_with_alternative(
+            url, "no_such_scenario", "whatever", RP_ALT
+        )
+
+
+def test_create_scenario_missing_alt_raises(tmp_path):
+    url = _build_db(str(tmp_path / "new_scen_missing_alt.sqlite"))
+    with pytest.raises(ValueError, match="no_such_alt"):
+        create_scenario_with_alternative(
+            url, SCENARIO, f"{SCENARIO}_x", "no_such_alt"
+        )
 
 
 def test_missing_scenario_raises(tmp_path):

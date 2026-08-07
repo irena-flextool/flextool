@@ -30,7 +30,7 @@ _CALIB_FIELDS = (
     "calib_rp_force_sustained",
     "calib_rp_force_peak",
     "calib_rp_force_window",
-    "calib_rp_add_to_scenario",
+    "calib_rp_scenario_mode",
     "calib_selected_solves",
     "calib_max_iterations",
     "calib_sizing",
@@ -50,7 +50,7 @@ def test_calib_settings_round_trip(tmp_path: Path):
         calib_rp_force_sustained=False,
         calib_rp_force_peak=True,
         calib_rp_force_window=48,
-        calib_rp_add_to_scenario=False,
+        calib_rp_scenario_mode="new_scenario",
         calib_selected_solves=["solve_a", "solve_b"],
         calib_max_iterations=15,
         calib_sizing="uniform",
@@ -89,7 +89,7 @@ def test_calib_settings_malformed_tolerated(tmp_path: Path):
                 "calib_max_iterations": True,  # bool, not a plain int
                 "calib_overshoot_pct": True,   # bool, not a number
                 "calib_keep_artifacts": "yes",  # not a bool
-                "calib_rp_add_to_scenario": "sure",  # not a bool
+                "calib_rp_scenario_mode": "bogus",  # not a valid mode
                 "calib_selected_solves": ["ok", 5, ""],
             }
         ),
@@ -102,6 +102,16 @@ def test_calib_settings_malformed_tolerated(tmp_path: Path):
     assert loaded.calib_max_iterations == defaults.calib_max_iterations
     assert loaded.calib_overshoot_pct == defaults.calib_overshoot_pct
     assert loaded.calib_keep_artifacts == defaults.calib_keep_artifacts
-    assert loaded.calib_rp_add_to_scenario == defaults.calib_rp_add_to_scenario
+    assert loaded.calib_rp_scenario_mode == defaults.calib_rp_scenario_mode
     # Non-string / empty elements dropped; the valid one is kept.
     assert loaded.calib_selected_solves == ["ok"]
+
+
+def test_calib_legacy_add_to_scenario_migrates(tmp_path: Path):
+    """A pre-3-way settings.yaml migrates the old bool to the new mode string."""
+    for flag, expected in ((False, "detached"), (True, "add")):
+        (tmp_path / SETTINGS_FILENAME).write_text(
+            yaml.safe_dump({"calib_rp_add_to_scenario": flag}), encoding="utf-8"
+        )
+        loaded = load_project_settings(tmp_path)
+        assert loaded.calib_rp_scenario_mode == expected

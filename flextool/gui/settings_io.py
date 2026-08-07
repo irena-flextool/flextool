@@ -129,11 +129,15 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     _c_win = data.get("calib_rp_force_window", settings.calib_rp_force_window)
     if isinstance(_c_win, int) and not isinstance(_c_win, bool):
         settings.calib_rp_force_window = _c_win
-    _c_add = data.get(
-        "calib_rp_add_to_scenario", settings.calib_rp_add_to_scenario
-    )
-    if isinstance(_c_add, bool):
-        settings.calib_rp_add_to_scenario = _c_add
+    _c_mode = data.get("calib_rp_scenario_mode")
+    if isinstance(_c_mode, str) and _c_mode in ("detached", "add", "new_scenario"):
+        settings.calib_rp_scenario_mode = _c_mode
+    else:
+        # Legacy migration: the pre-3-way boolean "add to scenario" flag
+        # (True -> append to the scenario, False -> leave the alt detached).
+        _c_add = data.get("calib_rp_add_to_scenario")
+        if isinstance(_c_add, bool):
+            settings.calib_rp_scenario_mode = "add" if _c_add else "detached"
     _c_solves = data.get("calib_selected_solves", settings.calib_selected_solves)
     if isinstance(_c_solves, list):
         settings.calib_selected_solves = [

@@ -109,8 +109,87 @@ def add_alternative_to_scenario(
         )
 
 
+def create_scenario_with_alternative(
+    db_url: str,
+    base_scenario_name: str,
+    new_scenario_name: str,
+    alternative_name: str,
+) -> None:
+    """Clone *base_scenario_name* into *new_scenario_name* + append *alternative_name*.
+
+    Creates *new_scenario_name* as a copy of *base_scenario_name*'s ordered
+    alternative stack (same alternatives, same ranks) and then appends
+    *alternative_name* at ``max(rank) + 1`` so the RP alternative overrides the
+    baseline ``period_timeset``. The base scenario is left completely
+    untouched, so the original and the representative-period runs can be
+    compared side by side.
+
+    Idempotent: if *new_scenario_name* already exists it is not recreated — the
+    function only ensures *alternative_name* is present at the top of its stack
+    (mirroring :func:`add_alternative_to_scenario`), so a repeated launch is a
+    no-op rather than an error.
+
+    Args:
+        db_url: Spine database URL (e.g. ``'sqlite:///path.sqlite'``).
+        base_scenario_name: Scenario to clone. Must exist.
+        new_scenario_name: Name of the scenario to create / extend.
+        alternative_name: Alternative to append on top. Must exist.
+
+    Raises:
+        ValueError: If the base scenario or the alternative does not exist.
+    """
+    with DatabaseMapping(db_url) as db:
+        if not db.get_scenario_item(name=base_scenario_name):
+            raise ValueError(
+                f"Scenario '{base_scenario_name}' does not exist in the database."
+            )
+        if not db.get_alternative_item(name=alternative_name):
+            raise ValueError(
+                f"Alternative '{alternative_name}' does not exist in the database."
+            )
+
+        # Create the new scenario the first time, cloning the base stack. On a
+        # repeat launch the scenario already exists, so only the top-rank append
+        # below runs (idempotent).
+        changed = False
+        if not db.get_scenario_item(name=new_scenario_name):
+            db.add_scenario(name=new_scenario_name)
+            for sa in db.get_scenario_alternative_items(
+                scenario_name=base_scenario_name
+            ):
+                db.add_scenario_alternative(
+                    scenario_name=new_scenario_name,
+                    alternative_name=sa["alternative_name"],
+                    rank=sa["rank"],
+                )
+            changed = True
+
+        existing = db.get_scenario_alternative_items(
+            scenario_name=new_scenario_name
+        )
+        if not any(
+            sa["alternative_name"] == alternative_name for sa in existing
+        ):
+            next_rank = max((sa["rank"] for sa in existing), default=0) + 1
+            db.add_scenario_alternative(
+                scenario_name=new_scenario_name,
+                alternative_name=alternative_name,
+                rank=next_rank,
+            )
+            changed = True
+
+        # Nothing to persist on a fully idempotent repeat call — committing an
+        # unchanged session raises ``NothingToCommit``.
+        if changed:
+            db.commit_session(
+                f"Create scenario '{new_scenario_name}' from "
+                f"'{base_scenario_name}' with alternative '{alternative_name}'"
+            )
+
+
 __all__ = [
     "add_alternative_to_scenario",
+    "create_scenario_with_alternative",
     "dedup_alternative_name",
     "existing_alternative_names",
 ]
