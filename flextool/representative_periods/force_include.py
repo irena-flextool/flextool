@@ -453,6 +453,109 @@ def _region_scope_forced_indices(
     return _greedy_region_cover(region_candidates, region_scores, effective_budget)
 
 
+def build_region_deficit_matrix(
+    profiles: dict[str, list[tuple[str, float]]],
+    inflows: dict[str, list[tuple[str, float]]],
+    demand_scalars: dict[str, float],
+    timestep_keys: list[str],
+    period_length: int,
+    n_base: int,
+    *,
+    region_profiles: dict[str, list[str]] | None,
+    region_demand: dict[str, float] | None,
+    region_nodes: dict[str, list[str]] | None,
+) -> np.ndarray | None:
+    """Extensive signed per-region net-deficit matrix, shape ``(R_used, n_base)``.
+
+    Row ``r`` (sorted region) × column ``b`` (base period). Entry is the signed
+    extensive net-load energy integral over the period:
+
+    ``D[r, b] = Σ_{t ∈ b} nl_r[t]``,
+    ``nl_r[t] = D_r·(1 − mean_{p ∈ r}(avail_{p,t})) − Σ_{n ∈ r} tv_inflow_{n,t}``
+
+    (raw, un-normalised, demand-energy units — the E1 deficit feature). This is
+    the same net-load physics as :func:`build_netload_hourly` but deliberately
+    **without** the ``_normalize`` mean-absolute division (which strips the level
+    that carries the drought) and **without** the ``vg_weight`` blend: the two
+    terms are summed at their true physical scale so the signed integral
+    reconstructs both storage limbs (drain when ``nl_r > 0``, recharge when
+    ``< 0``).
+
+    The constant scalar demand level is carried once, inside the VG term via
+    ``D_r`` (``region_demand``), and dropped from the inflow term (only the
+    time-varying part enters). A sum-to-1 convex fit annihilates any constant
+    added to a feature row, so this is fit-inert either way (see plan §D1).
+
+    Regions are iterated in ``sorted(region_profiles)`` order for a deterministic
+    row order (D5). A region with no profile, no inflow and no scalar demand
+    carries no signal and is skipped (same test as
+    :func:`_region_scope_forced_indices`); a region whose resulting row is
+    identically zero is skipped too. Returns ``None`` when no region qualifies,
+    so the caller falls back to the shape fit.
+
+    Args:
+        profiles: VRE availability series (name -> [(key, value), ...]), 0-1.
+        inflows: Time-varying node inflow series (name -> [(key, value), ...]).
+        demand_scalars: Constant node inflows collected as demand levels.
+        timestep_keys: Ordered timestep keys defining the horizon.
+        period_length: Timesteps per aligned base period.
+        n_base: Number of aligned base periods.
+        region_profiles: region -> profile names attached to that region.
+        region_demand: region -> demand level ``D_r``.
+        region_nodes: region -> member node names (filters inflow / demand).
+
+    Returns:
+        ``(R_used, n_base)`` array of signed extensive per-region net deficits,
+        or ``None`` when no region carries a usable signal.
+    """
+    if not region_profiles:
+        return None
+    region_demand = region_demand or {}
+    region_nodes = region_nodes or {}
+
+    n_hours = len(timestep_keys)
+    n_used = n_base * period_length
+
+    rows: list[np.ndarray] = []
+    for region in sorted(region_profiles):
+        prof_names = region_profiles[region]
+        node_set = set(region_nodes.get(region, []))
+        prof_r = {n: profiles[n] for n in prof_names if n in profiles}
+        inflow_r = {n: v for n, v in inflows.items() if n in node_set}
+        demand_r = {n: v for n, v in demand_scalars.items() if n in node_set}
+        # A region with no profile, no inflow and no scalar demand carries no
+        # net-load information — skip it (matches _region_scope_forced_indices).
+        if not prof_r and not inflow_r and not demand_r:
+            continue
+
+        d_r = float(region_demand.get(region, 0.0))
+        avail = _series_matrix(prof_r, timestep_keys)
+        if avail is None or d_r == 0.0:
+            vg_h = np.zeros(n_hours, dtype=np.float64)
+        else:
+            vg_h = d_r * (1.0 - avail.mean(axis=0))
+
+        tv = _series_matrix(inflow_r, timestep_keys)
+        if tv is not None:
+            nl_h = vg_h - tv.sum(axis=0)
+        else:
+            nl_h = vg_h
+
+        # Time-integral over each aligned base period (extensive: raw sum, no
+        # normalisation), giving one entry per base period.
+        region_row = nl_h[:n_used].reshape(n_base, period_length).sum(axis=1)
+
+        # A region whose integrated signal is identically zero carries no
+        # deficit information — skip it rather than add a dead feature row.
+        if not np.any(region_row):
+            continue
+        rows.append(region_row)
+
+    if not rows:
+        return None
+    return np.vstack(rows)
+
+
 def compute_forced_indices(
     profiles: dict[str, list[tuple[str, float]]],
     inflows: dict[str, list[tuple[str, float]]],

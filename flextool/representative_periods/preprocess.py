@@ -474,6 +474,7 @@ def preprocess_representative_periods(
     region_groups: list[str] | None = None,
     force_region_scope: bool = False,
     force_region_budget: int | None = None,
+    deficit_weights: bool = False,
     solves: list[str] | None = None,
     alternative_name: str | None = None,
     alternative_description: str | None = None,
@@ -504,6 +505,16 @@ def preprocess_representative_periods(
             scope. ``None`` (default) derives a sane cap from ``n_rp`` as
             ``max(1, n_rp // 2)`` so forced periods never dominate the
             representative set; ignored when ``force_region_scope`` is ``False``.
+        deficit_weights: Opt in to the E1 deficit-space weighting fit. ``False``
+            (default) fits the convex weights ``W`` to the *shape* clustering
+            matrix ``C`` — the byte-parity path. When ``True``, ``W`` is fit
+            instead to the per-region extensive signed net-deficit matrix ``D``
+            (:func:`force_include.build_region_deficit_matrix`) so the emitted
+            weights (and the annualization weight derived from them) favour
+            drought representatives. Requires ``region_groups``; falls back to
+            the shape fit — with a printed note — when no region carries a usable
+            deficit signal. Selection (``rep_indices``) is unchanged: it always
+            stays on the shape matrix ``C``.
         solves: Optional subset of solve names whose ``period_timeset`` should
             be repointed at the new RP timeset. ``None`` (default) updates every
             solve that carries a ``period_timeset`` param — the current
@@ -528,6 +539,15 @@ def preprocess_representative_periods(
     the selected ``rep_indices`` and the emitted Maps are byte-identical to the
     pure-hull path — this is the opt-in byte-parity contract.
     """
+    # Deficit-space weighting needs per-region maps to build its feature
+    # matrix; without --region-groups there is no region to score. Fail loudly
+    # rather than silently degrade to the shape fit (mirrors the --solves check).
+    if deficit_weights and not region_groups:
+        raise ValueError(
+            "--deficit-weights requires --region-groups: the deficit-space fit "
+            "scores net load per region and has no region set without it."
+        )
+
     # ------------------------------------------------------------------
     # 1. Read from DB with scenario filter
     # ------------------------------------------------------------------
@@ -664,16 +684,57 @@ def preprocess_representative_periods(
     # ------------------------------------------------------------------
     # 5. Compute weights
     # ------------------------------------------------------------------
+    # Selection (rep_indices) always stays on the shape matrix C. E1 only
+    # changes the feature matrix the convex weights are *fit* to: with
+    # --deficit-weights, W is fit to the per-region extensive net-deficit matrix
+    # D (same n_base column axis as C, so rep_indices index into it unchanged);
+    # otherwise W is fit to C — today's byte-parity path. fit_matrix records
+    # which matrix W was fit to so the projection-error summary (D6) reports the
+    # residual against the right target.
     print("Computing convex weights...")
-    W = compute_weight_matrix(C, rep_indices)
+    if deficit_weights:
+        D = force_include.build_region_deficit_matrix(
+            profiles,
+            inflows,
+            demand_scalars,
+            timestep_keys,
+            period_length,
+            n_base_periods,
+            region_profiles=region_profiles,
+            region_demand=region_demand,
+            region_nodes=region_nodes,
+        )
+        if D is None or D.shape[0] == 0:
+            print(
+                "  Deficit-weights: no region carried a usable deficit signal "
+                "— falling back to the shape fit."
+            )
+            W = compute_weight_matrix(C, rep_indices)
+            fit_matrix = C
+        else:
+            print(
+                f"  Deficit-weights: fitting weights to a {D.shape[0]}-region "
+                f"net-deficit matrix (shape {D.shape})."
+            )
+            W = compute_weight_matrix(D, rep_indices)
+            fit_matrix = D
+    else:
+        W = compute_weight_matrix(C, rep_indices)  # today's byte-parity path
+        fit_matrix = C
 
-    # Compute projection errors for summary
-    R = C[:, rep_indices]
+    # Compute projection errors for summary against the matrix W was fit to
+    # (D6): under E1 W is fit to D, so measuring its residual against C would
+    # print a meaningless shape residual of a deficit-fit W.
+    R = fit_matrix[:, rep_indices]
     errors = np.array([
-        np.linalg.norm(R @ W[d, :] - C[:, d]) for d in range(n_base_periods)
+        np.linalg.norm(R @ W[d, :] - fit_matrix[:, d]) for d in range(n_base_periods)
     ])
     mean_error = float(errors.mean())
     max_error = float(errors.max())
+    error_label = (
+        "deficit-space projection error" if fit_matrix is not C
+        else "shape projection error"
+    )
 
     # ------------------------------------------------------------------
     # 6. Build output
@@ -720,8 +781,8 @@ def preprocess_representative_periods(
     # ------------------------------------------------------------------
     print("\n--- Representative Periods Summary ---")
     print(f"  Representative periods selected: {n_rp}")
-    print(f"  Mean projection error: {mean_error:.6f}")
-    print(f"  Max projection error:  {max_error:.6f}")
+    print(f"  Mean {error_label}: {mean_error:.6f}")
+    print(f"  Max {error_label}:  {max_error:.6f}")
     print(f"  Timeset name:     '{timeset_name}'")
     print(f"  Alternative name: '{alternative_name}'")
 
@@ -804,6 +865,14 @@ def main() -> None:
         "from n_rp as max(1, n_rp // 2)).",
     )
     parser.add_argument(
+        "--deficit-weights",
+        action="store_true",
+        help="Fit the convex weights to the per-region extensive net-deficit "
+        "matrix (E1) instead of the shape clustering matrix, biasing the "
+        "emitted weights toward drought representatives. Requires "
+        "--region-groups. Selection of representative periods is unchanged.",
+    )
+    parser.add_argument(
         "--solves",
         type=str,
         default=None,
@@ -853,6 +922,7 @@ def main() -> None:
             region_groups=region_groups,
             force_region_scope=args.force_region_scope,
             force_region_budget=args.force_region_budget,
+            deficit_weights=args.deficit_weights,
             solves=solves,
             alternative_name=args.alternative_name,
             alternative_description=args.alternative_description,
