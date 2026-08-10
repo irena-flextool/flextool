@@ -254,13 +254,14 @@ class TestPhase0Parity:
 
 class TestAssemblerFormula:
     def test_build_region_deficit_matrix_formula(self):
-        """Exact ``d[r,b]`` on hand-built inputs.
+        """Exact ``d[r,b]`` on hand-built inputs (VRE-matches-demand formula).
 
-        Region A (2 profiles, D_r=10, one time-varying inflow node) and region B
-        (1 profile, D_r=5, no inflow) over 2 periods of length 2. Checks the sign
-        convention (a supply inflow lowers net load, a demand / negative inflow
-        raises it), ``D_r`` counted once, the per-hour profile-axis mean, and the
-        reshape/time-integral.
+        Region A (2 profiles, ``d_r_scalar=10``, one time-varying inflow node)
+        and region B (1 profile, ``d_r_scalar=5``, no inflow) over 2 periods of
+        length 2. Checks the sign convention (demand is negative inflow, so
+        ``-Σ tv`` raises demand), the scalar demand level, the per-hour
+        profile-axis mean, the ``vre_cap = E_D/E_A`` energy-match scaling, and
+        the reshape/time-integral.
         """
         keys = ["t0", "t1", "t2", "t3"]
         period_length, n_base = 2, 2
@@ -288,10 +289,16 @@ class TestAssemblerFormula:
             region_nodes=region_nodes,
         )
 
-        # Region A: mean avail = [0.25, 0.75, 0.5, 0.5]; vg = 10*(1-mean) =
-        # [7.5, 2.5, 5, 5]; nl = vg - inflow = [5.5, 5.5, 5, 4]; integral = [11, 9].
-        # Region B: vg = 5*(1-pb) = [0, 5, 0, 0]; integral = [5, 0].
-        expected = np.array([[11.0, 9.0], [5.0, 0.0]])
+        # Region A: mean avail = [0.25, 0.75, 0.5, 0.5]; E_A = 2.0.
+        #   demand = d_r_scalar - inflow = 10 - [2, -3, 0, 1] = [8, 13, 10, 9];
+        #   E_D = 40; vre_cap = 40/2 = 20.
+        #   nl = demand - 20*avail = [8-5, 13-15, 10-10, 9-10] = [3, -2, 0, -1];
+        #   integral = [3+(-2), 0+(-1)] = [1, -1].  (Note Σ nl = 0.)
+        # Region B: no inflow -> demand = [5, 5, 5, 5]; E_D = 20.
+        #   avail = pb = [1, 0, 1, 1]; E_A = 3; vre_cap = 20/3.
+        #   nl = 5 - (20/3)*avail = [5-20/3, 5, 5-20/3, 5-20/3];
+        #   integral = [(5-20/3)+5, (5-20/3)+(5-20/3)] = [10/3, -10/3].
+        expected = np.array([[1.0, -1.0], [10.0 / 3.0, -10.0 / 3.0]])
         assert D is not None
         assert D.shape == (2, 2)
         assert np.allclose(D, expected)

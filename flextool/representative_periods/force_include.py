@@ -470,21 +470,35 @@ def build_region_deficit_matrix(
     Row ``r`` (sorted region) × column ``b`` (base period). Entry is the signed
     extensive net-load energy integral over the period:
 
-    ``D[r, b] = Σ_{t ∈ b} nl_r[t]``,
-    ``nl_r[t] = D_r·(1 − mean_{p ∈ r}(avail_{p,t})) − Σ_{n ∈ r} tv_inflow_{n,t}``
+    ``D[r, b] = Σ_{t ∈ b} nl_r[t]``.
 
-    (raw, un-normalised, demand-energy units — the E1 deficit feature). This is
-    the same net-load physics as :func:`build_netload_hourly` but deliberately
-    **without** the ``_normalize`` mean-absolute division (which strips the level
-    that carries the drought) and **without** the ``vg_weight`` blend: the two
-    terms are summed at their true physical scale so the signed integral
-    reconstructs both storage limbs (drain when ``nl_r > 0``, recharge when
-    ``< 0``).
+    The per-hour net load ``nl_r[t]`` is built so it carries a real wind-drought
+    signal whether the region's demand is a scalar ``demand`` parameter OR (as on
+    this demo) time-varying node *inflow*. FlexTool's sign convention is that
+    demand is **negative** inflow, so subtracting the summed inflow raises net
+    load:
 
-    The constant scalar demand level is carried once, inside the VG term via
-    ``D_r`` (``region_demand``), and dropped from the inflow term (only the
-    time-varying part enters). A sum-to-1 convex fit annihilates any constant
-    added to a feature row, so this is fit-inert either way (see plan §D1).
+    ``demand_r[t] = d_r_scalar − Σ_{n ∈ r} tv_inflow_{n,t}``,
+    ``avail_r[t]  = mean_{p ∈ r}(avail_{p,t})``  (``0`` if the region has none),
+
+    where ``d_r_scalar = region_demand.get(region, 0.0)`` is the constant demand
+    *level* (usually ``0`` here — the demand is all in the inflow). VRE
+    generation is the availability shape scaled so that the region's total VRE
+    *energy* equals its total demand energy over the used horizon — the "VRE
+    matches demand in energy" proxy the operator specified, because the actually
+    invested VRE capacity is unknown at preprocess time:
+
+    ``E_D = Σ_t demand_r[t]``,  ``E_A = Σ_t avail_r[t]``,
+    ``vre_cap = E_D / E_A``  (``0`` when ``E_A ≤ 0`` or ``E_D ≤ 0``),
+    ``nl_r[t] = demand_r[t] − vre_cap · avail_r[t]``.
+
+    With this scaling ``Σ_t nl_r[t] ≈ 0``, so ``nl_r`` swings ``+`` in a
+    wind-drought / high-demand trough and ``−`` in a VRE surplus, and the signed
+    integral reconstructs both storage limbs (drain when ``nl_r > 0``, recharge
+    when ``< 0``). The energy sums ``E_D`` / ``E_A`` and the reshape/integral are
+    all taken over the same ``n_used = n_base·period_length`` slice so they stay
+    consistent. This is raw, un-normalised, demand-energy units (extensive — no
+    ``_normalize`` mean-absolute division, no ``vg_weight`` blend).
 
     Regions are iterated in ``sorted(region_profiles)`` order for a deterministic
     row order (D5). A region with no profile, no inflow and no scalar demand
@@ -528,22 +542,40 @@ def build_region_deficit_matrix(
         if not prof_r and not inflow_r and not demand_r:
             continue
 
-        d_r = float(region_demand.get(region, 0.0))
-        avail = _series_matrix(prof_r, timestep_keys)
-        if avail is None or d_r == 0.0:
-            vg_h = np.zeros(n_hours, dtype=np.float64)
-        else:
-            vg_h = d_r * (1.0 - avail.mean(axis=0))
+        d_r_scalar = float(region_demand.get(region, 0.0))
 
+        # Real exogenous demand per hour: scalar demand level minus the summed
+        # time-varying inflow (demand is negative inflow, so -Σ tv raises it).
         tv = _series_matrix(inflow_r, timestep_keys)
         if tv is not None:
-            nl_h = vg_h - tv.sum(axis=0)
+            demand_h = d_r_scalar - tv.sum(axis=0)
         else:
-            nl_h = vg_h
+            demand_h = np.full(n_hours, d_r_scalar, dtype=np.float64)
+
+        # VRE availability shape (0 when the region owns no profile).
+        avail = _series_matrix(prof_r, timestep_keys)
+        if avail is not None:
+            avail_h = avail.mean(axis=0)
+        else:
+            avail_h = np.zeros(n_hours, dtype=np.float64)
+
+        # Restrict to the used horizon BEFORE the energy sums so E_D / E_A and
+        # the integral are all consistent over the same slice.
+        demand_used = demand_h[:n_used]
+        avail_used = avail_h[:n_used]
+
+        # Scale VRE so its total energy matches the region's demand energy over
+        # the horizon (invested capacity is unknown at preprocess; this is the
+        # operator's "VRE matches demand in energy" proxy).
+        e_d = float(demand_used.sum())
+        e_a = float(avail_used.sum())
+        vre_cap = e_d / e_a if (e_a > 0.0 and e_d > 0.0) else 0.0
+
+        nl_used = demand_used - vre_cap * avail_used
 
         # Time-integral over each aligned base period (extensive: raw sum, no
         # normalisation), giving one entry per base period.
-        region_row = nl_h[:n_used].reshape(n_base, period_length).sum(axis=1)
+        region_row = nl_used.reshape(n_base, period_length).sum(axis=1)
 
         # A region whose integrated signal is identically zero carries no
         # deficit information — skip it rather than add a dead feature row.
