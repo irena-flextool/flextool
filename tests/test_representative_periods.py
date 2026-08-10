@@ -198,6 +198,96 @@ class TestNearestAssignment:
         # Tie → lowest rep index (r=0, i.e. rep_indices[0]=col 0).
         assert np.array_equal(W[1, :], np.array([1.0, 0.0]))
 
+    # -- k-nearest inverse-distance weighting ------------------------------
+
+    def test_k1_byte_identical_to_default(self):
+        rng = np.random.default_rng(2024)
+        C = rng.random((20, 15))
+        rep = greedy_convex_hull_clustering(C, 5)
+        W_default = compute_nearest_assignment(C, rep)
+        W_k1 = compute_nearest_assignment(C, rep, k=1)
+        assert np.array_equal(W_default, W_k1)
+
+    def test_k2_hand_computation(self):
+        # Single feature; reps at cols 0 (value 0), 1 (value 10), 2 (value 30).
+        C = np.array([[0.0, 10.0, 30.0, 4.0]])
+        rep = [0, 1, 2]
+        W = compute_nearest_assignment(C, rep, k=2)
+        # Base 3 (value 4): distances to reps = [4, 6, 26]. Two nearest are
+        # rep 0 (d=4) and rep 1 (d=6). Inverse-distance weights:
+        # 1/4 and 1/6 → normalized: (1/4)/(1/4+1/6), (1/6)/(1/4+1/6).
+        inv = np.array([1.0 / 4.0, 1.0 / 6.0])
+        norm = inv / inv.sum()
+        expected_row = np.array([norm[0], norm[1], 0.0])
+        assert np.allclose(W[3, :], expected_row)
+        # Exactly 2 nonzero entries; row sums to 1.
+        assert np.count_nonzero(W[3, :]) == 2
+        assert W[3, :].sum() == pytest.approx(1.0)
+
+    def test_k2_two_nonzero_and_row_sums(self):
+        rng = np.random.default_rng(99)
+        C = rng.random((10, 12))
+        rep = greedy_convex_hull_clustering(C, 5)
+        W = compute_nearest_assignment(C, rep, k=2)
+        for d in range(C.shape[1]):
+            nz = np.count_nonzero(W[d, :])
+            # Reps coincide with themselves → 1 nonzero; others → 2.
+            assert nz in (1, 2)
+            assert W[d, :].sum() == pytest.approx(1.0)
+        # A base period that IS a rep gets a clean one-hot (zero-distance guard).
+        for r_idx, r_col in enumerate(rep):
+            assert W[r_col, r_idx] == 1.0
+            assert np.count_nonzero(W[r_col, :]) == 1
+
+    def test_k2_zero_distance_guard_one_hot(self):
+        # Base col 3 equals rep col 1 exactly → one-hot, no NaN/inf even at k=2.
+        C = np.array(
+            [
+                [0.0, 10.0, 30.0, 10.0],
+                [0.0, 10.0, 30.0, 10.0],
+            ]
+        )
+        rep = [0, 1, 2]
+        W = compute_nearest_assignment(C, rep, k=2)
+        assert np.all(np.isfinite(W))
+        assert np.array_equal(W[3, :], np.array([0.0, 1.0, 0.0]))
+        assert np.count_nonzero(W[3, :]) == 1
+
+    def test_k2_deterministic_repeated_calls(self):
+        rng = np.random.default_rng(321)
+        C = rng.random((12, 30))
+        rep = greedy_convex_hull_clustering(C, 6)
+        W1 = compute_nearest_assignment(C, rep, k=2)
+        W2 = compute_nearest_assignment(C, rep, k=2)
+        assert np.array_equal(W1, W2)
+
+    def test_k2_tie_breaks_to_lowest_rep(self):
+        # Base col 1 (value 1) is equidistant from reps at cols 0 (0) and 2 (2),
+        # and rep at col 3 (value 5) is farther. With k=2 the two nearest are
+        # the tied pair → equal split; STABLE sort keeps them ordered by rep
+        # index so both are selected deterministically.
+        C = np.array([[0.0, 1.0, 2.0, 5.0]])
+        rep = [0, 2, 3]
+        W = compute_nearest_assignment(C, rep, k=2)
+        # Reps 0 and 1 (cols 0, 2) are the two nearest, both at distance 1 →
+        # equal 0.5/0.5 split; rep 2 (col 3) is zero.
+        assert np.allclose(W[1, :], np.array([0.5, 0.5, 0.0]))
+
+    def test_k_greater_than_nrp_clamps(self):
+        C = np.array([[0.0, 1.0, 2.0]])
+        rep = [0, 2]
+        # k=5 > n_rp=2 → clamp to 2; must not error and row sums to 1.
+        W = compute_nearest_assignment(C, rep, k=5)
+        assert W.shape == (3, 2)
+        for d in range(3):
+            assert W[d, :].sum() == pytest.approx(1.0)
+
+    def test_k_zero_raises(self):
+        C = np.array([[0.0, 1.0, 2.0]])
+        rep = [0, 2]
+        with pytest.raises(ValueError):
+            compute_nearest_assignment(C, rep, k=0)
+
 
 # ---------------------------------------------------------------------------
 # Unit test: _read_time_series scalar handling

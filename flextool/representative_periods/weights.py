@@ -125,29 +125,50 @@ def compute_weight_matrix(
 
 
 def compute_nearest_assignment(
-    C: np.ndarray, rep_indices: list[int]
+    C: np.ndarray, rep_indices: list[int], k: int = 1
 ) -> np.ndarray:
-    """Compute a 0/1 single-nearest weight matrix W for all base periods.
+    """Compute a nearest-``k`` inverse-distance weight matrix W for base periods.
 
     Drop-in alternative to :func:`compute_weight_matrix` that ties each base
-    period to its SINGLE nearest representative period instead of a convex
-    blend. Each base period is assigned (weight 1.0) to the representative
-    period ``r`` minimizing the Euclidean distance ``||C[:, d] - R[:, r]||``,
-    where ``R = C[:, rep_indices]``; all other entries in the row are 0.0.
+    period to its ``k`` nearest representative periods instead of a convex
+    blend. With the default ``k == 1`` each base period is assigned
+    (weight 1.0) to the representative period ``r`` minimizing the Euclidean
+    distance ``||C[:, d] - R[:, r]||``, where ``R = C[:, rep_indices]``; all
+    other entries in the row are 0.0 — a pure single-nearest 0/1 assignment.
+
+    For ``k > 1`` each base period is split across its ``k`` nearest
+    representative periods, weighted by inverse Euclidean distance
+    ``w_i ∝ 1 / d_i`` and normalized so the row sums to exactly 1.0. This
+    smooths the inter-period storage chain in hourly-RP experiments. A base
+    period that coincides with a representative period (distance 0) is a
+    special case: inverse distance is infinite, so all of the row's weight
+    goes to the zero-distance rep(s) (split equally if several of the ``k``
+    are at distance 0) and none is spread to the finite-distance reps.
 
     Args:
         C: Clustering matrix, shape (n_features, n_base_periods).
         rep_indices: Indices of selected representative periods.
+        k: Number of nearest representative periods to blend per base period.
+            ``1`` (default) reproduces the single-nearest 0/1 assignment
+            byte-for-byte. Clamped down to ``n_rp`` if larger. Must be >= 1.
 
     Returns:
-        Weight matrix W of shape (n_base_periods, n_rp), where each row has
-        exactly one entry equal to 1.0 and the rest 0.0. A base period that is
-        itself a representative period maps to itself (distance 0). Ties in
-        distance are broken toward the lowest representative index ``r``
-        (``np.argmin`` returns the first minimum).
+        Weight matrix W of shape (n_base_periods, n_rp). With ``k == 1`` each
+        row has exactly one entry equal to 1.0 and the rest 0.0. With
+        ``k > 1`` each row has up to ``k`` nonzero entries summing to 1.0
+        (exactly one nonzero for rows coinciding with a rep). Ties in distance
+        are broken toward the lowest representative index ``r`` via a STABLE
+        sort, which preserves rep-index order for equal distances.
+
+    Raises:
+        ValueError: If ``k < 1``.
     """
+    if k < 1:
+        raise ValueError(f"k must be >= 1, got {k}")
+
     n_base = C.shape[1]
     n_rp = len(rep_indices)
+    k = min(k, n_rp)
     R = C[:, rep_indices]
 
     # Squared Euclidean distances between every base period and every rep,
@@ -155,9 +176,41 @@ def compute_nearest_assignment(
     diff = C[:, :, np.newaxis] - R[:, np.newaxis, :]
     dist_sq = np.einsum("fbr,fbr->br", diff, diff)  # shape (n_base, n_rp)
 
-    # np.argmin returns the FIRST minimum → deterministic lowest-r tie-break.
-    nearest = np.argmin(dist_sq, axis=1)
-
     W = np.zeros((n_base, n_rp))
-    W[np.arange(n_base), nearest] = 1.0
+
+    if k == 1:
+        # np.argmin returns the FIRST minimum → deterministic lowest-r tie-break.
+        # Kept as a dedicated branch to guarantee byte-identical 0/1 output.
+        nearest = np.argmin(dist_sq, axis=1)
+        W[np.arange(n_base), nearest] = 1.0
+        return W
+
+    # Stable argsort keeps rep-index order on distance ties → lowest-r wins;
+    # take the k smallest-distance reps per base period.
+    order = np.argsort(dist_sq, axis=1, kind="stable")[:, :k]  # (n_base, k)
+    rows = np.arange(n_base)[:, np.newaxis]
+    sel_dist_sq = dist_sq[rows, order]  # (n_base, k) squared distances
+    sel_dist = np.sqrt(sel_dist_sq)  # actual Euclidean distance
+
+    # Zero-distance rows: base period coincides with one (or more) of the k
+    # reps → inverse distance is infinite. Give all weight to the zero-distance
+    # rep(s), split equally among them; do NOT divide by zero or spread.
+    zero_mask = sel_dist == 0.0  # (n_base, k)
+    row_has_zero = zero_mask.any(axis=1)  # (n_base,)
+
+    weights = np.zeros_like(sel_dist)
+
+    # Finite (no coincident rep) rows: inverse-distance, normalized to sum 1.
+    finite_rows = ~row_has_zero
+    if finite_rows.any():
+        inv = 1.0 / sel_dist[finite_rows]
+        weights[finite_rows] = inv / inv.sum(axis=1, keepdims=True)
+
+    # Coincident rows: uniform split across the zero-distance rep(s) only.
+    if row_has_zero.any():
+        zsub = zero_mask[row_has_zero]
+        weights[row_has_zero] = zsub / zsub.sum(axis=1, keepdims=True)
+
+    # Scatter the per-selection weights back into the full (n_base, n_rp) matrix.
+    np.add.at(W, (rows, order), weights)
     return W

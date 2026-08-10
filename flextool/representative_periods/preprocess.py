@@ -478,6 +478,7 @@ def preprocess_representative_periods(
     force_region_scope: bool = False,
     force_region_budget: int | None = None,
     nearest_assignment: bool = False,
+    nearest_k: int = 1,
     solves: list[str] | None = None,
     alternative_name: str | None = None,
     alternative_description: str | None = None,
@@ -512,6 +513,11 @@ def preprocess_representative_periods(
             nearest representative period (0/1 weight) instead of the convex
             blend. For hourly-RP tied-storage experiments. ``False`` (default)
             keeps the convex weight matrix — the byte-parity path.
+        nearest_k: Number of nearest representative periods to blend by inverse
+            Euclidean distance when ``nearest_assignment`` is ``True``. ``1``
+            (default) keeps the single-nearest 0/1 assignment; ``k > 1`` splits
+            each base period across its ``k`` nearest reps weighted by inverse
+            distance. Ignored when ``nearest_assignment`` is ``False``.
         solves: Optional subset of solve names whose ``period_timeset`` should
             be repointed at the new RP timeset. ``None`` (default) updates every
             solve that carries a ``period_timeset`` param — the current
@@ -673,8 +679,14 @@ def preprocess_representative_periods(
     # 5. Compute weights
     # ------------------------------------------------------------------
     if nearest_assignment:
-        print("Assigning each base period to its single nearest RP (0/1)...")
-        W = compute_nearest_assignment(C, rep_indices)
+        if nearest_k > 1:
+            print(
+                f"Assigning each base period to its {nearest_k} nearest RPs "
+                "by inverse distance..."
+            )
+        else:
+            print("Assigning each base period to its single nearest RP (0/1)...")
+        W = compute_nearest_assignment(C, rep_indices, k=nearest_k)
     else:
         print("Computing convex weights...")
         W = compute_weight_matrix(C, rep_indices)
@@ -823,6 +835,14 @@ def main() -> None:
         "tied-storage experiments.",
     )
     parser.add_argument(
+        "--nearest-k",
+        type=int,
+        default=1,
+        help="Number of nearest representative periods to blend by inverse "
+        "distance when --nearest-assignment is set (default 1 = single-nearest "
+        "0/1).",
+    )
+    parser.add_argument(
         "--solves",
         type=str,
         default=None,
@@ -873,6 +893,7 @@ def main() -> None:
             force_region_scope=args.force_region_scope,
             force_region_budget=args.force_region_budget,
             nearest_assignment=args.nearest_assignment,
+            nearest_k=args.nearest_k,
             solves=solves,
             alternative_name=args.alternative_name,
             alternative_description=args.alternative_description,
