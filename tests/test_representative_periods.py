@@ -13,6 +13,7 @@ import pytest
 
 from flextool.representative_periods.clustering import greedy_convex_hull_clustering
 from flextool.representative_periods.weights import (
+    compute_nearest_assignment,
     compute_weight_matrix,
     fit_convex_weights,
     project_onto_simplex,
@@ -129,6 +130,73 @@ class TestWeightMatrix:
         W = compute_weight_matrix(C, rep)
         for r_idx, r_col in enumerate(rep):
             assert W[r_col, r_idx] > 0.9
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: single-nearest assignment
+# ---------------------------------------------------------------------------
+
+class TestNearestAssignment:
+    def test_rows_are_one_hot(self):
+        rng = np.random.default_rng(42)
+        C = rng.random((20, 15))
+        rep = greedy_convex_hull_clustering(C, 5)
+        W = compute_nearest_assignment(C, rep)
+        assert W.shape == (15, 5)
+        for d in range(15):
+            assert W[d, :].sum() == 1.0
+            assert np.count_nonzero(W[d, :]) == 1
+            assert np.all((W[d, :] == 0.0) | (W[d, :] == 1.0))
+
+    def test_representative_maps_to_itself(self):
+        rng = np.random.default_rng(7)
+        C = rng.random((20, 15))
+        rep = greedy_convex_hull_clustering(C, 5)
+        W = compute_nearest_assignment(C, rep)
+        for r_idx, r_col in enumerate(rep):
+            # A base period that IS a rep has distance 0 to itself → self weight.
+            assert W[r_col, r_idx] == 1.0
+
+    def test_hand_constructed_argmin(self):
+        # 3 features x 5 base periods; reps are base columns 0, 2, 4.
+        C = np.array(
+            [
+                [0.0, 1.0, 10.0, 11.0, 20.0],
+                [0.0, 1.0, 10.0, 11.0, 20.0],
+                [0.0, 1.0, 10.0, 11.0, 20.0],
+            ]
+        )
+        rep = [0, 2, 4]
+        W = compute_nearest_assignment(C, rep)
+        # Base 0 -> rep 0 (self); base 1 (=1) nearest to rep 0 (=0);
+        # base 2 -> rep 1 (self, col 2); base 3 (=11) nearest to rep 1 (=10);
+        # base 4 -> rep 2 (self, col 4).
+        expected = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        assert np.array_equal(W, expected)
+
+    def test_deterministic_repeated_calls(self):
+        rng = np.random.default_rng(123)
+        C = rng.random((12, 30))
+        rep = greedy_convex_hull_clustering(C, 6)
+        W1 = compute_nearest_assignment(C, rep)
+        W2 = compute_nearest_assignment(C, rep)
+        assert np.array_equal(W1, W2)
+
+    def test_exact_tie_breaks_to_lowest_rep(self):
+        # Base column 1 is exactly equidistant from reps at cols 0 and 2.
+        C = np.array([[0.0, 1.0, 2.0]])
+        rep = [0, 2]
+        W = compute_nearest_assignment(C, rep)
+        # Tie → lowest rep index (r=0, i.e. rep_indices[0]=col 0).
+        assert np.array_equal(W[1, :], np.array([1.0, 0.0]))
 
 
 # ---------------------------------------------------------------------------

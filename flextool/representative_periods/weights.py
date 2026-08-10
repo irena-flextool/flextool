@@ -122,3 +122,42 @@ def compute_weight_matrix(
         W[d, :] = fit_convex_weights(R, C[:, d])
 
     return W
+
+
+def compute_nearest_assignment(
+    C: np.ndarray, rep_indices: list[int]
+) -> np.ndarray:
+    """Compute a 0/1 single-nearest weight matrix W for all base periods.
+
+    Drop-in alternative to :func:`compute_weight_matrix` that ties each base
+    period to its SINGLE nearest representative period instead of a convex
+    blend. Each base period is assigned (weight 1.0) to the representative
+    period ``r`` minimizing the Euclidean distance ``||C[:, d] - R[:, r]||``,
+    where ``R = C[:, rep_indices]``; all other entries in the row are 0.0.
+
+    Args:
+        C: Clustering matrix, shape (n_features, n_base_periods).
+        rep_indices: Indices of selected representative periods.
+
+    Returns:
+        Weight matrix W of shape (n_base_periods, n_rp), where each row has
+        exactly one entry equal to 1.0 and the rest 0.0. A base period that is
+        itself a representative period maps to itself (distance 0). Ties in
+        distance are broken toward the lowest representative index ``r``
+        (``np.argmin`` returns the first minimum).
+    """
+    n_base = C.shape[1]
+    n_rp = len(rep_indices)
+    R = C[:, rep_indices]
+
+    # Squared Euclidean distances between every base period and every rep,
+    # vectorized via broadcasting: (n_features, n_base, 1) - (n_features, 1, n_rp).
+    diff = C[:, :, np.newaxis] - R[:, np.newaxis, :]
+    dist_sq = np.einsum("fbr,fbr->br", diff, diff)  # shape (n_base, n_rp)
+
+    # np.argmin returns the FIRST minimum → deterministic lowest-r tie-break.
+    nearest = np.argmin(dist_sq, axis=1)
+
+    W = np.zeros((n_base, n_rp))
+    W[np.arange(n_base), nearest] = 1.0
+    return W

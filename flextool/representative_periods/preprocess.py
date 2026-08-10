@@ -16,7 +16,10 @@ from spinedb_api import DatabaseMapping, import_data, Map
 from flextool.engine_polars._db_reader import DictMode, params_to_dict
 from flextool.representative_periods import force_include
 from flextool.representative_periods.clustering import greedy_convex_hull_clustering
-from flextool.representative_periods.weights import compute_weight_matrix
+from flextool.representative_periods.weights import (
+    compute_nearest_assignment,
+    compute_weight_matrix,
+)
 
 
 def _read_time_series(
@@ -474,6 +477,7 @@ def preprocess_representative_periods(
     region_groups: list[str] | None = None,
     force_region_scope: bool = False,
     force_region_budget: int | None = None,
+    nearest_assignment: bool = False,
     solves: list[str] | None = None,
     alternative_name: str | None = None,
     alternative_description: str | None = None,
@@ -504,6 +508,10 @@ def preprocess_representative_periods(
             scope. ``None`` (default) derives a sane cap from ``n_rp`` as
             ``max(1, n_rp // 2)`` so forced periods never dominate the
             representative set; ignored when ``force_region_scope`` is ``False``.
+        nearest_assignment: When ``True``, assign each base period to its single
+            nearest representative period (0/1 weight) instead of the convex
+            blend. For hourly-RP tied-storage experiments. ``False`` (default)
+            keeps the convex weight matrix — the byte-parity path.
         solves: Optional subset of solve names whose ``period_timeset`` should
             be repointed at the new RP timeset. ``None`` (default) updates every
             solve that carries a ``period_timeset`` param — the current
@@ -664,8 +672,12 @@ def preprocess_representative_periods(
     # ------------------------------------------------------------------
     # 5. Compute weights
     # ------------------------------------------------------------------
-    print("Computing convex weights...")
-    W = compute_weight_matrix(C, rep_indices)
+    if nearest_assignment:
+        print("Assigning each base period to its single nearest RP (0/1)...")
+        W = compute_nearest_assignment(C, rep_indices)
+    else:
+        print("Computing convex weights...")
+        W = compute_weight_matrix(C, rep_indices)
 
     # Compute projection errors for summary
     R = C[:, rep_indices]
@@ -804,6 +816,13 @@ def main() -> None:
         "from n_rp as max(1, n_rp // 2)).",
     )
     parser.add_argument(
+        "--nearest-assignment",
+        action="store_true",
+        help="Assign each base period to its single nearest representative "
+        "period (0/1 weight) instead of a convex blend; for hourly-RP "
+        "tied-storage experiments.",
+    )
+    parser.add_argument(
         "--solves",
         type=str,
         default=None,
@@ -853,6 +872,7 @@ def main() -> None:
             region_groups=region_groups,
             force_region_scope=args.force_region_scope,
             force_region_budget=args.force_region_budget,
+            nearest_assignment=args.nearest_assignment,
             solves=solves,
             alternative_name=args.alternative_name,
             alternative_description=args.alternative_description,
