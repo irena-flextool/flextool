@@ -1025,19 +1025,33 @@ class PlotSettingsPicker(tk.Toplevel):
         return True
 
     def _on_drag_start(self, event: tk.Event) -> str | None:
-        """Begin a MOVE drag only when the press is on a selected row.
+        """Begin a MOVE drag whenever the press lands on a row.
 
-        Pressing an already-selected row starts moving the whole selection
-        (return ``"break"`` to keep the multi-selection intact).  Pressing
-        an unselected row / empty space is left to ttk's default handler so
-        a click selects and a drag DRAW-selects a range.
+        Pressing an already-selected row moves the whole selection.
+        Pressing an UNSELECTED row (no Shift/Ctrl) first collapses the
+        selection onto that row, then moves it — so a drag started on a
+        not-yet-selected item picks it up, as users expect, instead of
+        ttk's native range draw-select.  Either way we return ``"break"``
+        to own the selection and keep it intact for the drag.
+
+        Shift/Ctrl presses are left to ttk's default handler so extend /
+        toggle multi-selection still works (the user builds a selection,
+        then drags it as a block).  A press on empty space is native too.
         """
         tree = event.widget
         if tree not in self._tree_section:
             return None
         row = tree.identify_row(event.y) or None
         self._drag_moved[tree] = False
-        if row and row in set(tree.selection()):
+        # Shift (0x0001) / Control (0x0004) → let ttk extend/toggle select.
+        if getattr(event, "state", 0) & 0x0005:
+            self._drag_move[tree] = False
+            self._drag_anchor[tree] = None
+            return None
+        if row:
+            if row not in set(tree.selection()):
+                tree.selection_set(row)
+                tree.focus(row)
             self._drag_move[tree] = True
             self._drag_anchor[tree] = row
             return "break"

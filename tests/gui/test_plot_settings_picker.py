@@ -391,11 +391,12 @@ class TestPickerReorder:
         assert list(sect.keys()) == ["chp", "coal"]
         assert sect["chp"] == {"color": "#E64A19", "neg_color": "#9c3010"}
 
-    def test_drag_on_unselected_row_does_not_move(
+    def test_drag_on_unselected_row_selects_and_moves(
         self, tk_root, tmp_path, monkeypatch,
     ):
-        """Pressing an unselected row starts a DRAW-select (native), not a
-        move — our handlers must not reorder."""
+        """Pressing an UNSELECTED row (no modifier) collapses the selection
+        onto it and starts a MOVE drag, so a drag begun on a not-yet-selected
+        item picks it up and reorders."""
         picker, _ = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
         unit = _tree_in_tab(picker, titles.index("unit"))
@@ -406,13 +407,33 @@ class TestPickerReorder:
         def _ev(y):
             return types.SimpleNamespace(widget=unit, y=y)
 
-        # Nothing selected → press on coal is NOT a move; drag is a no-op
-        # for our reorder logic (ttk handles selection natively).
-        assert picker._on_drag_start(_ev(0)) is None
-        assert picker._drag_move[unit] is False
+        # Another row is selected; press on the UNSELECTED coal.
+        unit.selection_set(chp)
+        assert picker._on_drag_start(_ev(0)) == "break"
+        # coal is now the (sole) selection and a move drag is engaged.
+        assert picker._drag_move[unit] is True
+        assert unit.selection() == (coal,)
         picker._on_drag_motion(_ev(1))
         picker._on_drag_end(_ev(1))
-        assert _row_names(unit) == ["coal", "chp"]
+        assert _row_names(unit) == ["chp", "coal"]
+        sect = _section(picker._data, ("entities", "unit"))
+        assert list(sect.keys()) == ["chp", "coal"]
+
+    def test_drag_start_with_modifier_defers_to_native(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """A Shift/Ctrl press is left to ttk (extend/toggle multi-select),
+        so no move drag is primed."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal, chp = unit.get_children("")
+        monkeypatch.setattr(
+            unit, "identify_row", lambda y: {0: coal, 1: chp}.get(y, ""))
+        # Control (0x0004) held while pressing coal → native selection.
+        evt = types.SimpleNamespace(widget=unit, y=0, state=0x0004)
+        assert picker._on_drag_start(evt) is None
+        assert picker._drag_move[unit] is False
 
     def test_extended_selectmode(self, tk_root, tmp_path):
         """Trees allow multi-selection (Shift/Ctrl + native draw-select)."""
@@ -1156,6 +1177,9 @@ def _make_stub_viewer(project_path: Path, live_plan=None):
     stub = types.SimpleNamespace()
     stub._project_path = project_path
     stub._live_plan = live_plan
+    # Dispatch order/ylim caches that _apply_color_settings must invalidate.
+    stub._dispatch_ylims = {}
+    stub._dispatch_columns = {}
     stub.calls = []
     stub._clear_figure_cache = lambda: stub.calls.append("clear_figure_cache")
     stub._clear_prefetched_figures = lambda: stub.calls.append(
@@ -1284,6 +1308,27 @@ class TestApplyColorSettings:
         assert stub._live_plan is plan
         assert plan.shared_color_map == {'coal': (0.0, 1.0, 0.0)}
         assert stub.calls == ["clear_prefetched_figures", "trigger_replot"]
+
+    def test_clears_dispatch_order_cache(self, tk_root, tmp_path):
+        """Apply must invalidate the dispatch column/ylim caches so a
+        dispatch re-render re-derives its stacking order from the edited
+        template (else colors update but order stays frozen until reopen)."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "plot_settings.yaml").write_text(
+            "entities:\n  node:\n    n1: '#abcdef'\n", encoding="utf-8",
+        )
+
+        stub = _make_stub_viewer(project, live_plan=None)
+        # Prime the caches as a prior dispatch render would.
+        stub._dispatch_columns = {"elec": ["a", "b"]}
+        stub._dispatch_ylims = {"elec": (0.0, 1.0)}
+
+        stub._apply_color_settings()
+
+        # Both order-bearing caches are cleared in lockstep.
+        assert stub._dispatch_columns == {}
+        assert stub._dispatch_ylims == {}
 
 
 # ---------------------------------------------------------------------------

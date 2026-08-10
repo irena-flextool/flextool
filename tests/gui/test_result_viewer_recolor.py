@@ -101,6 +101,9 @@ class _RecolorViewer(ResultViewer):
         self._live_plan = None
         self._live_plan_key = ("", "", "")
         self._force_plan_recompute = False
+        # Dispatch order/ylim caches _apply_color_settings invalidates.
+        self._dispatch_ylims = {}
+        self._dispatch_columns = {}
         self._figure_cache = {}
         self._figure_cache_lock = threading.Lock()
         self._parquet_cache_key = ("", "")

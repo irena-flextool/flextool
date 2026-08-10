@@ -2251,6 +2251,17 @@ class ResultViewer(tk.Toplevel):
         from flextool.plot_outputs.plan import rebuild_plan_color_map
         _clear_cache()
 
+        # Dispatch plots don't use ``_live_plan``: they freeze their column
+        # (stacking) order in a per-nodeGroup cache that reindexes every
+        # render (``_display_*_dispatch``), so a freshly derived template
+        # order would be overridden by the stale cached order — colors would
+        # update on Apply but the ORDER would not, until the viewer is
+        # reopened.  Drop the order/ylim caches (kept in lockstep — both are
+        # keyed by nodeGroup and set together) so the next dispatch render
+        # re-derives its order from the edited ``plot_settings.yaml``.
+        self._dispatch_ylims.clear()
+        self._dispatch_columns.clear()
+
         # True in-place recolor/reorder: when a plan is already cached AND
         # it carries color hints (``color_category`` / ``color_entity_class``),
         # rebuild ONLY its shared_color_map (new colors + new file order)
