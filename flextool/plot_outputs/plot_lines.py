@@ -364,6 +364,20 @@ def _build_lines_figure(
             else:
                 lines = df_sub.columns.unique().tolist()
 
+            # Draw (and hence legend) order follows the shared color map's key
+            # order (file order from plot_settings.yaml; unlisted labels were
+            # appended alphabetically by the plan), matching the stack/bar
+            # charts.  Lines missing from the map keep their relative position
+            # after the mapped ones.
+            if shared_color_map:
+                key_pos = {k: i for i, k in enumerate(shared_color_map.keys())}
+                lines = sorted(
+                    lines,
+                    key=lambda ln: (
+                        key_pos.get(str(ln), len(key_pos)), lines.index(ln),
+                    ),
+                )
+
             for line in lines:
                 if is_multiindex:
                     if len(line_level_names) == 1:

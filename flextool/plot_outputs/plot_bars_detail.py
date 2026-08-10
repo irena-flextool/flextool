@@ -117,11 +117,21 @@ def _plot_grouped_bars(
         grouped_bar_df = df_sub.columns.to_frame()[grouped_bar_level_names].drop_duplicates()
         grouped_bars = [tuple(row) for row in grouped_bar_df.values]
 
-    # Sort groups alphabetically when using shared colors so visual order matches legend
+    # Order groups by the shared color map's key order (file order from
+    # plot_settings.yaml; unlisted labels were appended alphabetically by the
+    # plan), matching the stack/line charts so the visual order tracks the
+    # legend and the picker's reordering.  Groups missing from the map keep
+    # their relative position after the mapped ones.
     if shared_color_map:
         def _group_key(gb):
             return ' | '.join(str(v) for v in gb) if isinstance(gb, (tuple, list)) else str(gb)
-        grouped_bars.sort(key=_group_key)
+        key_pos = {k: i for i, k in enumerate(shared_color_map.keys())}
+        orig = list(grouped_bars)
+        grouped_bars.sort(
+            key=lambda gb: (
+                key_pos.get(_group_key(gb), len(key_pos)), orig.index(gb),
+            ),
+        )
 
     # Colors for grouped bars
     n_grouped = len(grouped_bars)
