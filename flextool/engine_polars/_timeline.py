@@ -113,6 +113,8 @@ class TimelineConfig:
         new_step_durations: dict,
         rp_weights: dict | None = None,
         timeset_weights: dict | None = None,
+        region_rp_weights: dict | None = None,
+        node_to_region: dict | None = None,
     ) -> None:
         self.timelines = timelines
         self.timesets = timesets
@@ -123,6 +125,12 @@ class TimelineConfig:
         self.timeset_weights: dict[str, dict[str, float]] = (
             timeset_weights or {}
         )
+        # Switch S — per-region representative-period weight matrices
+        # (``group.representative_period_weights``) and the node -> region
+        # resolution built from ``group__node`` membership.  Empty (the
+        # byte-parity default) when no group carries per-region weights.
+        self.region_rp_weights: dict = region_rp_weights or {}
+        self.node_to_region: dict[str, str] = node_to_region or {}
 
         # Mutable state — populated later by orchestration / stochastic.
         self.stochastic_timesteps: defaultdict[str, list] = defaultdict(list)
@@ -199,6 +207,44 @@ class TimelineConfig:
         timeset_weights: dict[str, dict[str, float]] = (
             _decode_timeset_weights(timeset_weights_raw)
         )
+
+        # Switch S — per-region representative-period weights
+        # (``group.representative_period_weights``).  Same rank-2 nested-Map
+        # shape as the timeset variant, so reuse ``_decode_rp_weights``.
+        # Scenario-filtered: only present when the region-weights alternative
+        # is active, so the byte-parity default (no group weights) yields an
+        # empty dict and no behaviour change.
+        region_rp_weights_raw = params_to_dict(
+            db=db,
+            cl="group",
+            par="representative_period_weights",
+            mode=DictMode.DICT,
+        )
+        region_rp_weights: dict = _decode_rp_weights(region_rp_weights_raw)
+
+        # Resolve node -> region from ``group__node`` membership, restricted
+        # to regions that actually carry per-region weights.  A storage node
+        # that belongs to more than one weighted region is ambiguous — raise
+        # a clear error rather than silently picking one.
+        node_to_region: dict[str, str] = {}
+        if region_rp_weights:
+            _weighted = set(region_rp_weights)
+            _node_regions: dict[str, list[str]] = {}
+            for item in db.get_entity_items(entity_class_name="group__node"):
+                group_name, node_name = item["element_name_list"]
+                if group_name in _weighted:
+                    _node_regions.setdefault(node_name, []).append(group_name)
+            for node_name, regions in _node_regions.items():
+                if len(set(regions)) > 1:
+                    raise FlexToolConfigError(
+                        f"Node '{node_name}' belongs to more than one region "
+                        f"group carrying representative_period_weights "
+                        f"({sorted(set(regions))}).  A storage node's "
+                        f"per-region weight matrix must be unambiguous — put "
+                        f"it in exactly one weighted region group."
+                    )
+                node_to_region[node_name] = regions[0]
+
         return cls(
             timelines=timelines,
             timesets=timesets,
@@ -207,6 +253,8 @@ class TimelineConfig:
             new_step_durations=new_step_durations,
             rp_weights=rp_weights,
             timeset_weights=timeset_weights,
+            region_rp_weights=region_rp_weights,
+            node_to_region=node_to_region,
         )
 
     @classmethod

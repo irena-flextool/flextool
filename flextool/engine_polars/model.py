@@ -1148,11 +1148,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # ``v_state__rp_last`` Var composes cleanly under activation.
         _t_dt = d.rp_block_first.schema["t"]
         _v_state_t_dt = v_state.frame.schema["t"]
+        # Switch S — per-region weights fan ``rp_base__rep`` per storage
+        # node: an ``n`` column keys the weight matrix so each node uses its
+        # region's matrix.  Absent the column (byte-parity default) the shared
+        # matrix cross-joins against every node exactly as before.
+        _rp_has_n = "n" in d.rp_base__rep.frame.columns
+        _n_dt = bind_set_rp.schema["n"]
         rbf = (d.rp_block_first
                .rename({"t": "r"})
                .with_columns(pl.col("r").cast(_t_dt, strict=False)))
         rep_pair = (d.rp_base__rep.frame
                     .with_columns(pl.col("r").cast(_t_dt, strict=False)))
+        if _rp_has_n:
+            rep_pair = rep_pair.with_columns(
+                pl.col("n").cast(_n_dt, strict=False))
         prpls = (d.p_rp_last_step
                  .with_columns(pl.col("r").cast(_t_dt, strict=False),
                                pl.col("last_step")
@@ -1167,11 +1176,18 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             # on the join product so engine arithmetic broadcasts it
             # against v_state / v_state_rp_start at the same cohort.
             # Schema dims = (b, r, d, last_step); ``value`` carries the
-            # rp_weight per (b, r) row, replicated across the join.
-            p_rp_weight_brdl = Param(
-                ("b", "r", "d", "last_step"),
-                rep_dr.select("b", "r", "d", "last_step", "value"),
-            )
+            # rp_weight per (b, r) row, replicated across the join.  Under
+            # switch S the key gains ``n`` (per-node weight matrix).
+            if _rp_has_n:
+                p_rp_weight_brdl = Param(
+                    ("n", "b", "r", "d", "last_step"),
+                    rep_dr.select("n", "b", "r", "d", "last_step", "value"),
+                )
+            else:
+                p_rp_weight_brdl = Param(
+                    ("b", "r", "d", "last_step"),
+                    rep_dr.select("b", "r", "d", "last_step", "value"),
+                )
             # v_state at p_rp_last_step[r]: rename t → last_step so the
             # var key is (n, d, last_step).
             v_state_at_last = Var(
@@ -1189,11 +1205,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 frame=v_state_rp_start.frame.rename({"t": "r"}),
                 lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
             )
-            # Cohort (n, b, r, d, last_step) for the Σ sum:
-            # bind_set_rp[n] × rep_dr[b, r, d, last_step].
-            n_brdl = (bind_set_rp.select("n").unique()
-                      .join(rep_dr.select("b", "r", "d", "last_step"),
-                            how="cross"))
+            # Cohort (n, b, r, d, last_step) for the Σ sum.  Shared path:
+            # bind_set_rp[n] × rep_dr[b, r, d, last_step] (every node gets the
+            # identical matrix).  Switch S: rep_dr already carries ``n``, so
+            # join on ``n`` (each node gets ONLY its own region's matrix)
+            # restricted to the storage nodes in bind_set_rp.
+            if _rp_has_n:
+                n_brdl = (bind_set_rp.select("n").unique()
+                          .join(rep_dr.select(
+                                    "n", "b", "r", "d", "last_step"),
+                                on="n", how="inner"))
+            else:
+                n_brdl = (bind_set_rp.select("n").unique()
+                          .join(rep_dr.select("b", "r", "d", "last_step"),
+                                how="cross"))
             v_last_at = Where(v_state_at_last, n_brdl)
             v_start_at = Where(v_state_rp_start_at_r, n_brdl)
             # (v_last - v_start) · p_rp_weight[b, r, d, last_step], dim
@@ -1322,11 +1347,17 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         rbf = (d.rp_block_first
                .rename({"t": "r"})
                .with_columns(pl.col("r").cast(_t_dt, strict=False)))
+        # Switch S — same per-node fan as rp_inter_period_balance above.
+        _rp_has_n = "n" in d.rp_base__rep.frame.columns
+        _n_dt = bind_set_rp.schema["n"]
         rep_pair_first = (d.rp_base__rep.frame
                           .rename({"b": "b_first"})
                           .with_columns(
                               pl.col("r").cast(_t_dt, strict=False),
                               pl.col("b_first").cast(_b_dt, strict=False)))
+        if _rp_has_n:
+            rep_pair_first = rep_pair_first.with_columns(
+                pl.col("n").cast(_n_dt, strict=False))
         prpls = (d.p_rp_last_step
                  .with_columns(pl.col("r").cast(_t_dt, strict=False),
                                pl.col("last_step")
@@ -1338,12 +1369,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             rep_dr_first = rep_dr_first.join(
                 d.period_in_use_set, on="d", how="inner")
         if rep_dr_first.height > 0:
-            # p_rp_weight[b_first, r] over (b_first, r, d, last_step).
-            p_rp_weight_bfrdl = Param(
-                ("b_first", "r", "d", "last_step"),
-                rep_dr_first.select(
-                    "b_first", "r", "d", "last_step", "value"),
-            )
+            # p_rp_weight[b_first, r] over (b_first, r, d, last_step); gains
+            # ``n`` under switch S (per-node weight matrix).
+            if _rp_has_n:
+                p_rp_weight_bfrdl = Param(
+                    ("n", "b_first", "r", "d", "last_step"),
+                    rep_dr_first.select(
+                        "n", "b_first", "r", "d", "last_step", "value"),
+                )
+            else:
+                p_rp_weight_bfrdl = Param(
+                    ("b_first", "r", "d", "last_step"),
+                    rep_dr_first.select(
+                        "b_first", "r", "d", "last_step", "value"),
+                )
             v_state_at_last = Var(
                 name=v_state.name + "__rp_last_cyc",
                 dims=("n", "d", "last_step"),
@@ -1356,12 +1395,19 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 frame=v_state_rp_start.frame.rename({"t": "r"}),
                 lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
             )
-            # Cohort (n, b_first, r, d, last_step):
-            # bind_set_rp[n] × rep_dr_first[b_first, r, d, last_step].
-            n_bfrdl = (bind_set_rp.select("n").unique()
-                       .join(rep_dr_first.select(
-                                 "b_first", "r", "d", "last_step"),
-                             how="cross"))
+            # Cohort (n, b_first, r, d, last_step).  Shared: cross-join every
+            # node with the matrix.  Switch S: join on ``n`` so each node uses
+            # only its region's matrix, restricted to bind_set_rp nodes.
+            if _rp_has_n:
+                n_bfrdl = (bind_set_rp.select("n").unique()
+                           .join(rep_dr_first.select(
+                                     "n", "b_first", "r", "d", "last_step"),
+                                 on="n", how="inner"))
+            else:
+                n_bfrdl = (bind_set_rp.select("n").unique()
+                           .join(rep_dr_first.select(
+                                     "b_first", "r", "d", "last_step"),
+                                 how="cross"))
             v_last_at = Where(v_state_at_last, n_bfrdl)
             v_start_at = Where(v_state_rp_start_at_r, n_bfrdl)
             # No p_state_unitsize factor — same var-unit framing as

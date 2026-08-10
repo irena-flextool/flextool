@@ -1757,6 +1757,8 @@ def migrate_database(
                 _migrate_v66_energy_margin_adder(db)
             elif next_version == 67:
                 _migrate_v67_node_penalty_method(db)
+            elif next_version == 68:
+                _migrate_v68_add_group_representative_period_weights(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3667,6 +3669,45 @@ def _migrate_v67_node_penalty_method(db) -> None:
     _commit_step(db,
         "v67: added node.penalty_method (penalty_methods: regular/off); "
         "'off' removes node balance slack (penalty) variables."
+    )
+
+
+def _migrate_v68_add_group_representative_period_weights(db) -> None:
+    """Add ``group.representative_period_weights`` (v67 -> v68).
+
+    Additive parameter only: declares a per-region (nodeGroup-scoped)
+    override of the shared ``timeset.representative_period_weights`` matrix
+    for the blended-weights inter-period storage coupling (switch S).  A
+    storage node that belongs to exactly one group carrying this parameter
+    uses that group's weight matrix instead of the shared timeset matrix;
+    absence everywhere is byte-identical to prior behaviour.
+
+    No data backfill — the parameter is populated only by the
+    representative-periods preprocess tool when run with ``--region-weights``.
+    Mirrors the additive pattern of the v61 timeset variant.
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="representative_period_weights",
+        parameter_type_list=("2d_map",),
+        parameter_group_name="solve_advanced",
+        description=(
+            "Per-region representative-period weighting map (rank-2 nested "
+            "Map: base period start timestep -> representative period start "
+            "timestep -> weight).  Optional region-scoped override of the "
+            "shared 'timeset.representative_period_weights' matrix for the "
+            "blended-weights inter-period storage coupling: each storage node "
+            "that belongs to exactly one group carrying this parameter uses "
+            "that group's weight matrix instead of the shared timeset matrix. "
+            "Created by the representative-periods preprocess tool with "
+            "'--region-weights'.  Absence everywhere is byte-identical to the "
+            "shared-matrix behaviour.  Selection of the representative periods "
+            "stays shared; only the weight matrix becomes region-indexed."
+        ),
+    )
+    db.commit_session(
+        "Added group.representative_period_weights parameter"
     )
 
 

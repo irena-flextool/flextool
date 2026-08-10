@@ -331,6 +331,75 @@ def _build_weights_map(
     return Map(outer_keys, outer_values, index_name="base_period")
 
 
+def compute_region_weight_maps(
+    profiles: dict[str, list[tuple[str, float]]],
+    inflows: dict[str, list[tuple[str, float]]],
+    region_profiles: dict[str, list[str]],
+    region_nodes: dict[str, list[str]],
+    rep_indices: list[int],
+    timestep_keys: list[str],
+    period_length: int,
+) -> dict[str, Map]:
+    """Compute one representative-period weight Map per region (switch S).
+
+    For each region, build a **region-filtered** clustering matrix ``C_r``
+    from only that region's profiles / time-varying inflows (mirroring the
+    per-region filtering in ``force_include._score_net_per_region``), then
+    project the base periods onto the SHARED ``rep_indices`` with
+    :func:`compute_weight_matrix`.  Selection is unchanged — only the
+    projection (the weight matrix) becomes region-specific.
+
+    A region whose filtered signal is empty or entirely constant carries no
+    net-load information; :func:`_build_clustering_matrix` raises
+    ``ValueError`` in that case and the region is skipped (it then falls
+    back to the shared matrix at emit time), matching the
+    ``_score_net_per_region`` "flat -> skip" convention.
+
+    Args:
+        profiles: System-wide profile series (name -> [(key, value), ...]).
+        inflows: System-wide time-varying inflow series.
+        region_profiles: region -> profile names attached to that region.
+        region_nodes: region -> member node names (filters inflow series).
+        rep_indices: Shared representative base-period indices.
+        timestep_keys: Ordered timeline step keys.
+        period_length: Timesteps per period.
+
+    Returns:
+        region -> nested weight ``Map`` (only for regions with a usable,
+        non-constant signal). Deterministic: regions are processed in
+        sorted order and each ``C_r`` is a pure function of its filtered,
+        order-preserving inputs.
+    """
+    region_maps: dict[str, Map] = {}
+    for region in sorted(region_profiles):
+        prof_names = region_profiles[region]
+        node_set = set(region_nodes.get(region, []))
+        prof_r = {n: profiles[n] for n in prof_names if n in profiles}
+        inflow_r = {n: v for n, v in inflows.items() if n in node_set}
+        if not prof_r and not inflow_r:
+            print(
+                f"  Region '{region}': no profiles/inflows to weight — "
+                f"falling back to shared matrix."
+            )
+            continue
+        try:
+            C_r, n_base_r = _build_clustering_matrix(
+                prof_r, inflow_r, timestep_keys, period_length
+            )
+        except ValueError:
+            print(
+                f"  Region '{region}': constant/empty signal — falling back "
+                f"to shared matrix."
+            )
+            continue
+        W_r = compute_weight_matrix(C_r, rep_indices)
+        region_maps[region] = _build_weights_map(
+            W_r, rep_indices, timestep_keys, period_length, n_base_r
+        )
+        print(f"  Region '{region}': per-region weight matrix computed.")
+    return region_maps
+
+
 def _write_results_to_db(
     db_url: str,
     timeset_name: str,
@@ -340,6 +409,7 @@ def _write_results_to_db(
     weights_map: Map,
     solve_period_timesets: dict,
     alternative_description: str | None = None,
+    region_weights_maps: dict[str, Map] | None = None,
 ) -> None:
     """Write clustering results to the database in a new alternative.
 
@@ -378,6 +448,25 @@ def _write_results_to_db(
                 ):
                     _pv.remove()
                     _purged = True
+        # Group-scoped per-region weights (switch S): same clean-overwrite so
+        # a re-run replaces rather than merges a region's map.
+        if region_weights_maps:
+            try:
+                _existing_grp = list(
+                    db.find_parameter_values(
+                        entity_class_name="group",
+                        parameter_definition_name="representative_period_weights",
+                    )
+                )
+            except Exception:
+                _existing_grp = []
+            for _pv in _existing_grp:
+                if (
+                    _pv["entity_name"] in region_weights_maps
+                    and _pv["alternative_name"] == alternative_name
+                ):
+                    _pv.remove()
+                    _purged = True
         if _purged:
             db.commit_session(
                 f"Clear stale representative periods before rewrite: {timeset_name}"
@@ -406,6 +495,26 @@ def _write_results_to_db(
             ("timeset", timeset_name, "timeset_duration", timeset_duration_map, alternative_name),
             ("timeset", timeset_name, "representative_period_weights", weights_map, alternative_name),
         ]
+
+        # Per-region weights (switch S): write each region's nested Map on the
+        # ``group`` class under the SAME alternative. Additive — the group
+        # entities already exist (they are user-defined nodeGroups); listing
+        # them here is a harmless no-op if present.
+        if region_weights_maps:
+            parameter_definitions.append(
+                ("group", "representative_period_weights")
+            )
+            for _region in sorted(region_weights_maps):
+                entities.append(("group", _region))
+                parameter_values.append(
+                    (
+                        "group",
+                        _region,
+                        "representative_period_weights",
+                        region_weights_maps[_region],
+                        alternative_name,
+                    )
+                )
 
         # Update each solve's period_timeset to use the new RP timeset
         entity_alternatives = [
@@ -456,6 +565,13 @@ def _write_results_to_db(
                 name="representative_period_weights",
                 parameter_group_name="solve_advanced",
             )
+            if region_weights_maps:
+                db.add_update_item(
+                    "parameter_definition",
+                    entity_class_name="group",
+                    name="representative_period_weights",
+                    parameter_group_name="solve_advanced",
+                )
 
         db.commit_session(f"Add representative periods: {timeset_name}")
         print(f"Wrote {count} items to database")
@@ -472,6 +588,7 @@ def preprocess_representative_periods(
     force_window: int | None = None,
     vg_weight: float = 0.5,
     region_groups: list[str] | None = None,
+    region_weights: bool = False,
     force_region_scope: bool = False,
     force_region_budget: int | None = None,
     solves: list[str] | None = None,
@@ -495,6 +612,13 @@ def preprocess_representative_periods(
         region_groups: Optional list of node-group names for demand-weighting
             the VG term (``Σ_r D_r · mean_{p∈r}(1 - avail)``). ``None`` (default)
             keeps the unweighted system aggregate — the byte-parity path.
+        region_weights: Opt in to per-region representative-period weight
+            matrices for the blended-weights inter-period storage coupling
+            (switch S). ``False`` (default) writes only the shared timeset
+            matrix — the byte-parity path. When ``True`` (requires
+            ``region_groups``), one ``group.representative_period_weights``
+            Map is written per region from that region's own filtered signal,
+            projected onto the SHARED ``rep_indices``.
         force_region_scope: Opt in to the per-region budgeted force-include mode
             (requires ``region_groups``). ``False`` (default) keeps the
             single system-coincident signal — the byte-parity path. When ``True``,
@@ -701,6 +825,34 @@ def preprocess_representative_periods(
     )
 
     # ------------------------------------------------------------------
+    # 6b. Per-region weight matrices (switch S, opt-in). Same shared
+    # ``rep_indices``; only the projection (weight matrix) is region-specific.
+    # ------------------------------------------------------------------
+    region_weights_maps: dict[str, Map] | None = None
+    if region_weights:
+        if not region_groups or region_profiles is None or region_nodes is None:
+            raise ValueError(
+                "--region-weights requires --region-groups (the regions to "
+                "compute per-region weight matrices for)."
+            )
+        print("Computing per-region representative-period weight matrices...")
+        region_weights_maps = compute_region_weight_maps(
+            profiles,
+            inflows,
+            region_profiles,
+            region_nodes,
+            rep_indices,
+            timestep_keys,
+            period_length,
+        )
+        if not region_weights_maps:
+            print(
+                "  No region produced a per-region weight matrix — all "
+                "regions fall back to the shared matrix."
+            )
+            region_weights_maps = None
+
+    # ------------------------------------------------------------------
     # 7. Write to DB (new connection, no scenario filter)
     # ------------------------------------------------------------------
     print("Writing results to database...")
@@ -713,6 +865,7 @@ def preprocess_representative_periods(
         weights_map,
         solve_period_timesets,
         alternative_description=alternative_description,
+        region_weights_maps=region_weights_maps,
     )
 
     # ------------------------------------------------------------------
@@ -790,6 +943,15 @@ def main() -> None:
         "system aggregate (byte-parity default).",
     )
     parser.add_argument(
+        "--region-weights",
+        action="store_true",
+        help="Compute and write a per-region representative-period weight "
+        "matrix (group.representative_period_weights) for each --region-groups "
+        "region, driving the blended-weights inter-period storage coupling per "
+        "region (switch S). Omitted → only the shared timeset matrix "
+        "(byte-parity default). Requires --region-groups.",
+    )
+    parser.add_argument(
         "--force-region-scope",
         action="store_true",
         help="Score net load PER region group and greedily force each region's "
@@ -851,6 +1013,7 @@ def main() -> None:
             force_window=args.force_window,
             vg_weight=args.vg_weight,
             region_groups=region_groups,
+            region_weights=args.region_weights,
             force_region_scope=args.force_region_scope,
             force_region_budget=args.force_region_budget,
             solves=solves,

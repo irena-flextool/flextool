@@ -1045,6 +1045,9 @@ def native_run_model(state, solver) -> int:
                     provider=sub_solve_provider,
                     variant="within_period",
                     per_period_inputs=per_period_inputs,
+                    region_rp_weights=state.timeline.region_rp_weights,
+                    node_to_region=state.timeline.node_to_region,
+                    storage_nodes=_wp_nodes,
                 )
                 rp_written = True
         else:
@@ -1071,6 +1074,9 @@ def native_run_model(state, solver) -> int:
                             period_name=period_name,
                             timeline_steps=timeline_steps,
                             provider=sub_solve_provider,
+                            region_rp_weights=state.timeline.region_rp_weights,
+                            node_to_region=state.timeline.node_to_region,
+                            storage_nodes=_ws_or_fo_nodes,
                         )
                         rp_written = True
                         break

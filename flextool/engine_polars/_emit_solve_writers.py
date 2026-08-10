@@ -885,6 +885,59 @@ def emit_delayed_durations(
 # ---------------------------------------------------------------------------
 
 
+def _rp_weights_frame(
+    rp_weights: dict[str, dict[str, float]],
+    base_starts: list[str],
+    region_rp_weights: dict[str, dict[str, dict[str, float]]] | None,
+    node_to_region: dict[str, str] | None,
+    storage_nodes: list[str] | None,
+) -> pl.DataFrame:
+    """Build ``rp_weights.csv`` — with a ``node`` column iff per-region
+    weights are in play (switch S).
+
+    Fallback (byte-parity): when ``region_rp_weights`` is empty or there
+    are no ``storage_nodes`` to fan out to, emit the historical three-column
+    ``(base_start, rep_start, weight)`` frame — the shared matrix, node-less,
+    byte-identical to prior behaviour.
+
+    Per-node: for each storage node, use its region's matrix when the node
+    maps (via ``group__node``) to exactly one region carrying weights, else
+    the shared matrix.  A base absent from a node's region matrix falls back
+    to the shared matrix for that base.  Header gains ``node``:
+    ``(base_start, rep_start, node, weight)``.  ``base_starts`` fixes the
+    (shared) base-period iteration order so the per-node frame stays
+    deterministic and node-block ordered.
+    """
+    per_node = bool(region_rp_weights) and bool(storage_nodes)
+    if not per_node:
+        rows: list[tuple[Any, ...]] = []
+        for base in base_starts:
+            for rep, weight in rp_weights[base].items():
+                if weight > 1e-10:
+                    rows.append((base, rep, str(weight)))
+        return _to_utf8_frame(
+            ("base_start", "rep_start", "weight"), rows,
+        )
+    node_to_region = node_to_region or {}
+    region_rp_weights = region_rp_weights or {}
+    rows = []
+    for node in sorted(storage_nodes):
+        region = node_to_region.get(node)
+        matrix = (
+            region_rp_weights[region]
+            if region in region_rp_weights
+            else rp_weights
+        )
+        for base in base_starts:
+            weights = matrix.get(base, rp_weights.get(base, {}))
+            for rep, weight in weights.items():
+                if weight > 1e-10:
+                    rows.append((base, rep, node, str(weight)))
+    return _to_utf8_frame(
+        ("base_start", "rep_start", "node", "weight"), rows,
+    )
+
+
 def _compute_rp_frames(
     rp_weights: dict[str, dict[str, float]],
     timeset_duration_entries: list[tuple[str, float]],
@@ -896,6 +949,9 @@ def _compute_rp_frames(
         "list[tuple[str, dict[str, dict[str, float]], "
         "list[tuple[str, float]], list[str]]] | None"
     ) = None,
+    region_rp_weights: dict[str, dict[str, dict[str, float]]] | None = None,
+    node_to_region: dict[str, str] | None = None,
+    storage_nodes: list[str] | None = None,
 ) -> dict[str, pl.DataFrame]:
     """Shared compute for the eight representative-period CSVs.
 
@@ -964,6 +1020,9 @@ def _compute_rp_frames(
         for (p_name, p_rp_w, p_ts_dur, p_tl_steps) in per_period_inputs:
             p_sub = _compute_rp_frames(
                 p_rp_w, p_ts_dur, p_name, p_tl_steps,
+                region_rp_weights=region_rp_weights,
+                node_to_region=node_to_region,
+                storage_nodes=storage_nodes,
             )
             # rp_base_chain: rename to add the owning period column.
             sub_chain = p_sub["rp_base_chain.csv"]
@@ -988,8 +1047,16 @@ def _compute_rp_frames(
             wp_weights_rows.extend(p_sub["rp_weights.csv"].iter_rows())
             wp_cost_rows.extend(p_sub["timestep_weight.csv"].iter_rows())
         out: dict[str, pl.DataFrame] = {}
+        # Header gains ``node`` when per-region weights fan the sub-frames
+        # (switch S); byte-parity three-column shape otherwise.
+        _wp_per_node = bool(region_rp_weights) and bool(storage_nodes)
+        _wp_weights_header = (
+            ("base_start", "rep_start", "node", "weight")
+            if _wp_per_node
+            else ("base_start", "rep_start", "weight")
+        )
         out["rp_weights.csv"] = _to_utf8_frame(
-            ("base_start", "rep_start", "weight"), wp_weights_rows,
+            _wp_weights_header, wp_weights_rows,
         )
         # ``period`` column is the period that owns this chain edge /
         # endpoint; consumed by the FlexData loader and propagated as
@@ -1059,14 +1126,12 @@ def _compute_rp_frames(
 
     out: dict[str, pl.DataFrame] = {}
 
-    # 1. rp_weights.csv — drop near-zero entries.
-    rp_weights_rows: list[tuple[Any, ...]] = []
-    for base in base_starts:
-        for rep, weight in rp_weights[base].items():
-            if weight > 1e-10:
-                rp_weights_rows.append((base, rep, str(weight)))
-    out["rp_weights.csv"] = _to_utf8_frame(
-        ("base_start", "rep_start", "weight"), rp_weights_rows,
+    # 1. rp_weights.csv — drop near-zero entries.  Gains a ``node`` column
+    # (fanned per storage node) when per-region weights are active; otherwise
+    # byte-identical three-column shared matrix (switch S).
+    out["rp_weights.csv"] = _rp_weights_frame(
+        rp_weights, base_starts, region_rp_weights, node_to_region,
+        storage_nodes,
     )
 
     # 2. rp_base_chain.csv — predecessor chain (excludes first).
@@ -1164,6 +1229,9 @@ def emit_rp_data(
         "list[tuple[str, dict[str, dict[str, float]], "
         "list[tuple[str, float]], list[str]]] | None"
     ) = None,
+    region_rp_weights: dict[str, dict[str, dict[str, float]]] | None = None,
+    node_to_region: dict[str, str] | None = None,
+    storage_nodes: list[str] | None = None,
 ) -> None:
     """Emit ``rp_data`` to the Provider.
 
@@ -1174,10 +1242,18 @@ def emit_rp_data(
     within_solve/within_period in a single solve is rejected upstream
     with ``FlexToolConfigError`` because the per-solve RP frame family
     can only carry one chain topology.
+
+    Switch S — ``region_rp_weights`` / ``node_to_region`` / ``storage_nodes``
+    add a per-storage-node ``node`` column to ``rp_weights.csv`` so each
+    storage node's inter-period coupling uses its region's weight matrix.
+    All three empty (the byte-parity default) => node-less shared matrix.
     """
     frames = _compute_rp_frames(
         rp_weights, timeset_duration_entries, period_name, timeline_steps,
         variant=variant, per_period_inputs=per_period_inputs,
+        region_rp_weights=region_rp_weights,
+        node_to_region=node_to_region,
+        storage_nodes=storage_nodes,
     )
     for basename, df in frames.items():
         _emit(provider, _RP_BASENAME_TO_PROVIDER_KEY[basename], df)

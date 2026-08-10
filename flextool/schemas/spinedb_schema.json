@@ -1498,6 +1498,14 @@
     ],
     [
       "group",
+      "representative_period_weights",
+      null,
+      null,
+      "Per-region representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Optional region-scoped override of the shared 'timeset.representative_period_weights' matrix for the blended-weights inter-period storage coupling: each storage node that belongs to exactly one group carrying this parameter uses that group's weight matrix instead of the shared timeset matrix.  Created by the representative-periods preprocess tool with '--region-weights'.  Absence everywhere is byte-identical to the shared-matrix behaviour.  Selection of the representative periods stays shared; only the weight matrix becomes region-indexed.",
+      "solve_advanced"
+    ],
+    [
+      "group",
       "print_indicators",
       null,
       "yes_no",
@@ -3363,6 +3371,12 @@
       "print_dispatch",
       "str",
       0
+    ],
+    [
+      "group",
+      "representative_period_weights",
+      "map",
+      2
     ],
     [
       "group",

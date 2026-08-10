@@ -2935,16 +2935,35 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             provider, _K_rp.SOLVE_DATA_RP_WEIGHTS, rpw_path,
         )
         if df_rpw.height > 0:
-            df_rpw = (df_rpw
-                      .rename({"base_start": "b",
-                               "rep_start": "r",
-                               "weight": "value"})
-                      .with_columns(value=pl.col("value")
-                                              .cast(pl.Float64, strict=False)
-                                              .fill_null(0.0))
-                      .select("b", "r", "value"))
+            # Switch S — when ``rp_weights.csv`` carries a ``node`` column
+            # (per-region weights fanned per storage node), key the Param on
+            # (n, b, r) so each storage node's inter-period coupling uses its
+            # own weight matrix.  Absent the column (byte-parity default),
+            # key on (b, r) exactly as before.
+            _has_node = "node" in df_rpw.columns
+            if _has_node:
+                df_rpw = (df_rpw
+                          .rename({"node": "n",
+                                   "base_start": "b",
+                                   "rep_start": "r",
+                                   "weight": "value"})
+                          .with_columns(value=pl.col("value")
+                                                  .cast(pl.Float64, strict=False)
+                                                  .fill_null(0.0))
+                          .select("n", "b", "r", "value"))
+            else:
+                df_rpw = (df_rpw
+                          .rename({"base_start": "b",
+                                   "rep_start": "r",
+                                   "weight": "value"})
+                          .with_columns(value=pl.col("value")
+                                                  .cast(pl.Float64, strict=False)
+                                                  .fill_null(0.0))
+                          .select("b", "r", "value"))
             if df_rpw.height > 0:
-                rp_base__rep = Param(("b", "r"), df_rpw)
+                rp_base__rep = Param(
+                    ("n", "b", "r") if _has_node else ("b", "r"), df_rpw,
+                )
 
     # ─── Invariant: when nodeState_rp is non-empty, the four tightly
     # coupled fields below must also be non-empty.  Silent absence has no
