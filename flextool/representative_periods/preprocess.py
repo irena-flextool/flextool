@@ -477,6 +477,10 @@ def preprocess_representative_periods(
     region_groups: list[str] | None = None,
     force_region_scope: bool = False,
     force_region_budget: int | None = None,
+    force_highs: int = 0,
+    force_lows: int = 0,
+    force_gradients: int = 0,
+    force_season: int = 0,
     nearest_assignment: bool = False,
     nearest_k: int = 1,
     solves: list[str] | None = None,
@@ -509,6 +513,21 @@ def preprocess_representative_periods(
             scope. ``None`` (default) derives a sane cap from ``n_rp`` as
             ``max(1, n_rp // 2)`` so forced periods never dominate the
             representative set; ignored when ``force_region_scope`` is ``False``.
+        force_highs: Force-include the ``force_highs`` base periods with the
+            highest net load. ``0`` (default) forces none — the byte-parity path.
+        force_lows: Force-include the ``force_lows`` base periods with the lowest
+            (most-negative) net load. ``0`` (default) forces none.
+        force_gradients: Force-include the ``force_gradients`` base periods with
+            the worst within-period net-load gradient. ``0`` (default) forces
+            none.
+        force_season: Force-include the ``force_season`` base periods with the
+            worst sustained net-load deficit (uses ``force_window`` for the
+            sustained sub-window). ``0`` (default) forces none. These four counts
+            seed the greedy hull (unioned/deduped with any
+            ``force_peak_load`` / ``force_highest_net_load`` pick), which then
+            fills the remaining ``n_rp - |forced|`` picks by net-load
+            reconstruction. With all four at ``0`` the forced set is unchanged —
+            the byte-parity contract.
         nearest_assignment: When ``True``, assign each base period to its single
             nearest representative period (0/1 weight) instead of the convex
             blend. For hourly-RP tied-storage experiments. ``False`` (default)
@@ -632,6 +651,42 @@ def preprocess_representative_periods(
         force_region_budget=effective_region_budget,
         region_nodes=region_nodes,
     )
+
+    # Opt-in shape + seasonal-stress enrichment: force top-N net-load extremes
+    # (highs / lows / worst gradients) and worst sustained-deficit periods,
+    # UNIONed and deduped with the single-argmax force-include above. All four
+    # counts 0 (default) → no extra periods → byte-parity default path.
+    if force_highs or force_lows or force_gradients or force_season:
+        shape_season_forced = force_include.compute_shape_season_forced(
+            profiles,
+            inflows,
+            demand_scalars,
+            timestep_keys,
+            period_length,
+            n_base_periods,
+            n_high=force_highs,
+            n_low=force_lows,
+            n_grad=force_gradients,
+            n_season=force_season,
+            force_window=force_window,
+            vg_weight=vg_weight,
+            region_profiles=region_profiles,
+            region_demand=region_demand,
+        )
+        forced_indices = sorted(set(forced_indices) | set(shape_season_forced))
+
+    # Guard: the greedy hull must keep at least one free (unforced) pick, so the
+    # forced set can never fill the whole budget. If it does, truncate to the
+    # first ``n_rp - 1`` indices (lowest base-period indices after sorting — the
+    # simplest deterministic rule) and warn rather than crash.
+    if forced_indices and len(forced_indices) >= n_rp:
+        kept = forced_indices[: max(0, n_rp - 1)]
+        print(
+            f"  Force-include: {len(forced_indices)} forced periods >= n_rp="
+            f"{n_rp}; truncating to the lowest {len(kept)} indices "
+            f"({kept}) so the hull keeps at least one free pick."
+        )
+        forced_indices = kept
 
     # ------------------------------------------------------------------
     # 4b. Run clustering (seeded by the forced periods when forcing is active)
@@ -828,6 +883,39 @@ def main() -> None:
         "from n_rp as max(1, n_rp // 2)).",
     )
     parser.add_argument(
+        "--force-highs",
+        type=int,
+        default=0,
+        help="Force N representative periods at the highest net load. They seed "
+        "the greedy hull, which fills the remaining picks by net-load "
+        "reconstruction (default: 0).",
+    )
+    parser.add_argument(
+        "--force-lows",
+        type=int,
+        default=0,
+        help="Force N representative periods at the lowest (most-negative) net "
+        "load. They seed the greedy hull, which fills the remaining picks by "
+        "net-load reconstruction (default: 0).",
+    )
+    parser.add_argument(
+        "--force-gradients",
+        type=int,
+        default=0,
+        help="Force N representative periods at the worst within-period net-load "
+        "gradient. They seed the greedy hull, which fills the remaining picks by "
+        "net-load reconstruction (default: 0).",
+    )
+    parser.add_argument(
+        "--force-season",
+        type=int,
+        default=0,
+        help="Force N representative periods at the worst sustained net-load "
+        "deficit (uses --force-window for the sustained sub-window). They seed "
+        "the greedy hull, which fills the remaining picks by net-load "
+        "reconstruction (default: 0).",
+    )
+    parser.add_argument(
         "--nearest-assignment",
         action="store_true",
         help="Assign each base period to its single nearest representative "
@@ -892,6 +980,10 @@ def main() -> None:
             region_groups=region_groups,
             force_region_scope=args.force_region_scope,
             force_region_budget=args.force_region_budget,
+            force_highs=args.force_highs,
+            force_lows=args.force_lows,
+            force_gradients=args.force_gradients,
+            force_season=args.force_season,
             nearest_assignment=args.nearest_assignment,
             nearest_k=args.nearest_k,
             solves=solves,

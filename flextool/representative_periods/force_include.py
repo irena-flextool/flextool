@@ -302,6 +302,98 @@ def score_net(
     return windows.mean(axis=2).max(axis=1)
 
 
+def score_low(
+    netload: np.ndarray,
+    period_length: int,
+    n_base: int,
+) -> np.ndarray:
+    """Per-period minimum net load (net-load lows).
+
+    ``score_low[d] = min_{h in period d} netload_h`` — the single best (lowest)
+    hour in each aligned base period. Net-load lows are surplus/curtailment
+    periods (high VRE / low demand); forcing the most-negative periods keeps the
+    representative set covering the down-flexibility / spill extremes, not just
+    the scarcity extremes.
+
+    Same ``(netload, period_length, n_base)`` signature and reshape convention
+    as :func:`score_peak`.
+
+    Args:
+        netload: Hourly net-load signal.
+        period_length: Timesteps per aligned base period.
+        n_base: Number of aligned base periods (``len(netload) // period_length``
+            or fewer; the horizon is truncated to ``n_base * period_length``).
+
+    Returns:
+        1-D array of length ``n_base``.
+    """
+    n_used = n_base * period_length
+    grid = np.asarray(netload[:n_used], dtype=np.float64).reshape(n_base, period_length)
+    return grid.min(axis=1)
+
+
+def score_gradient(
+    netload: np.ndarray,
+    period_length: int,
+    n_base: int,
+) -> np.ndarray:
+    """Per-period worst within-period net-load ramp.
+
+    ``score_gradient[d] = max_{h in period d} |netload_{h+1} - netload_h|`` over
+    the consecutive hours *inside* aligned base period ``d`` — the steepest
+    within-period first difference. Forcing the worst-ramp periods keeps the
+    representative set covering the hardest flexibility/ramping stress, which a
+    pure L2 shape hull can miss.
+
+    A period of length 1 has no internal consecutive pair, so there is no
+    within-period difference: this returns ``0.0`` for that period (and for
+    every period when ``period_length == 1``).
+
+    Same ``(netload, period_length, n_base)`` signature and reshape convention
+    as :func:`score_peak`.
+
+    Args:
+        netload: Hourly net-load signal.
+        period_length: Timesteps per aligned base period.
+        n_base: Number of aligned base periods (``len(netload) // period_length``
+            or fewer; the horizon is truncated to ``n_base * period_length``).
+
+    Returns:
+        1-D array of length ``n_base``.
+    """
+    if period_length <= 1:
+        # A single-timestep period has no internal ramp.
+        return np.zeros(n_base, dtype=np.float64)
+    n_used = n_base * period_length
+    grid = np.asarray(netload[:n_used], dtype=np.float64).reshape(n_base, period_length)
+    return np.abs(np.diff(grid, axis=1)).max(axis=1)
+
+
+def _top_n_indices(
+    scores: np.ndarray,
+    n: int,
+    *,
+    descending: bool,
+) -> list[int]:
+    """Return the ``n`` extreme base periods, deterministic and tie-stable.
+
+    Selects the top-``n`` indices of ``scores`` — the largest when
+    ``descending`` (peaks / gradients / sustained deficit), the smallest when
+    not (net-load lows). Uses a *stable* argsort so equal scores break the tie
+    to the LOWER period index (mirrors the intent of the region-scope
+    :func:`_region_scope_forced_indices` idiom, with no hash/set-ordering
+    dependence). Returns ``[]`` when ``n <= 0`` or the score is flat
+    (``max - min < _SCALE_EPS``) — nothing meaningful to force.
+    """
+    if n <= 0:
+        return []
+    if float(scores.max() - scores.min()) < _SCALE_EPS:
+        return []
+    keys = -scores if descending else scores
+    order = np.argsort(keys, kind="stable")
+    return [int(order[i]) for i in range(min(int(n), order.size))]
+
+
 def _greedy_region_cover(
     region_candidates: dict[str, list[int]],
     region_scores: dict[str, np.ndarray],
@@ -560,4 +652,111 @@ def compute_forced_indices(
         forced.add(
             int(np.argmax(score_net(netload, period_length, n_base, force_window)))
         )
+    return sorted(forced)
+
+
+def compute_shape_season_forced(
+    profiles: dict[str, list[tuple[str, float]]],
+    inflows: dict[str, list[tuple[str, float]]],
+    demand_scalars: dict[str, float],
+    timestep_keys: list[str],
+    period_length: int,
+    n_base: int,
+    *,
+    n_high: int,
+    n_low: int,
+    n_grad: int,
+    n_season: int,
+    force_window: int | None,
+    vg_weight: float,
+    region_profiles: dict[str, list[str]] | None = None,
+    region_demand: dict[str, float] | None = None,
+) -> list[int]:
+    """Force a controllable count of net-load extreme + seasonal-stress periods.
+
+    An additive enrichment of :func:`compute_forced_indices`: instead of the
+    single ``argmax`` per flag, it forces the top-``n`` base periods in each of
+    four categories, all measured on ONE system-coincident net-load signal
+    (:func:`build_netload_hourly`, with the same optional node-group
+    demand-weighting via ``region_profiles`` / ``region_demand``):
+
+    * ``n_high`` — highest per-period peak net load (:func:`score_peak`,
+      descending): capacity-adequacy extremes.
+    * ``n_low`` — lowest per-period min net load (:func:`score_low`, ASCENDING,
+      most-negative first): surplus / curtailment extremes.
+    * ``n_grad`` — worst within-period net-load ramp (:func:`score_gradient`,
+      descending): flexibility / ramping extremes.
+    * ``n_season`` — worst sustained net-load deficit (:func:`score_net` with
+      ``force_window``, descending): seasonal-stress periods.
+
+    The returned set is the deduplicated, ascending UNION of the four category
+    picks — a period that qualifies in two categories (e.g. both a peak and a
+    worst-gradient period) is forced exactly once. This shape matches
+    :func:`compute_forced_indices`, so it feeds the same greedy-hull seed. Each
+    ``n_*`` defaults to 0; with all four zero the function returns ``[]`` and has
+    no effect (the byte-parity contract).
+
+    A category whose count is 0 is skipped; a category whose score is flat
+    (``max - min < _SCALE_EPS``) is skipped too — there is nothing meaningful to
+    force. Selection is deterministic: :func:`_top_n_indices` uses a stable
+    argsort that breaks ties to the lower period index, with no dependence on
+    hash / set iteration order.
+
+    Args:
+        profiles: VRE availability series.
+        inflows: Time-varying node inflow series.
+        demand_scalars: Constant node inflows collected as demand levels.
+        timestep_keys: Ordered timestep keys defining the horizon.
+        period_length: Timesteps per aligned base period.
+        n_base: Number of aligned base periods.
+        n_high: Number of highest-peak-net-load periods to force.
+        n_low: Number of lowest-net-load periods to force.
+        n_grad: Number of worst-within-period-gradient periods to force.
+        n_season: Number of worst-sustained-net-load-deficit periods to force.
+        force_window: Sub-window length for the sustained :func:`score_net`
+            (``None`` = whole period).
+        vg_weight: Convex blend weight on the VG term.
+        region_profiles: Optional region -> profile names mapping (demand-weighted
+            system term).
+        region_demand: Optional region -> demand level ``D_r`` mapping.
+
+    Returns:
+        Sorted, deduplicated list of forced base-period indices.
+    """
+    if not (n_high or n_low or n_grad or n_season):
+        return []
+
+    netload = build_netload_hourly(
+        profiles,
+        inflows,
+        demand_scalars,
+        timestep_keys,
+        vg_weight=vg_weight,
+        region_profiles=region_profiles,
+        region_demand=region_demand,
+    )
+
+    forced: set[int] = set()
+    forced.update(
+        _top_n_indices(
+            score_peak(netload, period_length, n_base), n_high, descending=True
+        )
+    )
+    forced.update(
+        _top_n_indices(
+            score_low(netload, period_length, n_base), n_low, descending=False
+        )
+    )
+    forced.update(
+        _top_n_indices(
+            score_gradient(netload, period_length, n_base), n_grad, descending=True
+        )
+    )
+    forced.update(
+        _top_n_indices(
+            score_net(netload, period_length, n_base, force_window),
+            n_season,
+            descending=True,
+        )
+    )
     return sorted(forced)

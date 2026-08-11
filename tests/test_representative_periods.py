@@ -591,3 +591,146 @@ class TestRPHalfRepresented:
             f"Half-represented RP cost {cost_rp} differs from full {cost_full} "
             f"by {rel_diff:.2%}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: net-load extreme / sustained-deficit force-include scorers
+# (score_low, score_gradient, compute_shape_season_forced) — the shape+season
+# enrichment of the single-argmax force-include.
+# ---------------------------------------------------------------------------
+
+from flextool.representative_periods.force_include import (  # noqa: E402
+    _top_n_indices,
+    compute_shape_season_forced,
+    score_gradient,
+    score_low,
+)
+
+
+def _inflows_from_netload(netload: np.ndarray, keys: list[str]) -> dict:
+    """One fully-covering inflow series whose net-load signal is ``netload``.
+
+    With empty profiles, empty scalars and ``vg_weight=0``, ``build_netload_hourly``
+    reduces to ``normalize(-inflow)`` — a positive-scale, sign/order-preserving
+    map — so setting ``inflow = -netload`` reproduces ``netload`` up to scale.
+    """
+    return {"n1": [(k, float(-v)) for k, v in zip(keys, netload)]}
+
+
+class TestShapeSeasonScorers:
+    def test_score_low_returns_per_period_minima(self):
+        netload = np.array([1, 2, 3, 4, 10, -5, 10, -5, 0, 0, 0, 1], dtype=float)
+        low = score_low(netload, period_length=4, n_base=3)
+        assert np.array_equal(low, np.array([1.0, -5.0, 0.0]))
+
+    def test_score_gradient_max_abs_within_period(self):
+        netload = np.array([1, 2, 3, 4, 10, -5, 10, -5, 0, 0, 0, 1], dtype=float)
+        grad = score_gradient(netload, period_length=4, n_base=3)
+        # period ramps: max|Δ| = 1, 15, 1
+        assert np.array_equal(grad, np.array([1.0, 15.0, 1.0]))
+
+    def test_score_gradient_period_length_one_is_zero(self):
+        netload = np.array([5.0, -3.0, 8.0], dtype=float)
+        grad = score_gradient(netload, period_length=1, n_base=3)
+        assert np.array_equal(grad, np.zeros(3))
+
+
+class TestTopNIndices:
+    def test_descending_picks_largest(self):
+        scores = np.array([10.0, -8.0, 9.0, 2.0])
+        assert _top_n_indices(scores, 2, descending=True) == [0, 2]
+
+    def test_ascending_picks_smallest(self):
+        scores = np.array([10.0, -8.0, 0.0, 1.0])
+        assert _top_n_indices(scores, 1, descending=False) == [1]
+
+    def test_tie_breaks_to_lower_index_descending(self):
+        scores = np.array([5.0, 5.0, 1.0])
+        assert _top_n_indices(scores, 1, descending=True) == [0]
+
+    def test_tie_breaks_to_lower_index_ascending(self):
+        scores = np.array([1.0, 1.0, 5.0])
+        assert _top_n_indices(scores, 1, descending=False) == [0]
+
+    def test_flat_score_returns_empty(self):
+        scores = np.full(4, 3.0)
+        assert _top_n_indices(scores, 2, descending=True) == []
+
+    def test_zero_count_returns_empty(self):
+        scores = np.array([1.0, 2.0, 3.0])
+        assert _top_n_indices(scores, 0, descending=True) == []
+
+
+class TestComputeShapeSeasonForced:
+    # netload per period (PL=4, n_base=4):
+    #   p0 [10,10,10,10]  peak 10  min  10  grad 0  mean 10   -> highest peak + worst sustained
+    #   p1 [-8,-8,-8,-8]  peak -8  min  -8  grad 0  mean -8   -> lowest net load
+    #   p2 [ 0, 9, 0, 9]  peak  9  min   0  grad 9  mean 4.5  -> worst gradient
+    #   p3 [ 1, 1, 1, 2]  peak  2  min   1  grad 1  mean 1.25 -> unremarkable
+    NETLOAD = np.array(
+        [10, 10, 10, 10, -8, -8, -8, -8, 0, 9, 0, 9, 1, 1, 1, 2], dtype=float
+    )
+    KEYS = [f"t{i:03d}" for i in range(16)]
+
+    def _forced(self, **counts):
+        return compute_shape_season_forced(
+            {},  # profiles
+            _inflows_from_netload(self.NETLOAD, self.KEYS),
+            {},  # demand scalars
+            self.KEYS,
+            period_length=4,
+            n_base=4,
+            n_high=counts.get("n_high", 0),
+            n_low=counts.get("n_low", 0),
+            n_grad=counts.get("n_grad", 0),
+            n_season=counts.get("n_season", 0),
+            force_window=None,
+            vg_weight=0.0,
+        )
+
+    def test_all_zero_counts_returns_empty(self):
+        assert self._forced() == []
+
+    def test_high_picks_highest_peak(self):
+        assert self._forced(n_high=1) == [0]
+
+    def test_low_picks_most_negative(self):
+        assert self._forced(n_low=1) == [1]
+
+    def test_gradient_picks_worst_ramp(self):
+        assert self._forced(n_grad=1) == [2]
+
+    def test_season_picks_worst_sustained(self):
+        assert self._forced(n_season=1) == [0]
+
+    def test_counts_per_category(self):
+        # two highest peaks are p0 (10) then p2 (9)
+        assert self._forced(n_high=2) == [0, 2]
+
+    def test_union_dedups_across_categories(self):
+        # high -> {0}, low -> {1}, grad -> {2}, season -> {0}
+        # p0 qualifies as both high and season but appears once.
+        assert self._forced(n_high=1, n_low=1, n_grad=1, n_season=1) == [0, 1, 2]
+
+    def test_deterministic_repeated_calls(self):
+        first = self._forced(n_high=2, n_low=1, n_grad=1, n_season=1)
+        second = self._forced(n_high=2, n_low=1, n_grad=1, n_season=1)
+        assert first == second
+
+    def test_flat_signal_forces_nothing(self):
+        flat = np.full(16, 4.0)
+        forced = compute_shape_season_forced(
+            {},
+            _inflows_from_netload(flat, self.KEYS),
+            {},
+            self.KEYS,
+            period_length=4,
+            n_base=4,
+            n_high=2,
+            n_low=2,
+            n_grad=2,
+            n_season=2,
+            force_window=None,
+            vg_weight=0.0,
+        )
+        assert forced == []
