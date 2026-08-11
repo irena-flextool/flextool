@@ -481,6 +481,8 @@ def preprocess_representative_periods(
     force_lows: int = 0,
     force_gradients: int = 0,
     force_season: int = 0,
+    force_week_turns: list[str] | None = None,
+    turn_prominence: float = 0.1,
     nearest_assignment: bool = False,
     nearest_k: int = 1,
     solves: list[str] | None = None,
@@ -528,6 +530,17 @@ def preprocess_representative_periods(
             fills the remaining ``n_rp - |forced|`` picks by net-load
             reconstruction. With all four at ``0`` the forced set is unchanged —
             the byte-parity contract.
+        force_week_turns: Optional subset of ``{"drought", "low", "median"}``.
+            For each named week, locate the worst sustained-drought, lowest
+            net-load, and median whole week (non-overlapping) and force ONLY the
+            net-load *turning points* within it — the base periods where the
+            sustained net load reverses direction (see
+            :func:`force_include.compute_week_turn_forced`). Unioned/deduped with
+            the other forced picks and seeded into the greedy hull. ``None`` or
+            an empty list (default) forces none — the byte-parity path.
+        turn_prominence: Minimum net-load reversal to count a turning point, as
+            a fraction of that week's net-load range (default ``0.1``). Only
+            used when ``force_week_turns`` is non-empty.
         nearest_assignment: When ``True``, assign each base period to its single
             nearest representative period (0/1 weight) instead of the convex
             blend. For hourly-RP tied-storage experiments. ``False`` (default)
@@ -674,6 +687,27 @@ def preprocess_representative_periods(
             region_demand=region_demand,
         )
         forced_indices = sorted(set(forced_indices) | set(shape_season_forced))
+
+    # Opt-in critical-week turning-point enrichment: for each requested week
+    # (drought / low / median) force ONLY the net-load turning points — the base
+    # periods where the sustained net load reverses direction — UNIONed and
+    # deduped with the force-include picks above. Empty/None → no extra periods
+    # → byte-parity default path.
+    if force_week_turns:
+        week_turn_forced = force_include.compute_week_turn_forced(
+            profiles,
+            inflows,
+            demand_scalars,
+            timestep_keys,
+            period_length,
+            n_base_periods,
+            which=force_week_turns,
+            turn_prominence=turn_prominence,
+            vg_weight=vg_weight,
+            region_profiles=region_profiles,
+            region_demand=region_demand,
+        )
+        forced_indices = sorted(set(forced_indices) | set(week_turn_forced))
 
     # Guard: the greedy hull must keep at least one free (unforced) pick, so the
     # forced set can never fill the whole budget. If it does, truncate to the
@@ -916,6 +950,23 @@ def main() -> None:
         "reconstruction (default: 0).",
     )
     parser.add_argument(
+        "--force-week-turns",
+        type=str,
+        default="",
+        help="Comma-separated subset of 'drought,low,median'. For each named "
+        "week, force ONLY the net-load turning points (where the sustained net "
+        "load reverses direction) of the worst-drought / lowest / median whole "
+        "week. Omitted → force none (byte-parity default).",
+    )
+    parser.add_argument(
+        "--turn-prominence",
+        type=float,
+        default=0.1,
+        help="Minimum net-load reversal to count a turning point, as a fraction "
+        "of that week's net-load range (default: 0.1). Used only with "
+        "--force-week-turns.",
+    )
+    parser.add_argument(
         "--nearest-assignment",
         action="store_true",
         help="Assign each base period to its single nearest representative "
@@ -967,6 +1018,24 @@ def main() -> None:
         else None
     )
 
+    # Parse and validate the critical-week spec against the three valid tokens.
+    # Normalise to the fixed priority order (drought, low, median) and dedup so
+    # the selection is deterministic regardless of how the spec was written.
+    valid_week_turns = ("drought", "low", "median")
+    if args.force_week_turns:
+        tokens = {
+            t.strip() for t in args.force_week_turns.split(",") if t.strip()
+        }
+        unknown = sorted(t for t in tokens if t not in valid_week_turns)
+        if unknown:
+            parser.error(
+                f"--force-week-turns: unknown token(s) {unknown}; valid "
+                f"tokens are: {', '.join(valid_week_turns)}."
+            )
+        force_week_turns = [w for w in valid_week_turns if w in tokens]
+    else:
+        force_week_turns = None
+
     try:
         preprocess_representative_periods(
             db_url=args.db_url,
@@ -984,6 +1053,8 @@ def main() -> None:
             force_lows=args.force_lows,
             force_gradients=args.force_gradients,
             force_season=args.force_season,
+            force_week_turns=force_week_turns,
+            turn_prominence=args.turn_prominence,
             nearest_assignment=args.nearest_assignment,
             nearest_k=args.nearest_k,
             solves=solves,

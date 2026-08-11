@@ -760,3 +760,241 @@ def compute_shape_season_forced(
         )
     )
     return sorted(forced)
+
+
+def _find_critical_weeks(
+    netload: np.ndarray,
+    period_length: int,
+    n_base: int,
+    *,
+    which: "set[str] | list[str]",
+) -> dict[str, tuple[int, int]]:
+    """Locate up to three non-overlapping whole-week windows of base periods.
+
+    Reduces the hourly ``netload`` to a per-period mean array (``score_peak``'s
+    reshape convention, then ``.mean(axis=1)``), then a uniform sliding mean of
+    length ``periods_per_week = 7 * (24 // period_length)`` over that per-period
+    array — the sustained weekly net-load level at each possible week start
+    (``0 .. n_base - periods_per_week``).
+
+    The requested weeks are placed greedily in the fixed priority order
+    ``drought`` → ``low`` → ``median`` (independent of the iteration order of
+    ``which``):
+
+    * ``drought`` — the start with the **highest** window mean (the worst
+      sustained high-net-load / drought week).
+    * ``low`` — the start with the **lowest** window mean (the deepest
+      surplus / low-net-load week).
+    * ``median`` — the start whose window mean is closest to the **median** of
+      all window means (a representative middle week).
+
+    After each pick, every start within ``periods_per_week`` of the chosen start
+    is excluded, so the returned windows can never overlap. Ties (equal window
+    mean, or equal distance to the median) break to the LOWEST start index.
+    A week that cannot be placed without overlapping an already-chosen one is
+    skipped.
+
+    Args:
+        netload: Hourly net-load signal.
+        period_length: Timesteps per aligned base period.
+        n_base: Number of aligned base periods.
+        which: Subset of ``{"drought", "low", "median"}`` to place.
+
+    Returns:
+        ``{name: (start, start + periods_per_week)}`` for each requested and
+        successfully-placed week — half-open ranges of base-period indices.
+        Empty dict when ``which`` is empty or the horizon is shorter than one
+        week (``n_base < periods_per_week``).
+    """
+    periods_per_week = 7 * (24 // period_length)
+    if n_base < periods_per_week:
+        return {}
+
+    n_used = n_base * period_length
+    grid = np.asarray(netload[:n_used], dtype=np.float64).reshape(
+        n_base, period_length
+    )
+    per_period = grid.mean(axis=1)
+
+    kernel = np.ones(periods_per_week, dtype=np.float64) / periods_per_week
+    window_mean = np.convolve(per_period, kernel, mode="valid")
+    n_starts = int(window_mean.size)  # = n_base - periods_per_week + 1
+    all_median = float(np.median(window_mean))
+
+    available = np.ones(n_starts, dtype=bool)
+    result: dict[str, tuple[int, int]] = {}
+    for name in ("drought", "low", "median"):
+        if name not in which:
+            continue
+        avail_idx = np.nonzero(available)[0]
+        if avail_idx.size == 0:
+            # No non-overlapping window left for this (lower-priority) week.
+            continue
+        vals = window_mean[avail_idx]
+        if name == "drought":
+            local = int(np.argmax(vals))
+        elif name == "low":
+            local = int(np.argmin(vals))
+        else:  # median
+            local = int(np.argmin(np.abs(vals - all_median)))
+        # ``avail_idx`` is ascending and ``argmax``/``argmin`` return the FIRST
+        # extremum, so ties resolve to the lowest start index.
+        chosen = int(avail_idx[local])
+        result[name] = (chosen, chosen + periods_per_week)
+        # Exclude every start within ``periods_per_week`` (overlap guard):
+        # a start ``s`` overlaps ``chosen`` iff ``|s - chosen| < periods_per_week``.
+        lo = max(0, chosen - periods_per_week + 1)
+        hi = min(n_starts, chosen + periods_per_week)
+        available[lo:hi] = False
+
+    return result
+
+
+def _turning_points(week_vals: np.ndarray, prom_threshold: float) -> list[int]:
+    """Significant net-load turning points within one week (ZigZag / swing filter).
+
+    Walks the per-period series ``week_vals`` tracking a running extreme in the
+    current trend direction. When the series reverses away from that running
+    extreme by at least ``prom_threshold``, the running extreme is confirmed as
+    a pivot (a local peak or trough) and the trend flips. Peaks and troughs
+    therefore strictly alternate, and only reversals of at least
+    ``prom_threshold`` in magnitude count — small wiggles below the threshold
+    are filtered out (they neither confirm a pivot nor flip the trend).
+
+    Endpoints are not forced: the first index is recorded only once the series
+    swings away from it by ``prom_threshold`` (which confirms it as a genuine
+    leading pivot), and the trailing running extreme is left unconfirmed unless
+    a later reversal turns it into a pivot. This is fully deterministic.
+
+    Args:
+        week_vals: 1-D per-period net-load values for one week.
+        prom_threshold: Minimum reversal magnitude (in net-load units) that
+            confirms a turning point.
+
+    Returns:
+        Sorted 0-based offsets (within the week) of the confirmed turning
+        points. Empty list when the series range is below ``_SCALE_EPS`` (a flat
+        week has no turning point).
+    """
+    v = np.asarray(week_vals, dtype=np.float64)
+    n = int(v.size)
+    if n == 0 or float(v.max() - v.min()) < _SCALE_EPS:
+        return []
+
+    pivots: list[int] = []
+    # Running extremes since the last confirmed pivot: the highest point is the
+    # candidate peak, the lowest is the candidate trough. In an unknown trend
+    # both are live; whichever the series first reverses away from by
+    # ``prom_threshold`` is confirmed, which also sets the trend direction.
+    max_i = 0
+    min_i = 0
+    trend = 0  # 0 unknown, +1 up (looking for a peak), -1 down (looking for trough)
+    for i in range(1, n):
+        if v[i] > v[max_i]:
+            max_i = i
+        if v[i] < v[min_i]:
+            min_i = i
+        if trend >= 0 and v[max_i] - v[i] >= prom_threshold:
+            pivots.append(max_i)  # confirmed peak
+            trend = -1
+            min_i = i  # start tracking the next trough from here
+            max_i = i
+        elif trend <= 0 and v[i] - v[min_i] >= prom_threshold:
+            pivots.append(min_i)  # confirmed trough
+            trend = 1
+            max_i = i  # start tracking the next peak from here
+            min_i = i
+
+    return sorted(pivots)
+
+
+def compute_week_turn_forced(
+    profiles: dict[str, list[tuple[str, float]]],
+    inflows: dict[str, list[tuple[str, float]]],
+    demand_scalars: dict[str, float],
+    timestep_keys: list[str],
+    period_length: int,
+    n_base: int,
+    *,
+    which: "set[str] | list[str]",
+    turn_prominence: float,
+    vg_weight: float,
+    region_profiles: dict[str, list[str]] | None = None,
+    region_demand: dict[str, float] | None = None,
+) -> list[int]:
+    """Force the net-load turning points of up to three critical weeks.
+
+    Builds one system-coincident net-load signal (:func:`build_netload_hourly`,
+    with the same optional node-group demand-weighting via ``region_profiles`` /
+    ``region_demand``), locates the requested critical weeks
+    (:func:`_find_critical_weeks`), and within each week forces ONLY the net-load
+    *turning points* — the base periods where the sustained (per-period-mean)
+    net load reverses direction by at least ``turn_prominence`` of that week's
+    net-load range (:func:`_turning_points`). The monotonic stretches between
+    turning points are left for the greedy hull to fill.
+
+    Each week's threshold is ``turn_prominence * (week_vals.max() -
+    week_vals.min())`` so the same fraction adapts to weeks of different
+    amplitude. Turning-point offsets are converted to absolute base-period
+    indices (``start + offset``) and unioned across weeks.
+
+    Args:
+        profiles: VRE availability series.
+        inflows: Time-varying node inflow series.
+        demand_scalars: Constant node inflows collected as demand levels.
+        timestep_keys: Ordered timestep keys defining the horizon.
+        period_length: Timesteps per aligned base period.
+        n_base: Number of aligned base periods.
+        which: Subset of ``{"drought", "low", "median"}`` to force.
+        turn_prominence: Minimum net-load reversal to count a turning point, as
+            a fraction of the week's net-load range.
+        vg_weight: Convex blend weight on the VG term.
+        region_profiles: Optional region -> profile names mapping (demand-weighted
+            system term).
+        region_demand: Optional region -> demand level ``D_r`` mapping.
+
+    Returns:
+        Sorted, deduplicated list of forced base-period indices. Empty list when
+        ``which`` is empty or no requested week can be placed.
+    """
+    if not which:
+        return []
+
+    netload = build_netload_hourly(
+        profiles,
+        inflows,
+        demand_scalars,
+        timestep_keys,
+        vg_weight=vg_weight,
+        region_profiles=region_profiles,
+        region_demand=region_demand,
+    )
+
+    weeks = _find_critical_weeks(netload, period_length, n_base, which=which)
+    if not weeks:
+        return []
+
+    n_used = n_base * period_length
+    grid = np.asarray(netload[:n_used], dtype=np.float64).reshape(
+        n_base, period_length
+    )
+    per_period = grid.mean(axis=1)
+
+    forced: set[int] = set()
+    for name in ("drought", "low", "median"):
+        if name not in weeks:
+            continue
+        start, end = weeks[name]
+        week_vals = per_period[start:end]
+        rng = float(week_vals.max() - week_vals.min())
+        prom_threshold = turn_prominence * rng
+        offsets = _turning_points(week_vals, prom_threshold)
+        forced.update(start + off for off in offsets)
+        day_of_year = start * period_length / 24
+        print(
+            f"  Force week-turns: {name} week starts ~day {day_of_year:.1f} "
+            f"(base period {start}), contributed {len(offsets)} turning "
+            f"point(s)."
+        )
+
+    return sorted(forced)

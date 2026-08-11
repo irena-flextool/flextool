@@ -600,8 +600,11 @@ class TestRPHalfRepresented:
 # ---------------------------------------------------------------------------
 
 from flextool.representative_periods.force_include import (  # noqa: E402
+    _find_critical_weeks,
     _top_n_indices,
+    _turning_points,
     compute_shape_season_forced,
+    compute_week_turn_forced,
     score_gradient,
     score_low,
 )
@@ -734,3 +737,142 @@ class TestComputeShapeSeasonForced:
             vg_weight=0.0,
         )
         assert forced == []
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: critical-week turning-point force-include
+# (_turning_points, _find_critical_weeks, compute_week_turn_forced).
+# ---------------------------------------------------------------------------
+
+
+class TestTurningPoints:
+    # A series with two significant peaks (offsets 2, 6) and one deep interior
+    # trough (offset 4). Offset 0 is confirmed as a leading trough when the
+    # series first swings up; offset 8 is a trailing running extreme that is
+    # never confirmed.
+    HAND = np.array([0, 1, 2, 1, 0, 1, 3, 1, 0], dtype=float)
+
+    def test_hand_array_interior_pivots(self):
+        pivots = _turning_points(self.HAND, prom_threshold=1.5)
+        # Interior pivots (the requirement) are present; leading trough 0 is
+        # confirmed; trailing 8 is not.
+        assert pivots == [0, 2, 4, 6]
+        for interior in (2, 4, 6):
+            assert interior in pivots
+        assert 8 not in pivots
+
+    def test_large_prominence_removes_small_wiggle(self):
+        # [0,5,4,5,0]: the 5->4->5 dip has depth 1; a threshold of 2 filters it
+        # out, leaving only the leading trough and the single interior peak.
+        wiggly = np.array([0, 5, 4, 5, 0], dtype=float)
+        assert _turning_points(wiggly, prom_threshold=2.0) == [0, 1]
+
+    def test_small_prominence_keeps_small_wiggle(self):
+        # The same series with a threshold of 0.5 keeps the tiny dip, so the
+        # interior wiggle (trough at 2, peak at 3) survives.
+        wiggly = np.array([0, 5, 4, 5, 0], dtype=float)
+        assert _turning_points(wiggly, prom_threshold=0.5) == [0, 1, 2, 3]
+
+    def test_flat_series_returns_empty(self):
+        assert _turning_points(np.full(9, 3.0), prom_threshold=0.1) == []
+
+    def test_deterministic_repeated_calls(self):
+        first = _turning_points(self.HAND, prom_threshold=1.5)
+        second = _turning_points(self.HAND, prom_threshold=1.5)
+        assert first == second
+
+
+class TestFindCriticalWeeks:
+    # PL=24 -> periods_per_week=7. 35 base periods = 5 weeks. Per-period levels:
+    #   week 0 (0-6):   5 (mid)
+    #   week 1 (7-13):  10 (high) -> drought window at start 7
+    #   week 2 (14-20): 1  (low)  -> low window at start 14
+    #   week 3 (21-27): 5 (mid)
+    #   week 4 (28-34): 5 (mid)   -> median (closest to the global median 5) is
+    #                               the lowest-index all-mid window, start 0.
+    PL = 24
+    PER_PERIOD = np.array(
+        [5] * 7 + [10] * 7 + [1] * 7 + [5] * 7 + [5] * 7, dtype=float
+    )
+
+    def _hourly(self) -> np.ndarray:
+        # Constant within each base period so grid.mean(axis=1) == PER_PERIOD.
+        return np.repeat(self.PER_PERIOD, self.PL)
+
+    def test_places_three_nonoverlapping_windows(self):
+        weeks = _find_critical_weeks(
+            self._hourly(), self.PL, n_base=35,
+            which={"drought", "low", "median"},
+        )
+        assert weeks["drought"] == (7, 14)
+        assert weeks["low"] == (14, 21)
+        assert weeks["median"] == (0, 7)
+        # Pairwise non-overlapping half-open ranges.
+        ranges = sorted(weeks.values())
+        for (a_lo, a_hi), (b_lo, b_hi) in zip(ranges, ranges[1:]):
+            assert a_hi <= b_lo
+
+    def test_subset_respects_priority_and_placement(self):
+        weeks = _find_critical_weeks(
+            self._hourly(), self.PL, n_base=35, which=["low"]
+        )
+        assert weeks == {"low": (14, 21)}
+
+    def test_too_short_signal_returns_empty(self):
+        # 5 base periods < periods_per_week (7) -> no week can be placed.
+        hourly = np.repeat(np.array([5, 10, 1, 5, 5], dtype=float), self.PL)
+        assert _find_critical_weeks(
+            hourly, self.PL, n_base=5, which={"drought", "low", "median"}
+        ) == {}
+
+    def test_empty_which_returns_empty(self):
+        assert _find_critical_weeks(
+            self._hourly(), self.PL, n_base=35, which=set()
+        ) == {}
+
+
+class TestComputeWeekTurnForced:
+    # PL=24 -> periods_per_week=7. 35 base periods. Flat mid level 5, with a
+    # zigzag high block in week 1 (drought) and a zigzag low block in week 3
+    # (low), so each chosen week carries several net-load turning points.
+    PL = 24
+    N_BASE = 35
+
+    def _per_period(self) -> np.ndarray:
+        pp = np.full(self.N_BASE, 5.0)
+        pp[7:14] = [8, 12, 8, 12, 8, 12, 8]   # drought week (highest mean)
+        pp[21:28] = [2, 0, 2, 0, 2, 0, 2]     # low week (lowest mean)
+        return pp
+
+    def _keys(self) -> list[str]:
+        return [f"t{i:04d}" for i in range(self.N_BASE * self.PL)]
+
+    def _forced(self, which, turn_prominence=0.1):
+        keys = self._keys()
+        hourly = np.repeat(self._per_period(), self.PL)
+        inflows = _inflows_from_netload(hourly, keys)
+        return compute_week_turn_forced(
+            {},  # profiles
+            inflows,
+            {},  # demand scalars
+            keys,
+            self.PL,
+            self.N_BASE,
+            which=which,
+            turn_prominence=turn_prominence,
+            vg_weight=0.0,
+        )
+
+    def test_indices_inside_chosen_weeks_sorted_deduped(self):
+        forced = self._forced({"drought", "low"})
+        assert forced, "expected non-empty forced set"
+        # Ascending and de-duplicated.
+        assert forced == sorted(forced)
+        assert len(forced) == len(set(forced))
+        # Every forced index lies inside the drought week [7,14) or the low
+        # week [21,28).
+        for idx in forced:
+            assert (7 <= idx < 14) or (21 <= idx < 28), idx
+
+    def test_empty_which_returns_empty(self):
+        assert self._forced(set()) == []
