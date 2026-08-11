@@ -604,6 +604,7 @@ from flextool.representative_periods.force_include import (  # noqa: E402
     _top_n_indices,
     _turning_points,
     compute_shape_season_forced,
+    compute_week_full_forced,
     compute_week_turn_forced,
     score_gradient,
     score_low,
@@ -945,6 +946,59 @@ class TestComputeWeekTurnForced:
         assert len(forced) == len(set(forced))
         # Every forced index lies inside the drought week [7,14) or the low
         # week [21,28).
+        for idx in forced:
+            assert (7 <= idx < 14) or (21 <= idx < 28), idx
+
+    def test_empty_which_returns_empty(self):
+        assert self._forced(set()) == []
+
+
+class TestComputeWeekFullForced:
+    # Same net-load construction and week placement as TestComputeWeekTurnForced
+    # (PL=24 -> periods_per_week=7, 35 base periods). drought places at [7,14),
+    # low at [21,28); full-forced forces EVERY period of each placed week.
+    PL = 24
+    N_BASE = 35
+    PPW = 7  # periods_per_week = 7 * (24 // PL)
+
+    def _per_period(self) -> np.ndarray:
+        pp = np.full(self.N_BASE, 5.0)
+        pp[7:14] = [8, 12, 8, 12, 8, 12, 8]   # drought week (highest mean)
+        pp[21:28] = [2, 0, 2, 0, 2, 0, 2]     # low week (lowest mean)
+        return pp
+
+    def _keys(self) -> list[str]:
+        return [f"t{i:04d}" for i in range(self.N_BASE * self.PL)]
+
+    def _forced(self, which):
+        keys = self._keys()
+        hourly = np.repeat(self._per_period(), self.PL)
+        inflows = _inflows_from_netload(hourly, keys)
+        return compute_week_full_forced(
+            {},  # profiles
+            inflows,
+            {},  # demand scalars
+            keys,
+            self.PL,
+            self.N_BASE,
+            which=which,
+            vg_weight=0.0,
+        )
+
+    def test_single_week_forces_whole_contiguous_range(self):
+        # drought week places at [7, 14): all seven periods, contiguous.
+        forced = self._forced({"drought"})
+        assert forced == list(range(7, 14))
+        assert len(forced) == self.PPW
+
+    def test_two_weeks_union_full_count_sorted_deduped(self):
+        # drought [7,14) + low [21,28): 14 distinct indices, ascending.
+        forced = self._forced({"drought", "low"})
+        assert forced == sorted(forced)
+        assert len(forced) == len(set(forced))
+        assert len(forced) == 2 * self.PPW
+        assert forced == list(range(7, 14)) + list(range(21, 28))
+        # Every forced index lies inside one of the two placed weeks.
         for idx in forced:
             assert (7 <= idx < 14) or (21 <= idx < 28), idx
 

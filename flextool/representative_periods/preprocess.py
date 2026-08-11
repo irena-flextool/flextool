@@ -483,6 +483,7 @@ def preprocess_representative_periods(
     force_season: int = 0,
     force_week_turns: list[str] | None = None,
     turn_prominence: float = 0.1,
+    force_weeks_full: list[str] | None = None,
     nearest_assignment: bool = False,
     nearest_k: int = 1,
     solves: list[str] | None = None,
@@ -543,6 +544,13 @@ def preprocess_representative_periods(
         turn_prominence: Minimum net-load reversal to count a turning point, as
             a fraction of that week's net-load range (default ``0.1``). Only
             used when ``force_week_turns`` is non-empty.
+        force_weeks_full: Optional subset of the same six week tokens as
+            ``force_week_turns``. For each named week, force EVERY base period of
+            the whole week (the full-resolution counterpart of
+            ``force_week_turns``; see
+            :func:`force_include.compute_week_full_forced`). Unioned/deduped with
+            the other forced picks and seeded into the greedy hull. ``None`` or
+            an empty list (default) forces none — the byte-parity path.
         nearest_assignment: When ``True``, assign each base period to its single
             nearest representative period (0/1 weight) instead of the convex
             blend. For hourly-RP tied-storage experiments. ``False`` (default)
@@ -710,6 +718,25 @@ def preprocess_representative_periods(
             region_demand=region_demand,
         )
         forced_indices = sorted(set(forced_indices) | set(week_turn_forced))
+
+    # Opt-in critical-week FULL enrichment: for each requested week force EVERY
+    # base period of the whole week (the full-resolution counterpart of the
+    # turning-points enrichment above) — UNIONed and deduped with the
+    # force-include picks. Empty/None → no extra periods → byte-parity default.
+    if force_weeks_full:
+        week_full_forced = force_include.compute_week_full_forced(
+            profiles,
+            inflows,
+            demand_scalars,
+            timestep_keys,
+            period_length,
+            n_base_periods,
+            which=force_weeks_full,
+            vg_weight=vg_weight,
+            region_profiles=region_profiles,
+            region_demand=region_demand,
+        )
+        forced_indices = sorted(set(forced_indices) | set(week_full_forced))
 
     # Guard: the greedy hull must keep at least one free (unforced) pick, so the
     # forced set can never fill the whole budget. If it does, truncate to the
@@ -971,6 +998,14 @@ def main() -> None:
         "--force-week-turns.",
     )
     parser.add_argument(
+        "--force-weeks-full",
+        type=str,
+        default="",
+        help="For each named week, force EVERY 2h period of the whole week as a "
+        "representative period (the full-resolution counterpart of "
+        "--force-week-turns). Omitted → force none.",
+    )
+    parser.add_argument(
         "--nearest-assignment",
         action="store_true",
         help="Assign each base period to its single nearest representative "
@@ -1048,6 +1083,22 @@ def main() -> None:
     else:
         force_week_turns = None
 
+    # Same token set / validation as --force-week-turns, normalised to the
+    # fixed priority order and deduped.
+    if args.force_weeks_full:
+        tokens = {
+            t.strip() for t in args.force_weeks_full.split(",") if t.strip()
+        }
+        unknown = sorted(t for t in tokens if t not in valid_week_turns)
+        if unknown:
+            parser.error(
+                f"--force-weeks-full: unknown token(s) {unknown}; valid "
+                f"tokens are: {', '.join(valid_week_turns)}."
+            )
+        force_weeks_full = [w for w in valid_week_turns if w in tokens]
+    else:
+        force_weeks_full = None
+
     try:
         preprocess_representative_periods(
             db_url=args.db_url,
@@ -1067,6 +1118,7 @@ def main() -> None:
             force_season=args.force_season,
             force_week_turns=force_week_turns,
             turn_prominence=args.turn_prominence,
+            force_weeks_full=force_weeks_full,
             nearest_assignment=args.nearest_assignment,
             nearest_k=args.nearest_k,
             solves=solves,

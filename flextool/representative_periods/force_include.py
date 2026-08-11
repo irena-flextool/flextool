@@ -1033,3 +1033,79 @@ def compute_week_turn_forced(
         )
 
     return sorted(forced)
+
+
+def compute_week_full_forced(
+    profiles: dict[str, list[tuple[str, float]]],
+    inflows: dict[str, list[tuple[str, float]]],
+    demand_scalars: dict[str, float],
+    timestep_keys: list[str],
+    period_length: int,
+    n_base: int,
+    *,
+    which: "set[str] | list[str]",
+    vg_weight: float,
+    region_profiles: dict[str, list[str]] | None = None,
+    region_demand: dict[str, float] | None = None,
+) -> list[int]:
+    """Force EVERY base period of up to six critical whole weeks.
+
+    The full-resolution counterpart of :func:`compute_week_turn_forced`: it uses
+    the *same* net-load signal (:func:`build_netload_hourly`, with the same
+    optional node-group demand-weighting via ``region_profiles`` /
+    ``region_demand``) and the *same* week selection
+    (:func:`_find_critical_weeks`), but instead of forcing only each week's
+    net-load turning points it forces ALL base periods in the placed week —
+    ``range(start, end)`` — so the whole chosen week enters the representative
+    set at full resolution. This is the endpoint against which the
+    turning-points-only variant is compared.
+
+    Args:
+        profiles: VRE availability series.
+        inflows: Time-varying node inflow series.
+        demand_scalars: Constant node inflows collected as demand levels.
+        timestep_keys: Ordered timestep keys defining the horizon.
+        period_length: Timesteps per aligned base period.
+        n_base: Number of aligned base periods.
+        which: Subset of ``{"drought", "low", "median", "highmid", "lowmid",
+            "median2"}`` to force in full.
+        vg_weight: Convex blend weight on the VG term.
+        region_profiles: Optional region -> profile names mapping (demand-weighted
+            system term).
+        region_demand: Optional region -> demand level ``D_r`` mapping.
+
+    Returns:
+        Sorted, deduplicated list of forced base-period indices — the ascending
+        union of every placed week's whole range. Empty list when ``which`` is
+        empty or no requested week can be placed.
+    """
+    if not which:
+        return []
+
+    netload = build_netload_hourly(
+        profiles,
+        inflows,
+        demand_scalars,
+        timestep_keys,
+        vg_weight=vg_weight,
+        region_profiles=region_profiles,
+        region_demand=region_demand,
+    )
+
+    weeks = _find_critical_weeks(netload, period_length, n_base, which=which)
+    if not weeks:
+        return []
+
+    forced: set[int] = set()
+    for name in _CRITICAL_WEEK_ORDER:
+        if name not in weeks:
+            continue
+        start, end = weeks[name]
+        forced.update(range(start, end))
+        day_of_year = start * period_length / 24
+        print(
+            f"  Force weeks-full: {name} week starts ~day {day_of_year:.1f} "
+            f"(base period {start}), forced {end - start} period(s)."
+        )
+
+    return sorted(forced)
