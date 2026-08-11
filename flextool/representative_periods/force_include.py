@@ -762,6 +762,19 @@ def compute_shape_season_forced(
     return sorted(forced)
 
 
+# Fixed priority order in which critical weeks are placed, independent of the
+# order tokens appear in ``which``. ``median2`` is last so it takes the
+# next-nearest-median slot after the mids are placed.
+_CRITICAL_WEEK_ORDER: tuple[str, ...] = (
+    "drought",
+    "low",
+    "median",
+    "highmid",
+    "lowmid",
+    "median2",
+)
+
+
 def _find_critical_weeks(
     netload: np.ndarray,
     period_length: int,
@@ -769,7 +782,7 @@ def _find_critical_weeks(
     *,
     which: "set[str] | list[str]",
 ) -> dict[str, tuple[int, int]]:
-    """Locate up to three non-overlapping whole-week windows of base periods.
+    """Locate up to six non-overlapping whole-week windows of base periods.
 
     Reduces the hourly ``netload`` to a per-period mean array (``score_peak``'s
     reshape convention, then ``.mean(axis=1)``), then a uniform sliding mean of
@@ -777,20 +790,31 @@ def _find_critical_weeks(
     array — the sustained weekly net-load level at each possible week start
     (``0 .. n_base - periods_per_week``).
 
-    The requested weeks are placed greedily in the fixed priority order
-    ``drought`` → ``low`` → ``median`` (independent of the iteration order of
-    ``which``):
+    Let ``mx = max(window_means)``, ``mn = min(window_means)`` and
+    ``md = median(window_means)``, all computed once over ALL window means
+    before any exclusion. The requested weeks are placed greedily in the FIXED
+    priority order ``drought`` → ``low`` → ``median`` → ``highmid`` →
+    ``lowmid`` → ``median2`` (independent of the iteration order of ``which``):
 
-    * ``drought`` — the start with the **highest** window mean (the worst
+    * ``drought`` — the start with the **highest** window mean ``mx`` (the worst
       sustained high-net-load / drought week).
-    * ``low`` — the start with the **lowest** window mean (the deepest
+    * ``low`` — the start with the **lowest** window mean ``mn`` (the deepest
       surplus / low-net-load week).
-    * ``median`` — the start whose window mean is closest to the **median** of
-      all window means (a representative middle week).
+    * ``median`` — the start whose window mean is closest to ``md`` (a
+      representative middle week).
+    * ``highmid`` — a mix of median and drought: the start whose window mean is
+      closest to the target ``(mx + md) / 2``.
+    * ``lowmid`` — a mix of median and low: the start whose window mean is
+      closest to the target ``(mn + md) / 2``.
+    * ``median2`` — a SECOND median week: the start whose window mean is closest
+      to ``md`` among those still available. Placed LAST (after the mids) so it
+      takes the next-nearest-median slot once the primary ``median`` week has
+      been excluded. If ``median`` was not also requested, ``median2`` is simply
+      the closest-to-``md`` available window.
 
     After each pick, every start within ``periods_per_week`` of the chosen start
     is excluded, so the returned windows can never overlap. Ties (equal window
-    mean, or equal distance to the median) break to the LOWEST start index.
+    mean, or equal distance to a target) break to the LOWEST start index.
     A week that cannot be placed without overlapping an already-chosen one is
     skipped.
 
@@ -798,7 +822,8 @@ def _find_critical_weeks(
         netload: Hourly net-load signal.
         period_length: Timesteps per aligned base period.
         n_base: Number of aligned base periods.
-        which: Subset of ``{"drought", "low", "median"}`` to place.
+        which: Subset of ``{"drought", "low", "median", "highmid", "lowmid",
+            "median2"}`` to place.
 
     Returns:
         ``{name: (start, start + periods_per_week)}`` for each requested and
@@ -819,11 +844,14 @@ def _find_critical_weeks(
     kernel = np.ones(periods_per_week, dtype=np.float64) / periods_per_week
     window_mean = np.convolve(per_period, kernel, mode="valid")
     n_starts = int(window_mean.size)  # = n_base - periods_per_week + 1
+    # Reference levels over ALL window means, fixed before any exclusion.
+    all_max = float(window_mean.max())
+    all_min = float(window_mean.min())
     all_median = float(np.median(window_mean))
 
     available = np.ones(n_starts, dtype=bool)
     result: dict[str, tuple[int, int]] = {}
-    for name in ("drought", "low", "median"):
+    for name in _CRITICAL_WEEK_ORDER:
         if name not in which:
             continue
         avail_idx = np.nonzero(available)[0]
@@ -835,7 +863,13 @@ def _find_critical_weeks(
             local = int(np.argmax(vals))
         elif name == "low":
             local = int(np.argmin(vals))
-        else:  # median
+        elif name == "highmid":
+            target = (all_max + all_median) / 2.0
+            local = int(np.argmin(np.abs(vals - target)))
+        elif name == "lowmid":
+            target = (all_min + all_median) / 2.0
+            local = int(np.argmin(np.abs(vals - target)))
+        else:  # "median" or "median2" — both target the overall median
             local = int(np.argmin(np.abs(vals - all_median)))
         # ``avail_idx`` is ascending and ``argmax``/``argmin`` return the FIRST
         # extremum, so ties resolve to the lowest start index.
@@ -922,7 +956,7 @@ def compute_week_turn_forced(
     region_profiles: dict[str, list[str]] | None = None,
     region_demand: dict[str, float] | None = None,
 ) -> list[int]:
-    """Force the net-load turning points of up to three critical weeks.
+    """Force the net-load turning points of up to six critical weeks.
 
     Builds one system-coincident net-load signal (:func:`build_netload_hourly`,
     with the same optional node-group demand-weighting via ``region_profiles`` /
@@ -945,7 +979,8 @@ def compute_week_turn_forced(
         timestep_keys: Ordered timestep keys defining the horizon.
         period_length: Timesteps per aligned base period.
         n_base: Number of aligned base periods.
-        which: Subset of ``{"drought", "low", "median"}`` to force.
+        which: Subset of ``{"drought", "low", "median", "highmid", "lowmid",
+            "median2"}`` to force.
         turn_prominence: Minimum net-load reversal to count a turning point, as
             a fraction of the week's net-load range.
         vg_weight: Convex blend weight on the VG term.
@@ -981,7 +1016,7 @@ def compute_week_turn_forced(
     per_period = grid.mean(axis=1)
 
     forced: set[int] = set()
-    for name in ("drought", "low", "median"):
+    for name in _CRITICAL_WEEK_ORDER:
         if name not in weeks:
             continue
         start, end = weeks[name]

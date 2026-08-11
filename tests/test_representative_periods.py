@@ -830,6 +830,80 @@ class TestFindCriticalWeeks:
             self._hourly(), self.PL, n_base=35, which=set()
         ) == {}
 
+    def test_drought_low_median_unchanged_guard(self):
+        # Byte-parity guard: with only the original three tokens the selection
+        # must be exactly what it was before the highmid/lowmid/median2 addition.
+        weeks = _find_critical_weeks(
+            self._hourly(), self.PL, n_base=35,
+            which={"drought", "low", "median"},
+        )
+        assert weeks == {
+            "drought": (7, 14),
+            "low": (14, 21),
+            "median": (0, 7),
+        }
+
+    def test_median2_alone_returns_closest_to_median(self):
+        # Requested alone, median2 is simply the closest-to-median window — the
+        # same pick the primary median makes (lowest-index all-mid window).
+        weeks = _find_critical_weeks(
+            self._hourly(), self.PL, n_base=35, which={"median2"}
+        )
+        assert weeks == {"median2": (0, 7)}
+
+
+class TestFindCriticalWeeksSixTypes:
+    # PL=24 -> periods_per_week=7. 9 distinct weekly blocks = 63 base periods,
+    # enough for six non-overlapping weeks. Levels are chosen so drought (100),
+    # low (5), several mid plateaus (30), a median/drought-mix block (65) and a
+    # median/low-mix block (18) are all separable.
+    PL = 24
+    N_BASE = 63
+    PER_PERIOD = np.array(
+        [30] * 7    # week 0  mid
+        + [100] * 7  # week 1  drought (max)
+        + [30] * 7   # week 2  mid
+        + [5] * 7    # week 3  low (min)
+        + [30] * 7   # week 4  mid
+        + [65] * 7   # week 5  median/drought mix (~(100+30)/2)
+        + [18] * 7   # week 6  median/low mix (~(5+30)/2)
+        + [30] * 7   # week 7  mid
+        + [30] * 7,  # week 8  mid
+        dtype=float,
+    )
+
+    def _hourly(self) -> np.ndarray:
+        return np.repeat(self.PER_PERIOD, self.PL)
+
+    def _window_mean(self) -> np.ndarray:
+        # Same reduction as _find_critical_weeks: sliding 7-period mean.
+        ppw = 7 * (24 // self.PL)
+        kernel = np.ones(ppw, dtype=np.float64) / ppw
+        return np.convolve(self.PER_PERIOD, kernel, mode="valid")
+
+    def test_all_six_weeks_placed_nonoverlapping_and_ordered(self):
+        which = ["drought", "low", "median", "median2", "highmid", "lowmid"]
+        weeks = _find_critical_weeks(
+            self._hourly(), self.PL, n_base=self.N_BASE, which=which
+        )
+        # All six requested weeks are placed.
+        assert set(weeks) == set(which)
+
+        # Pairwise non-overlapping half-open ranges.
+        ranges = sorted(weeks.values())
+        for (a_lo, a_hi), (b_lo, b_hi) in zip(ranges, ranges[1:]):
+            assert a_hi <= b_lo
+
+        # median2 is a distinct window from the primary median.
+        assert weeks["median2"][0] != weeks["median"][0]
+
+        # highmid sits between the median and drought weeks; lowmid sits
+        # between the low and median weeks (by window mean).
+        wm = self._window_mean()
+        m = {name: float(wm[start]) for name, (start, _) in weeks.items()}
+        assert m["median"] < m["highmid"] < m["drought"]
+        assert m["low"] < m["lowmid"] < m["median"]
+
 
 class TestComputeWeekTurnForced:
     # PL=24 -> periods_per_week=7. 35 base periods. Flat mid level 5, with a

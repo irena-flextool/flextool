@@ -530,9 +530,11 @@ def preprocess_representative_periods(
             fills the remaining ``n_rp - |forced|`` picks by net-load
             reconstruction. With all four at ``0`` the forced set is unchanged —
             the byte-parity contract.
-        force_week_turns: Optional subset of ``{"drought", "low", "median"}``.
-            For each named week, locate the worst sustained-drought, lowest
-            net-load, and median whole week (non-overlapping) and force ONLY the
+        force_week_turns: Optional subset of ``{"drought", "low", "median",
+            "median2", "highmid", "lowmid"}``. For each named week, locate the
+            worst sustained-drought, lowest net-load, median (and a second
+            median, a median/drought mix, a median/low mix) whole week
+            (non-overlapping) and force ONLY the
             net-load *turning points* within it — the base periods where the
             sustained net load reverses direction (see
             :func:`force_include.compute_week_turn_forced`). Unioned/deduped with
@@ -953,10 +955,12 @@ def main() -> None:
         "--force-week-turns",
         type=str,
         default="",
-        help="Comma-separated subset of 'drought,low,median'. For each named "
-        "week, force ONLY the net-load turning points (where the sustained net "
-        "load reverses direction) of the worst-drought / lowest / median whole "
-        "week. Omitted → force none (byte-parity default).",
+        help="Comma-separated subset of "
+        "'drought,low,median,median2,highmid,lowmid'. For each named week, "
+        "force ONLY the net-load turning points (where the sustained net load "
+        "reverses direction) of the worst-drought / lowest / median / second-"
+        "median / median-drought-mix / median-low-mix whole week (all "
+        "non-overlapping). Omitted → force none (byte-parity default).",
     )
     parser.add_argument(
         "--turn-prominence",
@@ -1018,10 +1022,18 @@ def main() -> None:
         else None
     )
 
-    # Parse and validate the critical-week spec against the three valid tokens.
-    # Normalise to the fixed priority order (drought, low, median) and dedup so
-    # the selection is deterministic regardless of how the spec was written.
-    valid_week_turns = ("drought", "low", "median")
+    # Parse and validate the critical-week spec against the six valid tokens.
+    # Normalise to the fixed priority order (drought, low, median, highmid,
+    # lowmid, median2) and dedup so the selection is deterministic regardless of
+    # how the spec was written.
+    valid_week_turns = (
+        "drought",
+        "low",
+        "median",
+        "highmid",
+        "lowmid",
+        "median2",
+    )
     if args.force_week_turns:
         tokens = {
             t.strip() for t in args.force_week_turns.split(",") if t.strip()
