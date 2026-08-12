@@ -223,6 +223,92 @@ class TestPickerBuild:
 
 
 # ---------------------------------------------------------------------------
+#  PlotSettingsPicker — entity tabs auto-populate on OPEN (DB ∪ aggregates)
+# ---------------------------------------------------------------------------
+
+
+class TestPickerEntitySeeding:
+    """On open the entity tabs seed additively from the UNION of the input
+    DB(s) and the dispatch output aggregates — no manual Refresh needed."""
+
+    def test_entities_populate_from_db_on_open(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        # Seed the DB discovery BEFORE construction so the on-open merge runs
+        # (mirrors the refresh tests' monkeypatch pattern).
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
+
+        picker, _ = _make_picker(
+            tk_root, tmp_path, data={"entities": {"unit": {}}},
+        )
+        # DB entities appear on open (no Refresh click) with palette colors.
+        unit = _section(picker._data, ("entities", "unit"))
+        assert set(unit) == {"coal", "gas"}
+        assert all(
+            isinstance(v, str) and v.startswith("#") for v in unit.values()
+        )
+        # A class absent from the seed data is created from discovery too.
+        assert set(_section(picker._data, ("entities", "node"))) == {"n1"}
+
+    def test_dispatch_aggregate_populates_flowgroup_on_open(
+        self, tk_root, tmp_path,
+    ):
+        # A processGroup aggregate that lives ONLY in solved output (never the
+        # input DB) must become listable under flowGroup on open.
+        import pandas as pd
+
+        pq = tmp_path / "output_parquet" / "base_1"
+        pq.mkdir(parents=True)
+        pd.DataFrame(
+            {"group": ["elec"], "group_aggregate": ["Fossil"]},
+        ).to_parquet(
+            pq / "nodeGroupDispatch__processGroup_Unit_to_group.parquet",
+        )
+
+        picker, _ = _make_picker(
+            tk_root, tmp_path, data={"entities": {"flowGroup": {}}},
+        )
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        assert "Fossil" in fg
+        assert isinstance(fg["Fossil"], str) and fg["Fossil"].startswith("#")
+
+    def test_on_open_entity_merge_is_add_only(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        # DB knows coal + gas; 'chp' is a pre-existing entry absent from the DB.
+        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"]})
+        data = {"entities": {"unit": {"coal": "#123456", "chp": "#654321"}}}
+
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        unit = _section(picker._data, ("entities", "unit"))
+        # Existing colors + order preserved; chp NOT pruned (add-only); gas
+        # appended after the existing entries.
+        assert unit["coal"] == "#123456"
+        assert unit["chp"] == "#654321"
+        assert list(unit.keys())[:2] == ["coal", "chp"]
+        assert "gas" in unit and unit["gas"].startswith("#")
+
+    def test_on_open_merge_noop_without_sources(self, tk_root, tmp_path):
+        # No input DB and no output_parquet → on-open entity merge is a no-op
+        # (preserves the prior behaviour for projects with nothing to discover).
+        data = {"entities": {"unit": {"coal": "#212121"}}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        assert picker._data["entities"] == {"unit": {"coal": "#212121"}}
+
+
+# ---------------------------------------------------------------------------
 #  PlotSettingsPicker — Apply / Save / Cancel + on_apply wiring
 # ---------------------------------------------------------------------------
 
@@ -927,6 +1013,47 @@ class TestPickerRefresh:
         # categories / scenarios untouched.
         assert picker._data["categories"] == _SAMPLE["categories"]
         assert picker._data["scenarios"] == _SAMPLE["scenarios"]
+
+    def test_refresh_unions_db_and_output_aggregates(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Refresh prunes against B ∪ C: an output-only aggregate (Fossil,
+        absent from the DB) survives, while a truly-stale entry (in neither
+        the DB nor the output aggregates) is pruned."""
+        import pandas as pd
+
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        # The dispatch output draws the 'Fossil' flowGroup aggregate.
+        pq = tmp_path / "output_parquet" / "base_1"
+        pq.mkdir(parents=True)
+        pd.DataFrame(
+            {"group": ["elec"], "group_aggregate": ["Fossil"]},
+        ).to_parquet(
+            pq / "nodeGroupDispatch__processGroup_Unit_to_group.parquet",
+        )
+        # Seed: Fossil (output-only) + StaleGroup (in neither source) + coal.
+        data = {"entities": {
+            "flowGroup": {"Fossil": "#abcdef", "StaleGroup": "#111111"},
+            "unit": {"coal": "#212121"},
+        }}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        # DB knows only unit coal; it has NO flowGroups.
+        _mock_fetch(monkeypatch, {"unit": ["coal"]})
+
+        picker._on_refresh()
+
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        # Fossil kept (live output aggregate, value preserved); StaleGroup gone.
+        assert fg == {"Fossil": "#abcdef"}
+        # unit coal (in the DB) kept.
+        assert _section(picker._data, ("entities", "unit")) == {
+            "coal": "#212121",
+        }
 
     def test_refresh_rebuilds_trees(self, tk_root, tmp_path, monkeypatch):
         from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker

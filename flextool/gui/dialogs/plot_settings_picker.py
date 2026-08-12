@@ -13,9 +13,10 @@ section, lists every entry in a ``ttk.Treeview`` with a composite
 ``[pos][neg]`` swatch image next to its name, and wires Apply / Save and
 exit / Cancel to the file + the ``on_apply`` callback.  Editing
 interactions: reorder (drag + Alt-arrow), per-row color dialog
-(double-click), **Refresh from DB** (re-fetch entity names from the
-project's input DB(s) and add new + prune stale), and multi-level
-**Undo/Redo** over the in-memory working dict.
+(double-click), **Refresh from DB** (re-discover entity names from the
+project's input DB(s) unioned with the dispatch output aggregates, then
+add new + prune stale), and multi-level **Undo/Redo** over the in-memory
+working dict.  The same union seeds the entity tabs additively on open.
 """
 
 from __future__ import annotations
@@ -642,6 +643,12 @@ class PlotSettingsPicker(tk.Toplevel):
         # the always-shown scenarios tab is useful before any comparison run.
         # Add-only; Cancel still restores the on-disk text untouched.
         self._merge_scenarios_from_folders()
+        # Populate the entity sections from the input DB(s) ∪ the dispatch
+        # output aggregates so every drawn entity — including processGroup
+        # aggregates that live only in solved output (e.g. ``Fossil``) — is
+        # listable/colorable on open, without a manual "Refresh from DB".
+        # Add-only; Cancel still restores the on-disk text untouched.
+        self._merge_entities_from_sources()
 
         # In-memory edit history (deep copies of ``self._data``).  Every
         # mutator calls ``_snapshot()`` (push pre-edit state, clear redo)
@@ -1410,6 +1417,142 @@ class PlotSettingsPicker(tk.Toplevel):
             scenarios[name] = color
         self._data["scenarios"] = scenarios
 
+    def _discover_output_flow_aggregates(self) -> set[str]:
+        """ProcessGroup ``group_aggregate`` names the dispatch plots draw.
+
+        These aggregate names (e.g. ``Fossil``) exist ONLY in solved output
+        (``output_parquet``), never in the input DB, yet the dispatch graph
+        stacks them as flowGroup items — so the picker cannot list/color them
+        from the DB alone.  They are discovered by reading the
+        ``group_aggregate`` column directly from the three
+        ``nodeGroupDispatch__processGroup_*`` aggregate parquet files under
+        each ``output_parquet/<scenario>/`` folder, unioned across scenario
+        folders (``_``-prefixed manifest dirs skipped, mirroring
+        :meth:`_discover_scenario_names`).
+
+        A direct column read is used deliberately over the full
+        :func:`~flextool.scenario_comparison.dispatch_mappings.load_dispatch_mappings`:
+        only these three files carry ``group_aggregate`` and their values are
+        EXACTLY what the dispatch side classifies as flowGroup (see
+        :func:`~flextool.scenario_comparison.config_builder.discover_dispatch_entities`),
+        so this lighter read yields precisely the names the plot draws without
+        loading the heavy per-member / time-series mapping files.
+
+        Robust by construction: a missing ``output_parquet``, empty scenario
+        folders, missing aggregate files, and unreadable / columnless parquet
+        are all skipped — whatever is available is returned (empty set when
+        nothing), never raising.
+        """
+        parquet_dir = self._settings_path.parent / "output_parquet"
+        if not parquet_dir.is_dir():
+            return set()
+
+        from flextool.lean_parquet import read_lean_parquet
+
+        # The three processGroup aggregate tables that carry ``group_aggregate``
+        # (unit→group / group→unit / connection); see
+        # dispatch_mappings.load_dispatch_mappings and config_builder's
+        # flowGroup classification.
+        aggregate_files = (
+            "nodeGroupDispatch__processGroup_Unit_to_group.parquet",
+            "nodeGroupDispatch__processGroup_Group_to_unit.parquet",
+            "nodeGroupDispatch__processGroup_Connection.parquet",
+        )
+        aggregates: set[str] = set()
+        for scen_dir in sorted(parquet_dir.iterdir()):
+            if not scen_dir.is_dir() or scen_dir.name.startswith("_"):
+                continue
+            for filename in aggregate_files:
+                path = scen_dir / filename
+                if not path.is_file():
+                    continue
+                try:
+                    df = read_lean_parquet(path)
+                except Exception as exc:  # unreadable / corrupt parquet
+                    logger.warning("Cannot read %s: %s", path, exc)
+                    continue
+                if df is None or "group_aggregate" not in df.columns:
+                    continue
+                aggregates.update(
+                    str(g) for g in df["group_aggregate"].dropna().unique()
+                )
+        return aggregates
+
+    def _discover_all_entities(self) -> dict[str, set[str]]:
+        """Per-class entity names from input DB(s) (B) ∪ output aggregates (C).
+
+        Shared source of truth for both the add-only on-open merge
+        (:meth:`_merge_entities_from_sources`) and the add+prune
+        :meth:`_on_refresh`, so the union is defined in one place.
+
+        * **B** — every entity in the relevant classes across the project's
+          input/intermediate DBs (:meth:`_discover_input_dbs` +
+          :meth:`_fetch_entity_union`).
+        * **C** — processGroup ``group_aggregate`` names discovered from
+          ``output_parquet`` (:meth:`_discover_output_flow_aggregates`),
+          folded into the ``flowGroup`` class exactly as the dispatch side
+          classifies them, so output-only aggregates become listable.
+
+        Returns ``{class -> set of names}`` for every relevant entity class
+        (empty sets when a class has no members).  Never raises for a missing
+        DB or missing ``output_parquet`` (both simply contribute nothing).
+        """
+        union = self._fetch_entity_union(self._discover_input_dbs())
+        # C: dispatch output aggregates are flowGroup names.
+        union.setdefault("flowGroup", set()).update(
+            self._discover_output_flow_aggregates()
+        )
+        return union
+
+    def _merge_entities_from_sources(self) -> None:
+        """Additively seed entities from input DB(s) ∪ dispatch aggregates.
+
+        Called on open so the entity tabs are populated immediately (fixes
+        the symptom where entities only appeared after a manual "Refresh from
+        DB", and where output-only aggregates like ``Fossil`` were never
+        listable).  **Add-only**: newly discovered names (per class) are
+        appended with a default palette color
+        (:func:`assign_palette_colors`); existing entries — including any
+        edited color and the current order — are never touched, and nothing
+        is pruned.  New aggregate names land under ``entities.flowGroup``.
+
+        Mutates ``self._data['entities']`` in memory only and records NO undo
+        step; Cancel reverts via the on-disk text snapshot, exactly like
+        :meth:`_merge_scenarios_from_folders`.  Any discovery failure (e.g. a
+        corrupt input DB) is logged and skipped so opening the picker is never
+        broken.
+        """
+        try:
+            discovered = self._discover_all_entities()
+        except Exception as exc:  # never let discovery break the window open
+            logger.warning("Entity discovery on open failed: %s", exc)
+            return
+        if not any(discovered.values()):
+            return
+
+        from flextool.scenario_comparison.config_builder import (
+            assign_palette_colors,
+        )
+
+        entities = self._data.get("entities")
+        entities = entities if isinstance(entities, dict) else {}
+        changed = False
+        for cls, names in discovered.items():
+            if not names:
+                continue
+            section = entities.get(cls)
+            section = section if isinstance(section, dict) else {}
+            # Add-only: append names not already present; keep order + values.
+            new_names = sorted(n for n in names if n not in section)
+            if not new_names:
+                continue
+            for name, color in assign_palette_colors(new_names).items():
+                section[name] = color
+            entities[cls] = section
+            changed = True
+        if changed:
+            self._data["entities"] = entities
+
     def _fetch_entity_union(self, db_urls: list[str]) -> dict[str, set[str]]:
         """Union per-class entity names across every input DB (one open each).
 
@@ -1433,16 +1576,21 @@ class PlotSettingsPicker(tk.Toplevel):
         return union
 
     def _on_refresh(self) -> None:
-        """Re-fetch entities from the project DB(s): ADD new + PRUNE stale.
+        """Re-discover entities: ADD new + PRUNE stale, against B ∪ C.
 
-        Discovers the project's input DB(s), unions their per-class entity
-        names, and updates ``self._data['entities']`` in place: discovered
-        names not already present are appended with a default-palette color
-        (:func:`assign_palette_colors`); existing entries no longer in the DB
-        are removed; surviving entries keep their order and (edited) values.
-        ``categories`` and ``scenarios`` are never touched.  Records one undo
-        step and rebuilds the entity tabs.  Shows an info box and changes
-        nothing when no input DB is found.
+        Discovers the union of the project's input-DB entities and the
+        dispatch output aggregates (:meth:`_discover_all_entities`), and
+        updates ``self._data['entities']`` in place: discovered names not
+        already present are appended with a default-palette color
+        (:func:`assign_palette_colors`); existing entries no longer in the
+        union are removed; surviving entries keep their order and (edited)
+        values.  Pruning against the **union** (not the input DB alone) is
+        what keeps output-only aggregates like ``Fossil`` — which the
+        dispatch plot draws but the DB never lists — from being deleted by a
+        Refresh.  ``categories`` and ``scenarios`` are never touched.  Records
+        one undo step and rebuilds the entity tabs.  Shows an info box and
+        changes nothing only when there is genuinely nothing to discover (no
+        input DB AND no output aggregates).
         """
         from flextool.scenario_comparison.config_builder import (
             assign_palette_colors,
@@ -1451,16 +1599,14 @@ class PlotSettingsPicker(tk.Toplevel):
             RELEVANT_ENTITY_CLASSES,
         )
 
-        db_urls = self._discover_input_dbs()
-        if not db_urls:
+        union = self._discover_all_entities()
+        if not any(union.values()):
             messagebox.showinfo(
                 "Refresh from DB",
                 "No input database found.",
                 parent=self,
             )
             return
-
-        union = self._fetch_entity_union(db_urls)
 
         # Build the new entities mapping per class: keep existing entries (in
         # order, with their values) that still exist in the DB, append newly
@@ -1477,7 +1623,7 @@ class PlotSettingsPicker(tk.Toplevel):
             existing = existing if isinstance(existing, dict) else {}
 
             rebuilt: dict[str, object] = {}
-            # Preserve existing entries (order + value) still in the DB.
+            # Preserve existing entries (order + value) still in B ∪ C.
             for name, value in existing.items():
                 if name in discovered:
                     rebuilt[name] = value
