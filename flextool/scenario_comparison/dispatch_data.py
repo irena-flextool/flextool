@@ -189,13 +189,17 @@ def _order_dispatch_columns(
                     return len(config_order)
         ordered_from_config_neg.sort(key=_config_key)
         ordered_from_config_pos.sort(key=_config_key)
-        # Sort remaining by std dev
+        # Sort remaining by std dev, with column name as a deterministic
+        # secondary key so equal-std-dev ties resolve stably (otherwise an
+        # unlisted column's stacking slot is arbitrary).  This only changes
+        # ordering when std devs are exactly equal — distinct std devs keep
+        # their std-dev order.
         if remaining_neg:
             col_std = {col: df[col].abs().std() for col in remaining_neg}
-            remaining_neg.sort(key=lambda c: col_std.get(c, 0))
+            remaining_neg.sort(key=lambda c: (col_std.get(c, 0), c))
         if remaining_pos:
             col_std = {col: df[col].std() for col in remaining_pos}
-            remaining_pos.sort(key=lambda c: col_std.get(c, 0))
+            remaining_pos.sort(key=lambda c: (col_std.get(c, 0), c))
         # Re-insert special tokens at their fixed slots: negatives at the
         # very bottom (internal_losses, Export, Charge), positives at the
         # very top (Import, Discharge, LossOfLoad), mirroring the ``else``
@@ -219,12 +223,15 @@ def _order_dispatch_columns(
         neg_special = [c for c in negative_cols if c in NEGATIVE_SPECIAL]
         neg_regular = [c for c in negative_cols if c not in NEGATIVE_SPECIAL]
 
+        # Column name is a deterministic secondary key so equal-std-dev ties
+        # resolve stably (mirrors the config_order "remaining" buckets above);
+        # only affects ordering when std devs are exactly equal.
         if pos_regular:
             col_std = {col: df[col].std() for col in pos_regular}
-            pos_regular = sorted(pos_regular, key=lambda c: col_std.get(c, 0))
+            pos_regular = sorted(pos_regular, key=lambda c: (col_std.get(c, 0), c))
         if neg_regular:
             col_std = {col: df[col].abs().std() for col in neg_regular}
-            neg_regular = sorted(neg_regular, key=lambda c: col_std.get(c, 0))
+            neg_regular = sorted(neg_regular, key=lambda c: (col_std.get(c, 0), c))
 
         ordered_cols: list[str] = []
         ordered_cols.extend(neg_regular)

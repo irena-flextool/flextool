@@ -55,3 +55,52 @@ def test_specials_stay_pinned_with_entity_config_order():
     assert cols[-1] == "Curtailed"
     # Entity order honored: coal before wind (config order), between specials.
     assert cols.index("coal") < cols.index("wind")
+
+
+def _make_tie_df(col_order: list[str]) -> pd.DataFrame:
+    """DataFrame with two positive and two negative unlisted columns whose
+    within-sign std devs are exactly equal, built in *col_order*.
+
+    ``pos_a`` / ``pos_b`` share the same values (equal std dev), as do
+    ``neg_a`` / ``neg_b``; none appear in any config so they land in the
+    std-dev "remaining" buckets where the tie-break must decide their order.
+    """
+    idx = pd.Index([1, 2, 3], name="time")
+    data = {
+        "pos_a": [1.0, 3.0, 2.0],
+        "pos_b": [1.0, 3.0, 2.0],   # identical → equal std dev to pos_a
+        "neg_a": [-1.0, -3.0, -2.0],
+        "neg_b": [-1.0, -3.0, -2.0],  # identical → equal std dev to neg_a
+    }
+    return pd.DataFrame({c: data[c] for c in col_order}, index=idx)
+
+
+def test_equal_std_ties_resolve_by_name_config_branch():
+    """Unlisted columns with equal std dev order by name, independent of the
+    input column order (config_order branch)."""
+    cfg = ["something_else"]  # matches nothing → all fall to "remaining"
+    forward = _order_dispatch_columns(
+        _make_tie_df(["pos_a", "pos_b", "neg_a", "neg_b"]), config_order=cfg
+    )
+    reverse = _order_dispatch_columns(
+        _make_tie_df(["neg_b", "neg_a", "pos_b", "pos_a"]), config_order=cfg
+    )
+    assert list(forward.columns) == list(reverse.columns)
+    cols = list(forward.columns)
+    # Name-sorted within each sign bucket.
+    assert cols.index("pos_a") < cols.index("pos_b")
+    assert cols.index("neg_a") < cols.index("neg_b")
+
+
+def test_equal_std_ties_resolve_by_name_else_branch():
+    """Same deterministic tie-break in the config-less (else) branch."""
+    forward = _order_dispatch_columns(
+        _make_tie_df(["pos_a", "pos_b", "neg_a", "neg_b"]), config_order=None
+    )
+    reverse = _order_dispatch_columns(
+        _make_tie_df(["neg_b", "neg_a", "pos_b", "pos_a"]), config_order=None
+    )
+    assert list(forward.columns) == list(reverse.columns)
+    cols = list(forward.columns)
+    assert cols.index("pos_a") < cols.index("pos_b")
+    assert cols.index("neg_a") < cols.index("neg_b")
