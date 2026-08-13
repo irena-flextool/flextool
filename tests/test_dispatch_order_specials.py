@@ -376,3 +376,41 @@ def test_special_order_applies_in_config_branch_column_order():
     assert cols[:3] == ["Charge", "Export", "internal_losses"]
     # Positives: list order == reverse of special_order positives.
     assert cols[3:] == ["LossOfLoad", "Discharge", "Import"]
+
+
+def test_negative_config_bands_follow_picker_list_order():
+    """Negative bands must read the same way as the picker list: an entity
+    lower in the list sits lower in the plot.  Regression — negatives came out
+    upside-down because config_order (one top-to-bottom sequence) was applied
+    with the same sort direction as positives, which stack the opposite way."""
+    from flextool.plot_outputs.color_template import (
+        resolve_dispatch_colors_and_order,
+    )
+    # Picker/file order top->bottom = [Load_A, Load_B].
+    tmpl = {"entities": {"flowGroup": {"Load_A": "#ff0000", "Load_B": "#0000ff"}}}
+    _, cfg = resolve_dispatch_colors_and_order(tmpl, ["Load_A", "Load_B"])
+    df = pd.DataFrame(
+        {"Load_A": [-1.0, -1, -1], "Load_B": [-2.0, -2, -2]},
+        index=pd.RangeIndex(3),
+    )
+    cols = [str(c) for c in _order_dispatch_columns(df, config_order=cfg).columns]
+    # Negatives stack down with first-in-list nearest the axis (top), so
+    # Load_A (top of the picker list) must precede Load_B.
+    assert cols.index("Load_A") < cols.index("Load_B")
+
+
+def test_positive_config_bands_follow_picker_list_order():
+    """Positives already read correctly — guard that the negative fix didn't
+    flip them."""
+    from flextool.plot_outputs.color_template import (
+        resolve_dispatch_colors_and_order,
+    )
+    tmpl = {"entities": {"flowGroup": {"Gen_A": "#ff0000", "Gen_B": "#0000ff"}}}
+    _, cfg = resolve_dispatch_colors_and_order(tmpl, ["Gen_A", "Gen_B"])
+    df = pd.DataFrame(
+        {"Gen_A": [1.0, 1, 1], "Gen_B": [2.0, 2, 2]}, index=pd.RangeIndex(3),
+    )
+    cols = [str(c) for c in _order_dispatch_columns(df, config_order=cfg).columns]
+    # Positives stack up with last-in-list at the top, so Gen_A (top of list)
+    # must come AFTER Gen_B in list order (nearest-axis = bottom = last drawn).
+    assert cols.index("Gen_B") < cols.index("Gen_A")

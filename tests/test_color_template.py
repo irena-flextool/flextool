@@ -1349,6 +1349,16 @@ class TestResolveDispatchColorsAndOrder:
         _, uo2 = ct.resolve_dispatch_colors_and_order(u2, ["wind_out", "aaa_out"])
         assert uo1 != uo2, "unit band order ignored the unit reorder"
 
+    def test_lookup_color_exact_case_before_case_insensitive(self):
+        """A node's 'wind_out' band must take the unit 'wind' COLOR, and a
+        nodeGroup's 'Wind' aggregate the flowGroup 'Wind' colour — exact case
+        wins before the case-insensitive fallback, so the two don't collapse."""
+        ent = {"flowGroup": {"Wind": "#F1F1F1"}, "unit": {"wind": "#0A0A0A"}}
+        assert ct._lookup_entity_color(ent, "wind", False) == "#0A0A0A"
+        assert ct._lookup_entity_color(ent, "Wind", False) == "#F1F1F1"
+        # No exact hit → case-insensitive fallback, flowGroup (first) wins.
+        assert ct._lookup_entity_color(ent, "WIND", False) == "#F1F1F1"
+
     def test_same_name_collision_order_follows_flowgroup_first(self):
         """When a name is in two classes with the SAME case, its order slot
         comes from the first class (flowGroup), matching _lookup_entity_color's

@@ -694,17 +694,29 @@ def _lookup_entity_color(entities: dict, name: str, negative: bool):
     Returns the raw color value (positive side, or ``neg_color`` when
     *negative* and present) or ``None`` if no class lists *name*.
     """
-    name_lc = str(name).lower()
-    for cls in _DISPATCH_ENTITY_CLASSES:
-        class_map = entities.get(cls)
-        if not isinstance(class_map, dict):
-            continue
-        for key, val in class_map.items():
-            if str(key).lower() == name_lc:
-                color_val, neg_val = _resolve_entity_value(val)
-                if negative and neg_val is not None:
-                    return neg_val
-                return color_val
+    name_str = str(name)
+    name_lc = name_str.lower()
+    # Two passes: EXACT case first (across all classes, flowGroup first), then
+    # a case-insensitive fallback.  The exact pass keeps a unit ``wind`` and a
+    # flowGroup ``Wind`` distinct — a node's ``wind_out`` band then takes the
+    # unit colour and a nodeGroup's ``Wind`` aggregate the flowGroup colour,
+    # instead of both collapsing to whichever class comes first case-folded.
+    # This mirrors the exact-then-lower order index in
+    # ``resolve_dispatch_colors_and_order`` so colour and order agree.
+    for exact in (True, False):
+        for cls in _DISPATCH_ENTITY_CLASSES:
+            class_map = entities.get(cls)
+            if not isinstance(class_map, dict):
+                continue
+            for key, val in class_map.items():
+                hit = (str(key) == name_str) if exact else (
+                    str(key).lower() == name_lc
+                )
+                if hit:
+                    color_val, neg_val = _resolve_entity_value(val)
+                    if negative and neg_val is not None:
+                        return neg_val
+                    return color_val
     return None
 
 

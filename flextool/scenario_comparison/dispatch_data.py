@@ -362,8 +362,15 @@ def _order_dispatch_columns(
                     return config_order.index(col)
                 except ValueError:
                     return len(config_order)
-        ordered_from_config_neg.sort(key=_config_key)
+        # Positives stack UP from the axis in list order (first list column
+        # nearest 0 = bottom), negatives stack DOWN (first list column nearest
+        # 0 = top).  ``config_order`` is a single top-to-bottom sequence, so to
+        # make the picker's list order read the same way on BOTH sides, the
+        # negative block must take config_order in REVERSE: an entity lower in
+        # the list must sit lower in the plot on the negative side too (without
+        # this, negatives came out upside-down relative to the list).
         ordered_from_config_pos.sort(key=_config_key)
+        ordered_from_config_neg.sort(key=_config_key, reverse=True)
         # Sort remaining by std dev, with column name as a deterministic
         # secondary key so equal-std-dev ties resolve stably (otherwise an
         # unlisted column's stacking slot is arbitrary).  This only changes
