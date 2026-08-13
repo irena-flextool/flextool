@@ -786,9 +786,28 @@ def resolve_dispatch_colors_and_order(
     entity_file_order: list[str] = []
     for cls in _DISPATCH_ENTITY_CLASSES:
         entity_file_order.extend(template_label_order(template, entity_class=cls))
-    entity_order_index = {
-        str(k).lower(): i for i, k in enumerate(entity_file_order)
-    }
+    # Order index, first-occurrence-wins (``setdefault``) so it agrees with
+    # ``_lookup_entity_color``'s first-match-wins class precedence
+    # (``_DISPATCH_ENTITY_CLASSES`` has flowGroup first).  Keep BOTH an
+    # exact-case and a lowercase map: the exact map is consulted first so a
+    # flowGroup ``Wind`` and a unit ``wind`` keep DISTINCT positions — a
+    # nodeGroup's ``Wind`` aggregate band then tracks the flowGroup order and a
+    # node's ``wind_out`` band tracks the unit order, instead of one silently
+    # overwriting the other in a flat case-folded, last-wins index (which
+    # pinned flowGroup bands to an unrelated unit/node slot).  The lowercase
+    # map preserves case-insensitive tolerance as a fallback.
+    entity_order_index: dict[str, int] = {}
+    entity_order_index_lc: dict[str, int] = {}
+    for i, k in enumerate(entity_file_order):
+        entity_order_index.setdefault(str(k), i)
+        entity_order_index_lc.setdefault(str(k).lower(), i)
+
+    def _entity_order_pos(name: str) -> int:
+        if name in entity_order_index:
+            return entity_order_index[name]
+        return entity_order_index_lc.get(
+            name.lower(), len(entity_file_order),
+        )
 
     entity_cols: list[str] = []
     for col in cols:
@@ -831,9 +850,7 @@ def resolve_dispatch_colors_and_order(
     # historical std-dev ordering of unlisted columns) is preserved.
     ordered_entities = sorted(
         entity_cols,
-        key=lambda c: entity_order_index.get(
-            str(_extract_dispatch_entity_name(c)).lower(), len(entity_order_index)
-        ),
+        key=lambda c: _entity_order_pos(str(_extract_dispatch_entity_name(c))),
     )
 
     config_order = list(ordered_entities)
