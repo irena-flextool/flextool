@@ -662,6 +662,22 @@ class PlotSettingsPicker(tk.Toplevel):
         # Add-only; Cancel still restores the on-disk text untouched.
         self._merge_entities_from_sources()
 
+        # Dispatch-aggregator flowGroup set (display filter only — never
+        # touches ``self._data``): parquet ``group_aggregate`` names ∪ input-DB
+        # ``flow_aggregator`` ∈ {dispatch_plots_only, both}.  Computed ONCE here
+        # and reused by every (re)build (including undo/redo) so the flowGroup
+        # tab lists only dispatch aggregators; a non-aggregator flowGroup stays
+        # in the file but is not drawn.  Guarded like the merge above so a
+        # discovery failure can never break the window opening — an empty set
+        # then disables the filter (all flowGroups show).
+        try:
+            self._dispatch_flowgroup_aggregators = (
+                self._compute_dispatch_flowgroup_aggregators()
+            )
+        except Exception as exc:  # never let discovery break the window open
+            logger.warning("flowGroup aggregator discovery on open failed: %s", exc)
+            self._dispatch_flowgroup_aggregators = set()
+
         # In-memory edit history (deep copies of ``self._data``).  Every
         # mutator calls ``_snapshot()`` (push pre-edit state, clear redo)
         # before it changes ``self._data``; undo/redo move states between
@@ -1028,6 +1044,17 @@ class PlotSettingsPicker(tk.Toplevel):
         bindings — so all reorder / color-edit behaviour is unchanged; only
         the container differs (a swapped grid cell instead of a notebook tab).
         """
+        # Display filter (rows only — ``self._data`` is never touched, so the
+        # file still round-trips every flowGroup): the flowGroup tab lists ONLY
+        # dispatch aggregators (parquet ``group_aggregate`` ∪ input-DB
+        # ``flow_aggregator`` ∈ {dispatch_plots_only, both}).  When the
+        # aggregator set is empty (no DB and no parquet aggregates discovered —
+        # e.g. a pre-solve project with an unreadable DB) the filter is disabled
+        # so we never wrongly hide every flowGroup.
+        aggregators = getattr(self, "_dispatch_flowgroup_aggregators", None)
+        if section_path == ("entities", "flowGroup") and aggregators:
+            rows = [(name, value) for name, value in rows if name in aggregators]
+
         # Left selector row (pure selector — no reorder bindings attached).
         item = self._category_list.insert("", "end", text=title)
         self._category_items[title] = item
@@ -1785,6 +1812,43 @@ class PlotSettingsPicker(tk.Toplevel):
             changed = True
         if changed:
             self._data["entities"] = entities
+
+    def _compute_dispatch_flowgroup_aggregators(self) -> set[str]:
+        """flowGroups that are dispatch aggregators (for the display filter).
+
+        The set is the UNION of:
+
+        * the parquet ``group_aggregate`` flowGroup names discovered from the
+          solved ``output_parquet`` (:meth:`_discover_dispatch_sources` —
+          exactly the aggregates the dispatch plots draw, e.g. ``Fossil``), and
+        * every input-DB flowGroup whose ``flow_aggregator`` parameter is
+          ``dispatch_plots_only`` or ``both``
+          (:func:`~flextool.scenario_comparison.input_entity_colors.fetch_flow_aggregator_flowgroups`,
+          one DB open each over :meth:`_discover_input_dbs`).
+
+        Each source is individually guarded so one failing does not lose the
+        other; a total failure yields an empty set, which
+        :meth:`_add_category` treats as "do not filter" (show all flowGroups).
+        """
+        aggregators: set[str] = set()
+        try:
+            per_class, _std = self._discover_dispatch_sources()
+            aggregators |= set(per_class.get("flowGroup", set()))
+        except Exception as exc:  # parquet discovery must not break the filter
+            logger.warning("Dispatch flowGroup discovery failed: %s", exc)
+
+        from flextool.scenario_comparison.input_entity_colors import (
+            fetch_flow_aggregator_flowgroups,
+        )
+
+        for url in self._discover_input_dbs():
+            try:
+                aggregators |= fetch_flow_aggregator_flowgroups(url)
+            except Exception as exc:  # per-DB read must not break the filter
+                logger.warning(
+                    "flow_aggregator read failed for %s: %s", url, exc,
+                )
+        return aggregators
 
     def _fetch_entity_union(self, db_urls: list[str]) -> dict[str, set[str]]:
         """Union per-class entity names across every input DB (one open each).

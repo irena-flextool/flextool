@@ -449,6 +449,101 @@ class TestPickerEntitySeeding:
 
 
 # ---------------------------------------------------------------------------
+#  PlotSettingsPicker — flowGroup tab lists ONLY dispatch aggregators
+# ---------------------------------------------------------------------------
+
+
+def _mock_flow_aggregators(monkeypatch, names):
+    """Patch ``fetch_flow_aggregator_flowgroups`` to a fixed set (no real DB)."""
+    import flextool.scenario_comparison.input_entity_colors as iec
+
+    monkeypatch.setattr(
+        iec, "fetch_flow_aggregator_flowgroups", lambda _url: set(names),
+    )
+
+
+class TestFlowGroupDispatchFilter:
+    """The flowGroup tab lists ONLY dispatch-aggregator flowGroups — the union
+    of the input-DB ``flow_aggregator`` ∈ {dispatch_plots_only, both} and the
+    parquet ``group_aggregate`` names.  Non-aggregators stay in ``self._data``
+    (the file round-trips) but are not drawn."""
+
+    def test_db_aggregator_listed_others_hidden_but_kept(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        # DB says only 'AggBoth' is a dispatch aggregator.
+        _mock_flow_aggregators(monkeypatch, {"AggBoth"})
+        data = {"entities": {
+            "flowGroup": {"AggBoth": "#111111", "PlainNone": "#222222"},
+            "unit": {"coal": "#333333"},
+        }}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+
+        # Only the aggregator is drawn in the flowGroup tab…
+        assert _row_names(picker._category_trees["flowGroup"]) == ["AggBoth"]
+        # …but BOTH remain in the working dict so the file round-trips.
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        assert set(fg) == {"AggBoth", "PlainNone"}
+        # Other categories are never filtered.
+        assert _row_names(picker._category_trees["unit"]) == ["coal"]
+
+    def test_parquet_group_aggregate_listed_others_hidden(
+        self, tk_root, tmp_path,
+    ):
+        # A processGroup aggregate present as a parquet ``group_aggregate`` is a
+        # dispatch aggregator; a plain flowGroup in the file is not.
+        pq = tmp_path / "output_parquet" / "base_1"
+        _write_dispatch_flowgroup_bundle(
+            pq, "base_1", [("Fossil", "u_fossil", [10.0, 0.0, 10.0, 0.0])],
+        )
+        data = {"entities": {"flowGroup": {
+            "Fossil": "#aaaaaa", "PlainNone": "#bbbbbb",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+
+        assert _row_names(picker._category_trees["flowGroup"]) == ["Fossil"]
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        assert set(fg) == {"Fossil", "PlainNone"}
+        assert "Fossil" in picker._dispatch_flowgroup_aggregators
+
+    def test_empty_aggregator_set_shows_all_flowgroups(
+        self, tk_root, tmp_path,
+    ):
+        # No parquet and no input DB → empty aggregator set → filter DISABLED
+        # (never wrongly hide every flowGroup on a pre-solve project).
+        data = {"entities": {"flowGroup": {
+            "A": "#aaaaaa", "B": "#bbbbbb",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        assert picker._dispatch_flowgroup_aggregators == set()
+        assert _row_names(picker._category_trees["flowGroup"]) == ["A", "B"]
+
+    def test_rebuild_reapplies_filter(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        # Undo/redo rebuild via ``_build_panes`` → the same filter must reapply.
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        _mock_flow_aggregators(monkeypatch, {"AggBoth"})
+        data = {"entities": {"flowGroup": {
+            "AggBoth": "#111111", "PlainNone": "#222222",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        picker._rebuild_panes()
+        assert _row_names(picker._category_trees["flowGroup"]) == ["AggBoth"]
+
+
+# ---------------------------------------------------------------------------
 #  PlotSettingsPicker — live flush / Close / Cancel + on_apply wiring
 # ---------------------------------------------------------------------------
 

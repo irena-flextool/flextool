@@ -20,11 +20,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from spinedb_api import DatabaseMapping
+from spinedb_api import DatabaseMapping, to_database
 
 from flextool.scenario_comparison.input_entity_colors import (
     RELEVANT_ENTITY_CLASSES,
     fetch_entities_by_class,
+    fetch_flow_aggregator_flowgroups,
     seed_input_entity_colors,
 )
 
@@ -78,6 +79,79 @@ def _build_input_db(
                 )
         db.commit_session("input entity color test fixture")
     return url
+
+
+def _build_flow_aggregator_db(
+    path: Path, values: dict[str, str | None],
+) -> str:
+    """Build a DB whose flowGroups carry ``flow_aggregator`` parameter values.
+
+    *values* maps a flowGroup name -> its ``flow_aggregator`` enum string
+    (``both`` / ``dispatch_plots_only`` / ``standalone_aggregator_only`` /
+    ``none``), or ``None`` to create the flowGroup with NO value at all.  Values
+    are stored via spinedb's JSON encoding (:func:`to_database`) so the reader
+    exercises the real decode path.
+    """
+    url = "sqlite:///" + str(path)
+    with DatabaseMapping(url, create=True) as db:
+        db.add_update_item("entity_class", name="flowGroup")
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="flowGroup",
+            name="flow_aggregator",
+        )
+        for name, val in values.items():
+            db.add_update_item(
+                "entity", entity_class_name="flowGroup", name=name,
+                entity_byname=(name,),
+            )
+            if val is None:
+                continue
+            encoded, vtype = to_database(val)
+            db.add_update_item(
+                "parameter_value",
+                entity_class_name="flowGroup",
+                entity_byname=(name,),
+                parameter_definition_name="flow_aggregator",
+                alternative_name="Base",
+                value=encoded,
+                type=vtype,
+            )
+        db.commit_session("flow_aggregator fixture")
+    return url
+
+
+# --------------------------------------------------------------------------
+# fetch_flow_aggregator_flowgroups
+# --------------------------------------------------------------------------
+
+
+def test_fetch_flow_aggregator_filters_dispatch_bands(tmp_path):
+    # Only ``dispatch_plots_only`` / ``both`` flowGroups are dispatch
+    # aggregators; ``standalone_aggregator_only`` / ``none`` / no-value are not.
+    url = _build_flow_aggregator_db(
+        tmp_path / "fa.sqlite",
+        {
+            "AggBoth": "both",
+            "AggDispatch": "dispatch_plots_only",
+            "Standalone": "standalone_aggregator_only",
+            "Nil": "none",
+            "NoParam": None,
+        },
+    )
+    assert fetch_flow_aggregator_flowgroups(url) == {"AggBoth", "AggDispatch"}
+
+
+def test_fetch_flow_aggregator_missing_class_returns_empty(tmp_path):
+    # A DB with no flowGroup class / flow_aggregator parameter → empty, no raise.
+    url = _build_input_db(tmp_path / "no_fg.sqlite", {"unit": ["u1"]})
+    assert fetch_flow_aggregator_flowgroups(url) == set()
+
+
+def test_fetch_flow_aggregator_unopenable_db_returns_empty(tmp_path):
+    # A nonexistent DB (create=False) never raises — just contributes nothing.
+    url = "sqlite:///" + str(tmp_path / "does_not_exist.sqlite")
+    assert fetch_flow_aggregator_flowgroups(url) == set()
 
 
 # A structured project plot_settings.yaml with one pre-existing user entry to
