@@ -4,8 +4,9 @@ Covers:
 * ``PlotSettingsPicker`` builds a Notebook with one tab per present
   section, each tab's Treeview populated with the right names, and a
   composite swatch ``PhotoImage`` kept alive (not GC'd) per row.
-* ``_write`` round-trips the working dict to byte-valid YAML; Apply writes
-  + invokes ``on_apply``; Save-and-exit writes + invokes + closes; Cancel
+* ``_write`` round-trips the working dict to byte-valid YAML; the debounced
+  live flush writes + invokes ``on_apply`` (leaving the Cancel baseline
+  untouched); Close writes + invokes + closes (keeps changes); Cancel
   restores the on-open file text + invokes ``on_apply``.
 * ``ResultViewer._on_change_colors`` seeds a project ``plot_settings.yaml``
   when absent, never overwrites an existing one, edits only the project
@@ -361,30 +362,47 @@ class TestPickerEntitySeeding:
 
 
 # ---------------------------------------------------------------------------
-#  PlotSettingsPicker — Apply / Save / Cancel + on_apply wiring
+#  PlotSettingsPicker — live flush / Close / Cancel + on_apply wiring
 # ---------------------------------------------------------------------------
 
 
 class TestPickerButtons:
-    def test_apply_writes_roundtrip_and_calls_on_apply(self, tk_root, tmp_path):
+    def test_flush_writes_roundtrip_and_calls_on_apply(self, tk_root, tmp_path):
         calls = []
         picker, f = _make_picker(
             tk_root, tmp_path, on_apply=lambda: calls.append(1),
         )
-        picker._on_apply_clicked()
-        # on_apply fired; window stayed open.
+        # The debounced live flush writes the file and re-renders; the window
+        # stays open (it is not a close action).
+        picker._flush_live_update()
         assert calls == [1]
         assert picker.winfo_exists()
         # File round-trips equal to the working dict.
         assert yaml.safe_load(f.read_text(encoding="utf-8")) == picker._data
         assert picker._data == _SAMPLE
 
-    def test_save_and_exit_writes_and_closes(self, tk_root, tmp_path):
+    def test_flush_does_not_touch_cancel_baseline(self, tk_root, tmp_path):
+        """A live flush must NOT move the on-open baseline: a later Cancel
+        still reverts every change made since the dialog opened."""
+        picker, f = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        original = f.read_text(encoding="utf-8")
+        # Edit the working dict, then let a live flush write it to disk.
+        picker._data["scenarios"]["S1"] = "#123456"
+        picker._flush_live_update()
+        assert (
+            yaml.safe_load(f.read_text(encoding="utf-8"))["scenarios"]["S1"]
+            == "#123456"
+        )
+        # Cancel reverts to the on-open text (baseline untouched by the flush).
+        picker._on_cancel()
+        assert f.read_text(encoding="utf-8") == original
+
+    def test_close_writes_and_closes(self, tk_root, tmp_path):
         calls = []
         picker, f = _make_picker(
             tk_root, tmp_path, on_apply=lambda: calls.append(1),
         )
-        picker._on_save_exit()
+        picker._on_close()
         assert calls == [1]
         assert not picker.winfo_exists()
         assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE
@@ -395,7 +413,7 @@ class TestPickerButtons:
             tk_root, tmp_path, on_apply=lambda: calls.append(1),
         )
         original = f.read_text(encoding="utf-8")
-        # Simulate a prior Apply that changed the file on disk.
+        # Simulate a prior live write that changed the file on disk.
         f.write_text("scenarios:\n  X: '#000000'\n", encoding="utf-8")
         picker._on_cancel()
         # Original on-open text restored byte-for-byte; on_apply (revert) fired.
@@ -404,33 +422,138 @@ class TestPickerButtons:
         assert not picker.winfo_exists()
 
     def test_no_on_apply_is_fine(self, tk_root, tmp_path):
-        """Picker opened with no callback (PNG dialog) just writes."""
+        """Picker opened with no callback (PNG dialog) just writes on flush."""
         picker, f = _make_picker(tk_root, tmp_path, on_apply=None)
-        picker._on_apply_clicked()  # must not raise
+        picker._flush_live_update()  # must not raise
         assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE
 
-    def test_apply_is_commit_cancel_keeps_applied_changes(
-        self, tk_root, tmp_path,
-    ):
-        """Apply commits: a subsequent Cancel/close must NOT revert it.
-
-        Regression for the "colors/order disappear when I close the dialog"
-        bug — the window ``X``/Escape route to ``_on_cancel``, which restores
-        the baseline text; Apply must refresh that baseline so it restores the
-        APPLIED content, not the on-open content.
-        """
+    def test_close_keeps_edit(self, tk_root, tmp_path):
+        """After an edit, Close writes the edited content and destroys; the
+        file holds the edit (Close keeps changes)."""
         picker, f = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
-        # Edit the working dict, then Apply (commit) and Cancel (close).
-        picker._data["scenarios"]["S1"] = "#123456"
-        picker._on_apply_clicked()
-        applied = f.read_text(encoding="utf-8")
-        picker._on_cancel()
-        # The file still holds the applied edit — Cancel did not roll it back.
-        assert f.read_text(encoding="utf-8") == applied
+        picker._data["scenarios"]["S1"] = "#abcdef"
+        picker._on_close()
+        assert not picker.winfo_exists()
         assert (
             yaml.safe_load(f.read_text(encoding="utf-8"))["scenarios"]["S1"]
-            == "#123456"
+            == "#abcdef"
         )
+
+    def test_cancel_reverts_edit_to_on_open_text(self, tk_root, tmp_path):
+        """After an edit (and its live write), Cancel restores the on-open
+        text byte-for-byte."""
+        picker, f = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        original = f.read_text(encoding="utf-8")
+        picker._data["scenarios"]["S1"] = "#abcdef"
+        picker._flush_live_update()  # live write to disk
+        picker._on_cancel()
+        assert f.read_text(encoding="utf-8") == original
+
+    def test_escape_and_window_x_route_to_keep_handler(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Escape and the window ``X`` (WM_DELETE_WINDOW) route to the KEEP
+        handler (``_on_close``), NOT ``_on_cancel`` — live edits must not be
+        silently reverted on close."""
+        picker, _ = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        called = []
+        # Both bindings dispatch through instance attribute lookup, so the
+        # recorders are seen.
+        picker._on_close = lambda: called.append("close")
+        picker._on_cancel = lambda: called.append("cancel")
+
+        # A key event is only delivered to a mapped, focused, NON-transient
+        # window under bare Xvfb (a transient Toplevel never takes focus), so
+        # clear transient + force focus purely to route the synthesised key.
+        picker.wm_transient("")
+        picker.deiconify()
+        picker.update()
+        picker.focus_force()
+        picker.update()
+        picker.event_generate("<Escape>", when="now")
+        # The window ``X`` handler is invoked directly (no event needed).
+        picker.tk.call(picker.protocol("WM_DELETE_WINDOW"))
+
+        assert called == ["close", "close"]
+        assert "cancel" not in called
+
+    def test_apply_and_refresh_buttons_are_gone(self, tk_root, tmp_path):
+        """No Apply button and no Refresh button in the dialog."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        texts = {str(b.cget("text")) for b in _iter_buttons(picker)}
+        assert "Apply" not in texts
+        assert "Refresh from DB" not in texts
+
+
+class TestPickerLiveUpdate:
+    """Every user mutation schedules a debounced live write + on_apply."""
+
+    def test_reorder_schedules_live_update(self, tk_root, tmp_path):
+        calls = []
+        picker, f = _make_picker(
+            tk_root, tmp_path, on_apply=lambda: calls.append(1),
+        )
+        # Opening alone does not schedule a write.
+        assert picker._live_after_id is None
+
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        first = unit.get_children("")[0]
+        unit.focus(first)
+        unit.selection_set(first)
+        picker._key_move(unit, +1)  # coal → below chp (a real reorder)
+
+        # A live update is now pending (debounced); flushing it writes + fires.
+        assert picker._live_after_id is not None
+        picker._flush_live_update()
+        assert picker._live_after_id is None
+        assert calls == [1]
+        loaded = yaml.safe_load(f.read_text(encoding="utf-8"))
+        assert list(loaded["entities"]["unit"].keys()) == ["chp", "coal"]
+
+    def test_color_edit_schedules_live_update(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        calls = []
+        picker, f = _make_picker(
+            tk_root, tmp_path, on_apply=lambda: calls.append(1),
+        )
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        _patch_dialog(monkeypatch, ("#00ff00", None))
+        picker._edit_row_color(unit, coal)
+
+        assert picker._live_after_id is not None
+        picker._flush_live_update()
+        assert calls == [1]
+        loaded = yaml.safe_load(f.read_text(encoding="utf-8"))
+        assert loaded["entities"]["unit"]["coal"] == "#00ff00"
+
+    def test_noop_reorder_does_not_schedule(self, tk_root, tmp_path):
+        """An Alt-Up at the top (no actual reorder) schedules nothing."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        scen = _tree_in_tab(picker, titles.index("scenarios"))
+        top = scen.get_children("")[0]
+        scen.focus(top)
+        picker._key_move(scen, -1)  # already at top → no change
+        assert picker._live_after_id is None
+
+    def test_schedule_debounces_to_single_pending(self, tk_root, tmp_path):
+        """A burst of mutations collapses into ONE pending after id."""
+        picker, _ = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        picker._schedule_live_update()
+        first = picker._live_after_id
+        assert first is not None
+        picker._schedule_live_update()
+        second = picker._live_after_id
+        assert second is not None
+        # The prior pending call was cancelled and replaced (not stacked).
+        assert second != first
+        picker._flush_live_update()
+        assert picker._live_after_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -745,8 +868,8 @@ class TestPickerReorder:
         ]
 
     def test_reordered_order_is_written_to_file(self, tk_root, tmp_path):
-        """After a reorder, Apply writes the file with the new key order
-        and values intact (sort_keys=False preserves it)."""
+        """After a reorder, the live flush writes the file with the new key
+        order and values intact (sort_keys=False preserves it)."""
         picker, f = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
         unit = _tree_in_tab(picker, titles.index("unit"))
@@ -755,7 +878,7 @@ class TestPickerReorder:
         unit.selection_set(first)
         picker._key_move(unit, +1)  # coal → below chp
 
-        picker._on_apply_clicked()
+        picker._flush_live_update()
 
         loaded = yaml.safe_load(f.read_text(encoding="utf-8"))
         # File key order matches the tree's new top-to-bottom order.
@@ -1168,14 +1291,13 @@ class TestPlotDialogColorsButton:
 
 
 # ---------------------------------------------------------------------------
-#  Refresh from DB — re-fetch entities, ADD new + PRUNE stale (Stage 6.5)
+#  Entity discovery helpers (input-DB fallback, used by on-open seeding)
 # ---------------------------------------------------------------------------
 
 
 def _mock_fetch(monkeypatch, per_class):
     """Patch ``fetch_entities_by_class`` to return a fixed per-class mapping
-    (no real DB), and patch ``_discover_input_dbs`` to report one DB so the
-    refresh runs the union/add/prune path headlessly."""
+    (no real DB) so the on-open DB-fallback merge runs headlessly."""
     import flextool.scenario_comparison.input_entity_colors as iec
 
     monkeypatch.setattr(
@@ -1183,144 +1305,7 @@ def _mock_fetch(monkeypatch, per_class):
     )
 
 
-class TestPickerRefresh:
-    def test_refresh_adds_new_and_prunes_stale(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        # Discovery returns one DB; the DB has unit {coal, gas} and node {n1}.
-        # → unit: "chp" is stale (pruned), "gas" is new (added); node: n1 stays.
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
-        )
-        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
-
-        picker._on_refresh()
-
-        unit = _section(picker._data, ("entities", "unit"))
-        # coal kept (with its edited value), chp pruned, gas added.
-        assert "coal" in unit
-        assert "chp" not in unit
-        assert "gas" in unit
-        assert unit["coal"] == "#212121"  # existing value preserved
-        # New name got a palette hex color appended AFTER existing entries.
-        assert list(unit.keys()) == ["coal", "gas"]
-        assert isinstance(unit["gas"], str) and unit["gas"].startswith("#")
-        # node unchanged.
-        assert _section(picker._data, ("entities", "node")) == {"n1": "#4FC3F7"}
-        # categories / scenarios untouched.
-        assert picker._data["categories"] == _SAMPLE["categories"]
-        assert picker._data["scenarios"] == _SAMPLE["scenarios"]
-
-    def test_refresh_prunes_flowgroup_against_parquet(self, tk_root, tmp_path):
-        """Refresh prunes flowGroup against the parquet-discovered dispatch
-        aggregates (the primary source): an aggregate the dispatch draws
-        (Fossil) survives with its edited value, while a stale entry the
-        dispatch no longer draws (StaleGroup) is pruned.  With dispatch output
-        present the input DB is NOT consulted."""
-        pq = tmp_path / "output_parquet" / "base_1"
-        _write_dispatch_flowgroup_bundle(
-            pq, "base_1", [("Fossil", "u_fossil", [10.0, 0.0, 10.0, 0.0])],
-        )
-        # Seed: Fossil (drawn by the dispatch) + StaleGroup (not drawn).
-        data = {"entities": {
-            "flowGroup": {"Fossil": "#abcdef", "StaleGroup": "#111111"},
-        }}
-        picker, _ = _make_picker(tk_root, tmp_path, data=data)
-        # On open the merge is add-only, so StaleGroup is still present.
-        assert "StaleGroup" in _section(
-            picker._data, ("entities", "flowGroup"),
-        )
-
-        picker._on_refresh()
-
-        fg = _section(picker._data, ("entities", "flowGroup"))
-        # Fossil kept (live dispatch aggregate, value preserved); StaleGroup gone.
-        assert fg == {"Fossil": "#abcdef"}
-
-    def test_refresh_rebuilds_trees(self, tk_root, tmp_path, monkeypatch):
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
-        )
-        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
-
-        picker._on_refresh()
-
-        titles = _tab_titles(picker)
-        unit = _tree_in_tab(picker, titles.index("unit"))
-        # Tree rows match the rebuilt dict: chp gone, gas present.
-        assert _row_names(unit) == ["coal", "gas"]
-
-    def test_refresh_records_one_undo_step(self, tk_root, tmp_path, monkeypatch):
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
-        )
-        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
-
-        before = {k: dict(v) if isinstance(v, dict) else v
-                  for k, v in picker._data["entities"].items()}
-        picker._on_refresh()
-        assert len(picker._undo_stack) == 1
-        # Undo restores the pre-refresh entities.
-        picker._on_undo()
-        assert picker._data["entities"]["unit"] == before["unit"]
-
-    def test_refresh_no_db_shows_info_and_no_change(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        from flextool.gui.dialogs import plot_settings_picker as mod
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs", lambda self: [],
-        )
-        shown = []
-        monkeypatch.setattr(
-            mod.messagebox, "showinfo",
-            lambda *a, **k: shown.append((a, k)),
-        )
-
-        before = picker._data
-        picker._on_refresh()
-        assert len(shown) == 1  # info box shown
-        assert picker._data == _SAMPLE  # unchanged
-        assert picker._data is before
-        assert picker._undo_stack == []  # no edit recorded
-
-    def test_refresh_idempotent_no_change_no_undo(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        """A refresh whose DB exactly matches the current entities records no
-        undo step (nothing added or pruned)."""
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
-        )
-        # Exactly the current entities (unit: coal, chp; node: n1).
-        _mock_fetch(
-            monkeypatch, {"unit": ["coal", "chp"], "node": ["n1"]},
-        )
-        picker._on_refresh()
-        assert picker._undo_stack == []
-        assert list(_section(picker._data, ("entities", "unit")).keys()) == [
-            "coal", "chp",
-        ]
-
+class TestPickerEntityDiscovery:
     def test_discover_input_dbs_scans_both_dirs(self, tk_root, tmp_path):
         """Discovery scans <project>/input_sources and <project>/intermediate
         for *.sqlite (project root = settings file's parent)."""
@@ -1742,43 +1727,13 @@ class TestPickerNegRoundTrip:
 class TestPickerTabOrder:
     def test_button_traversal_order(self, tk_root, tmp_path):
         """Tk focus traversal follows child creation order; the buttons must
-        be created Refresh → Undo → Redo → Apply → Save → Cancel."""
+        be created Undo → Redo → Cancel → Close (no Apply, no Refresh)."""
         picker, _ = _make_picker(tk_root, tmp_path)
         texts = [str(b.cget("text")) for b in _iter_buttons(picker)]
-        assert texts == [
-            "Refresh from DB", "Undo", "Redo",
-            "Apply", "Save and exit", "Cancel",
-        ]
+        assert texts == ["Undo", "Redo", "Cancel", "Close"]
 
 
-class TestPickerApplyShortcut:
-    def test_ctrl_enter_bound_to_apply(self, tk_root, tmp_path, monkeypatch):
-        picker, _ = _make_picker(tk_root, tmp_path)
-        # Ctrl+Enter is bound at the window level (→ tool Apply).
-        assert picker.bind("<Control-Return>") != ""
-        # AND on the tree, so it wins over the tree's plain <Return> (edit)
-        # when the tree is focused (no-modifier binding also matches Ctrl).
-        titles = _tab_titles(picker)
-        unit = _tree_in_tab(picker, titles.index("unit"))
-        assert unit.bind("<Return>") != ""
-        assert unit.bind("<Control-Return>") != ""
-
-    def test_ctrl_enter_on_tree_applies_not_edits(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        calls = {"apply": 0, "edit": 0}
-        picker, _ = _make_picker(
-            tk_root, tmp_path, on_apply=lambda: calls.__setitem__(
-                "apply", calls["apply"] + 1),
-        )
-        monkeypatch.setattr(
-            picker, "_edit_row_color",
-            lambda *a, **k: calls.__setitem__("edit", calls["edit"] + 1),
-        )
-        # The tree's Ctrl+Enter handler must Apply, not open the editor.
-        assert picker._on_apply_shortcut() == "break"
-        assert calls == {"apply": 1, "edit": 0}
-
+class TestPickerFocusAndHint:
     def test_focus_in_activates_first_row_when_none(
         self, tk_root, tmp_path,
     ):
@@ -1810,4 +1765,6 @@ class TestPickerApplyShortcut:
         ]
         assert labels
         assert "\n" in str(labels[-1].cget("text"))
-        assert "Ctrl+Enter" in str(labels[-1].cget("text"))
+        # The hint mentions live updates, not a Ctrl+Enter Apply.
+        assert "apply live" in str(labels[-1].cget("text"))
+        assert "Ctrl+Enter" not in str(labels[-1].cget("text"))

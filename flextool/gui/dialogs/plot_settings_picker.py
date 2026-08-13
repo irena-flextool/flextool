@@ -4,21 +4,22 @@ This is the GUI editor that replaces the old plain-text
 ``PlotSettingsEditor``.  It treats the project ``plot_settings.yaml`` as a
 plain STRUCTURED data file (pyyaml load -> dict -> dump with
 ``sort_keys=False``).  The window is **non-modal** so it can be used at the
-same time as the result viewer: the **Apply** button writes the file and
-calls an ``on_apply`` callback (the viewer re-renders = live preview) while
-the window stays open.
+same time as the result viewer: every user edit writes the file **live**
+(debounced) and calls an ``on_apply`` callback (the viewer re-renders = live
+preview) while the window stays open — there is no Apply button.
 
 The window loads the file, renders one ``ttk.Notebook`` tab per present
 section, lists every entry in a ``ttk.Treeview`` with a composite
-``[pos][neg]`` swatch image next to its name, and wires Apply / Save and
-exit / Cancel to the file + the ``on_apply`` callback.  Editing
-interactions: reorder (drag + Alt-arrow), per-row color dialog
-(double-click), **Refresh** (re-discover entity names — primarily from the
-solved ``output_parquet`` dispatch, falling back to the project input DB(s)
-only when there is no dispatch output yet — then add new + prune stale), and
-multi-level **Undo/Redo** over the in-memory working dict.  The same
-discovery seeds the entity tabs additively on open, with newly-discovered
-entries given a one-time std-dev order (see ``_order_new_names_by_std``).
+``[pos][neg]`` swatch image next to its name.  Editing interactions:
+reorder (drag + Alt-arrow), per-row color dialog (double-click), and
+multi-level **Undo/Redo** over the in-memory working dict — each mutation
+schedules a debounced live write + ``on_apply``.  **Close** keeps all
+changes (flushes the pending live write); **Cancel** reverts to the on-open
+file text.  On open, the entity tabs are seeded additively from the solved
+``output_parquet`` dispatch (falling back to the project input DB(s) only
+when there is no dispatch output yet), with newly-discovered entries given a
+one-time std-dev order (see ``_order_new_names_by_std``); this on-open
+discovery does not itself write the file (only user actions do).
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ import tkinter as tk
 import zlib
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 import numpy as np
 import yaml
@@ -590,12 +591,17 @@ class PlotSettingsPicker(tk.Toplevel):
         Path to the project ``plot_settings.yaml`` (already seeded by the
         caller via ``seed_plot_settings``).
     on_apply:
-        Optional zero-arg callback invoked after every successful write
-        (Apply / Save and exit) and after a Cancel restore, so an opener
-        with a live preview (the result viewer) re-renders with the
-        current on-disk colors.  Pass ``None`` for no live preview (the
-        PNG batch dialog).
+        Optional zero-arg callback invoked after every live write
+        (debounced, on each user edit), on Close, and after a Cancel
+        restore, so an opener with a live preview (the result viewer)
+        re-renders with the current on-disk colors.  Pass ``None`` for no
+        live preview (the PNG batch dialog).
     """
+
+    # Debounce for the live write + re-render: a burst of edits (e.g. a
+    # hue drag committed through several handler calls) collapses into one
+    # write after the last change settles.
+    _LIVE_UPDATE_MS = 250
 
     def __init__(
         self,
@@ -607,6 +613,8 @@ class PlotSettingsPicker(tk.Toplevel):
         self.title("Colors and order")
         self._settings_path = Path(settings_path)
         self._on_apply = on_apply
+        # Pending debounced live-update ``after`` id (None = none pending).
+        self._live_after_id: str | None = None
 
         # Non-modal: transient (stacks with the parent, no taskbar entry on
         # some WMs) but NO grab_set / wait_window — the viewer stays live.
@@ -693,35 +701,31 @@ class PlotSettingsPicker(tk.Toplevel):
         self._build_tabs()
 
         # ── Buttons ───────────────────────────────────────────────
-        # Buttons are CREATED in tab-traversal order (Refresh → Undo → Redo
-        # → Apply → Save and exit → Cancel) — Tk's focus traversal follows
-        # the parent's child order.  ``grid`` then places them visually
-        # (left cluster / flexible spacer / right cluster), decoupling the
-        # on-screen layout from the traversal order.
+        # Buttons are CREATED in tab-traversal order (Undo → Redo → Cancel →
+        # Close) — Tk's focus traversal follows the parent's child order.
+        # ``grid`` then places them visually (left cluster / flexible spacer /
+        # right cluster), decoupling the on-screen layout from the traversal
+        # order.  Edits now write the file LIVE (debounced), so there is no
+        # Apply button; Refresh is gone too — the on-open discovery already
+        # seeds every listable entity add-only (stale entries are harmless).
         btn_frame = ttk.Frame(self)
         btn_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 10))
-        btn_frame.columnconfigure(3, weight=1)  # spacer between clusters
+        btn_frame.columnconfigure(2, weight=1)  # spacer between clusters
 
-        ttk.Button(
-            btn_frame, text="Refresh from DB", command=self._on_refresh,
-        ).grid(row=0, column=0)
         self._undo_button = ttk.Button(
             btn_frame, text="Undo", command=self._on_undo,
         )
-        self._undo_button.grid(row=0, column=1, padx=(5, 0))
+        self._undo_button.grid(row=0, column=0)
         self._redo_button = ttk.Button(
             btn_frame, text="Redo", command=self._on_redo,
         )
-        self._redo_button.grid(row=0, column=2, padx=(5, 0))
-        ttk.Button(
-            btn_frame, text="Apply", command=self._on_apply_clicked,
-        ).grid(row=0, column=4, padx=(5, 0))
-        ttk.Button(
-            btn_frame, text="Save and exit", command=self._on_save_exit,
-        ).grid(row=0, column=5, padx=(5, 0))
+        self._redo_button.grid(row=0, column=1, padx=(5, 0))
         ttk.Button(
             btn_frame, text="Cancel", command=self._on_cancel,
-        ).grid(row=0, column=6, padx=(5, 0))
+        ).grid(row=0, column=3, padx=(5, 0))
+        ttk.Button(
+            btn_frame, text="Close", command=self._on_close,
+        ).grid(row=0, column=4, padx=(5, 0))
         self._update_history_buttons()
 
         # ── Keyboard-shortcut hint strip (two rows) ───────────────
@@ -730,23 +734,22 @@ class PlotSettingsPicker(tk.Toplevel):
             text=(
                 "Enter: edit selected row    "
                 "Alt+↑ / Alt+↓: move row    drag: reorder\n"
-                "Ctrl+Enter: Apply    "
-                "Ctrl+Z: undo    Ctrl+Y: redo    Esc: close"
+                "Changes apply live    "
+                "Ctrl+Z: undo    Ctrl+Y: redo    Esc: close (keeps changes)"
             ),
             foreground="gray",
             anchor="w",
             justify="left",
         ).grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 8))
 
-        self.bind("<Escape>", lambda _e: self._on_cancel())
-        # Ctrl+Enter applies the whole tool (write + re-render the open
-        # plot), distinct from a plain Enter (edit the selected row).
-        self.bind("<Control-Return>", lambda _e: self._on_apply_clicked())
-        self.bind("<Control-KP_Enter>", lambda _e: self._on_apply_clicked())
+        # Edits are written live, so Escape and the window ``X`` KEEP the
+        # user's changes (flush the pending write + close) — only the
+        # explicit Cancel button reverts to the on-open text.
+        self.bind("<Escape>", lambda _e: self._on_close())
         self.bind("<Control-z>", lambda _e: self._on_undo())
         self.bind("<Control-y>", lambda _e: self._on_redo())
         self.bind("<Control-Shift-Z>", lambda _e: self._on_redo())
-        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self.protocol("WM_DELETE_WINDOW", lambda: self._on_close())
 
     # ── File I/O ──────────────────────────────────────────────────
     def _read_text(self) -> str:
@@ -817,7 +820,7 @@ class PlotSettingsPicker(tk.Toplevel):
     def _snapshot(self) -> None:
         """Push the PRE-edit ``self._data`` onto the undo stack.
 
-        Called by EVERY mutator (color write-back, reorder sync, refresh)
+        Called by EVERY mutator (color write-back, reorder sync)
         before it changes ``self._data``, so the undo stack always holds the
         states to roll back to.  A fresh edit invalidates any redo history,
         so the redo stack is cleared here.  States are deep copies so later
@@ -835,6 +838,7 @@ class PlotSettingsPicker(tk.Toplevel):
         self._data = self._undo_stack.pop()
         self._rebuild_all_tabs()
         self._update_history_buttons()
+        self._schedule_live_update()
 
     def _on_redo(self) -> None:
         """Re-apply one undone edit."""
@@ -844,6 +848,7 @@ class PlotSettingsPicker(tk.Toplevel):
         self._data = self._redo_stack.pop()
         self._rebuild_all_tabs()
         self._update_history_buttons()
+        self._schedule_live_update()
 
     def _update_history_buttons(self) -> None:
         """Enable/disable Undo/Redo to reflect each stack's emptiness."""
@@ -859,7 +864,7 @@ class PlotSettingsPicker(tk.Toplevel):
     def _rebuild_all_tabs(self) -> None:
         """Discard every tab/tree and rebuild them from ``self._data``.
 
-        Used by undo/redo/refresh so the displayed trees + swatches exactly
+        Used by undo/redo so the displayed trees + swatches exactly
         match the (possibly replaced) working dict — order, colors, and row
         presence.  All per-tree bookkeeping and swatch references are reset
         so stale rows/images cannot leak across a rebuild.
@@ -903,7 +908,7 @@ class PlotSettingsPicker(tk.Toplevel):
 
         Entity-class tabs (nodeGroup / flowGroup / unit / connection / node)
         are ALWAYS shown — even when empty — so it is visible that a class
-        has no entities (and "Refresh from DB" can populate it).  The
+        has no entities (the on-open discovery seeds any it can).  The
         scenarios tab is ALWAYS shown too, and last.  Category tabs appear
         only when present.
         """
@@ -990,12 +995,6 @@ class PlotSettingsPicker(tk.Toplevel):
         tree.bind("<Double-Button-1>", self._on_row_double_click)
         tree.bind("<Return>", self._on_row_return)
         tree.bind("<FocusIn>", self._on_tree_focus_in)
-        # Ctrl+Enter must Apply even with the tree focused: the plain
-        # ``<Return>`` (no-modifier) binding above otherwise also matches a
-        # Ctrl+Return and consumes it (returns "break"), so bind the more
-        # specific accelerator on the tree too — it wins on this widget.
-        tree.bind("<Control-Return>", self._on_apply_shortcut)
-        tree.bind("<Control-KP_Enter>", self._on_apply_shortcut)
 
         self._notebook.add(frame, text=title)
 
@@ -1200,12 +1199,13 @@ class PlotSettingsPicker(tk.Toplevel):
             return
 
         # Record the pre-edit state, then write back into the parent
-        # container so the change is in-place for the dict Apply/Save dump.
+        # container so the change is in-place for the live write / Close dump.
         self._snapshot()
         parent = self._data
         for key in section_path[:-1]:
             parent = parent[key]
         parent[section_path[-1]] = rebuilt
+        self._schedule_live_update()
 
     # ── Color editing (double-click / Enter) ──────────────────────
     def _restore_tree_focus(self, tree: ttk.Treeview, item: str) -> None:
@@ -1219,11 +1219,6 @@ class PlotSettingsPicker(tk.Toplevel):
             tree.selection_set(item)
             tree.focus(item)
             tree.see(item)
-
-    def _on_apply_shortcut(self, _event: tk.Event | None = None) -> str:
-        """Ctrl+Enter from a tree → Apply (write + re-render), consume key."""
-        self._on_apply_clicked()
-        return "break"
 
     def _on_tree_focus_in(self, event: tk.Event) -> None:
         """Activate a row when the tree gains focus (e.g. via Tab).
@@ -1332,6 +1327,7 @@ class PlotSettingsPicker(tk.Toplevel):
         else:
             section[name] = {"color": new_pos, "neg_color": new_neg}
             self._rebuild_row_swatch(tree, item, new_pos, new_neg)
+        self._schedule_live_update()
 
     def _edit_single_color(
         self,
@@ -1358,6 +1354,7 @@ class PlotSettingsPicker(tk.Toplevel):
         self._snapshot()
         section[name] = new_color
         self._rebuild_row_swatch(tree, item, new_color, None)
+        self._schedule_live_update()
 
     def _rebuild_row_swatch(
         self,
@@ -1376,7 +1373,7 @@ class PlotSettingsPicker(tk.Toplevel):
         self._row_swatches[(tree, item)] = image
         tree.item(item, image=image)
 
-    # ── Refresh from the input DB ─────────────────────────────────
+    # ── Entity discovery (on-open seeding) ────────────────────────
     def _discover_input_dbs(self) -> list[str]:
         """Return ``sqlite:///`` URLs for the project's input/intermediate DBs.
 
@@ -1593,11 +1590,11 @@ class PlotSettingsPicker(tk.Toplevel):
     def _discover_all_entities(
         self,
     ) -> tuple[dict[str, set[str]], dict[str, float]]:
-        """Per-class entity names + per-entity std dev for merge / refresh.
+        """Per-class entity names + per-entity std dev for the on-open merge.
 
-        Shared source of truth for both the add-only on-open merge
-        (:meth:`_merge_entities_from_sources`) and the add+prune
-        :meth:`_on_refresh`, so the discovery policy lives in one place.
+        Source of truth for the add-only on-open merge
+        (:meth:`_merge_entities_from_sources`), so the discovery policy lives
+        in one place.
 
         * **PRIMARY** — dispatch entities discovered from the solved
           ``output_parquet`` (:meth:`_discover_dispatch_sources`).  This is
@@ -1696,112 +1693,80 @@ class PlotSettingsPicker(tk.Toplevel):
                 union[cls].update(names)
         return union
 
-    def _on_refresh(self) -> None:
-        """Re-discover entities: ADD new + PRUNE stale, against the discovery.
+    # NOTE: there is deliberately no "Refresh from DB" action any more.  The
+    # on-open discovery (:meth:`_merge_entities_from_sources`) already seeds
+    # every listable entity add-only; the manual add+prune refresh was
+    # dropped along with its button.  Add-only leaves at most a few stale
+    # entries in the file, which are harmless (an unused color/order key never
+    # drawn), so nothing prunes them — the simplicity is worth it.
 
-        Re-discovers entities parquet-first (the solved dispatch), falling
-        back to the input DB only when there is no dispatch output
-        (:meth:`_discover_all_entities`), and updates ``self._data['entities']``
-        in place: discovered names not already present are appended, ordered
-        among the new names by std dev (:meth:`_order_new_names_by_std`);
-        existing entries no longer discovered are pruned; surviving entries
-        keep their order and (edited) values.
+    # ── Live update (debounced) ───────────────────────────────────
+    def _schedule_live_update(self) -> None:
+        """Debounce a live write + re-render after a user mutation.
 
-        Pruning is per class, and ONLY for the classes the discovery source
-        covers.  Under the parquet-primary path ``node`` is not discovered
-        (file-driven; see :meth:`_discover_dispatch_sources`), so an existing
-        node section is left untouched rather than emptied.  ``categories`` and
-        ``scenarios`` are never touched.  Records one undo step and rebuilds
-        the entity tabs.  Shows an info box and changes nothing only when there
-        is genuinely nothing to discover (no dispatch output AND no input DB).
+        Cancels any pending update and schedules a fresh one, so a burst of
+        edits (e.g. a color-drag committed through several handler calls)
+        collapses into a single write once the changes settle.  Guarded
+        against a destroyed window (the ``after`` call raises then).
         """
-        from flextool.scenario_comparison.config_builder import (
-            assign_palette_colors,
-        )
-
-        discovered_union, std_by_entity = self._discover_all_entities()
-        if not any(discovered_union.values()):
-            messagebox.showinfo(
-                "Refresh",
-                "No dispatch output or input database found.",
-                parent=self,
+        if self._live_after_id is not None:
+            try:
+                self.after_cancel(self._live_after_id)
+            except tk.TclError:
+                pass
+            self._live_after_id = None
+        try:
+            self._live_after_id = self.after(
+                self._LIVE_UPDATE_MS, self._flush_live_update,
             )
-            return
+        except tk.TclError:
+            self._live_after_id = None
 
-        entities = self._data.get("entities")
-        if not isinstance(entities, dict):
-            entities = {}
+    def _flush_live_update(self) -> None:
+        """Write the working dict to disk and re-render the live preview.
 
-        # Start from the existing sections and overwrite only the classes the
-        # discovery covers; classes it does not cover (e.g. node under the
-        # parquet-primary path) are carried through untouched.
-        new_entities: dict[str, dict] = dict(entities)
-        changed = False
-        for cls, discovered in discovered_union.items():
-            existing = entities.get(cls)
-            existing = existing if isinstance(existing, dict) else {}
-
-            rebuilt: dict[str, object] = {}
-            # Preserve existing entries (order + value) still discovered.
-            for name, value in existing.items():
-                if name in discovered:
-                    rebuilt[name] = value
-                else:
-                    changed = True  # pruned a stale entry
-            # Append newly discovered names, ordered by std dev, with colors.
-            new_names = self._order_new_names_by_std(
-                [n for n in discovered if n not in rebuilt], std_by_entity,
-            )
-            if new_names:
-                changed = True
-                for name, color in assign_palette_colors(new_names).items():
-                    rebuilt[name] = color
-
-            if rebuilt:
-                new_entities[cls] = rebuilt
-            else:
-                # The class lost all its (covered) entities; drop it.
-                if cls in new_entities:
-                    del new_entities[cls]
-                if existing:
-                    changed = True
-
-        if not changed:
-            return
-
-        self._snapshot()
-        if new_entities:
-            self._data["entities"] = new_entities
-        else:
-            self._data.pop("entities", None)
-        self._rebuild_all_tabs()
-
-    # ── Buttons ───────────────────────────────────────────────────
-    def _on_apply_clicked(self) -> None:
-        """Write the working dict and re-render the preview; stay open.
-
-        Apply is a COMMIT, not a preview: the just-written content becomes the
-        new Cancel/close restore point.  Without this, closing the window (the
-        ``X`` button and Escape are both bound to :meth:`_on_cancel`) after an
-        Apply would rewrite the file back to its on-open text and silently
-        discard everything the user applied — so the colors/order "disappear"
-        on close and are absent at the next open.  Refreshing the baseline
-        makes Cancel revert only edits made SINCE the last Apply.
+        This is the debounced live commit: it never touches
+        ``self._original_text`` (the on-open baseline), so a later Cancel can
+        still revert every change made since the dialog opened.
         """
+        self._live_after_id = None
         self._write()
-        self._original_text = dump_plot_settings(self._data)
         if self._on_apply is not None:
             self._on_apply()
 
-    def _on_save_exit(self) -> None:
-        """Write, re-render the preview, and close."""
+    # ── Buttons ───────────────────────────────────────────────────
+    def _on_close(self) -> None:
+        """Flush any pending live write, then close — KEEPING all changes.
+
+        Bound to the Close button, the window ``X``, and Escape.  Because
+        edits are written live, closing must not discard them: cancel the
+        pending debounce, write the final in-memory ``self._data`` (including
+        entities discovered on open), re-render, and destroy.
+        """
+        if self._live_after_id is not None:
+            try:
+                self.after_cancel(self._live_after_id)
+            except tk.TclError:
+                pass
+            self._live_after_id = None
         self._write()
         if self._on_apply is not None:
             self._on_apply()
         self.destroy()
 
     def _on_cancel(self) -> None:
-        """Restore the on-open file text, revert any preview, and close."""
+        """Revert to the on-open file text, revert the preview, and close.
+
+        Cancels the pending live write, restores the byte-for-byte on-open
+        text (undoing every live write made since the dialog opened), and
+        re-renders so the preview matches.
+        """
+        if self._live_after_id is not None:
+            try:
+                self.after_cancel(self._live_after_id)
+            except tk.TclError:
+                pass
+            self._live_after_id = None
         try:
             self._settings_path.write_text(
                 self._original_text, encoding="utf-8",
