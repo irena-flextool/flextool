@@ -200,9 +200,29 @@ def _build_dispatch_figure(
     if ylim:
         ax.set_ylim(ylim)
 
-    # Legend
+    # Legend — read top-to-bottom to match the VISUAL stack.  The area draw
+    # order is neg-block (stacks down, first = nearest axis = top of the
+    # negative area) then pos-block (stacks up, first = nearest axis = bottom
+    # of the positive area).  A blanket reversal makes positives read
+    # top-to-bottom but leaves negatives upside-down, so build the order per
+    # sign: positives reversed (top-most positive first), negatives as-is
+    # (top-most negative first), with the line overlays (Demand / Curtailed) on
+    # top.
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles[::-1], labels[::-1], bbox_to_anchor=(1.05, 1), loc='upper left')
+    line_labels = {'Curtailed', 'Demand'}
+    pos_h, neg_h, line_h = [], [], []
+    for h, lbl in zip(handles, labels):
+        if lbl in line_labels or lbl not in df_plot.columns:
+            line_h.append((h, lbl))
+        elif (df_plot[lbl].fillna(0) < 0).any():
+            neg_h.append((h, lbl))
+        else:
+            pos_h.append((h, lbl))
+    ordered = line_h + pos_h[::-1] + neg_h
+    ax.legend(
+        [h for h, _ in ordered], [lbl for _, lbl in ordered],
+        bbox_to_anchor=(1.05, 1), loc='upper left',
+    )
 
     return fig
 

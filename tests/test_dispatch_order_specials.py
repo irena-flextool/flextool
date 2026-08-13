@@ -414,3 +414,42 @@ def test_positive_config_bands_follow_picker_list_order():
     # Positives stack up with last-in-list at the top, so Gen_A (top of list)
     # must come AFTER Gen_B in list order (nearest-axis = bottom = last drawn).
     assert cols.index("Gen_B") < cols.index("Gen_A")
+
+
+def test_legend_order_matches_visual_stack_both_signs():
+    """The dispatch legend must read top-to-bottom in the same order as the
+    stacked bands — for negatives too (a blanket reversal used to leave the
+    negative half of the legend upside-down relative to the plot)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from flextool.plot_outputs.color_template import (
+        resolve_dispatch_colors_and_order,
+    )
+    from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
+
+    tmpl = {"entities": {"flowGroup": {
+        "Gen_A": "#ff0000", "Gen_B": "#00ff00",
+        "Load_A": "#0000ff", "Load_B": "#ffff00",
+    }}}
+    cols = ["Gen_A", "Gen_B", "Load_A", "Load_B"]
+    _, cfg = resolve_dispatch_colors_and_order(tmpl, cols)
+    df = pd.DataFrame(
+        {"Gen_A": [3.0] * 3, "Gen_B": [1.0] * 3,
+         "Load_A": [-1.0] * 3, "Load_B": [-2.0] * 3},
+        index=pd.RangeIndex(3),
+    )
+    df = _order_dispatch_columns(df, config_order=cfg)
+    colors = {c: tmpl["entities"]["flowGroup"].get(c, "#999999")
+              for c in df.columns}
+    fig = _build_dispatch_figure(df, None, "p", colors=colors)
+    ax = fig.axes[0]
+    legend_order = [t.get_text() for t in ax.get_legend().get_texts()]
+    # Visual top-to-bottom from each band's highest y.
+    vis = sorted(
+        ((float(coll.get_paths()[0].vertices[:, 1].max()), str(lbl))
+         for coll, lbl in zip(ax.collections, list(df.columns))),
+        reverse=True,
+    )
+    assert legend_order == [lbl for _, lbl in vis]
+    # And that equals the picker/file order top-to-bottom.
+    assert legend_order == ["Gen_A", "Gen_B", "Load_A", "Load_B"]
