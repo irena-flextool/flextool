@@ -49,6 +49,21 @@ _ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
 # Category subsections, in tab order.
 _CATEGORY_SECTIONS = ("costs", "node_flows", "nodegroup_flows", "dispatch")
 
+# The ``("categories", "dispatch")`` category is ENGINE-FIXED order (see the
+# module docstring for the stack): its special columns are pinned by the
+# engine — positive specials at the top, negative specials at the bottom — with
+# the movable flowGroup entity bands stacked near the zero axis in between.  In
+# the picker it is therefore rendered as a NON-reorderable list that mirrors
+# that stack, with a synthetic, immovable divider row marking where the flow
+# bands stack.  ``_DIVIDER_TAG`` tags the divider row (a Treeview tag used for
+# its distinct highlight); ``_DIVIDER_TEXT`` is the display-only label — it is
+# NEVER a key in ``self._data`` and must never be treated as an entity.
+_DISPATCH_SECTION = ("categories", "dispatch")
+_DIVIDER_TAG = "flowgroups_divider"
+_DIVIDER_TEXT = "flowGroups"
+# Sentinel marking the divider's position in the dispatch display sequence.
+_DIVIDER = object()
+
 # Swatch geometry (pixels).  Entity rows show two boxes (positive | gap |
 # negative); categories / scenarios show one.  ``_SWATCH_GAP`` separates the
 # two boxes; ``_SWATCH_PAD_L`` / ``_SWATCH_PAD_R`` inset the boxes from the
@@ -647,6 +662,17 @@ class PlotSettingsPicker(tk.Toplevel):
         # keyed by ``(tree, item_id)`` so the replacement survives GC
         # (the originals in ``self._swatches`` stay too).
         self._row_swatches: dict[tuple[ttk.Treeview, str], tk.PhotoImage] = {}
+        # Trees rendered in a FIXED (engine-pinned) order — currently only the
+        # dispatch category.  Their rows are never reorderable (drag / Alt-move
+        # are no-ops) and never synced back to ``self._data``; the specials'
+        # colors stay editable.  ``_divider_items`` holds every synthetic
+        # divider row as ``(tree, item_id)`` so it can be recognised (and
+        # skipped) everywhere a tree row maps back to an entity.
+        self._fixed_order_trees: set[ttk.Treeview] = set()
+        self._divider_items: set[tuple[ttk.Treeview, str]] = set()
+        # Lazily-built italic font for the divider row (None until first use);
+        # a copy of TkDefaultFont so it tracks the theme's default face/size.
+        self._divider_font: object | None = None
 
         # Working state = parsed dict; snapshot the original TEXT for Cancel.
         self._original_text = self._read_text()
@@ -952,6 +978,8 @@ class PlotSettingsPicker(tk.Toplevel):
         self._drag_moved.clear()
         self._tree_composite.clear()
         self._row_swatches.clear()
+        self._fixed_order_trees.clear()
+        self._divider_items.clear()
         self._swatches.clear()
         self._build_panes()
         if prev is not None and prev in self._category_trees:
@@ -1077,13 +1105,20 @@ class PlotSettingsPicker(tk.Toplevel):
         hscroll.grid(row=1, column=0, sticky="ew")
         tree.configure(xscrollcommand=hscroll.set)
 
-        for name, value in rows:
-            if composite:
-                pos, neg = _resolve_pos_neg(value)
-                image = self._make_swatch(pos, neg, reserve_neg=True)
-            else:
-                image = self._make_swatch(value, None)
-            tree.insert("", "end", text=str(name), image=image)
+        if section_path == _DISPATCH_SECTION:
+            # Engine-fixed order: render the stack top→bottom with an immovable
+            # divider between the positive and negative specials, and mark the
+            # tree fixed-order so reorder is a no-op.
+            self._insert_dispatch_rows(tree, rows)
+            self._fixed_order_trees.add(tree)
+        else:
+            for name, value in rows:
+                if composite:
+                    pos, neg = _resolve_pos_neg(value)
+                    image = self._make_swatch(pos, neg, reserve_neg=True)
+                else:
+                    image = self._make_swatch(value, None)
+                tree.insert("", "end", text=str(name), image=image)
 
         # Register for reordering and wire drag + keyboard moves.
         self._tree_section[tree] = section_path
@@ -1108,6 +1143,99 @@ class PlotSettingsPicker(tk.Toplevel):
         self._category_order.append(title)
         self._category_trees[title] = tree
         self._category_frames[title] = frame
+
+    # ── Dispatch category: engine-fixed order + flowGroups divider ────
+    @staticmethod
+    def _order_dispatch_rows(
+        rows: list[tuple[str, object]],
+    ) -> list[object]:
+        """Order the dispatch section rows to mirror the engine-fixed stack.
+
+        The dispatch plot's special columns are pinned by the engine
+        (positive specials at the top, negative at the bottom) with the
+        movable flowGroup bands near the zero axis in between; reordering the
+        specials in the file is silently ignored.  So the picker renders the
+        specials in that fixed top→bottom order — positive specials
+        (``POSITIVE_SPECIAL``), then the flowGroups divider sentinel, then the
+        negative specials (in bottom-of-stack visual order,
+        ``internal_losses``, ``Export``, ``Charge``) — regardless of the raw
+        key order in the file.  Only rows actually present are emitted.  Any
+        entry that is neither a positive nor a negative special (defensive —
+        should not occur) is appended just BEFORE the divider so it never
+        masquerades as a negative band.
+
+        Returns a display sequence of ``(name, value)`` tuples with the
+        :data:`_DIVIDER` sentinel marking the divider position.
+        """
+        from flextool.scenario_comparison.constants import (
+            NEGATIVE_SPECIAL,
+            POSITIVE_SPECIAL,
+        )
+
+        present = dict(rows)
+        pos = [n for n in POSITIVE_SPECIAL if n in present]
+        # Negative specials render in bottom-of-stack visual order (the reverse
+        # of the ``NEGATIVE_SPECIAL`` constant): internal_losses, Export, Charge.
+        neg = [n for n in reversed(NEGATIVE_SPECIAL) if n in present]
+        classified = set(pos) | set(neg)
+        # Preserve the raw file order for any unclassified defensive extras.
+        unknown = [n for n, _v in rows if n not in classified]
+
+        seq: list[object] = [(n, present[n]) for n in pos]
+        seq += [(n, present[n]) for n in unknown]
+        seq.append(_DIVIDER)
+        seq += [(n, present[n]) for n in neg]
+        return seq
+
+    def _insert_dispatch_rows(
+        self, tree: ttk.Treeview, rows: list[tuple[str, object]],
+    ) -> None:
+        """Insert the fixed-order dispatch rows plus the flowGroups divider.
+
+        Real special rows carry a single-box swatch (dispatch is not
+        composite) and are color-editable; the synthetic divider row carries
+        the distinct ``_DIVIDER_TAG`` highlight, no swatch, and is recorded in
+        ``self._divider_items`` so it is skipped everywhere a row maps back to
+        an entity (it is display-only — never written to ``self._data``).
+        """
+        self._configure_divider_tag(tree)
+        for entry in self._order_dispatch_rows(rows):
+            if entry is _DIVIDER:
+                iid = tree.insert(
+                    "", "end", text=_DIVIDER_TEXT, tags=(_DIVIDER_TAG,),
+                )
+                self._divider_items.add((tree, iid))
+            else:
+                name, value = entry
+                image = self._make_swatch(value, None)
+                tree.insert("", "end", text=str(name), image=image)
+
+    def _configure_divider_tag(self, tree: ttk.Treeview) -> None:
+        """Style the divider tag: a contrasting band + italic text.
+
+        A muted blue-gray background reads as a divider against the default
+        (light) ttk Treeview row background in both the classic and modern
+        themes.  The italic font is a copy of ``TkDefaultFont`` (so it tracks
+        the theme's default face / size); font creation is guarded so a Tk
+        without font introspection still gets the background highlight.
+        """
+        if self._divider_font is None:
+            try:
+                import tkinter.font as tkfont
+
+                base = tkfont.nametofont("TkDefaultFont")
+                self._divider_font = tkfont.Font(**base.actual())
+                self._divider_font.configure(slant="italic")
+            except tk.TclError:
+                self._divider_font = ""  # sentinel: font unavailable
+        opts = {"background": "#c8d4e0", "foreground": "#1a1a1a"}
+        if self._divider_font:
+            opts["font"] = self._divider_font
+        tree.tag_configure(_DIVIDER_TAG, **opts)
+
+    def _is_divider(self, tree: ttk.Treeview, item: str) -> bool:
+        """True iff *item* in *tree* is the synthetic flowGroups divider row."""
+        return (tree, item) in self._divider_items
 
     def _show_category(self, title: str) -> None:
         """Show *title*'s entity tree, hiding the previously shown one.
@@ -1191,6 +1319,13 @@ class PlotSettingsPicker(tk.Toplevel):
         tree = event.widget
         if tree not in self._tree_section:
             return None
+        # Fixed-order (dispatch) trees never reorder — let ttk's native
+        # ButtonPress run (selection / focus) but prime no move drag.
+        if tree in self._fixed_order_trees:
+            self._drag_move[tree] = False
+            self._drag_moved[tree] = False
+            self._drag_anchor[tree] = None
+            return None
         row = tree.identify_row(event.y) or None
         self._drag_moved[tree] = False
         # Shift (0x0001) / Control (0x0004) → let ttk extend/toggle select.
@@ -1217,6 +1352,8 @@ class PlotSettingsPicker(tk.Toplevel):
     def _on_drag_motion(self, event: tk.Event) -> None:
         """Move the selection to follow the cursor (move drags only)."""
         tree = event.widget
+        if tree in self._fixed_order_trees:
+            return  # engine-fixed order — no reorder drag
         if not self._drag_move.get(tree):
             return  # native draw-select drag — do not interfere
         target = tree.identify_row(event.y)
@@ -1282,6 +1419,9 @@ class PlotSettingsPicker(tk.Toplevel):
         """
         if tree not in self._tree_section:
             return "break"
+        # Fixed-order (dispatch) trees are engine-pinned — Alt-move is a no-op.
+        if tree in self._fixed_order_trees:
+            return "break"
         order = list(tree.get_children(""))
         selected = self._selected_rows(tree)
         if not selected:
@@ -1321,9 +1461,14 @@ class PlotSettingsPicker(tk.Toplevel):
         if not isinstance(section, dict):
             return
 
-        # Tree row order, by name (column #0 text).
+        # Tree row order, by name (column #0 text).  Skip any synthetic
+        # divider row so its display-only label ("flowGroups") can never leak
+        # into the working dict as an entity (defensive — fixed-order trees
+        # are never synced, but a stray divider must not round-trip).
         ordered_names = [
-            tree.item(iid, "text") for iid in tree.get_children("")
+            tree.item(iid, "text")
+            for iid in tree.get_children("")
+            if not self._is_divider(tree, iid)
         ]
         # Rebuild preserving values; keep any keys not represented as rows
         # (defensive — should not happen) appended in their original order.
@@ -1425,6 +1570,9 @@ class PlotSettingsPicker(tk.Toplevel):
 
     def _edit_row_color(self, tree: ttk.Treeview, item: str) -> None:
         """Open the appropriate color dialog and write the result back."""
+        # The synthetic flowGroups divider is display-only — never editable.
+        if self._is_divider(tree, item):
+            return
         section_path = self._tree_section[tree]
         section = self._section_dict(section_path)
         if section is None:
