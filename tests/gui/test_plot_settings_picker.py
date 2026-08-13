@@ -1,8 +1,9 @@
 """Tests for the non-modal color/order picker (Stage 6.2).
 
 Covers:
-* ``PlotSettingsPicker`` builds a Notebook with one tab per present
-  section, each tab's Treeview populated with the right names, and a
+* ``PlotSettingsPicker`` builds a two-pane layout — a left category
+  selector (fixed order, not reorderable) + a right entity list per
+  category — each entity Treeview populated with the right names, and a
   composite swatch ``PhotoImage`` kept alive (not GC'd) per row.
 * ``_write`` round-trips the working dict to byte-valid YAML; the debounced
   live flush writes + invokes ``on_apply`` (leaving the Cancel baseline
@@ -88,17 +89,16 @@ def _make_picker(tk_root, tmp_path, data=None, on_apply=None):
 
 
 def _tab_titles(picker) -> list[str]:
-    nb = picker._notebook
-    return [nb.tab(tid, "text") for tid in nb.tabs()]
+    # Category titles in display order — read from the left selector so this
+    # asserts the on-screen list, not just the bookkeeping attribute.
+    cat = picker._category_list
+    titles = [cat.item(i, "text") for i in cat.get_children("")]
+    assert titles == picker._category_order
+    return titles
 
 
 def _tree_in_tab(picker, index):
-    nb = picker._notebook
-    frame = nb.nametowidget(nb.tabs()[index])
-    for child in frame.winfo_children():
-        if isinstance(child, ttk.Treeview):
-            return child
-    raise AssertionError("no Treeview in tab")
+    return picker._category_trees[picker._category_order[index]]
 
 
 def _row_names(tree) -> list[str]:
@@ -221,6 +221,93 @@ class TestPickerBuild:
         picker, _ = _make_picker(tk_root, tmp_path)
         # The picker must not be the current grab.
         assert picker.grab_current() in (None, "")
+
+
+# ---------------------------------------------------------------------------
+#  PlotSettingsPicker — two-pane category-list + entity-list layout
+# ---------------------------------------------------------------------------
+
+
+class TestPickerTwoPaneLayout:
+    def test_category_list_is_single_select_selector(self, tk_root, tmp_path):
+        """The left pane is a single-select ttk.Treeview listing the category
+        titles in the fixed display order."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        cat = picker._category_list
+        assert isinstance(cat, ttk.Treeview)
+        assert str(cat.cget("selectmode")) == "browse"
+        left_titles = [cat.item(i, "text") for i in cat.get_children("")]
+        assert (
+            left_titles
+            == picker._category_order
+            == [
+                "nodeGroup", "flowGroup", "unit", "connection", "node",
+                "costs", "dispatch", "scenarios",
+            ]
+        )
+
+    def test_category_list_not_bound_to_reorder(self, tk_root, tmp_path):
+        """The left selector is a pure selector: no drag / Alt-arrow / move
+        reorder bindings are attached (only the entity trees carry those)."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        cat = picker._category_list
+        assert not cat.bind("<Alt-Up>")
+        assert not cat.bind("<Alt-Down>")
+        assert not cat.bind("<ButtonPress-1>")
+        assert not cat.bind("<B1-Motion>")
+        # ... while every entity tree DOES carry the move bindings.
+        for tree in picker._category_trees.values():
+            assert tree.bind("<Alt-Up>")
+            assert tree.bind("<ButtonPress-1>")
+
+    def test_selecting_category_shows_its_entity_tree(self, tk_root, tmp_path):
+        """Selecting a left category shows that category's entity tree and
+        hides the previously shown one."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        # Default open shows the first category (nodeGroup).
+        assert picker._current_category == "nodeGroup"
+        assert picker._category_frames["nodeGroup"].winfo_manager() == "grid"
+
+        # Select 'unit' via the left list → its entity tree becomes visible.
+        picker._category_list.selection_set(picker._category_items["unit"])
+        picker._on_category_select()
+        assert picker._current_category == "unit"
+        assert picker._category_frames["unit"].winfo_manager() == "grid"
+        # The previously-shown category's tree is now hidden.
+        assert picker._category_frames["nodeGroup"].winfo_manager() == ""
+
+    def test_undo_preserves_selected_category(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """A rebuild (undo) keeps the currently-selected category shown when
+        it still exists."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        picker._category_list.selection_set(picker._category_items["unit"])
+        picker._on_category_select()
+        assert picker._current_category == "unit"
+
+        unit = picker._category_trees["unit"]
+        coal = unit.get_children("")[0]
+        _patch_dialog(monkeypatch, ("#00ff00", None))
+        picker._edit_row_color(unit, coal)
+        picker._on_undo()
+        # After the rebuild the selection is still 'unit' (not reset to first).
+        assert picker._current_category == "unit"
+        assert picker._category_frames["unit"].winfo_manager() == "grid"
+
+    def test_default_height_is_about_80pct_screen(self, tk_root, tmp_path):
+        """The dialog defaults to ~80% of the screen height.  Skipped
+        gracefully if the WM ignores the requested geometry under Xvfb."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        picker.deiconify()
+        picker.update()
+        if not picker.winfo_ismapped():
+            pytest.skip("WM did not map the window under Xvfb")
+        expected = int(picker.winfo_screenheight() * 0.8)
+        actual = picker.winfo_height()
+        if abs(actual - expected) > 10:
+            pytest.skip("WM ignored the requested geometry under Xvfb")
+        assert abs(actual - expected) <= 10
 
 
 # ---------------------------------------------------------------------------

@@ -8,9 +8,11 @@ same time as the result viewer: every user edit writes the file **live**
 (debounced) and calls an ``on_apply`` callback (the viewer re-renders = live
 preview) while the window stays open — there is no Apply button.
 
-The window loads the file, renders one ``ttk.Notebook`` tab per present
-section, lists every entry in a ``ttk.Treeview`` with a composite
-``[pos][neg]`` swatch image next to its name.  Editing interactions:
+The window loads the file and renders a two-pane layout: a LEFT
+``ttk.Treeview`` selector lists every present section (fixed order, not
+reorderable) and the RIGHT pane shows the selected section's reorderable
+``ttk.Treeview``, each entry with a composite ``[pos][neg]`` swatch image
+next to its name.  Editing interactions:
 reorder (drag + Alt-arrow), per-row color dialog (double-click), and
 multi-level **Undo/Redo** over the in-memory working dict — each mutation
 schedules a debounced live write + ``on_apply``.  **Close** keeps all
@@ -678,27 +680,71 @@ class PlotSettingsPicker(tk.Toplevel):
         _metrics = get_metrics(self)
         cw = _metrics.cw
         lh = _metrics.lh
-        # Sized so all entity-class tabs fit by default: 30% wider and 50%
-        # taller than the previous 91x61 default (which itself grew from the
-        # original 70x34) → fewer hidden tabs and less vertical scrolling.
-        # Clamp to the screen (40px margin) so the bigger default never runs
-        # off a smaller display.
+        # The two-pane layout (a narrow left category selector + one entity
+        # list) needs only ~half the old notebook width, so the default is
+        # much narrower.  Width clamps to the screen (40px margin); height is
+        # a fixed 80% of the screen, positioned with a 10% top/bottom margin
+        # and centred horizontally.
         _margin = 40
-        _w = min(cw * 118, self.winfo_screenwidth() - _margin)
-        _h = min(lh * 92, self.winfo_screenheight() - _margin)
-        self.geometry(f"{_w}x{_h}")
+        _w = min(cw * 59, self.winfo_screenwidth() - _margin)
+        _h = int(self.winfo_screenheight() * 0.8)
+        _y = int(self.winfo_screenheight() * 0.1)
+        _x = max(0, (self.winfo_screenwidth() - _w) // 2)
+        self.geometry(f"{_w}x{_h}+{_x}+{_y}")
         self.resizable(True, True)
-        self.minsize(cw * 40, lh * 16)
+        self.minsize(cw * 22, lh * 16)
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
         self._tree_style = self._make_tree_style()
 
-        # ── Notebook with one tab per present section ─────────────
-        self._notebook = ttk.Notebook(self)
-        self._notebook.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
-        self._build_tabs()
+        # ── Two-pane category-list + entity-list layout ───────────
+        # A horizontal ``PanedWindow`` (user-resizable sash): the LEFT pane is
+        # a narrow, single-select category selector (fixed order — a selector
+        # only, never reorderable); the RIGHT pane holds one entity Treeview
+        # per category, of which only the selected category's tree is shown.
+        self._paned = ttk.PanedWindow(self, orient="horizontal")
+        self._paned.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
+
+        left = ttk.Frame(self._paned)
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(0, weight=1)
+        self._category_list = ttk.Treeview(
+            left, show="tree", selectmode="browse",
+        )
+        self._category_list.grid(row=0, column=0, sticky="nsew")
+        _cat_scroll = ttk.Scrollbar(
+            left, orient="vertical", command=self._category_list.yview,
+        )
+        _cat_scroll.grid(row=0, column=1, sticky="ns")
+        self._category_list.configure(yscrollcommand=_cat_scroll.set)
+        # Pure selector: selection swaps the visible right-pane tree.  NO
+        # drag / Alt-arrow / move bindings are attached here.
+        self._category_list.bind(
+            "<<TreeviewSelect>>", self._on_category_select,
+        )
+
+        # Right pane: a container holding every category's entity tree; only
+        # the selected one is shown (grid / grid_remove) so per-tree state
+        # persists across selections.
+        self._entity_container = ttk.Frame(self._paned)
+        self._entity_container.columnconfigure(0, weight=1)
+        self._entity_container.rowconfigure(0, weight=1)
+
+        self._paned.add(left, weight=0)
+        self._paned.add(self._entity_container, weight=1)
+
+        # Category-selector state (exposed for tests): display order + the
+        # per-category entity tree / frame / left-list item, and the title of
+        # the currently-shown category.
+        self._category_order: list[str] = []
+        self._category_trees: dict[str, ttk.Treeview] = {}
+        self._category_frames: dict[str, ttk.Frame] = {}
+        self._category_items: dict[str, str] = {}
+        self._current_category: str | None = None
+
+        self._build_panes()
 
         # ── Buttons ───────────────────────────────────────────────
         # Buttons are CREATED in tab-traversal order (Undo → Redo → Cancel →
@@ -836,7 +882,7 @@ class PlotSettingsPicker(tk.Toplevel):
             return
         self._redo_stack.append(copy.deepcopy(self._data))
         self._data = self._undo_stack.pop()
-        self._rebuild_all_tabs()
+        self._rebuild_panes()
         self._update_history_buttons()
         self._schedule_live_update()
 
@@ -846,7 +892,7 @@ class PlotSettingsPicker(tk.Toplevel):
             return
         self._undo_stack.append(copy.deepcopy(self._data))
         self._data = self._redo_stack.pop()
-        self._rebuild_all_tabs()
+        self._rebuild_panes()
         self._update_history_buttons()
         self._schedule_live_update()
 
@@ -861,17 +907,29 @@ class PlotSettingsPicker(tk.Toplevel):
                 state="normal" if self._redo_stack else "disabled",
             )
 
-    def _rebuild_all_tabs(self) -> None:
-        """Discard every tab/tree and rebuild them from ``self._data``.
+    def _rebuild_panes(self) -> None:
+        """Discard every entity tree + left-list row and rebuild from
+        ``self._data``.
 
         Used by undo/redo so the displayed trees + swatches exactly
         match the (possibly replaced) working dict — order, colors, and row
         presence.  All per-tree bookkeeping and swatch references are reset
-        so stale rows/images cannot leak across a rebuild.
+        so stale rows/images cannot leak across a rebuild.  The currently
+        selected category is preserved when it still exists, else the first
+        category is selected (``_build_panes`` already selects the first).
         """
-        for tab_id in self._notebook.tabs():
-            self._notebook.forget(tab_id)
-            self.nametowidget(tab_id).destroy()
+        prev = self._current_category
+        for frame in self._category_frames.values():
+            frame.destroy()
+        # Clear category bookkeeping BEFORE deleting the left rows so a
+        # delete-driven ``<<TreeviewSelect>>`` finds no frames and no-ops.
+        self._category_order = []
+        self._category_trees = {}
+        self._category_frames = {}
+        self._category_items = {}
+        self._current_category = None
+        for item in self._category_list.get_children(""):
+            self._category_list.delete(item)
         self._tree_section.clear()
         self._drag_move.clear()
         self._drag_anchor.clear()
@@ -879,9 +937,11 @@ class PlotSettingsPicker(tk.Toplevel):
         self._tree_composite.clear()
         self._row_swatches.clear()
         self._swatches.clear()
-        self._build_tabs()
+        self._build_panes()
+        if prev is not None and prev in self._category_trees:
+            self._show_category(prev)
 
-    # ── Tab construction ──────────────────────────────────────────
+    # ── Pane construction ─────────────────────────────────────────
     def _make_tree_style(self) -> str:
         """Return a Treeview style whose item layout drops the disclosure
         indicator, so leaf rows start flush-left (no ~18px indent) — the
@@ -903,21 +963,22 @@ class PlotSettingsPicker(tk.Toplevel):
             return "Treeview"
         return name
 
-    def _build_tabs(self) -> None:
-        """Create the tabs.
+    def _build_panes(self) -> None:
+        """Populate the left category selector and the right entity trees.
 
-        Entity-class tabs (nodeGroup / flowGroup / unit / connection / node)
-        are ALWAYS shown — even when empty — so it is visible that a class
-        has no entities (the on-open discovery seeds any it can).  The
-        scenarios tab is ALWAYS shown too, and last.  Category tabs appear
-        only when present.
+        Entity-class categories (nodeGroup / flowGroup / unit / connection /
+        node) are ALWAYS shown — even when empty — so it is visible that a
+        class has no entities (the on-open discovery seeds any it can).  The
+        scenarios category is ALWAYS shown too, and last.  Category
+        subsections appear only when present.  The first category (nodeGroup)
+        is selected by default.
         """
         entities = self._data.get("entities")
         entities = entities if isinstance(entities, dict) else {}
         for cls in _ENTITY_CLASSES:
             section = entities.get(cls)
             rows = list(section.items()) if isinstance(section, dict) else []
-            self._add_tab(
+            self._add_category(
                 title=cls,
                 rows=rows,
                 composite=True,
@@ -929,34 +990,50 @@ class PlotSettingsPicker(tk.Toplevel):
             for name in _CATEGORY_SECTIONS:
                 section = categories.get(name)
                 if isinstance(section, dict) and section:
-                    self._add_tab(
+                    self._add_category(
                         title=name,
                         rows=list(section.items()),
                         composite=False,
                         section_path=("categories", name),
                     )
 
-        # Scenarios tab is ALWAYS shown, and last — users rarely edit it, but
-        # it must be discoverable so scenario-comparison colors are editable
-        # even before a comparison run (populated from output folders on open).
+        # Scenarios is ALWAYS shown, and last — users rarely edit it, but it
+        # must be discoverable so scenario-comparison colors are editable even
+        # before a comparison run (populated from output folders on open).
         scenarios = self._data.get("scenarios")
         scenarios = scenarios if isinstance(scenarios, dict) else {}
-        self._add_tab(
+        self._add_category(
             title="scenarios",
             rows=list(scenarios.items()),
             composite=False,
             section_path=("scenarios",),
         )
 
-    def _add_tab(
+        # Default selection = the first category (nodeGroup).
+        if self._category_order:
+            self._show_category(self._category_order[0])
+
+    def _add_category(
         self,
         title: str,
         rows: list[tuple[str, object]],
         composite: bool,
         section_path: tuple[str, ...],
     ) -> None:
-        """Add a Notebook tab with a scrollable single-column Treeview."""
-        frame = ttk.Frame(self._notebook)
+        """Register a category: append it to the LEFT selector and build its
+        RIGHT-pane entity Treeview (initially hidden except the first).
+
+        The entity tree is built exactly as the old notebook tab was — same
+        widgets, same per-tree bookkeeping, same drag / Alt-arrow / edit
+        bindings — so all reorder / color-edit behaviour is unchanged; only
+        the container differs (a swapped grid cell instead of a notebook tab).
+        """
+        # Left selector row (pure selector — no reorder bindings attached).
+        item = self._category_list.insert("", "end", text=title)
+        self._category_items[title] = item
+
+        # Right-pane entity tree (same construction as the old tab).
+        frame = ttk.Frame(self._entity_container)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
@@ -996,7 +1073,45 @@ class PlotSettingsPicker(tk.Toplevel):
         tree.bind("<Return>", self._on_row_return)
         tree.bind("<FocusIn>", self._on_tree_focus_in)
 
-        self._notebook.add(frame, text=title)
+        # All frames share the one container cell; built hidden and shown on
+        # selection (grid / grid_remove) so per-tree state survives swaps.
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.grid_remove()
+
+        self._category_order.append(title)
+        self._category_trees[title] = tree
+        self._category_frames[title] = frame
+
+    def _show_category(self, title: str) -> None:
+        """Show *title*'s entity tree, hiding the previously shown one.
+
+        Also reflects the selection in the left selector so a programmatic
+        show (default open, undo/redo restore) and a user click stay in sync.
+        """
+        if title not in self._category_frames:
+            return
+        if (
+            self._current_category is not None
+            and self._current_category != title
+            and self._current_category in self._category_frames
+        ):
+            self._category_frames[self._current_category].grid_remove()
+        self._category_frames[title].grid()
+        self._current_category = title
+        item = self._category_items.get(title)
+        if (
+            item is not None
+            and self._category_list.exists(item)
+            and self._category_list.selection() != (item,)
+        ):
+            self._category_list.selection_set(item)
+
+    def _on_category_select(self, _event=None) -> None:
+        """Left-list selection changed → show that category's entity tree."""
+        sel = self._category_list.selection()
+        if not sel:
+            return
+        self._show_category(self._category_list.item(sel[0], "text"))
 
     # ── Reordering (drag + keyboard) ──────────────────────────────
     def _selected_rows(self, tree: ttk.Treeview) -> list[str]:
