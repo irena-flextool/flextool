@@ -212,3 +212,167 @@ def test_two_mixed_entities_innermost_matches_both_sides_config_branch():
     assert negs[0] == "storB_neg", negs
     assert poss[0] == "storB_pos", poss
     assert negs[1].removesuffix("_neg") == poss[1].removesuffix("_pos")
+
+
+# ---------------------------------------------------------------------------
+# special_order: reorder the special slots WITHIN each sign group
+#
+# ``special_order`` is the dispatch specials' file order (the picker's
+# top-to-bottom order of ``categories.dispatch`` keys) = the visual
+# top-to-bottom stack order.  Empirically (probe reading area-polygon
+# y-extents): positives stack UP from 0 in LIST order, so the visual TOP of the
+# positive block is the LAST list column → list order is the REVERSE of visual
+# top-to-bottom.  Negatives stack DOWN from 0 in list order, so the visual TOP
+# of the negative block (nearest the axis) is the FIRST list column → list
+# order EQUALS visual top-to-bottom.  ``_order_dispatch_columns`` must map
+# *special_order* accordingly, and default to the historical hardcoded slots
+# when it is ``None``.
+# ---------------------------------------------------------------------------
+
+# The b285bd63 dialog order (positives POSITIVE_SPECIAL, negatives
+# reversed(NEGATIVE_SPECIAL)); this is the default that must reproduce the
+# historical hardcoded output byte-for-byte.
+_DEFAULT_SPECIAL_ORDER = [
+    "LossOfLoad", "Discharge", "Import",
+    "internal_losses", "Export", "Charge",
+]
+
+
+def _make_specials_df() -> pd.DataFrame:
+    """A frame carrying all six special columns (distinct magnitudes so each
+    area polygon is identifiable) and nothing else."""
+    idx = pd.Index(range(4), name="time")
+    return pd.DataFrame(
+        {
+            "LossOfLoad": [3.0] * 4,
+            "Discharge": [2.0] * 4,
+            "Import": [1.0] * 4,
+            "internal_losses": [-1.0] * 4,
+            "Export": [-2.0] * 4,
+            "Charge": [-3.0] * 4,
+        },
+        index=idx,
+    )
+
+
+def _visual_top_to_bottom(out: pd.DataFrame) -> tuple[list[str], list[str]]:
+    """Render *out* and read each area polygon's y-extent, returning
+    ``(pos_top_to_bottom, neg_top_to_bottom)`` — the special columns ordered by
+    their visual position (highest upper edge first) within each sign block."""
+    import numpy as np
+
+    from flextool.scenario_comparison.dispatch_plots import (
+        _build_dispatch_figure,
+    )
+
+    cols = [c for c in out.columns if c != "Curtailed"]
+    fig = _build_dispatch_figure(
+        out[cols], None, title="probe", timeline=(0, len(out)),
+    )
+    ax = fig.axes[0]
+    extents = []
+    for name, coll in zip(cols, ax.collections):
+        ys = coll.get_paths()[0].vertices[:, 1]
+        extents.append((name, float(np.min(ys)), float(np.max(ys))))
+    pos = [e for e in extents if e[2] > 1e-9]
+    neg = [e for e in extents if e[1] < -1e-9]
+    pos_ttb = [e[0] for e in sorted(pos, key=lambda e: -e[2])]
+    neg_ttb = [e[0] for e in sorted(neg, key=lambda e: -e[2])]
+    return pos_ttb, neg_ttb
+
+
+def test_default_special_order_matches_hardcoded_none_else_branch():
+    """PARITY (else branch): special_order == the b285bd63 dialog default
+    reproduces the historical config_order=None output byte-for-byte."""
+    legacy = _order_dispatch_columns(_make_specials_df(), config_order=None)
+    defaulted = _order_dispatch_columns(
+        _make_specials_df(),
+        config_order=None,
+        special_order=list(_DEFAULT_SPECIAL_ORDER),
+    )
+    assert list(defaulted.columns) == list(legacy.columns)
+    # And that historical column order is exactly the documented slots.
+    assert list(legacy.columns) == [
+        "internal_losses", "Export", "Charge",   # neg, visual top→bottom
+        "Import", "Discharge", "LossOfLoad",      # pos, list order (reversed)
+    ]
+
+
+def test_default_special_order_matches_hardcoded_none_config_branch():
+    """PARITY (config branch): same byte-for-byte match when a (non-matching)
+    entity config_order is also supplied — special slots are independent."""
+    cfg = ["some_entity"]
+    legacy = _order_dispatch_columns(_make_specials_df(), config_order=cfg)
+    defaulted = _order_dispatch_columns(
+        _make_specials_df(),
+        config_order=cfg,
+        special_order=list(_DEFAULT_SPECIAL_ORDER),
+    )
+    assert list(defaulted.columns) == list(legacy.columns)
+
+
+def test_default_special_order_renders_historical_visual_stack():
+    """The default special_order renders positives top→bottom
+    LossOfLoad,Discharge,Import and negatives top→bottom
+    internal_losses,Export,Charge (the historical stack)."""
+    out = _order_dispatch_columns(
+        _make_specials_df(),
+        config_order=None,
+        special_order=list(_DEFAULT_SPECIAL_ORDER),
+    )
+    pos_ttb, neg_ttb = _visual_top_to_bottom(out)
+    assert pos_ttb == ["LossOfLoad", "Discharge", "Import"]
+    assert neg_ttb == ["internal_losses", "Export", "Charge"]
+
+
+def test_permuting_positive_special_order_permutes_the_stack():
+    """Permuting the positives within special_order permutes the positive stack
+    (visual top→bottom follows special_order) and never moves a positive below
+    the axis."""
+    # Put Import at the visual top, then LossOfLoad, then Discharge.
+    special = ["Import", "LossOfLoad", "Discharge",
+               "internal_losses", "Export", "Charge"]
+    out = _order_dispatch_columns(
+        _make_specials_df(), config_order=None, special_order=special,
+    )
+    pos_ttb, neg_ttb = _visual_top_to_bottom(out)
+    # Visual top→bottom of the positive block == the special_order positives.
+    assert pos_ttb == ["Import", "LossOfLoad", "Discharge"]
+    # Negatives untouched.
+    assert neg_ttb == ["internal_losses", "Export", "Charge"]
+    # Every positive special stays strictly above the axis (present in the
+    # positive polygons, never in the negative ones).
+    assert set(pos_ttb) == {"Import", "LossOfLoad", "Discharge"}
+    assert not (set(pos_ttb) & set(neg_ttb))
+
+
+def test_permuting_negative_special_order_permutes_the_stack():
+    """Permuting the negatives within special_order permutes the negative stack
+    (visual top→bottom follows special_order) and never moves a negative above
+    the axis."""
+    # Put Charge at the visual top (nearest the axis), then Export, then losses.
+    special = ["LossOfLoad", "Discharge", "Import",
+               "Charge", "Export", "internal_losses"]
+    out = _order_dispatch_columns(
+        _make_specials_df(), config_order=None, special_order=special,
+    )
+    pos_ttb, neg_ttb = _visual_top_to_bottom(out)
+    assert neg_ttb == ["Charge", "Export", "internal_losses"]
+    assert pos_ttb == ["LossOfLoad", "Discharge", "Import"]
+    assert not (set(pos_ttb) & set(neg_ttb))
+
+
+def test_special_order_applies_in_config_branch_column_order():
+    """In the config branch the permuted special slots appear in the returned
+    column list order (negatives first in list = visual top; positives reversed
+    in list = visual top last)."""
+    special = ["Import", "Discharge", "LossOfLoad",
+               "Charge", "Export", "internal_losses"]
+    out = _order_dispatch_columns(
+        _make_specials_df(), config_order=["some_entity"], special_order=special,
+    )
+    cols = list(out.columns)
+    # Negatives: list order == visual top→bottom == special_order negatives.
+    assert cols[:3] == ["Charge", "Export", "internal_losses"]
+    # Positives: list order == reverse of special_order positives.
+    assert cols[3:] == ["LossOfLoad", "Discharge", "Import"]

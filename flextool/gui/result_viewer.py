@@ -4075,8 +4075,15 @@ class ResultViewer(tk.Toplevel):
         # Slice by the in-data scenario tag (may differ from folder name).
         # Thread config_order so the per-node stack follows the picker's
         # order (not just the std-dev fallback), like the nodeGroup path.
+        # special_order carries the dispatch specials' file order so the
+        # engine stacks the positive/negative specials within each sign group
+        # in the order the picker shows.
+        special_order = list(
+            template.get('categories', {}).get('dispatch', {}).keys()
+        )
         df_node, inflow = prepare_node_dispatch_data(
             results, self._dispatch_data_tag, node, config_order=config_order,
+            special_order=special_order,
         )
 
         if (df_node is None or df_node.empty) and (
@@ -4175,12 +4182,18 @@ class ResultViewer(tk.Toplevel):
         _, config_order = resolve_dispatch_colors_and_order(
             template, template_entity_names(template),
         )
+        # Dispatch specials' file order (picker top-to-bottom) so the engine
+        # stacks the positive/negative specials within each sign group to
+        # match the picker.
+        special_order = list(
+            template.get('categories', {}).get('dispatch', {}).keys()
+        )
 
         # Prepare dispatch data — slice by the in-data scenario tag, which
         # may differ from the folder name (GUI run-index suffix).
         df_dispatch, inflow = prepare_dispatch_data(
             results, mappings, self._dispatch_data_tag, node_group,
-            config_order=config_order,
+            config_order=config_order, special_order=special_order,
         )
 
         if df_dispatch is None or df_dispatch.empty:

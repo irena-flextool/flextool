@@ -1397,30 +1397,34 @@ class TestPickerDoubleClickEdit:
 
 
 # ---------------------------------------------------------------------------
-#  PlotSettingsPicker — dispatch category is engine-fixed order + divider
+#  PlotSettingsPicker — dispatch specials reorderable WITHIN each sign group
+#  (the flowGroups divider is the boundary; positives above, negatives below)
 # ---------------------------------------------------------------------------
 
 
-# All six special columns, deliberately scrambled in the file, plus a couple
-# of ordinary categories/entities so the "other categories stay reorderable"
-# checks have something to move.
+# All six special columns in the default visual (top-to-bottom) order — the
+# file's ``categories.dispatch`` key order IS the visual stack order the engine
+# honors — plus a couple of ordinary categories/entities so the "other
+# categories stay reorderable" checks have something to move.
 _DISPATCH_ALL = {
     "scenarios": {"S1": "#1f77b4"},
     "categories": {
         "costs": {"co2": "#4d4d4d", "vom": "#222222"},
         "dispatch": {
-            "Export": "purple",
+            # positive group, visual top→bottom
             "LossOfLoad": "crimson",
-            "internal_losses": "darkgray",
-            "Import": "indigo",
-            "Charge": "lime",
             "Discharge": "aqua",
+            "Import": "indigo",
+            # negative group, visual top→bottom
+            "internal_losses": "darkgray",
+            "Export": "purple",
+            "Charge": "lime",
         },
     },
     "entities": {"unit": {"coal": "#212121", "gas": "#333333"}},
 }
 
-_FIXED_DISPATCH_ROWS = [
+_DISPATCH_ROWS = [
     "LossOfLoad", "Discharge", "Import",
     "flowGroups",
     "internal_losses", "Export", "Charge",
@@ -1435,26 +1439,52 @@ def _divider_iid(tree):
     return None
 
 
-class TestDispatchFixedOrderDivider:
-    """The dispatch category renders in the engine-fixed special order with an
-    immovable, non-editable ``flowGroups`` divider marking where the flow bands
-    stack; its specials are no longer reorderable but stay color-editable."""
+class TestDispatchSignGroupReorderDivider:
+    """The dispatch category renders its specials in two sign groups separated
+    by an immovable, non-editable ``flowGroups`` divider.  Specials are
+    reorderable WITHIN each sign group (positives among themselves above the
+    divider, negatives among themselves below), never across it; the divider
+    itself never moves and is never written to ``self._data``.  Colors stay
+    editable."""
 
-    def test_fixed_order_with_divider_between_pos_and_neg(
+    def test_rows_follow_file_order_within_each_group(
         self, tk_root, tmp_path,
     ):
         picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
         dispatch = picker._category_trees["dispatch"]
-        # Rows mirror the stack top→bottom (positive specials, divider,
-        # negative specials in bottom-of-stack order) regardless of file order.
-        assert _row_names(dispatch) == _FIXED_DISPATCH_ROWS
+        # Positives (file order), divider, negatives (file order).
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+
+    def test_scrambled_file_order_is_preserved_within_groups(
+        self, tk_root, tmp_path,
+    ):
+        """A non-default file key order is honored within each sign group (the
+        picker no longer forces a canonical special order)."""
+        data = {
+            "categories": {"dispatch": {
+                "Export": "purple",
+                "Import": "indigo",
+                "Charge": "lime",
+                "Discharge": "aqua",
+                "internal_losses": "darkgray",
+                "LossOfLoad": "crimson",
+            }},
+            "entities": {"unit": {}},
+        }
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        dispatch = picker._category_trees["dispatch"]
+        # Positives in file order (Import, Discharge, LossOfLoad), divider, then
+        # negatives in file order (Export, Charge, internal_losses).
+        assert _row_names(dispatch) == [
+            "Import", "Discharge", "LossOfLoad",
+            "flowGroups",
+            "Export", "Charge", "internal_losses",
+        ]
 
     def test_divider_is_not_a_data_key(self, tk_root, tmp_path):
         picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
         sect = _section(picker._data, ("categories", "dispatch"))
-        # The divider is display-only: never a key in the working dict.
         assert "flowGroups" not in sect
-        # Every real special is still present (nothing dropped by ordering).
         assert set(sect) == {
             "LossOfLoad", "Discharge", "Import",
             "internal_losses", "Export", "Charge",
@@ -1465,8 +1495,6 @@ class TestDispatchFixedOrderDivider:
         dispatch = picker._category_trees["dispatch"]
         div = _divider_iid(dispatch)
         assert div is not None
-        # Tracked as a divider item, recognised by the helper, and carrying the
-        # distinct divider tag (so it renders as a highlighted band).
         assert (dispatch, div) in picker._divider_items
         assert picker._is_divider(dispatch, div) is True
         from flextool.gui.dialogs.plot_settings_picker import _DIVIDER_TAG
@@ -1483,8 +1511,6 @@ class TestDispatchFixedOrderDivider:
         before = dict(_section(picker._data, ("categories", "dispatch")))
         picker._edit_row_color(dispatch, div)
 
-        # The color dialog was NEVER opened for the divider, and no data
-        # touched (no phantom "flowGroups" entry).
         assert "dialog" not in captured
         assert _section(picker._data, ("categories", "dispatch")) == before
         assert "flowGroups" not in _section(
@@ -1498,70 +1524,211 @@ class TestDispatchFixedOrderDivider:
             tk_root, tmp_path, data=_DISPATCH_ALL, on_apply=lambda: None,
         )
         dispatch = picker._category_trees["dispatch"]
-        # First row is LossOfLoad (a positive special).
         lol = dispatch.get_children("")[0]
         assert dispatch.item(lol, "text") == "LossOfLoad"
 
         captured = _patch_dialog(monkeypatch, ("#00ff00", None))
         picker._edit_row_color(dispatch, lol)
-        # The dialog opened for the real special and the edit wrote back.
         assert captured["dialog"].opened[0] == "LossOfLoad"
         sect = _section(picker._data, ("categories", "dispatch"))
         assert sect["LossOfLoad"] == "#00ff00"
-        # Fixed display order is unchanged by a color edit.
+        # A color edit does not reorder the rows.
         picker._flush_live_update()
-        assert _row_names(dispatch) == _FIXED_DISPATCH_ROWS
+        assert _row_names(dispatch) == _DISPATCH_ROWS
 
-    def test_key_move_on_dispatch_is_noop(self, tk_root, tmp_path):
+    # ── Reorder WITHIN a sign group (Alt-move) ─────────────────────
+    def test_alt_move_positive_within_top_group_reorders_and_writes(
+        self, tk_root, tmp_path,
+    ):
         picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
         dispatch = picker._category_trees["dispatch"]
-        assert dispatch in picker._fixed_order_trees
-        before_rows = _row_names(dispatch)
-        before_data = dict(_section(picker._data, ("categories", "dispatch")))
-
-        # Focus a real special and try to Alt-move it up and down.
-        top = dispatch.get_children("")[0]
-        dispatch.focus(top)
-        dispatch.selection_set(top)
-        assert picker._key_move(dispatch, +1) == "break"
+        # Move Discharge (2nd positive) up above LossOfLoad.
+        discharge = dispatch.get_children("")[1]
+        assert dispatch.item(discharge, "text") == "Discharge"
+        dispatch.focus(discharge)
+        dispatch.selection_set(discharge)
         assert picker._key_move(dispatch, -1) == "break"
 
-        # Neither the rows nor the working dict changed; no undo recorded.
-        assert _row_names(dispatch) == before_rows
-        assert _section(picker._data, ("categories", "dispatch")) == before_data
+        assert _row_names(dispatch) == [
+            "Discharge", "LossOfLoad", "Import",
+            "flowGroups",
+            "internal_losses", "Export", "Charge",
+        ]
+        # categories.dispatch rewritten in the new (divider-excluded) order,
+        # positives first then negatives; live update scheduled.
+        assert list(
+            _section(picker._data, ("categories", "dispatch")).keys()
+        ) == [
+            "Discharge", "LossOfLoad", "Import",
+            "internal_losses", "Export", "Charge",
+        ]
+        assert picker._live_after_id is not None
+        assert "flowGroups" not in _section(
+            picker._data, ("categories", "dispatch"),
+        )
+
+    def test_alt_move_negative_within_bottom_group_reorders_and_writes(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        # Move Export (2nd negative) up above internal_losses.
+        export = dispatch.get_children("")[5]
+        assert dispatch.item(export, "text") == "Export"
+        dispatch.focus(export)
+        dispatch.selection_set(export)
+        assert picker._key_move(dispatch, -1) == "break"
+
+        assert _row_names(dispatch) == [
+            "LossOfLoad", "Discharge", "Import",
+            "flowGroups",
+            "Export", "internal_losses", "Charge",
+        ]
+        assert list(
+            _section(picker._data, ("categories", "dispatch")).keys()
+        ) == [
+            "LossOfLoad", "Discharge", "Import",
+            "Export", "internal_losses", "Charge",
+        ]
+
+    def test_alt_move_positive_down_into_divider_is_clamped(
+        self, tk_root, tmp_path,
+    ):
+        """A positive at the bottom of its group cannot cross the divider — the
+        move is clamped (no crossing) and nothing changes; the divider stays."""
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        imp = dispatch.get_children("")[2]  # Import — last positive
+        assert dispatch.item(imp, "text") == "Import"
+        dispatch.focus(imp)
+        dispatch.selection_set(imp)
+        assert picker._key_move(dispatch, +1) == "break"
+
+        # Unchanged, divider still at index 3, no live update, no undo.
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        assert dispatch.get_children("")[3] == _divider_iid(dispatch)
+        assert picker._live_after_id is None
         assert picker._undo_stack == []
+
+    def test_alt_move_negative_up_into_divider_is_clamped(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        il = dispatch.get_children("")[4]  # internal_losses — top negative
+        assert dispatch.item(il, "text") == "internal_losses"
+        dispatch.focus(il)
+        dispatch.selection_set(il)
+        assert picker._key_move(dispatch, -1) == "break"
+
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        assert dispatch.get_children("")[3] == _divider_iid(dispatch)
         assert picker._live_after_id is None
 
-    def test_drag_on_dispatch_primes_no_move(
+    def test_divider_itself_never_moves_via_alt(self, tk_root, tmp_path):
+        """Focusing the divider and Alt-moving it is a no-op (it drops out of
+        the movable selection); it never enters self._data."""
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        div = _divider_iid(dispatch)
+        dispatch.focus(div)
+        dispatch.selection_set(div)
+        assert picker._key_move(dispatch, -1) == "break"
+        assert picker._key_move(dispatch, +1) == "break"
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        assert "flowGroups" not in _section(
+            picker._data, ("categories", "dispatch"),
+        )
+        assert picker._undo_stack == []
+
+    # ── Reorder WITHIN a sign group (drag) + clamp ─────────────────
+    def test_drag_positive_within_group_reorders_and_persists(
         self, tk_root, tmp_path, monkeypatch,
     ):
         picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
         dispatch = picker._category_trees["dispatch"]
-        top, second = dispatch.get_children("")[:2]
+        rows = dispatch.get_children("")
+        lol, imp = rows[0], rows[2]  # LossOfLoad (top), Import (last positive)
+        # Map cursor-y to rows: 0→LossOfLoad, 2→Import.
         monkeypatch.setattr(
             dispatch, "identify_row",
-            lambda y: {0: top, 1: second}.get(y, ""),
+            lambda y: {0: lol, 2: imp}.get(y, ""),
         )
 
         def _ev(y):
             return types.SimpleNamespace(widget=dispatch, y=y)
 
-        dispatch.selection_set(top)
-        # Press returns None (native) and no move drag is primed for a fixed
-        # tree; a subsequent motion/end never reorders.
-        assert picker._on_drag_start(_ev(0)) is None
-        assert picker._drag_move[dispatch] is False
+        dispatch.selection_set(lol)
+        assert picker._on_drag_start(_ev(0)) == "break"
+        assert picker._drag_move[dispatch] is True
+        picker._on_drag_motion(_ev(2))   # drag down onto Import
+        picker._on_drag_end(_ev(2))
+
+        # LossOfLoad moved to the bottom of the positive group (above divider).
+        assert _row_names(dispatch) == [
+            "Discharge", "Import", "LossOfLoad",
+            "flowGroups",
+            "internal_losses", "Export", "Charge",
+        ]
+        assert list(
+            _section(picker._data, ("categories", "dispatch")).keys()
+        ) == [
+            "Discharge", "Import", "LossOfLoad",
+            "internal_losses", "Export", "Charge",
+        ]
+
+    def test_drag_positive_onto_negative_is_clamped_to_boundary(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Dragging a positive down onto a negative row clamps it to just above
+        the divider (no crossing); the divider stays put."""
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        rows = dispatch.get_children("")
+        imp, chg = rows[2], rows[6]  # Import (last positive), Charge (last neg)
+        monkeypatch.setattr(
+            dispatch, "identify_row",
+            lambda y: {2: imp, 6: chg}.get(y, ""),
+        )
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=dispatch, y=y)
+
+        dispatch.selection_set(imp)
+        assert picker._on_drag_start(_ev(2)) == "break"
+        picker._on_drag_motion(_ev(6))   # drag down onto Charge (a negative)
+        picker._on_drag_end(_ev(6))
+
+        # No crossing: rows unchanged, divider still at index 3.
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        assert dispatch.get_children("")[3] == _divider_iid(dispatch)
+
+    def test_drag_start_on_divider_swallows_and_primes_no_move(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        div = _divider_iid(dispatch)
+        monkeypatch.setattr(dispatch, "identify_row", lambda y: div)
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=dispatch, y=y)
+
         before_rows = _row_names(dispatch)
-        picker._on_drag_motion(_ev(1))
-        picker._on_drag_end(_ev(1))
+        # Press on the divider is swallowed ("break"), no move primed, and it
+        # is not selected.
+        assert picker._on_drag_start(_ev(0)) == "break"
+        assert picker._drag_move[dispatch] is False
+        assert div not in dispatch.selection()
+        picker._on_drag_end(_ev(0))
         assert _row_names(dispatch) == before_rows
 
+    # ── Other categories / entity classes unaffected ──────────────
     def test_other_category_still_reorderable_and_no_divider(
         self, tk_root, tmp_path,
     ):
         picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
         costs = picker._category_trees["costs"]
-        # costs is NOT fixed-order and carries no divider.
         assert costs not in picker._fixed_order_trees
         assert _divider_iid(costs) is None
         assert _row_names(costs) == ["co2", "vom"]
@@ -1586,51 +1753,25 @@ class TestDispatchFixedOrderDivider:
         picker._key_move(unit, +1)
         assert _row_names(unit) == ["gas", "coal"]
 
-    def test_rebuild_reconstructs_fixed_order_and_single_divider(
+    def test_rebuild_reconstructs_order_and_single_divider(
         self, tk_root, tmp_path,
     ):
         picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
         picker._rebuild_panes()
         dispatch = picker._category_trees["dispatch"]
-        # Fixed order + divider rebuilt, and the divider is not duplicated.
-        assert _row_names(dispatch) == _FIXED_DISPATCH_ROWS
+        assert _row_names(dispatch) == _DISPATCH_ROWS
         dividers = [
             iid for iid in dispatch.get_children("")
             if dispatch.item(iid, "text") == "flowGroups"
         ]
         assert len(dividers) == 1
         assert (dispatch, dividers[0]) in picker._divider_items
-        # Still immovable + fixed-order after the rebuild.
-        assert dispatch in picker._fixed_order_trees
-        top = dispatch.get_children("")[0]
-        dispatch.focus(top)
-        dispatch.selection_set(top)
+        # Reorder still constrained after the rebuild (Import can't cross down).
+        imp = dispatch.get_children("")[2]
+        dispatch.focus(imp)
+        dispatch.selection_set(imp)
         picker._key_move(dispatch, +1)
-        assert _row_names(dispatch) == _FIXED_DISPATCH_ROWS
-
-    def test_undo_redo_preserves_fixed_order_and_divider(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        picker, _ = _make_picker(
-            tk_root, tmp_path, data=_DISPATCH_ALL, on_apply=lambda: None,
-        )
-        dispatch = picker._category_trees["dispatch"]
-        lol = dispatch.get_children("")[0]
-        _patch_dialog(monkeypatch, ("#00ff00", None))
-        picker._edit_row_color(dispatch, lol)  # a real edit (undoable)
-
-        picker._on_undo()
-        dispatch = picker._category_trees["dispatch"]
-        assert _row_names(dispatch) == _FIXED_DISPATCH_ROWS
-        assert _divider_iid(dispatch) is not None
-
-        picker._on_redo()
-        dispatch = picker._category_trees["dispatch"]
-        assert _row_names(dispatch) == _FIXED_DISPATCH_ROWS
-        assert len([
-            iid for iid in dispatch.get_children("")
-            if dispatch.item(iid, "text") == "flowGroups"
-        ]) == 1
+        assert _row_names(dispatch) == _DISPATCH_ROWS
 
     def test_partial_specials_only_present_rows_and_divider(
         self, tk_root, tmp_path,

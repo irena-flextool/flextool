@@ -1106,11 +1106,15 @@ class PlotSettingsPicker(tk.Toplevel):
         tree.configure(xscrollcommand=hscroll.set)
 
         if section_path == _DISPATCH_SECTION:
-            # Engine-fixed order: render the stack top→bottom with an immovable
-            # divider between the positive and negative specials, and mark the
-            # tree fixed-order so reorder is a no-op.
+            # Render the stack top→bottom with the flowGroups divider between
+            # the positive and negative specials.  The specials are reorderable
+            # WITHIN each sign group (positives among themselves above the
+            # divider, negatives among themselves below), but a row may not
+            # cross the divider and the divider itself never moves — enforced in
+            # the reorder paths via the divider row index (see
+            # ``_clamp_insert_for_divider``).  The tree is therefore NOT added
+            # to ``_fixed_order_trees``.
             self._insert_dispatch_rows(tree, rows)
-            self._fixed_order_trees.add(tree)
         else:
             for name, value in rows:
                 if composite:
@@ -1149,20 +1153,21 @@ class PlotSettingsPicker(tk.Toplevel):
     def _order_dispatch_rows(
         rows: list[tuple[str, object]],
     ) -> list[object]:
-        """Order the dispatch section rows to mirror the engine-fixed stack.
+        """Order the dispatch section rows into the two sign groups + divider.
 
-        The dispatch plot's special columns are pinned by the engine
-        (positive specials at the top, negative at the bottom) with the
-        movable flowGroup bands near the zero axis in between; reordering the
-        specials in the file is silently ignored.  So the picker renders the
-        specials in that fixed top→bottom order — positive specials
-        (``POSITIVE_SPECIAL``), then the flowGroups divider sentinel, then the
-        negative specials (in bottom-of-stack visual order,
-        ``internal_losses``, ``Export``, ``Charge``) — regardless of the raw
-        key order in the file.  Only rows actually present are emitted.  Any
-        entry that is neither a positive nor a negative special (defensive —
-        should not occur) is appended just BEFORE the divider so it never
-        masquerades as a negative band.
+        The dispatch plot's special columns split into a POSITIVE group (above
+        the zero axis) and a NEGATIVE group (below it); the flowGroups divider
+        marks the boundary where the movable flowGroup bands stack.  A special
+        can be reordered WITHIN its sign group but never crosses the divider (a
+        positive special is always positive).  So the picker renders the
+        positive specials, then the divider sentinel, then the negative
+        specials — each group in the FILE's top-to-bottom key order, which is
+        the visual top-to-bottom stack order the engine honors
+        (``categories.dispatch`` order → ``special_order`` in
+        ``dispatch_data._order_dispatch_columns``).  Only rows actually present
+        are emitted.  Any entry that is neither a positive nor a negative
+        special (defensive — should not occur) is appended just BEFORE the
+        divider so it never masquerades as a negative band.
 
         Returns a display sequence of ``(name, value)`` tuples with the
         :data:`_DIVIDER` sentinel marking the divider position.
@@ -1173,13 +1178,14 @@ class PlotSettingsPicker(tk.Toplevel):
         )
 
         present = dict(rows)
-        pos = [n for n in POSITIVE_SPECIAL if n in present]
-        # Negative specials render in bottom-of-stack visual order (the reverse
-        # of the ``NEGATIVE_SPECIAL`` constant): internal_losses, Export, Charge.
-        neg = [n for n in reversed(NEGATIVE_SPECIAL) if n in present]
-        classified = set(pos) | set(neg)
-        # Preserve the raw file order for any unclassified defensive extras.
-        unknown = [n for n, _v in rows if n not in classified]
+        pos_set = set(POSITIVE_SPECIAL)
+        neg_set = set(NEGATIVE_SPECIAL)
+        # Preserve the file's key order within each sign group (that IS the
+        # visual top-to-bottom order the engine renders).
+        pos = [n for n, _v in rows if n in pos_set]
+        neg = [n for n, _v in rows if n in neg_set]
+        # Any unclassified defensive extras keep their raw file order.
+        unknown = [n for n, _v in rows if n not in pos_set and n not in neg_set]
 
         seq: list[object] = [(n, present[n]) for n in pos]
         seq += [(n, present[n]) for n in unknown]
@@ -1237,6 +1243,55 @@ class PlotSettingsPicker(tk.Toplevel):
         """True iff *item* in *tree* is the synthetic flowGroups divider row."""
         return (tree, item) in self._divider_items
 
+    def _divider_index(self, tree: ttk.Treeview) -> int | None:
+        """Row index of *tree*'s flowGroups divider, or ``None`` if it has none.
+
+        Used by the reorder paths to keep a special on its own side of the
+        divider (positives above, negatives below) and to keep the divider
+        itself pinned.  A tree without a divider (every non-dispatch tree)
+        returns ``None``, so the sign-group clamp is a no-op there.
+        """
+        for i, iid in enumerate(tree.get_children("")):
+            if (tree, iid) in self._divider_items:
+                return i
+        return None
+
+    def _clamp_insert_for_divider(
+        self,
+        tree: ttk.Treeview,
+        order: list[str],
+        selected: list[str],
+        remaining: list[str],
+        insert_at: int,
+    ) -> int:
+        """Clamp *insert_at* so the moved block stays on its side of the divider.
+
+        *insert_at* is an index into *remaining* (the non-selected rows, which
+        always include the divider).  A block of positive specials (currently
+        above the divider) is clamped so it lands at or above the divider's slot
+        in *remaining*; a block of negatives (below) is clamped so it lands just
+        below it.  A move that would cross is thus clamped to the boundary (no
+        crossing), never rejected.  The divider is never in *selected*, so it
+        never moves.  No-op for trees without a divider.
+        """
+        div_idx = self._divider_index(tree)
+        if div_idx is None:
+            return insert_at
+        div_iid = order[div_idx]
+        if div_iid not in remaining:
+            return insert_at  # divider defensively selected — leave untouched
+        div_rem_idx = remaining.index(div_iid)
+        sel_idx = [order.index(r) for r in selected]
+        if not sel_idx:
+            return insert_at
+        if max(sel_idx) < div_idx:
+            # Positives: keep the block at/above the divider's slot.
+            return min(insert_at, div_rem_idx)
+        if min(sel_idx) > div_idx:
+            # Negatives: keep the block just below the divider's slot.
+            return max(insert_at, div_rem_idx + 1)
+        return insert_at
+
     def _show_category(self, title: str) -> None:
         """Show *title*'s entity tree, hiding the previously shown one.
 
@@ -1288,10 +1343,19 @@ class PlotSettingsPicker(tk.Toplevel):
         the selection, and returns True iff the order actually changed.
         """
         order = list(tree.get_children(""))
-        selected = self._selected_rows(tree)
+        # The flowGroups divider is display-only: never part of a moved block
+        # (so an arrow-key selection that landed on it can't drag it).
+        selected = [
+            r for r in self._selected_rows(tree)
+            if not self._is_divider(tree, r)
+        ]
         if not selected:
             return False
         remaining = [r for r in order if r not in set(selected)]
+        # Keep the block on its side of the divider (no-op without a divider).
+        insert_at = self._clamp_insert_for_divider(
+            tree, order, selected, remaining, insert_at,
+        )
         insert_at = max(0, min(insert_at, len(remaining)))
         new_order = remaining[:insert_at] + selected + remaining[insert_at:]
         if new_order == order:
@@ -1328,6 +1392,13 @@ class PlotSettingsPicker(tk.Toplevel):
             return None
         row = tree.identify_row(event.y) or None
         self._drag_moved[tree] = False
+        # The flowGroups divider is display-only — never selected or dragged.
+        # Swallow the press (``"break"``) so ttk's native handler does not
+        # select it, and prime no move.
+        if row and self._is_divider(tree, row):
+            self._drag_move[tree] = False
+            self._drag_anchor[tree] = None
+            return "break"
         # Shift (0x0001) / Control (0x0004) → let ttk extend/toggle select.
         if getattr(event, "state", 0) & 0x0005:
             self._drag_move[tree] = False
@@ -1419,11 +1490,17 @@ class PlotSettingsPicker(tk.Toplevel):
         """
         if tree not in self._tree_section:
             return "break"
-        # Fixed-order (dispatch) trees are engine-pinned — Alt-move is a no-op.
+        # Fixed-order trees are engine-pinned — Alt-move is a no-op.
         if tree in self._fixed_order_trees:
             return "break"
         order = list(tree.get_children(""))
-        selected = self._selected_rows(tree)
+        # The flowGroups divider never moves and is never part of the block;
+        # drop it from the selection so it can't be Alt-moved even when it holds
+        # focus from arrow-key navigation.
+        selected = [
+            r for r in self._selected_rows(tree)
+            if not self._is_divider(tree, r)
+        ]
         if not selected:
             return "break"
         sset = set(selected)
