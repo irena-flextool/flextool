@@ -602,12 +602,20 @@ def order_labels_by_template(
 # last as a LEGACY fallback so projects seeded before the
 # nodeGroup/flowGroup split still resolve their old ``entities.group``
 # colors; new seeds write ``nodeGroup`` / ``flowGroup``.
+# Class resolution order for a dispatch column → entity color/order.  A
+# dispatch band is a FLOW: a flowGroup aggregate, or an individual unit /
+# connection / node.  A ``nodeGroup`` is the plot's CONTAINER, never a band,
+# so it must have the LOWEST priority — otherwise a nodeGroup that happens to
+# share a name with a flowGroup aggregate (e.g. a "PV_flows" nodeGroup and a
+# "PV_flows" flowGroup) would shadow it, and editing the flowGroup entry would
+# silently do nothing.  First case-insensitive match wins (see
+# ``_lookup_entity_color`` / ``template_entity_names``).
 _DISPATCH_ENTITY_CLASSES: tuple[str, ...] = (
-    "nodeGroup",
     "flowGroup",
     "unit",
     "connection",
     "node",
+    "nodeGroup",
     "group",
 )
 

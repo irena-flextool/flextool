@@ -1290,6 +1290,35 @@ class TestResolveDispatchColorsAndOrder:
         },
     }
 
+    def test_flowgroup_wins_over_nodegroup_on_name_collision(self):
+        """A dispatch band is a FLOW: when the same name exists in both
+        nodeGroup and flowGroup (a real user pattern — e.g. a 'PV_flows'
+        nodeGroup and a 'PV_flows' flowGroup aggregate), the band must take
+        the FLOWGROUP color, not the container nodeGroup's — otherwise editing
+        the flowGroup entry silently does nothing."""
+        template = {
+            "entities": {
+                "nodeGroup": {"PV_flows": "#aec7e8"},   # container, must lose
+                "flowGroup": {"PV_flows": "#d6ca1f"},   # the actual band
+            },
+        }
+        assert ct._lookup_entity_color(
+            template["entities"], "PV_flows", False,
+        ) == "#d6ca1f"
+        colors, order = ct.resolve_dispatch_colors_and_order(
+            template, ["PV_flows"],
+        )
+        assert colors["PV_flows"] == "#d6ca1f"
+        assert order == ["PV_flows"]
+
+    def test_nodegroup_only_name_still_resolves(self):
+        """A name present ONLY in nodeGroup still resolves (nodeGroup is last,
+        not removed) — deprioritized, not dropped."""
+        template = {"entities": {"nodeGroup": {"OnlyGroup": "#123456"}}}
+        assert ct._lookup_entity_color(
+            template["entities"], "OnlyGroup", False,
+        ) == "#123456"
+
     def test_special_tokens_resolve_to_dispatch_category(self):
         colors, order = ct.resolve_dispatch_colors_and_order(
             self.TEMPLATE, ["LossOfLoad", "Charge", "internal_losses"]
