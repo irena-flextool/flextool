@@ -231,6 +231,11 @@ class ResultViewer(tk.Toplevel):
         # accumulated order is stale and must be dropped so the next render
         # re-derives it — see _maybe_invalidate_dispatch_order_on_settings_change.
         self._dispatch_order_settings_mtime: int | None = None
+        # Last dispatch iid actually rendered (node / nodeGroup).  A live
+        # colors/order edit refreshes via _trigger_replot, which normally reads
+        # the tree selection; this is the fallback when the selection is empty
+        # so the dispatch plot still updates.
+        self._last_dispatch_iid: str | None = None
         # Dispatch node-child iid → node name.  A node can be a member of
         # several nodeGroups, so its child iids must be unique per parent
         # (Treeview iids are global); this map recovers the node name from
@@ -3233,8 +3238,17 @@ class ResultViewer(tk.Toplevel):
         # Dispatch mode is handled directly by _on_tree_selected
         if mode == "dispatch":
             selection = self._plot_tree.selection()
+            # Prefer the live tree selection, but fall back to the
+            # last-rendered dispatch iid when the tree has no (plotting)
+            # selection — otherwise a live colors/order edit (whose refresh
+            # routes through here) would silently no-op and the dispatch plot
+            # would not update.  Guard that the iid still exists in the tree.
             if selection and _is_dispatch_iid(selection[0]):
-                self._display_dispatch_iid(scenarios[0], selection[0])
+                iid = selection[0]
+            else:
+                iid = self._last_dispatch_iid
+            if iid and self._plot_tree.exists(iid) and _is_dispatch_iid(iid):
+                self._display_dispatch_iid(scenarios[0], iid)
             return
 
         selection = self._plot_tree.selection()
@@ -3981,6 +3995,7 @@ class ResultViewer(tk.Toplevel):
         if iid.startswith(_DISPATCH_NODE_PREFIX):
             node = self._dispatch_node_iids.get(iid)
             if node is not None:
+                self._last_dispatch_iid = iid
                 self._display_node_dispatch(scenario, node)
             return
         if iid.startswith(_DISPATCH_GROUP_PREFIX):
@@ -3991,6 +4006,7 @@ class ResultViewer(tk.Toplevel):
                     "its dispatch"
                 )
                 return
+            self._last_dispatch_iid = iid
             self._display_dispatch(scenario, label)
 
     def _resolve_dispatch_template(self):

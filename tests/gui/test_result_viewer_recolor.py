@@ -419,3 +419,79 @@ def test_dispatch_order_cache_invalidated_on_settings_change(tmp_path):
     os.utime(settings, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
     invalidate()
     assert stub._dispatch_columns == {} and stub._dispatch_ylims == {}
+
+
+def test_display_dispatch_iid_records_last_iid():
+    """_display_dispatch_iid remembers the last iid it actually rendered, so a
+    later selection-less refresh can fall back to it."""
+    import types
+
+    from flextool.gui.result_viewer import ResultViewer
+
+    rendered = []
+    stub = types.SimpleNamespace(
+        _last_dispatch_iid=None,
+        _dispatch_node_iids={"dispatchnode_n1": "n1"},
+        _display_dispatch=lambda scen, label: rendered.append(("group", label)),
+        _display_node_dispatch=lambda scen, node: rendered.append(("node", node)),
+        _plot_canvas=types.SimpleNamespace(show_message=lambda m: None),
+    )
+    route = types.MethodType(ResultViewer._display_dispatch_iid, stub)
+
+    route("S1", "dispatch_Ireland")           # nodeGroup
+    assert stub._last_dispatch_iid == "dispatch_Ireland"
+    route("S1", "dispatchnode_n1")            # node
+    assert stub._last_dispatch_iid == "dispatchnode_n1"
+    # The non-plotting "Ungrouped nodes" container must NOT overwrite it.
+    route("S1", "dispatch_Ungrouped nodes")
+    assert stub._last_dispatch_iid == "dispatchnode_n1"
+    assert rendered == [("group", "Ireland"), ("node", "n1")]
+
+
+def test_trigger_replot_dispatch_falls_back_to_last_iid_when_no_selection():
+    """A live colors/order edit refreshes via _trigger_replot; with an empty
+    dispatch-tree selection it must still re-render the last dispatch iid
+    (not silently no-op)."""
+    import types
+
+    from flextool.gui.result_viewer import ResultViewer
+
+    calls = []
+
+    class _Tree:
+        def __init__(self, sel):
+            self._sel = sel
+
+        def selection(self):
+            return self._sel
+
+        def exists(self, iid):
+            return True
+
+    def _make(sel, last):
+        return types.SimpleNamespace(
+            _mode=types.SimpleNamespace(get=lambda: "dispatch"),
+            _get_selected_scenarios=lambda: ["S1"],
+            _plot_tree=_Tree(sel),
+            _last_dispatch_iid=last,
+            _plot_canvas=types.SimpleNamespace(show_message=lambda m: None),
+            _display_dispatch_iid=lambda scen, iid: calls.append((scen, iid)),
+        )
+
+    # Empty selection → falls back to the last rendered dispatch iid.
+    replot = types.MethodType(ResultViewer._trigger_replot, _make((), "dispatch_Ireland"))
+    replot()
+    assert calls == [("S1", "dispatch_Ireland")]
+
+    # Live selection present → uses it (preferred over the fallback).
+    calls.clear()
+    replot = types.MethodType(
+        ResultViewer._trigger_replot, _make(("dispatch_Cyprus",), "dispatch_Ireland"))
+    replot()
+    assert calls == [("S1", "dispatch_Cyprus")]
+
+    # No selection and no last iid → clean no-op (no crash).
+    calls.clear()
+    replot = types.MethodType(ResultViewer._trigger_replot, _make((), None))
+    replot()
+    assert calls == []
