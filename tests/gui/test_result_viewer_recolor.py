@@ -379,3 +379,43 @@ def test_disk_plan_reapplies_current_template_on_load(
         f"disk plan was not recolored from the current template on load "
         f"(legacy_plan={legacy_plan}): {sorted(after)}"
     )
+
+
+def test_dispatch_order_cache_invalidated_on_settings_change(tmp_path):
+    """The frozen dispatch order/ylim caches drop when plot_settings.yaml
+    changes, so an edited order is honored on a plain navigate (not only
+    after the picker Apply / a rescan)."""
+    import os
+    import types
+
+    from flextool.gui.result_viewer import ResultViewer
+
+    settings = tmp_path / "plot_settings.yaml"
+    settings.write_text("entities: {}\n", encoding="utf-8")
+
+    stub = types.SimpleNamespace(
+        _project_path=tmp_path,
+        _dispatch_columns={"NG": ["a", "b"]},
+        _dispatch_ylims={"NG": (0.0, 1.0)},
+        _dispatch_order_settings_mtime=None,
+    )
+    invalidate = types.MethodType(
+        ResultViewer._maybe_invalidate_dispatch_order_on_settings_change, stub,
+    )
+
+    # First call stamps the mtime and clears the (unstamped) caches.
+    invalidate()
+    assert stub._dispatch_columns == {} and stub._dispatch_ylims == {}
+    assert stub._dispatch_order_settings_mtime is not None
+
+    # No file change → caches preserved.
+    stub._dispatch_columns = {"NG": ["a"]}
+    stub._dispatch_ylims = {"NG": (0.0, 1.0)}
+    invalidate()
+    assert stub._dispatch_columns == {"NG": ["a"]}
+
+    # Bump the file mtime (a save / live edit) → caches dropped again.
+    st = settings.stat()
+    os.utime(settings, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+    invalidate()
+    assert stub._dispatch_columns == {} and stub._dispatch_ylims == {}

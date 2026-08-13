@@ -226,6 +226,11 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_data_tag: str = ""  # in-data scenario tag (may differ from folder)
         self._dispatch_ylims: dict[str, tuple[float, float]] = {}  # accumulated per-nodeGroup
         self._dispatch_columns: dict[str, list[str]] = {}  # accumulated column order
+        # mtime (ns) of the plot-settings file the frozen dispatch order was
+        # derived from; when the file changes (dialog save / live edit) the
+        # accumulated order is stale and must be dropped so the next render
+        # re-derives it — see _maybe_invalidate_dispatch_order_on_settings_change.
+        self._dispatch_order_settings_mtime: int | None = None
         # Dispatch node-child iid → node name.  A node can be a member of
         # several nodeGroups, so its child iids must be unique per parent
         # (Treeview iids are global); this map recovers the node name from
@@ -4008,8 +4013,32 @@ class ResultViewer(tk.Toplevel):
         )
         return template, config_order
 
+    def _maybe_invalidate_dispatch_order_on_settings_change(self) -> None:
+        """Drop the frozen dispatch order/ylim caches when the settings changed.
+
+        The per-nodeGroup ``_dispatch_columns`` accumulator freezes the stack
+        order on a nodeGroup's first render and every later render reindexes to
+        it — so an edited ``plot_settings.yaml`` order would be ignored on a
+        plain navigate (it only refreshed when the picker's Apply, or a rescan,
+        happened to clear the cache).  Stamp the accumulator with the settings
+        file's mtime and, whenever it changes (a dialog save or a live edit),
+        clear the frozen order + ylims so the next render re-derives them from
+        the current ``config_order``.  Cheap ``stat`` per render; no file read.
+        """
+        try:
+            mtime = resolve_plot_settings_path(
+                self._project_path
+            ).stat().st_mtime_ns
+        except OSError:
+            return
+        if mtime != self._dispatch_order_settings_mtime:
+            self._dispatch_columns.clear()
+            self._dispatch_ylims.clear()
+            self._dispatch_order_settings_mtime = mtime
+
     def _display_node_dispatch(self, scenario: str, node: str) -> None:
         """Render and display an individual node dispatch plot."""
+        self._maybe_invalidate_dispatch_order_on_settings_change()
         from flextool.plot_outputs.color_template import (
             resolve_dispatch_colors_and_order,
         )
@@ -4105,6 +4134,7 @@ class ResultViewer(tk.Toplevel):
         """Render and display a dispatch plot for a nodeGroup."""
         from flextool.scenario_comparison.dispatch_plots import _compute_ylim
 
+        self._maybe_invalidate_dispatch_order_on_settings_change()
         if not self._load_dispatch_data(scenario):
             self._plot_canvas.show_message(f"Could not load dispatch data for {scenario}")
             return
