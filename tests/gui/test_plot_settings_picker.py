@@ -234,8 +234,9 @@ class TestPickerEntitySeeding:
     def test_entities_populate_from_db_on_open(
         self, tk_root, tmp_path, monkeypatch,
     ):
-        # Seed the DB discovery BEFORE construction so the on-open merge runs
-        # (mirrors the refresh tests' monkeypatch pattern).
+        # DB FALLBACK path: tmp_path has no output_parquet, so the parquet-first
+        # discovery finds nothing and the on-open merge falls back to the input
+        # DB.  Seed the DB discovery BEFORE construction so the merge runs.
         from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
 
         monkeypatch.setattr(
@@ -306,6 +307,57 @@ class TestPickerEntitySeeding:
         data = {"entities": {"unit": {"coal": "#212121"}}}
         picker, _ = _make_picker(tk_root, tmp_path, data=data)
         assert picker._data["entities"] == {"unit": {"coal": "#212121"}}
+
+    def test_new_flowgroup_entries_ordered_by_std_on_open(
+        self, tk_root, tmp_path,
+    ):
+        """New flowGroup entries are appended in std-dev order (ascending,
+        matching ``_order_dispatch_columns``' remaining buckets), independent
+        of the discovery (alphabetical) order."""
+        pq = tmp_path / "output_parquet" / "base_1"
+        _write_dispatch_flowgroup_bundle(
+            pq, "base_1",
+            [
+                ("Fossil", "u_fossil", [10.0, 0.0, 10.0, 0.0]),  # high std
+                ("Wind", "u_wind", [1.0, 2.0, 1.0, 2.0]),        # low std
+            ],
+        )
+        picker, _ = _make_picker(
+            tk_root, tmp_path, data={"entities": {"flowGroup": {}}},
+        )
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        # Ascending std dev → Wind (low) before Fossil (high), NOT alphabetical
+        # (which discovery would yield as Fossil, Wind).
+        assert list(fg.keys()) == ["Wind", "Fossil"]
+        assert all(
+            isinstance(v, str) and v.startswith("#") for v in fg.values()
+        )
+
+    def test_on_open_merge_add_only_ignores_std_reorder(
+        self, tk_root, tmp_path,
+    ):
+        """An existing user order + colors are preserved on open even when the
+        parquet std-dev order would place the entries differently (add-only:
+        the std order applies ONLY to genuinely new names)."""
+        pq = tmp_path / "output_parquet" / "base_1"
+        _write_dispatch_flowgroup_bundle(
+            pq, "base_1",
+            [
+                ("Fossil", "u_fossil", [10.0, 0.0, 10.0, 0.0]),
+                ("Wind", "u_wind", [1.0, 2.0, 1.0, 2.0]),
+            ],
+        )
+        # Both already present, in alphabetical order (std order is Wind,
+        # Fossil) with the user's own colors.
+        data = {"entities": {
+            "flowGroup": {"Fossil": "#aaaaaa", "Wind": "#bbbbbb"},
+        }}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        # Neither reordered nor recolored.
+        assert list(fg.keys()) == ["Fossil", "Wind"]
+        assert fg["Fossil"] == "#aaaaaa"
+        assert fg["Wind"] == "#bbbbbb"
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +443,59 @@ def _section(data: dict, path: tuple[str, ...]) -> dict:
     for key in path:
         cur = cur[key]
     return cur
+
+
+def _write_dispatch_flowgroup_bundle(pdir, scenario, aggregates):
+    """Write a minimal-but-real dispatch output bundle under *pdir*.
+
+    Lets the picker's parquet-first discovery run end-to-end
+    (``discover_dispatch_entities`` for the class names + ``prepare_dispatch_data``
+    for the per-entity std devs) instead of monkeypatching the DB path.
+
+    *aggregates* is a list of ``(aggregate_name, unit_name, values)`` — each an
+    ``Unit_to_group`` processGroup aggregate whose single member unit produces
+    *values* (a per-time flow series) into node ``n1`` of nodeGroup ``elec``.
+    The aggregate's dispatch column std dev is therefore
+    ``pd.Series(values).std()`` (all-positive columns keep their name).
+    """
+    import pandas as pd
+
+    pdir.mkdir(parents=True, exist_ok=True)
+    k = len(aggregates)
+    # nodeGroup 'elec' flagged for dispatch, with member node 'n1'.
+    pd.DataFrame({"group": ["elec"]}).to_parquet(
+        pdir / "nodeGroupDispatch.parquet",
+    )
+    pd.DataFrame({"group": ["elec"], "node": ["n1"]}).to_parquet(
+        pdir / "group_node.parquet",
+    )
+    # Unit_to_group aggregates + their single-unit membership.
+    pd.DataFrame({
+        "group": ["elec"] * k,
+        "group_aggregate": [a for a, _u, _v in aggregates],
+    }).to_parquet(
+        pdir / "nodeGroupDispatch__processGroup_Unit_to_group.parquet",
+    )
+    pd.DataFrame({
+        "group": ["elec"] * k,
+        "group_aggregate": [a for a, _u, _v in aggregates],
+        "process": [u for _a, u, _v in aggregates],
+        "unit": [u for _a, u, _v in aggregates],
+        "node": ["n1"] * k,
+    }).to_parquet(
+        pdir / "nodeGroupDispatch__processGroup__process__unit__to_node.parquet",
+    )
+    # unit_outputNode_dt_ee: (scenario, unit, node) columns over a time index.
+    n = len(aggregates[0][2]) if aggregates else 0
+    time_idx = pd.Index(range(n), name="time")
+    flow = pd.DataFrame(
+        {i: v for i, (_a, _u, v) in enumerate(aggregates)}, index=time_idx,
+    )
+    flow.columns = pd.MultiIndex.from_tuples(
+        [(scenario, u, "n1") for _a, u, _v in aggregates],
+        names=["scenario", "unit", "node"],
+    )
+    flow.to_parquet(pdir / "unit_outputNode_dt_ee.parquet")
 
 
 class TestPickerReorder:
@@ -1037,46 +1142,31 @@ class TestPickerRefresh:
         assert picker._data["categories"] == _SAMPLE["categories"]
         assert picker._data["scenarios"] == _SAMPLE["scenarios"]
 
-    def test_refresh_unions_db_and_output_aggregates(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        """Refresh prunes against B ∪ C: an output-only aggregate (Fossil,
-        absent from the DB) survives, while a truly-stale entry (in neither
-        the DB nor the output aggregates) is pruned."""
-        import pandas as pd
-
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        # The dispatch output draws the 'Fossil' flowGroup aggregate.
+    def test_refresh_prunes_flowgroup_against_parquet(self, tk_root, tmp_path):
+        """Refresh prunes flowGroup against the parquet-discovered dispatch
+        aggregates (the primary source): an aggregate the dispatch draws
+        (Fossil) survives with its edited value, while a stale entry the
+        dispatch no longer draws (StaleGroup) is pruned.  With dispatch output
+        present the input DB is NOT consulted."""
         pq = tmp_path / "output_parquet" / "base_1"
-        pq.mkdir(parents=True)
-        pd.DataFrame(
-            {"group": ["elec"], "group_aggregate": ["Fossil"]},
-        ).to_parquet(
-            pq / "nodeGroupDispatch__processGroup_Unit_to_group.parquet",
+        _write_dispatch_flowgroup_bundle(
+            pq, "base_1", [("Fossil", "u_fossil", [10.0, 0.0, 10.0, 0.0])],
         )
-        # Seed: Fossil (output-only) + StaleGroup (in neither source) + coal.
+        # Seed: Fossil (drawn by the dispatch) + StaleGroup (not drawn).
         data = {"entities": {
             "flowGroup": {"Fossil": "#abcdef", "StaleGroup": "#111111"},
-            "unit": {"coal": "#212121"},
         }}
         picker, _ = _make_picker(tk_root, tmp_path, data=data)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
+        # On open the merge is add-only, so StaleGroup is still present.
+        assert "StaleGroup" in _section(
+            picker._data, ("entities", "flowGroup"),
         )
-        # DB knows only unit coal; it has NO flowGroups.
-        _mock_fetch(monkeypatch, {"unit": ["coal"]})
 
         picker._on_refresh()
 
         fg = _section(picker._data, ("entities", "flowGroup"))
-        # Fossil kept (live output aggregate, value preserved); StaleGroup gone.
+        # Fossil kept (live dispatch aggregate, value preserved); StaleGroup gone.
         assert fg == {"Fossil": "#abcdef"}
-        # unit coal (in the DB) kept.
-        assert _section(picker._data, ("entities", "unit")) == {
-            "coal": "#212121",
-        }
 
     def test_refresh_rebuilds_trees(self, tk_root, tmp_path, monkeypatch):
         from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker

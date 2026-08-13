@@ -13,10 +13,12 @@ section, lists every entry in a ``ttk.Treeview`` with a composite
 ``[pos][neg]`` swatch image next to its name, and wires Apply / Save and
 exit / Cancel to the file + the ``on_apply`` callback.  Editing
 interactions: reorder (drag + Alt-arrow), per-row color dialog
-(double-click), **Refresh from DB** (re-discover entity names from the
-project's input DB(s) unioned with the dispatch output aggregates, then
-add new + prune stale), and multi-level **Undo/Redo** over the in-memory
-working dict.  The same union seeds the entity tabs additively on open.
+(double-click), **Refresh** (re-discover entity names — primarily from the
+solved ``output_parquet`` dispatch, falling back to the project input DB(s)
+only when there is no dispatch output yet — then add new + prune stale), and
+multi-level **Undo/Redo** over the in-memory working dict.  The same
+discovery seeds the entity tabs additively on open, with newly-discovered
+entries given a one-time std-dev order (see ``_order_new_names_by_std``).
 """
 
 from __future__ import annotations
@@ -1417,104 +1419,204 @@ class PlotSettingsPicker(tk.Toplevel):
             scenarios[name] = color
         self._data["scenarios"] = scenarios
 
-    def _discover_output_flow_aggregates(self) -> set[str]:
-        """ProcessGroup ``group_aggregate`` names the dispatch plots draw.
+    def _discover_dispatch_sources(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, float]]:
+        """Discover dispatch entities + per-entity std dev from output parquet.
 
-        These aggregate names (e.g. ``Fossil``) exist ONLY in solved output
-        (``output_parquet``), never in the input DB, yet the dispatch graph
-        stacks them as flowGroup items — so the picker cannot list/color them
-        from the DB alone.  They are discovered by reading the
-        ``group_aggregate`` column directly from the three
-        ``nodeGroupDispatch__processGroup_*`` aggregate parquet files under
-        each ``output_parquet/<scenario>/`` folder, unioned across scenario
-        folders (``_``-prefixed manifest dirs skipped, mirroring
-        :meth:`_discover_scenario_names`).
+        PRIMARY discovery source: the solved ``output_parquet`` — i.e. exactly
+        what the dispatch plots draw.  For every executed-scenario folder
+        (``_``-prefixed manifest dirs skipped) the dispatch bundle is loaded
+        with :func:`~flextool.scenario_comparison.dispatch_data.load_dispatch_bundle`
+        (the same load sequence the result viewer uses), then:
 
-        A direct column read is used deliberately over the full
-        :func:`~flextool.scenario_comparison.dispatch_mappings.load_dispatch_mappings`:
-        only these three files carry ``group_aggregate`` and their values are
-        EXACTLY what the dispatch side classifies as flowGroup (see
-        :func:`~flextool.scenario_comparison.config_builder.discover_dispatch_entities`),
-        so this lighter read yields precisely the names the plot draws without
-        loading the heavy per-member / time-series mapping files.
+        * :func:`~flextool.scenario_comparison.config_builder.discover_dispatch_entities`
+          classifies the discovered names into ``nodeGroup`` / ``flowGroup`` /
+          ``unit`` / ``connection`` (processGroup ``group_aggregate`` names —
+          e.g. ``Fossil`` — land in ``flowGroup``), unioned across folders;
+        * :meth:`_accumulate_dispatch_std` runs
+          :func:`~flextool.scenario_comparison.dispatch_data.prepare_dispatch_data`
+          per dispatch node_group and records a per-entity std dev (max across
+          node_groups / scenarios) used to order newly-discovered entries.
 
-        Robust by construction: a missing ``output_parquet``, empty scenario
-        folders, missing aggregate files, and unreadable / columnless parquet
-        are all skipped — whatever is available is returned (empty set when
-        nothing), never raising.
+        The ``node`` class is intentionally NOT discovered here:
+        ``discover_dispatch_entities`` omits nodes (node colors are
+        dataset-coupled), so the node tab stays file-driven.
+
+        Robust by construction: a missing ``output_parquet``, empty / partial
+        scenario folders, unreadable parquet, a scenario with no dispatch
+        groups, and per-node_group prepare failures are all skipped — never
+        raising.  Returns ``({class -> names}, {entity -> std})`` with empty
+        sets/map when nothing is discoverable.
         """
         parquet_dir = self._settings_path.parent / "output_parquet"
+        per_class: dict[str, set[str]] = {
+            "nodeGroup": set(),
+            "flowGroup": set(),
+            "unit": set(),
+            "connection": set(),
+        }
+        std_by_entity: dict[str, float] = {}
         if not parquet_dir.is_dir():
-            return set()
+            return per_class, std_by_entity
 
-        from flextool.lean_parquet import read_lean_parquet
-
-        # The three processGroup aggregate tables that carry ``group_aggregate``
-        # (unit→group / group→unit / connection); see
-        # dispatch_mappings.load_dispatch_mappings and config_builder's
-        # flowGroup classification.
-        aggregate_files = (
-            "nodeGroupDispatch__processGroup_Unit_to_group.parquet",
-            "nodeGroupDispatch__processGroup_Group_to_unit.parquet",
-            "nodeGroupDispatch__processGroup_Connection.parquet",
+        from flextool.scenario_comparison.config_builder import (
+            discover_dispatch_entities,
         )
-        aggregates: set[str] = set()
+        from flextool.scenario_comparison.dispatch_data import (
+            load_dispatch_bundle,
+        )
+
         for scen_dir in sorted(parquet_dir.iterdir()):
             if not scen_dir.is_dir() or scen_dir.name.startswith("_"):
                 continue
-            for filename in aggregate_files:
-                path = scen_dir / filename
-                if not path.is_file():
-                    continue
-                try:
-                    df = read_lean_parquet(path)
-                except Exception as exc:  # unreadable / corrupt parquet
-                    logger.warning("Cannot read %s: %s", path, exc)
-                    continue
-                if df is None or "group_aggregate" not in df.columns:
-                    continue
-                aggregates.update(
-                    str(g) for g in df["group_aggregate"].dropna().unique()
+            scenario = scen_dir.name
+            try:
+                bundle = load_dispatch_bundle(parquet_dir, scenario)
+            except Exception as exc:  # unreadable / partial parquet bundle
+                logger.warning(
+                    "Cannot load dispatch bundle for %s: %s", scenario, exc,
                 )
-        return aggregates
+                continue
+            if bundle is None:
+                continue
+            mappings, results = bundle
+            try:
+                discovered = discover_dispatch_entities(mappings, [])
+            except Exception as exc:
+                logger.warning(
+                    "discover_dispatch_entities failed for %s: %s",
+                    scenario, exc,
+                )
+                discovered = {}
+            for cls in per_class:
+                per_class[cls].update(discovered.get(cls, []))
+            self._accumulate_dispatch_std(
+                mappings, results, scenario, std_by_entity,
+            )
+        return per_class, std_by_entity
 
-    def _discover_all_entities(self) -> dict[str, set[str]]:
-        """Per-class entity names from input DB(s) (B) ∪ output aggregates (C).
+    def _accumulate_dispatch_std(
+        self, mappings, results, scenario: str,
+        std_by_entity: dict[str, float],
+    ) -> None:
+        """Fold per-entity dispatch std devs from one scenario into the map.
+
+        For each dispatch node_group (the ``group`` values of
+        ``mappings.dispatch_groups``) the scenario's dispatch DataFrame is
+        prepared exactly as the plots build it (``config_order=None``).  Each
+        column's std dev (``series.std()``) is attributed to the base entity
+        name — any ``_pos`` / ``_neg`` split suffix stripped — and accumulated
+        as the MAX across occurrences (node_groups / scenarios) so a per-entity
+        value is stable.  ``NaN`` std devs (degenerate single-point series) and
+        any prepare failure are skipped, never raising.
+        """
+        dispatch_groups = getattr(mappings, "dispatch_groups", None)
+        if (
+            dispatch_groups is None
+            or dispatch_groups.empty
+            or "group" not in dispatch_groups.columns
+        ):
+            return
+
+        from flextool.scenario_comparison.dispatch_data import (
+            prepare_dispatch_data,
+        )
+
+        for node_group in dispatch_groups["group"].unique():
+            try:
+                df_dispatch, _ = prepare_dispatch_data(
+                    results, mappings, scenario, str(node_group),
+                    config_order=None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "prepare_dispatch_data failed (%s / %s): %s",
+                    scenario, node_group, exc,
+                )
+                continue
+            if df_dispatch is None or df_dispatch.empty:
+                continue
+            for col in df_dispatch.columns:
+                base = str(col)
+                for suffix in ("_pos", "_neg"):
+                    if base.endswith(suffix):
+                        base = base[: -len(suffix)]
+                        break
+                try:
+                    std = float(df_dispatch[col].std())
+                except (TypeError, ValueError):
+                    continue
+                if std != std:  # NaN
+                    continue
+                prev = std_by_entity.get(base)
+                if prev is None or std > prev:
+                    std_by_entity[base] = std
+
+    def _order_new_names_by_std(
+        self, new_names, std_by_entity: dict[str, float],
+    ) -> list[str]:
+        """Order newly-discovered entity names by std dev (one-time default).
+
+        Matches ``_order_dispatch_columns``' remaining / std-dev buckets, which
+        sort ASCENDING by std dev with the name as a deterministic secondary
+        key (``sorted(..., key=lambda c: (col_std.get(c, 0), c))``), so the
+        persisted order of new entries equals the stacking order the dispatch
+        render would have produced.  Names with no computed std dev (not a
+        dispatch entity, or the DB fallback path where no std is available)
+        sort LAST, by name.
+        """
+        def key(name: str):
+            std = std_by_entity.get(name)
+            if std is None:
+                return (1, 0.0, name)  # no std → after std-bearing, by name
+            return (0, std, name)
+
+        return sorted(new_names, key=key)
+
+    def _discover_all_entities(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, float]]:
+        """Per-class entity names + per-entity std dev for merge / refresh.
 
         Shared source of truth for both the add-only on-open merge
         (:meth:`_merge_entities_from_sources`) and the add+prune
-        :meth:`_on_refresh`, so the union is defined in one place.
+        :meth:`_on_refresh`, so the discovery policy lives in one place.
 
-        * **B** — every entity in the relevant classes across the project's
-          input/intermediate DBs (:meth:`_discover_input_dbs` +
-          :meth:`_fetch_entity_union`).
-        * **C** — processGroup ``group_aggregate`` names discovered from
-          ``output_parquet`` (:meth:`_discover_output_flow_aggregates`),
-          folded into the ``flowGroup`` class exactly as the dispatch side
-          classifies them, so output-only aggregates become listable.
+        * **PRIMARY** — dispatch entities discovered from the solved
+          ``output_parquet`` (:meth:`_discover_dispatch_sources`).  This is
+          what the plots actually draw, and it carries the std devs used to
+          order new entries.  Node is not covered here (file-driven).
+        * **FALLBACK** — only when there is NO dispatch output to discover
+          from (e.g. the pre-solve PNG-batch dialog on a project that hasn't
+          solved yet) is the input DB consulted (:meth:`_discover_input_dbs`
+          + :meth:`_fetch_entity_union`).  The DB fallback yields no std devs
+          (new entries then order by name).
 
-        Returns ``{class -> set of names}`` for every relevant entity class
-        (empty sets when a class has no members).  Never raises for a missing
-        DB or missing ``output_parquet`` (both simply contribute nothing).
+        Returns ``({class -> set of names}, {entity -> std})``.  Never raises
+        for a missing ``output_parquet`` or DB (both contribute nothing).
         """
-        union = self._fetch_entity_union(self._discover_input_dbs())
-        # C: dispatch output aggregates are flowGroup names.
-        union.setdefault("flowGroup", set()).update(
-            self._discover_output_flow_aggregates()
-        )
-        return union
+        per_class, std_by_entity = self._discover_dispatch_sources()
+        if any(per_class.values()):
+            return per_class, std_by_entity
+        # Fallback: input DB(s).  No std devs → new entries order by name.
+        return self._fetch_entity_union(self._discover_input_dbs()), {}
 
     def _merge_entities_from_sources(self) -> None:
-        """Additively seed entities from input DB(s) ∪ dispatch aggregates.
+        """Additively seed entities from the solved dispatch output (DB fallback).
 
         Called on open so the entity tabs are populated immediately (fixes
-        the symptom where entities only appeared after a manual "Refresh from
-        DB", and where output-only aggregates like ``Fossil`` were never
-        listable).  **Add-only**: newly discovered names (per class) are
-        appended with a default palette color
+        the symptom where entities only appeared after a manual "Refresh",
+        and where output-only aggregates like ``Fossil`` were never listable).
+        Discovery is parquet-first with a DB fallback
+        (:meth:`_discover_all_entities`).  **Add-only**: newly discovered
+        names (per class) are appended, ORDERED among themselves by std dev
+        (:meth:`_order_new_names_by_std` — a one-time default matching the
+        dispatch render's stacking order) with a default palette color
         (:func:`assign_palette_colors`); existing entries — including any
         edited color and the current order — are never touched, and nothing
-        is pruned.  New aggregate names land under ``entities.flowGroup``.
+        is pruned.  Node is not seeded from parquet (file-driven; see
+        :meth:`_discover_dispatch_sources`).
 
         Mutates ``self._data['entities']`` in memory only and records NO undo
         step; Cancel reverts via the on-disk text snapshot, exactly like
@@ -1523,7 +1625,7 @@ class PlotSettingsPicker(tk.Toplevel):
         broken.
         """
         try:
-            discovered = self._discover_all_entities()
+            discovered, std_by_entity = self._discover_all_entities()
         except Exception as exc:  # never let discovery break the window open
             logger.warning("Entity discovery on open failed: %s", exc)
             return
@@ -1542,8 +1644,11 @@ class PlotSettingsPicker(tk.Toplevel):
                 continue
             section = entities.get(cls)
             section = section if isinstance(section, dict) else {}
-            # Add-only: append names not already present; keep order + values.
-            new_names = sorted(n for n in names if n not in section)
+            # Add-only: append names not already present, ordered by std dev;
+            # keep existing entries' order + values untouched.
+            new_names = self._order_new_names_by_std(
+                [n for n in names if n not in section], std_by_entity,
+            )
             if not new_names:
                 continue
             for name, color in assign_palette_colors(new_names).items():
@@ -1576,61 +1681,61 @@ class PlotSettingsPicker(tk.Toplevel):
         return union
 
     def _on_refresh(self) -> None:
-        """Re-discover entities: ADD new + PRUNE stale, against B ∪ C.
+        """Re-discover entities: ADD new + PRUNE stale, against the discovery.
 
-        Discovers the union of the project's input-DB entities and the
-        dispatch output aggregates (:meth:`_discover_all_entities`), and
-        updates ``self._data['entities']`` in place: discovered names not
-        already present are appended with a default-palette color
-        (:func:`assign_palette_colors`); existing entries no longer in the
-        union are removed; surviving entries keep their order and (edited)
-        values.  Pruning against the **union** (not the input DB alone) is
-        what keeps output-only aggregates like ``Fossil`` — which the
-        dispatch plot draws but the DB never lists — from being deleted by a
-        Refresh.  ``categories`` and ``scenarios`` are never touched.  Records
-        one undo step and rebuilds the entity tabs.  Shows an info box and
-        changes nothing only when there is genuinely nothing to discover (no
-        input DB AND no output aggregates).
+        Re-discovers entities parquet-first (the solved dispatch), falling
+        back to the input DB only when there is no dispatch output
+        (:meth:`_discover_all_entities`), and updates ``self._data['entities']``
+        in place: discovered names not already present are appended, ordered
+        among the new names by std dev (:meth:`_order_new_names_by_std`);
+        existing entries no longer discovered are pruned; surviving entries
+        keep their order and (edited) values.
+
+        Pruning is per class, and ONLY for the classes the discovery source
+        covers.  Under the parquet-primary path ``node`` is not discovered
+        (file-driven; see :meth:`_discover_dispatch_sources`), so an existing
+        node section is left untouched rather than emptied.  ``categories`` and
+        ``scenarios`` are never touched.  Records one undo step and rebuilds
+        the entity tabs.  Shows an info box and changes nothing only when there
+        is genuinely nothing to discover (no dispatch output AND no input DB).
         """
         from flextool.scenario_comparison.config_builder import (
             assign_palette_colors,
         )
-        from flextool.scenario_comparison.input_entity_colors import (
-            RELEVANT_ENTITY_CLASSES,
-        )
 
-        union = self._discover_all_entities()
-        if not any(union.values()):
+        discovered_union, std_by_entity = self._discover_all_entities()
+        if not any(discovered_union.values()):
             messagebox.showinfo(
-                "Refresh from DB",
-                "No input database found.",
+                "Refresh",
+                "No dispatch output or input database found.",
                 parent=self,
             )
             return
 
-        # Build the new entities mapping per class: keep existing entries (in
-        # order, with their values) that still exist in the DB, append newly
-        # discovered names with a palette color.  Prune the rest.
         entities = self._data.get("entities")
         if not isinstance(entities, dict):
             entities = {}
 
-        new_entities: dict[str, dict] = {}
+        # Start from the existing sections and overwrite only the classes the
+        # discovery covers; classes it does not cover (e.g. node under the
+        # parquet-primary path) are carried through untouched.
+        new_entities: dict[str, dict] = dict(entities)
         changed = False
-        for cls in RELEVANT_ENTITY_CLASSES:
-            discovered = union.get(cls, set())
+        for cls, discovered in discovered_union.items():
             existing = entities.get(cls)
             existing = existing if isinstance(existing, dict) else {}
 
             rebuilt: dict[str, object] = {}
-            # Preserve existing entries (order + value) still in B ∪ C.
+            # Preserve existing entries (order + value) still discovered.
             for name, value in existing.items():
                 if name in discovered:
                     rebuilt[name] = value
                 else:
                     changed = True  # pruned a stale entry
-            # Append newly discovered names with a palette color.
-            new_names = sorted(n for n in discovered if n not in rebuilt)
+            # Append newly discovered names, ordered by std dev, with colors.
+            new_names = self._order_new_names_by_std(
+                [n for n in discovered if n not in rebuilt], std_by_entity,
+            )
             if new_names:
                 changed = True
                 for name, color in assign_palette_colors(new_names).items():
@@ -1638,9 +1743,12 @@ class PlotSettingsPicker(tk.Toplevel):
 
             if rebuilt:
                 new_entities[cls] = rebuilt
-            elif cls in existing and existing:
-                # The class lost all its entities; dropping it is a change.
-                changed = True
+            else:
+                # The class lost all its (covered) entities; drop it.
+                if cls in new_entities:
+                    del new_entities[cls]
+                if existing:
+                    changed = True
 
         if not changed:
             return

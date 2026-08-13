@@ -26,6 +26,69 @@ from flextool.scenario_comparison.data_models import (
 
 
 # ---------------------------------------------------------------------------
+# Shared dispatch-bundle loader
+# ---------------------------------------------------------------------------
+
+def load_dispatch_bundle(
+    parquet_base: "object", scenario: str,
+) -> tuple[DispatchMappings, TimeSeriesResults] | None:
+    """Load one scenario's dispatch mappings + time-series bundle from disk.
+
+    Factored out of ``ResultViewer._load_dispatch_data`` so callers that need
+    the same ``(DispatchMappings, TimeSeriesResults)`` pair without the
+    viewer's caching / tagging state (e.g. the colors picker) can reuse the
+    exact load sequence:
+
+    1. :func:`~flextool.scenario_comparison.dispatch_mappings.load_dispatch_mappings`
+       on ``<parquet_base>/<scenario>/`` → raw mapping DataFrames;
+    2. tag each non-empty mapping with the folder identity (``scenario``) in
+       its row index and build a :class:`DispatchMappings`;
+    3. ``build_scenario_folders_from_dir`` → ``collect_parquet_files`` →
+       ``combine_parquet_files`` → :meth:`TimeSeriesResults.from_dict`.
+
+    Returns ``(mappings, results)``, or ``None`` when the scenario folder does
+    not exist.  The viewer keeps its own copy of this sequence (it also
+    maintains cache keys / data tags), so this helper does not change viewer
+    behavior; it exists to avoid duplicating the load in the picker.
+    """
+    from pathlib import Path
+
+    from flextool.scenario_comparison.db_reader import (
+        build_scenario_folders_from_dir,
+        collect_parquet_files,
+        combine_parquet_files,
+    )
+    from flextool.scenario_comparison.dispatch_mappings import (
+        load_dispatch_mappings,
+    )
+
+    parquet_base = Path(parquet_base)
+    scenario_dir = parquet_base / scenario
+    if not scenario_dir.is_dir():
+        return None
+
+    raw_mappings = load_dispatch_mappings(scenario_dir)
+    # Tag by the folder identity, overwriting any model-scenario tag baked in
+    # at write time — mirrors ResultViewer._load_dispatch_data.
+    mapping_fields: dict[str, pd.DataFrame | None] = {}
+    for key, df in raw_mappings.items():
+        if df is not None and not df.empty:
+            df_copy = df.copy()
+            df_copy["scenario"] = scenario
+            df_copy = df_copy.set_index("scenario")
+            mapping_fields[key] = df_copy
+        else:
+            mapping_fields[key] = df
+    mappings = DispatchMappings(**mapping_fields)
+
+    scenario_folders = build_scenario_folders_from_dir(parquet_base, [scenario])
+    files_by_name = collect_parquet_files(scenario_folders, output_subdir="")
+    combined = combine_parquet_files(files_by_name, num_scenarios=1)
+    results = TimeSeriesResults.from_dict(combined)
+    return mappings, results
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers (S4, S5, S6)
 # ---------------------------------------------------------------------------
 
