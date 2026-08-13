@@ -649,6 +649,79 @@ class TestPickerReorder:
         assert picker._on_drag_start(evt) is None
         assert picker._drag_move[unit] is False
 
+    def test_drag_to_upper_half_of_top_row_reaches_index_zero(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Dragging onto the UPPER half of the first row drops the block at
+        index 0 — the top slot must be reachable (regression: a hard '+1'
+        made it impossible to drag anything above the first row)."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        coal, chp = unit.get_children("")
+        # coal occupies y-rows 0..20 (midpoint 10); chp 20..40.
+        monkeypatch.setattr(
+            unit, "identify_row",
+            lambda y: coal if y < 20 else chp,
+        )
+        monkeypatch.setattr(
+            unit, "bbox",
+            lambda item: (0, 0, 100, 20) if item == coal else (0, 20, 100, 20),
+        )
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=unit, y=y)
+
+        # Grab the BOTTOM row and drag it onto the UPPER half of the top row.
+        unit.selection_set(chp)
+        picker._on_drag_start(_ev(30))          # press on chp
+        picker._on_drag_motion(_ev(2))          # hover coal's upper half
+        picker._on_drag_end(_ev(2))
+        assert _row_names(unit) == ["chp", "coal"]
+        assert list(_section(picker._data, ("entities", "unit")).keys()) == [
+            "chp", "coal",
+        ]
+
+    def test_drag_to_lower_half_keeps_below(self, tk_root, tmp_path, monkeypatch):
+        """Dragging onto the LOWER half of a row drops the block after it."""
+        data = {"entities": {"unit": {
+            "a": "#111111", "b": "#222222", "c": "#333333",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        a, b, c = unit.get_children("")
+        rows = {a: (0, 0, 100, 20), b: (0, 20, 100, 20), c: (0, 40, 100, 20)}
+        monkeypatch.setattr(
+            unit, "identify_row",
+            lambda y: a if y < 20 else (b if y < 40 else c),
+        )
+        monkeypatch.setattr(unit, "bbox", lambda item: rows[item])
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=unit, y=y)
+
+        # Drag 'a' (top) down onto the LOWER half of 'b' → lands after b.
+        unit.selection_set(a)
+        picker._on_drag_start(_ev(5))
+        picker._on_drag_motion(_ev(38))  # b's lower half
+        picker._on_drag_end(_ev(38))
+        assert _row_names(unit) == ["b", "a", "c"]
+
+    def test_drag_start_takes_keyboard_focus(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Pressing a row must claim the tree's KEYBOARD focus so the
+        Alt-Up/Alt-Down reorder bindings fire (they were dead because the
+        press returned 'break' and suppressed ttk's default focus grab)."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        coal = unit.get_children("")[0]
+        monkeypatch.setattr(unit, "identify_row", lambda y: coal)
+        focus_calls = []
+        monkeypatch.setattr(unit, "focus_set", lambda: focus_calls.append(1))
+
+        picker._on_drag_start(types.SimpleNamespace(widget=unit, y=0))
+        assert focus_calls == [1]
+
     def test_extended_selectmode(self, tk_root, tmp_path):
         """Trees allow multi-selection (Shift/Ctrl + native draw-select)."""
         picker, _ = _make_picker(tk_root, tmp_path)

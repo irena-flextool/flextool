@@ -1061,6 +1061,11 @@ class PlotSettingsPicker(tk.Toplevel):
             if row not in set(tree.selection()):
                 tree.selection_set(row)
                 tree.focus(row)
+            # Returning "break" suppresses ttk's default ButtonPress handler,
+            # which is what normally gives the tree KEYBOARD focus — without
+            # this the Alt-Up / Alt-Down reorder bindings (which require the
+            # tree to hold keyboard focus) never fire after a click.
+            tree.focus_set()
             self._drag_move[tree] = True
             self._drag_anchor[tree] = row
             return "break"
@@ -1079,13 +1084,24 @@ class PlotSettingsPicker(tk.Toplevel):
         order = list(tree.get_children(""))
         selected = set(self._selected_rows(tree))
         target_idx = order.index(target)
-        # Drop the block where the cursor is: count non-selected rows above
-        # the target row to get the insertion slot among them.
-        insert_at = sum(
-            1 for r in order[:target_idx] if r not in selected
-        )
-        if target not in selected:
-            insert_at += 1  # land the block just past the hovered row
+        # Number of non-selected rows above the hovered row = the insertion
+        # slot that lands the block JUST ABOVE the target.
+        above = sum(1 for r in order[:target_idx] if r not in selected)
+        # Decide above/below from the cursor's position within the hovered
+        # row: upper half drops before it, lower half after.  Using the row
+        # midpoint (not an unconditional "+1") is what makes the TOP slot
+        # reachable — hovering the upper half of the first row gives
+        # insert_at == 0.  When the row has no geometry (scrolled off), fall
+        # back to "below" (the previous behaviour).
+        if target in selected:
+            insert_at = above
+        else:
+            bbox = tree.bbox(target)
+            drop_below = True
+            if bbox:
+                _bx, by, _bw, bh = bbox
+                drop_below = event.y >= by + bh / 2
+            insert_at = above + 1 if drop_below else above
         if self._reorder_selection_block(tree, insert_at):
             self._drag_moved[tree] = True
             tree.see(target)
