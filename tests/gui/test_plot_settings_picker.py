@@ -357,6 +357,29 @@ class TestPickerButtons:
         picker._on_apply_clicked()  # must not raise
         assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE
 
+    def test_apply_is_commit_cancel_keeps_applied_changes(
+        self, tk_root, tmp_path,
+    ):
+        """Apply commits: a subsequent Cancel/close must NOT revert it.
+
+        Regression for the "colors/order disappear when I close the dialog"
+        bug — the window ``X``/Escape route to ``_on_cancel``, which restores
+        the baseline text; Apply must refresh that baseline so it restores the
+        APPLIED content, not the on-open content.
+        """
+        picker, f = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        # Edit the working dict, then Apply (commit) and Cancel (close).
+        picker._data["scenarios"]["S1"] = "#123456"
+        picker._on_apply_clicked()
+        applied = f.read_text(encoding="utf-8")
+        picker._on_cancel()
+        # The file still holds the applied edit — Cancel did not roll it back.
+        assert f.read_text(encoding="utf-8") == applied
+        assert (
+            yaml.safe_load(f.read_text(encoding="utf-8"))["scenarios"]["S1"]
+            == "#123456"
+        )
+
 
 # ---------------------------------------------------------------------------
 #  PlotSettingsPicker — reordering (drag + keyboard) → persisted order

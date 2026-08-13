@@ -1654,8 +1654,18 @@ class PlotSettingsPicker(tk.Toplevel):
 
     # ── Buttons ───────────────────────────────────────────────────
     def _on_apply_clicked(self) -> None:
-        """Write the working dict and re-render the preview; stay open."""
+        """Write the working dict and re-render the preview; stay open.
+
+        Apply is a COMMIT, not a preview: the just-written content becomes the
+        new Cancel/close restore point.  Without this, closing the window (the
+        ``X`` button and Escape are both bound to :meth:`_on_cancel`) after an
+        Apply would rewrite the file back to its on-open text and silently
+        discard everything the user applied — so the colors/order "disappear"
+        on close and are absent at the next open.  Refreshing the baseline
+        makes Cancel revert only edits made SINCE the last Apply.
+        """
         self._write()
+        self._original_text = dump_plot_settings(self._data)
         if self._on_apply is not None:
             self._on_apply()
 
