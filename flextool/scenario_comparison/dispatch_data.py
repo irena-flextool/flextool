@@ -171,6 +171,24 @@ def _order_dispatch_columns(
     sections), columns are ordered to match the config.  Columns not in
     the config fall back to std-dev sorting.
     """
+    from flextool.plot_outputs.color_template import (
+        _extract_dispatch_entity_name,
+    )
+
+    def _entity_base(col: str) -> str:
+        """Bare entity a column belongs to, for config-order matching.
+
+        Reuses the color resolver's extractor so node-level columns
+        (``<unit>_out`` / ``<unit>_in`` / ``<conn>_left`` / ``<conn>_right``)
+        and mixed-sign ``_pos``/``_neg`` splits map to the same bare entity the
+        ``entities`` file lists.  Without this the per-node path's columns
+        never matched ``config_order`` (only ``_pos``/``_neg`` was stripped),
+        so per-node stacking ignored the picker order.  Aggregate/nodeGroup
+        names (no such suffix) are returned unchanged, so that path is
+        unaffected.
+        """
+        return _extract_dispatch_entity_name(col) or col
+
     positive_cols: list[str] = []
     negative_cols: list[str] = []
     # Entities split into BOTH a ``_pos`` and a ``_neg`` half (bidirectional
@@ -229,8 +247,9 @@ def _order_dispatch_columns(
     mixed_neg_set = {f"{b}_neg" for b in mixed_bases}
 
     def _mixed_sort_key(base):
-        if config_order and base in set(config_order):
-            return (0, config_order.index(base), 0.0, base)
+        entity = _entity_base(base)
+        if config_order and entity in set(config_order):
+            return (0, config_order.index(entity), 0.0, base)
         return (1, 0, float(df[f"{base}_pos"].std()), base)
 
     mixed_bases_sorted = sorted(mixed_bases, key=_mixed_sort_key)
@@ -257,7 +276,7 @@ def _order_dispatch_columns(
         for col in negative_cols:
             if col in mixed_neg_set:
                 continue  # handled by the near-axis mixed block
-            base = col.removesuffix('_neg') if col.endswith('_neg') else col
+            base = _entity_base(col)
             if base in config_set or col in config_set:
                 ordered_from_config_neg.append(col)
             elif col in NEGATIVE_SPECIAL:
@@ -267,7 +286,7 @@ def _order_dispatch_columns(
         for col in positive_cols:
             if col in mixed_pos_set:
                 continue  # handled by the near-axis mixed block
-            base = col.removesuffix('_pos') if col.endswith('_pos') else col
+            base = _entity_base(col)
             if base in config_set or col in config_set:
                 ordered_from_config_pos.append(col)
             elif col in POSITIVE_SPECIAL:
@@ -276,7 +295,7 @@ def _order_dispatch_columns(
                 remaining_pos.append(col)
         # Sort config-matched columns by their position in config_order
         def _config_key(col):
-            base = col.removesuffix('_pos').removesuffix('_neg')
+            base = _entity_base(col)
             try:
                 return config_order.index(base)
             except ValueError:
@@ -691,11 +710,18 @@ def prepare_node_dispatch_data(
     results: TimeSeriesResults,
     scenario: str,
     node: str,
+    config_order: list[str] | None = None,
 ) -> tuple[pd.DataFrame | None, pd.Series | None]:
     """Prepare dispatch data for a single node (not a nodeGroup).
 
     Collects unit outputs/inputs, connection flows, slack (LossOfLoad),
     and demand for the given node.
+
+    *config_order* is the entity stacking order from ``plot_settings.yaml``
+    (via ``resolve_dispatch_colors_and_order``); it is threaded into
+    ``_order_dispatch_columns`` so the per-node stack follows the picker's
+    order, exactly as the nodeGroup path does.  ``None`` keeps the historical
+    std-dev fallback ordering.
     """
     try:
         # Get time index (S5)
@@ -788,7 +814,10 @@ def prepare_node_dispatch_data(
         df_dispatch = pd.DataFrame(df_dispatch, index=time_index)
 
         # --- Order columns (S6) ---
-        df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{node} ({scenario})")
+        df_dispatch = _order_dispatch_columns(
+            df_dispatch, plot_name=f"{node} ({scenario})",
+            config_order=config_order,
+        )
 
         # --- Get demand from node_inflow__dt ---
         inflow_series = None

@@ -245,5 +245,46 @@ class TestNodeDispatchConsumer(unittest.TestCase):
         self.assertTrue((df[in_cols[0]] <= 0).all())
 
 
+class TestNodeDispatchConfigOrder(unittest.TestCase):
+    """Per-node dispatch honors the plot_settings.yaml entity order.
+
+    ``_display_node_dispatch`` threads ``config_order`` into
+    ``prepare_node_dispatch_data``; the node columns are ``<unit>_out`` etc.,
+    so ordering only follows the file if ``_order_dispatch_columns`` reduces
+    them to the bare entity (``pv_out`` → ``pv``) when matching config.
+    """
+
+    def _two_unit_results(self) -> TimeSeriesResults:
+        # Two producers into NODE: alpha varies (std > 0), beta is flat
+        # (std 0) → std-dev fallback would stack beta (0) before alpha.
+        res = TimeSeriesResults()
+        cols = pd.MultiIndex.from_tuples(
+            [(SCEN, "alpha", NODE), (SCEN, "beta", NODE)],
+            names=["scenario", "e0", "e1"],
+        )
+        res.unit_outputNode_dt_ee = pd.DataFrame(
+            [[3.0, 1.0], [1.0, 1.0]], index=_dt_index(), columns=cols,
+        )
+        return res
+
+    @staticmethod
+    def _out_order(df: pd.DataFrame) -> list[str]:
+        return [str(c) for c in df.columns if str(c).endswith("_out")]
+
+    def test_no_config_uses_std_fallback(self) -> None:
+        df, _ = prepare_node_dispatch_data(self._two_unit_results(), SCEN, NODE)
+        # Ascending std-dev: flat beta (0) before varying alpha.
+        self.assertEqual(self._out_order(df), ["beta_out", "alpha_out"])
+
+    def test_config_order_reorders_node_stack(self) -> None:
+        df, _ = prepare_node_dispatch_data(
+            self._two_unit_results(), SCEN, NODE,
+            config_order=["alpha", "beta"],
+        )
+        # File order wins: alpha before beta despite the std-dev fallback —
+        # proving <unit>_out columns matched the bare entity in config_order.
+        self.assertEqual(self._out_order(df), ["alpha_out", "beta_out"])
+
+
 if __name__ == "__main__":
     unittest.main()

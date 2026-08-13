@@ -4054,11 +4054,13 @@ class ResultViewer(tk.Toplevel):
 
         # Node dispatch threads the same plot_settings.yaml colors/order the
         # group path uses, so the live node plot matches the PNG export.
-        template, _config_order = self._resolve_dispatch_template()
+        template, config_order = self._resolve_dispatch_template()
 
         # Slice by the in-data scenario tag (may differ from folder name).
+        # Thread config_order so the per-node stack follows the picker's
+        # order (not just the std-dev fallback), like the nodeGroup path.
         df_node, inflow = prepare_node_dispatch_data(
-            results, self._dispatch_data_tag, node,
+            results, self._dispatch_data_tag, node, config_order=config_order,
         )
 
         if (df_node is None or df_node.empty) and (
