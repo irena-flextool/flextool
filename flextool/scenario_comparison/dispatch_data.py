@@ -173,6 +173,10 @@ def _order_dispatch_columns(
     """
     positive_cols: list[str] = []
     negative_cols: list[str] = []
+    # Entities split into BOTH a ``_pos`` and a ``_neg`` half (bidirectional
+    # flows) — their halves later hug the zero axis (see mixed-entity block
+    # after the sign classification loop).
+    mixed_bases: list[str] = []
     plot_label = f" in '{plot_name}'" if plot_name else ""
 
     for col in list(df.columns):
@@ -187,12 +191,16 @@ def _order_dispatch_columns(
                   f" - splitting into {col}_pos and {col}_neg")
             pos_part = series.clip(lower=0)
             neg_part = series.clip(upper=0)
-            if pos_part.abs().sum() > 0:
+            added_pos = pos_part.abs().sum() > 0
+            added_neg = neg_part.abs().sum() > 0
+            if added_pos:
                 df[f"{col}_pos"] = pos_part
                 positive_cols.append(f"{col}_pos")
-            if neg_part.abs().sum() > 0:
+            if added_neg:
                 df[f"{col}_neg"] = neg_part
                 negative_cols.append(f"{col}_neg")
+            if added_pos and added_neg:
+                mixed_bases.append(col)
             df = df.drop(columns=[col])
         elif has_neg:
             negative_cols.append(col)
@@ -206,6 +214,28 @@ def _order_dispatch_columns(
     for col in NEGATIVE_SPECIAL:
         if col in positive_cols:
             print(f"  Warning: '{col}' is expected to be negative but has positive values")
+
+    # --- Mixed-sign entities hug the zero axis ---
+    # An entity split into BOTH ``<base>_pos`` and ``<base>_neg`` has its two
+    # halves placed at the FRONT of their respective blocks (nearest the zero
+    # axis in pandas' stacked area: the first column of each sign sits against
+    # 0).  This overrides config/std ordering for the split halves so the
+    # band straddles zero and both excursions read clearly.  Multiple mixed
+    # entities are ordered among themselves deterministically — config-order
+    # position if listed, else std-dev then name (same key style as the
+    # regular buckets) — and placed so the SAME entity is nearest zero on both
+    # sides.  Special tokens keep their fixed far-from-axis slots below.
+    mixed_pos_set = {f"{b}_pos" for b in mixed_bases}
+    mixed_neg_set = {f"{b}_neg" for b in mixed_bases}
+
+    def _mixed_sort_key(base):
+        if config_order and base in set(config_order):
+            return (0, config_order.index(base), 0.0, base)
+        return (1, 0, float(df[f"{base}_pos"].std()), base)
+
+    mixed_bases_sorted = sorted(mixed_bases, key=_mixed_sort_key)
+    mixed_pos = [f"{b}_pos" for b in mixed_bases_sorted]
+    mixed_neg = [f"{b}_neg" for b in mixed_bases_sorted]
 
     if config_order:
         # Use config order: columns present in config come first (in config order),
@@ -225,6 +255,8 @@ def _order_dispatch_columns(
         neg_special_present: list[str] = []
         pos_special_present: list[str] = []
         for col in negative_cols:
+            if col in mixed_neg_set:
+                continue  # handled by the near-axis mixed block
             base = col.removesuffix('_neg') if col.endswith('_neg') else col
             if base in config_set or col in config_set:
                 ordered_from_config_neg.append(col)
@@ -233,6 +265,8 @@ def _order_dispatch_columns(
             else:
                 remaining_neg.append(col)
         for col in positive_cols:
+            if col in mixed_pos_set:
+                continue  # handled by the near-axis mixed block
             base = col.removesuffix('_pos') if col.endswith('_pos') else col
             if base in config_set or col in config_set:
                 ordered_from_config_pos.append(col)
@@ -276,15 +310,23 @@ def _order_dispatch_columns(
             if c in pos_special_present
         ]
         ordered_cols = (
-            ordered_from_config_neg + remaining_neg + neg_special_ordered
-            + ordered_from_config_pos + remaining_pos + pos_special_ordered
+            mixed_neg + ordered_from_config_neg + remaining_neg + neg_special_ordered
+            + mixed_pos + ordered_from_config_pos + remaining_pos + pos_special_ordered
         )
     else:
-        # Fallback: sort by std dev with special columns in fixed positions
+        # Fallback: sort by std dev with special columns in fixed positions.
+        # Mixed halves are excluded here and re-inserted at the front of each
+        # block (nearest the zero axis) below.
         pos_special = [c for c in positive_cols if c in POSITIVE_SPECIAL]
-        pos_regular = [c for c in positive_cols if c not in POSITIVE_SPECIAL]
+        pos_regular = [
+            c for c in positive_cols
+            if c not in POSITIVE_SPECIAL and c not in mixed_pos_set
+        ]
         neg_special = [c for c in negative_cols if c in NEGATIVE_SPECIAL]
-        neg_regular = [c for c in negative_cols if c not in NEGATIVE_SPECIAL]
+        neg_regular = [
+            c for c in negative_cols
+            if c not in NEGATIVE_SPECIAL and c not in mixed_neg_set
+        ]
 
         # Column name is a deterministic secondary key so equal-std-dev ties
         # resolve stably (mirrors the config_order "remaining" buckets above);
@@ -297,10 +339,12 @@ def _order_dispatch_columns(
             neg_regular = sorted(neg_regular, key=lambda c: (col_std.get(c, 0), c))
 
         ordered_cols: list[str] = []
+        ordered_cols.extend(mixed_neg)
         ordered_cols.extend(neg_regular)
         for col in ['internal_losses', 'Export', 'Charge']:
             if col in neg_special:
                 ordered_cols.append(col)
+        ordered_cols.extend(mixed_pos)
         ordered_cols.extend(pos_regular)
         for col in ['Import', 'Discharge', 'LossOfLoad']:
             if col in pos_special:

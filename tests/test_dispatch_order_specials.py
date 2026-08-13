@@ -104,3 +104,111 @@ def test_equal_std_ties_resolve_by_name_else_branch():
     cols = list(forward.columns)
     assert cols.index("pos_a") < cols.index("pos_b")
     assert cols.index("neg_a") < cols.index("neg_b")
+
+
+# ---------------------------------------------------------------------------
+# Mixed-sign entities hug the zero axis
+#
+# A bidirectional flow is split into ``<base>_pos`` / ``<base>_neg`` halves.
+# We require both halves to sit against the zero axis so the band straddles
+# zero and its two excursions read clearly.  In pandas' stacked area the
+# FIRST column of each sign (in the returned column order) sits nearest the
+# axis: positives stack upward from 0 in list order, negatives downward from
+# 0 in list order.  So "nearest zero" for a sign == first occurrence of that
+# sign in the returned column list.  (Empirically verified: with column order
+# [A+, B+, A-, B-] the polygons span A+:0..1, B+:1..3, A-:-1..0, B-:-3..-1.)
+# ---------------------------------------------------------------------------
+
+
+def _make_mixed_df() -> pd.DataFrame:
+    """One mixed entity (battery) plus a pure-positive (wind), a pure-negative
+    regular (load), a negative special (Charge) and a positive special
+    (LossOfLoad)."""
+    idx = pd.Index([1, 2, 3], name="time")
+    return pd.DataFrame(
+        {
+            "wind": [10.0, 5.0, 8.0],       # pure positive
+            "load": [-2.0, -3.0, -1.0],     # pure negative, regular
+            "battery": [2.0, -1.0, 3.0],    # mixed → split
+            "Charge": [-1.0, -2.0, -1.0],   # negative special
+            "LossOfLoad": [0.0, 1.0, 0.0],  # positive special
+        },
+        index=idx,
+    )
+
+
+def _neg_pos_split(out: pd.DataFrame) -> tuple[list[str], list[str]]:
+    """Return (negatives, positives) in returned column order (excluding the
+    ``Curtailed`` line overlay).  After splitting, every stacked column is
+    single-signed."""
+    cols = [c for c in out.columns if c != "Curtailed"]
+    negs = [c for c in cols if (out[c] <= 0).all()]
+    poss = [c for c in cols if (out[c] >= 0).all()]
+    return negs, poss
+
+
+def _assert_battery_hugs_axis(out: pd.DataFrame) -> None:
+    negs, poss = _neg_pos_split(out)
+    # Nearest zero == first in that sign's list order.  Battery's negative half
+    # is the last negative stacked before the zero axis (topmost of the neg
+    # stack); its positive half is the first positive after it (bottom of the
+    # pos stack).  Both adjacent to zero.
+    assert negs[0] == "battery_neg", negs
+    assert poss[0] == "battery_pos", poss
+    # Specials stay furthest from the axis (last in their sign's list).
+    assert negs[-1] == "Charge", negs
+    assert poss[-1] == "LossOfLoad", poss
+    # And in the flat returned order the positive half is the first positive
+    # right after the negative-to-positive boundary.
+    cols = [c for c in out.columns if c != "Curtailed"]
+    assert cols.index("battery_pos") == cols.index("Charge") + 1
+
+
+def test_mixed_entity_hugs_axis_config_branch():
+    out = _order_dispatch_columns(_make_mixed_df(), config_order=["wind"])
+    _assert_battery_hugs_axis(out)
+
+
+def test_mixed_entity_hugs_axis_else_branch():
+    out = _order_dispatch_columns(_make_mixed_df(), config_order=None)
+    _assert_battery_hugs_axis(out)
+
+
+def _make_two_mixed_df() -> pd.DataFrame:
+    """Two mixed entities plus a pure-positive and a pure-negative regular."""
+    idx = pd.Index([1, 2, 3], name="time")
+    return pd.DataFrame(
+        {
+            "wind": [10.0, 5.0, 8.0],
+            "load": [-2.0, -3.0, -1.0],
+            "storA": [2.0, -1.0, 3.0],   # mixed
+            "storB": [5.0, -4.0, 1.0],   # mixed
+        },
+        index=idx,
+    )
+
+
+def test_two_mixed_entities_innermost_matches_both_sides_else_branch():
+    out = _order_dispatch_columns(_make_two_mixed_df(), config_order=None)
+    negs, poss = _neg_pos_split(out)
+    # The two nearest-zero columns on each side are the two mixed halves.
+    assert set(negs[:2]) == {"storA_neg", "storB_neg"}, negs
+    assert set(poss[:2]) == {"storA_pos", "storB_pos"}, poss
+    # Innermost (nearest-zero) entity is the SAME on both sides.
+    assert negs[0].removesuffix("_neg") == poss[0].removesuffix("_pos")
+    # And the second-nearest entity also matches across signs.
+    assert negs[1].removesuffix("_neg") == poss[1].removesuffix("_pos")
+
+
+def test_two_mixed_entities_innermost_matches_both_sides_config_branch():
+    # Config lists storB first → storB is the config-preferred mixed entity and
+    # sits nearest zero on both sides (config position wins among mixed).
+    out = _order_dispatch_columns(
+        _make_two_mixed_df(), config_order=["storB", "storA", "wind"]
+    )
+    negs, poss = _neg_pos_split(out)
+    assert set(negs[:2]) == {"storA_neg", "storB_neg"}, negs
+    assert set(poss[:2]) == {"storA_pos", "storB_pos"}, poss
+    assert negs[0] == "storB_neg", negs
+    assert poss[0] == "storB_pos", poss
+    assert negs[1].removesuffix("_neg") == poss[1].removesuffix("_pos")
