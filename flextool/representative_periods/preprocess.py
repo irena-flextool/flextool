@@ -485,6 +485,7 @@ def preprocess_representative_periods(
     alternative_description: str | None = None,
     netload_clustering: bool = False,
     vre_penetration: float = 1.0,
+    solved_caps: dict[str, float] | None = None,
 ) -> str:
     """Select representative periods and write results to database.
 
@@ -539,6 +540,14 @@ def preprocess_representative_periods(
         vre_penetration: Energy-share target passed to
             ``demand_match_default_caps`` when ``netload_clustering`` is ``True``
             (``1.0`` = full-energy VRE match). Ignored on the default path.
+        solved_caps: Optional per-investable-VRE-unit TOTAL capacities from a
+            prior solve, threaded into ``build_group_capacities`` so the
+            net-load signal is built over the *solved* fleet instead of the
+            iteration-0 demand-match default. ``None`` (default) reproduces the
+            Phase-3 single-shot behaviour byte-for-byte (demand-match caps
+            only). Only consulted when ``netload_clustering`` is ``True``; the
+            solve-iteration driver (``netload_iterate``) feeds each iteration's
+            invested caps back through this argument.
 
     Returns:
         Name of the created timeset entity.
@@ -615,9 +624,10 @@ def preprocess_representative_periods(
     # ------------------------------------------------------------------
     print("Building clustering matrix...")
     if netload_clustering:
-        # Single-shot net-load mode: size the investable VRE fleet by the
-        # iteration-0 demand-match default (no solve feedback — that is Phase 4),
-        # then build the real-MW net-load matrix. Same C shape
+        # Net-load mode: size the investable VRE fleet by the iteration-0
+        # demand-match default UNLESS the caller feeds back a prior solve's
+        # capacities via ``solved_caps`` (the solve-iteration driver), then
+        # build the real-MW net-load matrix. Same C shape
         # (n_features · period_length, n_base_periods) the hull path emits, so
         # everything downstream (clustering, force-include seeding, weights,
         # DB write) is unchanged.
@@ -625,7 +635,7 @@ def preprocess_representative_periods(
             netload_inputs, timestep_keys, vre_penetration
         )
         caps = build_group_capacities(
-            netload_inputs, default_caps, solved_caps=None
+            netload_inputs, default_caps, solved_caps=solved_caps
         )
         C, n_base_periods, _agg_names = build_netload_matrix(
             netload_inputs, caps, timestep_keys, period_length
