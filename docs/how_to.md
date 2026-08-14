@@ -1068,6 +1068,27 @@ forces the low-VRE week starting 2050-10-15 (base period 41), which the unseeded
 
 Forced periods **seed** the greedy hull: they are guaranteed into the set as its initial vertices, and the clustering then fills the remaining slots to *complement* them (never re-selecting a period a forced extreme already represents). The total stays pinned at `n_rp` — a forced period consumes one of the `n_rp` slots, it never grows the set beyond `n_rp`. The `+f{n}` suffix counts the forced periods that displaced a clustered pick (i.e. that the unseeded hull would not have selected). With no `--force-*` flag the run is byte-identical to the pure-hull selection and keeps the plain `hull_{n_rp}rp_{period_length}h` timeset name, so force-include never overwrites the pure-hull timeset.
 
+### How to cluster representative periods on net load
+
+By default the greedy hull clusters on the *shape* of every normalized profile and inflow series. `--netload-clustering` instead clusters on a real-MW **net-load** signal — demand minus available VRE — so the selected periods are the ones the *net* demand actually stresses rather than the ones with the most distinctive individual profile shapes:
+
+```bash
+python -m flextool.representative_periods.preprocess <db_url> <scenario> <n_rp> <period_length> --netload-clustering [--vre-penetration P]
+```
+
+- `--netload-clustering` — cluster on `demand − Σ VRE·availability`. VRE is any generation unit whose `unit__node__profile` arc uses `profile_method = upper_limit` (the default). The iteration-0 VRE fleet is sized by a **demand-match** default (each aggregation unit's investable VRE is grown until its energy plus existing VRE energy covers the unit's demand energy). The timeset is written as `netload_{n_rp}rp_{period_length}h`.
+- `--vre-penetration P` — scale the demand-match energy-share target (`1.0` = full-energy match; default `1.0`). Ignored without `--netload-clustering`.
+
+**Per-group vs per-node granularity.** Set the `group.use_for_representative_periods` (`yes_no`) flag to `yes` on one or more region groups to sum each flagged group's member-node net load into a single regional signal; when no group carries the flag, each node is clustered as its own net-load signal.
+
+**Iterating on solved capacities.** The single-shot mode above sizes VRE with the demand-match default. To instead feed a solve's *realised* investments back into the selection, use the iteration driver, which reselects and re-solves until the representative set stabilises:
+
+```bash
+python -m flextool.representative_periods.netload_iterate <db_url> <scenario> --n-rp 5 --period-length 168 --iterations 3 [--keep-best]
+```
+
+Each iteration runs an invest-only solve and feeds its invested capacities into the next net-load selection; the loop stops early once the selected set stops changing. `--keep-best` additionally dispatches each mature iteration over the full year and keeps the representative set with the lowest full-year cost. Run `... netload_iterate --help` for the full flag list (`--invest-solves`, `--dispatch-solves`, `--vre-penetration`, `--work-dir`, `--output-location`, `--alternative-name`, `--warm-start`).
+
 ### How to add an energy margin for investment adequacy
 
 In a nested solve the investment stage is optimised over representative periods and the full-year dispatch is solved separately. The representative periods can be systematically optimistic about variable-renewable (VRE) availability: their average VRE availability tends to exceed the true annual average. The investment stage then under-builds, and the full-year dispatch has to cover the shortfall with large forced unserved-energy (upward-slack) penalties.

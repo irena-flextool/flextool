@@ -1,5 +1,30 @@
 ## Unreleased
 
+**Database migration v67 → v68** (one step, automatic on load,
+`_migrate_v68_rp_group_flag`). The new parameter is additive and defaults to
+prior behaviour, so a migrated database selects representative periods
+byte-identically until you opt into net-load clustering.
+
+- **Net-load representative-period clustering (`--netload-clustering`).** The
+  representative-period preprocessor can cluster on a real-MW net-load signal
+  (demand − Σ VRE·availability over demand-match-sized capacities) instead of
+  the default per-series normalized profile/inflow stack. VRE is any
+  `unit__node__profile` arc whose `profile_method` is `upper_limit` (the schema
+  default). `--vre-penetration` scales the demand-match energy-share target.
+  The default (non-`--netload-clustering`) path is byte-parity with prior
+  behaviour.
+- **`group.use_for_representative_periods` (schema v68).** A per-group `yes_no`
+  flag that marks a region-group as a net-load aggregation unit: when one or
+  more groups carry `yes`, net load is summed per flagged group; when none do,
+  selection falls back to per-node net-load signals.
+- **Net-load iteration driver (`python -m
+  flextool.representative_periods.netload_iterate`).** An invest-only
+  iterate-until-stable loop that feeds each iteration's solved investment
+  capacities back into the next net-load selection until the representative set
+  stabilises (early-stop on stability; bootstrap dispatch skipped). `--keep-best`
+  additionally dispatches each mature iteration and keeps the lowest full-year
+  dispatch-cost set. Subsets are run via a `model.solves` override alternative;
+  a fail-closed guard rejects an active timed `energy_margin_adder`.
 - **Fixed** representative-period blended-weights inter-period storage state being mis-scaled by unit size for storage nodes with unit size ≠ 1.
 
 ## Release 4.0.0b26 (30.7.2026) — adequacy calibrator + Calibrate-investments GUI; additive energy-margin & hard node balance; near-optimal IPM acceptance

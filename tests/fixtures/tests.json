@@ -3351,6 +3351,17 @@
       "network"
     ],
     [
+      "group",
+      "use_for_representative_periods",
+      [
+        "Im5vIg==",
+        "str"
+      ],
+      "yes_no",
+      "A flag whether this group of nodes is an aggregation unit for net-load representative-period selection. When 'yes', the representative-periods preprocessor aggregates the member nodes' net load (demand minus available VRE) into a single regional signal used for clustering; when 'no' (default) the group is ignored by that selection. If no group carries the flag, the selection falls back to per-node net-load signals.",
+      "solve_advanced"
+    ],
+    [
       "model",
       "inflation_offset_investment",
       [
@@ -3442,7 +3453,7 @@
       "model",
       "version",
       [
-        "Njc=",
+        "Njg=",
         "float"
       ],
       null,
