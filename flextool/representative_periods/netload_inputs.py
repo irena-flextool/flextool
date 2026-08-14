@@ -13,10 +13,10 @@ The net-load signal is a real-MW aggregate per *aggregation unit* rather than
 the per-series normalized feature stack of ``preprocess._build_clustering_matrix``.
 An aggregation unit is either a **region group** (when groups carry the boolean
 ``use_for_representative_periods`` flag) or, in the fallback, a single **node**
-(each node is its own aggregation unit). The flag parameter does not exist in
-the schema yet (it lands in a later phase); reading a not-yet-defined parameter
-is handled gracefully and simply activates the per-node fallback, so this reader
-starts producing group-granular signals automatically once the flag is added.
+(each node is its own aggregation unit). On a pre-v68 (un-migrated) database the
+flag parameter is not yet defined; that genuinely-absent case is detected and
+handled gracefully by simply activating the per-node fallback, while a read
+failure on a *defined* flag is allowed to surface rather than silently degrade.
 
 FlexTool sign convention (the gotcha, shared with ``force_include``): **demand
 is NEGATIVE inflow**, supply is positive inflow. A demand node's ``inflow``
@@ -259,24 +259,28 @@ def _read_units_by_group(
     two or more flagged groups is reported on stdout (a plain ``print`` warning,
     no raise) and counted in EACH group.
 
-    When no group is flagged — including when the flag parameter does not yet
-    exist in the schema (the reader returns an empty map without crashing) — the
-    fallback is per-node: each node is its own aggregation unit
+    When no group is flagged — including on a pre-v68 database where the flag
+    parameter is not yet defined (detected via the definition probe below) —
+    the fallback is per-node: each node is its own aggregation unit
     (``granularity = "node"``).
     """
-    # Reading a not-yet-defined parameter must not crash. params_to_dict wraps
-    # find_parameter_values, which returns [] for an undefined parameter on an
-    # existing class, so this yields {} for the pre-schema window; the broad
-    # guard additionally covers a missing class.
-    try:
-        flags = params_to_dict(
-            db=db,
-            cl="group",
-            par="use_for_representative_periods",
-            mode=DictMode.DICT,
-        )
-    except Exception:
-        flags = {}
+    # The flag parameter may be absent on a pre-v68 (un-migrated) database.
+    # Probe the *definition* rather than swallowing every exception: a
+    # genuinely-undefined parameter is the documented per-node fallback,
+    # whereas a read failure on a parameter that *is* defined is a real
+    # error that must surface instead of silently degrading to per-node.
+    if not db.get_parameter_definition_item(
+        entity_class_name="group",
+        name="use_for_representative_periods",
+    ):
+        return {node: [node] for node in all_nodes}, "node"
+
+    flags = params_to_dict(
+        db=db,
+        cl="group",
+        par="use_for_representative_periods",
+        mode=DictMode.DICT,
+    )
 
     flagged = sorted(
         name for name, value in flags.items() if str(value) == _FLAG_YES

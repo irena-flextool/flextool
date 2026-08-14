@@ -231,3 +231,149 @@ def test_reader_array_inflow_skipped(tmp_path, capsys):
     assert "n_map" in inputs.demand_ts
     assert "n_array" not in inputs.demand_ts
     assert "n_array" not in inputs.demand_scalar
+
+
+# --- Group-granularity path (use_for_representative_periods flag) ---------
+
+
+def _build_grouped_db(tmp_path: Path) -> str:
+    """A four-node model with two flagged region groups.
+
+    * ``r_north`` (flagged 'yes') → nodes {n_a, n_shared}.
+    * ``r_south`` (flagged 'yes') → nodes {n_b, n_shared}.
+    * ``r_off``   (flagged 'no')  → node  {n_c} — must NOT be used.
+
+    ``n_shared`` belongs to both flagged groups, exercising the
+    multi-membership warning + count-in-each behaviour. ``n_c`` (a member
+    only of the un-flagged ``r_off``) and any un-grouped node must not
+    appear as an aggregation unit under group granularity.
+    """
+    db_path = tmp_path / "grouped.sqlite"
+    initialize_database(str(_SCHEMA), str(db_path))
+    url = f"sqlite:///{db_path}"
+
+    with DatabaseMapping(url) as db:
+        _count, errors = import_data(
+            db,
+            alternatives=[["base", ""]],
+            entities=[
+                ["node", ["n_a"], None],
+                ["node", ["n_b"], None],
+                ["node", ["n_c"], None],
+                ["node", ["n_shared"], None],
+                ["group", ["r_north"], None],
+                ["group", ["r_south"], None],
+                ["group", ["r_off"], None],
+                ["group__node", ["r_north", "n_a"], None],
+                ["group__node", ["r_north", "n_shared"], None],
+                ["group__node", ["r_south", "n_b"], None],
+                ["group__node", ["r_south", "n_shared"], None],
+                ["group__node", ["r_off", "n_c"], None],
+            ],
+            parameter_values=[
+                ["group", "r_north", "use_for_representative_periods", "yes", "base"],
+                ["group", "r_south", "use_for_representative_periods", "yes", "base"],
+                ["group", "r_off", "use_for_representative_periods", "no", "base"],
+            ],
+        )
+        assert not errors, errors
+        db.commit_session("grouped net-load fixture")
+    return url
+
+
+def test_reader_group_granularity(tmp_path: Path, capsys):
+    """Flagged groups become aggregation units; 'no' groups are excluded, a
+    shared node is counted in each flagged group and triggers a warning."""
+    url = _build_grouped_db(tmp_path)
+    with DatabaseMapping(url) as db:
+        inputs = read_netload_inputs(db)
+
+    # (a) granularity flips to group.
+    assert inputs.granularity == "group"
+
+    # (c) the 'no' group r_off (and its lone member n_c) is not an agg unit.
+    assert set(inputs.units_by_group) == {"r_north", "r_south"}
+
+    # (b) n_shared counted in BOTH flagged groups; members sorted.
+    assert inputs.units_by_group["r_north"] == ["n_a", "n_shared"]
+    assert inputs.units_by_group["r_south"] == ["n_b", "n_shared"]
+
+    # (b) multi-membership warning on stdout naming the shared node + groups.
+    out = capsys.readouterr().out
+    assert "n_shared" in out
+    assert "r_north" in out and "r_south" in out
+    assert "counted in each" in out
+
+
+def test_reader_flag_present_but_all_no_falls_back(tmp_path: Path):
+    """The flag is defined but no group carries 'yes' → per-node fallback."""
+    db_path = tmp_path / "all_no.sqlite"
+    initialize_database(str(_SCHEMA), str(db_path))
+    url = f"sqlite:///{db_path}"
+
+    with DatabaseMapping(url) as db:
+        _count, errors = import_data(
+            db,
+            alternatives=[["base", ""]],
+            entities=[
+                ["node", ["n_x"], None],
+                ["node", ["n_y"], None],
+                ["group", ["r_off"], None],
+                ["group__node", ["r_off", "n_x"], None],
+            ],
+            parameter_values=[
+                ["group", "r_off", "use_for_representative_periods", "no", "base"],
+            ],
+        )
+        assert not errors, errors
+        db.commit_session("all-no fixture")
+
+    with DatabaseMapping(url) as db:
+        inputs = read_netload_inputs(db)
+
+    # (d) no flagged group → per-node; every node is its own unit.
+    assert inputs.granularity == "node"
+    assert inputs.units_by_group == {"n_x": ["n_x"], "n_y": ["n_y"]}
+
+
+def test_reader_flag_undefined_falls_back(tmp_path: Path):
+    """A pre-v68 DB (flag definition absent) still falls back to per-node.
+
+    Simulates the un-migrated schema window by removing the
+    ``use_for_representative_periods`` parameter definition after building a
+    current-schema DB: the reader's definition-probe must detect the genuine
+    absence and use the per-node fallback without raising.
+    """
+    db_path = tmp_path / "no_flag_def.sqlite"
+    initialize_database(str(_SCHEMA), str(db_path))
+    url = f"sqlite:///{db_path}"
+
+    with DatabaseMapping(url) as db:
+        _count, errors = import_data(
+            db,
+            alternatives=[["base", ""]],
+            entities=[
+                ["node", ["n_p"], None],
+                ["node", ["n_q"], None],
+            ],
+        )
+        assert not errors, errors
+        # Remove the flag definition to emulate a pre-v68 database.
+        pdef = db.get_parameter_definition_item(
+            entity_class_name="group",
+            name="use_for_representative_periods",
+        )
+        assert pdef, "flag definition must exist in the current schema"
+        db.remove_items("parameter_definition", pdef["id"])
+        db.commit_session("drop rp flag definition")
+
+    with DatabaseMapping(url) as db:
+        # Definition gone → probe returns falsy → per-node, no raise.
+        assert not db.get_parameter_definition_item(
+            entity_class_name="group",
+            name="use_for_representative_periods",
+        )
+        inputs = read_netload_inputs(db)
+
+    assert inputs.granularity == "node"
+    assert inputs.units_by_group == {"n_p": ["n_p"], "n_q": ["n_q"]}

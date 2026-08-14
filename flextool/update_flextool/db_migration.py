@@ -1757,6 +1757,8 @@ def migrate_database(
                 _migrate_v66_energy_margin_adder(db)
             elif next_version == 67:
                 _migrate_v67_node_penalty_method(db)
+            elif next_version == 68:
+                _migrate_v68_rp_group_flag(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3667,6 +3669,64 @@ def _migrate_v67_node_penalty_method(db) -> None:
     _commit_step(db,
         "v67: added node.penalty_method (penalty_methods: regular/off); "
         "'off' removes node balance slack (penalty) variables."
+    )
+
+
+def _migrate_v68_rp_group_flag(db) -> None:
+    """Add ``group.use_for_representative_periods`` (v67 -> v68).
+
+    A new per-group ``yes_no`` flag that marks a region-group as an
+    aggregation unit for net-load representative-period selection.  When a
+    group carries ``use_for_representative_periods == 'yes'`` the
+    representative-periods preprocessor aggregates that group's member
+    nodes' net load (demand minus available VRE) into a single regional
+    signal used for clustering; when no group carries the flag the
+    selection falls back to per-node net-load signals.
+
+    The flag is consumed only by the representative-periods preprocessor,
+    never by the LP model, so there is no engine wiring here — this
+    migration lands the schema definition alone.  It reuses the existing
+    ``yes_no`` value list (mirroring ``has_inertia`` /
+    ``include_stochastics``) and attaches the parameter to the
+    ``solve_advanced`` parameter group (consistent with the other
+    representative-period parameters such as
+    ``representative_period_weights``).
+    """
+    rp_default_val, rp_default_type = to_database("no")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="use_for_representative_periods",
+        default_value=rp_default_val,
+        default_type=rp_default_type,
+        parameter_value_list_name="yes_no",
+        description=(
+            "A flag whether this group of nodes is an aggregation unit for "
+            "net-load representative-period selection. When 'yes', the "
+            "representative-periods preprocessor aggregates the member "
+            "nodes' net load (demand minus available VRE) into a single "
+            "regional signal used for clustering; when 'no' (default) the "
+            "group is ignored by that selection. If no group carries the "
+            "flag, the selection falls back to per-node net-load signals."
+        ),
+    )
+
+    # Attach to the 'solve_advanced' parameter group when it exists
+    # (consistent with representative_period_weights).
+    has_solve_advanced_group = bool(
+        db.get_item("parameter_group", name="solve_advanced")
+    )
+    if has_solve_advanced_group:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="group",
+            name="use_for_representative_periods",
+            parameter_group_name="solve_advanced",
+        )
+
+    _commit_step(db,
+        "v68: added group.use_for_representative_periods (yes_no flag) for "
+        "net-load representative-period aggregation-unit selection."
     )
 
 
