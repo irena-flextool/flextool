@@ -41,43 +41,53 @@ def _series_lookup(series: list[tuple[str, float]]) -> dict[str, float]:
     return {k: float(v) for k, v in series}
 
 
-def _profile_array(
-    profile: str,
-    profiles: dict[str, list[tuple[str, float]]],
-    timestep_keys: list[str],
+def _covers(lookup: dict[str, float], timestep_keys: list[str]) -> bool:
+    """Whether ``lookup`` has a value at *every* key in ``timestep_keys``.
+
+    Matches the partial-coverage policy of ``preprocess._build_clustering_matrix``
+    and ``force_include._series_matrix``: a series that does not cover every used
+    timestep is skipped by the caller (never zero-filled).
+    """
+    return all(k in lookup for k in timestep_keys)
+
+
+def _duration_array(
+    step_durations: dict[str, float], timestep_keys: list[str]
 ) -> np.ndarray:
-    """Availability array over ``timestep_keys`` (missing key → 0.0 available)."""
-    lookup = _series_lookup(profiles.get(profile, []))
+    """Duration per key over ``timestep_keys`` (missing key → duration 1.0)."""
     return np.array(
-        [lookup.get(k, 0.0) for k in timestep_keys], dtype=np.float64
+        [step_durations.get(k, 1.0) for k in timestep_keys], dtype=np.float64
     )
 
 
-def _total_duration(
-    step_durations: dict[str, float], timestep_keys: list[str]
-) -> float:
-    """Σ duration over ``timestep_keys`` (missing key → duration 1.0)."""
-    return float(sum(step_durations.get(k, 1.0) for k in timestep_keys))
-
-
 def demand_match_default_caps(
-    inputs: NetloadInputs, timestep_keys: list[str]
+    inputs: NetloadInputs,
+    timestep_keys: list[str],
+    vre_penetration: float = 1.0,
 ) -> dict[str, float]:
     """Iteration-0 demand-match capacities for every investable VRE unit.
 
     For each aggregation unit ``g`` (``inputs.units_by_group``):
 
     * ``E_demand = Σ_{node in g}( |scalar| + Σ_h |min(inflow_h, 0)| · dur_h )`` —
-      the scalar demand level (magnitude) plus the energy of the time-varying
-      *demand* (negative-inflow) part.
-    * ``E_existing_VRE = Σ_{VRE unit in g} existing_cap · mean(avail) · Σ_h dur_h``
-      over ALL of ``g``'s VRE units (investable and not).
-    * ``target = max(0, E_demand − E_existing_VRE)`` — the demand energy the
-      existing VRE fleet does not already cover.
+      the scalar demand level (magnitude) plus the DURATION-WEIGHTED energy of the
+      time-varying *demand* (negative-inflow) part. A time-varying inflow series
+      that does not cover every key in ``timestep_keys`` is SKIPPED with a warning
+      (never zero-filled), matching ``preprocess._build_clustering_matrix``.
+    * ``E_existing_VRE = Σ_{VRE unit in g} existing_cap · Σ_h avail_h · dur_h``
+      over ALL of ``g``'s VRE units (investable and not) — the true
+      duration-weighted profiled energy, correct for UNEQUAL step durations. A VRE
+      unit whose availability profile does not cover every used timestep is
+      SKIPPED with a warning (its contribution is not subtracted).
+    * ``target = max(0, vre_penetration · E_demand − E_existing_VRE)`` — the
+      (scaled) demand energy the existing VRE fleet does not already cover.
+      ``vre_penetration`` (default ``1.0`` → 100% energy match) scales the demand
+      target: e.g. ``0.5`` sizes the investable fleet to a half-energy VRE share.
     * ``target`` is split as EQUAL ENERGY SHARES across ``g``'s ``k`` investable
-      VRE units that have usable mean availability (``mean(avail) ≥ eps``). Each
-      such unit's invested capacity is ``(target/k) / (mean(avail) · Σ_h dur_h)``,
-      i.e. the capacity whose profiled energy equals its ``target/k`` share.
+      VRE units that have a usable profile energy
+      (``w_u = Σ_h avail_h · dur_h ≥ eps``). Each such unit's invested capacity is
+      ``(target/k) / w_u``, i.e. the capacity whose profiled energy
+      ``cap · Σ_h avail_h · dur_h`` equals its ``target/k`` share EXACTLY.
 
     Contract of the returned dict (documented, and pinned by the capacity-contract
     test):
@@ -88,53 +98,73 @@ def demand_match_default_caps(
     * Each value is the unit's **TOTAL** iteration-0 capacity =
       ``existing_cap + invested_share``. Because ``target`` already subtracts the
       existing VRE energy, adding it back per unit keeps the group's total VRE
-      energy equal to ``E_demand`` (when ``target > 0`` and every investable unit
-      is usable) — a clean, energy-consistent total the net-load builder can
-      multiply by availability directly.
-    * An investable unit with ``mean(avail) < eps`` (no usable profile), or a
-      group whose ``target`` is 0 or has no usable investable unit, gets its
-      ``existing_cap`` (no useful invest possible) — never a divide-by-near-zero
-      blow-up.
+      energy equal to ``vre_penetration · E_demand`` (when ``target > 0`` and
+      every investable unit is usable) — a clean, energy-consistent total the
+      net-load builder can multiply by availability directly. The invested VRE
+      energy ``Σ_u invested_u · w_u`` equals ``target`` to machine precision, for
+      equal AND unequal step durations alike.
+    * An investable unit with ``w_u < eps`` (no usable profile), or a group whose
+      ``target`` is 0 or has no usable investable unit, gets its ``existing_cap``
+      (no useful invest possible) — never a divide-by-near-zero blow-up.
 
     Curtailment is ignored (pure energy balance).
     """
-    total_dur = _total_duration(inputs.step_durations, timestep_keys)
+    dur = _duration_array(inputs.step_durations, timestep_keys)
     caps: dict[str, float] = {}
 
     for group in sorted(inputs.units_by_group):
         node_set = set(inputs.units_by_group[group])
 
-        # Demand energy of the group.
+        # Demand energy of the group (duration-weighted).
         e_demand = 0.0
         for node in sorted(node_set):
             e_demand += abs(inputs.demand_scalar.get(node, 0.0))
             ts = inputs.demand_ts.get(node)
-            if ts:
-                for key, value in ts:
-                    v = float(value)
-                    if v < 0.0:
-                        e_demand += abs(v) * inputs.step_durations.get(key, 1.0)
+            if not ts:
+                continue
+            lookup = _series_lookup(ts)
+            if not _covers(lookup, timestep_keys):
+                print(
+                    f"  Net-load: skipping inflow of node '{node}' "
+                    f"(demand-match): does not cover all used timesteps."
+                )
+                continue
+            inflow = np.array(
+                [lookup[k] for k in timestep_keys], dtype=np.float64
+            )
+            demand_part = np.where(inflow < 0.0, -inflow, 0.0)
+            e_demand += float(np.dot(demand_part, dur))
 
-        # VRE units of the group, with their mean availability.
+        # VRE units of the group, with their duration-weighted profile energy.
         vre_units = sorted(
             u for u, vu in inputs.vre.items() if vu.node in node_set
         )
-        mean_avail: dict[str, float] = {}
+        weight: dict[str, float] = {}
         e_existing = 0.0
         for u in vre_units:
             vu = inputs.vre[u]
-            avail = _profile_array(vu.profile, inputs.profiles, timestep_keys)
-            ma = float(avail.mean()) if avail.size else 0.0
-            mean_avail[u] = ma
-            e_existing += vu.existing_cap * ma * total_dur
+            lookup = _series_lookup(inputs.profiles.get(vu.profile, []))
+            if not _covers(lookup, timestep_keys):
+                print(
+                    f"  Net-load: skipping VRE unit '{u}' (demand-match): "
+                    f"profile '{vu.profile}' does not cover all used timesteps."
+                )
+                weight[u] = 0.0
+                continue
+            avail = np.array(
+                [lookup[k] for k in timestep_keys], dtype=np.float64
+            )
+            w_u = float(np.dot(avail, dur))
+            weight[u] = w_u
+            e_existing += vu.existing_cap * w_u
 
-        target = max(0.0, e_demand - e_existing)
+        target = max(0.0, vre_penetration * e_demand - e_existing)
 
-        # Investable units with usable availability share the target energy.
+        # Investable units with usable profile energy share the target energy.
         usable = [
             u
             for u in vre_units
-            if inputs.vre[u].investable and mean_avail[u] >= _EPS
+            if inputs.vre[u].investable and weight[u] >= _EPS
         ]
         k = len(usable)
 
@@ -142,12 +172,12 @@ def demand_match_default_caps(
             vu = inputs.vre[u]
             if not vu.investable:
                 continue  # existing-only units are not in this dict.
-            ma = mean_avail[u]
-            if k == 0 or target <= 0.0 or ma < _EPS:
+            w_u = weight[u]
+            if k == 0 or target <= 0.0 or w_u < _EPS:
                 # No useful invest possible: total cap is just the existing cap.
                 caps[u] = vu.existing_cap
             else:
-                invested = (target / k) / (ma * total_dur)
+                invested = (target / k) / w_u
                 caps[u] = vu.existing_cap + invested
 
     return {u: caps[u] for u in sorted(caps)}
@@ -246,15 +276,22 @@ def build_netload_matrix(
     if not agg_names:
         raise ValueError("No aggregation units found for net-load clustering.")
 
-    # Pre-build availability arrays for every profile referenced by a VRE unit.
-    avail_cache: dict[str, np.ndarray] = {}
+    # Pre-build availability arrays (over the used keys) for every profile
+    # referenced by a VRE unit. A profile that does not cover all used timesteps
+    # is cached as ``None`` (skip policy of ``preprocess._build_clustering_matrix``
+    # / ``force_include._series_matrix`` — never zero-filled).
+    avail_cache: dict[str, np.ndarray | None] = {}
 
-    def _avail(profile: str) -> np.ndarray:
-        arr = avail_cache.get(profile)
-        if arr is None:
-            arr = _profile_array(profile, inputs.profiles, used_keys)
-            avail_cache[profile] = arr
-        return arr
+    def _avail(profile: str) -> np.ndarray | None:
+        if profile not in avail_cache:
+            lookup = _series_lookup(inputs.profiles.get(profile, []))
+            if _covers(lookup, used_keys):
+                avail_cache[profile] = np.array(
+                    [lookup[k] for k in used_keys], dtype=np.float64
+                )
+            else:
+                avail_cache[profile] = None
+        return avail_cache[profile]
 
     feature_blocks: list[np.ndarray] = []
     for group in agg_names:
@@ -262,23 +299,54 @@ def build_netload_matrix(
 
         # Demand term: Σ nodes ( −inflow_h(time-varying) + |scalar| ).
         demand = np.zeros(n_used, dtype=np.float64)
+        has_demand = False
         for node in sorted(node_set):
             scalar = inputs.demand_scalar.get(node, 0.0)
             if scalar:
                 demand += abs(scalar)
+                has_demand = True
             ts = inputs.demand_ts.get(node)
             if ts:
                 lookup = _series_lookup(ts)
+                if not _covers(lookup, used_keys):
+                    print(
+                        f"  Net-load: skipping inflow of node '{node}': "
+                        f"does not cover all used timesteps."
+                    )
+                    continue
                 demand -= np.array(
-                    [lookup.get(k, 0.0) for k in used_keys], dtype=np.float64
+                    [lookup[k] for k in used_keys], dtype=np.float64
                 )
+                has_demand = True
 
         # VRE term: Σ VRE units cap · avail_h.
         vre_supply = np.zeros(n_used, dtype=np.float64)
+        has_vre = False
         for u in sorted(u for u, vu in inputs.vre.items() if vu.node in node_set):
+            has_vre = True
+            avail = _avail(inputs.vre[u].profile)
+            if avail is None:
+                print(
+                    f"  Net-load: skipping VRE unit '{u}': profile "
+                    f"'{inputs.vre[u].profile}' does not cover all used timesteps."
+                )
+                continue
             cap = float(caps.get(u, 0.0))
             if cap:
-                vre_supply += cap * _avail(inputs.vre[u].profile)
+                vre_supply += cap * avail
+
+        # Co-location check: a group with VRE capacity but NO demand (neither
+        # time-varying inflow nor a scalar level) yields a pure-negative "net
+        # load" with nothing to net against — usually the region's load lives on
+        # a different node/group. Warn and suggest a co-locating region-group.
+        # (Demand-but-no-VRE, a pure load region, is normal and NOT warned.)
+        if has_vre and not has_demand:
+            print(
+                f"  Net-load: aggregation unit '{group}' has VRE capacity but "
+                f"no demand (time-varying or scalar) — its net load is pure "
+                f"negative VRE. Define a region-group "
+                f"(use_for_representative_periods) to co-locate demand and VRE."
+            )
 
         series = demand - vre_supply
 

@@ -122,7 +122,21 @@ def _read_inflows(
     for name in sorted(raw_inflows):
         value = raw_inflows[name]
         if isinstance(value, list):
-            demand_ts[name] = value
+            # A Map comes back as ``[(key, value), ...]`` pairs. An ``Array``
+            # comes back as a bare value list (no keys), which the downstream
+            # ``for key, value in ts`` unpack cannot consume. Skip it with a
+            # warning rather than crashing on the unpack.
+            if all(
+                isinstance(item, (tuple, list)) and len(item) == 2
+                for item in value
+            ):
+                demand_ts[name] = value
+            else:
+                print(
+                    f"  Net-load: skipping inflow of node '{name}': "
+                    f"Array-typed (keyless) series is not supported; "
+                    f"use a Map (timestep → value)."
+                )
         else:
             coerced = _coerce_float(value)
             if coerced is not None:

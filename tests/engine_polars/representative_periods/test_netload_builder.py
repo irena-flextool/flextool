@@ -122,8 +122,83 @@ class TestDemandMatchEnergyBalance:
             step_durations={k: 1.0 for k in keys},
         )
         caps = demand_match_default_caps(inputs, keys)
-        # mean(avail) == 0 → no usable invest → total cap == existing cap.
+        # Σ avail·dur == 0 → no usable invest → total cap == existing cap.
         assert caps["dead"] == 7.0
+
+    def test_unequal_durations_energy_balance(self):
+        """Σ investable-VRE energy == target with UNEQUAL step durations.
+
+        The VRE energy must be ``Σ_h avail_h · dur_h`` — NOT ``mean(avail) · Σ
+        dur_h`` (which diverges once the durations are not all equal). Two
+        investable units with distinct non-flat profiles split the demand energy
+        equally; their duration-weighted profiled energy must sum to the target
+        to machine precision.
+        """
+        keys = _keys(3)
+        dur = {keys[0]: 1.0, keys[1]: 2.0, keys[2]: 3.0}
+        avail_a = np.array([0.2, 0.4, 0.6])
+        avail_b = np.array([0.5, 0.0, 1.0])
+        inputs = NetloadInputs(
+            units_by_group={"g": ["n1"]},
+            demand_scalar={"n1": -100.0},  # E_demand = 100
+            vre={
+                "ua": VreUnit("n1", "pa", 0.0, 1.0, investable=True),
+                "ub": VreUnit("n1", "pb", 0.0, 1.0, investable=True),
+            },
+            profiles={
+                "pa": list(zip(keys, avail_a)),
+                "pb": list(zip(keys, avail_b)),
+            },
+            step_durations=dur,
+        )
+        caps = demand_match_default_caps(inputs, keys)
+
+        dur_arr = np.array([dur[k] for k in keys])
+        w_a = float(np.dot(avail_a, dur_arr))  # 2.8
+        w_b = float(np.dot(avail_b, dur_arr))  # 3.5
+        # A mean(avail)·total_dur denominator would use 0.4·6 and 0.5·6 instead.
+        assert w_a != avail_a.mean() * dur_arr.sum()
+        e_a = caps["ua"] * w_a
+        e_b = caps["ub"] * w_b
+        # Equal energy shares of the 100 demand.
+        assert abs(e_a - 50.0) < 1e-12
+        assert abs(e_b - 50.0) < 1e-12
+        assert abs((e_a + e_b) - 100.0) < 1e-12
+
+    def test_vre_penetration_scales_target(self):
+        """vre_penetration=0.5 halves the sized investable energy (linear)."""
+        keys = _keys(3)
+        dur = {keys[0]: 1.0, keys[1]: 2.0, keys[2]: 3.0}
+        avail = np.array([0.2, 0.4, 0.6])
+        inputs = NetloadInputs(
+            units_by_group={"g": ["n1"]},
+            demand_scalar={"n1": -100.0},  # E_demand = 100
+            vre={"u": VreUnit("n1", "p", 0.0, 1.0, investable=True)},
+            profiles={"p": list(zip(keys, avail))},
+            step_durations=dur,
+        )
+        dur_arr = np.array([dur[k] for k in keys])
+        w = float(np.dot(avail, dur_arr))
+
+        full = demand_match_default_caps(inputs, keys)  # penetration 1.0 default
+        half = demand_match_default_caps(inputs, keys, vre_penetration=0.5)
+        # target 1.0 → 100 energy; target 0.5 → 50 energy.
+        assert abs(full["u"] * w - 100.0) < 1e-12
+        assert abs(half["u"] * w - 50.0) < 1e-12
+        assert abs(half["u"] - full["u"] * 0.5) < 1e-12
+
+    def test_vre_penetration_default_is_full_match(self):
+        keys = _keys(2)
+        inputs = NetloadInputs(
+            units_by_group={"g": ["n1"]},
+            demand_scalar={"n1": -100.0},
+            vre={"u": VreUnit("n1", "p", 0.0, 1.0, investable=True)},
+            profiles={"p": _flat_profile(0.5, keys)},
+            step_durations={k: 1.0 for k in keys},
+        )
+        assert demand_match_default_caps(inputs, keys) == demand_match_default_caps(
+            inputs, keys, vre_penetration=1.0
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -310,3 +385,128 @@ class TestCapacityContract:
         )
         # solved_caps provided but does not contain 'inv' → default used.
         assert caps["inv"] == 99.0
+
+
+# ---------------------------------------------------------------------------
+# (e) partial-coverage series are SKIPPED, never zero-filled
+# ---------------------------------------------------------------------------
+
+class TestPartialCoverageSkipped:
+    def test_partial_profile_vre_skipped(self, capsys):
+        """A VRE profile missing a used timestep is skipped (with warning).
+
+        The unit must NOT contribute a zero-filled fake net-load; the group's
+        net load stays the pure demand shape.
+        """
+        keys = _keys(4)
+        inflow = [-10.0, -40.0, -20.0, -30.0]
+        # Profile covers only 3 of the 4 used keys → partial coverage.
+        partial = list(zip(keys[:3], [1.0, 1.0, 1.0]))
+        inputs = NetloadInputs(
+            units_by_group={"g": ["n1"]},
+            demand_ts={"n1": list(zip(keys, inflow))},
+            vre={"w": VreUnit("n1", "pf", 0.0, 1.0, investable=True)},
+            profiles={"pf": partial},
+            step_durations={k: 1.0 for k in keys},
+        )
+        C, _, _ = build_netload_matrix(inputs, {"w": 50.0}, keys, period_length=4)
+        out = capsys.readouterr().out
+        assert "skipping VRE unit 'w'" in out
+        # VRE not subtracted → net load is the normalized demand shape.
+        demand = -np.array(inflow)
+        expected = (demand - demand.min()) / (demand.max() - demand.min())
+        assert np.allclose(C[:, 0], expected)
+
+    def test_partial_inflow_demand_skipped(self, capsys):
+        """A demand inflow series missing used timesteps is skipped (warning)."""
+        keys = _keys(4)
+        full = [-10.0, -40.0, -20.0, -30.0]
+        partial = list(zip(keys[:2], [-5.0, -5.0]))  # covers 2 of 4 keys
+        inputs = NetloadInputs(
+            units_by_group={"g": ["n1", "n2"]},
+            demand_ts={"n1": list(zip(keys, full)), "n2": partial},
+            profiles={},
+            step_durations={k: 1.0 for k in keys},
+        )
+        C, _, _ = build_netload_matrix(inputs, {}, keys, period_length=4)
+        out = capsys.readouterr().out
+        assert "skipping inflow of node 'n2'" in out
+        # Only n1's demand shapes the net load; n2 is dropped, not zero-filled.
+        demand = -np.array(full)
+        expected = (demand - demand.min()) / (demand.max() - demand.min())
+        assert np.allclose(C[:, 0], expected)
+
+    def test_partial_profile_skipped_in_demand_match(self, capsys):
+        """demand_match also skips a partial VRE profile (no zero-fill energy)."""
+        keys = _keys(4)
+        partial = list(zip(keys[:2], [0.5, 0.5]))
+        inputs = NetloadInputs(
+            units_by_group={"g": ["n1"]},
+            demand_scalar={"n1": -100.0},
+            vre={
+                "ex": VreUnit("n1", "pf", 40.0, 1.0, investable=False),
+                "inv": VreUnit("n1", "pg", 0.0, 1.0, investable=True),
+            },
+            profiles={
+                "pf": partial,  # existing unit's profile is partial → skipped
+                "pg": _flat_profile(0.5, keys),
+            },
+            step_durations={k: 1.0 for k in keys},
+        )
+        caps = demand_match_default_caps(inputs, keys)
+        out = capsys.readouterr().out
+        assert "skipping VRE unit 'ex'" in out
+        # ex's energy is NOT subtracted → target stays the full 100 demand.
+        # cap = 100 / (0.5 · 4) = 50.
+        assert abs(caps["inv"] - 50.0) < 1e-12
+
+
+# ---------------------------------------------------------------------------
+# (f) co-location warning: VRE capacity but no demand on the aggregation unit
+# ---------------------------------------------------------------------------
+
+class TestColocationWarning:
+    def _keys_avail(self):
+        keys = _keys(4)
+        return keys, [0.2, 0.4, 0.6, 0.8]
+
+    def test_vre_only_group_warns(self, capsys):
+        keys, avail = self._keys_avail()
+        inputs = NetloadInputs(
+            units_by_group={"g_vre": ["n_vre"]},
+            demand_ts={},
+            vre={"w": VreUnit("n_vre", "pf", 10.0, 1.0, investable=False)},
+            profiles={"pf": list(zip(keys, avail))},
+            step_durations={k: 1.0 for k in keys},
+        )
+        build_netload_matrix(inputs, {"w": 10.0}, keys, period_length=4)
+        out = capsys.readouterr().out
+        assert "has VRE capacity but" in out
+        assert "g_vre" in out
+
+    def test_demand_and_vre_group_no_warn(self, capsys):
+        keys, avail = self._keys_avail()
+        inflow = [-10.0, -40.0, -20.0, -30.0]
+        inputs = NetloadInputs(
+            units_by_group={"g": ["n1"]},
+            demand_ts={"n1": list(zip(keys, inflow))},
+            vre={"w": VreUnit("n1", "pf", 10.0, 1.0, investable=False)},
+            profiles={"pf": list(zip(keys, avail))},
+            step_durations={k: 1.0 for k in keys},
+        )
+        build_netload_matrix(inputs, {"w": 10.0}, keys, period_length=4)
+        out = capsys.readouterr().out
+        assert "has VRE capacity but" not in out
+
+    def test_demand_only_group_no_warn(self, capsys):
+        keys = _keys(4)
+        inflow = [-10.0, -40.0, -20.0, -30.0]
+        inputs = NetloadInputs(
+            units_by_group={"g": ["n1"]},
+            demand_ts={"n1": list(zip(keys, inflow))},
+            profiles={},
+            step_durations={k: 1.0 for k in keys},
+        )
+        build_netload_matrix(inputs, {}, keys, period_length=4)
+        out = capsys.readouterr().out
+        assert "has VRE capacity but" not in out

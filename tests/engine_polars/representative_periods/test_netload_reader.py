@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, Map, import_data
+from spinedb_api import Array, DatabaseMapping, Map, import_data
 
 from flextool.representative_periods.netload_inputs import read_netload_inputs
 from flextool.update_flextool.initialize_database import initialize_database
@@ -191,3 +191,43 @@ def test_reader_end_to_end_builds_matrix(netload_db: str):
     assert names == ["n_load", "n_vre"]
     assert n_base == 2
     assert C.shape == (4, 2)
+
+
+def test_reader_array_inflow_skipped(tmp_path, capsys):
+    """An Array-typed inflow (keyless value list) is skipped, not crashed on.
+
+    ``params_to_dict`` returns an ``Array`` as a bare list of values (no keys),
+    which the downstream ``for key, value in ts`` unpack cannot consume. The
+    reader must detect the non-``(key, value)`` shape and skip it with a warning.
+    """
+    db_path = tmp_path / "array_inflow.sqlite"
+    initialize_database(str(_SCHEMA), str(db_path))
+    url = f"sqlite:///{db_path}"
+
+    with DatabaseMapping(url) as db:
+        _count, errors = import_data(
+            db,
+            alternatives=[["base", ""]],
+            entities=[
+                ["node", ["n_map"], None],
+                ["node", ["n_array"], None],
+            ],
+            parameter_values=[
+                # Map-typed inflow → normal (key, value) series.
+                ["node", "n_map", "inflow", Map(_KEYS, [-1.0, -2.0, -3.0, -4.0]), "base"],
+                # Array-typed inflow → keyless value list → must be skipped.
+                ["node", "n_array", "inflow", Array([-1.0, -2.0, -3.0, -4.0]), "base"],
+            ],
+        )
+        assert not errors, errors
+        db.commit_session("array inflow fixture")
+
+    with DatabaseMapping(url) as db:
+        inputs = read_netload_inputs(db)  # must not raise
+
+    out = capsys.readouterr().out
+    assert "skipping inflow of node 'n_array'" in out
+    # The Map series survives; the Array node is absent from both maps.
+    assert "n_map" in inputs.demand_ts
+    assert "n_array" not in inputs.demand_ts
+    assert "n_array" not in inputs.demand_scalar
