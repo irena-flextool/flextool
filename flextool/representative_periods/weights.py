@@ -125,7 +125,7 @@ def compute_weight_matrix(
 
 
 def compute_nearest_assignment(
-    C: np.ndarray, rep_indices: list[int], k: int = 1
+    C: np.ndarray, rep_indices: list[int], k: int = 1, power: float = 1.0
 ) -> np.ndarray:
     """Compute a nearest-``k`` inverse-distance weight matrix W for base periods.
 
@@ -151,6 +151,14 @@ def compute_nearest_assignment(
         k: Number of nearest representative periods to blend per base period.
             ``1`` (default) reproduces the single-nearest 0/1 assignment
             byte-for-byte. Clamped down to ``n_rp`` if larger. Must be >= 1.
+        power: Inverse-distance exponent ``p`` for the ``k > 1`` blend, so
+            ``w_i ∝ 1 / d_i**p``. ``1.0`` (default) is plain inverse distance
+            and is byte-identical to the pre-``power`` behaviour. ``p > 1``
+            sharpens the kernel toward the single-nearest rep (an isolated,
+            much-closer rep keeps almost all the weight — preserving extreme
+            reps at amplitude while still interpolating between similar reps);
+            ``p -> inf`` approaches ``k == 1``. No effect when ``k == 1`` (the
+            assignment is 0/1 regardless of ``power``). Must be > 0.
 
     Returns:
         Weight matrix W of shape (n_base_periods, n_rp). With ``k == 1`` each
@@ -165,6 +173,8 @@ def compute_nearest_assignment(
     """
     if k < 1:
         raise ValueError(f"k must be >= 1, got {k}")
+    if power <= 0:
+        raise ValueError(f"power must be > 0, got {power}")
 
     n_base = C.shape[1]
     n_rp = len(rep_indices)
@@ -203,7 +213,12 @@ def compute_nearest_assignment(
     # Finite (no coincident rep) rows: inverse-distance, normalized to sum 1.
     finite_rows = ~row_has_zero
     if finite_rows.any():
-        inv = 1.0 / sel_dist[finite_rows]
+        # power == 1.0 kept as a dedicated path to guarantee byte-identical
+        # output to the pre-``power`` behaviour; p > 1 sharpens toward nearest.
+        if power == 1.0:
+            inv = 1.0 / sel_dist[finite_rows]
+        else:
+            inv = 1.0 / sel_dist[finite_rows] ** power
         weights[finite_rows] = inv / inv.sum(axis=1, keepdims=True)
 
     # Coincident rows: uniform split across the zero-distance rep(s) only.

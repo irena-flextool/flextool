@@ -486,6 +486,7 @@ def preprocess_representative_periods(
     force_weeks_full: list[str] | None = None,
     nearest_assignment: bool = False,
     nearest_k: int = 1,
+    nearest_power: float = 1.0,
     solves: list[str] | None = None,
     alternative_name: str | None = None,
     alternative_description: str | None = None,
@@ -560,6 +561,10 @@ def preprocess_representative_periods(
             (default) keeps the single-nearest 0/1 assignment; ``k > 1`` splits
             each base period across its ``k`` nearest reps weighted by inverse
             distance. Ignored when ``nearest_assignment`` is ``False``.
+        nearest_power: Inverse-distance exponent ``p`` (``w ∝ 1/d**p``) for the
+            ``k > 1`` blend. ``1.0`` (default) is plain inverse distance;
+            ``p > 1`` sharpens toward the nearest rep. Ignored when
+            ``nearest_assignment`` is ``False`` or ``nearest_k == 1``.
         solves: Optional subset of solve names whose ``period_timeset`` should
             be repointed at the new RP timeset. ``None`` (default) updates every
             solve that carries a ``period_timeset`` param — the current
@@ -800,11 +805,13 @@ def preprocess_representative_periods(
         if nearest_k > 1:
             print(
                 f"Assigning each base period to its {nearest_k} nearest RPs "
-                "by inverse distance..."
+                f"by inverse distance (power {nearest_power})..."
             )
         else:
             print("Assigning each base period to its single nearest RP (0/1)...")
-        W = compute_nearest_assignment(C, rep_indices, k=nearest_k)
+        W = compute_nearest_assignment(
+            C, rep_indices, k=nearest_k, power=nearest_power
+        )
     else:
         print("Computing convex weights...")
         W = compute_weight_matrix(C, rep_indices)
@@ -1021,6 +1028,14 @@ def main() -> None:
         "0/1).",
     )
     parser.add_argument(
+        "--nearest-power",
+        type=float,
+        default=1.0,
+        help="Inverse-distance exponent p (w ~ 1/d**p) for the --nearest-k > 1 "
+        "blend (default 1.0 = plain inverse distance). p > 1 sharpens toward the "
+        "nearest rep, preserving isolated extreme reps at amplitude.",
+    )
+    parser.add_argument(
         "--solves",
         type=str,
         default=None,
@@ -1121,6 +1136,7 @@ def main() -> None:
             force_weeks_full=force_weeks_full,
             nearest_assignment=args.nearest_assignment,
             nearest_k=args.nearest_k,
+            nearest_power=args.nearest_power,
             solves=solves,
             alternative_name=args.alternative_name,
             alternative_description=args.alternative_description,
