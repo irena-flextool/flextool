@@ -125,7 +125,12 @@ def compute_weight_matrix(
 
 
 def compute_nearest_assignment(
-    C: np.ndarray, rep_indices: list[int], k: int = 1, power: float = 1.0
+    C: np.ndarray,
+    rep_indices: list[int],
+    k: int = 1,
+    power: float = 1.0,
+    freq_preserve: bool = False,
+    adaptive_frac: float = 0.0,
 ) -> np.ndarray:
     """Compute a nearest-``k`` inverse-distance weight matrix W for base periods.
 
@@ -159,6 +164,17 @@ def compute_nearest_assignment(
             reps at amplitude while still interpolating between similar reps);
             ``p -> inf`` approaches ``k == 1``. No effect when ``k == 1`` (the
             assignment is 0/1 regardless of ``power``). Must be > 0.
+        freq_preserve: When ``True`` (and ``k > 1``), Sinkhorn-rescale the
+            k-nearest weights so each rep's total (column) weight matches its
+            single-nearest (k=1) Voronoi frequency, keeping the blend pattern
+            (chain interpolation) but restoring frequency-correct invest sizing.
+            Rows still sum to exactly 1; column margins are matched approximately.
+            ``False`` (default) leaves the plain k-nearest weights unchanged.
+        adaptive_frac: Fraction in ``[0, 1)`` of the most EXTREME base periods
+            (by distance from the feature-space centroid) to pin back to
+            single-nearest (k=1), preserving isolated extreme reps at full
+            amplitude while interior periods keep the k-nearest blend. ``0.0``
+            (default) is a no-op. Only affects ``k > 1``.
 
     Returns:
         Weight matrix W of shape (n_base_periods, n_rp). With ``k == 1`` each
@@ -175,6 +191,8 @@ def compute_nearest_assignment(
         raise ValueError(f"k must be >= 1, got {k}")
     if power <= 0:
         raise ValueError(f"power must be > 0, got {power}")
+    if not 0.0 <= adaptive_frac < 1.0:
+        raise ValueError(f"adaptive_frac must be in [0, 1), got {adaptive_frac}")
 
     n_base = C.shape[1]
     n_rp = len(rep_indices)
@@ -228,4 +246,42 @@ def compute_nearest_assignment(
 
     # Scatter the per-selection weights back into the full (n_base, n_rp) matrix.
     np.add.at(W, (rows, order), weights)
+
+    # --- Adaptive-k (lever 1): force the most EXTREME base periods back to
+    # single-nearest (k=1) so isolated extreme reps keep full amplitude, while
+    # interior base periods retain the k-nearest interpolation. Extremity =
+    # distance from the base-period centroid in the (normalised) feature space;
+    # the top ``adaptive_frac`` fraction is pinned to its single nearest rep.
+    if adaptive_frac > 0.0:
+        centroid = C.mean(axis=1, keepdims=True)  # (n_features, 1)
+        d_cent = np.sqrt(((C - centroid) ** 2).sum(axis=0))  # (n_base,)
+        thresh = np.quantile(d_cent, 1.0 - adaptive_frac)
+        extreme = d_cent >= thresh
+        if extreme.any():
+            nearest1 = np.argmin(dist_sq, axis=1)
+            W[extreme, :] = 0.0
+            W[extreme, nearest1[extreme]] = 1.0
+
+    # --- Frequency-preserving renormalisation (lever 2, the cheap proxy for
+    # decoupling invest-weight from chain-interpolation): keep the k-nearest
+    # blend PATTERN (so the inter-period storage chain still interpolates) but
+    # rescale so each rep's total (column) weight matches its k=1 Voronoi
+    # frequency (so the invest LP sizes capacity on true frequencies). Sinkhorn:
+    # alternate column-scale to the k=1 targets and row-renorm to 1; the final
+    # op is the row-renorm so rows sum to exactly 1 (column margins approximate).
+    if freq_preserve:
+        nearest1 = np.argmin(dist_sq, axis=1)
+        targets = np.bincount(nearest1, minlength=n_rp).astype(float)  # (n_rp,)
+        for _ in range(200):
+            col = W.sum(axis=0)
+            col[col == 0.0] = 1.0
+            W *= (targets / col)[np.newaxis, :]  # scale columns toward targets
+            rowsum = W.sum(axis=1, keepdims=True)
+            rowsum[rowsum == 0.0] = 1.0
+            W_new = W / rowsum  # renormalise rows to sum 1 (hard invariant)
+            if np.max(np.abs(W_new - W)) < 1e-12:
+                W = W_new
+                break
+            W = W_new
+
     return W

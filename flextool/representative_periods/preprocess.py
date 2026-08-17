@@ -487,6 +487,8 @@ def preprocess_representative_periods(
     nearest_assignment: bool = False,
     nearest_k: int = 1,
     nearest_power: float = 1.0,
+    nearest_freq_preserve: bool = False,
+    nearest_adaptive_frac: float = 0.0,
     solves: list[str] | None = None,
     alternative_name: str | None = None,
     alternative_description: str | None = None,
@@ -810,7 +812,12 @@ def preprocess_representative_periods(
         else:
             print("Assigning each base period to its single nearest RP (0/1)...")
         W = compute_nearest_assignment(
-            C, rep_indices, k=nearest_k, power=nearest_power
+            C,
+            rep_indices,
+            k=nearest_k,
+            power=nearest_power,
+            freq_preserve=nearest_freq_preserve,
+            adaptive_frac=nearest_adaptive_frac,
         )
     else:
         print("Computing convex weights...")
@@ -1036,6 +1043,21 @@ def main() -> None:
         "nearest rep, preserving isolated extreme reps at amplitude.",
     )
     parser.add_argument(
+        "--nearest-freq-preserve",
+        action="store_true",
+        help="Sinkhorn-rescale the --nearest-k > 1 weights so each rep's total "
+        "weight matches its k=1 Voronoi frequency (keeps chain interpolation, "
+        "restores frequency-correct invest sizing).",
+    )
+    parser.add_argument(
+        "--nearest-adaptive-frac",
+        type=float,
+        default=0.0,
+        help="Fraction [0,1) of the most extreme base periods (by distance from "
+        "the feature centroid) to pin to single-nearest, preserving extreme reps "
+        "at amplitude while interior periods keep the k-nearest blend.",
+    )
+    parser.add_argument(
         "--solves",
         type=str,
         default=None,
@@ -1137,6 +1159,8 @@ def main() -> None:
             nearest_assignment=args.nearest_assignment,
             nearest_k=args.nearest_k,
             nearest_power=args.nearest_power,
+            nearest_freq_preserve=args.nearest_freq_preserve,
+            nearest_adaptive_frac=args.nearest_adaptive_frac,
             solves=solves,
             alternative_name=args.alternative_name,
             alternative_description=args.alternative_description,
