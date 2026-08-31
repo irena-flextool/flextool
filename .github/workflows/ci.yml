@@ -25,7 +25,7 @@ jobs:
   smoke:
     name: Smoke (per-commit gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -36,14 +36,17 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pytest-xdist pyyaml matplotlib
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
 
       - name: Set solver binary permissions
         run: |
           if [ -f bin/highs ]; then chmod +x bin/highs; fi
 
       - name: Run smoke gate
-        run: pytest -m "smoke or (not slow and not solver)" -v --tb=short
+        # Just the smoke-marked fast Layer-1 scenarios — the genuine per-commit
+        # gate. The broader "not slow and not solver" set is the `full` job's job
+        # (it ran ~the whole suite here and blew the 1-min cap).
+        run: pytest -m smoke -v --tb=short
 
   full:
     name: Full (Layer-1 + Layer-2 parity)
@@ -62,7 +65,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pytest-xdist pyyaml matplotlib
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
 
       - name: Set solver binary permissions
         run: |
@@ -94,7 +97,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pytest-xdist pyyaml matplotlib
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
 
       - name: Set solver binary permissions
         run: |
