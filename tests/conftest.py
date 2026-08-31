@@ -87,6 +87,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Example: pytest test/ --regenerate coal"
         ),
     )
+    parser.addoption(
+        "--run-gui",
+        action="store_true",
+        default=False,
+        help=(
+            "Run the opt-in GUI tests that open a real interactive Tk window. "
+            "Skipped by default (they steal focus locally and have no display in "
+            "CI); pass this — ideally under 'xvfb-run -a' — to exercise them."
+        ),
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -118,12 +128,43 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "emission: Tier 7 MPS row-count emission tests"
     )
+    config.addinivalue_line(
+        "markers",
+        "gui: opens a real interactive Tk window; opt-in via --run-gui "
+        "(deselected by default)",
+    )
+
+
+# GUI test modules that open a real Tk window and therefore need an interactive
+# display. Opt-in only (see --run-gui): skipped by default both locally (they
+# steal focus / pop up windows) and in headless CI (no display). Test modules
+# can also opt in individually with `@pytest.mark.gui`. Add new display-driving
+# GUI test modules here.
+_GUI_DISPLAY_MODULES = frozenset({
+    "test_calibrate_dialog",
+    "test_check_tree",
+    "test_main_window_calibrate_entry",
+    "test_plot_canvas",
+    "test_plot_canvas_perf",
+    "test_plot_settings_picker",
+    "test_result_viewer_dispatch_tree",
+    "test_result_viewer_recolor",
+})
 
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """When --regenerate is given, run only the matching scenario test."""
+    """Skip opt-in GUI display tests by default; honor --regenerate filtering."""
+    if not config.getoption("--run-gui", default=False):
+        skip_gui = pytest.mark.skip(
+            reason="GUI display test — pass --run-gui (ideally under 'xvfb-run -a') to run"
+        )
+        for item in items:
+            stem = getattr(getattr(item, "path", None), "stem", "")
+            if stem in _GUI_DISPLAY_MODULES or item.get_closest_marker("gui"):
+                item.add_marker(skip_gui)
+
     regenerate = config.getoption("--regenerate", default=None)
     if not regenerate:
         return

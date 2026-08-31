@@ -167,6 +167,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",
     "smoke: fast Layer-1 scenarios for the per-commit gate",
+    "gui: opens a real interactive Tk window; opt-in via --run-gui (deselected by default)",
 ]
 testpaths = ["tests"]
 # Hard per-test wallclock cap.  Used by ``pytest-timeout`` (installed
