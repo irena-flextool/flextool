@@ -3548,7 +3548,7 @@
       ],
       null,
       "Coefficients and right-hand-side terms whose absolute value is below this are treated as 0 when building the optimisation problem. Reduces the numerical range (conditioning) of the LP. Default 0.0001.",
-      null
+      "model"
     ],
     [
       "model",
@@ -3565,7 +3565,7 @@
       "model",
       "version",
       [
-        "Njg=",
+        "Njk=",
         "float"
       ],
       null,
@@ -3878,7 +3878,7 @@
       ],
       "penalty_methods",
       "Whether this node has balance penalty (unserved-energy / over-supply slack) variables. 'regular' (default) keeps the penalty_up / penalty_down slack variables that let the node balance be violated at a cost. 'off' removes those slack variables entirely, making the node balance a hard equality (the solve becomes infeasible if the node cannot balance). Use 'off' only if certain that it will not make the model infeasible (a real solution exists) - infeasible models can be very difficult to debug. At the same time, 'off' will reduce variables and can direct infeasibilities to other, more desirable, nodes.",
-      null
+      "basics"
     ],
     [
       "node",
