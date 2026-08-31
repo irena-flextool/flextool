@@ -156,7 +156,13 @@ pythonpath = ["."]
 # a [dev] dependency).  Each worker is a separate process, so the per-test
 # global-state resets stay isolated.  Pass ``-n 0`` to disable parallelism for
 # interactive debugging (``-s`` / ``--pdb`` need a single process).
-addopts = "--import-mode=importlib -n 8"
+# ``-n auto`` matches worker count to the host's CPUs so we don't oversubscribe
+# on low-core CI runners (``-n 8`` on a 4-core runner ran heavy solver tests ~2x
+# slower and tripped the per-test timeout). ``--dist loadfile`` keeps every test
+# in a file on ONE worker, so an expensive module-scoped fixture (e.g. the
+# energy-margin double-cascade, ~400s) is built once instead of being rebuilt on
+# each worker that happens to receive one of the module's tests.
+addopts = "--import-mode=importlib -n auto --dist loadfile"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",
@@ -167,13 +173,14 @@ testpaths = ["tests"]
 # Hard per-test wallclock cap.  Used by ``pytest-timeout`` (installed
 # via ``pip install -e .[dev]``).  The default applies to every test
 # unless overridden with ``@pytest.mark.timeout(N)`` or the CLI
-# ``--timeout=N``.  300 s is comfortable headroom for the slowest
-# legitimate rolling scenarios while still cutting off HiGHS runs
-# that wedge in a C extension and ignore SIGTERM.
+# ``--timeout=N``.  The heaviest legitimate fixtures (energy-margin
+# double-cascade) run ~400 s serially, so 900 s leaves headroom on slower CI
+# hardware while still cutting off HiGHS runs that wedge in a C extension and
+# ignore SIGTERM.
 # ``thread`` mode runs the test in a thread and dumps a traceback
 # on timeout — works for tests stuck inside C extensions where the
 # default ``signal`` mode can't fire from a non-main thread.
-timeout = 300
+timeout = 900
 timeout_method = "thread"
 
 [tool.setuptools.packages.find]

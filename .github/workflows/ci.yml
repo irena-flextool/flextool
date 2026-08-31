@@ -51,7 +51,7 @@ jobs:
   full:
     name: Full (Layer-1 + Layer-2 parity)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     # Run on push to main and on nightly schedule (skip pull_request to
     # keep PR feedback fast — smoke is the PR gate).
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
