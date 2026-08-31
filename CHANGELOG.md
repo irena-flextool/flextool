@@ -4,10 +4,12 @@ This is the first stable **4.0.0** release. FlexTool is now **pip-installable**
 from PyPI — `pip install flextool` — instead of only being available as a git
 distribution; `main` is now the default branch and `master` is deprecated.
 
-**Database migration v67 → v68** (one step, automatic on load). The new
-parameter is additive and defaults to prior behaviour, so a migrated database
-selects representative periods byte-identically until you opt into net-load
-clustering.
+**Database migration v67 → v69** (two steps, automatic on load): v68 adds the
+representative-period group flag (additive, defaults to prior behaviour — a
+migrated database selects representative periods byte-identically until you opt
+into net-load clustering), and v69 backfills parameter groups for two previously
+ungrouped parameters (`model.small_number_threshold`, `node.penalty_method`) so
+they are no longer dropped from group-filtered tabular exports.
 
 ### Packaging & distribution
 
