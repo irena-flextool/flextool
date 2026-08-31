@@ -506,5 +506,165 @@ def test_csv_solve_injection_entity_first_dt():
     assert old == ["", ""], "positional baseline should have been broken"
 
 
+# ---------------------------------------------------------------------------
+# Schema top-up on a pre-existing (stale) results DB.
+#
+# A results.sqlite built by an older FlexTool lags the current schema: the
+# cold-start create short-circuits on the existing file, so additive params /
+# classes never reach it and write_spinedb crashes referencing a missing def.
+# ensure_results_db must detect the gap and top it up in place.
+# ---------------------------------------------------------------------------
+
+def _remove_param_def(url, ec, name):
+    """Delete one parameter definition and commit; return its removal."""
+    with DatabaseMapping(url) as db:
+        it = db.get_parameter_definition_item(entity_class_name=ec, name=name)
+        assert it, f"expected {ec}/{name} to exist before removal"
+        db.remove_item("parameter_definition", it["id"])
+        db.commit_session("test: remove param def")
+
+
+def test_top_up_restores_missing_param_def(tmp_path):
+    """Regression: a stale DB missing node/cost_annualized is repaired in
+    place (correct derived-unit description) and write_spinedb round-trips."""
+    from flextool.process_outputs.write_spinedb import (
+        _unit_tag,
+        derived_param_unit_map,
+    )
+
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    ensure_results_db(url)
+
+    # Simulate staleness: drop the param def a newer schema would add.
+    _remove_param_def(url, "node", "cost_annualized")
+    with DatabaseMapping(url) as db:
+        assert not db.get_parameter_definition_item(
+            entity_class_name="node", name="cost_annualized")
+
+    # Top-up restores it.
+    ensure_results_db(url)
+    expected_unit = _unit_tag(derived_param_unit_map()[("node", "cost_annualized")])
+    with DatabaseMapping(url) as db:
+        it = db.get_parameter_definition_item(
+            entity_class_name="node", name="cost_annualized")
+        assert it, "top-up did not restore node/cost_annualized"
+        assert it["description"].startswith(expected_unit), (
+            f"restored description missing derived unit {expected_unit!r}: "
+            f"{it['description']!r}")
+        assert len(db.get_parameter_definition_items()) == 58
+
+    # End-to-end: the previously-crashing write now round-trips.
+    s = StubS()
+    write_spinedb({"cost_node_annualized_d_ec": _cost_by_entity_df("node")},
+                  s, url, "scenD", "s1")
+    with DatabaseMapping(url) as db:
+        val = _read_value(db, "node", ("n1",), "cost_annualized", "scenD")
+        assert val is not None
+        assert (val.get_value("commodity_cost")
+                .get_value("s1").get_value("p2020") == 3.5)
+
+
+def test_top_up_steady_state_no_write(tmp_path, monkeypatch):
+    """A current DB is a genuine no-op: counts unchanged and import_data is
+    never invoked (patched to fail if it were)."""
+    import flextool.process_outputs.write_spinedb as ws
+
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    ensure_results_db(url)
+    with DatabaseMapping(url) as db:
+        ec_before = len(db.get_entity_class_items())
+        pd_before = len(db.get_parameter_definition_items())
+
+    def _boom(*a, **k):
+        raise AssertionError("import_data must not be called on a current DB")
+
+    monkeypatch.setattr(ws, "import_data", _boom)
+    ensure_results_db(url)  # must not raise -> no write attempted
+
+    with DatabaseMapping(url) as db:
+        assert len(db.get_entity_class_items()) == ec_before
+        assert len(db.get_parameter_definition_items()) == pd_before
+
+
+def test_top_up_restores_missing_entity_class(tmp_path):
+    """A stale DB missing an entire entity class (and its param defs) is
+    restored to the full schema."""
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    ensure_results_db(url)
+
+    with DatabaseMapping(url) as db:
+        ec = db.get_entity_class_item(name="group")
+        assert ec
+        db.remove_item("entity_class", ec["id"])
+        db.commit_session("test: remove entity class")
+    with DatabaseMapping(url) as db:
+        assert not db.get_entity_class_item(name="group")
+        assert not any(p["entity_class_name"] == "group"
+                       for p in db.get_parameter_definition_items())
+
+    ensure_results_db(url)
+    with DatabaseMapping(url) as db:
+        assert db.get_entity_class_item(name="group")
+        assert any(p["entity_class_name"] == "group"
+                   for p in db.get_parameter_definition_items())
+        assert len(db.get_entity_class_items()) == 12
+        assert len(db.get_parameter_definition_items()) == 58
+
+
+def test_top_up_excludes_alternatives(tmp_path):
+    """Top-up imports schema classes/params but NOT alternatives: user run
+    alternatives are untouched and no spurious alternative is seeded."""
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    s = StubS()
+    write_spinedb({"unit_outputNode_dt_ee": _flow_df(42.0, 7.0)}, s, url,
+                  "scenA", "s1")
+    write_spinedb({"unit_outputNode_dt_ee": _flow_df(99.0, 1.0)}, s, url,
+                  "scenB", "s1")
+
+    # Force a top-up by dropping a param def.
+    _remove_param_def(url, "node", "cost_annualized")
+    ensure_results_db(url)
+
+    with DatabaseMapping(url) as db:
+        alt_names = {a["name"] for a in db.get_alternative_items()}
+        assert alt_names == {"Base", "scenA", "scenB"}, (
+            f"top-up disturbed alternatives: {alt_names}")
+        assert db.get_parameter_definition_item(
+            entity_class_name="node", name="cost_annualized")
+
+
+def test_concurrent_top_up_on_stale_shared_db(tmp_path):
+    """Many processes topping up the SAME stale shared DB must converge on ONE
+    top-up: the missing def is restored exactly once (no duplicate, no
+    UNIQUE-violation), and no temp/held-lock detritus is left behind."""
+    url = "sqlite:///" + str(tmp_path / "shared_results.sqlite")
+    ensure_results_db(url)
+    _remove_param_def(url, "node", "cost_annualized")
+    with DatabaseMapping(url) as db:
+        assert len(db.get_parameter_definition_items()) == 57
+
+    ctx = mp.get_context("spawn")
+    n = 6
+    with ctx.Pool(n) as pool:
+        outcomes = pool.map(_ensure_worker, [url] * n)
+    assert all(o == "ok" for o in outcomes), f"worker failures: {outcomes}"
+
+    with DatabaseMapping(url) as db:
+        defs = db.get_parameter_definition_items(
+            entity_class_name="node", name="cost_annualized")
+        assert len(defs) == 1, f"expected exactly one def, got {len(defs)}"
+        assert len(db.get_parameter_definition_items()) == 58
+        assert len(db.get_entity_class_items()) == 12
+
+    # No leftover temp DBs; the sidecar lock (if present) is not held.
+    assert not list(tmp_path.glob(".results-*.sqlite.tmp"))
+    lock_path = tmp_path / "shared_results.sqlite.lock"
+    if lock_path.exists():
+        import fcntl
+        with open(lock_path, "a") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
