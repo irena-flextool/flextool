@@ -3,15 +3,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flextool"
-# First v4 alpha — engine swap, output overhaul and storage-binding
-# restructure are in.  4.0.0 final follows after the remaining
-# minor-functionality additions, cleanup and testing land.  PEP 440
-# pre-release suffix: 4.0.0a1, 4.0.0a2, ... 4.0.0b1, 4.0.0rc1, then 4.0.0.
-version = "4.0.0b26"
+version = "4.0.0"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 authors = [
     { name = "IRENA FlexTool contributors" },
 ]
@@ -26,13 +22,11 @@ keywords = [
     "spine",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

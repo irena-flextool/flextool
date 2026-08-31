@@ -7,16 +7,10 @@
 IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.
 
 > [!NOTE]
-> **`main` is the default branch — the current, actively developed FlexTool.**
-> The previous `master` branch is deprecated and no longer updated.
->
-> Cross-platform support is still maturing: `main` is best tested on Linux, while
-> Windows and macOS validation is ongoing. Please report any problems in the
-> [tracker](https://github.com/irena-flextool/flextool/issues).
->
-> If you still run FlexTool from `master`, the recommended way to migrate is a
-> **fresh parallel install** (separate directory and venv) — see
-> [Installation](#installation) — so your existing setup is left untouched.
+> The previous `master` branch is deprecated and no longer updated — `main` is
+> now FlexTool. If you still run FlexTool from `master`, migrate with a fresh
+> parallel install (separate directory and venv); see
+> [Installation](#installation) so your existing setup is left untouched.
 
 ## What's new
 
@@ -43,7 +37,7 @@ IRENA FlexTool is an energy and power systems model for understanding the role o
   change is in how the matrix is generated and solved, not in the model
   formulation.
 
-This is IRENA FlexTool v4.x.x (see current version from CHANGELOG.md) in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
+This is IRENA FlexTool v4 (see the current version in CHANGELOG.md). Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
 The previous version of IRENA FlexTool can be found in https://www.irena.org/energytransition/Energy-System-Models-and-Data/IRENA-FlexTool.
 
 ## Under the hood: Rust-based matrix generation
