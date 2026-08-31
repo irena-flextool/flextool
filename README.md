@@ -6,16 +6,15 @@
 IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.
 
 > [!NOTE]
-> **This is the `main` branch — the current, actively developed FlexTool.** The
-> previous `master` branch is deprecated and no longer updated.
+> **`main` is the default branch — the current, actively developed FlexTool.**
+> The previous `master` branch is deprecated and no longer updated.
 >
-> `main` is not the default branch yet because it has so far been **tested well
-> on Linux only**; Windows and macOS are not yet fully validated. On Linux,
-> using `main` now is encouraged. On other systems, expect rough edges and please
-> report issues in the [tracker](https://github.com/irena-flextool/flextool/issues).
+> Cross-platform support is still maturing: `main` is best tested on Linux, while
+> Windows and macOS validation is ongoing. Please report any problems in the
+> [tracker](https://github.com/irena-flextool/flextool/issues).
 >
-> If you already run FlexTool from `master`, the recommended way to try `main`
-> is a **fresh parallel install** (separate directory and venv) — see
+> If you still run FlexTool from `master`, the recommended way to migrate is a
+> **fresh parallel install** (separate directory and venv) — see
 > [Installation](#installation) — so your existing setup is left untouched.
 
 ## What's new
@@ -37,7 +36,7 @@ IRENA FlexTool is an energy and power systems model for understanding the role o
   change is in how the matrix is generated and solved, not in the model
   formulation.
 
-This is IRENA FlexTool v3.x.x (see current version from CHANGELOG.md) in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
+This is IRENA FlexTool v4.x.x (see current version from CHANGELOG.md) in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
 The previous version of IRENA FlexTool can be found in https://www.irena.org/energytransition/Energy-System-Models-and-Data/IRENA-FlexTool.
 
 ## Under the hood: pure-Python matrix generation
@@ -56,9 +55,9 @@ against linopy and Pyomo on the same HiGHS solver.
 
 ## Installation
 
-FlexTool requires **Python 3.11+**. The recommended way to start — and to try
-`main` without disturbing an existing `master` setup — is a fresh clone in its
-own directory and virtual environment.
+FlexTool requires **Python 3.11+**. The recommended way to start — and to
+migrate from an existing `master` setup without disturbing it — is a fresh clone
+in its own directory and virtual environment.
 
 **Windows (PowerShell):**
 
