@@ -11,10 +11,12 @@ or modify scenarios. See test/README.md for the full workflow.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -345,14 +347,21 @@ def test_scenario(
                 f"rel_err={rel_err:.3e} tolerance={expected_objective_tolerance:.3e}"
             )
 
-    # Optional timing budget. Budgets are set to ~1.5x the observed max
-    # over a small sample of clean runs (see tests/README.md), so a
-    # tripped assertion indicates a real performance regression rather
-    # than CI noise. Placed last so a CSV/objective regression is
-    # reported first; pytest stops at the first failed assertion.
-    if time_budget_seconds is not None:
-        assert elapsed_seconds <= time_budget_seconds, (
+    # Optional timing budget. Budgets are ~1.5x the observed max over a small
+    # sample of clean runs (see tests/README.md), so they are only meaningful
+    # without CPU contention. Under xdist (``-n>0`` — the default ``addopts`` and
+    # CI both run ``-n 8``) many solves execute concurrently and inflate
+    # wall-clock time far past the budget, which is not a real regression. So
+    # enforce the budget only when running serially; under parallel workers it
+    # is downgraded to a warning (it is a perf canary, not a correctness gate).
+    # Placed last so a CSV/objective regression is reported first.
+    if time_budget_seconds is not None and elapsed_seconds > time_budget_seconds:
+        msg = (
             f"timing regression: scenario={scenario} "
             f"observed={elapsed_seconds:.2f}s budget={time_budget_seconds:.2f}s "
             f"(set in tests/scenarios.yaml; bump if the increase is intended)"
         )
+        if os.environ.get("PYTEST_XDIST_WORKER"):
+            warnings.warn(f"{msg} [not failing: parallel CPU contention]", stacklevel=2)
+        else:
+            raise AssertionError(msg)
