@@ -200,6 +200,17 @@ exclude = ["flextool*.__pycache__"]
 #                                         commercial solvers; seeded into
 #                                         solver_config/<solver>.opt on first run)
 #   * export_to_tabular/*.yaml          — export settings (sheet config etc.)
+#   * process_inputs/*.json             — old-Excel/CSV import spec
+#                                         (import_old_excel_input.json), loaded by
+#                                         the flextool-read-tabular-input CLI.
+#
+# NOTE (intentionally NOT shipped): schemas/canonical_databases/_recipes.yaml is
+# a *maintainer/build-only* recipe consumed solely by
+# flextool.update_flextool.generate_canonical, which is source-checkout-only
+# (it reads tests/fixtures/*.json and imports tests.db_utils — neither of which
+# is in a wheel) and fails loudly if run from an installed package.  Shipping it
+# would add an inert file with no runtime reachability, so the
+# canonical_databases glob deliberately stays *.json.
 flextool = [
     "schemas/*.json",
     "schemas/*.md",
@@ -208,4 +219,5 @@ flextool = [
     "schemas/pre_v26/*.json",
     "solver_config/*.opt.template",
     "export_to_tabular/*.yaml",
+    "process_inputs/*.json",
 ]
