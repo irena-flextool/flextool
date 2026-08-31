@@ -1,3 +1,4 @@
+[![PyPI version](https://img.shields.io/pypi/v/flextool.svg)](https://pypi.org/project/flextool/)
 [![Documentation Status](https://img.shields.io/badge/Documentation-passing-brightgreen)](https://irena-flextool.github.io/flextool/)
 [![Python](https://img.shields.io/badge/python-3.11%20|%203.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
