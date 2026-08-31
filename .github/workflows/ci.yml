@@ -2,7 +2,7 @@ name: CI
 
 # Three-tier CI gate:
 #   smoke  — every push and pull_request; <1 min, blocks merge
-#   full   — push to master + nightly; full Layer-1 + Layer-2 parity (<30 min)
+#   full   — push to main + nightly; full Layer-1 + Layer-2 parity (<30 min)
 #   slow   — nightly only; xlsx workflow + other slow integration tests
 #
 # All jobs use the in-repo HiGHS / glpsol binaries under bin/ (no external
@@ -10,9 +10,12 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    # `main` is the default branch. `master` is retained transitionally so CI
+    # keeps firing on the deprecated branch until it is fully retired; drop it
+    # once the default-branch switch has settled.
+    branches: [main, master]
   pull_request:
-    branches: [master]
+    branches: [main, master]
   schedule:
     # 03:00 UTC nightly
     - cron: "0 3 * * *"
@@ -46,7 +49,7 @@ jobs:
     name: Full (Layer-1 + Layer-2 parity)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Run on push to master and on nightly schedule (skip pull_request to
+    # Run on push to main and on nightly schedule (skip pull_request to
     # keep PR feedback fast — smoke is the PR gate).
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:

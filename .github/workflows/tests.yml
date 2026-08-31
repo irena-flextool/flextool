@@ -1,9 +1,10 @@
 name: Tests
 on:
   push:
-    branches: [master]
+    # `main` is the default branch; `master` kept transitionally (see ci.yml).
+    branches: [main, master]
   pull_request:
-    branches: [master]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
