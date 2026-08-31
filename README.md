@@ -22,7 +22,13 @@ IRENA FlexTool is an energy and power systems model for understanding the role o
 - **A lot faster.** The model build and pre-processing now run as pure Python
   instead of the previous GLPSOL-based text pre-processing and AMPL-style model
   translation. There is no LP file written to disk and re-read between build and
-  solve. (Solver time is unchanged — that is still HiGHS.)
+  solve.
+- **Automatic problem scaling.** The `polar-high` matrix layer automatically
+  scales the optimisation problem before it reaches the solver. Better numerical
+  conditioning often speeds up the HiGHS solve considerably — sometimes
+  dramatically — so total run time usually improves well beyond the faster build
+  alone. The solver is still HiGHS; the gain comes from handing it a
+  better-conditioned problem.
 - **A new, easy-to-use interface.** The **FlexTool GUI** is a standalone
   application (`python -m flextool.gui`) that manages projects and input
   sources, runs scenarios, and lets you **browse the results** — a result viewer
@@ -39,17 +45,18 @@ IRENA FlexTool is an energy and power systems model for understanding the role o
 This is IRENA FlexTool v4.x.x (see current version from CHANGELOG.md) in beta testing. Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
 The previous version of IRENA FlexTool can be found in https://www.irena.org/energytransition/Energy-System-Models-and-Data/IRENA-FlexTool.
 
-## Under the hood: pure-Python matrix generation
+## Under the hood: Rust-based matrix generation
 
-FlexTool reads its input data, builds the optimisation matrix in
-[polars](https://pola.rs/) DataFrames via
-[`polar-high`](https://github.com/nodal-tools/polar-high), and solves it with
-[HiGHS](https://highs.dev/). Variables and parameters are polars frames;
-multiplications are joins and aggregations are group-bys, so coefficient work
-happens inside polars rather than as per-coefficient Python objects, and the
-matrix is passed to HiGHS through `highspy` with no intermediate LP/MPS file.
-`polar-high` is a general-purpose, domain-free modelling layer published
-separately (Apache-2.0, `pip install polar-high`); its
+FlexTool is a thin Python layer over a Rust engine. It reads its input data and
+builds the optimisation matrix as [polars](https://pola.rs/) DataFrames via
+[`polar-high`](https://github.com/nodal-tools/polar-high), then solves with
+[HiGHS](https://highs.dev/). Variables and parameters are polars frames, so
+multiplications become joins and aggregations become group-bys — the heavy
+coefficient work runs inside polars' Rust core rather than as per-coefficient
+Python objects, and the matrix goes straight to HiGHS through `highspy` with no
+intermediate LP/MPS file. `polar-high` is a general-purpose, domain-free
+modelling layer published separately (Apache-2.0, `pip install polar-high`); it
+also applies the automatic problem scaling noted above, and its
 [benchmark](https://nodal-tools.fi/polar-high/compare/benchmark/) compares it
 against linopy and Pyomo on the same HiGHS solver.
 
