@@ -1,0 +1,1894 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning." name="description"/>
+<meta content="Juha Kiviluoma, VTT Technical Centre of Finland" name="author"/>
+<link href="../slack_convention/" rel="prev"/>
+<link href="../db_schema/" rel="next"/>
+<link href="../../img/irena_flextool_favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.7" name="generator"/>
+<title>Decomposition - IRENA FlexTool</title>
+<link href="../../assets/stylesheets/main.ec1eaa64.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#decomposition">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--shadow" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="IRENA FlexTool" class="md-header__button md-logo" data-md-component="logo" href="../.." title="IRENA FlexTool">
+<img alt="logo" src="../../img/irena_flextool_favicon.png"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Decomposition
+            
+          </span>
+</div>
+</div>
+</div>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/irena-flextool/flextool" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="IRENA FlexTool" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="IRENA FlexTool">
+<img alt="logo" src="../../img/irena_flextool_favicon.png"/>
+</a>
+    IRENA FlexTool
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/irena-flextool/flextool" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../interface_overview/">
+<span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../install_gui/">
+<span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../install_toolbox/">
+<span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../tutorial/">
+<span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../reference/">
+<span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../results/">
+<span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../how_to/">
+<span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_concepts/">
+<span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../flextool_gui_interface/">
+<span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../spine_toolbox/">
+<span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../spine_database/">
+<span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../excel_interface/">
+<span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../terminal_workflow/">
+<span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/">
+<span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/highs/">
+<span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/gurobi/">
+<span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/cplex/">
+<span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/xpress/">
+<span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/copt/">
+<span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../architecture/">
+<span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../engine_polars/">
+<span class="md-ellipsis">
+    
+  
+    The engine_polars pipeline
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../scaling/">
+<span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../slack_convention/">
+<span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#1-picking-a-decomposition">
+<span class="md-ellipsis">
+      
+        1. Picking a decomposition
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#2-spatial-benders-decomposition">
+<span class="md-ellipsis">
+      
+        2. Spatial / Benders decomposition
+      
+    </span>
+</a>
+<nav aria-label="2. Spatial / Benders decomposition" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#21-concept">
+<span class="md-ellipsis">
+      
+        2.1 Concept
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#22-region-declaration">
+<span class="md-ellipsis">
+      
+        2.2 Region declaration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#23-half-flow-rewriting">
+<span class="md-ellipsis">
+      
+        2.3 Half-flow rewriting
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#24-algorithm-master-multi-cut-benders-loop">
+<span class="md-ellipsis">
+      
+        2.4 Algorithm — master + multi-cut Benders loop
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#25-existing-vs-investable-trade-capacity">
+<span class="md-ellipsis">
+      
+        2.5 Existing vs investable trade capacity
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#26-validity-guard">
+<span class="md-ellipsis">
+      
+        2.6 Validity guard
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#27-diagnostics">
+<span class="md-ellipsis">
+      
+        2.7 Diagnostics
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#28-selecting-the-scheme-per-solve">
+<span class="md-ellipsis">
+      
+        2.8 Selecting the scheme per solve
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#29-reference-implementation">
+<span class="md-ellipsis">
+      
+        2.9 Reference implementation
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#3-flex-temporal-decomposition">
+<span class="md-ellipsis">
+      
+        3. Flex-temporal decomposition
+      
+    </span>
+</a>
+<nav aria-label="3. Flex-temporal decomposition" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#31-concept">
+<span class="md-ellipsis">
+      
+        3.1 Concept
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#32-schema-surface">
+<span class="md-ellipsis">
+      
+        3.2 Schema surface
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#33-blocklayout">
+<span class="md-ellipsis">
+      
+        3.3 BlockLayout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#34-overlap-set-aggregation">
+<span class="md-ellipsis">
+      
+        3.4 Overlap-set aggregation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#35-block-aware-emitters">
+<span class="md-ellipsis">
+      
+        3.5 Block-aware emitters
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#36-output-expansion">
+<span class="md-ellipsis">
+      
+        3.6 Output expansion
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#37-caveats">
+<span class="md-ellipsis">
+      
+        3.7 Caveats
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#4-rolling-nested-solves">
+<span class="md-ellipsis">
+      
+        4. Rolling / nested solves
+      
+    </span>
+</a>
+<nav aria-label="4. Rolling / nested solves" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#41-rolling">
+<span class="md-ellipsis">
+      
+        4.1 Rolling
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#42-nested">
+<span class="md-ellipsis">
+      
+        4.2 Nested
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#43-stochastic-branches">
+<span class="md-ellipsis">
+      
+        4.3 Stochastic branches
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#5-release-notes-context">
+<span class="md-ellipsis">
+      
+        5. RELEASE notes context
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#6-where-they-compose">
+<span class="md-ellipsis">
+      
+        6. Where they compose
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#7-see-also">
+<span class="md-ellipsis">
+      
+        7. See also
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../db_schema/">
+<span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../testing/">
+<span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../env_vars/">
+<span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../inject_between_solves/">
+<span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../release/">
+<span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../archived/browser_interface/">
+<span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../archived/install_web_interface/">
+<span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#1-picking-a-decomposition">
+<span class="md-ellipsis">
+      
+        1. Picking a decomposition
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#2-spatial-benders-decomposition">
+<span class="md-ellipsis">
+      
+        2. Spatial / Benders decomposition
+      
+    </span>
+</a>
+<nav aria-label="2. Spatial / Benders decomposition" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#21-concept">
+<span class="md-ellipsis">
+      
+        2.1 Concept
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#22-region-declaration">
+<span class="md-ellipsis">
+      
+        2.2 Region declaration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#23-half-flow-rewriting">
+<span class="md-ellipsis">
+      
+        2.3 Half-flow rewriting
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#24-algorithm-master-multi-cut-benders-loop">
+<span class="md-ellipsis">
+      
+        2.4 Algorithm — master + multi-cut Benders loop
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#25-existing-vs-investable-trade-capacity">
+<span class="md-ellipsis">
+      
+        2.5 Existing vs investable trade capacity
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#26-validity-guard">
+<span class="md-ellipsis">
+      
+        2.6 Validity guard
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#27-diagnostics">
+<span class="md-ellipsis">
+      
+        2.7 Diagnostics
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#28-selecting-the-scheme-per-solve">
+<span class="md-ellipsis">
+      
+        2.8 Selecting the scheme per solve
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#29-reference-implementation">
+<span class="md-ellipsis">
+      
+        2.9 Reference implementation
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#3-flex-temporal-decomposition">
+<span class="md-ellipsis">
+      
+        3. Flex-temporal decomposition
+      
+    </span>
+</a>
+<nav aria-label="3. Flex-temporal decomposition" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#31-concept">
+<span class="md-ellipsis">
+      
+        3.1 Concept
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#32-schema-surface">
+<span class="md-ellipsis">
+      
+        3.2 Schema surface
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#33-blocklayout">
+<span class="md-ellipsis">
+      
+        3.3 BlockLayout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#34-overlap-set-aggregation">
+<span class="md-ellipsis">
+      
+        3.4 Overlap-set aggregation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#35-block-aware-emitters">
+<span class="md-ellipsis">
+      
+        3.5 Block-aware emitters
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#36-output-expansion">
+<span class="md-ellipsis">
+      
+        3.6 Output expansion
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#37-caveats">
+<span class="md-ellipsis">
+      
+        3.7 Caveats
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#4-rolling-nested-solves">
+<span class="md-ellipsis">
+      
+        4. Rolling / nested solves
+      
+    </span>
+</a>
+<nav aria-label="4. Rolling / nested solves" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#41-rolling">
+<span class="md-ellipsis">
+      
+        4.1 Rolling
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#42-nested">
+<span class="md-ellipsis">
+      
+        4.2 Nested
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#43-stochastic-branches">
+<span class="md-ellipsis">
+      
+        4.3 Stochastic branches
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#5-release-notes-context">
+<span class="md-ellipsis">
+      
+        5. RELEASE notes context
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#6-where-they-compose">
+<span class="md-ellipsis">
+      
+        6. Where they compose
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#7-see-also">
+<span class="md-ellipsis">
+      
+        7. See also
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="decomposition">Decomposition</h1>
+<p>Decomposition in FlexTool means splitting a monolithic LP into smaller
+solvable pieces, then recombining their solutions. FlexTool supports
+three independent flavours, all implemented natively in
+<code>engine_polars</code>:</p>
+<ul>
+<li><strong>Spatial / Benders</strong> — partition the network into regions joined
+  only by the inter-regional trade flows; a coordinating master holds
+  those trade flows plus the trade-connection investment, and each
+  region is an operational subproblem whose duals become optimality
+  cuts the master accumulates until the optimality gap closes. Selected
+  <strong>per solve</strong> from the database (<code>solve.decomposition = benders</code>); see
+  <a href="#28-selecting-the-scheme-per-solve">§2.8</a>.</li>
+<li><strong>Flex-temporal</strong> — let different parts of the same solve run at
+  different timestep resolutions (hourly power, daily hydrogen, …) in
+  one LP. Configured per-entity via <code>group.new_stepduration</code>.</li>
+<li><strong>Sequential / rolling / nested</strong> — split a long horizon into
+  overlapping windows (rolling) or into an outer long-horizon solve
+  whose decisions feed an inner short-horizon solve (nested). The user
+  configuration is in <code>solve.solve_mode</code> / <code>solve.contains_solves</code>; the
+  engine wiring is in <code>_recursive_solve.py</code> + <code>_solve_handoff.py</code>.</li>
+</ul>
+<p>Spatial and flex-temporal are LP-level decompositions (one solve, many
+sub-problems). Rolling / nested is a <em>meta</em>-level decomposition (one
+chain of solves, each with its own LP). They compose, with one
+exception noted in <a href="#6-where-they-compose">§6</a>.</p>
+<p>The engine-side overview of the per-solve pipeline and warm-start /
+Benders / cascade solve modes lives in
+<a href="../engine_polars/">engine_polars.md</a>; this page focuses on the
+decomposition mechanics themselves.</p>
+<h2 id="1-picking-a-decomposition">1. Picking a decomposition</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Monolithic LP slow, but the system has clear regional structure (multi-country grid, sparse interconnections)</td>
+<td>Spatial / Benders</td>
+</tr>
+<tr>
+<td>Power demand needs hourly resolution but some commodities (long-duration storage, hydrogen, district heat) only need daily / weekly resolution</td>
+<td>Flex-temporal</td>
+</tr>
+<tr>
+<td>Long horizon (decades, full reanalysis years) that does not fit one solve</td>
+<td>Rolling</td>
+</tr>
+<tr>
+<td>Long-term storage needs a multi-year view, but dispatch needs intra-week resolution</td>
+<td>Nested</td>
+</tr>
+<tr>
+<td>Capacity-expansion at coarse resolution + intra-week dispatch at fine resolution</td>
+<td>Nested</td>
+</tr>
+<tr>
+<td>Multiple operational scenarios sharing the same realised path</td>
+<td>Nested + stochastic branches</td>
+</tr>
+</tbody>
+</table>
+<p>The three flavours are <strong>orthogonal in intent</strong> (a decomposition along
+the geography axis, the time-resolution axis, and the horizon axis).
+<a href="#6-where-they-compose">§6</a> covers which combinations are actually
+wired today.</p>
+<h2 id="2-spatial-benders-decomposition">2. Spatial / Benders decomposition</h2>
+<h3 id="21-concept">2.1 Concept</h3>
+<p>Benders decomposition splits the LP into a coordinating <strong>master</strong> and a
+set of operational <strong>subproblems</strong>, one per region. The complicating
+decisions — the inter-regional trade flows and the trade-connection
+investment — live in the master; everything inside a region (its own
+network, generators, storage, demand) is a subproblem solved with the
+master's trade schedule <strong>pinned</strong>. Each subproblem returns the duals of
+its pinned trade columns; the master accumulates those as <strong>optimality
+cuts</strong> and re-solves. The master objective is a <strong>valid lower bound</strong> on
+the true optimum; the incumbent feasible cost is the upper bound; the loop
+stops when the optimality gap <code>(UB − LB) / |UB|</code> drops below tolerance.</p>
+<p>This <strong>replaces</strong> the earlier dual-subgradient (Lagrangian) scheme, which
+severed each cross-region arc into invest-less half-flows bounded near zero
+and collapsed greenfield trade to an autarkic solution with an <em>invalid</em>
+bound above the true optimum. Benders puts the trade investment and the
+trade flow / capacity coupling in the master, feeds each region the
+master's chosen flow as a pinned boundary injection, and returns a
+certified lower bound and the true optimum.</p>
+<p>The master is built by <code>build_flextool</code> over a <strong>network-only reduced
+<code>FlexData</code></strong> (<code>_region_filter.master_network_data</code>) — the SAME emit the
+monolith uses — so the master picks up the trade <code>maxFlow</code> capacity
+coupling, the invest annuity, and the connection flow cost natively and
+<strong>RP-weight-consistently</strong>: the master's trade flow cost and the regions'
+recourse costs are both weighted by the same representative-period /
+timestep weights <code>build_flextool</code> applies everywhere, so summing them is
+arithmetically the monolithic objective (no hand-rolled annuity, no
+weight mismatch). One <strong>recourse</strong> variable <code>η_r</code> per region carries that
+region's operational cost in the master objective.</p>
+<pre class="mermaid"><code>flowchart TD
+    A[FlexData whole system] --&gt; B[_region_filter.split<br/>regions + half-flows]
+    A --&gt; M0[_region_filter.master_network_data<br/>network-only reduced FlexData]
+    M0 --&gt; M[Master = build_flextool + WarmProblem<br/>trade flow f, invest C, recourse η_r]
+    B --&gt; C[Per-region Problem<br/>build_flextool, trade pinned to f̄]
+    M --&gt; C
+    C --&gt; D[subproblem duals<br/>col_dual of pinned trade cols]
+    D --&gt; E[master.add_cut_row<br/>optimality cut per region]
+    E --&gt; M
+    M --&gt; F{gap ≤ tol?}
+    F -- iterate --&gt; C
+    F -- stop --&gt; G[BendersResult<br/>region_objectives, LB/UB, log]
+</code></pre>
+<h3 id="22-region-declaration">2.2 Region declaration</h3>
+<p>Regions are <code>group</code> entities whose <code>decomposition_method</code> parameter
+equals the string <code>benders_regional</code>. The group's
+<code>group__node</code> / <code>group__unit</code> / <code>group__connection</code> memberships list
+the entities belonging to that region. The coordinator requires at
+least two such groups in the active scenario; one is treated as an
+error (use the monolithic path instead).</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Spine input DB fixture sketch.</span>
+<span class="n">entities</span> <span class="o">+=</span> <span class="p">[(</span><span class="s2">"group"</span><span class="p">,</span> <span class="s2">"region_A"</span><span class="p">),</span> <span class="p">(</span><span class="s2">"group"</span><span class="p">,</span> <span class="s2">"region_B"</span><span class="p">)]</span>
+<span class="n">parameter_values</span> <span class="o">+=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="s2">"group"</span><span class="p">,</span> <span class="s2">"region_A"</span><span class="p">,</span> <span class="s2">"decomposition_method"</span><span class="p">,</span> <span class="s2">"benders_regional"</span><span class="p">,</span> <span class="n">ALT</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">"group"</span><span class="p">,</span> <span class="s2">"region_B"</span><span class="p">,</span> <span class="s2">"decomposition_method"</span><span class="p">,</span> <span class="s2">"benders_regional"</span><span class="p">,</span> <span class="n">ALT</span><span class="p">),</span>
+<span class="p">]</span>
+<span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"A"</span><span class="p">,</span> <span class="s2">"B"</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"elec_</span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"h2_</span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"battery_</span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">"</span><span class="p">]:</span>
+        <span class="n">entities</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">"group__node"</span><span class="p">,</span> <span class="p">(</span><span class="sa">f</span><span class="s2">"region_</span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">node</span><span class="p">)))</span>
+</code></pre></div>
+<p>The reference catalogue entry is <code>group.decomposition_method</code> in
+<a href="../../reference/">reference.md</a>; the only accepted value is
+<code>benders_regional</code> (the <code>_region</code> suffix makes the geographic flavour
+explicit, leaving naming room for any future temporal variant). The
+source of truth is
+<code>flextool/engine_polars/_region_filter.py:load_decomposition_method</code>.</p>
+<h3 id="23-half-flow-rewriting">2.3 Half-flow rewriting</h3>
+<p>Every connection whose endpoints straddle two region groups is
+rewritten into a pair of <strong>import / export half-flows</strong> through a
+virtual commodity node, one per region:</p>
+<div class="highlight"><pre><span></span><code>hf_&lt;pipe&gt;__export__&lt;region_A&gt;     (in region A, virtual sink node)
+hf_&lt;pipe&gt;__import__&lt;region_B&gt;     (in region B, virtual source node)
+</code></pre></div>
+<p>Inside a region's standalone LP each half-flow is an ordinary <code>v_flow</code>
+column. The export and import sides of an arc carry the <strong>same flow</strong> at
+optimality. In the Benders scheme that consensus is enforced by the
+master: each iteration <strong>pins</strong> every region's forward cross-region
+half-flow to the master's current <code>f̄</code> per <code>(d, t)</code> (reverse pinned to 0)
+before solving the region. The cut slope for <code>(arc, d, t)</code> is then the
+reduced cost of the pinned forward column
+(<code>Solution.col_dual[pin_col_id]</code> = <code>∂cost_r / ∂f̄</code>, basis-correct, no
+monolith reference). The rewriter / half-flow metadata structure is in
+<code>_region_filter</code> (<code>HalfFlow</code>, <code>Coupling</code>, <code>split</code>); the arc / pin
+bookkeeping for the master lives in <code>_benders._build_arcs</code>.</p>
+<p>Star topologies (more than two regions sharing one pipeline) are not
+supported; the rewriter asserts bilateral arcs only.</p>
+<h3 id="24-algorithm-master-multi-cut-benders-loop">2.4 Algorithm — master + multi-cut Benders loop</h3>
+<p>The master is a single <code>polar_high.Problem</code> wrapped in a
+<code>polar_high.WarmProblem</code>, built ONCE and grown by appended optimality cut
+rows. The loop:</p>
+<ol>
+<li><strong>Bootstrap</strong> <code>f̄ = 0</code>, solve every region, harvest the first cuts.</li>
+<li><strong>Master solve</strong> → new trade schedule <code>f̄</code> and invest <code>C</code>; the master
+   objective is the lower bound <code>LB</code> (a <em>valid</em> global under-estimate —
+   the whole point versus the old scheme).</li>
+<li><strong>Subproblems</strong>: pin each region's forward trade columns to <code>f̄</code>,
+   solve, read <code>col_dual</code> of the pinned columns.</li>
+<li><strong>Cuts</strong>: append one optimality cut per region via
+   <code>WarmProblem.add_cut_row</code>, bounding that region's recourse <code>η_r</code>.</li>
+<li><strong>Upper bound</strong>: <code>UB = master invest cost(C) + Σ_r cost_r(f̄)</code>;
+   incumbent = best (min) <code>UB</code>.</li>
+<li>Repeat from 2 until <code>gap = (best_UB − LB) / |best_UB| ≤ tol</code> or the
+   iteration cap is hit.</li>
+</ol>
+<p>The recourse vars and cut rows are appended through the polar-high
+primitives <code>WarmProblem.add_recourse_col</code> and <code>WarmProblem.add_cut_row</code>;
+each region subproblem is solved with <code>WarmProblem.solve(retry_on_unknown=
+…)</code> so a transient HiGHS <code>kUnknown</code> is retried rather than aborting the
+run. Each <code>η_r</code> is lower-bounded by a large-NEGATIVE finite floor (NOT a
+hard <code>η ≥ 0</code>): FlexTool region costs can be negative, so a blind zero floor
+could cut off the optimum; the finite floor is a provably valid global
+under-estimate that keeps the cut-less iter-0 master optimal.</p>
+<p>The two knobs:</p>
+<table>
+<thead>
+<tr>
+<th>DB parameter (<code>solve</code> entity)</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>benders_max_iter</code></td>
+<td><code>50</code></td>
+<td>Outer-loop iteration cap</td>
+</tr>
+<tr>
+<td><code>benders_tolerance</code></td>
+<td><code>1e-3</code></td>
+<td>Relative optimality-gap threshold (gap normalised by the incumbent UB)</td>
+</tr>
+</tbody>
+</table>
+<p>They are resolved per solve by <code>SolveConfig.benders_config_for</code>; a solve
+that authors neither falls back to these defaults.</p>
+<h3 id="25-existing-vs-investable-trade-capacity">2.5 Existing vs investable trade capacity</h3>
+<p>The master handles existing and investable trade connections in ONE
+build. An existing-only arc (<code>existing &gt; 0</code>, no <code>invest_method</code>) carries
+no invest variable; its flow is bounded by <code>existing / unitsize</code> through
+the FlexTool <code>maxFlow</code> RHS (<code>p_flow_upper_existing</code>). An investable arc
+gets a <code>v_invest</code> var and its capacity is bounded by <code>existing +
+invested</code>. A greenfield arc (<code>existing = 0</code>) is unchanged — all its trade
+capacity is invested <code>C</code>. Because the master is the SAME emit as the
+monolith, the existing-capacity term and the invest annuity drop in with
+no rescale, and the per-region half-flows are left <strong>uncapped</strong>
+(<code>benders_uncap_cross_region=True</code>) so a positive master pin is always
+feasible in the region.</p>
+<h3 id="26-validity-guard">2.6 Validity guard</h3>
+<p>A monolith-free <strong>sandwich guard</strong> is always on: <code>LB ≤ optimum ≤ best_UB</code>
+must hold (<code>best_UB</code> is itself an upper bound on the optimum). An
+<code>LB &gt; best_UB</code> is the genuine invalid-lower-bound pathology — exactly the
+bug this scheme fixes — and raises <code>RuntimeError</code> rather than reporting a
+wrong-but-plausible optimum. No external big-<code>M</code> is needed.</p>
+<h3 id="27-diagnostics">2.7 Diagnostics</h3>
+<p>Every outer iteration logs the iteration index, the master <code>LB</code>, the
+incumbent <code>UB</code>, and the current gap; the orchestrator also prints a final
+convergence + LB/UB sandwich summary. The same data is available on the
+returned <code>BendersResult</code>:</p>
+<ul>
+<li><code>BendersResult.iteration_log</code> — per-iteration dicts (LB / UB / gap
+  trajectory)</li>
+<li><code>BendersResult.lower_bound</code> / <code>upper_bound</code> / <code>gap</code> — final values</li>
+<li><code>BendersResult.region_objectives</code> — per-region recourse cost at the
+  incumbent</li>
+<li><code>BendersResult.converged</code> — True iff the gap dropped below <code>tol</code>
+  before the iteration cap</li>
+</ul>
+<p>Look for:</p>
+<ul>
+<li>the gap closing monotonically (LB rising, UB falling toward each
+  other); a stalled gap usually means <code>benders_max_iter</code> is too low or
+  the cut slopes are degenerate (a region whose pinned trade column is
+  basic returns a zero reduced cost)</li>
+<li>region objectives broadly similar magnitude — one region dominating
+  often means the cut placement is wrong (a major load centre ended
+  up in a region with too little generation)</li>
+</ul>
+<h3 id="28-selecting-the-scheme-per-solve">2.8 Selecting the scheme per solve</h3>
+<p>Decomposition is chosen <strong>per solve, from the database</strong> — there is no
+CLI flag. Set <code>solve.decomposition = benders</code> on the solve(s) you
+want decomposed, optionally overriding the two <code>benders_*</code> knobs:</p>
+<table>
+<thead>
+<tr>
+<th><code>solve</code> parameter</th>
+<th>Value list / type</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>decomposition</code></td>
+<td><code>decomposition_schemes</code> = {<code>none</code>, <code>benders</code>}</td>
+<td><code>none</code></td>
+<td><code>benders</code> routes this solve through <code>solve_benders</code>; <code>none</code> solves it monolithically</td>
+</tr>
+<tr>
+<td><code>benders_max_iter</code></td>
+<td>float</td>
+<td><code>50</code></td>
+<td>Outer-loop iteration cap</td>
+</tr>
+<tr>
+<td><code>benders_tolerance</code></td>
+<td>float</td>
+<td><code>1e-3</code></td>
+<td>Relative optimality-gap threshold</td>
+</tr>
+</tbody>
+</table>
+<p>Because the decision is per solve, a single chain can mix schemes — for
+example a Benders investment solve followed by a monolithic
+full-resolution dispatch solve. The orchestrator
+(<code>engine_polars._orchestration</code>) reads each solve's resolved
+<code>decomposition</code> value as it iterates <code>model.solves</code>. This is distinct
+from the group-level <code>group.decomposition_method</code>
+(<code>none</code> / <code>benders_regional</code>), which declares <em>which groups are
+regions</em>; <code>solve.decomposition</code> declares <em>whether a given solve
+decomposes</em>. Benders still requires at least two <code>benders_regional</code>
+groups.</p>
+<p><strong>Invest → dispatch handoff.</strong> A Benders investment solve assembles the
+owner-selected invested trade + in-region capacity into a whole-system
+<code>SolveHandoff</code> (the TIER-1 invest→dispatch chain) so a downstream rolling
+or monolithic dispatch solve consumes the realised capacity exactly as it
+would after any other invest solve. The orchestrator records which Benders
+solves produced an invest handoff and threads it forward; a downstream
+solve that would consume a Benders solve which produced none is rejected
+loudly rather than silently dropping the link.</p>
+<p>The <code>--region &lt;GROUP_NAME&gt;</code> flag is a separate, filter-only entry
+point that emits a per-region input directory and exits without
+solving — useful for inspecting how the rewriter sees a given region.</p>
+<h3 id="29-reference-implementation">2.9 Reference implementation</h3>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Module</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>solve_benders(data, *, ...)</code> — top-level entry</td>
+<td><code>flextool/engine_polars/_benders.py</code></td>
+</tr>
+<tr>
+<td><code>BendersResult</code> — return type</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>Coupling</code>, <code>_build_arcs</code>, the master + cut loop</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>master_network_data</code> (network-only reduced FlexData for the master)</td>
+<td><code>flextool/engine_polars/_region_filter.py</code></td>
+</tr>
+<tr>
+<td><code>RegionSplit</code>, <code>HalfFlow</code>, <code>split</code></td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>load_decomposition_method</code> (reads <code>decomposition_method</code> from solve_data)</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>WarmProblem.add_cut_row</code> / <code>add_recourse_col</code> / <code>solve(retry_on_unknown=…)</code></td>
+<td><code>polar_high</code> (external)</td>
+</tr>
+</tbody>
+</table>
+<p>The per-solve routing lives in <code>flextool/engine_polars/_orchestration.py</code>
+(<code>_PolarHighCascadeSolver._run_benders_solve</code>, driven by
+<code>SolveConfig.decomposition_for</code>). The Benders path is also surfaced
+as a "Solve modes" entry in
+<a href="../engine_polars/#solve-modes">engine_polars.md § Solve modes</a>.</p>
+<h2 id="3-flex-temporal-decomposition">3. Flex-temporal decomposition</h2>
+<h3 id="31-concept">3.1 Concept</h3>
+<p>Mixed-resolution scheduling: some entities (power demand, VRE
+generation, batteries) need fine timesteps; others (long-duration
+storage, hydrogen, district heat) only need coarser steps for their
+dynamics to be well-represented. A monolithic LP at the fine
+resolution wastes solve time on the slow entities. Flex-temporal
+decomposition lets a single LP carry both — every entity runs on the
+block resolution it needs, joined by overlap-set aggregation across
+the LP's constraints.</p>
+<p>This is structurally different from the Benders path: there is one
+LP, one HiGHS run, no outer loop. The decomposition lives in the LP
+<em>structure</em> (which <code>(entity, block)</code> rows the <code>_emit_*</code> modules produce).</p>
+<h3 id="32-schema-surface">3.2 Schema surface</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Entity</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>solve.new_stepduration</code></td>
+<td><code>solve</code></td>
+<td>Solve-wide default block duration (existing parameter, predates the multi-block work)</td>
+</tr>
+<tr>
+<td><code>group.new_stepduration</code></td>
+<td><code>group</code></td>
+<td>Override: members of this group operate at this step duration</td>
+</tr>
+<tr>
+<td><code>group.decomposition_method</code></td>
+<td><code>group</code></td>
+<td>Tag a group as a <em>resolution group</em>. Used together with <code>new_stepduration</code>.</td>
+</tr>
+<tr>
+<td><code>group__node</code> / <code>group__unit</code> / <code>group__connection</code></td>
+<td>(relation)</td>
+<td>Membership lists for the resolution group</td>
+</tr>
+</tbody>
+</table>
+<p>Validation in <code>BlockLayout.validate_group_membership</code>:</p>
+<ul>
+<li>every entity may belong to at most one resolution-group (otherwise
+  block assignment is ambiguous)</li>
+<li>every entity may belong to at most one decomposition-group (the
+  Benders region groups counted here too)</li>
+<li>reserve participants must NOT sit in any resolution-group (reserve
+  blocks are V1 only — preserved compatibility quirk)</li>
+</ul>
+<p>Violations raise <code>FlexToolConfigError</code> at solve setup.</p>
+<h3 id="33-blocklayout">3.3 BlockLayout</h3>
+<p><code>BlockLayout.build</code> (in <code>_block_layout.py</code>) is called once per solve
+and produces, in one pass, every per-solve block-related frame:</p>
+<ul>
+<li><code>entity_block_frame</code> — <code>(entity, block)</code></li>
+<li><code>process_side_block_frame</code> — <code>(process, side, block)</code></li>
+<li><code>process_block_frame</code> — <code>(process, block)</code> (process-unified)</li>
+<li><code>block_step_duration_frame</code> — <code>(block, period, step, step_duration)</code></li>
+<li><code>overlap_set_frame</code> —
+  <code>(period, block_coarse, step_coarse, block_fine, step_fine, fraction)</code></li>
+<li><code>block_step_previous_frame</code> — per-block predecessor 7-tuples</li>
+<li><code>block_period_time_first_frame</code> / <code>block_period_time_last_frame</code> —
+  per-block period boundaries</li>
+</ul>
+<p>The <code>DEFAULT_BLOCK</code> block always exists and inherits
+<code>solve.new_stepduration</code> (or the bare timeline if unset). Every
+resolution group becomes one additional named block at its own step
+duration.</p>
+<pre class="mermaid"><code>flowchart LR
+    A[group.new_stepduration<br/>+ group__*] --&gt; B[BlockLayout.build]
+    C[solve.new_stepduration] --&gt; B
+    D[timeline_config] --&gt; B
+    B --&gt; E[entity_block]
+    B --&gt; F[overlap_set]
+    B --&gt; G[block_step_duration]
+    B --&gt; H[block_step_previous]
+    E &amp; F &amp; G &amp; H --&gt; I[BlockBundle]
+    I --&gt; J[block-aware _emit_*.py]
+</code></pre>
+<p><code>BlockBundle</code> (in <code>_derived_block.py</code>) wraps the <code>BlockLayout</code> with
+cached lazy-frame join helpers (<code>block_compat_frame</code>,
+<code>process_side_block_lf</code>, …) that the <code>_emit_*</code> modules use to filter and
+re-project their rows.</p>
+<h3 id="34-overlap-set-aggregation">3.4 Overlap-set aggregation</h3>
+<p>The <code>overlap_set</code> is the cross-block aggregation key. For each
+<code>(period, block_coarse, step_coarse)</code> row there are one or more
+<code>(block_fine, step_fine, fraction)</code> rows whose <code>fraction</code> sums to 1.
+The constraint generators use this to project fine-block decision
+variables onto coarse-block constraints (and vice versa).</p>
+<p>Concretely, when a coarse-block (e.g. daily hydrogen) node balance
+joins an hourly arc, the hourly <code>v_flow</code> rows are aggregated to the
+daily key via <code>arc_sink_block_dt</code> / <code>arc_source_block_dt</code>
+(<code>_derived_block.py</code>), weighted by <code>block_step_duration</code>. The other
+direction — a fine-block constraint reading a coarse-block variable —
+projects the coarse value onto each fine step at fraction 1
+(piecewise-constant).</p>
+<p>Two structural assumptions:</p>
+<ul>
+<li><strong>Two-block-deep limit</strong> — one resolution-group block plus the
+  natural default fine block. Lifting it is a model-design question.</li>
+<li><strong>Aligned subsets only</strong> — every coarse step must align with an
+  integer number of fine steps. Non-aligned configurations raise
+  <code>NotImplementedError</code> from <code>_build_overlap_set</code>.</li>
+</ul>
+<h3 id="35-block-aware-emitters">3.5 Block-aware emitters</h3>
+<p>The <code>_emit_*.py</code> modules in <code>engine_polars</code> (formerly <code>_writer_*.py</code>,
+renamed in the writer→emitter Phases 1–5; see
+<a href="../engine_polars/#emitters-formerly-writer-ports">engine_polars.md § Emitters</a>)
+are block-aware. The major touch points:</p>
+<ul>
+<li><strong>Node balance</strong> — built on the block of the node, joined with
+  per-side arcs through <code>overlap_set</code> (loss-aware when the arc
+  efficiency depends on flow direction).</li>
+<li><strong>Storage transition</strong> — <code>v_state</code> ties at block boundaries; the
+  <code>block_step_previous_frame</code> provides the per-block predecessor
+  lookup so storage state continuity is enforced on the block
+  granularity, not the fine granularity.</li>
+<li><strong>Ramp / minimum-load</strong> — block-aware: ramps use the block's step
+  duration, not the underlying timeline's.</li>
+<li><strong>Reserves</strong> — V1-only-on-default-block; reserves cannot ride a
+  coarse block (the validation rule above guarantees this).</li>
+</ul>
+<h3 id="36-output-expansion">3.6 Output expansion</h3>
+<p>Coarse-block decision variables are expanded back onto the fine
+timeline before the <code>_emit_*</code> modules write results, using the same
+<code>overlap_set</code> (read in reverse). Per-fraction attribution stays
+consistent across the solve / write boundary; downstream tooling sees
+the same fine-grained output regardless of which entities ran on
+which block.</p>
+<p>This expansion is the reason that <code>output_node_state_t</code>,
+<code>output_node_balance_t</code>, etc. emit one row per <code>(period, fine_step)</code>
+even for entities on a coarse block.</p>
+<h3 id="37-caveats">3.7 Caveats</h3>
+<ul>
+<li><code>representative_period_weights</code> interacts with block durations via
+  the per-period normalisation in <code>TimelineConfig.timeset_weights</code>;
+  picking arbitrary block durations on top of an RP-clustered timeset
+  is supported but requires the block step duration to divide the RP
+  period length evenly.</li>
+<li>Block-aware reserves are not implemented; if you tag a reserve
+  participant into a resolution group, the validator refuses the
+  scenario.</li>
+</ul>
+<p>The engine-side overview of flex-temporal lives in
+<a href="../engine_polars/#flex-temporal-decomposition">engine_polars.md § Flex-temporal decomposition</a>.</p>
+<h2 id="4-rolling-nested-solves">4. Rolling / nested solves</h2>
+<p>These are user-facing patterns documented in
+<a href="../../how_to/">how_to.md</a>; this section covers the engine wiring.</p>
+<h3 id="41-rolling">4.1 Rolling</h3>
+<p>A long horizon is split into overlapping optimisation windows. Each
+window ("roll") is its own LP; the next window starts at the previous
+window's "jump" point with the storage state at that point fixed.</p>
+<p>Schema:</p>
+<ul>
+<li><code>solve.solve_mode = rolling_window</code></li>
+<li><code>solve.rolling_solve_jump</code> — interval between roll start points
+  (also the output interval per roll)</li>
+<li><code>solve.rolling_solve_horizon</code> — length of the roll's optimisation
+  horizon (<code>&gt; jump</code>; the overlap is <code>horizon - jump</code>)</li>
+<li><code>solve.rolling_duration</code> — optional total horizon length;
+  <code>-1</code> (or unset) means "until the active time list is exhausted"</li>
+</ul>
+<p>Engine wiring:</p>
+<ul>
+<li><code>RecursiveSolveBuilder.create_rolling_solves</code> in
+  <code>_recursive_solve.py</code> expands the parent solve into a sequence
+  <code>solve_roll_0, solve_roll_1, …</code> with per-roll active-time and
+  realized-time lists.</li>
+<li>Per-roll storage carry-over rides
+  <code>SolveHandoff.roll_end_state</code> (<code>_solve_handoff.py</code>).</li>
+<li>The cascade reuses the same LP shell via <code>polar_high.WarmProblem</code>
+  when consecutive rolls' <code>FlexData</code> fingerprints match; otherwise
+  cold-rebuild. See
+  <a href="../engine_polars/#warm-start-cascade-polar_highwarmproblem">engine_polars.md § Warm-start cascade</a>.</li>
+</ul>
+<h3 id="42-nested">4.2 Nested</h3>
+<p>An outer long-horizon solve fixes long-term decisions (capacity, long-
+term storage state at chosen anchor periods); an inner short-horizon
+solve dispatches within those decisions.</p>
+<p>Schema:</p>
+<ul>
+<li><code>solve.contains_solves</code> — array of child solves run after the parent
+  using the parent's realised data</li>
+<li><code>solve.fix_storage_periods</code> — periods where the parent's last
+  storage value becomes a target for the child</li>
+<li><code>node.storage_nested_fix_method</code> — how the child handles the
+  fix-storage target (<code>fix_quantity</code> / <code>fix_price</code> / etc.; <code>fix_price</code>
+  requires <code>storage_state_reference_price</code>)</li>
+</ul>
+<p>Engine wiring:</p>
+<ul>
+<li>The <code>RecursiveSolveBuilder</code> walks the solve tree at
+  <code>define_solve_recursive</code> time and threads <code>ParentSolveInfo</code> into
+  nested children.</li>
+<li>The parent's realised capacity / storage state rides
+  <code>SolveHandoff.realized_invest</code> / <code>realized_existing</code> /
+  <code>fix_storage</code> / <code>fix_storage_timesteps</code>.</li>
+<li>The child's preprocessing reads from <code>state.handoffs[parent_name]</code>
+  (in-memory by default) or from the legacy
+  <code>solve_data_&lt;parent&gt;/fix_storage_*.csv</code> (fallback).</li>
+</ul>
+<p>The single-matching-period rename quirk: when a child solve's period
+set intersects its parent's by exactly one period, the child is
+renamed <code>solve + "_" + period</code> and <code>duplicate_solve</code> carbon-copies
+the parent's lockstep dicts under the new name. Preserved verbatim
+from the legacy preprocessor.</p>
+<h3 id="43-stochastic-branches">4.3 Stochastic branches</h3>
+<p>Each branch is itself a sub-solve in the chain. <code>solve.stochastic_branches</code>
+is a 4-D map that decorates affected periods with branch-suffixed
+clones (<code>y2025</code> → <code>y2025</code>, <code>y2025_low</code>, <code>y2025_high</code>). Only the
+realised branch contributes to <code>realized_time_lists</code> and
+<code>fix_storage_time_lists</code>; the other branches' LP variables exist for
+the optimisation but do not enter the realised outputs.</p>
+<p>The wiring lives in <code>_stochastic.StochasticSolver</code> (called from
+<code>RecursiveSolveBuilder</code>); non-anticipativity constraints are emitted
+by <code>_add_non_anticipativity_constraints</code> in <code>model.py</code>. See
+<a href="../engine_polars/#stochastic-branches">engine_polars.md § Stochastic branches</a>.</p>
+<h2 id="5-release-notes-context">5. RELEASE notes context</h2>
+<p>The 3.29.0–3.33.0 release cycle is the relevant window for these
+features. Quick map (full text in
+<a href="../../release/">release.md</a> or <code>CHANGELOG.md</code>):</p>
+<ul>
+<li><strong>3.29.0</strong> — Flex-temporal decomposition lands. <code>v50</code> migration
+  moves <code>new_stepduration</code> from <code>timeset</code> to <code>solve</code>. <code>v51</code> adds
+  group-level <code>new_stepduration</code> + <code>decomposition_method</code>.</li>
+<li><strong>3.30.0–3.32.0</strong> — Block-aware emitters complete (then known as writer ports); output
+  expansion stabilises.</li>
+<li><strong>4.0.0 (<code>v60</code> migration)</strong> — spatial decomposition becomes DB-driven
+  and per-solve: <code>solve.decomposition</code> plus per-solve knobs. The global
+  <code>--decomposition</code> CLI flags are removed; the orchestrator routes each
+  solve from its DB value.</li>
+<li><strong>4.0.0 (<code>v62</code> migration)</strong> — the spatial scheme switches from the
+  dual-subgradient (Lagrangian) coordinator to <strong>Benders</strong>. The
+  <code>decomposition_schemes</code> value <code>lagrangian</code> → <code>benders</code> and the group
+  method <code>lagrangian_region</code> → <code>benders_regional</code>; the old
+  <code>lagrangian_alpha</code> / <code>lagrangian_max_iter</code> / <code>lagrangian_tolerance</code>
+  knobs are dropped and replaced by <code>benders_max_iter</code> (50) /
+  <code>benders_tolerance</code> (1e-3). Existing DBs are auto-migrated (breaking
+  schema change, DB version 62). The Benders invest solve threads its
+  realised capacity into a downstream dispatch solve (TIER-1
+  invest→dispatch handoff).</li>
+</ul>
+<h2 id="6-where-they-compose">6. Where they compose</h2>
+<table>
+<thead>
+<tr>
+<th>Combination</th>
+<th>Supported</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Benders + flex-temporal</td>
+<td>Yes</td>
+<td>Each region's <code>build_flextool</code> runs through the block-aware <code>_emit_*</code> modules unchanged.</td>
+</tr>
+<tr>
+<td>Benders + rolling</td>
+<td>No</td>
+<td>One Benders solve is the unit of work for the outer rolling loop. Not currently wired; would require per-roll cut warm-start. The TIER-1 invest→dispatch handoff threads a Benders <em>invest</em> solve into a downstream <em>rolling dispatch</em> solve, which is the supported pattern.</td>
+</tr>
+<tr>
+<td>Benders + nested</td>
+<td>Partial</td>
+<td>The outer (parent) solve can be Benders, but the parent's handoff to children propagates only the invest→dispatch capacity, not per-region operational state. Treat as untested beyond the invest→dispatch chain.</td>
+</tr>
+<tr>
+<td>Flex-temporal + rolling</td>
+<td>Yes</td>
+<td>The rolling jump is on the fine timeline; coarse blocks honour the jump boundary inside each window.</td>
+</tr>
+<tr>
+<td>Flex-temporal + nested</td>
+<td>Yes</td>
+<td>Each parent / child solve carries its own <code>BlockLayout</code>.</td>
+</tr>
+<tr>
+<td>Flex-temporal + stochastic</td>
+<td>Yes</td>
+<td>Branches enter the active-time lists at the fine resolution; coarse-block constraints pick up the relevant branch-suffixed steps via the same overlap set.</td>
+</tr>
+<tr>
+<td>Rolling + nested</td>
+<td>Yes</td>
+<td>The legacy "more than one solve in a rolling solve" raise still trips for unsupported sibling-rolling-children patterns.</td>
+</tr>
+<tr>
+<td>Rolling + stochastic</td>
+<td>Yes</td>
+<td>Each roll can carry branches; the realised branch chains forward.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="7-see-also">7. See also</h2>
+<ul>
+<li><a href="../engine_polars/">engine_polars.md</a> — the engine guide; Solve modes
+  section covers monolithic / warm / Benders and Flex-temporal
+  decomposition section covers the BlockLayout shape.</li>
+<li><a href="../architecture/">architecture.md</a> — top-level architecture; how the
+  decomposition pieces fit into the larger pipeline.</li>
+<li><a href="../scaling/">scaling.md</a> — auto-scaling pipeline; runs per
+  sub-problem, so each region / each roll / each block gets its own
+  scaling pass.</li>
+<li><a href="../../reference/">reference.md</a> — the parameters touched here:
+  <code>solve.solve_mode</code>, <code>solve.rolling_solve_jump</code>,
+  <code>solve.rolling_solve_horizon</code>, <code>solve.contains_solves</code>,
+  <code>solve.fix_storage_periods</code>, <code>solve.stochastic_branches</code>,
+  <code>solve.new_stepduration</code>, <code>group.new_stepduration</code>,
+  <code>group.decomposition_method</code>, <code>node.storage_nested_fix_method</code>.</li>
+<li><a href="../../how_to/">how_to.md</a> — practical recipes for setting up
+  Benders regions, rolling windows, nested solves, and stochastic
+  branches.</li>
+</ul>
+</article>
+</div>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+<script src="../../assets/mathjaxhelper.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>

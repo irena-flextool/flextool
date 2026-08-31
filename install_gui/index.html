@@ -13,10 +13,10 @@
       
       
       
-        <link rel="prev" href="..">
+        <link rel="prev" href="../interface_overview/">
       
       
-        <link rel="next" href="../install_gui/">
+        <link rel="next" href="../install_toolbox/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Choosing an interface - IRENA FlexTool</title>
+        <title>Install with FlexTool GUI - IRENA FlexTool</title>
       
     
     
@@ -68,7 +68,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#choosing-an-interface" class="md-skip">
+        <a href="#install-flextool-with-the-flextool-gui" class="md-skip">
           Skip to content
         </a>
       
@@ -103,7 +103,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Choosing an interface
+              Install with FlexTool GUI
             
           </span>
         </div>
@@ -295,6 +295,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -314,7 +342,7 @@
   <span class="md-ellipsis">
     
   
-    Choosing an interface
+    Install with FlexTool GUI
   
 
     
@@ -332,7 +360,7 @@
   <span class="md-ellipsis">
     
   
-    Choosing an interface
+    Install with FlexTool GUI
   
 
     
@@ -358,10 +386,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#pick-by-use-case" class="md-nav__link">
+  <a href="#requirements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pick by use case
+        Requirements
       
     </span>
   </a>
@@ -369,22 +397,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#execution-orchestration-gui" class="md-nav__link">
+  <a href="#installation-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Execution / orchestration GUI
+        Installation Steps
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Execution / orchestration GUI">
+    <nav class="md-nav" aria-label="Installation Steps">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#flextool-gui" class="md-nav__link">
+  <a href="#1-install-python" class="md-nav__link">
     <span class="md-ellipsis">
       
-        FlexTool GUI
+        1. Install Python
       
     </span>
   </a>
@@ -392,10 +420,115 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#spine-toolbox" class="md-nav__link">
+  <a href="#2-install-git-optional" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Spine Toolbox
+        2. Install Git (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-get-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Get FlexTool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-enter-the-flextool-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Enter the FlexTool directory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-create-a-virtual-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Create a Virtual Environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-install-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Install FlexTool
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Install FlexTool">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lighter-weight-install-without-spine-toolbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lighter weight install (without Spine Toolbox)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-from-pypi-testpypi-pre-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install from PyPI / TestPyPI (pre-release)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-initialize-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Initialize FlexTool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-verify-the-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Verify the install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#9-launch-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Launch FlexTool
       
     </span>
   </a>
@@ -408,22 +541,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#data-editor" class="md-nav__link">
+  <a href="#updating-flextool" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Data editor
+        Updating FlexTool
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Data editor">
+    <nav class="md-nav" aria-label="Updating FlexTool">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#spine-database-editor-default" class="md-nav__link">
+  <a href="#from-the-gui" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Spine database editor (default)
+        From the GUI
       
     </span>
   </a>
@@ -431,10 +564,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#excel-libreoffice-alternative" class="md-nav__link">
+  <a href="#update-notifications" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Excel / LibreOffice (alternative)
+        Update notifications
       
     </span>
   </a>
@@ -447,24 +580,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#scripting-automation-terminal-cli" class="md-nav__link">
+  <a href="#troubleshooting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Scripting / automation (terminal CLI)
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#command-not-found-flextool-gui-flextool-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "command not found: flextool-gui" / "flextool-run"
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#whats-not-an-interface-any-more" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#no-module-named-_tkinter-macos-linux" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What's not an interface any more
+        "No module named '_tkinter'" (macOS / Linux)
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#import-errors-or-missing-modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import errors or missing modules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#solver-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solver issues
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -472,34 +644,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../install_gui/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Install with FlexTool GUI
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -1629,10 +1773,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#pick-by-use-case" class="md-nav__link">
+  <a href="#requirements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pick by use case
+        Requirements
       
     </span>
   </a>
@@ -1640,22 +1784,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#execution-orchestration-gui" class="md-nav__link">
+  <a href="#installation-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Execution / orchestration GUI
+        Installation Steps
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Execution / orchestration GUI">
+    <nav class="md-nav" aria-label="Installation Steps">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#flextool-gui" class="md-nav__link">
+  <a href="#1-install-python" class="md-nav__link">
     <span class="md-ellipsis">
       
-        FlexTool GUI
+        1. Install Python
       
     </span>
   </a>
@@ -1663,10 +1807,115 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#spine-toolbox" class="md-nav__link">
+  <a href="#2-install-git-optional" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Spine Toolbox
+        2. Install Git (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-get-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Get FlexTool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-enter-the-flextool-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Enter the FlexTool directory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-create-a-virtual-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Create a Virtual Environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-install-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Install FlexTool
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Install FlexTool">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lighter-weight-install-without-spine-toolbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lighter weight install (without Spine Toolbox)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-from-pypi-testpypi-pre-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install from PyPI / TestPyPI (pre-release)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-initialize-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Initialize FlexTool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-verify-the-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Verify the install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#9-launch-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Launch FlexTool
       
     </span>
   </a>
@@ -1679,22 +1928,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#data-editor" class="md-nav__link">
+  <a href="#updating-flextool" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Data editor
+        Updating FlexTool
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Data editor">
+    <nav class="md-nav" aria-label="Updating FlexTool">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#spine-database-editor-default" class="md-nav__link">
+  <a href="#from-the-gui" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Spine database editor (default)
+        From the GUI
       
     </span>
   </a>
@@ -1702,10 +1951,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#excel-libreoffice-alternative" class="md-nav__link">
+  <a href="#update-notifications" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Excel / LibreOffice (alternative)
+        Update notifications
       
     </span>
   </a>
@@ -1718,24 +1967,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#scripting-automation-terminal-cli" class="md-nav__link">
+  <a href="#troubleshooting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Scripting / automation (terminal CLI)
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#command-not-found-flextool-gui-flextool-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "command not found: flextool-gui" / "flextool-run"
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#whats-not-an-interface-any-more" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#no-module-named-_tkinter-macos-linux" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What's not an interface any more
+        "No module named '_tkinter'" (macOS / Linux)
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#import-errors-or-missing-modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import errors or missing modules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#solver-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solver issues
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1759,126 +2047,132 @@
   
 
 
-<h1 id="choosing-an-interface">Choosing an interface</h1>
-<p>FlexTool offers <strong>two parallel ways to orchestrate runs</strong> and <strong>two parallel ways to edit data</strong>.
-This page helps you pick the right combination — most users settle in under two minutes by
-scanning the table below.</p>
-<p>The two axes are orthogonal: any orchestration GUI can be paired with any data editor, and a
-terminal workflow can be layered on top of either combination for batches and automation.</p>
-<h2 id="pick-by-use-case">Pick by use case</h2>
-<table>
-<thead>
-<tr>
-<th>You want to…</th>
-<th>Recommended stack</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Get started quickly / build a first model</td>
-<td><strong>FlexTool GUI</strong> + <strong>Spine database editor</strong></td>
-</tr>
-<tr>
-<td>Keep editing data in spreadsheets</td>
-<td><strong>FlexTool GUI</strong> + <strong>Excel / LibreOffice</strong></td>
-</tr>
-<tr>
-<td>Build multi-tool DAG workflows (FlexTool combined with other models)</td>
-<td><strong>Spine Toolbox</strong> + <strong>Spine database editor</strong></td>
-</tr>
-<tr>
-<td>Run batches on a server or in CI</td>
-<td><strong>Terminal CLI</strong> (data editor irrelevant once the input DB is built)</td>
-</tr>
-<tr>
-<td>You're an experienced FlexTool v3 user / already use Spine Toolbox</td>
-<td><strong>Spine Toolbox</strong> + <strong>Spine database editor</strong></td>
-</tr>
-</tbody>
-</table>
-<p>The rest of this page explains each choice and links to the installation and usage guides.</p>
-<h2 id="execution-orchestration-gui">Execution / orchestration GUI</h2>
-<h3 id="flextool-gui">FlexTool GUI</h3>
-<p>A standalone Tkinter application launched with <code>python -m flextool.gui</code>. It is the recommended
-starting point for new users and for anyone whose workflow centres on FlexTool itself.</p>
-<p>What it gives you:</p>
-<ul>
-<li>Project management with one or more input sources (<code>.sqlite</code> or <code>.xlsx</code>).</li>
-<li>Double-click an <code>.sqlite</code> source to open it in the Spine database editor.</li>
-<li>Scenario selection and an execution queue with a memory watchdog (per-job memory budget,
-  system-memory floor, automatic kill of the most-over-budget job under pressure).</li>
-<li>Auto-generated outputs after each run: scenario plots, scenario Excels, scenario CSVs,
-  comparison plots, and comparison Excels — each toggleable.</li>
-<li>Result viewer with keyboard navigation between scenarios and plot variants, plus a dedicated
-  scenario comparison mode and a network graph view.</li>
-</ul>
-<p>When to choose FlexTool GUI:</p>
-<ul>
-<li>You are new to FlexTool, or your work is mostly FlexTool-centric.</li>
-<li>You want one place to manage inputs, run scenarios, and inspect results.</li>
-<li>You want the lightest installation footprint.</li>
-</ul>
-<p>See <a href="../install_gui/">Install with FlexTool GUI</a> and the
-<a href="../flextool_gui_interface/">FlexTool GUI reference</a>.</p>
-<h3 id="spine-toolbox">Spine Toolbox</h3>
-<p>Spine Toolbox is a separate workflow manager that runs FlexTool as one node in a directed
-acyclic graph (DAG) of tools and data stores.</p>
-<p>When to choose Spine Toolbox:</p>
-<ul>
-<li>You build <strong>multi-tool pipelines</strong> (custom pre-processing, FlexTool, post-processing,
-  another model downstream).</li>
-<li>You need to integrate FlexTool with other Spine-based models.</li>
-<li>You already use Spine Toolbox and don't want a second orchestration GUI.</li>
-<li>You are more comfortable with the visual workflow than predefined options</li>
-</ul>
-<p>See <a href="../install_toolbox/">Install with Spine Toolbox</a> and the
-<a href="../spine_toolbox/">Spine Toolbox interface guide</a>.</p>
-<h2 id="data-editor">Data editor</h2>
-<h3 id="spine-database-editor-default">Spine database editor (default)</h3>
-<p>The Spine database editor is the native editor for FlexTool's input format. It opens from
-either GUI: double-click an <code>.sqlite</code> source in the FlexTool GUI, or open the data store from
-inside Spine Toolbox.</p>
-<p>It understands FlexTool's entities, alternatives, scenarios, and parameter-value structure
-directly, so all relationships (e.g. a unit's input/output nodes, a node's commodity) are
-validated as you edit. This is the recommended editor for anything beyond trivial changes.</p>
-<p>See the <a href="../spine_database/">Spine database guide</a>.</p>
-<h3 id="excel-libreoffice-alternative">Excel / LibreOffice (alternative)</h3>
-<p>If you would rather not learn a new editor, you can export an Excel template from the FlexTool
-GUI, edit the data in Excel or LibreOffice, and import it back. The same workflow is supported
-from the terminal.</p>
-<p>See the <a href="../excel_interface/">Excel / spreadsheet interface</a>.</p>
+<h1 id="install-flextool-with-the-flextool-gui">Install FlexTool with the FlexTool GUI</h1>
+<p>This page describes how to install IRENA FlexTool using the built-in FlexTool GUI. This is the simplest installation path — it does not require Spine Toolbox (though you can optionally add it).</p>
+<p>For the Spine Toolbox installation path, see <a href="../install_toolbox/">Install with Spine Toolbox</a>.</p>
 <div class="admonition note">
-<p class="admonition-title">Mix and match freely</p>
-<p>You can edit some scenarios in the Spine database editor and others in Excel within the
-same project — they round-trip through the same input database. Use whichever fits the
-edit at hand.</p>
+<p class="admonition-title">v4 is in alpha</p>
+<p>FlexTool v4 is currently in alpha (<code>4.0.0a1</code>, released 2026-05-26). The release is published as a PEP 440 pre-release on PyPI, so pip needs the <code>--pre</code> flag to resolve it — e.g. <code>pip install --pre flextool</code>. Parity with the 3.47.x line is expected; reports against scenarios that worked on 3.47.0 but misbehave on 4.0.0a1 are especially welcome.</p>
 </div>
-<h2 id="scripting-automation-terminal-cli">Scripting / automation (terminal CLI)</h2>
-<p>For batch jobs, CI pipelines, parameter sweeps, and headless servers, drive FlexTool from the
-command line. The CLI subcommands live under <code>python -m flextool.cli.cmd_*</code>, and the
-repository ships convenience wrappers such as <code>run_flextool.py</code> and
-<code>execute_flextool_workflow.py</code>.</p>
-<p>When to choose the terminal CLI:</p>
+<h2 id="requirements">Requirements</h2>
 <ul>
-<li>You want repeatable, scripted runs that don't need a GUI.</li>
-<li>You're running on a remote server, a cluster, or in continuous integration.</li>
-<li>You're sweeping many scenarios or chaining FlexTool into a larger automation.</li>
+<li><strong>Python ≥ 3.11</strong> (see <code>requires-python</code> in <code>pyproject.toml</code> for up-to-date requirements)</li>
+<li><strong>Git</strong> (optional, but recommended for easy updates)</li>
 </ul>
-<p>The terminal workflow is <strong>orthogonal to the GUI axis</strong>: you can edit data in either the
-Spine database editor or Excel and still execute the same project from the terminal.</p>
-<p>See the <a href="../terminal_workflow/">terminal workflow guide</a>.</p>
-<h2 id="whats-not-an-interface-any-more">What's not an interface any more</h2>
-<p>The FlexTool <strong>web / browser interface has been retired</strong>. It is preserved for historical
-reference in the <a href="../archived/browser_interface/">archived browser interface notes</a>, but it is
-no longer maintained and is not a current option for running FlexTool. This is also why some
-older video tutorials look quite different from the screenshots in this documentation — they
-were recorded against the retired web UI.</p>
-<div class="admonition tip">
-<p class="admonition-title">Still unsure?</p>
-<p>Start with <strong>FlexTool GUI + Spine database editor</strong>. You can always switch later — the
-underlying data and scenarios are the same regardless of which orchestrator and editor
-you use.</p>
-</div>
+<h2 id="installation-steps">Installation Steps</h2>
+<h3 id="1-install-python">1. Install Python</h3>
+<p>Download and install Python from <a href="https://www.python.org/downloads/">python.org</a>. Make sure to check <strong>"Add Python to PATH"</strong> during installation on Windows.</p>
+<blockquote>
+<p><strong>Note:</strong> If you already have Python in your PATH (check with <code>python --version</code> in a terminal) and it is older than 3.9, you need to install a supported version. On Windows, you may need to use the full path to the new Python (e.g. <code>C:\Python312\python.exe</code>) unless you update your PATH to point to it.</p>
+</blockquote>
+<h3 id="2-install-git-optional">2. Install Git (optional)</h3>
+<p>Git makes it easy to update FlexTool in the future. The alternative is to download zip files manually.</p>
+<ul>
+<li>Download and install from <a href="https://git-scm.com/downloads">https://git-scm.com/downloads</a> or use your system's package manager.</li>
+<li><strong>Windows tips:</strong> During git installation, the defaults are fine for most questions. Exceptions:</li>
+<li>Text editor: switch from VIM to Nano (scroll upward) — unless you know and like VIM.</li>
+<li>Use Windows' default console window (unless you know what you are doing).</li>
+</ul>
+<h3 id="3-get-flextool">3. Get FlexTool</h3>
+<p>Either clone with Git (recommended):
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/irena-flextool/flextool.git
+</code></pre></div></p>
+<p>Or download and unzip from <a href="https://github.com/irena-flextool/flextool/archive/refs/heads/main.zip">GitHub</a>.</p>
+<h3 id="4-enter-the-flextool-directory">4. Enter the FlexTool directory</h3>
+<p>All the remaining steps must be run from inside the FlexTool directory:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>flextool
+</code></pre></div>
+<p>(Substitute the extracted folder name if you used the zip download.)</p>
+<h3 id="5-create-a-virtual-environment">5. Create a Virtual Environment</h3>
+<p><strong>Linux (Debian / Ubuntu / Mint):</strong> The system Python may not include <code>venv</code> with <code>pip</code> by default. Install it first:</p>
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>python3-venv
+</code></pre></div>
+<p>Create a virtual environment inside the FlexTool directory:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
+</code></pre></div>
+<p>Activate the virtual environment:</p>
+<p>Linux / macOS:
+<div class="highlight"><pre><span></span><code><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</code></pre></div></p>
+<p>Windows:
+<div class="highlight"><pre><span></span><code>.venv\Scripts\activate
+</code></pre></div></p>
+<h3 id="6-install-flextool">6. Install FlexTool</h3>
+<p><strong>Recommended</strong> — install FlexTool with Spine Toolbox (includes Spine DB Editor for editing input databases):</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">".[toolbox]"</span>
+</code></pre></div>
+<p>This installs FlexTool with the built-in GUI, HiGHS solver (via highspy), and Spine Toolbox with its dependencies (Spine DB Editor, Spine Items, Spine Engine, PySide6, etc.).</p>
+<h4 id="lighter-weight-install-without-spine-toolbox">Lighter weight install (without Spine Toolbox)</h4>
+<p>If you prefer a leaner installation or have issues installing Spine Toolbox dependencies:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>.
+</code></pre></div>
+<p>This installs FlexTool and the GUI, but without Spine DB Editor. You can run scenarios and view results, but editing <code>.sqlite</code> input sources from the GUI requires Spine DB Editor. You can upgrade to the full install at any time by running the recommended command above.</p>
+<h4 id="install-from-pypi-testpypi-pre-release">Install from PyPI / TestPyPI (pre-release)</h4>
+<p>If you do not need a clone of the source tree, FlexTool can be installed directly from PyPI. Because v4 is an alpha, pip needs <code>--pre</code> to resolve it:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>--pre<span class="w"> </span>flextool<span class="w">                </span><span class="c1"># lean / GUI only</span>
+pip<span class="w"> </span>install<span class="w"> </span>--pre<span class="w"> </span><span class="s2">"flextool[toolbox]"</span><span class="w">     </span><span class="c1"># with Spine Toolbox</span>
+</code></pre></div>
+<p>TestPyPI sometimes carries newer alphas than PyPI. To install from there, point pip at the TestPyPI index and keep PyPI as a fallback for dependencies that are not mirrored on TestPyPI:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>--pre<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--index-url<span class="w"> </span>https://test.pypi.org/simple/<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--extra-index-url<span class="w"> </span>https://pypi.org/simple/<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>flextool
+</code></pre></div>
+<p>The PyPI install does not include the <code>update_flextool.py</code> initialization script or the example databases that live alongside it. If you need those — or want the <code>update_flextool.py</code> migration workflow described below — install from a clone instead.</p>
+<h3 id="7-initialize-flextool">7. Initialize FlexTool</h3>
+<p>Create the necessary database files and templates:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>update_flextool.py<span class="w"> </span>--skip-git
+</code></pre></div>
+<h3 id="8-verify-the-install">8. Verify the install</h3>
+<p>Confirm the CLI is wired up:</p>
+<div class="highlight"><pre><span></span><code>flextool-run<span class="w"> </span>--help
+</code></pre></div>
+<p>This should print the FlexTool CLI usage. If it does, the venv is healthy.</p>
+<h3 id="9-launch-flextool">9. Launch FlexTool</h3>
+<p>Start the FlexTool GUI:</p>
+<div class="highlight"><pre><span></span><code>flextool-gui
+</code></pre></div>
+<p>(Equivalent to <code>python -m flextool.gui</code>.)</p>
+<p>If you also installed Spine Toolbox, you can launch it with:</p>
+<div class="highlight"><pre><span></span><code>spinetoolbox
+</code></pre></div>
+<p>Then open FlexTool project from the menu: File... Open project... Choose FlexTool folder.</p>
+<h2 id="updating-flextool">Updating FlexTool</h2>
+<p>FlexTool update process will get the latest FlexTool version and then run a migration script that updates the databases to the latest version. </p>
+<p>If you installed with Git:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>flextool
+<span class="nb">source</span><span class="w"> </span>.venv/bin/activate<span class="w">   </span><span class="c1"># Linux / macOS</span>
+.venv<span class="se">\S</span>cripts<span class="se">\a</span>ctivate<span class="w">      </span><span class="c1"># Windows</span>
+python<span class="w"> </span>update_flextool.py
+</code></pre></div>
+<p>If you installed from a zip file, download the latest zip, extract it over the existing directory, and run:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>update_flextool.py<span class="w"> </span>--skip-git
+</code></pre></div>
+<h3 id="from-the-gui">From the GUI</h3>
+<p>Click <strong>Update FlexTool…</strong> in the top-right of the main window (next to <strong>UI settings…</strong>). FlexTool detects how it is installed and runs the right upgrade automatically — <code>git pull</code> plus an editable reinstall for a git checkout, or <code>pip install --upgrade</code> for a PyPI install — and streams the output to the Execution window. <strong>Restart FlexTool when it finishes</strong> for the new version to take effect.</p>
+<p>The dialog has an <strong>Install Spine Toolbox</strong> checkbox. Spine Toolbox is a large, optional dependency that is required to open <code>.sqlite</code> input sources in the Spine DB Editor; leave it unticked if you do not need it. (It is ticked by default when Spine Toolbox is already installed, so updating keeps it.)</p>
+<h3 id="update-notifications">Update notifications</h3>
+<p>By default FlexTool makes one lightweight check at startup — against PyPI, or your git remote for a git checkout — for a newer version. When one is available the <strong>Update FlexTool…</strong> button is highlighted. The check fails silently if you are offline or the network is restricted.</p>
+<p>To disable it, untick <strong>Check for updates on startup</strong> in the Update FlexTool dialog (the choice is remembered), or set the environment variable <code>FLEXTOOL_NO_UPDATE_CHECK=1</code> to suppress the check entirely.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="command-not-found-flextool-gui-flextool-run">"command not found: flextool-gui" / "flextool-run"</h3>
+<p>Make sure your virtual environment is activated. The <code>flextool-gui</code> and <code>flextool-run</code> console scripts are only on PATH when the venv where FlexTool was installed is active.</p>
+<h3 id="no-module-named-_tkinter-macos-linux">"No module named '_tkinter'" (macOS / Linux)</h3>
+<p>The FlexTool GUI uses <code>tkinter</code>, which is part of Python's standard library but depends on Tcl/Tk system libraries. Some platforms do not bundle these by default.</p>
+<p><strong>macOS (Homebrew Python):</strong> Install the Tcl/Tk binding for your Python version:</p>
+<div class="highlight"><pre><span></span><code>brew<span class="w"> </span>install<span class="w"> </span>python-tk@3.12
+</code></pre></div>
+<p>Replace <code>3.12</code> with your Python version (check with <code>python3 --version</code>).</p>
+<p><strong>Linux (Debian / Ubuntu):</strong> Install the system package:</p>
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>python3-tk
+</code></pre></div>
+<h3 id="import-errors-or-missing-modules">Import errors or missing modules</h3>
+<p>Try reinstalling:
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w"> </span>--force-reinstall
+</code></pre></div></p>
+<h3 id="solver-issues">Solver issues</h3>
+<p>FlexTool uses <strong>HiGHS</strong> by default — installed automatically via the <code>highspy</code> Python bindings, no additional setup needed.</p>
+<p>It is also possible to wire in commercial solvers (e.g. CPLEX) for licensed users; see the documentation for details.</p>
 
 
 

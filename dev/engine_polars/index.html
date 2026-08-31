@@ -1,0 +1,2420 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning." name="description"/>
+<meta content="Juha Kiviluoma, VTT Technical Centre of Finland" name="author"/>
+<link href="../architecture/" rel="prev"/>
+<link href="../scaling/" rel="next"/>
+<link href="../../img/irena_flextool_favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.7" name="generator"/>
+<title>The engine_polars pipeline - IRENA FlexTool</title>
+<link href="../../assets/stylesheets/main.ec1eaa64.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#the-engine_polars-pipeline">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--shadow" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="IRENA FlexTool" class="md-header__button md-logo" data-md-component="logo" href="../.." title="IRENA FlexTool">
+<img alt="logo" src="../../img/irena_flextool_favicon.png"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              The engine_polars pipeline
+            
+          </span>
+</div>
+</div>
+</div>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/irena-flextool/flextool" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="IRENA FlexTool" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="IRENA FlexTool">
+<img alt="logo" src="../../img/irena_flextool_favicon.png"/>
+</a>
+    IRENA FlexTool
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/irena-flextool/flextool" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../interface_overview/">
+<span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../install_gui/">
+<span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../install_toolbox/">
+<span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../tutorial/">
+<span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../reference/">
+<span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../results/">
+<span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../how_to/">
+<span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_concepts/">
+<span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../flextool_gui_interface/">
+<span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../spine_toolbox/">
+<span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../spine_database/">
+<span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../excel_interface/">
+<span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../terminal_workflow/">
+<span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/">
+<span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/highs/">
+<span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/gurobi/">
+<span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/cplex/">
+<span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/xpress/">
+<span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/copt/">
+<span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../architecture/">
+<span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    The engine_polars pipeline
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    The engine_polars pipeline
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#per-solve-pipeline">
+<span class="md-ellipsis">
+      
+        Per-solve pipeline
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flexdata-the-central-data-carrier">
+<span class="md-ellipsis">
+      
+        FlexData — the central data carrier
+      
+    </span>
+</a>
+<nav aria-label="FlexData — the central data carrier" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#data-sources">
+<span class="md-ellipsis">
+      
+        Data sources
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#per-field-shapes">
+<span class="md-ellipsis">
+      
+        Per-field shapes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#feature-conditional-lp-build">
+<span class="md-ellipsis">
+      
+        Feature-conditional LP build
+      
+    </span>
+</a>
+<nav aria-label="Feature-conditional LP build" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#worked-example-storage">
+<span class="md-ellipsis">
+      
+        Worked example: STORAGE
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#rp-blended-weights-inter-period-coupling">
+<span class="md-ellipsis">
+      
+        RP-blended-weights inter-period coupling
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#emitters-formerly-writer-ports">
+<span class="md-ellipsis">
+      
+        Emitters (formerly writer ports)
+      
+    </span>
+</a>
+<nav aria-label="Emitters (formerly writer ports)" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#vectorized-per-roll-emit">
+<span class="md-ellipsis">
+      
+        Vectorized per-roll emit
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#writer-emitter-rename-phases-15">
+<span class="md-ellipsis">
+      
+        Writer → emitter rename (Phases 1–5)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#topological-ordering">
+<span class="md-ellipsis">
+      
+        Topological ordering
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flexdataprovider-and-override-translator">
+<span class="md-ellipsis">
+      
+        FlexDataProvider and override translator
+      
+    </span>
+</a>
+<nav aria-label="FlexDataProvider and override translator" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#override-translator">
+<span class="md-ellipsis">
+      
+        Override translator
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#source-tagging-and-audit-dump">
+<span class="md-ellipsis">
+      
+        Source-tagging and audit dump
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#enum-dtype-axis-convention">
+<span class="md-ellipsis">
+      
+        Enum-dtype axis convention
+      
+    </span>
+</a>
+<nav aria-label="Enum-dtype axis convention" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#entity-union-axis">
+<span class="md-ellipsis">
+      
+        Entity-union axis
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-modes">
+<span class="md-ellipsis">
+      
+        Solve modes
+      
+    </span>
+</a>
+<nav aria-label="Solve modes" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#monolithic-polar_highproblem">
+<span class="md-ellipsis">
+      
+        Monolithic — polar_high.Problem
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#warm-start-cascade-polar_highwarmproblem">
+<span class="md-ellipsis">
+      
+        Warm-start cascade — polar_high.WarmProblem
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#spatial-benders-master-multi-cut-loop">
+<span class="md-ellipsis">
+      
+        Spatial Benders — master + multi-cut loop
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-to-solve-handoff">
+<span class="md-ellipsis">
+      
+        Solve-to-solve handoff
+      
+    </span>
+</a>
+<nav aria-label="Solve-to-solve handoff" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fix-storage-semantics-deferred-b-wiring">
+<span class="md-ellipsis">
+      
+        Fix-storage semantics (Deferred-B wiring)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#upward-dispatchstorage-feedback">
+<span class="md-ellipsis">
+      
+        Upward dispatch→storage feedback
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#output-writer-shape-adaptation">
+<span class="md-ellipsis">
+      
+        Output-writer shape adaptation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#per-solve-sets-and-pdt-lookup">
+<span class="md-ellipsis">
+      
+        Per-solve sets and PDT lookup
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flex-temporal-decomposition">
+<span class="md-ellipsis">
+      
+        Flex-temporal decomposition
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#stochastic-branches">
+<span class="md-ellipsis">
+      
+        Stochastic branches
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#auto-scaling-and-the-slack-convention">
+<span class="md-ellipsis">
+      
+        Auto-scaling and the slack convention
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#public-api">
+<span class="md-ellipsis">
+      
+        Public API
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#where-to-start-when">
+<span class="md-ellipsis">
+      
+        Where to start when…
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#conventions-worth-knowing">
+<span class="md-ellipsis">
+      
+        Conventions worth knowing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cross-references">
+<span class="md-ellipsis">
+      
+        Cross-references
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../scaling/">
+<span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../slack_convention/">
+<span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../decomposition/">
+<span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../db_schema/">
+<span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../testing/">
+<span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../env_vars/">
+<span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../inject_between_solves/">
+<span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../release/">
+<span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../archived/browser_interface/">
+<span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../archived/install_web_interface/">
+<span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#per-solve-pipeline">
+<span class="md-ellipsis">
+      
+        Per-solve pipeline
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flexdata-the-central-data-carrier">
+<span class="md-ellipsis">
+      
+        FlexData — the central data carrier
+      
+    </span>
+</a>
+<nav aria-label="FlexData — the central data carrier" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#data-sources">
+<span class="md-ellipsis">
+      
+        Data sources
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#per-field-shapes">
+<span class="md-ellipsis">
+      
+        Per-field shapes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#feature-conditional-lp-build">
+<span class="md-ellipsis">
+      
+        Feature-conditional LP build
+      
+    </span>
+</a>
+<nav aria-label="Feature-conditional LP build" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#worked-example-storage">
+<span class="md-ellipsis">
+      
+        Worked example: STORAGE
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#rp-blended-weights-inter-period-coupling">
+<span class="md-ellipsis">
+      
+        RP-blended-weights inter-period coupling
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#emitters-formerly-writer-ports">
+<span class="md-ellipsis">
+      
+        Emitters (formerly writer ports)
+      
+    </span>
+</a>
+<nav aria-label="Emitters (formerly writer ports)" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#vectorized-per-roll-emit">
+<span class="md-ellipsis">
+      
+        Vectorized per-roll emit
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#writer-emitter-rename-phases-15">
+<span class="md-ellipsis">
+      
+        Writer → emitter rename (Phases 1–5)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#topological-ordering">
+<span class="md-ellipsis">
+      
+        Topological ordering
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flexdataprovider-and-override-translator">
+<span class="md-ellipsis">
+      
+        FlexDataProvider and override translator
+      
+    </span>
+</a>
+<nav aria-label="FlexDataProvider and override translator" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#override-translator">
+<span class="md-ellipsis">
+      
+        Override translator
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#source-tagging-and-audit-dump">
+<span class="md-ellipsis">
+      
+        Source-tagging and audit dump
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#enum-dtype-axis-convention">
+<span class="md-ellipsis">
+      
+        Enum-dtype axis convention
+      
+    </span>
+</a>
+<nav aria-label="Enum-dtype axis convention" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#entity-union-axis">
+<span class="md-ellipsis">
+      
+        Entity-union axis
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-modes">
+<span class="md-ellipsis">
+      
+        Solve modes
+      
+    </span>
+</a>
+<nav aria-label="Solve modes" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#monolithic-polar_highproblem">
+<span class="md-ellipsis">
+      
+        Monolithic — polar_high.Problem
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#warm-start-cascade-polar_highwarmproblem">
+<span class="md-ellipsis">
+      
+        Warm-start cascade — polar_high.WarmProblem
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#spatial-benders-master-multi-cut-loop">
+<span class="md-ellipsis">
+      
+        Spatial Benders — master + multi-cut loop
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-to-solve-handoff">
+<span class="md-ellipsis">
+      
+        Solve-to-solve handoff
+      
+    </span>
+</a>
+<nav aria-label="Solve-to-solve handoff" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fix-storage-semantics-deferred-b-wiring">
+<span class="md-ellipsis">
+      
+        Fix-storage semantics (Deferred-B wiring)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#upward-dispatchstorage-feedback">
+<span class="md-ellipsis">
+      
+        Upward dispatch→storage feedback
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#output-writer-shape-adaptation">
+<span class="md-ellipsis">
+      
+        Output-writer shape adaptation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#per-solve-sets-and-pdt-lookup">
+<span class="md-ellipsis">
+      
+        Per-solve sets and PDT lookup
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flex-temporal-decomposition">
+<span class="md-ellipsis">
+      
+        Flex-temporal decomposition
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#stochastic-branches">
+<span class="md-ellipsis">
+      
+        Stochastic branches
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#auto-scaling-and-the-slack-convention">
+<span class="md-ellipsis">
+      
+        Auto-scaling and the slack convention
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#public-api">
+<span class="md-ellipsis">
+      
+        Public API
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#where-to-start-when">
+<span class="md-ellipsis">
+      
+        Where to start when…
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#conventions-worth-knowing">
+<span class="md-ellipsis">
+      
+        Conventions worth knowing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cross-references">
+<span class="md-ellipsis">
+      
+        Cross-references
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="the-engine_polars-pipeline">The engine_polars pipeline</h1>
+<p><code>flextool/engine_polars/</code> is FlexTool's in-memory optimization engine. It
+reads a Spine input DB (or a CSV workdir, or an in-memory test fixture)
+into a single typed dataclass, runs ~150 derived-parameter helpers to
+populate the rest of the dataclass, builds an LP feature-by-feature on
+top of the upstream <code>polar_high</code> eDSL, and hands the HiGHS-via-<code>highspy</code>
+solution off to either the next solve in a cascade or to
+<code>process_outputs</code>.</p>
+<p>This page is the developer-side deep dive — the file map and feature
+table are on <a href="../architecture/">architecture.md</a>; here we walk the
+pipeline in the order a bug or extension actually traverses it.</p>
+<div class="admonition note">
+<p class="admonition-title">Two repositories</p>
+<p><code>polar_high</code> is the standalone LP eDSL — sets, parameters,
+variables, lazy constraint composition, warm-LP machinery, and
+the Benders cut / recourse primitives. <code>engine_polars</code> is the
+FlexTool-side glue:
+it knows the on-disk layout of the input/ + solve_data/ CSVs
+and the shape of FlexTool's optimization model. <code>polar_high</code>
+knows nothing of FlexTool.</p>
+</div>
+<h2 id="per-solve-pipeline">Per-solve pipeline</h2>
+<pre class="mermaid"><code>flowchart TD
+  src["Spine input DB<br/>(or CsvSource / InMemoryReader)"] --&gt; reader
+  reader["SpineDbReader<br/>InMemoryReader"] --&gt; overlay
+  overlay["_apply_db_overrides<br/>(direct + derived ports)"] --&gt; emit
+  emit["_emit_*.py + _derived_*.py<br/>(~150 sets &amp; params, Provider-first)"] --&gt; provider["FlexDataProvider<br/>(in-memory transport)"]
+  provider --&gt; flex["FlexData<br/>(polars frames + Params)"]
+  flex --&gt; build["build_flextool(m, d)<br/>feature-gated LP build"]
+  build --&gt; prob["polar_high.Problem<br/>(or WarmProblem)"]
+  prob --&gt; highs["HiGHS via highspy"]
+  highs --&gt; sol["Solution"]
+  sol --&gt; capture["capture_post_solve<br/>→ SolveHandoff"]
+  capture --&gt;|next sub-solve| overlay
+  sol --&gt; outputs["process_outputs.write_outputs"]
+</code></pre>
+<p>Side-paths off this trunk:</p>
+<ul>
+<li><strong>Rolling-horizon / nested</strong>: every iteration loops back through
+  <code>overlay</code> carrying a <code>SolveHandoff</code>. When the LP shape is unchanged
+  the cascade re-uses the live <code>WarmProblem</code>; when it isn't, the
+  cascade cold-rebuilds.</li>
+<li><strong>Stochastic branches</strong>: <code>_stochastic.py</code> decorates per-solve
+  active-time lists with branch-suffixed periods before <code>overlay</code>
+  sees them. Branched periods get LP variables; only the realized
+  branch contributes to handoff carriers.</li>
+<li><strong>Spatial Benders</strong>: <code>_benders.solve_benders</code> slices a
+  single <code>FlexData</code> into per-region copies via <code>_region_filter</code>,
+  builds a coordinating master (trade flows + trade invest + one
+  recourse per region) plus one operational sub-problem per region,
+  and accumulates the sub-problems' duals as optimality cuts until
+  the optimality gap closes.</li>
+</ul>
+<h2 id="flexdata-the-central-data-carrier">FlexData — the central data carrier</h2>
+<p><code>FlexData</code> (in <code>input.py</code>) is a <code>@dataclass</code> of roughly 220 fields. Five
+fields are positional and always present (the time / weighting / node
+floor); every other field defaults to <code>None</code> and is filled in only when
+the scenario exercises the corresponding feature.</p>
+<p>The naming convention is documented on the class:</p>
+<ul>
+<li>Sets — index frames, <code>pl.DataFrame</code>, no prefix. Example:
+  <code>nodeBalance</code>, <code>process_source_sink</code>, <code>pss_dt</code>, <code>nodeState</code>,
+  <code>cdt_eq</code>, <code>dtttdt</code>.</li>
+<li>Parameters — numeric <code>polar_high.Param</code>, <code>p_*</code> prefix. Example:
+  <code>p_inflow</code>, <code>p_unitsize</code>, <code>p_commodity_price</code>, <code>p_step_duration</code>.</li>
+<li>Variables created later by <code>build_flextool</code> are <code>v_*</code> for primal
+  and <code>vq_*</code> for slack.</li>
+</ul>
+<p>The contract carried throughout the engine is simple: <strong>a field is
+either populated with a non-empty frame / Param, or it is <code>None</code></strong>.
+Populating with an <em>empty</em> frame is legal — that signals "this feature
+class is enabled, but no rows in this partition" (e.g.
+<code>process_source_sink_noEff</code> empty because every process is in the eff
+partition). <code>None</code> always means "loader didn't touch this field".</p>
+<h3 id="data-sources">Data sources</h3>
+<p>The loaders are stacked on two protocols defined in <code>_input_source.py</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Implementation</th>
+<th>When used</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CsvSource</code></td>
+<td><code>_input_source.py</code></td>
+<td>Loads from an on-disk <code>input/</code> + <code>solve_data/</code> workdir. Used by tests and by <code>load_flextool(path_or_csv_source)</code> against pre-built fixture workdirs.</td>
+</tr>
+<tr>
+<td><code>SpineDbReader</code></td>
+<td><code>_spinedb_reader.py</code></td>
+<td>The DB-direct reader — returns one polars frame per <code>(entity_class, parameter_name)</code> pair, no CSV roundtrip. Consumed by the override chain in <code>_apply_db_overrides</code> and by the live cascade entry point <code>run_chain_from_db</code>.</td>
+</tr>
+<tr>
+<td><code>InMemoryReader</code></td>
+<td><code>_inmemory_reader.py</code></td>
+<td>Same <code>InputSource</code> protocol as <code>SpineDbReader</code>, but driven by an in-memory dict-of-frames fixture. The vehicle for fast unit tests under <code>tests/engine_polars/</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><code>FlexInputSource</code> (CSV-shaped) and <code>InputSource</code> (per-parameter frame)
+are deliberately two protocols, not one: the legacy CSV reader path
+walks directories, the DB-direct path requests one parameter at a time.
+They coexist — <code>load_flextool</code> accepts either, and a Spine DB load
+typically uses both (CSV side for the bulky pre-computed sets, DB side
+for the parameters the override chain owns).</p>
+<h3 id="per-field-shapes">Per-field shapes</h3>
+<p>The shape registry lives in <code>_param_shapes.py</code>. Every parameter known
+to the engine has an entry in <code>PARAM_ALLOWED_SHAPES</code> listing the
+shapes FlexTool's preprocessing is allowed to emit (scalar,
+<code>1d_map[period]</code>, <code>1d_map[time]</code>, <code>2d_map[period,time]</code>,
+<code>2d_map[time,period]</code>, …). The resolver
+(<code>resolve_param_shape</code>) reads the actual nesting depth and per-level
+<code>index_name</code> labels from the DB, validates against the allow-list, and
+raises <code>FlexToolConfigError</code> on a mismatch.</p>
+<p>This DB-driven validation matters because a 2D parameter authored as
+<code>Map[time, period]</code> versus <code>Map[period, time]</code> has the same column
+<em>names</em> in polars but the opposite axis semantics. Column-shape
+detection misses the difference; the per-level <code>index_name</code> doesn't.</p>
+<h2 id="feature-conditional-lp-build">Feature-conditional LP build</h2>
+<p><code>build_flextool(m, d)</code> is the heart of the engine. It walks a fixed
+list of feature blocks and adds variables, constraints, and objective
+terms to the <code>polar_high.Problem</code> <code>m</code> only when the corresponding
+fields of <code>FlexData</code> <code>d</code> are populated.</p>
+<p>The feature requirements are declared as module-level tuples at the
+top of <code>model.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ALWAYS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"dt"</span><span class="p">,</span> <span class="s2">"nodeBalance"</span><span class="p">,</span> <span class="s2">"nodeBalance_dt"</span><span class="p">,</span>
+          <span class="s2">"p_step_duration"</span><span class="p">,</span> <span class="s2">"p_rp_cost_weight"</span><span class="p">,</span> <span class="s2">"p_inflation_op"</span><span class="p">,</span>
+          <span class="s2">"p_period_share"</span><span class="p">,</span> <span class="s2">"p_inflow"</span><span class="p">,</span> <span class="s2">"p_penalty_up"</span><span class="p">,</span> <span class="s2">"p_penalty_down"</span><span class="p">)</span>
+<span class="n">PROCESSES</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"process_source_sink"</span><span class="p">,</span> <span class="s2">"process_source_sink_eff"</span><span class="p">,</span>
+             <span class="s2">"process_source_sink_noEff"</span><span class="p">,</span> <span class="s2">"pss_dt"</span><span class="p">,</span> <span class="s2">"flow_to_n"</span><span class="p">,</span>
+             <span class="s2">"flow_from_commodity_eff"</span><span class="p">,</span> <span class="s2">"flow_from_commodity_noEff"</span><span class="p">,</span>
+             <span class="s2">"p_unitsize"</span><span class="p">,</span> <span class="s2">"p_flow_upper"</span><span class="p">,</span> <span class="s2">"p_slope"</span><span class="p">,</span> <span class="s2">"p_commodity_price"</span><span class="p">)</span>
+<span class="n">STORAGE</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"nodeState"</span><span class="p">,</span> <span class="s2">"nodeState_dt"</span><span class="p">,</span> <span class="s2">"dtttdt"</span><span class="p">,</span>
+           <span class="s2">"p_state_upper"</span><span class="p">,</span> <span class="s2">"p_state_unitsize"</span><span class="p">)</span>
+<span class="n">ONLINE</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"process_online"</span><span class="p">,</span> <span class="s2">"p_online_dt"</span><span class="p">,</span> <span class="s2">"p_min_load"</span><span class="p">,</span>
+          <span class="s2">"dtttdt"</span><span class="p">,</span> <span class="s2">"p_process_existing_count"</span><span class="p">)</span>
+<span class="c1"># ... INDIRECT, CO2_PRICE, CO2_CAP, USER_CSTR, PROFILES,</span>
+<span class="c1">#     MINLOAD_EFF, STARTUP_COST_LINEAR, STARTUP_COST_INTEGER,</span>
+<span class="c1">#     RAMP, INVEST, DIVEST</span>
+</code></pre></div>
+<p><code>build_flextool</code> first runs <code>_check(d, ALWAYS, "always")</code> to assert the
+floor, then inspects each block's switch field (e.g. <code>nodeState</code> for
+storage, <code>process_indirect</code> for CHP) and calls <code>_check(d, BLOCK,
+"name")</code> when the switch is set. The check is <strong>fail-fast</strong>: if the
+switch is set but a required field is <code>None</code>, it raises <code>ValueError</code>.
+No silent degradation.</p>
+<p>After validation the body of <code>build_flextool</code> becomes a long
+straight-line sequence of <code>if has_&lt;feature&gt;: ...</code> clauses. Each clause
+adds its variables, equation constraints, and objective contributions
+in one place. This shape is the <strong>key invariant for extending the
+engine</strong>: to add a new feature, declare its required-field tuple,
+populate those fields in the loader / writer ports, and gate every
+model element you add on the <code>has_&lt;feature&gt;</code> boolean.</p>
+<p>Before the first feature block, <code>build_flextool</code> declares FlexTool's
+dense trailing axes once with <code>m.declare_dense_axes(("d", "t"))</code> —
+<code>(period, timestep)</code>. This is an unconditional call requiring
+<strong>polar-high&gt;=2.4.0</strong> (the interim <code>hasattr</code> capability guard has been
+dropped; the version pin lives in <code>pyproject.toml</code>). Declaring the dense
+axes lets polar-high build the canonical matrix via the block-COO slice
+path: the pre-sorted dense axis is sliced as contiguous numpy blocks and
+the coefficient factors are multiplied with ufuncs, instead of wide
+relational joins. <code>Sum</code>-wrapped chains (FlexTool's <code>Sum</code>-heavy
+nodeBalance / reserves / co2 families) evaluate in a single pass via a
+captured <code>SumBlockMeta</code> recipe with a relabel fast-path. The block-COO
+output is bit-identical to the legacy polars path — the gain is the LP
+build's peak memory and wall time, not the LP itself.</p>
+<h3 id="worked-example-storage">Worked example: STORAGE</h3>
+<p>The storage block is a representative case:</p>
+<ol>
+<li>Required fields: <code>nodeState</code>, <code>nodeState_dt</code>, <code>dtttdt</code>,
+   <code>p_state_upper</code>, <code>p_state_unitsize</code>.</li>
+<li>Variable added: <code>v_state</code> indexed by <code>nodeState_dt = (n, d, t)</code>,
+   upper-bounded by <code>p_state_upper * p_state_unitsize</code>.</li>
+<li>Constraints added: the storage transition rule keyed on <code>dtttdt</code>
+   (the predecessor-lookup frame from <code>_timeline.py</code>), the start-of-
+   horizon <code>storage_fix_start</code>, and the end-state binding when
+   <code>storage_use_reference_value</code> is populated.</li>
+<li>Objective contribution: none directly — slack penalties only.</li>
+</ol>
+<p>A bug report like "storage transition wrong at the period boundary"
+walks straight back to one of those four fields: most often <code>dtttdt</code>
+or <code>storage_bind_forward_only</code>, both populated by the loader and
+inspected here.</p>
+<h3 id="rp-blended-weights-inter-period-coupling">RP-blended-weights inter-period coupling</h3>
+<p>The <code>RP_BLENDED_WEIGHTS</code> feature block (gated on
+<code>d.nodeState_rp.height &gt; 0</code>, the union of nodes whose
+<code>storage_binding_method</code> selects one of the blended-weights variants)
+adds the variables and constraints that close representative-period
+storage state across base periods. The block is structurally an
+extension of <code>STORAGE</code> and shares the <code>v_state</code> declaration; it adds
+on top:</p>
+<table>
+<thead>
+<tr>
+<th>Element</th>
+<th>Module</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>v_state_inter[n, b]</code></td>
+<td><code>model.py</code></td>
+<td>Long-run state at base-period boundaries, free per <code>(n, b)</code>.</td>
+</tr>
+<tr>
+<td><code>v_state_rp_start[n, d, t]</code></td>
+<td><code>model.py</code></td>
+<td>Free starting state at the first step of each RP block.</td>
+</tr>
+<tr>
+<td><code>nodeState_rp_dt</code></td>
+<td><code>_pdt_join.compute_nodeState_rp_dt</code></td>
+<td>The <code>(n, d, t)</code> join used to project <code>v_state</code> rows onto the RP cohort.</td>
+</tr>
+<tr>
+<td><code>nodeState_rp_block_first_dt</code></td>
+<td><code>_pdt_join.compute_nodeState_rp_block_first_dt</code></td>
+<td>Index set for <code>v_state_rp_start</code> — RP-block-first <code>(d, t)</code> tuples per RP node.</td>
+</tr>
+<tr>
+<td><code>state_change_rp_interior</code> / <code>state_change_rp_start</code></td>
+<td><code>model.py</code> <code>nodeBalance_eq</code> terms</td>
+<td>Intra-period state-change. Interior steps use the ordinary within-timeset lag; the first step of each RP block replaces the lag with <code>v_state_rp_start</code> so each block starts free.</td>
+</tr>
+<tr>
+<td><code>rp_inter_period_balance</code></td>
+<td><code>model.py</code></td>
+<td>Inter-period balance over <code>(n, b, b_prev) ∈ nodeState_rp × rp_base_chain</code>, summing the per-RP-block drift weighted by <code>p_rp_weight[b, r]</code> and <code>p_state_unitsize[n]</code>.</td>
+</tr>
+<tr>
+<td><code>rp_inter_period_cyclic</code></td>
+<td><code>model.py</code></td>
+<td>End-to-start closure for the within-solve / within-period variants, indexed over <code>nodeState_rp × rp_base_first × rp_base_last</code>. The forward-only variant skips this constraint.</td>
+</tr>
+<tr>
+<td><code>rp_inter_period_max_state</code></td>
+<td><code>model.py</code></td>
+<td>Capacity bound on <code>v_state_inter[n, b]</code> over <code>(n, b, d) ∈ nodeState_rp × rp_base_period × period_in_use</code>, tightened by cumulative invest/divest exactly as the ordinary <code>maxState</code>.</td>
+</tr>
+<tr>
+<td><code>maxState_rp_start</code></td>
+<td><code>model.py</code></td>
+<td>Sibling capacity bound on <code>v_state_rp_start[n, d, t]</code> over <code>rp_block_first</code>. The RP variables don't get per-row <code>Var.upper</code> — both bounds are lifted into sibling constraints because <code>polar_high</code> doesn't yet support per-row variable bounds.</td>
+</tr>
+</tbody>
+</table>
+<p>The three blended-weights methods that activate the block —
+<code>bind_within_solve_blended_weights</code>, <code>bind_within_period_blended_weights</code>,
+and <code>bind_forward_only_blended_weights</code> — are projected from the user-side
+<code>storage_binding_method</code> value list by
+<code>storage_bind_within_solve_blended_weights</code> /
+<code>storage_bind_within_period_blended_weights</code> /
+<code>storage_bind_forward_only_blended_weights</code> in <code>_projection_params.py</code>,
+which populate the corresponding <code>FlexData</code> fields. <code>nodeState_rp</code> is
+the union (the inter-period constraints all share it); the cyclic
+constraint further filters back to the within-solve / within-period
+subset because the forward-only variant deliberately leaves the chain
+open.</p>
+<p>The on-disk <code>rp_weights</code> carrier is authored as a flat triple
+<code>(base_start, rep_start, weight)</code> and decoded by
+<code>_timeline._decode_rp_weights</code>, which accepts both the nested Map
+shape and the flattened list-of-Maps shape Spine produces depending on
+import path. Both decode to the same nested
+<code>{base: {rep: weight}}</code> dict that
+<code>_emit_solve_writers.derive_rp_weights</code> converts into the per-solve
+<code>rp_weights.csv</code> frame and that <code>_emit_solve_writers</code> derives the
+<code>rp_base_chain</code>, <code>rp_base_first</code>, <code>rp_base_last</code>, and <code>rp_base__rep</code>
+companion sets from. See architecture.md
+<a href="../architecture/#feature-blocks-in-build_flextool">Feature blocks in <code>build_flextool</code></a>
+for the entry in the gating table.</p>
+<h2 id="emitters-formerly-writer-ports">Emitters (formerly writer ports)</h2>
+<p>About 150 sets and calculated parameters that used to be <code>param := ...</code>
+declarations in the retired <code>flextool.mod</code> are now produced in Python
+by the <code>_emit_*.py</code> and <code>_derived_*.py</code> modules. They all share a
+common shape:</p>
+<ul>
+<li>Input: a <code>FlexData</code> populated with the prior phases' fields, plus a
+  source plugin (<code>InputSource</code> or <code>FlexDataProvider</code>).</li>
+<li>Output: one or more frames published to <code>FlexDataProvider</code> under the
+  canonical key declared in <code>_provider_keys.py</code>; downstream consumers
+  read by key.</li>
+<li>Purity: every helper either fully populates its target keys or
+  leaves them absent — no half-populated state.</li>
+</ul>
+<p>The split between <code>_derived_*</code> and <code>_emit_*</code> is historical, not
+semantic. The <code>_emit_*</code> family ported the modules that wrote
+<code>solve_data/*.csv</code> in the legacy preprocessing; the <code>_derived_*</code>
+family ported the modules that produced computed parameters
+in-process. Both are now just Python functions writing into the
+Provider.</p>
+<p>Representative entries:</p>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Produces</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_derived_block.py</code></td>
+<td><code>BlockLayout</code> fan-out — per-entity blocks, overlap sets, block step durations.</td>
+</tr>
+<tr>
+<td><code>_derived_branch.py</code></td>
+<td><code>period_branch</code>, <code>pdt_branch_weight</code>, <code>pd_branch_weight</code> — stochastic branch weighting.</td>
+</tr>
+<tr>
+<td><code>_derived_existing.py</code></td>
+<td><code>p_entity_all_existing</code>, <code>p_entity_previously_invested_capacity</code> — cross-solve existing-capacity composition.</td>
+</tr>
+<tr>
+<td><code>_derived_npv.py</code></td>
+<td>Annualized investment / divestment carriers feeding the objective.</td>
+</tr>
+<tr>
+<td><code>_derived_profile.py</code></td>
+<td><code>p_profile_value</code> and the <code>p_process_existing_count</code> factor used by profile-bound constraints.</td>
+</tr>
+<tr>
+<td><code>_derived_walks.py</code></td>
+<td>Backward / forward step lookups (<code>dtttdt</code>, <code>dtttdt_forward_only</code>, the block-interior variant).</td>
+</tr>
+<tr>
+<td><code>_emit_arc_unions.py</code></td>
+<td>Arc set algebra: <code>flow_to_n</code>, <code>flow_from_n</code>, the commodity-flow joins, the reverse-arc additions for connections.</td>
+</tr>
+<tr>
+<td><code>_emit_calc_params.py</code></td>
+<td>The <code>pdtX</code> / <code>pdX</code> per-step parameter cascade.</td>
+</tr>
+<tr>
+<td><code>_emit_co2_accumulators.py</code></td>
+<td>Cumulative-CO2 ladder feeding the CO2-cap constraint.</td>
+</tr>
+<tr>
+<td><code>_emit_pdt_params.py</code></td>
+<td>The full <code>pdt_*</code> family (online indices, varCost frames, …).</td>
+</tr>
+<tr>
+<td><code>_emit_period_calc.py</code></td>
+<td><code>p_period_share</code>, <code>complete_period_share_of_year</code>, <code>p_timeline_duration_in_years</code>.</td>
+</tr>
+<tr>
+<td><code>_emit_reserve.py</code></td>
+<td>Reserve-up / reserve-down set machinery for <code>_reserve.py</code>.</td>
+</tr>
+<tr>
+<td><code>_emit_provider_io.py</code></td>
+<td>The single Provider-funnel (<code>_emit</code>, <code>_provider_key</code>, <code>_provider_open</code>) every emitter routes through.</td>
+</tr>
+<tr>
+<td><code>_vectorize.py</code></td>
+<td>Shared per-roll vectorize helpers: the entity × dt and entity × period grids (carrying <code>__eo</code> / <code>__to</code> / <code>__po</code> order keys), the dict→lookup lift, the stochastic / parent-period fold, and the <code>repr()</code>-based value rendering.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vectorized-per-roll-emit">Vectorized per-roll emit</h3>
+<p>The heavy per-step parameter families — <code>pdtProcess</code>, <code>pdtNode</code>, the
+<code>pdtProcess_{source,sink}</code> per-side variants, <code>pdtCommodity</code>,
+<code>pdtGroup</code>, and friends — each produce a dense <code>(entity × dt)</code> (or
+<code>(entity × period)</code>) frame. They are derived with vectorized polars,
+once per roll, over that roll's own window: there is no cache and no
+full-domain frame.</p>
+<p>The recipe is the same for every family. First build the dense grid
+for the roll with <code>build_entity_dt_grid</code> (or <code>build_entity_period_grid</code>
+for the period-only families) from <code>_vectorize.py</code>. The grid is the
+cross-product of the entity list and the roll's <code>(period, time)</code> list,
+and it carries integer order keys (<code>__eo</code> for the entity position,
+<code>__to</code> / <code>__po</code> for the time or period position) so that a final
+<code>.sort</code> on those keys reproduces the intended entity-major,
+time-within-entity row order. Next, lift each parameter source into a
+small polars lookup frame with <code>lift_dict_to_lookup</code> and left-join it
+onto the grid. Where a family also has stochastic or parent-period
+terms, <code>build_fold_frame</code> computes those as a group-by-sum and joins
+the result in as one more candidate column. Then <code>coalesce_value</code>
+picks the first non-null candidate across the cascade branches in
+priority order, and <code>collect_value_frame</code> collects the graph to a
+single Float64 value column, sorts by the order keys, and renders each
+value to a string. <code>derive_pdtProcess_vectorized</code> in
+<code>_emit_pdt_params.py</code> is a representative example, and <code>emit_pdtProcess</code>
+simply publishes its output to the Provider.</p>
+<p>Two rules keep the rendered output exact:</p>
+<ul>
+<li><strong>Render values with the <code>repr()</code> loop, never <code>.cast(Utf8)</code>.</strong>
+<code>_render_value_column</code> walks the value column and emits <code>repr(v)</code>
+  per cell. A polars <code>.cast(Utf8)</code> diverges from <code>repr</code> on
+  scientific-notation exponent padding and on <code>NaN</code>/<code>nan</code>, which would
+  silently corrupt the emitted text.</li>
+<li><strong>Lift lookups from the de-duplicated parameter dict, not raw CSV.</strong>
+  The parameter dicts the family already builds are last-wins-deduped.
+  Lifting a lookup frame straight from the raw CSV would re-introduce
+  duplicate join keys and explode the left-join (one grid row matching
+  many lookup rows). Always lift from the dict.</li>
+</ul>
+<h3 id="writer-emitter-rename-phases-15">Writer → emitter rename (Phases 1–5)</h3>
+<p>Every module that used to be <code>flextool/engine_polars/_writer_*.py</code>
+is now <code>_emit_*.py</code>. The accompanying function-level rename moved
+<code>write_X(workdir, ...)</code> to <code>emit_X(provider, ...)</code> — emitters publish
+to <code>FlexDataProvider</code> first, and any CSV mirror is a side-effect of
+<code>csv_dump=True</code> rather than the canonical path. The retired surfaces
+include the <code>capture_frames</code> snapshot helper, the <code>_PATCH_MODULES</code>
+indirection used by older parity tests, and the transitional
+<code>write_*</code> aliases that wrapped <code>emit_*</code> during the migration; the
+<code>emit_*(provider, ...)</code> signature is now the only call shape and the
+meta-test
+<code>tests/engine_polars/test_meta_provider_invariants.py</code> forbids disk
+reads from any cascade module.</p>
+<p>The architectural consequence is that there is no longer a disk-side
+hand-off path <em>inside</em> the cascade. The Provider is the contract:
+emitters <code>put</code> under a canonical key, consumers <code>get</code> by the same key,
+and the workdir CSVs that used to mediate cross-phase data flow are
+purely a debug artefact. See architecture.md
+<a href="../architecture/#flextoolengine_polars--the-optimization-engine">engine_polars/ — the optimization engine</a>
+for the public-surface narrative and
+<a href="../architecture/#cross-solve-state-provider-keys--solvehandoff">Cross-solve state (Provider keys + SolveHandoff)</a>
+for the handoff-key family.</p>
+<h3 id="topological-ordering">Topological ordering</h3>
+<p>Emitters have dependencies — <code>_derived_existing</code> reads
+<code>realized_invest</code> from prior solves' handoffs and <code>pd_invest_set</code>
+from <code>_emit_period_params</code>; <code>_derived_npv</code> reads
+<code>ed_lifetime_fixed_cost</code> which depends on <code>p_entity_all_existing</code>;
+<code>_derived_block</code>'s overlap sets feed the arc-side block aggregation
+in <code>_emit_arc_unions</code>.</p>
+<p>The runner does not compute the order. It is encoded in the call
+order of <code>_apply_db_overrides</code> (in <code>input.py</code>) and the legacy
+load sequence in <code>load_flextool</code>. Adding a new derived field
+typically means appending one call to the right phase.</p>
+<h2 id="flexdataprovider-and-override-translator">FlexDataProvider and override translator</h2>
+<p><code>FlexDataProvider</code> (<code>flextool/engine_polars/_flex_data_provider.py</code>)
+is the in-memory dict-of-frames that every cascade module reads from
+and writes to. Keys are declared in <code>_provider_keys.py</code>; the
+convention is <code>&lt;parent&gt;/&lt;basename&gt;</code> (e.g. <code>solve_data/foo</code>,
+<code>input/bar</code>, <code>handoff/realized_invest</code>). Bare-basename consumer
+lookups are resolved against the parent-qualified key, so a single
+<code>put</code> registers the frame under one canonical name.</p>
+<p>Three key families:</p>
+<table>
+<thead>
+<tr>
+<th>Prefix</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INPUT_*</code></td>
+<td>Backend-derived rows the cascade re-reads each iteration (CSV-shaped, populated from the input DB).</td>
+</tr>
+<tr>
+<td><code>SOLVE_DATA_*</code></td>
+<td>Per-solve sets and parameters that the derivation layer produces (the bulk of the <code>_emit_*</code> output).</td>
+</tr>
+<tr>
+<td><code>HANDOFF_*</code> / <code>OVERRIDE_*</code></td>
+<td>Cross-solve handoff carriers and their override siblings; see below.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="override-translator">Override translator</h3>
+<p><code>_provider_translators.py</code> carries two small layers that let the
+orchestrator inject external state into the live Provider without
+re-running the emit pipeline:</p>
+<ul>
+<li><code>translate_handoff_to_provider(handoff, provider)</code> writes one
+  <code>HANDOFF_*</code> key per field of a <code>SolveHandoff</code>. Empty fields land as
+  header-only frames so consumers can use a single
+  <code>provider.get(K.HANDOFF_X).height &gt; 0</code> check.</li>
+<li><code>translate_overrides_to_provider(overrides, provider)</code> takes a
+  caller-supplied <code>{K.HANDOFF_X: pl.DataFrame, ...}</code> dict and writes
+  each frame under the corresponding <code>OVERRIDE_X</code> key. Unknown keys
+  are rejected with <code>ValueError</code> so the override surface stays
+  explicit.</li>
+</ul>
+<p>Consumers go through <code>read_handoff_frame(provider, K.HANDOFF_X)</code>,
+which checks the <code>OVERRIDE_X</code> slot first and falls back to the natural
+<code>HANDOFF_X</code> carrier. A non-empty override shadows the cascade-produced
+handoff for that key; an empty override frame falls through cleanly,
+so the override layer is opt-in per key.</p>
+<h3 id="source-tagging-and-audit-dump">Source-tagging and audit dump</h3>
+<p><code>FlexDataProvider.put(key, frame, *, source=None)</code> accepts an optional
+free-form <code>source</code> tag retained alongside the frame and surfaced via
+<code>get_source(key)</code>. Natural-cascade emits leave <code>source</code> at the default
+<code>None</code>; only the override translator currently tags its writes
+(<code>source="external_override"</code>). Untagged writes carry no entry in the
+source map, so the audit surface stays minimal.</p>
+<p><code>dump_provider_sources(provider, path, solve_name)</code> iterates every
+Provider key whose <code>get_source(...)</code> returns non-<code>None</code> and appends one
+tab-separated line per <code>(solve_name, key, source)</code> to the dump path.
+The orchestrator invokes it at the end of per-iteration preprocessing
+when <code>FLEXTOOL_AUDIT_SOURCES=1</code> is set; the log lands at
+<code>&lt;work_folder&gt;/audit_sources.log</code> and accumulates across sub-solves.
+This is the recommended trail for answering "who set this value?" on
+override-driven cascades.</p>
+<h2 id="enum-dtype-axis-convention">Enum-dtype axis convention</h2>
+<p>Identity columns in <code>FlexData</code> (entity, source, sink, period, time,
+group, commodity, …) carry the <code>pl.Enum</code> dtype rather than <code>pl.Utf8</code>.
+The Enum vocabulary is built at the <code>SpineDBBackend</code> and
+<code>SpineDbReader</code> emit boundaries and propagated through the cascade by
+<code>_axis_enums.cast_flexdata_axes</code> / <code>cast_value_axes</code>.</p>
+<p>Three column-axis helpers in <code>_axis_enums.py</code> make the Enum
+preservation mechanical at the call sites where polars would otherwise
+drop back to <code>Utf8</code>:</p>
+<ul>
+<li><code>rename_to_axis(frame, mapping)</code> — rename columns AND cast to the
+  matching axis Enum in one call. Any rename that introduces a
+  canonical axis column (<code>"n"</code>, <code>"p"</code>, <code>"e"</code>, <code>"source"</code>, <code>"sink"</code>,
+  <code>"period"</code>, …) takes ownership of the dim-column dtype at the rename
+  target.</li>
+<li><code>alias_to_axis(source, target_axis)</code> — the sibling for
+  <code>select()</code>/<code>with_columns()</code> projections that rename via alias instead
+  of <code>.rename(...)</code>. Accepts either a string column name or an
+  arbitrary <code>pl.Expr</code>.</li>
+<li><code>lit_axis(value, axis)</code> — <code>pl.lit(value)</code> that emits the canonical
+  axis Enum dtype, so literal tokens injected into axis-aware columns
+  don't <code>SchemaError</code> against neighbouring Enum frames.</li>
+</ul>
+<p>For empty-frame fallbacks the same module exports
+<code>schema_dtype(enums, axis)</code>, which returns the Enum dtype if a live
+vocabulary is set and <code>pl.Utf8</code> otherwise. Every site that previously
+hard-coded <code>schema={"e": pl.Utf8, "d": pl.Utf8}</code> now uses
+<code>schema_dtype(_enums, "e")</code> so empty frames carry the canonical dtype
+without each helper threading the enum dict through.</p>
+<h3 id="entity-union-axis">Entity-union axis</h3>
+<p>Mixed-vocab dimension columns (<code>"source"</code>, <code>"sink"</code>, and anywhere a
+join needs to land both sides of a heterogeneous arc) resolve through
+the axis-synonym table to the canonical axis <code>"e"</code>, a union enum that
+covers every entity vocabulary. The convention is: when joining frames
+whose dim columns hold different vocabulary subsets, use the union
+axis named <code>"entity"</code> and cast against the union enum. Never mix
+<code>Enum</code> and <code>Utf8</code> columns in the same join — the polars caster nulls
+out the mismatched side silently. The <code>_axis_enums.align_join_dtypes</code>
+helper normalises both sides before the join in cases where the call
+site cannot use one of the rename helpers.</p>
+<p>Cross-link: every parameter known to the engine has its expected
+shape declared in <code>_param_shapes.py</code>, and the axis vocabulary the
+parameter's dim columns must satisfy is implicit in the <code>dims=</code> tuple
+its loader passes to <code>polar_high.Param</code>. The two registries together
+are the schema contract that the emitters obey and the meta-tests
+verify.</p>
+<h2 id="solve-modes">Solve modes</h2>
+<p>The same <code>build_flextool</code> body backs three solver wrappers exported by
+<code>polar_high</code>. They differ only in what they do <em>between</em> solves.</p>
+<h3 id="monolithic-polar_highproblem">Monolithic — <code>polar_high.Problem</code></h3>
+<p>The default. One LP, one HiGHS run. Used for every single-shot solve
+and for the cold rebuild path inside a cascade. The
+<code>include_existing_fixed_cost</code> flag on <code>build_flextool</code> toggles the
+inclusion of the §8.1 objective constant; default <code>False</code> to match
+the parquet writer (see the docstring on <code>build_flextool</code>).</p>
+<h3 id="warm-start-cascade-polar_highwarmproblem">Warm-start cascade — <code>polar_high.WarmProblem</code></h3>
+<p>Rolling-horizon and nested solves rebuild the same LP shell once and
+then mutate marked Params between iterations. <code>_warm.py</code> carries the
+machinery:</p>
+<ul>
+<li><code>_STRUCTURAL_FIELDS</code> — the tuple of <code>FlexData</code> fields whose shape
+  defines the LP structure. Two consecutive solves are "warm-
+  compatible" iff <code>_fingerprint(d_prev) == _fingerprint(d_next)</code>.</li>
+<li><code>_WARM_PARAMS</code> — Params that the warm path knows how to push into
+  the live HiGHS instance via <code>changeRowsBounds</code> /
+  <code>changeColsCost</code> / per-cell coefficient writes.</li>
+<li><code>_MUTABLE_PARAMS</code> — Params declared mutable on the WarmProblem
+  itself; the WarmProblem rebuilds the affected rows on its own.</li>
+<li><code>_apply_warm_updates(prev, next, wp)</code> — the actual update routine.
+  Raises <code>_IncompatibleUpdate</code> when a Param outside the warm set
+  changed, which the cascade catches and falls back to a cold rebuild.</li>
+</ul>
+<p>The <code>OrchestrationStep.warm_used</code> boolean reports whether each
+sub-solve actually warm-updated or cold-rebuilt.</p>
+<h3 id="spatial-benders-master-multi-cut-loop">Spatial Benders — master + multi-cut loop</h3>
+<p><code>_benders.solve_benders</code> slices <code>FlexData</code> by region using
+<code>_region_filter.split</code>, which returns a list of <code>RegionSplit</code> (one per
+region) plus the <code>HalfFlow</code> / <code>Coupling</code> metadata that describes
+cross-region arcs. A coordinating <strong>master</strong> is built by <code>build_flextool</code>
+over a network-only reduced <code>FlexData</code>
+(<code>_region_filter.master_network_data</code>) and wrapped in a
+<code>polar_high.WarmProblem</code>; it holds the trade flows <code>f</code>, the
+trade-connection invest <code>C</code>, and one recourse var <code>η_r</code> per region
+(<code>WarmProblem.add_recourse_col</code>). Each iteration pins every region's
+forward trade columns to the master's chosen <code>f̄</code>, solves the region as
+an operational sub-problem, reads the pinned columns' reduced costs, and
+appends one optimality cut per region (<code>WarmProblem.add_cut_row</code>). The
+loop converges on the optimality gap; the master objective is a valid
+lower bound.</p>
+<p>The FlexTool wrapper handles the FlexTool-side concerns: regional
+unitsize, regional profiles, regional handoff state, and the RP-weight
+consistency that follows from building the master with the same emit as
+the monolith. See <a href="../decomposition/">decomposition.md</a> for the
+user-facing story and the parameters that gate this path.</p>
+<h2 id="solve-to-solve-handoff">Solve-to-solve handoff</h2>
+<p>When a solve is part of a cascade (rolling-window, nested, or stochastic
+sub-solves), each completed solve produces a <code>SolveHandoff</code> that seeds
+the next solve's preprocessing. The dataclass is in
+<code>_solve_handoff.py</code>; its eleven optional carriers are all
+<code>pl.DataFrame | None</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Shape</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>realized_invest</code></td>
+<td><code>[entity, period, value]</code></td>
+<td>Capacity built in <em>this</em> solve, in absolute units.</td>
+</tr>
+<tr>
+<td><code>realized_existing</code></td>
+<td><code>[entity, period, value]</code></td>
+<td>Resolved existing-capacity history per <code>(entity, period)</code>. Captures pre-existing decay + divest that <code>realized_invest</code> doesn't.</td>
+</tr>
+<tr>
+<td><code>divest_cumulative</code></td>
+<td><code>[entity, value]</code></td>
+<td>Cumulative divest per entity.</td>
+</tr>
+<tr>
+<td><code>roll_end_state</code></td>
+<td><code>[node, value]</code></td>
+<td><code>v_state</code> at the end of this roll, pinning the next roll's first timestep.</td>
+</tr>
+<tr>
+<td><code>upward_roll_end_state</code></td>
+<td><code>[node, value]</code></td>
+<td>Same shape as <code>roll_end_state</code>; dispatch→storage upward feedback in nested cascades.</td>
+</tr>
+<tr>
+<td><code>fix_storage_quantity</code></td>
+<td><code>[node, period, step, p_fix_storage_quantity]</code></td>
+<td>Parent-imposed storage quota (hard equality).</td>
+</tr>
+<tr>
+<td><code>fix_storage_price</code></td>
+<td><code>[node, period, step, p_fix_storage_price]</code></td>
+<td>Parent's storage dual fed into <code>p_storage_state_reference_price</code>.</td>
+</tr>
+<tr>
+<td><code>fix_storage_usage</code></td>
+<td><code>[node, period, step, p_fix_storage_usage]</code></td>
+<td>Parent's realized-usage allowance bound on the child via <code>node_storage_usage_fix_le</code>.</td>
+</tr>
+<tr>
+<td><code>cumulative_co2</code></td>
+<td><code>[group, period, value]</code></td>
+<td>Running CO2 totals across rolls.</td>
+</tr>
+<tr>
+<td><code>cumulative_commodity</code></td>
+<td><code>[commodity, tier, period, mwh]</code></td>
+<td>Per-tier commodity consumption ladder.</td>
+</tr>
+<tr>
+<td><code>cum_sim_hours</code></td>
+<td><code>[period, value]</code></td>
+<td>Running simulated-hour total per period.</td>
+</tr>
+</tbody>
+</table>
+<p><code>build_handoff_from_solution(sol, work_folder, solve_name, ...)</code> in
+<code>input.py</code> populates one <code>SolveHandoff</code> from the just-completed
+solve's <code>polar_high</code> Solution plus the per-solve metadata in
+<code>solve_data/</code>. The cascade transports the carriers through the
+Provider's <code>HANDOFF_*</code> keys (see
+<a href="#flexdataprovider-and-override-translator">FlexDataProvider and override translator</a>);
+the <code>solve_data/&lt;solve&gt;/*.csv</code> mirrors only exist under
+<code>csv_dump=True</code> and are not load-bearing for any downstream phase.</p>
+<p>The handoff flows back into the next solve through the override
+translator + <code>_apply_db_overrides</code> chain in <code>input.py</code>, which reads
+the <code>HANDOFF_*</code> Provider keys and translates each carrier into the
+next <code>FlexData</code>'s <code>p_entity_*</code> parameters and the corresponding
+<code>n_*</code> / <code>ndt_*</code> / <code>p_*</code> sets (<code>p_fix_storage_quantity</code>,
+<code>p_fix_storage_usage</code>, <code>p_storage_state_reference_price</code>, …).</p>
+<h3 id="fix-storage-semantics-deferred-b-wiring">Fix-storage semantics (Deferred-B wiring)</h3>
+<p>The three <code>fix_storage_*</code> carriers translate into distinct LP wirings
+on the child solve:</p>
+<ul>
+<li><code>fix_storage_quantity</code> pins
+  <code>v_state[n, d_upper, t_upper] * p_state_unitsize[n]</code> to the parent's
+  realized state — a hard equality at the boundary timesteps. The
+  <code>node_storage_fix</code> constraint family is gated on
+  <code>p_fix_storage_quantity</code> being populated; the supporting sets
+  <code>n_fix_storage_quantity</code> and <code>ndt_fix_storage_quantity</code> are derived
+  from the Param frame at load time.</li>
+<li>
+<p><code>fix_storage_price</code> arrives on the child as a dual carrier folded
+  into <code>p_storage_state_reference_price</code>. The objective term added by
+  <code>use_reference_price</code> (model.py §10.1) values <code>v_state</code> at the last
+  step of every <code>period_last</code> by that reference price, so the parent's
+  shadow price on storage at the boundary becomes the child's
+  end-of-period valuation:</p>
+<p>− Σ_{n ∈ nodeState, (d, t) ∈ period__time_last : d ∈ period_last}
+        p_storage_state_reference_price[n, d]
+        · v_state[n, d, t] · unitsize[n]
+        · rp_cost_weight[d, t] · inflation_op[d] / period_share[d]
+        · pdt_branch_weight[d, t]</p>
+</li>
+</ul>
+<p>The same parameter is also populated for any node whose
+  <code>storage_binding_method</code> is <code>use_reference_price</code>, so the routing is
+  unified and the dual carrier merely supplies values for the existing
+  term.
+- <code>fix_storage_usage</code> adds the <code>node_storage_usage_fix_le</code> constraint
+  (<code>model.py</code>, gated on <code>n_fix_storage_usage</code> / <code>ndt_fix_storage_usage</code>
+  / <code>p_fix_storage_usage</code> all being populated). The constraint pins
+  cumulative realized usage at <code>nodeState_last_dt</code> to be at most the
+  parent's allowance, indexed over the n_fix_storage_usage subset of
+  nodes.</p>
+<p><code>build_handoff_from_solution</code> (in <code>input.py</code>, formerly
+<code>build_handoff_from_flexpy</code>) is the producer side: it extracts the
+three metrics from the just-completed solution and packs them into the
+<code>SolveHandoff</code> carrier. Each metric is sourced independently —
+quantity from <code>v_state</code> at fix-storage timesteps, price from the
+<code>fix_storage_*</code> row duals, usage from the realised flow integrals —
+so a fixture exercising one metric doesn't force the others to be
+populated. The HANDOFF carriers
+(<code>HANDOFF_FIX_STORAGE_QUANTITY</code> / <code>_PRICE</code> / <code>_USAGE</code> in
+<code>_provider_keys.py</code>) are the cross-solve transport surface; the
+<code>OVERRIDE_*</code> siblings let the orchestrator inject parent-imposed
+values without re-solving the parent.</p>
+<h3 id="upward-dispatchstorage-feedback">Upward dispatch→storage feedback</h3>
+<p>The original <code>SolveHandoff</code> carried a single <code>roll_end_state</code> that
+flowed forward in time within one solve's roll chain. In a nested
+invest+dispatch cascade the dispatch sub-solve also needs to push its
+realised end-of-horizon <code>v_state</code> <em>upward</em> to the parent storage
+solve's next roll — otherwise the parent keeps running on its own
+previously-predicted state rather than the dispatch sub-solve's
+realised state.</p>
+<p><code>upward_roll_end_state</code> (<code>SolveHandoff</code> field added by <code>bb35cd54</code>) is
+the explicit carrier for that path. The producer at
+<code>build_handoff_from_solution</code> copies the same end-of-horizon <code>v_state</code>
+into both <code>roll_end_state</code> and <code>upward_roll_end_state</code> for every
+solve; the consumer in <code>input.py</code> reads
+<code>HANDOFF_UPWARD_ROLL_END_STATE</code> first and falls back to
+<code>HANDOFF_ROLL_END_STATE</code> when the upward key is empty. The carrier is
+always-on for any storage→dispatch nesting; no opt-in flag. See
+architecture.md
+<a href="../architecture/#solve-to-solve-handoff">Solve-to-solve handoff</a>
+for the carrier table.</p>
+<h2 id="output-writer-shape-adaptation">Output-writer shape adaptation</h2>
+<p>The Phase E.1 work made the post-solve output writers in
+<code>flextool/process_outputs/read_parameters.py</code> shape-aware. The
+preprocessing helper <code>broadcast_to_period_time</code> returns Params whose
+dims match the <em>authored</em> Spine shape — <code>SCALAR</code> → <code>(entity,)</code>,
+<code>MAP_PERIOD</code> → <code>(entity, d)</code>, <code>MAP_PERIOD_TIME</code> → <code>(entity, d, t)</code>.
+<code>polar_high</code> broadcasts the lower-dim Params lazily at constraint
+emission so the LP doesn't care, but the parquet writers used to
+assume the canonical <code>(entity, d, t)</code> shape and would crash on any
+scalar / period-map authoring.</p>
+<p>The fix routes through <code>_param_shapes.promote_param_to_dt</code>: every
+writer that pivots a Param checks <code>param.dims</code> for the presence of
+<code>"d"</code> and <code>"t"</code>, and when either is missing it promotes the Param
+against <code>flex_data.dt</code> before the pivot. Empty Params take the same
+empty-frame fallback as before.</p>
+<p>The same shape-tolerance idea shows up in the loader-side
+<code>_node_unitsize_lf</code> helper (<code>_derived_params.py</code>): a node parameter
+authored as a Spine <code>Map</code> carries the Map's <code>index_name</code> on the data
+column, which Spine defaults to <code>x</code> rather than <code>period</code>. The helper
+treats any non-<code>(name, value)</code> column as the period axis and
+<code>group_by("n").agg(max)</code> collapses it to one row per node, so a
+user-renamed <code>Map.index_name</code> works without code changes. The same
+pattern reappears in <code>p_entity_all_existing_from_source</code> for the
+existing-capacity loader.</p>
+<h2 id="per-solve-sets-and-pdt-lookup">Per-solve sets and PDT lookup</h2>
+<p>A FlexTool scenario may have several solves with overlapping but
+distinct time / entity scopes. The per-solve scoping machinery lives
+in two places:</p>
+<ul>
+<li><code>_per_solve_sets.py</code> — produces per-active-solve aggregates directly
+  from <code>InputSource</code>: <code>period_in_use</code>, <code>dt_complete</code>,
+  <code>period__timeline</code>, <code>p_timeline_duration_in_years</code>,
+  <code>complete_period_share_of_year</code>. These are the sets that decide
+  <em>which</em> timesteps and periods the next LP build will see. They are
+  computed once per <code>load_flextool</code> / per orchestration step and
+  reused throughout.</li>
+<li><code>_pdt_lookup.py</code> — the period × time-instant parameter family
+  (<code>pdtProcess</code>, <code>pdtNode</code>, the per-side variants, …). For each
+  parameter there is a priority cascade: a period+time default falls
+  back to a period default, then a time default, then a class-level
+  default, with stochastic and parent-period folds layered on top. The
+  derive that actually produces these frames is vectorized and runs
+  per roll over the roll's own window — see
+  <a href="#vectorized-per-roll-emit">Vectorized per-roll emit</a> under
+  Emitters for how the cascade is evaluated with polars left-joins and
+  <code>coalesce</code> rather than a per-cell scalar loop.</li>
+</ul>
+<p>Together these two modules are how "logical model time" (period
+identifiers like <code>y2025</code>, branch suffixes like <code>y2025_low</code>) is
+resolved against the "physical timeline" — the ordered-by-step
+timeline that HiGHS sees through <code>polar_high</code>.</p>
+<h2 id="flex-temporal-decomposition">Flex-temporal decomposition</h2>
+<p><code>_block_layout.py</code> and <code>_derived_block.py</code> carry the multi-resolution
+period-block layout that lets one solve run hourly power dispatch
+alongside daily hydrogen dispatch in the same LP. The public surface
+is <code>BlockLayout</code> — a dataclass produced once per solve, carrying:</p>
+<ul>
+<li><code>entity_block</code> — <code>(entity, block)</code> membership.</li>
+<li><code>process_side_block</code> — <code>(process, side, block)</code>.</li>
+<li><code>block_step_duration</code> — <code>(block, period, step, step_duration)</code>.</li>
+<li><code>overlap_set</code> — <code>(period, block_coarse, step_coarse, block_fine,
+  step_fine, fraction)</code> — the cross-block aggregation key.</li>
+<li><code>block_step_previous</code> — per-block predecessor 7-tuples (the
+  storage-transition lookup, block-aware).</li>
+<li><code>block_period_time_first</code> / <code>block_period_time_last</code> — per-block
+  period boundaries.</li>
+</ul>
+<p>Writer ports become block-aware by joining their output through
+<code>overlap_set</code> and weighting by <code>block_step_duration</code>. Concretely:
+the node balance constraint is built on the <em>daily</em> block when the
+node is hydrogen, but each contributing arc on the <em>hourly</em> block
+projects its hourly <code>v_flow</code> rows up to the daily key via
+<code>arc_sink_block_dt</code> / <code>arc_source_block_dt</code> and the
+<code>p_arc_sink_weight</code> / <code>p_arc_source_weight</code> weights.</p>
+<p>Post-solve, every coarse-block variable is expanded back onto the
+fine timeline before the writer ports emit results. The expansion
+uses the same <code>overlap_set</code> (read in reverse) so per-fraction
+attribution stays consistent across the solve / write boundary.</p>
+<p>The block algorithm has two model-design constraints (not engine
+bugs): a two-block-deep limit and an aligned-subsets-only assumption
+on the block hierarchy.</p>
+<h2 id="stochastic-branches">Stochastic branches</h2>
+<p><code>_stochastic.StochasticSolver</code> reads <code>solve.stochastic_branches</code> from
+the source DB and decorates each affected period with branch-suffixed
+clones (<code>y2025</code> becomes <code>y2025</code>, <code>y2025_low</code>, <code>y2025_high</code>, …).
+Branches enter the active-time lists and get LP variables; only the
+realized branch contributes to <code>realized_time_lists</code> and
+<code>fix_storage_time_lists</code>.</p>
+<p>A handful of behavioural quirks preserved verbatim from the legacy
+preprocessor:</p>
+<ul>
+<li><strong>Zero-weight branches</strong>: excluded from <code>new_active_time_list</code> but
+  still appear in <code>solve_branch__time_branch_lists</code> under certain
+  three-way conditions on <code>branch != period</code> and the realized flag.</li>
+<li><strong>Sticky branch suffixes across periods</strong>: when a roll's jump
+  exceeds a period length, branches continue into subsequent periods
+  reusing the same <code>period + "_" + branch</code> naming.</li>
+<li><strong>Single realized branch per period</strong> (otherwise loud failure).</li>
+<li><strong>R-O6 invariant</strong>: branches do NOT enter <code>invest_periods</code>.
+  Investment stays realized-only; recourse-invest is a future
+  capability requiring a deeper refactor.</li>
+</ul>
+<p>The non-anticipativity constraints (<code>_add_non_anticipativity_constraints</code>
+in <code>model.py</code>) close the LP back together at the anchor period across
+sibling branches — there are four families covering <code>v_state</code>,
+<code>v_online</code>, <code>v_reserve</code>, and <code>v_flow</code>. The implementation pins the
+sibling-branch variables via Var renaming (<code>d → b</code>) so the engine's
+join routes the same Var through two key columns at once.</p>
+<h2 id="auto-scaling-and-the-slack-convention">Auto-scaling and the slack convention</h2>
+<p>FlexTool's LP can accumulate coefficients spanning many decades —
+think a 10 kW heat pump alongside a 10 GW grid. The scaling pipeline
+runs on every solve and is documented end-to-end in
+<a href="../scaling/">scaling.md</a>; the slack-variable side is documented in
+<a href="../slack_convention/">slack_convention.md</a>. One-line summary:</p>
+<ul>
+<li><code>autoscale._ranges.compute_ranges</code> (Layer 1) walks the assembled
+  LP and reports matrix / cost / bound / RHS log10 ranges and the
+  cross-group max-ratio that gates whether Layers 2/3 fire. The range
+  readout routes through polar-high's <code>bounded_coefficient_walk</code>
+  (requires polar-high&gt;=2.4.0): it iterates the constraint / column
+  spine in fixed row-batches and never materialises the wide coefficient
+  product to read its min/max. The former size-blind family-row cap is
+  retired, so every family's range is bounded and folded into the report.</li>
+<li><code>autoscale._layer2.apply_layer2</code> (Layer 2) applies per-quantity-type
+  power-of-2 column scalers; its magnitude-bucketing readout also walks
+  the spine in bounded row-batches via <code>bounded_coefficient_walk</code> (the
+  log2-magnitude histogram reducer) instead of collecting the wide
+  product, and with the cap gone every family's magnitudes feed the
+  scaling decision (no silent coverage gap). <code>autoscale._layer3.apply_layer3</code>
+  (Layer 3) folds the HiGHS-native <code>user_bound_scale</code> and the escape
+  valve in a single pass.</li>
+<li><code>--scaling={off,solver_only,basic,full}</code> (or <code>FLEXTOOL_SCALING=&lt;mode&gt;</code>)
+  selects the autoscale strategy; <code>off</code> disables the whole package
+  (default is <code>full</code>). <code>--user-bound-scale N</code> pins Layer 3 manually.</li>
+<li><code>autoscale._report.write_report</code> writes
+  <code>solve_data/autoscale_&lt;solve&gt;.yaml</code> after each solve; the same
+  module's <code>format_console_summary</code> prints a one-liner verdict and
+  <code>format_nonoptimal_hint</code> triggers only on HiGHS non-optimal.</li>
+<li>Output un-scaling happens in
+  <code>flextool/process_outputs/read_highs_solution.py</code> via the
+  <code>unscale_by</code> field on each <code>VariableSpec</code>, applying both the
+  Layer 2 and Layer 3 reverse maps.</li>
+</ul>
+<p>The scaling pipeline never changes the LP optimum — every transform
+is reversible and the reverse is wired into the output writer.</p>
+<h2 id="public-api">Public API</h2>
+<p><code>flextool.engine_polars</code>'s public surface (see <code>__init__.py</code>) is
+small. Repeating the table from
+<a href="../architecture/">architecture.md</a> with deeper notes:</p>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FlexData</code></td>
+<td>The single input dataclass. Everything else either produces it, consumes it, or transforms it in place. Modifying its field list is the cardinal extension act.</td>
+</tr>
+<tr>
+<td><code>load_flextool(source, ...)</code></td>
+<td>CSV-shaped loader. Source may be a <code>Path</code>, a <code>str</code>, or a <code>CsvSource</code>. Accepts an optional <code>InputSource</code> override for migrated parameters. In the live cascade it is driven by <code>_drive_cascade</code> against a pre-built workdir whose Provider serves every read in-memory.</td>
+</tr>
+<tr>
+<td><code>build_flextool(m, d, *, include_existing_fixed_cost=False, scale_the_objective=1.0)</code></td>
+<td>The model build. <code>m</code> is a fresh <code>Problem</code> / <code>WarmProblem</code>; <code>d</code> is the populated <code>FlexData</code>. Returns <code>None</code>; mutates <code>m</code> in place.</td>
+</tr>
+<tr>
+<td><code>run_chain(steps, ...)</code></td>
+<td>Thin compat shim around <code>run_chain_from_db</code>. Kept for callers that still hand-construct <code>ChainStep</code> lists.</td>
+</tr>
+<tr>
+<td><code>run_chain_from_db(db_url, work_folder, ...)</code></td>
+<td>The canonical multi-solve driver. Walks the solve list, calls <code>_drive_cascade</code> per solve, threads <code>SolveHandoff</code> between iterations.</td>
+</tr>
+<tr>
+<td><code>run_orchestration(state, work_folder, ...)</code></td>
+<td>One layer below <code>run_chain_from_db</code>. Takes a pre-built <code>RunnerState</code> (with <code>SolveConfig</code> and <code>TimelineConfig</code> already resolved) and drives the cascade. The intended entry point from the GUI / Spine Toolbox layer.</td>
+</tr>
+<tr>
+<td><code>SolveHandoff</code></td>
+<td>The carrier dataclass. Optional fields covering invest / divest / fix-storage / cumulative ladders / roll-end state (incl. the upward variant). <code>is_empty()</code> returns True when nothing fired. Populated by <code>build_handoff_from_solution</code> (in <code>input.py</code>); the older disk-read <code>capture_post_solve</code> constructor was retired when the cascade fell through to Provider/CSV reads in all production paths.</td>
+</tr>
+<tr>
+<td><code>OrchestrationStep</code></td>
+<td>Per-solve result. Carries <code>solve_name</code>, <code>solution</code>, <code>handoff</code>, <code>warm_used</code>.</td>
+</tr>
+<tr>
+<td><code>ChainStep</code></td>
+<td>Per-sub-solve result of the compat shim. Same shape as <code>OrchestrationStep</code>.</td>
+</tr>
+<tr>
+<td><code>FlexInputSource</code> / <code>CsvSource</code></td>
+<td>The CSV-shaped source protocol family.</td>
+</tr>
+<tr>
+<td><code>InputSource</code> / <code>SpineDbReader</code> / <code>InMemoryReader</code></td>
+<td>The per-parameter-frame source protocol family.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="where-to-start-when">Where to start when…</h2>
+<table>
+<thead>
+<tr>
+<th>You want to…</th>
+<th>Start at</th>
+<th>Then read</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Add a constraint that uses only existing parameters</td>
+<td><code>model.py</code> <code>build_flextool</code> body</td>
+<td>The closest existing feature block. Wrap your additions in <code>if has_&lt;feature&gt;:</code> and skip a new requirement tuple.</td>
+</tr>
+<tr>
+<td>Add a new input parameter</td>
+<td><code>_param_shapes.py</code> <code>PARAM_ALLOWED_SHAPES</code></td>
+<td>Add the parameter's entry, then populate it in <code>_direct_params.py</code> (trivial DB read) or a new <code>_derived_*.py</code> (computed). Add the field to <code>FlexData</code>. Add it to the relevant feature's required-field tuple in <code>model.py</code>.</td>
+</tr>
+<tr>
+<td>Add a new pre-solve set / index</td>
+<td><code>_per_solve_sets.py</code> if it's per-active-solve; a new <code>_emit_*.py</code> otherwise</td>
+<td>Wire the new function into <code>_apply_db_overrides</code> in <code>input.py</code>.</td>
+</tr>
+<tr>
+<td>Add a new feature block</td>
+<td><code>model.py</code> requirement tuples</td>
+<td>Declare your <code>MY_FEATURE = (...)</code> tuple. Inspect a switch field via <code>has_my_feature = d.&lt;switch&gt; is not None and d.&lt;switch&gt;.height &gt; 0</code>. Wrap the variable / constraint / objective additions in <code>if has_my_feature:</code>. Add a <code>_check(d, MY_FEATURE, "my_feature")</code> call alongside the existing ones.</td>
+</tr>
+<tr>
+<td>Trace a numerical issue</td>
+<td><code>solve_data/autoscale_&lt;solve&gt;.yaml</code></td>
+<td>The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: <a href="../scaling/">scaling.md</a>.</td>
+</tr>
+<tr>
+<td>Trace a feasibility issue</td>
+<td><code>vq_*</code> outputs in <code>output_parquet/</code></td>
+<td>Slack activity localises the infeasibility to a row family. Cross-link: <a href="../slack_convention/">slack_convention.md</a>.</td>
+</tr>
+<tr>
+<td>Add a new decomposition mode</td>
+<td><code>_benders.py</code> (+ <code>_region_filter.py</code>) for spatial, <code>_warm.py</code> + <code>_orchestration.py</code> <code>_drive_cascade</code> for temporal</td>
+<td>Each carries the FlexTool-side glue around a <code>polar_high</code> driver. Read <a href="../decomposition/">decomposition.md</a> first.</td>
+</tr>
+<tr>
+<td>Trace a wrong-period bug in rolling horizon</td>
+<td><code>_apply_db_overrides</code> in <code>input.py</code></td>
+<td>The handoff translation site. Cross-check against the <code>SolveHandoff</code> fields populated by <code>capture_post_solve</code>.</td>
+</tr>
+<tr>
+<td>Trace a warm-LP divergence</td>
+<td><code>_warm._STRUCTURAL_FIELDS</code>, <code>_warm._WARM_PARAMS</code></td>
+<td>A divergence usually means a structural field changed (add it to <code>_STRUCTURAL_FIELDS</code>) or a Param outside the warm set was mutated (add it to <code>_WARM_PARAMS</code> and write the <code>_apply_warm_updates</code> clause).</td>
+</tr>
+<tr>
+<td>Add a new variable / dual to the parquet output</td>
+<td><code>flextool/process_outputs/read_highs_solution.VARIABLE_SPECS</code></td>
+<td>Append one <code>VariableSpec</code>. No engine-side change required.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="conventions-worth-knowing">Conventions worth knowing</h2>
+<p>A few cross-cutting conventions that aren't obvious from a single
+file:</p>
+<ul>
+<li><strong>Lazy at the rim, eager at the boundary.</strong> Internal frames are
+  <code>pl.LazyFrame</code>; helpers <code>.collect()</code> once at the function boundary.
+  This is the pattern documented at the top of <code>_derived_params.py</code>
+  and <code>_per_solve_sets.py</code>.</li>
+<li><strong>None-skip is canonical.</strong> A field at <code>None</code> means "feature not
+  active" and is the recommended way to opt out. Empty frames mean
+  "active but no rows". Helpers that downstream this distinction
+  should never silently coerce <code>None</code> into an empty frame.</li>
+<li><strong>Provider is authoritative; CSVs are debug-only.</strong> Cross-phase
+  data inside the cascade moves through <code>FlexDataProvider</code>. The
+  <code>solve_data/&lt;solve&gt;/*.csv</code> mirrors only exist under <code>csv_dump=True</code>
+  and are not load-bearing — the meta-test
+  <code>tests/engine_polars/test_meta_provider_invariants.py</code> forbids
+  disk reads from any cascade module.</li>
+<li><strong>One funnel per source.</strong> All Provider reads inside emitter
+  modules go through <code>_emit_provider_io._provider_open</code> /
+  <code>_provider_key</code>. All Spine DB reads go through
+  <code>SpineDbReader.parameter()</code>. Adding a new reader site is a smell;
+  route through the existing funnel.</li>
+<li><strong>Fail loud on schema surprises.</strong> The codebase prefers
+  <code>FlexToolConfigError</code> / <code>ValueError</code> / <code>NotImplementedError</code> over
+  silent fallbacks. The retired preprocessor was full of defensive
+  branches that masked bugs; the engine_polars port deliberately
+  walks back to the input the moment a shape doesn't match.</li>
+</ul>
+<h2 id="cross-references">Cross-references</h2>
+<ul>
+<li><a href="../architecture/">architecture.md</a> — the higher-level package map
+  and the cross-package data-flow diagram.</li>
+<li><a href="../scaling/">scaling.md</a> — the full scaling pipeline.</li>
+<li><a href="../slack_convention/">slack_convention.md</a> — the <code>vq_*</code> convention.</li>
+<li><a href="../decomposition/">decomposition.md</a> — spatial and temporal
+  decomposition.</li>
+<li><a href="../db_schema/">db_schema.md</a> — the Spine input DB schema.</li>
+<li><a href="../testing/">testing.md</a> — how the engine_polars unit and parity
+  tests are organised.</li>
+</ul>
+</article>
+</div>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+<script src="../../assets/mathjaxhelper.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>

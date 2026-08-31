@@ -1,0 +1,1160 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning." name="description"/>
+<meta content="Juha Kiviluoma, VTT Technical Centre of Finland" name="author"/>
+<link href="../spine_database/" rel="prev"/>
+<link href="../terminal_workflow/" rel="next"/>
+<link href="../img/irena_flextool_favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.7" name="generator"/>
+<title>Excel as input/output - IRENA FlexTool</title>
+<link href="../assets/stylesheets/main.ec1eaa64.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#excel-as-inputoutput">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--shadow" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="IRENA FlexTool" class="md-header__button md-logo" data-md-component="logo" href=".." title="IRENA FlexTool">
+<img alt="logo" src="../img/irena_flextool_favicon.png"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Excel as input/output
+            
+          </span>
+</div>
+</div>
+</div>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/irena-flextool/flextool" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="IRENA FlexTool" class="md-nav__button md-logo" data-md-component="logo" href=".." title="IRENA FlexTool">
+<img alt="logo" src="../img/irena_flextool_favicon.png"/>
+</a>
+    IRENA FlexTool
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/irena-flextool/flextool" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="..">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../interface_overview/">
+<span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../install_gui/">
+<span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../install_toolbox/">
+<span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../tutorial/">
+<span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../reference/">
+<span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../results/">
+<span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../how_to/">
+<span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../advanced_concepts/">
+<span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../flextool_gui_interface/">
+<span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../spine_toolbox/">
+<span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../spine_database/">
+<span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#when-to-choose-excel-over-the-database-editor">
+<span class="md-ellipsis">
+      
+        When to choose Excel over the database editor
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#the-export-edit-import-loop">
+<span class="md-ellipsis">
+      
+        The export, edit, import loop
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#exporting-an-excel-template">
+<span class="md-ellipsis">
+      
+        Exporting an Excel template
+      
+    </span>
+</a>
+<nav aria-label="Exporting an Excel template" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-the-flextool-gui">
+<span class="md-ellipsis">
+      
+        From the FlexTool GUI
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-the-terminal">
+<span class="md-ellipsis">
+      
+        From the terminal
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#editing-in-excel-or-libreoffice">
+<span class="md-ellipsis">
+      
+        Editing in Excel or LibreOffice
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#importing-edited-data-back">
+<span class="md-ellipsis">
+      
+        Importing edited data back
+      
+    </span>
+</a>
+<nav aria-label="Importing edited data back" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-the-flextool-gui_1">
+<span class="md-ellipsis">
+      
+        From the FlexTool GUI
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-the-terminal_1">
+<span class="md-ellipsis">
+      
+        From the terminal
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#round-trip-and-version-control">
+<span class="md-ellipsis">
+      
+        Round-trip and version control
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#limitations">
+<span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#see-also">
+<span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../terminal_workflow/">
+<span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../solvers/">
+<span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../solvers/highs/">
+<span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../solvers/gurobi/">
+<span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../solvers/cplex/">
+<span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../solvers/xpress/">
+<span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../solvers/copt/">
+<span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/architecture/">
+<span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/engine_polars/">
+<span class="md-ellipsis">
+    
+  
+    The engine_polars pipeline
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/scaling/">
+<span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/slack_convention/">
+<span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/decomposition/">
+<span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/db_schema/">
+<span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/testing/">
+<span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/env_vars/">
+<span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/inject_between_solves/">
+<span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../release/">
+<span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../archived/browser_interface/">
+<span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../archived/install_web_interface/">
+<span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#when-to-choose-excel-over-the-database-editor">
+<span class="md-ellipsis">
+      
+        When to choose Excel over the database editor
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#the-export-edit-import-loop">
+<span class="md-ellipsis">
+      
+        The export, edit, import loop
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#exporting-an-excel-template">
+<span class="md-ellipsis">
+      
+        Exporting an Excel template
+      
+    </span>
+</a>
+<nav aria-label="Exporting an Excel template" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-the-flextool-gui">
+<span class="md-ellipsis">
+      
+        From the FlexTool GUI
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-the-terminal">
+<span class="md-ellipsis">
+      
+        From the terminal
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#editing-in-excel-or-libreoffice">
+<span class="md-ellipsis">
+      
+        Editing in Excel or LibreOffice
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#importing-edited-data-back">
+<span class="md-ellipsis">
+      
+        Importing edited data back
+      
+    </span>
+</a>
+<nav aria-label="Importing edited data back" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-the-flextool-gui_1">
+<span class="md-ellipsis">
+      
+        From the FlexTool GUI
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-the-terminal_1">
+<span class="md-ellipsis">
+      
+        From the terminal
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#round-trip-and-version-control">
+<span class="md-ellipsis">
+      
+        Round-trip and version control
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#limitations">
+<span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#see-also">
+<span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="excel-as-inputoutput">Excel as input/output</h1>
+<p>FlexTool stores its data in Spine SQLite databases. The default editor is the
+<a href="../spine_database/">Spine database editor</a>, but the same data can also be
+round-tripped through a single Excel (<code>.xlsx</code>) workbook. The <em>modelling
+content</em> is identical regardless of which editor you use — only the editing
+UX changes. The same workbook can be exported, edited, and re-imported any
+number of times.</p>
+<div class="admonition note">
+<p class="admonition-title">Excel is a stand-in for any compatible spreadsheet</p>
+<p>Everywhere this page says "Excel", LibreOffice Calc works the same way.
+FlexTool reads and writes the OpenXML <code>.xlsx</code> format directly via
+<code>openpyxl</code>; no Microsoft Office installation is required at any step.</p>
+</div>
+<h2 id="when-to-choose-excel-over-the-database-editor">When to choose Excel over the database editor</h2>
+<ul>
+<li>You like to keep your scenario data in spreadsheets.</li>
+<li>You want a single, self-contained file for review and
+  for sharing.</li>
+<li>You are doing bulk edits — copy/paste, fill-down, find-and-replace — that
+  are awkward in the relational editor (although you can copy paste from
+  spreadsheet to the Spine DB editor)</li>
+<li>You need to hand the file to a collaborator who does not have Spine Toolbox
+  installed.</li>
+</ul>
+<p>If none of these apply, stay in the Spine database editor: edits are
+type-checked and committed directly to the DB, with no export/import step.</p>
+<h2 id="the-export-edit-import-loop">The export, edit, import loop</h2>
+<pre class="mermaid"><code>flowchart LR
+    DB[(Spine SQLite<br/>input DB)]
+    DB --&gt;|export| PICK{Parameter-group<br/>picker}
+    PICK --&gt;|template.xlsx| EDIT[Edit in Excel<br/>or LibreOffice]
+    EDIT --&gt;|import| DB2[(Spine SQLite<br/>input DB)]
+    DB2 --&gt; RUN[Run scenarios]
+</code></pre>
+<p>Exporting produces a workbook whose every sheet carries the metadata needed
+to read it back later (the <em>v2 self-describing</em> format). Edit the file in
+any spreadsheet, then import it into a fresh or existing Spine DB. Sheets
+that were dropped during export — for example because their parameter group
+was unchecked — simply remain absent from the workbook and are not touched
+on import.</p>
+<h2 id="exporting-an-excel-template">Exporting an Excel template</h2>
+<h3 id="from-the-flextool-gui">From the FlexTool GUI</h3>
+<p>In the <strong>Add input source</strong> dialog, choose <strong>Add empty FlexTool input
+Excel</strong>. The GUI initialises a temporary template DB from the master JSON
+template, reads its parameter groups, and opens the <strong>group picker</strong>:</p>
+<ul>
+<li>The picker is <strong>DB-driven</strong> — the checkbox list is built from the input
+  DB's actual schema, so it always matches the parameters the running
+  FlexTool version knows about.</li>
+<li>The <strong>required</strong> groups for a functioning model — <code>timeline</code>, <code>model</code>,
+  <code>solve_basics</code>, <code>basics</code> — are pinned to the top, highlighted, and
+  pre-checked. A hover tooltip explains why they are recommended.</li>
+<li>Bulk buttons let you switch between <strong>Select all</strong>, <strong>Required only</strong>, and
+  <strong>Clear all</strong>.</li>
+<li>Colours follow the active ttk theme, so the picker stays readable in
+  both light and dark modes.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Smaller is usually better</p>
+<p>Unchecking groups you don't intend to edit produces a slimmer workbook
+with fewer sheets to navigate. You can always re-export with more
+groups later — the underlying DB is unchanged.</p>
+</div>
+<p>After clicking <strong>OK</strong>, the workbook is saved into your project's
+<code>input_sources</code> directory.</p>
+<h3 id="from-the-terminal">From the terminal</h3>
+<p>The same export is available without the GUI:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_export_to_tabular<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///input_data.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>input_template.xlsx
+</code></pre></div>
+<p>Useful flags:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--groups timeline,model,solve_basics,basics</code></td>
+<td>Restrict to the listed parameter groups (same semantics as the GUI picker). Sheets that lose all their columns are dropped, unless listed in <code>always_include_with_groups</code> in <code>export_settings.yaml</code>.</td>
+</tr>
+<tr>
+<td><code>--include-advanced</code></td>
+<td>Include advanced sheets (solve sequences, periods available, stochastic data) even when empty.</td>
+</tr>
+<tr>
+<td><code>--old-format</code></td>
+<td>Emit the legacy v1 layout instead of v2 self-describing — only needed for tooling pinned to the older format.</td>
+</tr>
+</tbody>
+</table>
+<p>A realistic minimal-template export:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_export_to_tabular<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///input_data.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>starter.xlsx<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--groups<span class="w"> </span>timeline,model,solve_basics,basics
+</code></pre></div>
+<h2 id="editing-in-excel-or-libreoffice">Editing in Excel or LibreOffice</h2>
+<p>The exported workbook uses the <strong>v2 self-describing</strong> format. Each sheet
+embeds its own header describing what it contains:</p>
+<ul>
+<li>A <strong>definition row</strong> labels each column (<code>alternative</code>, <code>entity: node</code>,
+  <code>parameter: ...</code>, <code>index: ...</code>, etc.).</li>
+<li>A <strong>definition column</strong> labels metadata rows (<code>description</code>,
+  <code>data type</code>, <code>parameter</code>, ...).</li>
+<li>Their intersection — the <strong>crossing point</strong> — is auto-discovered by the
+  reader, so adding rows or columns above the data block is safe as long
+  as the header keywords stay intact.</li>
+</ul>
+<p>A few practical notes:</p>
+<ul>
+<li>Sheets whose parameter group was not selected at export time are simply
+  absent. Re-export later if you decide to start editing them.</li>
+<li>When <strong>any</strong> parameter on a sheet carries a database default, a
+  <strong>default-value row</strong> is rendered above the data. <code>Map</code>- and <code>Array</code>-
+  typed defaults are stringified for display; you should not normally need
+  to edit this row.</li>
+<li>A <code>navigate</code> sheet acts as an index/table of contents and the schema
+  version is recorded there as well. The importer skips <code>navigate</code> and
+  <code>version</code> on read.</li>
+<li>Tab colours mirror the navigate groups configured in
+  <code>export_settings.yaml</code>, which makes related sheets easy to spot.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Locale and scientific notation</p>
+<p>LibreOffice and Excel can disagree on number locale (comma vs. dot)
+and on whether very large or very small numbers are rendered in
+scientific notation. If you exchange files across both tools, lock the
+spreadsheet locale to one convention (typically English/US) and the
+column format to plain <code>Number</code> for data columns.</p>
+</div>
+<h2 id="importing-edited-data-back">Importing edited data back</h2>
+<h3 id="from-the-flextool-gui_1">From the FlexTool GUI</h3>
+<p>Add the edited <code>.xlsx</code> as an input source via the <strong>Add input source</strong>
+dialog. The GUI treats a workbook the same way it treats a Spine DB input
+— when a scenario runs, FlexTool reads the workbook and feeds the merged
+data to the engine. If you prefer a persistent DB, use the <strong>Convert</strong>
+action to materialise the workbook into a Spine SQLite file once, then
+keep editing the DB directly.</p>
+<h3 id="from-the-terminal_1">From the terminal</h3>
+<p>For v2 (self-describing) workbooks — the canonical format going forward:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_read_self_describing_tabular_input<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>edited.xlsx<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///input_data.sqlite
+</code></pre></div>
+<p>For v1 specification-driven workbooks — kept for backwards compatibility:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_read_tabular_input<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///input_data.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tabular-file-path<span class="w"> </span>edited.xlsx
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">v2 is the canonical format</p>
+<p>New code paths and the GUI's <strong>Add empty FlexTool input Excel</strong> action
+always produce v2 workbooks. The v1 reader stays available for files
+produced before the self-describing layout was introduced, and a
+separate reader handles legacy <code>.xlsm</code> files from very old FlexTool
+releases — but no new features are being added to either of them.</p>
+</div>
+<h2 id="round-trip-and-version-control">Round-trip and version control</h2>
+<p>On a well-formed DB, <strong>export followed by re-import is idempotent</strong> at the
+modelling-content level: only the edits you actually make should show up
+as a meaningful diff. That makes Excel a reasonable medium for PR-based
+review of model data — reviewers can open the workbook, flip through the
+sheets, and compare two checked-in versions side by side.</p>
+<h2 id="limitations">Limitations</h2>
+<ul>
+<li>Very large time-series sheets (tens of thousands of rows) render slowly
+  in both Excel and LibreOffice. Consider editing them as CSV or keeping
+  them in the database when bulk data is involved.</li>
+<li>The <code>--groups</code> flag drops sheets whose columns are <em>all</em> filtered out;
+  if you need a structural sheet to stay around even when empty, add it
+  to <code>always_include_with_groups</code> in <code>export_settings.yaml</code>.</li>
+<li>Multi-dimensional parameters (<code>2d_map</code>, <code>3d_map</code>, <code>4d_map</code>) are laid out
+  with extra index columns; reshape these with care, and re-export if you
+  want a clean baseline.</li>
+<li>Excel and LibreOffice may disagree on number locale and scientific
+  notation — see the warning above.</li>
+</ul>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../spine_database/">Spine database editor</a> — the default alternative
+  editor.</li>
+<li><a href="../flextool_gui_interface/">FlexTool GUI</a> — where the Excel-related
+  actions live.</li>
+<li><a href="../terminal_workflow/">Terminal / CLI</a> — for scripted export and import.</li>
+<li><a href="../interface_overview/">Choosing an interface</a> — high-level comparison.</li>
+</ul>
+</article>
+</div>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+<script src="../assets/mathjaxhelper.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>

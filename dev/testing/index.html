@@ -1,0 +1,2272 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../db_schema/">
+      
+      
+        <link rel="next" href="../env_vars/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Testing - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#testing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Testing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engine_polars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine_polars pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#layer-1-engine_polars-unit-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 1 — engine_polars unit &amp; integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layer-2-scenario-fixtures-goldens-and-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 2 — scenario fixtures, goldens, and parity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Layer 2 — scenario fixtures, goldens, and parity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#testsfixturesjson-is-the-single-authoritative-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tests/fixtures/*.json is the single authoritative source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scenario_workdir-on-demand-cascade-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scenario_workdir — on-demand cascade fixture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extend_tests_fixture-agent-friendly-append-only-edits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extend_tests_fixture — agent-friendly append-only edits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate_canonical-projected-canonical-dbs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        generate_canonical — projected canonical DBs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#golden-objectives-scenario-goldens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Golden objectives &amp; scenario goldens
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layer-3-full-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 3 — full integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ci-verify-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CI verify chain
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#markers-and-gating" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Markers and gating
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#determinism-guards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Determinism guards
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adding-a-new-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a new test
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-pages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related pages
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#layer-1-engine_polars-unit-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 1 — engine_polars unit &amp; integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layer-2-scenario-fixtures-goldens-and-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 2 — scenario fixtures, goldens, and parity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Layer 2 — scenario fixtures, goldens, and parity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#testsfixturesjson-is-the-single-authoritative-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tests/fixtures/*.json is the single authoritative source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scenario_workdir-on-demand-cascade-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scenario_workdir — on-demand cascade fixture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extend_tests_fixture-agent-friendly-append-only-edits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extend_tests_fixture — agent-friendly append-only edits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate_canonical-projected-canonical-dbs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        generate_canonical — projected canonical DBs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#golden-objectives-scenario-goldens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Golden objectives &amp; scenario goldens
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layer-3-full-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 3 — full integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ci-verify-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CI verify chain
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#markers-and-gating" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Markers and gating
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#determinism-guards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Determinism guards
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adding-a-new-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a new test
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-pages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related pages
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="testing">Testing</h1>
+<p>FlexTool has a multi-layer test pyramid: fast unit/integration tests on
+the <code>engine_polars</code> building blocks, scenario goldens built on demand
+from JSON fixtures, and end-to-end scenario runs that compare output
+CSVs against committed reference files. This page is a developer
+pointer — where the tests live, how the JSON-fixture architecture
+works, how the CI verify chain enforces drift detection, and how the
+markers gate CI.</p>
+<p>For the high-level test-layout inventory see
+<a href="../architecture/"><code>architecture.md</code></a> ("Test layout and fixture
+architecture"). For the engine internals being tested see
+<a href="../engine_polars/"><code>engine_polars.md</code></a>. For the JSON-fixture rollout
+narrative see the <code>CHANGELOG.md</code> entry for v3.47.0.</p>
+<h2 id="layer-1-engine_polars-unit-integration">Layer 1 — engine_polars unit &amp; integration</h2>
+<p>Lives under <code>tests/engine_polars/</code>. Covers the LP build path, derived
+parameter expansion, writer port, scaling pipeline (see
+<a href="../scaling/"><code>scaling.md</code></a>), decomposition (see
+<a href="../decomposition/"><code>decomposition.md</code></a>), warm-start handoff, fast load,
+stochastic / PBT pieces, and the Surface A audit subdirectories:</p>
+<ul>
+<li><code>loaders/</code> — A-tier loader tests (<code>test_a01_a02_temporal_node.py</code>,
+  <code>test_a03_a11_a12_process_topology.py</code>, …) covering temporal-node,
+  topology, online-ramp, storage-handoff, invest, costs/CO2,
+  user-cstr/stochastic, groups/reserve/ladder, delay/dc loaders.</li>
+<li><code>constraints/</code> — B-tier constraint tests
+  (<code>test_b01_b02_balance_storage.py</code> …
+  <code>test_b09_b10_b11_dc_co2_user.py</code>, plus emission / storage-handoff
+  wiring).</li>
+<li><code>objective/</code> — B16–B20 objective-term tests (varcost, invest cost,
+  slack &amp; reserve penalties, delay/DR/ladder).</li>
+</ul>
+<p>Each subdirectory has its own <code>conftest.py</code> and a
+<code>test_fixtures_solve.py</code> that exercises the shared fixture solve
+fixtures.</p>
+<p>Tests range from millisecond-class unit tests (block layout, derived
+params) to solver-touching parity tests. Synthetic flextool-flavoured
+fixtures live in <code>tests/engine_polars/fixtures/</code> and are auto-added to
+<code>sys.path</code> by <code>tests/engine_polars/conftest.py</code> so test modules can
+<code>from flex_toy_&lt;feature&gt; import …</code> directly.</p>
+<p><strong>Meta-provider invariants.</strong>
+<code>tests/engine_polars/test_meta_provider_invariants.py</code> enforces the
+Provider-only cascade contract as executable tests, not convention:</p>
+<ul>
+<li><code>test_no_disk_csv_reads_in_cascade</code> — fails if a cascade module
+  re-introduces a <code>csv.reader</code> / <code>open(...).read()</code> against a CSV path
+  without an explicit justification entry in the allowlist.</li>
+<li><code>test_no_photocopier_lru_cache</code> — fails on module-level
+  <code>@lru_cache</code> over frame-returning helpers (cross-test contamination
+  trap).</li>
+<li><code>test_no_module_level_frame_globals</code> — fails on module-level
+  <code>pl.DataFrame</code> / <code>pl.LazyFrame</code> globals.</li>
+<li><code>test_provider_or_shims_have_justification</code> — every disk read still
+  in the cascade must be accompanied by a documented reason.</li>
+<li><code>test_allowlists_cover_only_existing_files</code> — the allowlists
+  themselves cannot drift past the files they reference.</li>
+</ul>
+<p>A cascade module that reads from disk silently is a meta-test failure,
+not a code-review catch.</p>
+<h2 id="layer-2-scenario-fixtures-goldens-and-parity">Layer 2 — scenario fixtures, goldens, and parity</h2>
+<h3 id="testsfixturesjson-is-the-single-authoritative-source"><code>tests/fixtures/*.json</code> is the single authoritative source</h3>
+<p>Every SQLite DB used by tests is built on demand from a JSON fixture.
+The previous ~521 MB of tracked / gitignored SQLite + CSV fixtures has
+collapsed to ~5 KB of JSON plus the on-demand cascade. Schema
+migration covers the fixture set via
+<code>flextool.update_flextool.test_fixtures.migrate_all</code>, and the CI
+verify chain (see below) fails the build if any fixture drifts from
+the current <code>FLEXTOOL_DB_VERSION</code>.</p>
+<p>Canonical fixtures currently in <code>tests/fixtures/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Fixture</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests.json</code></td>
+<td>Main fixture; <code>tests/scenarios.yaml</code> and most engine_polars tests build their work-folders from here. Also the source for the generated <code>templates_examples.json</code> canonical DB.</td>
+</tr>
+<tr>
+<td><code>stochastics.json</code></td>
+<td>Stochastic / forecast-branch scenarios. Source for the generated <code>howto_stochastics.json</code> canonical DB.</td>
+</tr>
+<tr>
+<td><code>stochastics_pbt_inflow.json</code></td>
+<td>PBT inflow scenarios (period-block-time stochastic inflow).</td>
+</tr>
+<tr>
+<td><code>lh2_three_region.json</code></td>
+<td>LH2 three-region monolithic + Benders parity fixture (see <a href="../decomposition/"><code>decomposition.md</code></a>).</td>
+</tr>
+<tr>
+<td><code>h2_trade_parity.json</code></td>
+<td>H2-trade Benders parity fixture.</td>
+</tr>
+<tr>
+<td><code>multi_ts_branch1.json</code></td>
+<td>Multi-timeseries branch-1 fixture.</td>
+</tr>
+<tr>
+<td><code>branch2_parent_period.json</code></td>
+<td>Branch-2 / parent-period stochastic fixture.</td>
+</tr>
+<tr>
+<td><code>case14_dc_power_flow.json</code></td>
+<td>PGLib IEEE case14 MATPOWER export (~8200 lines), used by <code>test_flex_dc_power_flow.py</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>_augment_*.py</code> and <code>build_*.py</code> scripts alongside these JSONs are
+one-shot builders / overlays kept for provenance, not runtime
+dependencies.</p>
+<h3 id="scenario_workdir-on-demand-cascade-fixture"><code>scenario_workdir</code> — on-demand cascade fixture</h3>
+<p><code>scenario_workdir(scenario_name, db_fixture="main")</code>, defined in
+<code>tests/engine_polars/conftest.py</code>, is the session-scoped fixture that
+replaced the historical <code>tests/engine_polars/data/work_*/</code> snapshot
+pattern. For a requested <code>(scenario, db_fixture)</code> pair it:</p>
+<ol>
+<li>Resolves <code>db_fixture</code> against the per-fixture session-scoped DB
+   (built once per session from the matching JSON).</li>
+<li>Runs the full cascade with <code>csv_dump=True</code> + <code>keep_solutions=True</code>
+   in a <code>tmp_path_factory</code> workdir.</li>
+<li>Snapshots the last orchestration step's <code>flex_data_provider</code> so the
+   on-disk CSV layout matches what the legacy disk fixtures shipped.</li>
+<li>Caches the resulting work-folder per <code>(scenario, db_fixture)</code> —
+   each scenario pays its ~2 s cascade cost once per test session
+   regardless of how many tests consume it.</li>
+</ol>
+<p>Valid <code>db_fixture</code> keys map 1:1 to the JSONs listed above (<code>main</code>,
+<code>stochastic</code>, <code>lh2</code>, <code>case14</code>, <code>h2_trade_parity</code>, <code>multi_ts_branch1</code>,
+<code>stochastics_pbt_inflow</code>, <code>branch2_parent_period</code>).</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_foo</span><span class="p">(</span><span class="n">scenario_workdir</span><span class="p">):</span>
+    <span class="n">work</span> <span class="o">=</span> <span class="n">scenario_workdir</span><span class="p">(</span><span class="s2">"coal_ladder_annual"</span><span class="p">,</span> <span class="n">db_fixture</span><span class="o">=</span><span class="s2">"main"</span><span class="p">)</span>
+    <span class="c1"># work is a Path to a populated workdir with input/output CSVs.</span>
+</code></pre></div>
+<p>The two <code>tests/engine_polars/data/work_&lt;scenario&gt;/</code> directories that
+survive after Stage 4 (<code>work_lh2_three_region</code>, <code>work_test_a_lot</code>)
+hold only a single <code>golden_obj.json</code> golden objective each. No
+migrated test depends on the gitignored bulk CSV snapshot pattern;
+the entry stays on <code>.gitignore</code> for back-compat only.</p>
+<h3 id="extend_tests_fixture-agent-friendly-append-only-edits"><code>extend_tests_fixture</code> — agent-friendly append-only edits</h3>
+<p><code>flextool.update_flextool.extend_tests_fixture</code> is a YAML-delta
+workflow for <em>append-only</em> additions to <code>tests/fixtures/*.json</code> —
+new entities, alternatives, scalar parameter values, and scenarios.
+It exists because rewriting authoritative JSON by hand is risky:</p>
+<ul>
+<li>Validates every name against <code>spinedb_schema.json</code> with did-you-mean
+  suggestions.</li>
+<li>Rejects edits to existing entries (append-only enforcement).</li>
+<li>Rejects structured (<code>Map</code> / time-series) values, pointing the caller
+  at the SpineDB editor for those.</li>
+<li>Eight unit tests under <code>tests/spinedb_backend/</code> lock the contract.</li>
+</ul>
+<p>Agents add to fixtures without rewriting them; structured / curated
+edits remain a human-with-SpineDB-editor job.</p>
+<h3 id="generate_canonical-projected-canonical-dbs"><code>generate_canonical</code> — projected canonical DBs</h3>
+<p><code>flextool.update_flextool.generate_canonical</code> projects authoritative
+fixtures into derived canonical JSONs. The recipes in
+<code>flextool/schemas/canonical_databases/_recipes.yaml</code> declare two
+projections today:</p>
+<ul>
+<li><code>tests/fixtures/tests.json</code> → <code>templates_examples.json</code></li>
+<li><code>tests/fixtures/stochastics.json</code> → <code>howto_stochastics.json</code></li>
+</ul>
+<p>The remaining <code>howto_*.json</code> files plus
+<code>templates_time_settings_only.json</code> stay individually authoritative —
+purpose-specific minimal teaching examples whose curation goals
+differ from test-coverage curation. <code>generate_canonical --verify</code>
+fails when a projected canonical drifts from its source.</p>
+<h3 id="golden-objectives-scenario-goldens">Golden objectives &amp; scenario goldens</h3>
+<p><code>tests/scenarios.yaml</code> defines a parametrised end-to-end scenario
+set that runs in <code>tests/test_scenarios.py</code>:</p>
+<ol>
+<li>Build the session-scoped SQLite DB from
+   <code>tests/fixtures/&lt;fixture&gt;.json</code>.</li>
+<li>Run <code>FlexToolRunner</code> for the scenario in an isolated tmp workdir.</li>
+<li>Compare selected output CSVs against
+   <code>tests/expected/&lt;scenario&gt;/*.csv</code>.</li>
+<li>If the scenario YAML entry sets <code>expected_objective</code>, assert that
+   <code>summary_solve.csv</code> lands within <code>expected_objective_tolerance</code>
+   (default <code>1e-3</code>, often tightened to <code>1e-5</code> for stable scenarios).</li>
+<li>If <code>time_budget_seconds</code> is set, assert the full
+   write-input → solve → write-outputs cycle finishes in budget.</li>
+</ol>
+<p>Standalone golden integration tests live alongside (e.g.
+<code>tests/test_lh2_three_region.py</code> pins the LH2 three-region monolithic
+objective against <code>tests/expected/lh2_three_region/objective.json</code> at
+relative tolerance <code>1e-4</code>). The same fixture also backs the native
+Benders gap-to-monolithic check — see
+<a href="../decomposition/"><code>decomposition.md</code></a> and
+<a href="../slack_convention/"><code>slack_convention.md</code></a>.</p>
+<h2 id="layer-3-full-integration">Layer 3 — full integration</h2>
+<p>The <code>tests/test_scenarios.py</code> driver above covers Layer 3 for the
+in-tree scenarios (<code>tests/scenarios.yaml</code> parametrises it, goldens
+live in <code>tests/expected/&lt;scenario&gt;/</code>). The separate <code>execution_tests/</code>
+directory contains Spine Toolbox workflow execution tests
+(<code>test_execution.py</code>, <code>tool.py</code>) that exercise the same scenarios
+through the Toolbox DAG rather than the Python runner directly.</p>
+<p><strong>Three-tier gate cadence</strong> (matches the
+<a href="../architecture/"><code>architecture.md</code></a> wording so contributors converge
+on the same loop):</p>
+<ul>
+<li><strong>Inner loop</strong> — module-specific tests after every edit, typically
+  <code>pytest tests/engine_polars/&lt;area&gt;/</code>. Run continuously while
+  iterating.</li>
+<li><strong>Broader gate</strong> — <code>pytest tests/engine_polars/</code> full sweep, once
+  per commit batch (~27 minutes on a recent reference run).</li>
+<li><strong>Activation truth</strong> — <code>pytest tests/</code> (Layer 1 + scenario
+  integration suite + <code>tests/model/</code> + <code>tests/gui/</code> +
+  <code>tests/decomposition/</code> + <code>tests/spinedb_backend/</code>), run rarely
+  (overnight / pre-release).</li>
+</ul>
+<p>Inner loop ≠ confidence to merge; activation truth is the only gate
+that signals end-to-end health.</p>
+<h2 id="ci-verify-chain">CI verify chain</h2>
+<p><code>.github/workflows/tests.yml::template-check</code> enforces four drift
+checks before any Linux/Windows/macOS test job runs. The same
+commands are valid as pre-push sanity locally:</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Command</th>
+<th>What it checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Master template parity</td>
+<td><code>python -m flextool.update_flextool.sync_master_json_template --verify</code></td>
+<td><code>schemas/spinedb_schema.json</code> matches the migration chain (see <a href="../db_schema/"><code>db_schema.md</code></a>).</td>
+</tr>
+<tr>
+<td>Test fixtures schema</td>
+<td><code>python -m flextool.update_flextool.test_fixtures verify</code></td>
+<td>All <code>tests/fixtures/*.json</code> are at the current <code>FLEXTOOL_DB_VERSION</code>.</td>
+</tr>
+<tr>
+<td>Generated canonicals</td>
+<td><code>python -m flextool.update_flextool.generate_canonical --verify</code></td>
+<td>Generated canonical JSONs (<code>templates_examples.json</code>, <code>howto_stochastics.json</code>) match what <code>generate_canonical</code> would emit from the current authoritative sources.</td>
+</tr>
+<tr>
+<td>Canonical schema</td>
+<td><code>python -m flextool.update_flextool.canonical_databases verify</code></td>
+<td>The authoritative canonical JSONs themselves are at the current schema.</td>
+</tr>
+</tbody>
+</table>
+<p>A drift in any of the four is a failed workflow, not a code-review
+catch. See the <a href="../architecture/"><code>architecture.md</code></a> "verify hooks"
+tail for the same chain in the higher-level inventory and
+<a href="../db_schema/"><code>db_schema.md</code></a> for the migration-chain side of the
+contract.</p>
+<h2 id="markers-and-gating">Markers and gating</h2>
+<p>Defined in <code>pyproject.toml</code> and re-asserted in <code>tests/conftest.py</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Marker</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>smoke</code></td>
+<td>Layer-1 + scenarios on the per-commit CI gate (&lt;1 min)</td>
+</tr>
+<tr>
+<td><code>solver</code></td>
+<td>Touches a real solver (HiGHS), 5–60 s each</td>
+</tr>
+<tr>
+<td><code>slow</code></td>
+<td>&gt;~30 s — nightly only</td>
+</tr>
+<tr>
+<td><code>decomposition</code></td>
+<td>Tier 8 objective-decomposition parity tests</td>
+</tr>
+<tr>
+<td><code>perturbation</code></td>
+<td>Tier 6 single-multiplier perturbation tests</td>
+</tr>
+<tr>
+<td><code>emission</code></td>
+<td>Tier 7 MPS row-count emission tests</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>smoke</code> marker is attached automatically to scenarios in
+<code>scenarios.yaml</code> that set <code>smoke: true</code>.</p>
+<p><code>.github/workflows/ci.yml</code> defines the three-tier CI gate:</p>
+<ul>
+<li><strong>smoke</strong> — every push and PR; runs
+  <code>pytest -m "smoke or (not slow and not solver)"</code> with a 1-minute
+  timeout.</li>
+<li><strong>full</strong> — push to <code>master</code> and nightly cron; full Layer-1 plus
+  Layer-2 MPS parity (30-minute timeout).</li>
+<li><strong>slow</strong> — nightly only; <code>-m slow</code>.</li>
+</ul>
+<h2 id="running-the-tests">Running the tests</h2>
+<div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-m<span class="w"> </span>smoke<span class="w">              </span><span class="c1"># the CI smoke gate, fast</span>
+pytest<span class="w"> </span>-m<span class="w"> </span><span class="s2">"not solver"</span><span class="w">       </span><span class="c1"># everything that doesn't touch a solver</span>
+pytest<span class="w"> </span>tests/engine_polars/<span class="w">  </span><span class="c1"># broader gate — engine layer</span>
+pytest<span class="w"> </span>tests/<span class="w">                </span><span class="c1"># activation truth (slow)</span>
+</code></pre></div>
+<p>Regenerate a single scenario's golden CSVs in place:</p>
+<div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>tests/test_scenarios.py<span class="w"> </span>--regenerate<span class="w"> </span>coal
+</code></pre></div>
+<p>This runs only the matching <code>scenario</code> parametrize-case, writes fresh
+CSVs into <code>tests/expected/coal/</code>, and lets you commit the diff.</p>
+<h2 id="determinism-guards">Determinism guards</h2>
+<p><code>engine_polars</code> emitters keep cross-solve determinism through explicit
+polars sort keys on every set / parameter frame before it enters the
+<code>polar_high.Problem</code>. The downstream LP row / column IDs are then
+assigned in canonical order regardless of Python hash randomisation.</p>
+<p>The autouse fixture <code>_reset_flextool_module_caches</code> in
+<code>tests/conftest.py</code> clears the LP-scaling module cache around every
+test so scenarios that share solve names cannot cross-contaminate.</p>
+<h2 id="adding-a-new-test">Adding a new test</h2>
+<ul>
+<li><strong>Engine unit test.</strong> Drop a <code>test_*.py</code> file into
+  <code>tests/engine_polars/</code> (or the matching <code>loaders/</code> / <code>constraints/</code>
+  / <code>objective/</code> subdirectory) — pytest auto-discovers.</li>
+<li><strong>New scenario golden.</strong> Append a scenario entry to
+  <code>tests/scenarios.yaml</code>, then
+  <code>pytest tests/test_scenarios.py --regenerate &lt;name&gt;</code> and commit the
+  resulting <code>tests/expected/&lt;name&gt;/</code> directory.</li>
+<li><strong>New fixture content (append-only).</strong> Use
+  <code>flextool.update_flextool.extend_tests_fixture</code> with a YAML delta
+  rather than editing the JSON by hand.</li>
+<li><strong>Marker discipline.</strong> Mark fast tests with <code>smoke</code> only if they
+  belong in the per-commit gate; mark anything that builds and solves
+  an LP with <code>solver</code>; mark anything over ~30 s with <code>slow</code>.</li>
+</ul>
+<h2 id="related-pages">Related pages</h2>
+<ul>
+<li><a href="../architecture/"><code>architecture.md</code></a> — pipeline end-to-end,
+  Repository layout, verify-hook inventory</li>
+<li><a href="../engine_polars/"><code>engine_polars.md</code></a> — the core under Layer 1</li>
+<li><a href="../db_schema/"><code>db_schema.md</code></a> — schema migration chain that
+  <code>sync_master_json_template --verify</code> enforces</li>
+<li><a href="../decomposition/"><code>decomposition.md</code></a> — Benders parity context</li>
+<li><code>CHANGELOG.md</code> 3.47.0 entry — the JSON-fixture architecture rollout</li>
+<li><code>CHANGELOG.md</code> 3.33.0 entry — the original test-pyramid rollout</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../../assets/mathjaxhelper.js"></script>
+      
+    
+  </body>
+</html>

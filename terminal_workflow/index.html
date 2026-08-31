@@ -1,0 +1,3429 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../excel_interface/">
+      
+      
+        <link rel="next" href="../solvers/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Terminal / CLI - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#running-irena-flextool-from-the-terminal" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Terminal / CLI
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how_to/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scripts-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scripts overview
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scripts overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workflow-and-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow and execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#input-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input preparation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-and-maintenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export and maintenance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#installed-entry-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installed entry points
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#execute_flextool_workflowpy-full-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execute_flextool_workflow.py &mdash; full workflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="execute_flextool_workflow.py — full workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#positional-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positional arguments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#input-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input sources
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run_flextoolpy-model-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_flextool.py &mdash; model execution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="run_flextool.py — model execution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#positional-arguments_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positional arguments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#write_outputspy-output-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        write_outputs.py &mdash; output generation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="write_outputs.py — output generation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scenario_resultspy-cross-scenario-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scenario_results.py &mdash; cross-scenario comparison
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="scenario_results.py — cross-scenario comparison">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-preparation-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input preparation commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Input preparation commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#import-self-describing-excel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import self-describing Excel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#import-with-specification-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import with specification file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#import-old-flextool-v2-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import old FlexTool v2 files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export-and-maintenance-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export and maintenance commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Export and maintenance commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#export-database-to-excel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export database to Excel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrate-database-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migrate database schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update FlexTool
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worked-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worked examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Worked examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-run-a-full-workflow-from-an-existing-database" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Run a full workflow from an existing database
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-import-from-excel-and-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Import from Excel and run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-re-plot-outputs-from-parquet-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Re-plot outputs from parquet files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-compare-multiple-scenarios" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Compare multiple scenarios
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-import-and-convert-an-old-flextool-v2-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Import and convert an old FlexTool v2 model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-export-a-database-to-excel-and-re-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Export a database to Excel and re-import
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#output-directory-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output directory structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/engine_polars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine_polars pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scripts-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scripts overview
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scripts overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workflow-and-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow and execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#input-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input preparation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-and-maintenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export and maintenance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#installed-entry-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installed entry points
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#execute_flextool_workflowpy-full-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execute_flextool_workflow.py &mdash; full workflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="execute_flextool_workflow.py — full workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#positional-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positional arguments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#input-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input sources
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run_flextoolpy-model-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_flextool.py &mdash; model execution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="run_flextool.py — model execution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#positional-arguments_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positional arguments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#write_outputspy-output-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        write_outputs.py &mdash; output generation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="write_outputs.py — output generation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scenario_resultspy-cross-scenario-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scenario_results.py &mdash; cross-scenario comparison
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="scenario_results.py — cross-scenario comparison">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-preparation-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input preparation commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Input preparation commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#import-self-describing-excel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import self-describing Excel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#import-with-specification-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import with specification file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#import-old-flextool-v2-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import old FlexTool v2 files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export-and-maintenance-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export and maintenance commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Export and maintenance commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#export-database-to-excel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export database to Excel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrate-database-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migrate database schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-flextool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update FlexTool
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worked-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worked examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Worked examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-run-a-full-workflow-from-an-existing-database" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Run a full workflow from an existing database
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-import-from-excel-and-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Import from Excel and run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-re-plot-outputs-from-parquet-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Re-plot outputs from parquet files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-compare-multiple-scenarios" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Compare multiple scenarios
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-import-and-convert-an-old-flextool-v2-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Import and convert an old FlexTool v2 model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-export-a-database-to-excel-and-re-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Export a database to Excel and re-import
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#output-directory-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output directory structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="running-irena-flextool-from-the-terminal">Running IRENA FlexTool from the terminal</h1>
+<p>IRENA FlexTool can be run directly from the command line without Spine Toolbox or a web browser. This is useful for scripting, automation, running on servers, or when you prefer a terminal-based workflow.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li><strong>Python 3.11+</strong> with a virtual environment (e.g. <code>~/venv-spi/</code>)</li>
+<li><strong>HiGHS</strong> solver, called from Python via the <code>highspy</code> bindings (installed automatically with the FlexTool package)</li>
+<li><strong>FlexTool</strong> installed: <code>pip install -e .</code> (add <code>[toolbox]</code> for Spine Toolbox integration)</li>
+<li>See the <a href="https://irena-flextool.github.io/flextool/install_toolbox/">install page</a> for full setup instructions</li>
+</ul>
+<p>Activate the virtual environment before running any commands:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">source</span><span class="w"> </span>~/venv-spi/bin/activate
+</code></pre></div>
+<h2 id="quick-start">Quick start</h2>
+<p>Run the example scenario <code>base</code> from the bundled example database:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>templates/examples.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>output_info.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>base
+</code></pre></div>
+<p>The database already exists, so the input-preparation phase is skipped automatically (it runs only when <code>--tabular-file-path</code> or <code>--csv-directory-path</code> is given). Phase 2 then runs the model and writes outputs in one pass. Results land in <code>output_plots/base/</code> and <code>output_parquet/base/</code>.</p>
+<h2 id="scripts-overview">Scripts overview</h2>
+<p>Root-level scripts are backward-compatible wrappers that delegate to modules under <code>flextool/cli/</code>. Both invocation styles work:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Root-level script (backward compat)</span>
+python<span class="w"> </span>run_flextool.py<span class="w"> </span>...
+
+<span class="c1"># Module invocation (preferred)</span>
+python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_flextool<span class="w"> </span>...
+</code></pre></div>
+<h3 id="workflow-and-execution">Workflow and execution</h3>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>CLI module</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>execute_flextool_workflow.py</code></td>
+<td><code>flextool.cli.cmd_execute_flextool_workflow</code></td>
+<td>Unified entry point &mdash; runs the full workflow</td>
+</tr>
+<tr>
+<td><code>run_flextool.py</code></td>
+<td><code>flextool.cli.cmd_run_flextool</code></td>
+<td>Runs the optimization model and writes outputs</td>
+</tr>
+<tr>
+<td><code>write_outputs.py</code></td>
+<td><code>flextool.cli.cmd_write_outputs</code></td>
+<td>(Re-)generates plots, parquet, CSV, or Excel from results</td>
+</tr>
+<tr>
+<td><code>scenario_results.py</code></td>
+<td><code>flextool.cli.cmd_scenario_results</code></td>
+<td>Compares results across multiple scenarios</td>
+</tr>
+</tbody>
+</table>
+<h3 id="input-preparation">Input preparation</h3>
+<table>
+<thead>
+<tr>
+<th>CLI module</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>flextool.cli.cmd_read_tabular_input</code></td>
+<td>Parse Excel/ODS/CSV using JSON specification &rarr; write Spine DB</td>
+</tr>
+<tr>
+<td><code>flextool.cli.cmd_read_self_describing_tabular_input</code></td>
+<td>Read self-describing Excel with embedded metadata &rarr; Spine DB</td>
+</tr>
+<tr>
+<td><code>flextool.cli.cmd_read_old_flextool</code></td>
+<td>Import old FlexTool v2 .xlsm files &rarr; Spine DB</td>
+</tr>
+</tbody>
+</table>
+<h3 id="export-and-maintenance">Export and maintenance</h3>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>CLI module</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>migrate_database.py</code></td>
+<td><code>flextool.cli.cmd_migrate_database</code></td>
+<td>Upgrade DB schema to latest version</td>
+</tr>
+<tr>
+<td>&mdash;</td>
+<td><code>flextool.cli.cmd_export_to_tabular</code></td>
+<td>Export Spine DB &rarr; Excel (.xlsx)</td>
+</tr>
+<tr>
+<td><code>update_flextool.py</code></td>
+<td><code>flextool.cli.cmd_update_flextool</code></td>
+<td>Git pull + project migration</td>
+</tr>
+</tbody>
+</table>
+<h3 id="installed-entry-points">Installed entry points</h3>
+<p>After <code>pip install -e .</code> or <code>pip install .</code>, these commands are available directly:</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Entry point</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>flextool-gui</code></td>
+<td><code>flextool.gui.__main__:main</code></td>
+</tr>
+<tr>
+<td><code>flextool-read-old</code></td>
+<td><code>flextool.cli.cmd_read_old_flextool:main</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="execute_flextool_workflowpy-full-workflow"><code>execute_flextool_workflow.py</code> &mdash; full workflow</h2>
+<p>This is the recommended entry point. It orchestrates two phases:</p>
+<ol>
+<li><strong>Input preparation</strong> (optional) &mdash; convert tabular data (Excel/ODS/CSV) into a Spine database. Runs only when <code>--tabular-file-path</code> or <code>--csv-directory-path</code> is given; otherwise the existing input database is used as-is.</li>
+<li><strong>Model execution + output write</strong> &mdash; run the FlexTool optimization model and write results in the requested formats. Parquet is always produced; <code>--write-methods</code> selects which additional formats (plot, csv, excel, spinedb) to generate alongside.</li>
+</ol>
+<p>The two phases are fused because the in-memory <code>FlexData</code> + HiGHS solution are gone once the solver exits &mdash; there is no separate standalone "write outputs" step. (Use <code>python run_flextool.py</code> followed by <code>python write_outputs.py --read-parquet-dir ...</code> if you need to re-render artefacts from a previous run's parquets without re-solving.)</p>
+<h3 id="usage">Usage</h3>
+<div class="highlight"><pre><span></span><code>python execute_flextool_workflow.py INPUT_DB_URL OUTPUT_DB_URL SCENARIO_NAME [options]
+</code></pre></div>
+<h3 id="positional-arguments">Positional arguments</h3>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INPUT_DB_URL</code></td>
+<td>Input database URL or file path (e.g. <code>sqlite:///input.sqlite</code> or <code>input.sqlite</code>)</td>
+</tr>
+<tr>
+<td><code>OUTPUT_DB_URL</code></td>
+<td>Output database URL for storing result metadata</td>
+</tr>
+<tr>
+<td><code>SCENARIO_NAME</code></td>
+<td>Name of the scenario to execute</td>
+</tr>
+</tbody>
+</table>
+<h3 id="options">Options</h3>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--tabular-file-path PATH</code></td>
+<td>Path to Excel/ODS input file (mutually exclusive with <code>--csv-directory-path</code>). Triggers Phase 1.</td>
+</tr>
+<tr>
+<td><code>--csv-directory-path PATH</code></td>
+<td>Path to directory containing CSV input files. Triggers Phase 1.</td>
+</tr>
+<tr>
+<td><code>--write-methods METHOD [...]</code></td>
+<td>Output formats to generate (default: <code>plot parquet csv</code>). Choices: <code>plot</code>, <code>parquet</code>, <code>excel</code>, <code>csv</code>, <code>spinedb</code>. Parquet is the canonical output and is always produced when this flag is omitted. <code>spinedb</code> dumps the processed results into a SpineDB using the FlexTool results schema (one Spine alternative per run, named after the scenario, so multiple runs coexist in one file).</td>
+</tr>
+<tr>
+<td><code>--output-subdir DIR</code></td>
+<td>Subdirectory for output files (default: scenario name)</td>
+</tr>
+<tr>
+<td><code>--output-config PATH</code></td>
+<td>Path to output configuration YAML (default: bundled <code>flextool/schemas/default_plots.yaml</code>)</td>
+</tr>
+<tr>
+<td><code>--debug</code></td>
+<td>Forward <code>--debug</code> to the model run (enables verbose memory checkpoints and per-solve CSV diagnostics)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="input-sources">Input sources</h3>
+<p><strong>From an Excel or ODS file:</strong></p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>input.sqlite<span class="w"> </span>output_info.sqlite<span class="w"> </span>my_scenario<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tabular-file-path<span class="w"> </span>my_input.xlsx
+</code></pre></div>
+<p><strong>From a directory of CSV files:</strong></p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>input.sqlite<span class="w"> </span>output_info.sqlite<span class="w"> </span>my_scenario<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--csv-directory-path<span class="w"> </span>input_data/
+</code></pre></div>
+<p><strong>From an existing Spine database</strong> (no <code>--tabular-file-path</code> / <code>--csv-directory-path</code> &rArr; Phase 1 is skipped automatically):</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///input.sqlite<span class="w"> </span>output_info.sqlite<span class="w"> </span>my_scenario
+</code></pre></div>
+<h2 id="run_flextoolpy-model-execution"><code>run_flextool.py</code> &mdash; model execution</h2>
+<p>Runs the FlexTool optimization model directly. This is called internally by <code>execute_flextool_workflow.py</code> but can also be used standalone. After solving, it writes outputs and records scenario information in the output database.</p>
+<h3 id="usage_1">Usage</h3>
+<div class="highlight"><pre><span></span><code>python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
+</code></pre></div>
+<h3 id="positional-arguments_1">Positional arguments</h3>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INPUT_DB_URL</code></td>
+<td>Input database URL</td>
+</tr>
+<tr>
+<td><code>OUTPUT_DB_URL</code></td>
+<td>Output database URL for result metadata (optional)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="options_1">Options</h3>
+<p><strong>Run control and I/O paths:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--scenario-name NAME</code></td>
+<td>Scenario name to execute (if omitted, uses the active DB filter)</td>
+</tr>
+<tr>
+<td><code>--settings-db-url URL</code></td>
+<td>Settings DB consulted for post-processing defaults</td>
+</tr>
+<tr>
+<td><code>--output-spreadsheet PATH</code></td>
+<td>Save results to a spreadsheet file</td>
+</tr>
+<tr>
+<td><code>--write-methods METHOD [...]</code></td>
+<td>Output formats: <code>plot</code>, <code>parquet</code>, <code>excel</code>, <code>csv</code>, <code>spinedb</code> (default: <code>plot parquet</code>)</td>
+</tr>
+<tr>
+<td><code>--results-db-url URL</code></td>
+<td>Target SpineDB for the <code>spinedb</code> write-method (default: <code>&lt;output-location&gt;/results.sqlite</code>)</td>
+</tr>
+<tr>
+<td><code>--output-config PATH</code></td>
+<td>Path to output configuration YAML (default: <code>templates/default_plots.yaml</code>)</td>
+</tr>
+<tr>
+<td><code>--active-configs NAME [...]</code></td>
+<td>Which plot configuration sets to use (default: <code>default</code>)</td>
+</tr>
+<tr>
+<td><code>--plot-rows START END</code></td>
+<td>First and last row to plot in time series (default: <code>0 167</code>)</td>
+</tr>
+<tr>
+<td><code>--output-location DIR</code></td>
+<td>Override output location path</td>
+</tr>
+<tr>
+<td><code>--output-subdir NAME</code></td>
+<td>Subdirectory under <code>output_parquet/</code> etc. (default: scenario name)</td>
+</tr>
+<tr>
+<td><code>--flextool-location PATH</code></td>
+<td>Spine Toolbox shim: directs outputs to the FlexTool repo root rather than the work directory</td>
+</tr>
+<tr>
+<td><code>--work-folder DIR</code></td>
+<td>Working directory for intermediate files (default: CWD). Enables parallel scenario execution by isolating each run</td>
+</tr>
+<tr>
+<td><code>--only-first-file-per-plot</code></td>
+<td>Only produce the first file for each plot (quick overview mode)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Debug and diagnostics:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--debug</code></td>
+<td>Enable verbose logging, per-checkpoint memory trace, and a <code>solve_data/memory_diagnostics.csv</code> per-solve CSV</td>
+</tr>
+<tr>
+<td><code>--csv-dump</code></td>
+<td>Preserve cascade debug artefacts on disk: <code>input/</code>, <code>solve_data/</code>, <code>cross_solve/</code>, and <code>output_raw/</code> mirrors. Off by default (these directories are normally cleaned up after the run)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Numerical precision and solver tuning:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--precision-digits N</code></td>
+<td>Round every numeric input parameter to N significant figures before writing CSVs (typical: 10). Collapses float noise so HiGHS <code>mip_detect_symmetry</code> can aggregate structurally identical coefficients. Overrides <code>FLEXTOOL_PRECISION_DIGITS</code>; <code>0</code> or unset disables rounding</td>
+</tr>
+<tr>
+<td><code>--scaling {off,solver_only,basic,full}</code></td>
+<td>FlexTool autoscaler strategy (see <a href="../dev/scaling/">scaling.md</a>). <code>off</code> disables all scaling including HiGHS' internal equilibration; <code>solver_only</code> keeps only HiGHS' default matrix scaling; <code>basic</code> adds FlexTool's Layer-1 range detection and Layer-3 <code>user_*_scale</code> recommendation without LP mutation; <code>full</code> (default) adds Layer-2 semantic per-type column/row/cost scaling. Env fallback: <code>FLEXTOOL_SCALING</code></td>
+</tr>
+<tr>
+<td><code>--user-bound-scale N</code></td>
+<td>Pin HiGHS' <code>user_bound_scale</code> exponent (multiplies all column bounds and RHS by <code>2**N</code>). Use the value HiGHS suggests in its scaling warning; clamped to <code>[-10, 0]</code>. Overrides the Layer-3 auto-pick and any DB value</td>
+</tr>
+<tr>
+<td><code>--presolve {on,off,choose}</code></td>
+<td>HiGHS <code>presolve</code> override. Default keeps the determinism-pinned <code>on</code>; <code>off</code> disables presolve (slower but useful for memory or numerical diagnostics)</td>
+</tr>
+<tr>
+<td><code>--highs-threads N</code></td>
+<td>Number of HiGHS solver threads (default <code>1</code>). Values &gt;1 enable HiGHS parallel mode and trade determinism for wall-clock speedup</td>
+</tr>
+<tr>
+<td><code>--save-memory</code></td>
+<td>Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source, write the LP to a temp MPS file, and solve it in a separate HiGHS subprocess (via <code>cmd_solve_mps</code>) so the solver's working set lives outside the FlexTool address space. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See <a href="../dev/architecture/">architecture.md</a></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Decomposition (Benders):</strong></p>
+<p>Benders decomposition is selected <strong>per solve from the database</strong>, not
+via a CLI flag: set <code>solve.decomposition = benders</code> (plus the optional
+<code>solve.benders_max_iter</code> / <code>benders_tolerance</code> knobs) and declare at
+least two <code>group.decomposition_method = benders_regional</code> region groups.
+A single chain can mix schemes. See
+<a href="../dev/decomposition/">decomposition.md</a>. The one remaining CLI flag is
+the filter-only inspector:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--region GROUP_NAME</code></td>
+<td>Filter-only entry point: produce a per-region input directory <code>input_region_&lt;GROUP&gt;/</code> for Benders decomposition and exit without solving. Cross-region processes are replaced with import/export half-flows; coupling variables are listed in <code>solve_data/region_coupling.csv</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="example">Example</h3>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>run_flextool.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///templates/examples.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///output_info.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--scenario-name<span class="w"> </span>base
+</code></pre></div>
+<p>Return codes: <code>0</code> = success, <code>1</code> = infeasible or unbounded, <code>-1</code> = failure.</p>
+<h2 id="write_outputspy-output-generation"><code>write_outputs.py</code> &mdash; output generation</h2>
+<p>Generates plots, parquet files, CSV, or Excel outputs from existing model results. Useful for re-plotting with different settings without re-running the model.</p>
+<h3 id="usage_2">Usage</h3>
+<div class="highlight"><pre><span></span><code>python write_outputs.py [options]
+</code></pre></div>
+<p>All arguments are optional. When run from the terminal, you typically provide <code>--scenario-name</code>.</p>
+<h3 id="key-options">Key options</h3>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--scenario-name NAME</code></td>
+<td>Scenario with raw outputs available (when re-plotting a single scenario from the terminal)</td>
+</tr>
+<tr>
+<td><code>--input-db-url URL</code></td>
+<td>Input DB with scenario filter (used when <code>run_flextool.py</code> chains into this command from Toolbox)</td>
+</tr>
+<tr>
+<td><code>--output-locations-db-url URL</code></td>
+<td>Output-locations DB holding paths of existing outputs (re-plotting from Toolbox)</td>
+</tr>
+<tr>
+<td><code>--settings-db-url URL</code></td>
+<td>Settings DB consulted for unset parameters</td>
+</tr>
+<tr>
+<td><code>--read-parquet-dir DIR</code></td>
+<td>Read from existing parquet files instead of raw CSVs (faster)</td>
+</tr>
+<tr>
+<td><code>--config-path PATH</code></td>
+<td>Output configuration YAML (default: <code>templates/default_plots.yaml</code>)</td>
+</tr>
+<tr>
+<td><code>--active-configs NAME [...]</code></td>
+<td>Which plot configuration sets to use (default: <code>default</code>)</td>
+</tr>
+<tr>
+<td><code>--write-methods METHOD [...]</code></td>
+<td>Output formats: <code>plot</code>, <code>parquet</code>, <code>excel</code>, <code>csv</code>, <code>spinedb</code> (default: <code>plot parquet excel</code>)</td>
+</tr>
+<tr>
+<td><code>--results-db-url URL</code></td>
+<td>Target SpineDB for the <code>spinedb</code> write-method (default: <code>&lt;output-location&gt;/results.sqlite</code>). Note: <code>spinedb</code> needs the native solve path, so it is skipped (with a warning) when re-rendering via <code>--read-parquet-dir</code>.</td>
+</tr>
+<tr>
+<td><code>--plot-rows START END</code></td>
+<td>First and last row to plot in time series (default: <code>0 167</code>)</td>
+</tr>
+<tr>
+<td><code>--subdir DIR</code></td>
+<td>Subdirectory for outputs (default: scenario name)</td>
+</tr>
+<tr>
+<td><code>--output-location DIR</code></td>
+<td>Root directory for input/output locations (default: flextool root); overridden by <code>--output-locations-db-url</code></td>
+</tr>
+<tr>
+<td><code>--plot-file-format {png,svg}</code></td>
+<td>File format for plots (default: <code>png</code>)</td>
+</tr>
+<tr>
+<td><code>--only-first-file-per-plot</code></td>
+<td>Only produce the first file for each plot (quick overview mode)</td>
+</tr>
+<tr>
+<td><code>--single-result KEY CSV_NAME PLOT_NAME PLOT_TYPE SUBPLOTS_PER_ROW LEGEND_POSITION</code></td>
+<td>Process a single result (overrides <code>--config-path</code>). Use <code>"null"</code> for None values</td>
+</tr>
+<tr>
+<td><code>--debug</code></td>
+<td>Enable debug output</td>
+</tr>
+</tbody>
+</table>
+<h3 id="examples">Examples</h3>
+<p><strong>Re-plot from raw CSV outputs:</strong></p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>write_outputs.py<span class="w"> </span>--scenario-name<span class="w"> </span>base
+</code></pre></div>
+<p><strong>Re-plot from existing parquet files:</strong></p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>write_outputs.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--scenario-name<span class="w"> </span>base<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--read-parquet-dir<span class="w"> </span>output_parquet/base
+</code></pre></div>
+<p><strong>Generate only Excel output:</strong></p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>write_outputs.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--scenario-name<span class="w"> </span>base<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--write-methods<span class="w"> </span>excel
+</code></pre></div>
+<p><strong>Plot a different time range (rows 0 to 500):</strong></p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>write_outputs.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--scenario-name<span class="w"> </span>base<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--plot-rows<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="m">500</span>
+</code></pre></div>
+<h2 id="scenario_resultspy-cross-scenario-comparison"><code>scenario_results.py</code> &mdash; cross-scenario comparison</h2>
+<p>Reads results from multiple scenarios and generates comparison plots and optional spreadsheets.</p>
+<h3 id="usage_3">Usage</h3>
+<div class="highlight"><pre><span></span><code>python scenario_results.py [DB_URL] [options]
+</code></pre></div>
+<h3 id="options_2">Options</h3>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--parquet-base-dir DIR</code></td>
+<td>Base directory containing per-scenario parquet subdirectories</td>
+</tr>
+<tr>
+<td><code>--alternatives NAME [...]</code></td>
+<td>Specify scenario/alternative names manually</td>
+</tr>
+<tr>
+<td><code>--dispatch-plots</code></td>
+<td>Generate dispatch area plots for nodes and node groups</td>
+</tr>
+<tr>
+<td><code>--write-to-xlsx</code></td>
+<td>Write combined results to Excel file</td>
+</tr>
+<tr>
+<td><code>--write-dispatch-xlsx</code></td>
+<td>Write dispatch data to Excel in the plot directory</td>
+</tr>
+<tr>
+<td><code>--write-to-ods</code></td>
+<td>Write combined results to ODS file</td>
+</tr>
+<tr>
+<td><code>--output-config-path PATH</code></td>
+<td>Comparison plot configuration YAML (default: <code>templates/default_comparison_plots.yaml</code>)</td>
+</tr>
+<tr>
+<td><code>--active-configs NAME [...]</code></td>
+<td>Which plot configuration sets to use (default: <code>default</code>)</td>
+</tr>
+<tr>
+<td><code>--plot-rows START END</code></td>
+<td>First and last row to plot in time series (default: <code>0 167</code>)</td>
+</tr>
+<tr>
+<td><code>--plot-dir DIR</code></td>
+<td>Directory for comparison plots (default: <code>output_plot_comparisons</code>)</td>
+</tr>
+<tr>
+<td><code>--excel-dir DIR</code></td>
+<td>Directory for comparison Excel files</td>
+</tr>
+<tr>
+<td><code>--plot-file-format FORMAT</code></td>
+<td>File format for plots: <code>png</code> or <code>svg</code></td>
+</tr>
+<tr>
+<td><code>--shared-legend</code></td>
+<td>Use shared legend across subplots</td>
+</tr>
+<tr>
+<td><code>--only-first-file-per-plot</code></td>
+<td>Only produce the first file for each plot</td>
+</tr>
+<tr>
+<td><code>--show-plots</code></td>
+<td>Display plots interactively in addition to saving</td>
+</tr>
+</tbody>
+</table>
+<h3 id="examples_1">Examples</h3>
+<p><strong>Generate dispatch plots for specific alternatives:</strong></p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>scenario_results.py<span class="w"> </span>sqlite:///output_info.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--dispatch-plots<span class="w"> </span>--alternatives<span class="w"> </span>base<span class="w"> </span>high_RE
+</code></pre></div>
+<p><strong>Compare scenarios from parquet directories (without output DB):</strong></p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_scenario_results<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--parquet-base-dir<span class="w"> </span>output_parquet<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--alternatives<span class="w"> </span>base<span class="w"> </span>network_all_tech<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--dispatch-plots<span class="w"> </span>--write-to-xlsx
+</code></pre></div>
+<hr />
+<h2 id="input-preparation-commands">Input preparation commands</h2>
+<p>These commands convert tabular input data into a Spine database. They are called automatically by <code>execute_flextool_workflow.py</code> and by the GUI, but can also be run manually.</p>
+<h3 id="import-self-describing-excel">Import self-describing Excel</h3>
+<p>The self-describing format embeds metadata (entity classes, parameter names, data types) directly in the Excel sheet headers. This is the recommended input format.</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_read_self_describing_tabular_input<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>my_input.xlsx<span class="w"> </span>sqlite:///input.sqlite
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>xlsx_path</code></td>
+<td>Path to the self-describing Excel file</td>
+</tr>
+<tr>
+<td><code>target_db_url</code></td>
+<td>Target database URL</td>
+</tr>
+<tr>
+<td><code>--keep-entities</code></td>
+<td>Keep existing entities during purge (default: purge all)</td>
+</tr>
+<tr>
+<td><code>--no-purge</code></td>
+<td>Do not purge existing data before importing</td>
+</tr>
+</tbody>
+</table>
+<h3 id="import-with-specification-file">Import with specification file</h3>
+<p>The older format uses a separate JSON specification file to define how Excel/ODS/CSV columns map to database entities.</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_read_tabular_input<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///input.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tabular-file-path<span class="w"> </span>my_input.xlsx
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>target_db_url</code></td>
+<td>URL to FlexTool input database</td>
+</tr>
+<tr>
+<td><code>--tabular-file-path PATH</code></td>
+<td>Path to Excel or ODS input file</td>
+</tr>
+<tr>
+<td><code>--csv-directory-path PATH</code></td>
+<td>Path to directory containing CSV input files</td>
+</tr>
+<tr>
+<td><code>--migration-follows</code></td>
+<td>Accept version mismatch (migration will run after import)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="import-old-flextool-v2-files">Import old FlexTool v2 files</h3>
+<p>Converts old-format FlexTool .xlsm files (18 fixed sheets) to the current Spine database format.</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_read_old_flextool<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>old_model.xlsm<span class="w"> </span>sqlite:///input.sqlite
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>xlsm_path</code></td>
+<td>Path to the old-format FlexTool Excel file</td>
+</tr>
+<tr>
+<td><code>target_db_url</code></td>
+<td>Target database URL</td>
+</tr>
+<tr>
+<td><code>--alternative-name NAME</code></td>
+<td>Name for the alternative (default: <code>base</code>)</td>
+</tr>
+<tr>
+<td><code>--no-purge</code></td>
+<td>Do not purge existing data before importing</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="export-and-maintenance-commands">Export and maintenance commands</h2>
+<h3 id="export-database-to-excel">Export database to Excel</h3>
+<p>Exports a Spine database back to Excel (.xlsx) in self-describing format.</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_export_to_tabular<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>sqlite:///input.sqlite<span class="w"> </span>output.xlsx
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>db_url</code></td>
+<td>URL to FlexTool input database</td>
+</tr>
+<tr>
+<td><code>output_path</code></td>
+<td>Output Excel file path (.xlsx)</td>
+</tr>
+<tr>
+<td><code>--include-advanced</code></td>
+<td>Include advanced sheets (solve sequences, stochastic data)</td>
+</tr>
+<tr>
+<td><code>--old-format</code></td>
+<td>Use the old v1 format instead of self-describing v2</td>
+</tr>
+</tbody>
+</table>
+<h3 id="migrate-database-schema">Migrate database schema</h3>
+<p>Upgrades a database to the latest FlexTool schema version using the templates bundled under <code>flextool/schemas/</code>.</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_migrate_database<span class="w"> </span>input.sqlite
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>filepath</code></td>
+<td>Path to the database file (absolute or relative to flextool folder)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="update-flextool">Update FlexTool</h3>
+<p>Pulls the latest version from GitHub and migrates project databases.</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_update_flextool
+</code></pre></div>
+<hr />
+<h2 id="worked-examples">Worked examples</h2>
+<p>These examples use the bundled <code>templates/examples.sqlite</code> database and the <code>base</code> scenario.</p>
+<h3 id="1-run-a-full-workflow-from-an-existing-database">1. Run a full workflow from an existing database</h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Run model and generate outputs (plots, parquet, CSV)</span>
+<span class="c1"># No --tabular-file-path / --csv-directory-path → Phase 1 is skipped automatically</span>
+python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>templates/examples.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>output_info.sqlite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>base
+
+<span class="c1"># Output plots are saved to output_plots/base/</span>
+<span class="c1"># Parquet files are saved to output_parquet/base/</span>
+<span class="c1"># CSV files are saved to output_csv/base/</span>
+</code></pre></div>
+<h3 id="2-import-from-excel-and-run">2. Import from Excel and run</h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Self-describing format (recommended)</span>
+python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>input.sqlite<span class="w"> </span>output_info.sqlite<span class="w"> </span>my_scenario<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--tabular-file-path<span class="w"> </span>my_input.xlsx
+</code></pre></div>
+<h3 id="3-re-plot-outputs-from-parquet-files">3. Re-plot outputs from parquet files</h3>
+<p>After running the model at least once, you can regenerate plots from the saved parquet files without re-running the model:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>write_outputs.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--scenario-name<span class="w"> </span>base<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--read-parquet-dir<span class="w"> </span>output_parquet/base<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--write-methods<span class="w"> </span>plot
+</code></pre></div>
+<h3 id="4-compare-multiple-scenarios">4. Compare multiple scenarios</h3>
+<p>First, run two scenarios to populate the output database:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Run first scenario</span>
+python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>templates/examples.sqlite<span class="w"> </span>output_info.sqlite<span class="w"> </span>base
+
+<span class="c1"># Run second scenario</span>
+python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>templates/examples.sqlite<span class="w"> </span>output_info.sqlite<span class="w"> </span>network_all_tech
+</code></pre></div>
+<p>Then compare them:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>scenario_results.py<span class="w"> </span>sqlite:///output_info.sqlite<span class="w"> </span>--dispatch-plots
+</code></pre></div>
+<p>Comparison plots are saved to <code>output_plot_comparisons/</code>.</p>
+<h3 id="5-import-and-convert-an-old-flextool-v2-model">5. Import and convert an old FlexTool v2 model</h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Create a target database from the template</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"from flextool import initialize_database; initialize_database('schemas/spinedb_schema.json', 'converted.sqlite')"</span>
+
+<span class="c1"># Import the old-format file</span>
+python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_read_old_flextool<span class="w"> </span>old_model.xlsm<span class="w"> </span>sqlite:///converted.sqlite
+
+<span class="c1"># Run a scenario from the converted database</span>
+python<span class="w"> </span>execute_flextool_workflow.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>converted.sqlite<span class="w"> </span>output_info.sqlite<span class="w"> </span>my_scenario
+</code></pre></div>
+<h3 id="6-export-a-database-to-excel-and-re-import">6. Export a database to Excel and re-import</h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Export</span>
+python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_export_to_tabular<span class="w"> </span>sqlite:///input.sqlite<span class="w"> </span>exported.xlsx
+
+<span class="c1"># Edit exported.xlsx in a spreadsheet editor...</span>
+
+<span class="c1"># Re-import</span>
+python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_read_self_describing_tabular_input<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>exported.xlsx<span class="w"> </span>sqlite:///input.sqlite
+</code></pre></div>
+<h2 id="output-directory-structure">Output directory structure</h2>
+<p>After running the workflow, outputs are organized as follows:</p>
+<div class="highlight"><pre><span></span><code>flextool/
+  output_plots/&lt;scenario&gt;/     # PNG plot files
+  output_parquet/&lt;scenario&gt;/   # Parquet data files
+  output_csv/&lt;scenario&gt;/       # CSV data files
+  output_excel/&lt;scenario&gt;/     # Excel summary files
+  output_plot_comparisons/     # Cross-scenario comparison plots
+  solve_data/                  # Solver progress and timing
+</code></pre></div>
+<h2 id="configuration">Configuration</h2>
+<p>Output plots are controlled by YAML configuration files:</p>
+<ul>
+<li><code>templates/default_plots.yaml</code> &mdash; single-scenario plot configuration</li>
+<li><code>templates/default_comparison_plots.yaml</code> &mdash; cross-scenario comparison plot configuration</li>
+</ul>
+<p>These files define which results to plot, plot types, layout, and styling. You can create custom configuration files and pass them via <code>--output-config</code> or <code>--output-config-path</code>.</p>
+<p>Dispatch plot colors and stacking order are defined in <code>output_plot_comparisons/config.yaml</code>, which is auto-generated on first run and can be edited via the GUI or any text editor.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../assets/mathjaxhelper.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2796 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning." name="description"/>
+<meta content="Juha Kiviluoma, VTT Technical Centre of Finland" name="author"/>
+<link href="../../solvers/copt/" rel="prev"/>
+<link href="../engine_polars/" rel="next"/>
+<link href="../../img/irena_flextool_favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.7" name="generator"/>
+<title>Architecture overview - IRENA FlexTool</title>
+<link href="../../assets/stylesheets/main.ec1eaa64.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#flextool-architecture">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--shadow" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="IRENA FlexTool" class="md-header__button md-logo" data-md-component="logo" href="../.." title="IRENA FlexTool">
+<img alt="logo" src="../../img/irena_flextool_favicon.png"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Architecture overview
+            
+          </span>
+</div>
+</div>
+</div>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/irena-flextool/flextool" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="IRENA FlexTool" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="IRENA FlexTool">
+<img alt="logo" src="../../img/irena_flextool_favicon.png"/>
+</a>
+    IRENA FlexTool
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/irena-flextool/flextool" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../interface_overview/">
+<span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../install_gui/">
+<span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../install_toolbox/">
+<span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../tutorial/">
+<span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../reference/">
+<span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../results/">
+<span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../how_to/">
+<span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../advanced_concepts/">
+<span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../flextool_gui_interface/">
+<span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../spine_toolbox/">
+<span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../spine_database/">
+<span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../excel_interface/">
+<span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../terminal_workflow/">
+<span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/">
+<span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/highs/">
+<span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/gurobi/">
+<span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/cplex/">
+<span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/xpress/">
+<span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../solvers/copt/">
+<span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#project-purpose">
+<span class="md-ellipsis">
+      
+        Project Purpose
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#top-level-data-flow">
+<span class="md-ellipsis">
+      
+        Top-level data flow
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cli-surface">
+<span class="md-ellipsis">
+      
+        CLI surface
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#repository-layout">
+<span class="md-ellipsis">
+      
+        Repository layout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#module-details">
+<span class="md-ellipsis">
+      
+        Module details
+      
+    </span>
+</a>
+<nav aria-label="Module details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolspinedb_backend-the-input-api">
+<span class="md-ellipsis">
+      
+        flextool/spinedb_backend/ — the input API
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolinput_derivation-per-solve-preprocessing">
+<span class="md-ellipsis">
+      
+        flextool/input_derivation/ — per-solve preprocessing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolengine_polars-the-optimization-engine">
+<span class="md-ellipsis">
+      
+        flextool/engine_polars/ — the optimization engine
+      
+    </span>
+</a>
+<nav aria-label="flextool/engine_polars/ — the optimization engine" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#public-surface">
+<span class="md-ellipsis">
+      
+        Public surface
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-modes">
+<span class="md-ellipsis">
+      
+        Solve modes
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#feature-blocks-in-build_flextool">
+<span class="md-ellipsis">
+      
+        Feature blocks in build_flextool
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#block-coo-dense-axis-contract">
+<span class="md-ellipsis">
+      
+        Block-COO dense-axis contract
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cross-solve-state-provider-keys-solvehandoff">
+<span class="md-ellipsis">
+      
+        Cross-solve state (Provider keys + SolveHandoff)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#file-map-most-important">
+<span class="md-ellipsis">
+      
+        File map (most important)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#parameter-shapes-dt-broadcasting">
+<span class="md-ellipsis">
+      
+        Parameter shapes &amp; (d,t) broadcasting
+      
+    </span>
+</a>
+<nav aria-label="Parameter shapes &amp; (d,t) broadcasting" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#silent-default-x-index-readers-outside-the-resolver">
+<span class="md-ellipsis">
+      
+        Silent-default "x" index — readers outside the resolver
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolprocess_inputs-tabular-spine-db">
+<span class="md-ellipsis">
+      
+        flextool/process_inputs/ — tabular → Spine DB
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolprocess_outputs-solution-parquet-downstream">
+<span class="md-ellipsis">
+      
+        flextool/process_outputs/ — solution → parquet → downstream
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolplot_outputs-png-svg-plots-and-plot-plans">
+<span class="md-ellipsis">
+      
+        flextool/plot_outputs/ — PNG / SVG plots and plot plans
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolscenario_comparison-multi-scenario-analysis">
+<span class="md-ellipsis">
+      
+        flextool/scenario_comparison/ — multi-scenario analysis
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolexport_to_tabular-spine-db-excel">
+<span class="md-ellipsis">
+      
+        flextool/export_to_tabular/ — Spine DB → Excel
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolgui-tkinter-desktop-application">
+<span class="md-ellipsis">
+      
+        flextool/gui/ — Tkinter desktop application
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolupdate_flextool-migration-and-updates">
+<span class="md-ellipsis">
+      
+        flextool/update_flextool/ — migration and updates
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextooldecomposition-benders-region-helpers">
+<span class="md-ellipsis">
+      
+        flextool/decomposition/ — Benders region helpers
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolmodel_builder-and-flextoolrepresentative_periods">
+<span class="md-ellipsis">
+      
+        flextool/model_builder/ and flextool/representative_periods/
+      
+    </span>
+</a>
+<nav aria-label="flextool/model_builder/ and flextool/representative_periods/" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#net-load-clustering-mode">
+<span class="md-ellipsis">
+      
+        Net-load clustering mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#net-load-iteration-driver">
+<span class="md-ellipsis">
+      
+        Net-load iteration driver
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#public-api-surface">
+<span class="md-ellipsis">
+      
+        Public API surface
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solver-layout">
+<span class="md-ellipsis">
+      
+        Solver layout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solver-outputs-folder-layout">
+<span class="md-ellipsis">
+      
+        Solver outputs: folder layout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-to-solve-handoff">
+<span class="md-ellipsis">
+      
+        Solve-to-solve handoff
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solution-extraction">
+<span class="md-ellipsis">
+      
+        Solution extraction
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#numerical-scaling">
+<span class="md-ellipsis">
+      
+        Numerical scaling
+      
+    </span>
+</a>
+<nav aria-label="Numerical scaling" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#layers-bottom-up">
+<span class="md-ellipsis">
+      
+        Layers (bottom up)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-acceptance">
+<span class="md-ellipsis">
+      
+        Solve acceptance
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#test-layout-and-fixture-architecture">
+<span class="md-ellipsis">
+      
+        Test layout and fixture architecture
+      
+    </span>
+</a>
+<nav aria-label="Test layout and fixture architecture" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#json-fixture-single-source-of-truth">
+<span class="md-ellipsis">
+      
+        JSON-fixture single source of truth
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#test-directory-layout">
+<span class="md-ellipsis">
+      
+        Test directory layout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#three-tier-gate">
+<span class="md-ellipsis">
+      
+        Three-tier gate
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#key-architectural-patterns">
+<span class="md-ellipsis">
+      
+        Key architectural patterns
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../engine_polars/">
+<span class="md-ellipsis">
+    
+  
+    The engine_polars pipeline
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../scaling/">
+<span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../slack_convention/">
+<span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../decomposition/">
+<span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../db_schema/">
+<span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../testing/">
+<span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../env_vars/">
+<span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../inject_between_solves/">
+<span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../release/">
+<span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../archived/browser_interface/">
+<span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../archived/install_web_interface/">
+<span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#project-purpose">
+<span class="md-ellipsis">
+      
+        Project Purpose
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#top-level-data-flow">
+<span class="md-ellipsis">
+      
+        Top-level data flow
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cli-surface">
+<span class="md-ellipsis">
+      
+        CLI surface
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#repository-layout">
+<span class="md-ellipsis">
+      
+        Repository layout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#module-details">
+<span class="md-ellipsis">
+      
+        Module details
+      
+    </span>
+</a>
+<nav aria-label="Module details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolspinedb_backend-the-input-api">
+<span class="md-ellipsis">
+      
+        flextool/spinedb_backend/ — the input API
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolinput_derivation-per-solve-preprocessing">
+<span class="md-ellipsis">
+      
+        flextool/input_derivation/ — per-solve preprocessing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolengine_polars-the-optimization-engine">
+<span class="md-ellipsis">
+      
+        flextool/engine_polars/ — the optimization engine
+      
+    </span>
+</a>
+<nav aria-label="flextool/engine_polars/ — the optimization engine" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#public-surface">
+<span class="md-ellipsis">
+      
+        Public surface
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-modes">
+<span class="md-ellipsis">
+      
+        Solve modes
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#feature-blocks-in-build_flextool">
+<span class="md-ellipsis">
+      
+        Feature blocks in build_flextool
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#block-coo-dense-axis-contract">
+<span class="md-ellipsis">
+      
+        Block-COO dense-axis contract
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cross-solve-state-provider-keys-solvehandoff">
+<span class="md-ellipsis">
+      
+        Cross-solve state (Provider keys + SolveHandoff)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#file-map-most-important">
+<span class="md-ellipsis">
+      
+        File map (most important)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#parameter-shapes-dt-broadcasting">
+<span class="md-ellipsis">
+      
+        Parameter shapes &amp; (d,t) broadcasting
+      
+    </span>
+</a>
+<nav aria-label="Parameter shapes &amp; (d,t) broadcasting" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#silent-default-x-index-readers-outside-the-resolver">
+<span class="md-ellipsis">
+      
+        Silent-default "x" index — readers outside the resolver
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolprocess_inputs-tabular-spine-db">
+<span class="md-ellipsis">
+      
+        flextool/process_inputs/ — tabular → Spine DB
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolprocess_outputs-solution-parquet-downstream">
+<span class="md-ellipsis">
+      
+        flextool/process_outputs/ — solution → parquet → downstream
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolplot_outputs-png-svg-plots-and-plot-plans">
+<span class="md-ellipsis">
+      
+        flextool/plot_outputs/ — PNG / SVG plots and plot plans
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolscenario_comparison-multi-scenario-analysis">
+<span class="md-ellipsis">
+      
+        flextool/scenario_comparison/ — multi-scenario analysis
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolexport_to_tabular-spine-db-excel">
+<span class="md-ellipsis">
+      
+        flextool/export_to_tabular/ — Spine DB → Excel
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolgui-tkinter-desktop-application">
+<span class="md-ellipsis">
+      
+        flextool/gui/ — Tkinter desktop application
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolupdate_flextool-migration-and-updates">
+<span class="md-ellipsis">
+      
+        flextool/update_flextool/ — migration and updates
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextooldecomposition-benders-region-helpers">
+<span class="md-ellipsis">
+      
+        flextool/decomposition/ — Benders region helpers
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#flextoolmodel_builder-and-flextoolrepresentative_periods">
+<span class="md-ellipsis">
+      
+        flextool/model_builder/ and flextool/representative_periods/
+      
+    </span>
+</a>
+<nav aria-label="flextool/model_builder/ and flextool/representative_periods/" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#net-load-clustering-mode">
+<span class="md-ellipsis">
+      
+        Net-load clustering mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#net-load-iteration-driver">
+<span class="md-ellipsis">
+      
+        Net-load iteration driver
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#public-api-surface">
+<span class="md-ellipsis">
+      
+        Public API surface
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solver-layout">
+<span class="md-ellipsis">
+      
+        Solver layout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solver-outputs-folder-layout">
+<span class="md-ellipsis">
+      
+        Solver outputs: folder layout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-to-solve-handoff">
+<span class="md-ellipsis">
+      
+        Solve-to-solve handoff
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solution-extraction">
+<span class="md-ellipsis">
+      
+        Solution extraction
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#numerical-scaling">
+<span class="md-ellipsis">
+      
+        Numerical scaling
+      
+    </span>
+</a>
+<nav aria-label="Numerical scaling" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#layers-bottom-up">
+<span class="md-ellipsis">
+      
+        Layers (bottom up)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#solve-acceptance">
+<span class="md-ellipsis">
+      
+        Solve acceptance
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#test-layout-and-fixture-architecture">
+<span class="md-ellipsis">
+      
+        Test layout and fixture architecture
+      
+    </span>
+</a>
+<nav aria-label="Test layout and fixture architecture" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#json-fixture-single-source-of-truth">
+<span class="md-ellipsis">
+      
+        JSON-fixture single source of truth
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#test-directory-layout">
+<span class="md-ellipsis">
+      
+        Test directory layout
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#three-tier-gate">
+<span class="md-ellipsis">
+      
+        Three-tier gate
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#key-architectural-patterns">
+<span class="md-ellipsis">
+      
+        Key architectural patterns
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="flextool-architecture">FlexTool Architecture</h1>
+<h2 id="project-purpose">Project Purpose</h2>
+<p>IRENA FlexTool is an energy and power systems optimization model. It reads
+input data from a Spine database, derives per-solve preprocessing tables in
+polars, builds a linear/MIP program in memory via <code>polar_high</code>, solves it
+with HiGHS in-process via <code>highspy</code>, and writes results to parquet (with
+optional CSV, Excel, and plot renderings on top of the parquets).
+Inputs can be authored directly in the Spine database, populated from
+tabular input files (Excel / ODS / CSV), or imported from old FlexTool v2
+<code>.xlsm</code> files. A Tkinter desktop application and a Spine Toolbox workflow
+provide the two user-facing GUIs.</p>
+<h2 id="top-level-data-flow">Top-level data flow</h2>
+<pre class="mermaid"><code>flowchart LR
+  excel["Excel / ODS / CSV<br/>+ old FlexTool .xlsm"] --&gt; spdb
+  manual["Spine DB editor"] --&gt; spdb[("Spine input DB")]
+  spdb --&gt; backend["SpineDBBackend<br/>(EAV → polars frames)"]
+  backend --&gt; derive["input_derivation<br/>(per-solve preprocessing)"]
+  derive --&gt; provider["FlexDataProvider<br/>(in-memory transport)"]
+  provider --&gt; build["engine_polars.build_flextool<br/>(polar_high.Problem)"]
+  build --&gt; solve["HiGHS via highspy<br/>(Problem / WarmProblem)"]
+  solve --&gt; handoff["SolveHandoff<br/>(Provider keys)"]
+  handoff --&gt;|next roll / sub-solve| derive
+  solve --&gt; outputs["process_outputs<br/>(read solution → calc_* → out_*)"]
+  outputs --&gt; parquet[("output_parquet/<scenario>/")]
+  parquet --&gt; renderers["CSV mirrors / Excel /<br/>PNG plots / GUI ResultViewer /<br/>scenario_comparison"]
+</scenario></code></pre>
+<p>Key invariants:</p>
+<ul>
+<li><strong>One backend.</strong> <code>SpineDBBackend</code> is the only input backend. Everything
+  upstream (Excel, ODS, CSV, old <code>.xlsm</code>) is converted to a Spine DB
+  before the engine sees it.</li>
+<li><strong>Lazy polars, in-memory.</strong> Frames stay as <code>LazyFrame</code> until they reach
+  <code>polar_high</code>, which assembles the HiGHS matrix. Solver variables / duals
+  are read back from the live <code>highspy.Highs</code> instance — no intermediate
+  solver files.</li>
+<li><strong>Parquet is the canonical output.</strong> CSV / Excel / PNG / GUI plots all
+  read from the parquets the cascade just wrote. Scenario comparison loads
+  multi-scenario parquet sets and emits combined renderings.</li>
+</ul>
+<h2 id="cli-surface">CLI surface</h2>
+<pre class="mermaid"><code>flowchart LR
+  root["Root wrapper scripts<br/>run_flextool.py, write_outputs.py,<br/>scenario_results.py, ..."] --&gt; cli["flextool/cli/cmd_*"]
+  cli --&gt; engine["flextool/engine_polars<br/>cascade + LP build + HiGHS solve"]
+  cli --&gt; backend["flextool/spinedb_backend"]
+  cli --&gt; derive["flextool/input_derivation"]
+  cli --&gt; decomp["flextool/decomposition"]
+  cli --&gt; inputs["flextool/process_inputs"]
+  cli --&gt; outputs["flextool/process_outputs"]
+  cli --&gt; plots["flextool/plot_outputs"]
+  cli --&gt; compare["flextool/scenario_comparison"]
+  cli --&gt; export["flextool/export_to_tabular"]
+  cli --&gt; update["flextool/update_flextool"]
+  cli --&gt; gui["flextool/gui"]
+</code></pre>
+<p>Each <code>cmd_*.py</code> is a thin argparse wrapper; the work lives in the linked
+packages. Every CLI command also has an installed entry point in
+<code>pyproject.toml</code> (the <code>flextool-*</code> names).</p>
+<table>
+<thead>
+<tr>
+<th>CLI module</th>
+<th>Entry point</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cmd_run_flextool</code></td>
+<td><code>flextool-run</code></td>
+<td>Run the cascade (<code>run_chain_from_db</code> / <code>run_orchestration</code>) plus output processing for a scenario.</td>
+</tr>
+<tr>
+<td><code>cmd_write_outputs</code></td>
+<td><code>flextool-write-outputs</code></td>
+<td>Replay <code>process_outputs.write_outputs</code> over an existing parquet folder.</td>
+</tr>
+<tr>
+<td><code>cmd_scenario_results</code></td>
+<td><code>flextool-scenario-results</code></td>
+<td>Combine parquets from multiple scenario folders into comparison plots / Excel.</td>
+</tr>
+<tr>
+<td><code>cmd_read_tabular_input</code></td>
+<td><code>flextool-read-tabular-input</code></td>
+<td>Parse Excel / ODS / CSV via JSON spec → Spine DB.</td>
+</tr>
+<tr>
+<td><code>cmd_read_self_describing_tabular_input</code></td>
+<td><code>flextool-read-self-describing-tabular-input</code></td>
+<td>Self-describing Excel (embedded metadata) → Spine DB.</td>
+</tr>
+<tr>
+<td><code>cmd_read_old_flextool</code></td>
+<td><code>flextool-read-old</code></td>
+<td>Import old FlexTool v2 <code>.xlsm</code> files → Spine DB.</td>
+</tr>
+<tr>
+<td><code>cmd_read_matpower</code></td>
+<td><code>flextool-read-matpower</code></td>
+<td>Import a MATPOWER case → Spine DB.</td>
+</tr>
+<tr>
+<td><code>cmd_import_sensitivities</code></td>
+<td><code>flextool-import-sensitivities</code></td>
+<td>Import FlexTool v2 sensitivity scenarios.</td>
+</tr>
+<tr>
+<td><code>cmd_export_to_tabular</code></td>
+<td><code>flextool-export-to-tabular</code></td>
+<td>Export Spine DB → Excel (<code>.xlsx</code>).</td>
+</tr>
+<tr>
+<td><code>cmd_execute_flextool_workflow</code></td>
+<td><code>flextool-execute-workflow</code></td>
+<td>Two-phase workflow runner: optional input-prep (auto-triggered by <code>--tabular-file-path</code> / <code>--csv-directory-path</code>) followed by the fused model-run + output-write phase.</td>
+</tr>
+<tr>
+<td><code>cmd_migrate_database</code></td>
+<td><code>flextool-migrate-database</code></td>
+<td>Upgrade an input DB to the current schema version.</td>
+</tr>
+<tr>
+<td><code>cmd_update_flextool</code></td>
+<td><code>flextool-update</code></td>
+<td><code>git pull</code> + project-side migration in one step.</td>
+</tr>
+<tr>
+<td><code>cmd_gui</code> (via <code>flextool.gui.__main__</code>)</td>
+<td><code>flextool-gui</code></td>
+<td>Launch the Tkinter desktop application.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="repository-layout">Repository layout</h2>
+<div class="highlight"><pre><span></span><code>flextool/                          The installed Python package
+├── __init__.py                    Public re-exports: write_outputs,
+│                                    migrate_database, initialize_database,
+│                                    update_flextool
+├── cli/                           Argparse wrappers (cmd_*.py) +
+│                                    cli/_timing.py (TimingRecorder)
+├── spinedb_backend/               Spine DB → polars frames (the input API).
+│                                    SpineDBBackend.find_entities /
+│                                    parameter_values / default_values.
+├── input_derivation/              Per-solve preprocessing computations
+│                                    (the live successor to the retired
+│                                    flextoolrunner/preprocessing).
+├── engine_polars/                 Optimization engine + cascade coordinator:
+│                                    FlexData, FlexDataProvider, derived
+│                                    parameter / set emitters (_emit_*.py),
+│                                    build_flextool, run_orchestration /
+│                                    run_chain_from_db, SolveHandoff,
+│                                    auto-scaling.
+├── decomposition/                 Region decomposition + region filter
+│                                    (Benders sub-problems).
+├── common_utils/                  Cross-package helpers (precision rounding).
+├── process_inputs/                Tabular / Excel / old-format readers →
+│                                    Spine DB writers.
+├── process_outputs/               Solution → parquet + downstream CSV /
+│                                    Excel rendering pipeline.
+├── plot_outputs/                  PNG / SVG plot rendering + plot-plan
+│                                    persistence (the viewer-readable
+│                                    parquet plans).
+├── scenario_comparison/           Multi-scenario parquet load + dispatch
+│                                    &amp; summary comparison rendering.
+├── export_to_tabular/             Spine DB → Excel (.xlsx) exporter.
+├── update_flextool/               DB schema migration chain, canonical-DB
+│                                    generation, settings-DB initialisation,
+│                                    repo self-update.
+├── model_builder/                 Synthetic / mock-up scenario generator.
+├── representative_periods/        Greedy convex-hull representative-period
+│                                    clustering.
+├── gui/                           Tkinter desktop application (main_window,
+│                                    result_viewer, plot_canvas,
+│                                    network_graph, check_tree, dialogs/...).
+├── helpers/                       Small standalone diagnostic utilities
+│                                    (file compare, LP coefficient inspector,
+│                                    schema converters).
+├── solver_config/                 Solver options templates (HiGHS + the
+│                                    commercial solvers; shipped in the
+│                                    wheel as *.opt.template, seeded into
+│                                    the project-root solver_config/ on
+│                                    first run).
+├── schemas/                       Schema JSONs, YAML templates,
+│                                    canonical-database JSONs, pre-v26
+│                                    migration snapshots.
+└── lean_parquet.py                Tiny parquet loader used by the GUI
+                                     ResultViewer.
+
+Root wrapper scripts (kept for Spine Toolbox workflow compatibility):
+  run_flextool.py, write_outputs.py, scenario_results.py,
+  migrate_database.py, read_tabular_input.py,
+  execute_flextool_workflow.py, update_flextool.py
+
+solver_config/                     Project-root user-editable solver options
+                                     (highs.opt + gurobi/cplex/xpress/copt.opt
+                                     — all gitignored; each seeded from its
+                                     bundled *.opt.template on first run).
+
+templates/                         Example databases and project assets
+                                     (examples.sqlite, input templates).
+
+migration_artifacts/               (none — the migration scratchpad was
+                                     retired with the GMPL pipeline.)
+
+tests/                             Test suite (single root):
+  tests/                             — top-level unit &amp; integration tests
+  tests/engine_polars/               — engine-internal unit tests (cluster,
+                                       constraints, scaling, perturbation, ...)
+  tests/spinedb_backend/             — backend unit tests
+  tests/model/                       — model-level end-to-end suites
+  tests/gui/                         — GUI startup tests
+  tests/decomposition/               — Benders / region-filter tests
+  tests/fixtures/*.json              — single authoritative source for all
+                                       test data; sqlite DBs are built on
+                                       demand
+  tests/scenarios.yaml + tests/expected/  — the scenario integration suite
+  tests/conftest.py                  — shared top-level fixtures
+  tests/engine_polars/conftest.py    — engine-internal fixtures
+                                       (scenario_workdir, ...)
+
+execution_tests/                   Spine Toolbox subprocess execution tests.
+
+docs/                              MkDocs documentation site:
+  docs/dev/                          — developer reference (this file,
+                                       decomposition, scaling, slack convention)
+  docs/*.md + assets                 — user-facing tutorials and reference.
+
+.spinetoolbox/                     Spine Toolbox project integration.
+.github/workflows/                 CI/CD (tests + verify hooks).
+pyproject.toml, mkdocs.yml,        Build config, doc config, citation,
+CITATION.cff, LICENSE.txt,         license, readme, release notes.
+README.md, CHANGELOG.md
+</code></pre></div>
+<h2 id="module-details">Module details</h2>
+<h3 id="flextoolspinedb_backend-the-input-api"><code>flextool/spinedb_backend/</code> — the input API</h3>
+<p><code>SpineDBBackend</code> is the sole materialiser between the Spine database and
+the rest of the engine. It owns the EAV-to-tabular transformation: every
+method returns a canonical-schema <code>polars.DataFrame</code>, and no method writes
+to disk. The caller stack is:</p>
+<div class="highlight"><pre><span></span><code>SpineDB → SpineDBBackend → input_derivation → FlexDataProvider → cascade
+</code></pre></div>
+<p>Key surface:</p>
+<ul>
+<li><code>SpineDBBackend.find_entities(entity_class, ...)</code> — entity rows.</li>
+<li><code>SpineDBBackend.parameter_values(entity_class, parameter, ...)</code> —
+  parameter rows with parsed values (Map / time-series / array / scalar).</li>
+<li><code>SpineDBBackend.default_values(...)</code> — default-value lookups for
+  cascade fallbacks.</li>
+</ul>
+<p>A handful of small caching layers (parameter-value row cache, parsed-value
+eviction, chunked accumulators) keep peak RSS bounded on continental-scale
+inputs.</p>
+<h3 id="flextoolinput_derivation-per-solve-preprocessing"><code>flextool/input_derivation/</code> — per-solve preprocessing</h3>
+<p>The per-solve derivation pipeline. Each module is a focused port of a
+self-contained preprocessing step (commodity ladder, DC power flow, process
+methods, period sets, ...). The package's <code>__init__.py</code> orchestrates the
+three-step pattern:</p>
+<ol>
+<li>Spec-driven entity / parameter spec loops over the backend.</li>
+<li>Derivation helpers project the raw rows into FlexData fields.</li>
+<li>Validators sanity-check shape / dtype invariants before handoff.</li>
+</ol>
+<p>Output is an in-memory <code>FlexData</code> augmented with derived fields, exposed to
+the engine through <code>FlexDataProvider</code>.</p>
+<h3 id="flextoolengine_polars-the-optimization-engine"><code>flextool/engine_polars/</code> — the optimization engine</h3>
+<p>The dominant package. Builds a <code>polar_high.Problem</code> from <code>FlexData</code>, solves
+it with HiGHS, and threads cross-solve state through <code>SolveHandoff</code> (in
+memory; CSVs only emitted under <code>csv_dump=True</code> for debugging).</p>
+<h4 id="public-surface">Public surface</h4>
+<p>Exported from <code>flextool.engine_polars</code> (<code>__init__.py</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FlexData</code></td>
+<td>Input dataclass — polars frames + <code>polar_high.Param</code>s. Sets unprefixed, parameters <code>p_*</code>. Full inventory in <code>_param_shapes.py</code>.</td>
+</tr>
+<tr>
+<td><code>FlexDataProvider</code></td>
+<td>In-memory transport surface. Keys are declared in <code>_provider_keys.py</code> (no <code>.csv</code> suffix). All cross-phase data moves through it.</td>
+</tr>
+<tr>
+<td><code>load_flextool(source)</code></td>
+<td>Build <code>FlexData</code> from a workdir (CSV layout) or from a Provider-backed source.</td>
+</tr>
+<tr>
+<td><code>build_flextool(m, d, ...)</code></td>
+<td>Feature-conditional LP/MIP construction on a <code>Problem</code> / <code>WarmProblem</code>.</td>
+</tr>
+<tr>
+<td><code>run_chain(...)</code> / <code>run_chain_from_db(...)</code></td>
+<td>Run a sequence of <code>ChainStep</code>s, threading <code>SolveHandoff</code> between them.</td>
+</tr>
+<tr>
+<td><code>run_orchestration(state, work_folder, ...)</code></td>
+<td>Native cascade coordinator: reads <code>RunnerState</code>, drives the rolling / nested / stochastic cascade, returns one <code>OrchestrationStep</code> per solve.</td>
+</tr>
+<tr>
+<td><code>SolveHandoff</code></td>
+<td>Cross-solve carrier (invest / divest / storage / roll-state / CO2 ladder / commodity ladder / cumulative sim-hours / history sets).</td>
+</tr>
+<tr>
+<td><code>SpineDbReader</code> / <code>InMemoryReader</code> / <code>CsvSource</code> / <code>FlexInputSource</code></td>
+<td>Input adapters — production Spine DB, in-memory test fixture, or workdir CSVs.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="solve-modes">Solve modes</h4>
+<p>Same <code>build_flextool</code> body, three wrappers from <code>polar_high</code>:</p>
+<ul>
+<li><strong>Monolithic</strong> — <code>polar_high.Problem</code>. One LP per call.</li>
+<li><strong>Warm-start cascade</strong> — <code>polar_high.WarmProblem</code>. Rebuilds the LP shell
+  once, then mutates marked Params (<code>_apply_warm_updates</code> in
+  <code>_solve_handoff.py</code>) between rolls. The optimisation room for the future
+  rolling-overlap work (only update changing coefficients) lives here.</li>
+<li><strong>Benders (regional)</strong> — <code>engine_polars._benders.solve_benders</code> driven by
+  the orchestrator. Slices <code>FlexData</code> by region via <code>_region_filter</code>, then
+  runs a <strong>Benders decomposition</strong>: a coordinating <em>master</em> (a persistent
+  <code>polar_high.WarmProblem</code>) holds the inter-regional trade flows and the
+  trade-connection investment plus one recourse variable <code>η_r</code> per region;
+  each region is an operational <em>subproblem</em> solved with the master's trade
+  pinned, returning duals that the master accumulates as optimality
+  <strong>cuts</strong> (<code>WarmProblem.add_cut_row</code> / <code>add_recourse_col</code>). The master
+  objective is a <strong>valid lower bound</strong> and the loop converges on the
+  optimality gap. This replaces the earlier dual-subgradient scheme, which
+  collapsed greenfield cross-region trade to autarky with an <em>invalid</em>
+  bound. See <a href="../decomposition/">decomposition.md</a>.</li>
+</ul>
+<h4 id="feature-blocks-in-build_flextool">Feature blocks in <code>build_flextool</code></h4>
+<p>LP construction is feature-by-feature; each block runs only when its switch
+field on <code>FlexData</code> is populated. Required-field lists are module-level
+tuples in <code>model.py</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Constant</th>
+<th>Switch field</th>
+<th>Adds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ALWAYS</code></td>
+<td>(floor)</td>
+<td><code>vq_state_up/down</code>, <code>nodeBalance_eq</code>, slack-only objective.</td>
+</tr>
+<tr>
+<td><code>PROCESSES</code></td>
+<td><code>process_source_sink</code></td>
+<td><code>v_flow</code>, source/sink contributions to <code>nodeBalance_eq</code>, commodity buy.</td>
+</tr>
+<tr>
+<td><code>INDIRECT</code></td>
+<td><code>process_indirect</code></td>
+<td><code>conversion_indirect_eq</code> for multi-flow processes.</td>
+</tr>
+<tr>
+<td><code>CO2_PRICE</code></td>
+<td><code>flow_from_co2_priced</code></td>
+<td>CO2 emission term in the objective.</td>
+</tr>
+<tr>
+<td><code>CO2_CAP</code></td>
+<td><code>flow_from_co2_capped</code> / <code>group_d_co2_capped</code></td>
+<td>Per-period CO2 cap constraint.</td>
+</tr>
+<tr>
+<td><code>USER_CSTR</code></td>
+<td><code>flow_constraint_idx</code></td>
+<td>User-defined <code>process_constraint_{eq,le,ge}</code> rows.</td>
+</tr>
+<tr>
+<td><code>PROFILES</code></td>
+<td><code>process_profile_{upper,lower,fixed}</code></td>
+<td>Profile bounds on <code>v_flow</code>.</td>
+</tr>
+<tr>
+<td><code>STORAGE</code></td>
+<td><code>nodeState</code></td>
+<td><code>v_state</code>, storage transition, fix-start / fix-storage, end-state binding.</td>
+</tr>
+<tr>
+<td><code>ONLINE</code></td>
+<td><code>process_online</code></td>
+<td><code>v_online</code>, min-load, uptime / downtime windows.</td>
+</tr>
+<tr>
+<td><code>RAMP</code></td>
+<td>any <code>process_source_sink_ramp_limit_*</code></td>
+<td>Ramp-up / ramp-down constraints.</td>
+</tr>
+<tr>
+<td><code>INVEST</code> / <code>DIVEST</code></td>
+<td><code>pd_invest_set</code> / <code>pd_divest_set</code> (or <code>nd_*</code>)</td>
+<td><code>v_invest</code> / <code>v_divest</code>, cumulative caps, lifetime cost.</td>
+</tr>
+<tr>
+<td><code>STARTUP_COST_*</code></td>
+<td><code>pdt_online_{linear,integer}</code></td>
+<td>Startup-cost objective term.</td>
+</tr>
+<tr>
+<td><code>MINLOAD_EFF</code></td>
+<td><code>process_min_load_eff</code></td>
+<td>min_load_efficiency reformulation.</td>
+</tr>
+<tr>
+<td><code>RP_BLENDED_WEIGHTS</code></td>
+<td><code>nodeState_rp</code> family</td>
+<td>Representative-period inter-period state coupling.</td>
+</tr>
+</tbody>
+</table>
+<p>If a switch is set but a required field is missing, <code>build_flextool</code> raises
+<code>ValueError</code> rather than silently degrading.</p>
+<h4 id="block-coo-dense-axis-contract">Block-COO dense-axis contract</h4>
+<p><code>build_flextool</code> declares FlexTool's dense trailing axes once, up front, via
+<code>m.declare_dense_axes(("d", "t"))</code> — <code>(period, timestep)</code>. This is an
+unconditional call requiring <strong>polar-high&gt;=2.4.0</strong> (the interim <code>hasattr</code>
+capability guard has been dropped; the pin lives in <code>pyproject.toml</code>). With the
+axes declared, polar-high's canonical-matrix build slices the pre-sorted dense
+axis as contiguous numpy blocks and multiplies coefficient factors with ufuncs
+(the block-COO slice path) instead of wide relational joins. <code>Sum</code>-wrapped
+chains — FlexTool's <code>Sum</code>-heavy families (nodeBalance, reserves, co2) — evaluate
+in one pass via a captured <code>SumBlockMeta</code> recipe with a relabel fast-path. The
+block-COO output is bit-identical to the legacy polars path; the win is purely
+the peak-memory and wall-time of the build.</p>
+<h4 id="cross-solve-state-provider-keys-solvehandoff">Cross-solve state (Provider keys + <code>SolveHandoff</code>)</h4>
+<p>Inside the cascade everything moves through <code>FlexDataProvider</code>. The
+relevant key families are declared in <code>engine_polars/_provider_keys.py</code>:</p>
+<ul>
+<li><code>HANDOFF_*</code> — quantities the just-solved problem produces for the next
+  iteration (<code>fix_storage_quantity/price/usage</code>, <code>roll_end_state</code>,
+  <code>realized_invest</code>, <code>realized_existing</code>, <code>divest_cumulative</code>,
+  <code>cumulative_co2</code>, <code>commodity_ladder_cumulative</code>, <code>cum_sim_hours</code>,
+  <code>ed_history_realized_first</code>, <code>edd_history</code>).</li>
+<li><code>INPUT_*</code> — backend-derived rows the cascade re-reads each iteration.</li>
+<li><code>SOLVE_DATA_*</code> — per-solve sets and parameters that the derivation
+  layer produces.</li>
+</ul>
+<p>The Provider is the contract. Disk-side CSV mirrors in <code>solve_data/&lt;solve&gt;/</code>
+exist only when <code>csv_dump=True</code> (a debug toggle) and are not load-bearing
+for any downstream phase.</p>
+<h4 id="file-map-most-important">File map (most important)</h4>
+<div class="highlight"><pre><span></span><code>__init__.py                       Public re-exports (table above)
+model.py                          build_flextool — LP build, feature blocks
+input.py                          FlexData dataclass + loader entry point
+chain.py                          run_chain + ChainStep dataclass
+_orchestration.py                 run_orchestration / run_chain_from_db,
+                                  native cascade
+_solve_state.py                   RunnerState, PathConfig, SolveConfig,
+                                  TimelineConfig dataclasses
+_solve_handoff.py                 SolveHandoff carrier + capture wiring
+_benders.py                       solve_benders + Coupling / BendersResult
+                                  (master + multi-cut loop)
+_region_filter.py                 region slicing + half-flow injection
+_warm.py                          WarmProblem update routine
+_provider_keys.py                 Canonical key names for FlexDataProvider
+_flex_data_provider.py            In-memory transport surface
+_param_shapes.py                  Canonical shape per FlexData field
+_spinedb_reader.py                Spine DB → FlexData
+_inmemory_reader.py               In-memory test-fixture loader
+_input_source.py                  FlexInputSource / CsvSource / InputSource
+_db_loader.py                     FlexToolRunner: DB-side state loader
+_db_reader.py                     Spine DB read helpers
+_recursive_solve.py               Rolling / nested solve tree builder
+_stochastic.py                    Stochastic branch handler
+_timeline.py                      Timeline / timeset construction
+_block_layout.py / _blocks.py     Multi-resolution period-block layout
+_solver_base.py                   Solver invocation surface
+autoscale/                        Auto-scaling pipeline + YAML audit report
+_derived_*.py                     Calculated-parameter helpers (NPV, branch,
+                                  walks, profile, block, ...)
+_emit_*.py                        Set/parameter emitters (period_params,
+                                  arc_unions, calc_params, co2_accumulators,
+                                  pdt_params, reserve, leaf_sets, mid_sets,
+                                  inflow_scaling, lp_scaling, ...)
+_native_run_model.py              Per-solve run helper (cascade-internal)
+_output_writer.py                 Solution → output_parquet bridge
+</code></pre></div>
+<h4 id="parameter-shapes-dt-broadcasting">Parameter shapes &amp; <code>(d,t)</code> broadcasting</h4>
+<p><code>_param_shapes.py</code> is the authoritative resolver for how a DB-authored
+parameter maps onto the model axes. <strong>Never detect a parameter's
+period / time axis by column name.</strong> Spine writes a Map's index column
+under the author's <code>index_name</code>, defaulting to the silent <code>"x"</code> when
+unset — so a column-name check like <code>("t","time","step")</code> misclassifies
+a time series as a scalar and broadcasts it with a <code>how="cross"</code>
+Cartesian product against the full <code>(d,t)</code> grid. On long timelines that
+overflows polars' 2³² row index; on short ones it silently flattens the
+time variation via a downstream <code>unique([...])</code>. Both bit us (the
+<code>p_slope</code> blow-up). Route every param→<code>(d,t)</code> broadcast through
+<code>resolve_param_shape</code> (DB-metadata shape + value-domain probing) →
+<code>broadcast_to_period_time</code> (keeps the Param at its authored shape, no
+cross-product) → <code>promote_param_to_dt</code> (narrowing inner-join on the
+carried axis). A new parameter that needs this must be added to
+<code>PARAM_ALLOWED_SHAPES</code>.</p>
+<p><code>_param_shapes</code> is the <strong>I/O contract only</strong> — it validates user-authored
+DB shapes and errors to the user on mismatch. Model-internal axes (e.g.
+the rolling-solve <code>roll</code> axis) are deliberately excluded; they are never
+DB-authored, never reach the resolver, and a stray one already fails
+loudly via <code>_UnrecognisedIndex</code>. Document such internal axes in
+<code>schemas/flextool_axis_contract.json</code>, not in the resolver's allow-lists.</p>
+<h5 id="silent-default-x-index-readers-outside-the-resolver">Silent-default <code>"x"</code> index — readers outside the resolver</h5>
+<p>Not every DB read goes through <code>resolve_param_shape</code>. The <strong>per-entity
+cascades</strong> in <code>_derived_params.py</code> / <code>_derived_existing.py</code> /
+<code>_derived_npv.py</code> read raw entity params (<code>source.parameter(...)</code>) and
+must detect the period axis themselves. The failure mode is identical to
+the resolver's: Spine names a Map's index column with the author's
+<code>index_name</code>, whose spinedb_api <em>default is the literal string <code>"x"</code></em>
+(not empty — real 2-D maps carry <code>index_name='x'</code>, see
+<code>_spinedb_reader._discover_index_cols</code>). So a <code>if "period" in cols</code>
+gate misfires on the common <code>"x"</code>-indexed map and the code either drops
+the row or collapses it via a downstream <code>.unique(subset=["e"],
+keep="last")</code> — for a <em>retiring</em> <code>existing</code> map (nameplate → 0 at expiry)
+that keeps the last period's <code>0</code>, defaulting <code>unitsize</code> to <code>1000</code> and
+turning <code>existing_count = existing/unitsize</code> into a spurious fraction
+(caps continuous online below 1; forbids integer online entirely).</p>
+<p><strong>Safe idioms</strong> (use one of these for any raw per-entity map read):</p>
+<ul>
+<li>period-agnostic aggregate — <code>group_by("e").agg(pl.col("value").max())</code>
+  (used by <code>_entity_unitsize_lf</code>: the cascade only needs "non-zero", and
+  the per-period MAX is non-zero iff any period is);</li>
+<li>explicit dual check — <code>period_col = "period" if "period" in cols else
+  "x"</code> / <code>for cand in ("period","x")</code> (used by
+  <code>_ed_explicit_period_param</code>, <code>_per_solve_sets</code>);</li>
+<li>per-row scalar detection — treat any single non-<code>name</code>/<code>value</code> column
+  as the period dim and classify scalar-vs-map by that column's
+  <em>per-row</em> null-ness, so a constant value sharing a class with period-Map
+  siblings (surfaces as <code>x = null</code>) broadcasts instead of zeroing (used by
+  <code>_per_entity_param_lf</code> in both the <code>existing</code> and <code>npv</code> mirrors).</li>
+</ul>
+<p><strong>Audited state</strong> (see the coverage test
+<code>tests/engine_polars/test_silent_default_index_pdt.py</code>):</p>
+<ul>
+<li><em>Safe</em> — <code>availability</code>, <code>inflow</code>, <code>other_operational_cost</code>,
+  <code>reservation</code> (resolver-routed); the <code>existing</code>/<code>lifetime</code>/
+  <code>virtual_unitsize</code> per-period chains (<code>_per_entity_param_lf</code>,
+  hardened); <code>_ed_explicit_period_param</code>, <code>_per_solve_sets</code>; <code>profile</code>
+  in real solves (reads the engine-written canonical <code>pt_profile.csv</code> /
+  <code>pbt_profile</code>, not the raw Map).</li>
+<li><em>Residual, latent</em> — the <code>_derived_profile.py</code> <strong>raw-Spine fallback</strong>
+  readers (<code>_profile_time_lf</code> matches only <code>t</code>/<code>i</code>/<code>time</code>;
+  <code>_profile_period_time_lf</code> / <code>_profile_period_only_lf</code> gate on literal
+  <code>"period"</code>). An <code>"x"</code>-indexed profile Map read via these returns empty
+  (silent zero profile). Only reachable when the averaged-CSV primary
+  path is absent (tests / runner bypass), so not a live-solve bug —
+  harden if that path ever becomes load-bearing.</li>
+<li><em>Guarded by schema</em> — <code>invest_max_total</code> and <code>virtual_unitsize</code> are
+  declared <code>float</code>-only in <code>parameter_types</code> (no <code>map</code> row), so the
+  <code>keep="last"</code> collapse in <code>_e_explicit_param</code> and in the
+  <code>virtual_unitsize</code> sub-branch of <code>_entity_unitsize_lf</code> can only bite if
+  a param is authored against its declared type. Value-type enforcement
+  is not yet strict, so these are latent-until-misauthored, not safe by
+  construction.</li>
+<li><em>Separate gap</em> — <code>min_load</code> is declared map-capable (<code>map,1</code> / <code>map,3</code>)
+  but <code>p_min_load_from_source</code> reads it as a scalar <code>Param(("p",))</code>, and
+  <code>minFlow_minload</code> consumes only that scalar. A period/time-varying
+  <code>min_load</code> is therefore flattened regardless of the index name — an
+  engine "consumes scalar only" gap, not just an <code>"x"</code>-detection one.
+  Route through the resolver if per-period <code>min_load</code> is ever wired.</li>
+</ul>
+<h3 id="flextoolprocess_inputs-tabular-spine-db"><code>flextool/process_inputs/</code> — tabular → Spine DB</h3>
+<p>Reads tabular data and writes Spine DB. The output of this package is the
+Spine DB the engine consumes.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>read_tabular_with_specification.py</code> (<code>TabularReader</code>)</td>
+<td>JSON-spec-driven reader for Excel / ODS / CSV.</td>
+</tr>
+<tr>
+<td><code>read_self_describing_excel.py</code></td>
+<td>Self-describing Excel with embedded metadata.</td>
+</tr>
+<tr>
+<td><code>read_old_flextool.py</code></td>
+<td>Parse old FlexTool v2 <code>.xlsm</code> → <code>OldFlexToolData</code>.</td>
+</tr>
+<tr>
+<td><code>read_matpower.py</code></td>
+<td>MATPOWER case → import structure.</td>
+</tr>
+<tr>
+<td><code>write_to_input_db.py</code> (<code>write_to_flextool_input_db</code>)</td>
+<td>Tabular → Spine DB.</td>
+</tr>
+<tr>
+<td><code>write_self_describing_to_db.py</code></td>
+<td>Self-describing Excel → Spine DB.</td>
+</tr>
+<tr>
+<td><code>write_old_flextool_to_db.py</code></td>
+<td>Old FlexTool data → Spine DB.</td>
+</tr>
+<tr>
+<td><code>import_old_excel_input.json</code> / <code>import_excel_input.json</code></td>
+<td>Excel import specifications.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="flextoolprocess_outputs-solution-parquet-downstream"><code>flextool/process_outputs/</code> — solution → parquet → downstream</h3>
+<p>Three-layer architecture:</p>
+<div class="highlight"><pre><span></span><code>Solution extraction (in-memory, from highspy.Highs):
+  read_highs_solution.py         VARIABLE_SPECS — variables, row duals,
+                                 column duals harvested directly from
+                                 the live solver instance.
+
+Post-processing (parquet-backed calculations):
+  drop_levels.py                 Strip 'solve' level from time-indexed objects.
+  calc_capacity_flows.py         Capacity, online status, flow_dt, ramps.
+  calc_connections.py            Connection flows and losses.
+  calc_storage_vre.py            Storage state changes and VRE potential.
+  calc_slacks.py                 Reserve, slack, inertia quantities.
+  calc_costs.py                  All cost aggregates.
+  calc_group_flows.py            Group-level flow aggregations.
+  process_results.py             Coordinator: calls calc_* in order.
+  handoff_writers.py             SolveHandoff CSV mirrors (csv_dump only).
+  solve_order.py                 Solve-sequence reconstruction.
+
+Output formatting:
+  out_capacity.py                Unit / connection / node capacity tables.
+  out_flows.py                   Unit flow, capacity-factor, VRE, ramp.
+  out_group.py / out_flowgroup.py NodeGroup flow, inflow, VRE-share, indicators.
+  out_node.py                    Node summary and additional-results outputs.
+  out_costs.py                   Cost summary, CO2, generic outputs.
+  out_ancillary.py               Connection, reserve, inertia, slack, dual.
+  write_outputs.py               ALL_OUTPUTS list + orchestrator.
+  to_spine_db.py                 Result DataFrames → Spine output DB.
+</code></pre></div>
+<p>The cascade produces <code>output_parquet/&lt;scenario&gt;/</code>. CSV / Excel / plot
+renderers all consume those parquets — no separate solver-output
+extraction step.</p>
+<h3 id="flextoolplot_outputs-png-svg-plots-and-plot-plans"><code>flextool/plot_outputs/</code> — PNG / SVG plots and plot plans</h3>
+<p>Static plots (lines, bars, stacked area) plus a persistence layer that
+saves precomputed <em>plot plans</em> (one parquet per result key) so the GUI's
+<code>ResultViewer</code> can re-render without recomputing pivots / pagination.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>orchestrator.py</code></td>
+<td><code>plot_dict_of_dataframes</code>, <code>prepare_plot_data</code>, <code>compute_all_plot_plans</code>.</td>
+</tr>
+<tr>
+<td><code>config.py</code></td>
+<td><code>PlotConfig</code>, <code>DIMENSION_RULES</code>, <code>PLOT_FIELD_NAMES</code>.</td>
+</tr>
+<tr>
+<td><code>plan.py</code></td>
+<td><code>compute_plot_plans_for_result</code>, <code>save_plot_plan</code>, <code>load_plot_plan</code> (with <code>schema_version</code> invalidation).</td>
+</tr>
+<tr>
+<td><code>plot_lines.py</code></td>
+<td>Line and stacked-area rendering.</td>
+</tr>
+<tr>
+<td><code>plot_bars.py</code> / <code>plot_bars_detail.py</code></td>
+<td>Bar chart orchestration and rendering.</td>
+</tr>
+<tr>
+<td><code>axis_helpers.py</code>, <code>legend_helpers.py</code>, <code>subplot_helpers.py</code>, <code>format_helpers.py</code></td>
+<td>Layout, formatting, filename generation.</td>
+</tr>
+<tr>
+<td><code>color_template.py</code></td>
+<td>Stable color assignment across scenarios.</td>
+</tr>
+<tr>
+<td><code>shared_manifest.py</code>, <code>plan_union.py</code></td>
+<td>Per-scenario plan availability + cross-scenario union.</td>
+</tr>
+<tr>
+<td><code>perf.py</code></td>
+<td>Internal timing.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="flextoolscenario_comparison-multi-scenario-analysis"><code>flextool/scenario_comparison/</code> — multi-scenario analysis</h3>
+<p>Loads parquets from multiple scenario folders, builds combined views, and
+renders comparison plots.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>data_models.py</code></td>
+<td><code>TimeSeriesResults</code>, <code>DispatchMappings</code>.</td>
+</tr>
+<tr>
+<td><code>db_reader.py</code></td>
+<td>Load scenario parquet files into <code>TimeSeriesResults</code>.</td>
+</tr>
+<tr>
+<td><code>dispatch_mappings.py</code></td>
+<td>Load dispatch-mapping parquets.</td>
+</tr>
+<tr>
+<td><code>config_builder.py</code></td>
+<td>Discover dispatch entity/scenario names + assign palette colors (seeded into <code>plot_settings.yaml</code>).</td>
+</tr>
+<tr>
+<td><code>dispatch_data.py</code> / <code>dispatch_plots.py</code></td>
+<td>Per-scenario dispatch DataFrame prep and stacked-area rendering.</td>
+</tr>
+<tr>
+<td><code>constants.py</code></td>
+<td>Colors and special column-name lists.</td>
+</tr>
+<tr>
+<td><code>orchestrator.py</code></td>
+<td>Top-level <code>run()</code> function.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="flextoolexport_to_tabular-spine-db-excel"><code>flextool/export_to_tabular/</code> — Spine DB → Excel</h3>
+<p>Exports a Spine input DB to <code>.xlsx</code> in self-describing v2 or original v1.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>export_to_excel.py</code></td>
+<td>Orchestrator; v1 vs v2 format selection.</td>
+</tr>
+<tr>
+<td><code>db_reader.py</code></td>
+<td><code>DatabaseContents</code> + <code>read_database()</code>.</td>
+</tr>
+<tr>
+<td><code>sheet_config.py</code></td>
+<td><code>SheetSpec</code>, <code>build_sheet_specs()</code>.</td>
+</tr>
+<tr>
+<td><code>excel_writer.py</code></td>
+<td>Sheet writers (periodic, time-series, ...).</td>
+</tr>
+<tr>
+<td><code>formatting.py</code></td>
+<td>Cell formatting / type conversion.</td>
+</tr>
+<tr>
+<td><code>export_settings.yaml</code></td>
+<td>Export configuration.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="flextoolgui-tkinter-desktop-application"><code>flextool/gui/</code> — Tkinter desktop application</h3>
+<p>Spawns CLI commands as subprocesses; never imports the engine directly.</p>
+<div class="highlight"><pre><span></span><code>__main__.py                      Entry point → MainWindow.
+main_window.py                   MainWindow (tkinter.Tk root).
+project_utils.py                 Create / list / rename projects.
+settings_io.py                   Load / save GlobalSettings + ProjectSettings.
+data_models.py                   Settings + ScenarioInfo dataclasses.
+input_sources.py                 InputSourceManager (file selection).
+scenario_lists.py                Available / executed scenario managers.
+execution_manager.py             ExecutionManager (threaded subprocess pool).
+execution_window.py              ExecutionWindow (progress).
+output_actions.py                Plot / export action wiring.
+output_log_window.py             Log display.
+db_editor_integration.py         Spine DB editor launcher.
+db_version_check.py              Input-DB version validation + auto-upgrade.
+error_handling.py                safe_callback decorator.
+platform_utils.py                Platform-specific file/app opening.
+result_viewer.py                 ResultViewer (parquet → plot canvas).
+plot_canvas.py                   Matplotlib canvas with downsampling.
+plot_cache.py                    Plot cache.
+plot_config_reader.py            Plot-config YAML parser.
+network_graph.py                 Network-topology figure builder.
+check_tree.py                    CheckTreeController.
+hover_tooltip.py / tree_reorder.py / downsampling.py / cli_format.py / scenario_key.py / config_parser.py
+dialogs/                         Add / project / plot / file-picker dialogs.
+</code></pre></div>
+<h3 id="flextoolupdate_flextool-migration-and-updates"><code>flextool/update_flextool/</code> — migration and updates</h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>self_update.py</code> (<code>update_flextool</code>)</td>
+<td><code>git pull</code> + project-side migration.</td>
+</tr>
+<tr>
+<td><code>db_migration.py</code> (<code>migrate_database</code>)</td>
+<td>Walk the version chain to the current <code>FLEXTOOL_DB_VERSION</code>.</td>
+</tr>
+<tr>
+<td><code>initialize_database.py</code> (<code>initialize_database</code>)</td>
+<td>Create new DB from JSON template.</td>
+</tr>
+<tr>
+<td><code>ensure_settings_db.py</code></td>
+<td>Idempotent settings-DB creation.</td>
+</tr>
+<tr>
+<td><code>test_fixtures.py</code></td>
+<td>Migrate <code>tests/fixtures/*.json</code> to current schema.</td>
+</tr>
+<tr>
+<td><code>canonical_databases.py</code></td>
+<td>Materialise / migrate canonical example DBs from JSON.</td>
+</tr>
+<tr>
+<td><code>generate_canonical.py</code></td>
+<td>Project authoritative fixtures into derived canonical DBs.</td>
+</tr>
+<tr>
+<td><code>extend_tests_fixture.py</code></td>
+<td>Agent-friendly YAML-delta workflow for append-only fixture additions.</td>
+</tr>
+</tbody>
+</table>
+<p>CI-enforced verify chain (<code>tests.yml::template-check</code>):</p>
+<ul>
+<li><code>sync_master_json_template --verify</code> — schema parity.</li>
+<li><code>test_fixtures verify</code> — <code>tests/fixtures/*.json</code> at current schema.</li>
+<li><code>generate_canonical --verify</code> — generated canonical files in sync.</li>
+<li><code>canonical_databases verify</code> — authoritative canonical files at current schema.</li>
+</ul>
+<h3 id="flextooldecomposition-benders-region-helpers"><code>flextool/decomposition/</code> — Benders region helpers</h3>
+<p><code>region_decomposition.py</code> and <code>region_filter.py</code> slice <code>FlexData</code> by region
+group and prepare sub-problems for the Benders solve mode (the filter-only
+<code>--region</code> CLI entry point that materialises one region's standalone input
+directory). The in-engine slicer used by the live Benders driver lives at
+<code>engine_polars/_region_filter.py</code>; the master + cut loop is in
+<code>engine_polars/_benders.py</code>.</p>
+<h3 id="flextoolmodel_builder-and-flextoolrepresentative_periods"><code>flextool/model_builder/</code> and <code>flextool/representative_periods/</code></h3>
+<ul>
+<li><strong><code>model_builder</code></strong> — synthetic scenario generator used for benchmarking
+  and stress-testing the engine. <code>build_model.py</code> is the entry point;
+  <code>encoding.py</code>, <code>names.py</code>, <code>profiles.py</code> are helpers.</li>
+<li><strong><code>representative_periods</code></strong> — greedy convex-hull clustering used at the
+  input-preparation stage to pick representative weeks / days.
+  <code>preprocess.preprocess_representative_periods</code> is the entry point.</li>
+</ul>
+<h4 id="net-load-clustering-mode">Net-load clustering mode</h4>
+<p>By default the greedy hull clusters on the per-series normalized
+profile/inflow feature stack (<code>preprocess._build_clustering_matrix</code>). The
+<code>--netload-clustering</code> flag (schema wiring lives in
+<code>representative_periods/netload_inputs.py</code> for the DB read and
+<code>representative_periods/netload.py</code> for the pure math) instead clusters on a
+real-MW <strong>net-load</strong> signal per aggregation unit <code>g</code>:</p>
+<pre><code>net_load[g, h] = Σ_{demand node in g} demand_h
+                 − Σ_{VRE unit in g} cap[u] · avail[profile(u)][h]
+</code></pre>
+<p>FlexTool's sign convention (shared with <code>force_include</code>) makes demand a
+<em>negative</em> inflow, so <code>demand_h = −inflow_h + |scalar demand level|</code>. <strong>VRE</strong>
+is any <code>unit__node__profile</code> arc whose <code>profile_method</code> is <code>upper_limit</code>;
+that is the schema default, so an arc that never sets <code>profile_method</code>
+explicitly (no row from the reader) is treated as VRE. Each aggregation
+unit's series is min-max normalized to <code>[0, 1]</code> exactly as the default
+feature builder does per feature.</p>
+<p>An <strong>aggregation unit</strong> is either a <strong>region group</strong> or a single <strong>node</strong>.
+Granularity is chosen by the schema-v68 <code>group.use_for_representative_periods</code>
+(<code>yes_no</code>) flag: when one or more groups carry the flag <code>yes</code> the member
+nodes' net load is summed into one regional signal per flagged group; when no
+group carries the flag the selection falls back to <strong>per-node</strong> signals (each
+node its own aggregation unit). On a pre-v68 database the flag parameter is
+not yet defined — that genuinely-absent case is detected and quietly activates
+the per-node fallback, while a read failure on a <em>defined</em> flag is allowed to
+surface rather than silently degrade.</p>
+<p>The iteration-0 VRE capacities come from a <strong>demand-match</strong> default: the
+investable VRE of each aggregation unit is sized so its energy plus the
+existing VRE energy just covers the unit's demand energy (pure energy balance,
+curtailment ignored). <code>--vre-penetration</code> scales that energy-share target
+(1.0 = full-energy match). The default (non-<code>--netload-clustering</code>) code path
+is byte-parity with the prior behaviour.</p>
+<h4 id="net-load-iteration-driver">Net-load iteration driver</h4>
+<p><code>representative_periods/netload_iterate.py</code> (<code>run_netload_iteration</code>,
+<code>NetloadIterConfig</code>; also a <code>main()</code>/<code>__main__</code> CLI) composes the single-shot
+net-load selector into an <em>iterate-until-stable</em> loop that feeds each
+iteration's solved investment capacities back into the next selection — sizing
+the VRE fleet from a solve's realised investments (instead of the demand-match
+default) sharpens which periods are net-load-critical.</p>
+<ul>
+<li><strong>Invest-only loop.</strong> Iteration <code>k</code> in <code>range(iterations + 1)</code>. <code>k = 0</code> is
+  the bootstrap: select on the demand-match caps and run an INVEST-ONLY solve.
+  The bootstrap dispatch is <strong>skipped</strong> — default-cap investments are
+  known-bad, so measuring their full-year cost is not worth the solve.
+  <code>k = 1..n</code> select on the prior iteration's invested caps; if the selected
+  representative set is unchanged from the previous iteration the loop
+  converges and breaks before solving (<strong>early-stop on stability</strong>).</li>
+<li><strong>Keep-best (opt-in).</strong> With <code>--keep-best</code>, each mature iteration (<code>k ≥ 1</code>)
+  ALSO runs the full-year DISPATCH, reads its total system cost, and the loop
+  keeps the representative set with the <strong>lowest full-year dispatch cost</strong>. A
+  keep-best winner from an earlier iteration is deterministically
+  re-materialised by re-running the selector on that iteration's input caps
+  (greedy hull over a fixed matrix — no randomness). A final dispatch is run on
+  the chosen set for output.</li>
+<li><strong>Stable-alternative-name orphan guard.</strong> The full <code>alternative_name</code> is
+  pinned once and passed as the explicit override to the selector every
+  iteration, so the selector never derives a per-iteration name (whose
+  force-suffix could shift with the forced count) and orphans timesets. A
+  stable name lets the selector's purge+rewrite cleanly REPLACE the single
+  net-load timeset each iteration, so N iterations leave exactly one.</li>
+<li><strong><code>model.solves</code>-override subset mechanism.</strong> <code>cmd_run_flextool</code> has no
+  <code>--solves</code> flag; the DB-driven way to run a subset is the <code>model.solves</code>
+  Array resolved under the scenario's alternative stack. The driver writes a
+  dedicated <code>model.solves</code> OVERRIDE alternative at the top of the stack
+  (mirroring <code>calibrate._db_alt</code>) — the invest solve(s) for an invest-only
+  pass, the dispatch solves (or the scenario's full original chain) for a
+  dispatch pass. A genuine subset run, not a silent full-chain fallback.</li>
+<li><strong>Fail-closed guards.</strong> <code>_guard_no_timed_energy_margin</code> refuses to run when a
+  node's <code>energy_margin_method</code> resolves to <code>inflow_adder</code> with a timed
+  (2-D per-cell) <code>energy_margin_adder</code> — the timed adder and the net-load
+  loop's cap feedback are mutually exclusive. Every iteration solve is
+  <code>assess_solve</code>-gated on its required outputs; an untrusted solve raises
+  <code>NetloadIterError</code> rather than feeding a bad cap set forward. Basis caches
+  are cold per solve by default (the LP columns change with the representative
+  set); <code>--warm-start</code> opts into one shared cache only when the grid is stable.</li>
+</ul>
+<h2 id="public-api-surface">Public API surface</h2>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">flextool</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">write_outputs</span><span class="p">,</span>
+    <span class="n">migrate_database</span><span class="p">,</span>
+    <span class="n">initialize_database</span><span class="p">,</span>
+    <span class="n">update_flextool</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.engine_polars</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">FlexData</span><span class="p">,</span>
+    <span class="n">FlexDataProvider</span><span class="p">,</span>
+    <span class="n">SolveHandoff</span><span class="p">,</span>
+    <span class="n">build_flextool</span><span class="p">,</span>
+    <span class="n">load_flextool</span><span class="p">,</span>
+    <span class="n">run_chain_from_db</span><span class="p">,</span>
+    <span class="n">run_orchestration</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.engine_polars._db_loader</span><span class="w"> </span><span class="kn">import</span> <span class="n">FlexToolRunner</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.spinedb_backend</span><span class="w"> </span><span class="kn">import</span> <span class="n">SpineDBBackend</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.process_inputs</span><span class="w"> </span><span class="kn">import</span> <span class="n">TabularReader</span><span class="p">,</span> <span class="n">write_to_flextool_input_db</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.process_outputs</span><span class="w"> </span><span class="kn">import</span> <span class="n">write_outputs</span><span class="p">,</span> <span class="n">post_process_results</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.plot_outputs</span><span class="w"> </span><span class="kn">import</span> <span class="n">plot_dict_of_dataframes</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.scenario_comparison</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_scenario_results</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.export_to_tabular</span><span class="w"> </span><span class="kn">import</span> <span class="n">export_to_excel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.update_flextool</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">migrate_database</span><span class="p">,</span>
+    <span class="n">initialize_database</span><span class="p">,</span>
+    <span class="n">update_flextool</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.helpers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">compare_files</span><span class="p">,</span>
+    <span class="n">find_largest_numbers</span><span class="p">,</span>
+    <span class="n">parse_mps_to_matrices</span><span class="p">,</span>
+    <span class="n">convert_schema</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<h2 id="solver-layout">Solver layout</h2>
+<p>HiGHS is a regular Python dependency (<code>highspy</code>); FlexTool no longer
+bundles solver binaries. The only solver-config artefact is the HiGHS
+options file:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Tracked?</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>flextool/solver_config/highs.opt.template</code></td>
+<td>Yes (package data)</td>
+<td>Template that ships in the wheel.</td>
+</tr>
+<tr>
+<td><code>solver_config/highs.opt</code></td>
+<td>No (gitignored)</td>
+<td>User-editable runtime copy; seeded from the template on first run.</td>
+</tr>
+</tbody>
+</table>
+<p><code>flextool._resources.package_data_path("solver_config/highs.opt.template")</code>
+returns the template; the runtime layer copies it to
+<code>solver_config/highs.opt</code> on first run if absent. Users edit the runtime
+copy; <code>_orchestration._finalise_highs_options</code> reads it and applies any
+CLI overrides (<code>--user-bound-scale</code>, <code>--presolve</code>, <code>--highs-threads</code>).</p>
+<p><code>--save-memory</code> (or <code>FLEXTOOL_SAVE_MEMORY=1</code>) is an opt-in peak-RSS
+strategy that disables warm-start and round-trips each sub-solve through
+an on-disk MPS file, trading ~5-10 GB peak RSS for slower per-solve
+build time. The orchestrator emits a one-time warning when it disables
+warm-start because of this flag.</p>
+<h2 id="solver-outputs-folder-layout">Solver outputs: folder layout</h2>
+<div class="highlight"><pre><span></span><code>work_folder/
+├── solve_data/&lt;solve&gt;/        Debug-only mirrors of cascade state
+│                                (csv_dump=True path). Not load-bearing.
+├── output_parquet/&lt;scenario&gt;/ Canonical results — one parquet per output.
+├── output_csv/&lt;scenario&gt;/     Optional CSV mirror of the parquets.
+├── output_excel/              Optional summary workbook.
+└── output_plots/              Optional PNG / SVG plots (default_plots.yaml).
+</code></pre></div>
+<p>Cross-solve state moves through <code>FlexDataProvider</code> keys; the <code>solve_data/</code>
+CSVs exist only as a debugging aid.</p>
+<h2 id="solve-to-solve-handoff">Solve-to-solve handoff</h2>
+<p>When a solve is part of a rolling-horizon, nested, or sub-solve chain, the
+just-solved problem produces a <code>SolveHandoff</code> (typed in-memory carrier).
+Inside the cascade it's transported via the <code>HANDOFF_*</code> Provider keys —
+zero disk round-trips. The <code>csv_dump=True</code> mirror files retain the same
+names as before for debug inspection:</p>
+<table>
+<thead>
+<tr>
+<th>Carrier (<code>SolveHandoff</code> field)</th>
+<th>Debug-mirror file</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>realized_invest</code></td>
+<td><code>p_entity_period_existing_capacity.csv</code> (period column)</td>
+<td>New capacity built this solve, in absolute units.</td>
+</tr>
+<tr>
+<td><code>realized_existing</code></td>
+<td><code>p_entity_period_existing_capacity.csv</code> (existing column)</td>
+<td>Cumulative existing capacity history per <code>(entity, period)</code>.</td>
+</tr>
+<tr>
+<td><code>divest_cumulative</code></td>
+<td><code>p_entity_divested.csv</code></td>
+<td>Cumulative divest per entity carried forward.</td>
+</tr>
+<tr>
+<td><code>roll_end_state</code> / <code>upward_roll_end_state</code></td>
+<td><code>p_roll_continue_state.csv</code></td>
+<td><code>v_state</code> at the end of the realized window; pins the next roll's first timestep.</td>
+</tr>
+<tr>
+<td><code>fix_storage_quantity / price / usage</code></td>
+<td><code>fix_storage_*.csv</code></td>
+<td>Parent-imposed storage quota at the boundary (any subset of the three metrics — each carries its own <code>(node, period, step)</code> index, so a separate timesteps carrier is not needed).</td>
+</tr>
+<tr>
+<td><code>cumulative_co2</code></td>
+<td><code>co2_cum_realized_tonnes.csv</code></td>
+<td>Running CO2 totals across rolls.</td>
+</tr>
+<tr>
+<td><code>cumulative_commodity</code></td>
+<td><code>commodity_ladder_cumulative.csv</code></td>
+<td>Per-tier commodity consumption (ladder pricing).</td>
+</tr>
+<tr>
+<td><code>cum_sim_hours</code></td>
+<td><code>ladder_cum_sim_hours.csv</code></td>
+<td>Running simulated-hour total per period.</td>
+</tr>
+</tbody>
+</table>
+<p><code>fix_storage_timesteps</code>, <code>ed_history_realized_first</code>, and <code>edd_history</code>
+used to be <code>SolveHandoff</code> fields too, populated only by the now-removed
+<code>capture_post_solve()</code> disk-read constructor. They were retired when the
+cascade fell through to Provider/CSV reads in all production paths; see
+the docstring of <code>_solve_handoff.py</code> for the history.</p>
+<h2 id="solution-extraction">Solution extraction</h2>
+<p><code>process_outputs.read_highs_solution.VARIABLE_SPECS</code> declares every
+variable and dual to harvest from the live <code>highspy.Highs</code> instance:
+<code>v_flow</code>, <code>v_state</code>, <code>v_invest</code>, <code>v_divest</code>, <code>vq_*</code>, period / total /
+cumulative invest-cap duals, <code>co2_max_*</code> duals, the inflation-adjusted
+<code>v_dual_node_balance</code>, and so on. Each <code>VariableSpec</code> carries an
+<code>unscale_by</code> field so row / objective scaling is undone before the parquet
+is written.</p>
+<p>To add a new variable or dual: append a <code>VariableSpec</code> to <code>VARIABLE_SPECS</code>.
+No other changes required.</p>
+<h2 id="numerical-scaling">Numerical scaling</h2>
+<p>FlexTool's LP/MIP can accumulate coefficients spanning many decades when
+users combine entities of different physical scale (10 kW heat pump
+alongside 10 GW continental grid). The scaling pipeline is layered so each
+mechanism targets one source of spread; see <a href="../scaling/">scaling.md</a> for
+the user-facing guide and <a href="../slack_convention/">slack_convention.md</a> for
+slack semantics.</p>
+<h3 id="layers-bottom-up">Layers (bottom up)</h3>
+<ol>
+<li><strong>Unitsize column normalisation.</strong> Every variable is written in units
+   of <code>p_entity_unitsize</code> per entity, so the raw values stay near <code>O(1)</code>.</li>
+<li><strong>Single-variable slack convention.</strong> Every <code>vq_*</code> is a single
+   non-negative variable, relative to its row-scaler where one applies.
+   See <a href="../slack_convention/">slack_convention.md</a>.</li>
+<li><strong>Row scaling (opt-in, <code>--scaling</code> CLI flag / <code>FLEXTOOL_SCALING</code>).</strong>
+   Node-balance and
+   group-balance constraint rows get multiplied by
+   <code>node_capacity_for_scaling</code> / <code>group_capacity_for_scaling</code> derived
+   from connected-entity unitsizes; rounded to powers of 10 to preserve
+   HiGHS symmetry detection.</li>
+<li><strong>Precision cleanup (<code>--precision-digits</code>).</strong> Every numeric value is
+   rounded to 10 significant figures so benign precision artifacts don't
+   trip near-duplicate detection.</li>
+<li><strong>Autoscale package</strong> (<code>engine_polars/autoscale/</code>). Three layers,
+   on by default (gate via <code>--scaling=off</code> / <code>FLEXTOOL_SCALING=off</code>;
+   intermediate modes are <code>solver_only</code>, <code>basic</code>, <code>full</code>):</li>
+<li><strong>Layer 1 — detect</strong> (<code>_ranges.py</code>). Walks the assembled LP and
+     computes matrix / cost / bound / RHS log10 ranges plus a
+     cross-group max-ratio. Always emitted to the YAML audit; the
+     <code>trigger</code> flag tells the orchestrator whether Layers 2/3 should
+     run. The range readout routes through polar-high's
+     <code>bounded_coefficient_walk</code> (requires polar-high&gt;=2.4.0): the
+     constraint / column spine is iterated in fixed row-batches and the
+     <code>(rid/col_id, coef)</code> product is rebuilt per batch, so the wide
+     coefficient product is never materialised to read its min/max. The
+     former size-blind family-row cap (<code>POLAR_HIGH_RANGES_MAX_FAMILY_ROWS</code>
+     / <code>_skip_unbounded_over_cap</code>) is gone — every family's range is now
+     bounded and folded into the report, so no shape is silently dropped.</li>
+<li>
+<p><strong>Layer 2 — semantic per-type scaling</strong> (<code>_layer2.py</code>,
+     <code>_quantity_types.py</code>). Buckets matrix columns by quantity-type
+     (energy, capacity, monetary, …) and applies a power-of-2 scaler
+     per type to compress the median-of-type onto O(1). Has structural
+     limits: cannot compress within-type spread, and the Rivendell
+     guard prevents over-shrinking columns with mixed-magnitude
+     coefficients on a single row. Like Layer 1, the magnitude-bucketing
+     readout walks the spine in bounded row-batches via
+     <code>bounded_coefficient_walk</code> (the log2-magnitude histogram reducer)
+     rather than collecting the wide product — and with the family-row
+     cap retired, every family's magnitudes are folded into the scaling
+     decision (no silent coverage gap).</p>
+<p><strong>Registry contract — read this before adding any <code>add_var</code> /
+ <code>add_cstr</code> / parameter.</strong> Layer 2 looks up the quantity-type of every
+ variable (<code>VARIABLE_FAMILIES</code>), constraint (<code>CONSTRAINT_FAMILIES</code>
+ via <code>lookup_cstr</code>) and parameter (<code>PARAMETER_TYPES</code>) in
+ <code>_layer2_types.py</code> / <code>_quantity_types.py</code>. These registries refuse
+ to default — an unregistered name raises <code>KeyError</code> in
+ <code>bucket_coefficients</code>. That <code>KeyError</code> is <strong>caught</strong> in
+ <code>_orchestration._autoscale_apply_layer2_pre_solve</code> and the solve
+ silently reverts to an <strong>un-scaled LP</strong> ("autoscale Layer 2 apply
+ failed … reverting"), so a missing registration does not crash — it
+ quietly disables autoscaling. So: every new <code>add_var(...)</code> /
+ <code>add_cstr(...)</code> literal and every new schema parameter MUST get a
+ registry entry (flags / <code>yes_no</code> gates → <code>DIMENSIONLESS</code>).
+ <code>lookup_cstr</code> resolves dynamic (f-string) constraint names by
+ exact-match → <code>_linear</code>/<code>_integer</code>/<code>_p</code>/<code>_n</code> suffix strip → longest
+ prefix; dynamic names are invisible to the static-literal grep in
+ <code>test_registry_coverage</code>, so pin them in
+ <code>test_dynamic_constraint_names_resolve</code>. Run autoscale-exercising
+ tests with <code>FLEXTOOL_AUTOSCALE_STRICT=1</code> to turn the silent degrade
+ into a loud failure (off in production so a gap never blocks a user
+ solve).
+   - <strong>Layer 3 — HiGHS native + bound-scale folding</strong> (<code>_layer3.py</code>).
+ Picks an integer <code>user_bound_scale</code> exponent (within HiGHS's safe
+ range) and folds D's escape-tier valve into the same pass, so the
+ LP arriving at HiGHS is comfortably within the solver's
+ conditioning sweet spot.
+6. <strong>YAML audit</strong> (<code>engine_polars/autoscale/_report.py</code>). After every
+   solve, writes <code>solve_data/autoscale_&lt;solve&gt;.yaml</code> covering Layer 1
+   ranges, the Layer 2 plan (per-type exponents + post-L2 ranges),
+   and the Layer 3 plan (<code>user_bound_scale</code>, escape-tier).
+   A 1-line console summary echoes via <code>format_console_summary</code>; the
+   non-optimal hint (<code>format_nonoptimal_hint</code>) fires only when a <em>rejected</em>
+   solve's <strong>post-autoscale</strong> LP is still wide-ranged (i.e. the autoscaler
+   could not tame the spread), and even then it is framed as a possibility
+   — never as the certified cause. Accept/reject itself is decided by
+   <code>engine_polars/_solve_acceptance.py</code> from the solver's own diagnostics
+   (see "Solve acceptance" below), not by the range report.
+7. <strong>Manual override.</strong> <code>--user-bound-scale N</code> (or DB
+   <code>solve.user_bound_scale</code>) pins Layer 3's bound-scale exponent and
+   disables the auto-pick. Useful when the audit hints at a value the
+   recommender did not lock in.
+8. <strong>Output un-scaling</strong> (<code>process_outputs/read_highs_solution.py</code>).
+   Every <code>VariableSpec</code> carries an <code>unscale_by</code> field; the Layer 2 +
+   Layer 3 reverse maps are applied in the writer so downstream
+   consumers see absolute units regardless of which layers fired.</p>
+</li>
+</ol>
+<h3 id="solve-acceptance">Solve acceptance</h3>
+<p>The cascade does <strong>not</strong> gate on a bare <code>kOptimal</code>. An interior-point
+solve run without crossover (the model generator's <code>run_crossover</code>
+choice) can return a genuinely feasible, in-practice-optimal <em>primal</em> that
+HiGHS refuses to <em>certify</em> — post-solve leaves the dual objective slightly
+inconsistent, so HiGHS reports <code>kUnknown</code> rather than a failure. FlexTool
+consumes the primal for every output, so such a solve is usable.</p>
+<p><code>engine_polars/_solve_acceptance.py::classify_acceptance</code> decides from the
+solver's own diagnostics (<code>polar_high.Solution.solve_diagnostics()</code>, a
+snapshot of <code>getModelStatus()</code> + <code>getInfo()</code>):</p>
+<ul>
+<li><code>kOptimal</code> → accept.</li>
+<li>a genuine failure status (<code>kInfeasible</code>, <code>kUnbounded</code>, <code>kTimeLimit</code>,
+  <code>kSolveError</code>, …) → reject, naming the precise cause.</li>
+<li><code>kUnknown</code> → accept as <strong>near-optimal</strong> iff the primal is feasible
+  (HiGHS' own verdict + a scale-invariant relative check + a
+  tolerance-derived absolute backstop) <em>and</em> <code>primal_dual_objective_error</code>
+  is within the accepted optimality gap; otherwise reject.</li>
+</ul>
+<p>Thresholds default to primal-relative <code>1e-6</code>, absolute margin <code>10×</code> the
+solver's <code>primal_feasibility_tolerance</code>, and P-D gap <code>1e-2</code> (the same
+order as the <code>mip_rel_gap</code> models routinely accept); each has a
+<code>FLEXTOOL_ACCEPT_*</code> env override, and <code>FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0</code>
+restores the legacy hard-fail. The subprocess/commercial path exposes no
+queryable handle, so <code>solve_diagnostics()</code> returns <code>None</code> and the solve is
+never near-optimal-accepted — it falls back to the strict <code>kOptimal</code> gate.</p>
+<h2 id="test-layout-and-fixture-architecture">Test layout and fixture architecture</h2>
+<h3 id="json-fixture-single-source-of-truth">JSON-fixture single source of truth</h3>
+<p><code>tests/fixtures/*.json</code> is the only authoritative source for test data and
+canonical example databases. Schema migration covers them via
+<code>flextool.update_flextool.test_fixtures.migrate_all</code>, and the CI verify
+chain enforces drift detection.</p>
+<p><strong>No test reads a checked-in <code>.sqlite</code>.</strong> A test that needs a DB builds
+one from its JSON / schema source under <code>tmp_path_factory</code> at session
+start (e.g. <code>json_to_db(...)</code> for fixtures, or the <code>schema_db_url</code>
+fixture which runs <code>initialize_database</code> on <code>spinedb_schema.json</code> once
+per session). Checked-in DBs (<code>templates/*.sqlite</code>) are user-facing and
+go stale between regenerations: a registry-coverage test that read
+<code>templates/input_data_template.sqlite</code> stayed green through the v56
+<code>is_enabled</code> add because the on-disk template lagged the schema. Build
+from the source of truth so a schema change is caught the moment it
+lands — and never mutate a user-facing DB from a test. Some downstream JSONs (e.g.
+<code>templates_examples.json</code>, <code>howto_stochastics.json</code>) are <em>generated
+projections</em> of authoritative fixtures via
+<code>flextool.update_flextool.generate_canonical</code>; the remaining <code>howto_*.json</code>
+files are individually authoritative.</p>
+<p>For append-only edits to fixtures (entities / alternatives / scalar
+parameter values / scenarios), use
+<code>flextool.update_flextool.extend_tests_fixture</code> — it validates against
+<code>spinedb_schema.json</code> with did-you-mean suggestions and rejects edits to
+existing entries.</p>
+<h3 id="test-directory-layout">Test directory layout</h3>
+<div class="highlight"><pre><span></span><code>tests/
+├── conftest.py                  Shared fixtures (scenario_workdir, ...).
+├── fixtures/                    Authoritative JSON fixtures.
+├── scenarios.yaml               Integration-suite scenario definitions.
+├── expected/                    Golden CSVs (per-scenario, regenerated
+│                                  when the suite genuinely changes).
+├── engine_polars/               Engine-internal unit tests.
+├── spinedb_backend/             Backend unit tests.
+├── model/                       Model-level end-to-end suites.
+├── gui/                         GUI startup tests.
+├── decomposition/               Benders / region-filter tests.
+└── test_*.py                    Top-level unit &amp; integration tests.
+</code></pre></div>
+<p><code>scenario_workdir(scenario_name, db_fixture="main")</code> (defined in
+<code>tests/engine_polars/conftest.py</code>) is a session-scoped fixture that
+builds a per-scenario workdir on demand by running the full cascade with
+<code>csv_dump=True</code>. It replaced the historical bulky CSV snapshot pattern
+that previously sat under <code>tests/engine_polars/data/work_*/</code> (~521 MB
+gitignored); the directories that remain contain only a single
+<code>golden_obj.json</code> golden file each. Tests do not depend on pre-built
+fixture directories.</p>
+<h3 id="three-tier-gate">Three-tier gate</h3>
+<ul>
+<li><strong>Inner loop</strong> — module-specific tests, run after every edit
+  (typically <code>tests/engine_polars/&lt;area&gt;/</code>).</li>
+<li><strong>Broader gate</strong> — <code>tests/engine_polars/</code> full sweep, once per commit
+  batch.</li>
+<li><strong>Activation truth</strong> — full <code>tests/</code> including the integration scenario
+  suite, run rarely (overnight / release).</li>
+</ul>
+<h2 id="key-architectural-patterns">Key architectural patterns</h2>
+<ul>
+<li><strong>CLI → core delegation.</strong> Every user-facing entry point (CLI script or
+  GUI) is a thin wrapper that delegates to a core library module. The
+  Tkinter GUI is special: it spawns CLI commands as subprocesses rather
+  than calling library functions directly, so user runs stay isolated.</li>
+<li><strong>State containers.</strong> <code>RunnerState</code>, <code>SolveConfig</code>, <code>TimelineConfig</code>,
+  <code>PathConfig</code> bundle related state for the cascade. The Provider is the
+  transport surface between phases.</li>
+<li><strong>Dataclass-driven module boundaries.</strong> <code>FlexData</code>, <code>SolveHandoff</code>,
+  <code>DatabaseContents</code>, <code>TimeSeriesResults</code>, <code>DispatchMappings</code>, <code>SheetSpec</code>
+  define data shapes where packages meet.</li>
+<li><strong>Multi-format I/O at the edges only.</strong> Inputs (Excel / ODS / CSV / old
+  <code>.xlsm</code> / MATPOWER) convert to Spine DB; outputs render from parquets.
+  The engine itself is single-source / single-sink.</li>
+<li><strong>Verify hooks instead of conventions.</strong> CI verifies that schemas,
+  canonical DBs, and test fixtures stay in sync — drift is a failed
+  workflow, not a code-review catch.</li>
+</ul>
+</article>
+</div>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+<script src="../../assets/mathjaxhelper.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>
