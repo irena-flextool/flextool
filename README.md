@@ -57,42 +57,52 @@ against linopy and Pyomo on the same HiGHS solver.
 
 ## Installation
 
-FlexTool requires **Python 3.11+**. The recommended way to start — and to
-migrate from an existing `master` setup without disturbing it — is a fresh clone
-in its own directory and virtual environment.
+FlexTool requires **Python 3.11+**. Install it into a virtual environment.
 
-**Windows (PowerShell):**
+### Install from PyPI (recommended)
+
+```
+python -m venv .venv
+# activate — Windows PowerShell:  .\.venv\Scripts\Activate.ps1
+#            Linux / macOS:        . .venv/bin/activate
+python -m pip install --upgrade pip
+pip install flextool
+```
+
+(If PowerShell blocks the activate script, run once per user:
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.)
+
+Launch the FlexTool GUI:
+
+```
+flextool
+```
+
+— equivalently `python -m flextool.gui`. The GUI creates and manages your
+projects and input databases; to seed the bundled template and example
+databases (handy for the CLI or Spine Toolbox workflows) run `flextool-update`.
+Update FlexTool later with:
+
+```
+pip install --upgrade flextool
+```
+
+### Install from source (developers / latest `main`)
+
+To work on FlexTool itself — or to run the not-yet-released `main` — clone the
+repo and install it editable:
 
 ```powershell
-git clone https://github.com/irena-flextool/flextool.git flextool_main
-cd flextool_main
-git checkout main
-py -m venv .venv            # Could also be 'python' instead of 'py'
-.\.venv\Scripts\Activate.ps1
-# If PowerShell blocks the activate script, run once per user:
-#   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+git clone https://github.com/irena-flextool/flextool.git
+cd flextool
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1     # Linux / macOS:  . .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -e .            # resolves the polar-high pin from PyPI
-python -m update-flextool --skip-git  # Creates template and example input databases
+pip install -e .
 ```
 
-**Linux / macOS** — identical, with two exceptions:
-
-- create the venv with `python3 -m venv .venv`
-- activate with `. .venv/bin/activate`
-
-(On Windows `cmd.exe` rather than PowerShell, activate with
-`.venv\Scripts\activate.bat`.)
-
-Update later with `git pull origin main` — the editable install picks up source
-changes automatically; only re-run `pip install -e .` if a dependency pin in
-`pyproject.toml` changed.
-
-Then launch the FlexTool GUI:
-
-```
-python -m flextool.gui
-```
+The editable install picks up source changes on `git pull`; re-run
+`pip install -e .` only when a dependency pin in `pyproject.toml` changes.
 
 ## [Documentation](https://irena-flextool.github.io/flextool/) and [installation](https://irena-flextool.github.io/flextool/install_toolbox/)
 
