@@ -269,7 +269,7 @@ def ensure_runtime_files(verbose: bool = False) -> None:
 
     # 5. results.sqlite (and its template), both create-if-missing.
     try:
-        result_template_path = str(package_data_path("schemas/pre_v26/flextool_template_results_master.json"))
+        result_template_path = str(package_data_path("schemas/spinedb_results_schema.json"))
         if not os.path.exists("templates/results_template.sqlite"):
             initialize_result_database("templates/results_template.sqlite", result_template_path)
         if not os.path.exists("results.sqlite") and os.path.exists("templates/results_template.sqlite"):
@@ -379,7 +379,7 @@ def update_flextool(skip_git):
     # Refresh the results template (unconditional) and ensure results.sqlite
     # exists (ensure_runtime_files seeds it; this is a belt-and-braces copy
     # for the case it was removed since).
-    result_template_path = str(package_data_path("schemas/pre_v26/flextool_template_results_master.json"))
+    result_template_path = str(package_data_path("schemas/spinedb_results_schema.json"))
     if os.path.exists('templates/results_template.sqlite'):
         os.remove('templates/results_template.sqlite')
     initialize_result_database('templates/results_template.sqlite', result_template_path)
@@ -392,8 +392,7 @@ def update_flextool(skip_git):
         template = json.load(json_file)
     with DatabaseMapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True) as db:
         #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
-        (num,log) = import_data(db, object_parameters = template["object_parameters"])
-        (num,log) = import_data(db, relationship_parameters = template["relationship_parameters"])
+        (num,log) = import_data(db, parameter_definitions = template["parameter_definitions"])
         try:
             db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
         except NothingToCommit:
