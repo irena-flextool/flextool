@@ -654,9 +654,12 @@ def scenario_workdir(
         # Copy the SQLite the cascade was driven from into the workdir
         # so ``_find_scenario`` can auto-construct a SpineDbReader for
         # the re-solve in tests that call ``load_flextool(wf)``.  The
-        # url is ``sqlite:///<absolute-path>``; urlparse returns the
-        # leading slash inside ``.path``.
+        # url is ``sqlite:///<absolute-path>``; urlparse returns the leading
+        # slash inside ``.path``.  On Windows that yields ``/C:/…``, an invalid
+        # path (OSError 22), so strip the leading slash before a drive letter.
         sqlite_src = urlparse(url).path
+        if len(sqlite_src) >= 3 and sqlite_src[0] == "/" and sqlite_src[2] == ":":
+            sqlite_src = sqlite_src[1:]  # '/C:/…' -> 'C:/…'
         shutil.copy(sqlite_src, wf / "tests.sqlite")
         # Mirror the CLI ``--csv-dump`` post-cascade snapshot: only the
         # last sub-solve's Provider holds the union of every cascade
