@@ -46,7 +46,11 @@ def _unpack_value(packed: Any) -> tuple[bytes | None, str | None]:
 
 def db_to_json(db_path: Path, json_path: Path) -> None:
     """Export a Spine SQLite DB to a JSON file for version control."""
-    url = f"sqlite:///{db_path.resolve()}"
+    # ``.as_posix()`` — SQLite URLs need forward slashes; a Windows backslash
+    # path (``C:\...``) mangles to an invalid ``/C:\...`` when the URL is
+    # resolved back to a filesystem path. No-op on POSIX. (cf.
+    # cmd_open_results_db._sqlite_url, which already does this.)
+    url = f"sqlite:///{db_path.resolve().as_posix()}"
     with DatabaseMapping(url) as db_map:
         data = export_data(db_map, parse_value=_pack_value)
     json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,7 +63,11 @@ def json_to_db(json_path: Path, db_path: Path) -> str:
     """Import a JSON fixture into a new SQLite DB. Returns the sqlite:/// URL."""
     with open(json_path) as f:
         data = json.load(f)
-    url = f"sqlite:///{db_path.resolve()}"
+    # ``.as_posix()`` — SQLite URLs need forward slashes; a Windows backslash
+    # path (``C:\...``) mangles to an invalid ``/C:\...`` when the URL is
+    # resolved back to a filesystem path. No-op on POSIX. (cf.
+    # cmd_open_results_db._sqlite_url, which already does this.)
+    url = f"sqlite:///{db_path.resolve().as_posix()}"
     with DatabaseMapping(url, create=True) as db_map:
         count, errors = import_data(db_map, unparse_value=_unpack_value, **data)
         if errors:

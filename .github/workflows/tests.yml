@@ -34,20 +34,25 @@ jobs:
         run: python -m flextool.update_flextool.canonical_databases verify
 
   test:
+    # Full suite on all platforms — all blocking. Genuinely platform-specific
+    # tests are skipped in place (POSIX-only path/shebang forms, Windows file
+    # locks), and the one non-unique-optimum scenario (network_all_tech) is
+    # skipped pending reformulation for a unique optimum (see its skip_reason in
+    # tests/scenarios.yaml).
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             python: "3.12"
-          - os: windows-latest
-            python: "3.12"
-          - os: macos-15
-            python: "3.12"
           - os: ubuntu-latest
             python: "3.13"
           - os: windows-latest
+            python: "3.12"
+          - os: windows-latest
             python: "3.13"
+          - os: macos-15
+            python: "3.12"
           - os: macos-15
             python: "3.13"
     runs-on: ${{ matrix.os }}
@@ -61,7 +66,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pytest-xdist pyyaml matplotlib
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
 
       - name: Set glpsol executable permission
         if: runner.os != 'Windows'

@@ -252,7 +252,10 @@ def invest_solve_data(tmp_path_factory):
         csv_dump=True,
         keep_solutions=True,
     )
-    shutil.copy(urlparse(url).path, wf / "tests.sqlite")
+    _src = urlparse(url).path
+    if len(_src) >= 3 and _src[0] == "/" and _src[2] == ":":
+        _src = _src[1:]  # Windows '/C:/...' -> 'C:/...'
+    shutil.copy(_src, wf / "tests.sqlite")
     last_step = next(reversed(list(steps.values())))
     provider = getattr(last_step, "flex_data_provider", None)
     if provider is not None:

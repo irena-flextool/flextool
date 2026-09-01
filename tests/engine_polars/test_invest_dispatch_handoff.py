@@ -114,6 +114,8 @@ def invest_solve_data(tmp_path_factory):
     # Copy the SQLite + snapshot the last (only) sub-solve so
     # ``load_flextool(wf)`` reconstructs the invest solve's FlexData.
     sqlite_src = urlparse(url).path
+    if len(sqlite_src) >= 3 and sqlite_src[0] == "/" and sqlite_src[2] == ":":
+        sqlite_src = sqlite_src[1:]  # Windows '/C:/...' -> 'C:/...'
     shutil.copy(sqlite_src, wf / "tests.sqlite")
     last_step = next(reversed(list(steps.values())))
     provider = getattr(last_step, "flex_data_provider", None)

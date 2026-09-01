@@ -268,6 +268,13 @@
     - connection__dt.csv
     - costs__dt.csv
   time_budget_seconds: 10.0
+  # Non-unique optimum: the demand-response shift (dr_shift_demand/dr_storage)
+  # has multiple equally-optimal solutions, so the solver may pick a different
+  # (valid) vertex per platform and the golden CSV isn't bit-portable. Skipped
+  # until the scenario is reformulated for a unique optimum (see GitHub issue).
+  skip_reason: >-
+    non-unique optimum (demand-response shift); golden not portable across
+    platforms — reformulate for a unique optimum before re-enabling
 
 - scenario: network_coal_wind_battery_co2_fullYear_availability
   csvs:

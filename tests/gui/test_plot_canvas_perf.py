@@ -9,14 +9,25 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
-import matplotlib
-matplotlib.use("TkAgg")
-
 import numpy as np
 import pytest
 from matplotlib.figure import Figure
 
-from flextool.gui.plot_canvas import PlotCanvas
+# Manual perf benchmark — needs a real interactive Tk backend (run locally with
+# `-s`). On a headless runner, selecting TkAgg — or importing PlotCanvas, which
+# selects it at import — raises, which would otherwise become a collection ERROR
+# and fail the whole suite (pytest exit 2). Skip the module cleanly instead.
+import matplotlib
+
+try:
+    matplotlib.use("TkAgg")
+    from flextool.gui.plot_canvas import PlotCanvas
+except Exception:
+    pytest.skip(
+        "PlotCanvas perf benchmark requires an interactive Tk backend "
+        "(unavailable on headless CI)",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture

@@ -16,7 +16,10 @@ stable across settings loss and surfaces deleted-but-not-empty sources:
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 from flextool.gui.data_models import ProjectSettings, SourceRecord
 from flextool.gui.input_sources import InputSourceManager
@@ -139,6 +142,10 @@ def test_registry_gc_when_no_file_and_no_results(tmp_path: Path) -> None:
     assert load_project_settings(project).source_registry == {}
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="unlinks a .sqlite that still has an open handle — not permitted on Windows",
+)
 def test_delete_then_readd_reclaims_number_and_relinks(tmp_path: Path) -> None:
     project = _project(tmp_path)
     _add_file(project, "a.sqlite")
