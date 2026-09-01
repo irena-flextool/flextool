@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -95,24 +94,28 @@ def open_folder(dirpath: Path) -> None:
 
 
 def open_spine_db_editor(db_url: str) -> subprocess.Popen | None:
-    """Launch spine-db-editor as a subprocess.
-
-    Command: ``spine-db-editor <db_url>``
+    """Launch the Spine DB editor on *db_url* as a subprocess, using the current
+    environment's Spine Toolbox (``python -m spinetoolbox.spine_db_editor.main``,
+    matching the CLI launcher) rather than a ``spine-db-editor`` found anywhere
+    on PATH.
 
     Returns:
-        The :class:`subprocess.Popen` object, or ``None`` if
-        ``spine-db-editor`` is not found on the system PATH.
+        The :class:`subprocess.Popen` object, or ``None`` if Spine Toolbox is
+        not installed in this environment.
     """
-    exe = shutil.which("spine-db-editor")
-    if exe is None:
-        logger.warning("spine-db-editor not found on PATH")
+    import importlib.util
+
+    if importlib.util.find_spec("spinetoolbox") is None:
+        logger.warning("spinetoolbox is not installed in this environment")
         return None
 
     try:
-        proc = subprocess.Popen([exe, db_url])
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "spinetoolbox.spine_db_editor.main", db_url]
+        )
         return proc
     except OSError:
-        logger.warning("Failed to launch spine-db-editor", exc_info=True)
+        logger.warning("Failed to launch the Spine DB editor", exc_info=True)
         return None
 
 

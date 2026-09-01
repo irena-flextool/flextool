@@ -18,7 +18,6 @@ from __future__ import annotations
 import importlib.metadata as _im
 import json
 import logging
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -58,12 +57,15 @@ def flextool_version() -> str:
 
 
 def toolbox_installed() -> bool:
-    """Whether Spine Toolbox (and thus the Spine DB Editor) is installed."""
+    """Whether Spine Toolbox is installed *in the current environment* (the venv
+    running FlexTool). Deliberately does NOT fall back to a PATH lookup — a
+    ``spine-db-editor`` from a different environment would otherwise read as
+    installed even though it isn't importable here."""
     try:
         _im.distribution("spinetoolbox")
         return True
     except _im.PackageNotFoundError:
-        return shutil.which("spine-db-editor") is not None
+        return False
 
 
 def describe_install() -> str:
