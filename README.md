@@ -87,8 +87,8 @@ terminal so the new PATH takes effect.
 
 Install FlexTool into a virtual environment to keep its packages separate from
 other Python applications. If you want to install into the base Python (perhaps
-because you do not otherwise use Python), just run the last command from below,
-`pip install flextool`.
+because you do not otherwise use Python), just run the last `pip install`
+command from below.
 
 ```
 python -m venv .venv        # Windows: py -m venv .venv
@@ -97,8 +97,13 @@ python -m venv .venv        # Windows: py -m venv .venv
 #            Windows CMD:         .\.venv\Scripts\activate.bat
 #            Linux / macOS:       . .venv/bin/activate
 python -m pip install --upgrade pip
-pip install flextool
+pip install "flextool[toolbox,viewer]"
 ```
+
+The `[toolbox,viewer]` extras add the Spine Toolbox database editor (for editing
+and viewing input and result databases) and the network-graph result view. To
+install without Spine Toolbox (edit/view data in a spreadsheet only), you can
+use plain `pip install flextool`.
 
 Your prompt should now show `(.venv)`. Verify with `python --version` — it
 should report 3.11 or newer.
