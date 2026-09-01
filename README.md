@@ -57,17 +57,51 @@ against linopy and Pyomo on the same HiGHS solver.
 
 ## Installation
 
-FlexTool requires **Python 3.11+**. Install it into a virtual environment.
+### Check your Python (and possibly install it)
+
+FlexTool requires **Python 3.11+**.
+
+Open a terminal (Windows: Command Prompt or PowerShell; macOS: Terminal; Linux: your shell)
+and check which Python you have:
+
+| Platform | Command |
+|---|---|
+| Windows | `py --version` (falls back to `python --version`) |
+| macOS / Linux | `python3 --version` |
+
+The output looks like `Python 3.12.4`. If the command is not found, prints
+something below 3.11, or (on Windows) opens the Microsoft Store, install Python
+from https://www.python.org/downloads/ — on Windows tick
+**"Add python.exe to PATH"** in the installer. Then close and reopen the
+terminal so the new PATH takes effect.
+
+> On Windows, use `py` in place of `python` in the commands below if `python`
+> is not recognised. If several versions are installed, `py -3.11 --version`
+> (or `-3.12`, …) picks a specific one, and `py -0` lists them all.
+> On macOS/Linux, `python` often means Python 2 or does not exist at all, so
+> use `python3`. Inside an activated virtual environment, plain `python` always
+> means that environment's Python on every platform.
+
 
 ### Install from PyPI (recommended)
 
+Install FlexTool into a virtual environment to keep its packages separate from
+other Python applications. If you want to install into the base Python (perhaps
+because you do not otherwise use Python), just run the last command from below,
+`pip install flextool`.
+
 ```
-python -m venv .venv
+python -m venv .venv        # Windows: py -m venv .venv
+                            # macOS/Linux: python3 -m venv .venv
 # activate — Windows PowerShell:  .\.venv\Scripts\Activate.ps1
-#            Linux / macOS:        . .venv/bin/activate
+#            Windows CMD:         .\.venv\Scripts\activate.bat
+#            Linux / macOS:       . .venv/bin/activate
 python -m pip install --upgrade pip
 pip install flextool
 ```
+
+Your prompt should now show `(.venv)`. Verify with `python --version` — it
+should report 3.11 or newer.
 
 (If PowerShell blocks the activate script, run once per user:
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.)
@@ -81,16 +115,11 @@ flextool
 — equivalently `python -m flextool.gui`. The GUI creates and manages your
 projects and input databases; to seed the bundled template and example
 databases (handy for the CLI or Spine Toolbox workflows) run `flextool-update`.
-Update FlexTool later with:
-
-```
-pip install --upgrade flextool
-```
 
 ### Install from source (developers / latest `main`)
 
-To work on FlexTool itself — or to run the not-yet-released `main` — clone the
-repo and install it editable:
+To participate in FlexTool development — or to run the not-yet-released `main`
+— clone the repo and install it editable:
 
 ```powershell
 git clone https://github.com/irena-flextool/flextool.git
@@ -103,6 +132,16 @@ pip install -e .
 
 The editable install picks up source changes on `git pull`; re-run
 `pip install -e .` only when a dependency pin in `pyproject.toml` changes.
+
+### Update FlexTool:
+
+```
+# If using virtual environment (venv), then activate venv first:
+#   Windows PowerShell:  .\.venv\Scripts\Activate.ps1
+#   Windows CMD:         .\.venv\Scripts\activate.bat
+#   Linux / macOS:       . .venv/bin/activate
+pip install --upgrade flextool
+```
 
 ## [Documentation](https://irena-flextool.github.io/flextool/) and [installation](https://irena-flextool.github.io/flextool/install_toolbox/)
 
