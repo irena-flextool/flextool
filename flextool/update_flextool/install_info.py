@@ -74,6 +74,16 @@ def describe_install() -> str:
     return f"PyPI install (version {flextool_version()})"
 
 
+def manual_toolbox_command() -> str:
+    """Shell command a user can run by hand to add Spine Toolbox, matched to the
+    current install type — editable ``-e .[toolbox]`` in a git checkout (running
+    the PyPI form there would clobber the editable install), otherwise the PyPI
+    ``flextool[toolbox]`` form."""
+    if git_checkout_root() is not None:
+        return 'pip install -e ".[toolbox]"'
+    return 'pip install "flextool[toolbox]"'
+
+
 def upgrade_steps(include_toolbox: bool) -> tuple[list[list[str]], Path | None]:
     """Build the command(s) that upgrade FlexTool in place.
 

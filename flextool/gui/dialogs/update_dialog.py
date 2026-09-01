@@ -34,6 +34,7 @@ class UpdateDialog(tk.Toplevel):
         install_description: str,
         is_git: bool,
         default_toolbox: bool,
+        toolbox_installed: bool,
         check_on_startup: bool,
         update_available: bool | None,
         check_fn: Callable[[], bool],
@@ -46,6 +47,7 @@ class UpdateDialog(tk.Toplevel):
 
         self.proceed: bool = False
         self.include_toolbox: bool = default_toolbox
+        self._toolbox_installed: bool = toolbox_installed
         self.check_on_startup: bool = check_on_startup
         self.update_available: bool | None = update_available
         self._initial_check_on_startup: bool = check_on_startup
@@ -81,6 +83,7 @@ class UpdateDialog(tk.Toplevel):
 
         ttk.Checkbutton(
             body, text="Install Spine Toolbox", variable=self._toolbox_var,
+            command=self._render_availability,
         ).pack(anchor="w")
         ttk.Label(
             body,
@@ -139,14 +142,27 @@ class UpdateDialog(tk.Toplevel):
 
     # ── Availability state ──────────────────────────────────────────
 
+    def _pending_toolbox_install(self) -> bool:
+        """The user wants Spine Toolbox but it isn't installed yet — a valid
+        action (``pip install flextool[toolbox]``) even when FlexTool itself is
+        already up to date."""
+        return bool(self._toolbox_var.get()) and not self._toolbox_installed
+
     def _render_availability(self) -> None:
-        """Reflect ``update_available`` in the status label and Update button."""
+        """Reflect ``update_available`` (and a pending toolbox install) in the
+        status label and Update button."""
         if self.update_available is True:
             self._status_var.set("Status: a newer version is available.")
             self._set_update_enabled(True)
         elif self.update_available is False:
-            self._status_var.set("Status: you are up to date.")
-            self._set_update_enabled(False)
+            if self._pending_toolbox_install():
+                self._status_var.set(
+                    "Status: FlexTool is up to date — Spine Toolbox will be installed."
+                )
+                self._set_update_enabled(True)
+            else:
+                self._status_var.set("Status: you are up to date.")
+                self._set_update_enabled(False)
         else:
             self._status_var.set(
                 "Status: not checked — click Check to look for updates."
