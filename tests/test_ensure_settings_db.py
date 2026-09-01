@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -77,6 +78,10 @@ def test_accepts_sqlite_url_three_slashes(tmp_path: Path) -> None:
     assert target.exists()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="four-slash URL form is built via Path.relative_to('/'), which is POSIX-only",
+)
 def test_accepts_sqlite_url_four_slashes(tmp_path: Path) -> None:
     target = tmp_path / "output_info.sqlite"
     url = f"sqlite:////{target.relative_to('/')}"

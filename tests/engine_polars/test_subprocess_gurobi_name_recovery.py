@@ -48,6 +48,14 @@ from flextool.engine_polars._subprocess_solve import (
     _solve_commercial_subprocess,
 )
 
+# The commercial-solver stubs are POSIX shebang scripts made executable via
+# chmod; Windows can't spawn them (WinError 193). Skip the module there — the
+# name-recovery logic itself is platform-agnostic and covered on Linux/macOS.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="commercial-solver subprocess stubs are POSIX shebang scripts",
+)
+
 
 # ---------------------------------------------------------------------------
 # Problem builders

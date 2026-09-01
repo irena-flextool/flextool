@@ -34,15 +34,11 @@ jobs:
         run: python -m flextool.update_flextool.canonical_databases verify
 
   test:
-    # Linux is the authoritative, blocking gate (runs the full suite green).
-    # Windows and macOS are non-blocking (experimental) for now, for two
-    # pre-existing reasons unrelated to a regression: (1) the golden solver tests
-    # aren't bit-portable — an LP with multiple optima (e.g. demand-response
-    # shift) lets HiGHS pick a different, equally-optimal vertex than the
-    # Linux-generated golden; (2) a few tests still carry POSIX-isms (e.g. an
-    # fcntl-based lock probe). Making cross-platform CI green (per-platform
-    # goldens / tolerance policy + a Windows dev pass) is a separate, deliberate
-    # task; until then these run and report but don't block the PR.
+    # Full suite on all platforms — all blocking. Genuinely platform-specific
+    # tests are skipped in place (POSIX-only path/shebang forms, Windows file
+    # locks), and the one non-unique-optimum scenario (network_all_tech) is
+    # skipped pending reformulation for a unique optimum (see its skip_reason in
+    # tests/scenarios.yaml).
     strategy:
       fail-fast: false
       matrix:
@@ -53,18 +49,13 @@ jobs:
             python: "3.13"
           - os: windows-latest
             python: "3.12"
-            experimental: true
           - os: windows-latest
             python: "3.13"
-            experimental: true
           - os: macos-15
             python: "3.12"
-            experimental: true
           - os: macos-15
             python: "3.13"
-            experimental: true
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental || false }}
     steps:
       - uses: actions/checkout@v4
 
@@ -90,4 +81,4 @@ jobs:
           # gap-free (see docs/dev/architecture.md "Numerical scaling →
           # Layer 2").
           FLEXTOOL_AUTOSCALE_STRICT: "1"
-        run: pytest tests/ --tb=line -rf -q
+        run: pytest tests/ -v --tb=short -x

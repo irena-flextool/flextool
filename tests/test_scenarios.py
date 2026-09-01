@@ -62,6 +62,10 @@ def _load_scenarios() -> list:
         marks = []
         if e.get("smoke"):
             marks.append(pytest.mark.smoke)
+        if e.get("skip_reason"):
+            # Scenario deliberately excluded from the golden comparison (e.g. a
+            # non-unique LP optimum that isn't bit-portable across platforms).
+            marks.append(pytest.mark.skip(reason=e["skip_reason"]))
         params.append(
             pytest.param(
                 e["scenario"],
