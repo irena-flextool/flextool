@@ -90,4 +90,4 @@ jobs:
           # gap-free (see docs/dev/architecture.md "Numerical scaling →
           # Layer 2").
           FLEXTOOL_AUTOSCALE_STRICT: "1"
-        run: pytest tests/ -v --tb=short -x
+        run: pytest tests/ --tb=line -rf -q
