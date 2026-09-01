@@ -84,6 +84,17 @@ def manual_toolbox_command() -> str:
     return 'pip install "flextool[toolbox]"'
 
 
+def install_toolbox_steps() -> tuple[list[list[str]], Path | None]:
+    """Command(s) to install *just* the Spine Toolbox extra, without updating
+    FlexTool itself. Editable ``-e .[toolbox]`` (run in the repo root) for a git
+    checkout, otherwise the PyPI ``flextool[toolbox]`` form."""
+    py = sys.executable
+    root = git_checkout_root()
+    if root is not None:
+        return [[py, "-m", "pip", "install", "-e", ".[toolbox]"]], root
+    return [[py, "-m", "pip", "install", "flextool[toolbox]"]], None
+
+
 def upgrade_steps(include_toolbox: bool) -> tuple[list[list[str]], Path | None]:
     """Build the command(s) that upgrade FlexTool in place.
 

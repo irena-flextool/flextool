@@ -3196,16 +3196,25 @@ class MainWindow(tk.Tk):
         if not dlg.proceed:
             return
 
-        steps, cwd = install_info.upgrade_steps(dlg.include_toolbox)
+        if dlg.install_toolbox:
+            steps, cwd = install_info.install_toolbox_steps()
+            description = "Install Spine Toolbox"
+            intro = "Installing Spine Toolbox…\n"
+        else:
+            steps, cwd = install_info.upgrade_steps(dlg.include_toolbox)
+            description = "Update FlexTool"
+            intro = (
+                "Updating FlexTool"
+                + (" with Spine Toolbox" if dlg.include_toolbox else "")
+                + "…\n"
+            )
         self._run_cli_job(
             steps,
             job_type=JobType.UPDATE,
-            description="Update FlexTool",
+            description=description,
             action_key="update_flextool",
             cwd=cwd,
-            intro="Updating FlexTool"
-            + (" with Spine Toolbox" if dlg.include_toolbox else "")
-            + "…\n",
+            intro=intro,
             on_finish=self._update_finished,
         )
 
