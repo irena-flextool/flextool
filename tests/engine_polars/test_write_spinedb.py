@@ -7,6 +7,7 @@ nested Map parameter values per the schema.
 
 import logging
 import multiprocessing as mp
+import sys
 
 import pandas as pd
 import pytest
@@ -659,8 +660,8 @@ def test_concurrent_top_up_on_stale_shared_db(tmp_path):
     # No leftover temp DBs; the sidecar lock (if present) is not held.
     assert not list(tmp_path.glob(".results-*.sqlite.tmp"))
     lock_path = tmp_path / "shared_results.sqlite.lock"
-    if lock_path.exists():
-        import fcntl
+    if lock_path.exists() and sys.platform != "win32":
+        import fcntl  # POSIX-only lock double-check; the top-up itself is portable
         with open(lock_path, "a") as fh:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
