@@ -10,6 +10,7 @@ CWD-relative behaviour and the bundled default template.
 """
 
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,10 @@ from flextool.scenario_comparison.orchestrator import derive_project_root
 # Pure predicate: derive_project_root
 # ---------------------------------------------------------------------------
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "uses POSIX absolute-path literals (/proj/...) that anchor to a drive on Windows",
+)
 class TestDeriveProjectRoot(unittest.TestCase):
     def test_all_equal(self) -> None:
         """All scenarios share one folder → that folder is the root."""

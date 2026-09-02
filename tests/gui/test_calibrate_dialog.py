@@ -115,6 +115,12 @@ def test_dialog_cli_previews_and_rp_naming(tk_root, tmp_path: Path):
     settings.calib_rp_n_rp = 40
     settings.calib_rp_period_length = 54
     settings.calib_selected_solves = [INVEST_SOLVE]
+    # "File outputs" choices: csv + excel on, plot + spinedb off. The calib
+    # preview must regenerate exactly these from the final parquet.
+    settings.auto_generate_scen_plots = False
+    settings.auto_generate_scen_excels = True
+    settings.auto_generate_scen_csvs = True
+    settings.auto_generate_comp_spinedb = False
 
     dialog = CalibrateDialog(
         tk_root,
@@ -136,9 +142,13 @@ def test_dialog_cli_previews_and_rp_naming(tk_root, tmp_path: Path):
         # Calibration preview is non-empty and points at the scenario.
         assert "flextool.calibrate" in calib_text
         assert SCENARIO in calib_text
+        # The final-outputs flag mirrors the File-outputs settings (excel + csv,
+        # in the run path's order), so the calibrated results match a normal run.
+        assert "--final-write-methods excel csv" in calib_text
+        assert "--skip-final-outputs" not in calib_text
 
-        # The add-to-scenario checkbox mirrors the (default True) setting.
-        assert dialog._var_add_to_scenario.get() is True
+        # The disposition radio mirrors the (default "add") setting.
+        assert dialog._var_rp_mode.get() == "add"
 
         # A second (post-launch) allocation would advance to _2 once the first
         # name is reserved; simulate the reservation the launch performs.

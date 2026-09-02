@@ -26,6 +26,69 @@ from flextool.scenario_comparison.data_models import (
 
 
 # ---------------------------------------------------------------------------
+# Shared dispatch-bundle loader
+# ---------------------------------------------------------------------------
+
+def load_dispatch_bundle(
+    parquet_base: "object", scenario: str,
+) -> tuple[DispatchMappings, TimeSeriesResults] | None:
+    """Load one scenario's dispatch mappings + time-series bundle from disk.
+
+    Factored out of ``ResultViewer._load_dispatch_data`` so callers that need
+    the same ``(DispatchMappings, TimeSeriesResults)`` pair without the
+    viewer's caching / tagging state (e.g. the colors picker) can reuse the
+    exact load sequence:
+
+    1. :func:`~flextool.scenario_comparison.dispatch_mappings.load_dispatch_mappings`
+       on ``<parquet_base>/<scenario>/`` → raw mapping DataFrames;
+    2. tag each non-empty mapping with the folder identity (``scenario``) in
+       its row index and build a :class:`DispatchMappings`;
+    3. ``build_scenario_folders_from_dir`` → ``collect_parquet_files`` →
+       ``combine_parquet_files`` → :meth:`TimeSeriesResults.from_dict`.
+
+    Returns ``(mappings, results)``, or ``None`` when the scenario folder does
+    not exist.  The viewer keeps its own copy of this sequence (it also
+    maintains cache keys / data tags), so this helper does not change viewer
+    behavior; it exists to avoid duplicating the load in the picker.
+    """
+    from pathlib import Path
+
+    from flextool.scenario_comparison.db_reader import (
+        build_scenario_folders_from_dir,
+        collect_parquet_files,
+        combine_parquet_files,
+    )
+    from flextool.scenario_comparison.dispatch_mappings import (
+        load_dispatch_mappings,
+    )
+
+    parquet_base = Path(parquet_base)
+    scenario_dir = parquet_base / scenario
+    if not scenario_dir.is_dir():
+        return None
+
+    raw_mappings = load_dispatch_mappings(scenario_dir)
+    # Tag by the folder identity, overwriting any model-scenario tag baked in
+    # at write time — mirrors ResultViewer._load_dispatch_data.
+    mapping_fields: dict[str, pd.DataFrame | None] = {}
+    for key, df in raw_mappings.items():
+        if df is not None and not df.empty:
+            df_copy = df.copy()
+            df_copy["scenario"] = scenario
+            df_copy = df_copy.set_index("scenario")
+            mapping_fields[key] = df_copy
+        else:
+            mapping_fields[key] = df
+    mappings = DispatchMappings(**mapping_fields)
+
+    scenario_folders = build_scenario_folders_from_dir(parquet_base, [scenario])
+    files_by_name = collect_parquet_files(scenario_folders, output_subdir="")
+    combined = combine_parquet_files(files_by_name, num_scenarios=1)
+    results = TimeSeriesResults.from_dict(combined)
+    return mappings, results
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers (S4, S5, S6)
 # ---------------------------------------------------------------------------
 
@@ -94,10 +157,60 @@ def _connection_series_at_node(
     return None
 
 
+def _resolve_special_slots(
+    special_order: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Return ``(pos_special_list, neg_special_list)`` in stacking LIST order.
+
+    *special_order* is the dispatch specials' file order — i.e. the picker
+    dialog's top-to-bottom order of ``categories.dispatch`` keys, which is
+    **visual top-to-bottom** in the rendered stack.  The two returned lists are
+    in the order columns must be appended to ``ordered_cols`` (the pandas
+    ``plot.area(stacked=True)`` LIST order), which is NOT the same as visual
+    order for both signs:
+
+    * Negatives stack DOWN from 0 in list order, so the FIRST list entry sits
+      nearest the axis (visual TOP of the negative block).  List order therefore
+      equals visual top-to-bottom → the negative slot is *special_order*'s
+      negatives as-is.
+    * Positives stack UP from 0 in list order, so the LAST list entry sits
+      furthest from the axis (visual TOP of the positive block).  List order is
+      therefore the REVERSE of visual top-to-bottom → the positive slot is
+      *special_order*'s positives reversed.
+
+    (Empirically confirmed by reading area-polygon y-extents; see
+    ``tests/test_dispatch_order_specials.py``.)
+
+    When *special_order* is ``None`` the historical hardcoded slots are
+    returned verbatim, so callers that pass nothing are byte-for-byte
+    unchanged.  Any positive/negative special absent from *special_order* is
+    appended in its default visual order, so an incomplete file order still
+    orders every special deterministically.
+    """
+    if not special_order:
+        # Historical hardcoded list order (nearest-axis first for each sign).
+        return (
+            ['Import', 'Discharge', 'LossOfLoad'],
+            ['internal_losses', 'Export', 'Charge'],
+        )
+    pos_set = set(POSITIVE_SPECIAL)
+    neg_set = set(NEGATIVE_SPECIAL)
+    # Visual top-to-bottom, taken from the file order, completed with any
+    # special the file omitted (kept in its default visual order).
+    pos_visual = [c for c in special_order if c in pos_set]
+    pos_visual += [c for c in POSITIVE_SPECIAL if c not in pos_visual]
+    neg_default_visual = list(reversed(NEGATIVE_SPECIAL))  # internal_losses,Export,Charge
+    neg_visual = [c for c in special_order if c in neg_set]
+    neg_visual += [c for c in neg_default_visual if c not in neg_visual]
+    # Convert visual → list order per the stacking direction above.
+    return list(reversed(pos_visual)), neg_visual
+
+
 def _order_dispatch_columns(
     df: pd.DataFrame,
     plot_name: str = "",
     config_order: list[str] | None = None,
+    special_order: list[str] | None = None,
 ) -> pd.DataFrame:
     """Validate signs, sort columns, return reordered DataFrame.
 
@@ -107,9 +220,40 @@ def _order_dispatch_columns(
     When *config_order* is provided (from config.yaml positive/negative
     sections), columns are ordered to match the config.  Columns not in
     the config fall back to std-dev sorting.
+
+    *special_order* is the dispatch specials' file order (the picker's
+    top-to-bottom order of ``categories.dispatch`` keys).  When provided the
+    positive-special and negative-special slots are ordered by it (within their
+    sign group only — a positive special can never move below the axis); when
+    ``None`` the historical hardcoded special order is kept exactly.  See
+    :func:`_resolve_special_slots`.
     """
+    from flextool.plot_outputs.color_template import (
+        _extract_dispatch_entity_name,
+    )
+
+    pos_special_list, neg_special_list = _resolve_special_slots(special_order)
+
+    def _entity_base(col: str) -> str:
+        """Bare entity a column belongs to, for config-order matching.
+
+        Reuses the color resolver's extractor so node-level columns
+        (``<unit>_out`` / ``<unit>_in`` / ``<conn>_left`` / ``<conn>_right``)
+        and mixed-sign ``_pos``/``_neg`` splits map to the same bare entity the
+        ``entities`` file lists.  Without this the per-node path's columns
+        never matched ``config_order`` (only ``_pos``/``_neg`` was stripped),
+        so per-node stacking ignored the picker order.  Aggregate/nodeGroup
+        names (no such suffix) are returned unchanged, so that path is
+        unaffected.
+        """
+        return _extract_dispatch_entity_name(col) or col
+
     positive_cols: list[str] = []
     negative_cols: list[str] = []
+    # Entities split into BOTH a ``_pos`` and a ``_neg`` half (bidirectional
+    # flows) — their halves later hug the zero axis (see mixed-entity block
+    # after the sign classification loop).
+    mixed_bases: list[str] = []
     plot_label = f" in '{plot_name}'" if plot_name else ""
 
     for col in list(df.columns):
@@ -124,12 +268,16 @@ def _order_dispatch_columns(
                   f" - splitting into {col}_pos and {col}_neg")
             pos_part = series.clip(lower=0)
             neg_part = series.clip(upper=0)
-            if pos_part.abs().sum() > 0:
+            added_pos = pos_part.abs().sum() > 0
+            added_neg = neg_part.abs().sum() > 0
+            if added_pos:
                 df[f"{col}_pos"] = pos_part
                 positive_cols.append(f"{col}_pos")
-            if neg_part.abs().sum() > 0:
+            if added_neg:
                 df[f"{col}_neg"] = neg_part
                 negative_cols.append(f"{col}_neg")
+            if added_pos and added_neg:
+                mixed_bases.append(col)
             df = df.drop(columns=[col])
         elif has_neg:
             negative_cols.append(col)
@@ -143,6 +291,29 @@ def _order_dispatch_columns(
     for col in NEGATIVE_SPECIAL:
         if col in positive_cols:
             print(f"  Warning: '{col}' is expected to be negative but has positive values")
+
+    # --- Mixed-sign entities hug the zero axis ---
+    # An entity split into BOTH ``<base>_pos`` and ``<base>_neg`` has its two
+    # halves placed at the FRONT of their respective blocks (nearest the zero
+    # axis in pandas' stacked area: the first column of each sign sits against
+    # 0).  This overrides config/std ordering for the split halves so the
+    # band straddles zero and both excursions read clearly.  Multiple mixed
+    # entities are ordered among themselves deterministically — config-order
+    # position if listed, else std-dev then name (same key style as the
+    # regular buckets) — and placed so the SAME entity is nearest zero on both
+    # sides.  Special tokens keep their fixed far-from-axis slots below.
+    mixed_pos_set = {f"{b}_pos" for b in mixed_bases}
+    mixed_neg_set = {f"{b}_neg" for b in mixed_bases}
+
+    def _mixed_sort_key(base):
+        entity = _entity_base(base)
+        if config_order and entity in set(config_order):
+            return (0, config_order.index(entity), 0.0, base)
+        return (1, 0, float(df[f"{base}_pos"].std()), base)
+
+    mixed_bases_sorted = sorted(mixed_bases, key=_mixed_sort_key)
+    mixed_pos = [f"{b}_pos" for b in mixed_bases_sorted]
+    mixed_neg = [f"{b}_neg" for b in mixed_bases_sorted]
 
     if config_order:
         # Use config order: columns present in config come first (in config order),
@@ -162,7 +333,9 @@ def _order_dispatch_columns(
         neg_special_present: list[str] = []
         pos_special_present: list[str] = []
         for col in negative_cols:
-            base = col.removesuffix('_neg') if col.endswith('_neg') else col
+            if col in mixed_neg_set:
+                continue  # handled by the near-axis mixed block
+            base = _entity_base(col)
             if base in config_set or col in config_set:
                 ordered_from_config_neg.append(col)
             elif col in NEGATIVE_SPECIAL:
@@ -170,7 +343,9 @@ def _order_dispatch_columns(
             else:
                 remaining_neg.append(col)
         for col in positive_cols:
-            base = col.removesuffix('_pos') if col.endswith('_pos') else col
+            if col in mixed_pos_set:
+                continue  # handled by the near-axis mixed block
+            base = _entity_base(col)
             if base in config_set or col in config_set:
                 ordered_from_config_pos.append(col)
             elif col in POSITIVE_SPECIAL:
@@ -179,7 +354,7 @@ def _order_dispatch_columns(
                 remaining_pos.append(col)
         # Sort config-matched columns by their position in config_order
         def _config_key(col):
-            base = col.removesuffix('_pos').removesuffix('_neg')
+            base = _entity_base(col)
             try:
                 return config_order.index(base)
             except ValueError:
@@ -187,52 +362,76 @@ def _order_dispatch_columns(
                     return config_order.index(col)
                 except ValueError:
                     return len(config_order)
-        ordered_from_config_neg.sort(key=_config_key)
+        # Positives stack UP from the axis in list order (first list column
+        # nearest 0 = bottom), negatives stack DOWN (first list column nearest
+        # 0 = top).  ``config_order`` is a single top-to-bottom sequence, so to
+        # make the picker's list order read the same way on BOTH sides, the
+        # negative block must take config_order in REVERSE: an entity lower in
+        # the list must sit lower in the plot on the negative side too (without
+        # this, negatives came out upside-down relative to the list).
         ordered_from_config_pos.sort(key=_config_key)
-        # Sort remaining by std dev
+        ordered_from_config_neg.sort(key=_config_key, reverse=True)
+        # Sort remaining by std dev, with column name as a deterministic
+        # secondary key so equal-std-dev ties resolve stably (otherwise an
+        # unlisted column's stacking slot is arbitrary).  This only changes
+        # ordering when std devs are exactly equal — distinct std devs keep
+        # their std-dev order.
         if remaining_neg:
             col_std = {col: df[col].abs().std() for col in remaining_neg}
-            remaining_neg.sort(key=lambda c: col_std.get(c, 0))
+            remaining_neg.sort(key=lambda c: (col_std.get(c, 0), c))
         if remaining_pos:
             col_std = {col: df[col].std() for col in remaining_pos}
-            remaining_pos.sort(key=lambda c: col_std.get(c, 0))
+            remaining_pos.sort(key=lambda c: (col_std.get(c, 0), c))
         # Re-insert special tokens at their fixed slots: negatives at the
-        # very bottom (internal_losses, Export, Charge), positives at the
-        # very top (Import, Discharge, LossOfLoad), mirroring the ``else``
-        # branch ordering.
+        # very bottom, positives at the very top, in the order resolved from
+        # *special_order* (default preserves the historical hardcoded order),
+        # mirroring the ``else`` branch ordering.
         neg_special_ordered = [
-            c for c in ['internal_losses', 'Export', 'Charge']
+            c for c in neg_special_list
             if c in neg_special_present
         ]
         pos_special_ordered = [
-            c for c in ['Import', 'Discharge', 'LossOfLoad']
+            c for c in pos_special_list
             if c in pos_special_present
         ]
         ordered_cols = (
-            ordered_from_config_neg + remaining_neg + neg_special_ordered
-            + ordered_from_config_pos + remaining_pos + pos_special_ordered
+            mixed_neg + ordered_from_config_neg + remaining_neg + neg_special_ordered
+            + mixed_pos + ordered_from_config_pos + remaining_pos + pos_special_ordered
         )
     else:
-        # Fallback: sort by std dev with special columns in fixed positions
+        # Fallback: sort by std dev with special columns in fixed positions.
+        # Mixed halves are excluded here and re-inserted at the front of each
+        # block (nearest the zero axis) below.
         pos_special = [c for c in positive_cols if c in POSITIVE_SPECIAL]
-        pos_regular = [c for c in positive_cols if c not in POSITIVE_SPECIAL]
+        pos_regular = [
+            c for c in positive_cols
+            if c not in POSITIVE_SPECIAL and c not in mixed_pos_set
+        ]
         neg_special = [c for c in negative_cols if c in NEGATIVE_SPECIAL]
-        neg_regular = [c for c in negative_cols if c not in NEGATIVE_SPECIAL]
+        neg_regular = [
+            c for c in negative_cols
+            if c not in NEGATIVE_SPECIAL and c not in mixed_neg_set
+        ]
 
+        # Column name is a deterministic secondary key so equal-std-dev ties
+        # resolve stably (mirrors the config_order "remaining" buckets above);
+        # only affects ordering when std devs are exactly equal.
         if pos_regular:
             col_std = {col: df[col].std() for col in pos_regular}
-            pos_regular = sorted(pos_regular, key=lambda c: col_std.get(c, 0))
+            pos_regular = sorted(pos_regular, key=lambda c: (col_std.get(c, 0), c))
         if neg_regular:
             col_std = {col: df[col].abs().std() for col in neg_regular}
-            neg_regular = sorted(neg_regular, key=lambda c: col_std.get(c, 0))
+            neg_regular = sorted(neg_regular, key=lambda c: (col_std.get(c, 0), c))
 
         ordered_cols: list[str] = []
+        ordered_cols.extend(mixed_neg)
         ordered_cols.extend(neg_regular)
-        for col in ['internal_losses', 'Export', 'Charge']:
+        for col in neg_special_list:
             if col in neg_special:
                 ordered_cols.append(col)
+        ordered_cols.extend(mixed_pos)
         ordered_cols.extend(pos_regular)
-        for col in ['Import', 'Discharge', 'LossOfLoad']:
+        for col in pos_special_list:
             if col in pos_special:
                 ordered_cols.append(col)
 
@@ -257,6 +456,7 @@ def prepare_dispatch_data(
     output_node_group: str,
     colors: dict | None = None,
     config_order: list[str] | None = None,
+    special_order: list[str] | None = None,
 ) -> tuple[pd.DataFrame | None, pd.Series | None]:
     """Prepare dispatch data for a specific nodeGroupDispatch.
 
@@ -546,7 +746,7 @@ def prepare_dispatch_data(
         df_dispatch = pd.DataFrame(df_dispatch, index=time_index)
 
         # --- Order columns (S6) ---
-        df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{output_node_group} ({scenario})", config_order=config_order)
+        df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{output_node_group} ({scenario})", config_order=config_order, special_order=special_order)
 
         # --- Get demand from node_inflow__dt ---
         inflow_series = None
@@ -577,11 +777,24 @@ def prepare_node_dispatch_data(
     results: TimeSeriesResults,
     scenario: str,
     node: str,
+    config_order: list[str] | None = None,
+    special_order: list[str] | None = None,
 ) -> tuple[pd.DataFrame | None, pd.Series | None]:
     """Prepare dispatch data for a single node (not a nodeGroup).
 
     Collects unit outputs/inputs, connection flows, slack (LossOfLoad),
     and demand for the given node.
+
+    *config_order* is the entity stacking order from ``plot_settings.yaml``
+    (via ``resolve_dispatch_colors_and_order``); it is threaded into
+    ``_order_dispatch_columns`` so the per-node stack follows the picker's
+    order, exactly as the nodeGroup path does.  ``None`` keeps the historical
+    std-dev fallback ordering.
+
+    *special_order* is the dispatch specials' file order (the picker's
+    top-to-bottom order of ``categories.dispatch`` keys); it orders the
+    positive- and negative-special slots within their sign group.  ``None``
+    keeps the historical hardcoded special order.
     """
     try:
         # Get time index (S5)
@@ -674,7 +887,10 @@ def prepare_node_dispatch_data(
         df_dispatch = pd.DataFrame(df_dispatch, index=time_index)
 
         # --- Order columns (S6) ---
-        df_dispatch = _order_dispatch_columns(df_dispatch, plot_name=f"{node} ({scenario})")
+        df_dispatch = _order_dispatch_columns(
+            df_dispatch, plot_name=f"{node} ({scenario})",
+            config_order=config_order, special_order=special_order,
+        )
 
         # --- Get demand from node_inflow__dt ---
         inflow_series = None

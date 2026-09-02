@@ -617,6 +617,88 @@ directory). The in-engine slicer used by the live Benders driver lives at
   input-preparation stage to pick representative weeks / days.
   `preprocess.preprocess_representative_periods` is the entry point.
 
+#### Net-load clustering mode
+
+By default the greedy hull clusters on the per-series normalized
+profile/inflow feature stack (`preprocess._build_clustering_matrix`). The
+`--netload-clustering` flag (schema wiring lives in
+`representative_periods/netload_inputs.py` for the DB read and
+`representative_periods/netload.py` for the pure math) instead clusters on a
+real-MW **net-load** signal per aggregation unit `g`:
+
+    net_load[g, h] = Σ_{demand node in g} demand_h
+                     − Σ_{VRE unit in g} cap[u] · avail[profile(u)][h]
+
+FlexTool's sign convention (shared with `force_include`) makes demand a
+*negative* inflow, so `demand_h = −inflow_h + |scalar demand level|`. **VRE**
+is any `unit__node__profile` arc whose `profile_method` is `upper_limit`;
+that is the schema default, so an arc that never sets `profile_method`
+explicitly (no row from the reader) is treated as VRE. Each aggregation
+unit's series is min-max normalized to `[0, 1]` exactly as the default
+feature builder does per feature.
+
+An **aggregation unit** is either a **region group** or a single **node**.
+Granularity is chosen by the schema-v68 `group.use_for_representative_periods`
+(`yes_no`) flag: when one or more groups carry the flag `yes` the member
+nodes' net load is summed into one regional signal per flagged group; when no
+group carries the flag the selection falls back to **per-node** signals (each
+node its own aggregation unit). On a pre-v68 database the flag parameter is
+not yet defined — that genuinely-absent case is detected and quietly activates
+the per-node fallback, while a read failure on a *defined* flag is allowed to
+surface rather than silently degrade.
+
+The iteration-0 VRE capacities come from a **demand-match** default: the
+investable VRE of each aggregation unit is sized so its energy plus the
+existing VRE energy just covers the unit's demand energy (pure energy balance,
+curtailment ignored). `--vre-penetration` scales that energy-share target
+(1.0 = full-energy match). The default (non-`--netload-clustering`) code path
+is byte-parity with the prior behaviour.
+
+#### Net-load iteration driver
+
+`representative_periods/netload_iterate.py` (`run_netload_iteration`,
+`NetloadIterConfig`; also a `main()`/`__main__` CLI) composes the single-shot
+net-load selector into an *iterate-until-stable* loop that feeds each
+iteration's solved investment capacities back into the next selection — sizing
+the VRE fleet from a solve's realised investments (instead of the demand-match
+default) sharpens which periods are net-load-critical.
+
+- **Invest-only loop.** Iteration `k` in `range(iterations + 1)`. `k = 0` is
+  the bootstrap: select on the demand-match caps and run an INVEST-ONLY solve.
+  The bootstrap dispatch is **skipped** — default-cap investments are
+  known-bad, so measuring their full-year cost is not worth the solve.
+  `k = 1..n` select on the prior iteration's invested caps; if the selected
+  representative set is unchanged from the previous iteration the loop
+  converges and breaks before solving (**early-stop on stability**).
+- **Keep-best (opt-in).** With `--keep-best`, each mature iteration (`k ≥ 1`)
+  ALSO runs the full-year DISPATCH, reads its total system cost, and the loop
+  keeps the representative set with the **lowest full-year dispatch cost**. A
+  keep-best winner from an earlier iteration is deterministically
+  re-materialised by re-running the selector on that iteration's input caps
+  (greedy hull over a fixed matrix — no randomness). A final dispatch is run on
+  the chosen set for output.
+- **Stable-alternative-name orphan guard.** The full `alternative_name` is
+  pinned once and passed as the explicit override to the selector every
+  iteration, so the selector never derives a per-iteration name (whose
+  force-suffix could shift with the forced count) and orphans timesets. A
+  stable name lets the selector's purge+rewrite cleanly REPLACE the single
+  net-load timeset each iteration, so N iterations leave exactly one.
+- **`model.solves`-override subset mechanism.** `cmd_run_flextool` has no
+  `--solves` flag; the DB-driven way to run a subset is the `model.solves`
+  Array resolved under the scenario's alternative stack. The driver writes a
+  dedicated `model.solves` OVERRIDE alternative at the top of the stack
+  (mirroring `calibrate._db_alt`) — the invest solve(s) for an invest-only
+  pass, the dispatch solves (or the scenario's full original chain) for a
+  dispatch pass. A genuine subset run, not a silent full-chain fallback.
+- **Fail-closed guards.** `_guard_no_timed_energy_margin` refuses to run when a
+  node's `energy_margin_method` resolves to `inflow_adder` with a timed
+  (2-D per-cell) `energy_margin_adder` — the timed adder and the net-load
+  loop's cap feedback are mutually exclusive. Every iteration solve is
+  `assess_solve`-gated on its required outputs; an untrusted solve raises
+  `NetloadIterError` rather than feeding a bad cap set forward. Basis caches
+  are cold per solve by default (the LP columns change with the representative
+  set); `--warm-start` opts into one shared cache only when the grid is stable.
+
 ## Public API surface
 
 ```python

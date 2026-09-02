@@ -180,6 +180,17 @@ STORAGE_STATE = Transform(
 PRICE_ENERGY = Transform(
     "CUR/MWh", Semantics.PRICE,
     "Nodal energy price (shadow price of the node balance constraint).",
+    description="Nodal energy price — the shadow price (dual) of the node "
+                "balance constraint: the marginal system cost of one more unit "
+                "of the commodity at that node and timestep. For a storage "
+                "node this is the marginal value of stored energy (the "
+                "\"water value\"): a well-defined intertemporal price, but "
+                "treat it with care — it can be non-unique when storage sits "
+                "at the margin (indifferent between charging and discharging), "
+                "spike at empty/full state of charge, differ between the "
+                "charge and discharge sides by the round-trip efficiency, and "
+                "be shifted by end-of-horizon, rolling and inter-period "
+                "(blended-weight) storage linking.",
     algebra="dual(node_balance)",
 )
 EMISSION_MT = Transform(

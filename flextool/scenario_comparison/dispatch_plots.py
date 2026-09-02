@@ -200,9 +200,29 @@ def _build_dispatch_figure(
     if ylim:
         ax.set_ylim(ylim)
 
-    # Legend
+    # Legend — read top-to-bottom to match the VISUAL stack.  The area draw
+    # order is neg-block (stacks down, first = nearest axis = top of the
+    # negative area) then pos-block (stacks up, first = nearest axis = bottom
+    # of the positive area).  A blanket reversal makes positives read
+    # top-to-bottom but leaves negatives upside-down, so build the order per
+    # sign: positives reversed (top-most positive first), negatives as-is
+    # (top-most negative first), with the line overlays (Demand / Curtailed) on
+    # top.
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles[::-1], labels[::-1], bbox_to_anchor=(1.05, 1), loc='upper left')
+    line_labels = {'Curtailed', 'Demand'}
+    pos_h, neg_h, line_h = [], [], []
+    for h, lbl in zip(handles, labels):
+        if lbl in line_labels or lbl not in df_plot.columns:
+            line_h.append((h, lbl))
+        elif (df_plot[lbl].fillna(0) < 0).any():
+            neg_h.append((h, lbl))
+        else:
+            pos_h.append((h, lbl))
+    ordered = line_h + pos_h[::-1] + neg_h
+    ax.legend(
+        [h for h, _ in ordered], [lbl for _, lbl in ordered],
+        bbox_to_anchor=(1.05, 1), loc='upper left',
+    )
 
     return fig
 
@@ -487,9 +507,15 @@ def create_dispatch_plots(
 
     excel_data: dict[str, pd.DataFrame] = {}
 
-    # First pass: collect y-axis ranges across all scenarios for consistent scales
-    ng_ylims: dict[str, tuple[float, float]] = {}
-    node_ylims: dict[str, tuple[float, float]] = {}
+    # First pass: collect y-axis ranges + column order.  ylims are keyed
+    # PER (scenario, group/node) so each plot scales to its own scenario's
+    # dispatch — unioning ylims across scenarios of very different magnitude
+    # (e.g. a represented-period solve vs an 8760 h trade-only snapshot
+    # ~1000x larger) would force the smaller scenario onto the larger one's
+    # axis and flatten it.  Columns stay keyed by group/node (unioned across
+    # scenarios) so the legend / stacking order is consistent between plots.
+    ng_ylims: dict[tuple[str, str], tuple[float, float]] = {}
+    node_ylims: dict[tuple[str, str], tuple[float, float]] = {}
     ng_columns: dict[str, list[str]] = {}
     node_columns: dict[str, list[str]] = {}
     # No node curation: ``config['nodes']`` is no longer consumed.  Per-node
@@ -509,14 +535,14 @@ def create_dispatch_plots(
             )
             if df_dispatch is not None and not df_dispatch.empty:
                 ymin, ymax = _compute_ylim(df_dispatch, timeline, inflow)
-                if ng in ng_ylims:
-                    ng_ylims[ng] = (min(ng_ylims[ng][0], ymin), max(ng_ylims[ng][1], ymax))
-                    # Add any new columns preserving existing order
+                # ylim: per (scenario, group) — each plot scales to itself.
+                ng_ylims[(scenario, ng)] = (ymin, ymax)
+                # columns: unioned per group for consistent legend/stacking.
+                if ng in ng_columns:
                     for col in df_dispatch.columns:
                         if col not in ng_columns[ng]:
                             ng_columns[ng].append(col)
                 else:
-                    ng_ylims[ng] = (ymin, ymax)
                     ng_columns[ng] = list(df_dispatch.columns)
 
         for node in nodes:
@@ -525,13 +551,12 @@ def create_dispatch_plots(
             )
             if df_node is not None and not df_node.empty:
                 ymin, ymax = _compute_ylim(df_node, timeline, inflow_node)
-                if node in node_ylims:
-                    node_ylims[node] = (min(node_ylims[node][0], ymin), max(node_ylims[node][1], ymax))
+                node_ylims[(scenario, node)] = (ymin, ymax)
+                if node in node_columns:
                     for col in df_node.columns:
                         if col not in node_columns[node]:
                             node_columns[node].append(col)
                 else:
-                    node_ylims[node] = (ymin, ymax)
                     node_columns[node] = list(df_node.columns)
 
     # Add small margin to y-axis limits
@@ -601,7 +626,7 @@ def create_dispatch_plots(
                     colors=colors,
                     timeline=timeline,
                     show_plot=show_plot,
-                    ylim=ng_ylims.get(ng),
+                    ylim=ng_ylims.get((scenario, ng)),
                     break_times=break_times,
                 )
 
@@ -648,7 +673,7 @@ def create_dispatch_plots(
                     colors=node_colors,
                     timeline=timeline,
                     show_plot=show_plot,
-                    ylim=node_ylims.get(node),
+                    ylim=node_ylims.get((scenario, node)),
                     break_times=break_times,
                 )
                 if write_xlsx:

@@ -1757,6 +1757,10 @@ def migrate_database(
                 _migrate_v66_energy_margin_adder(db)
             elif next_version == 67:
                 _migrate_v67_node_penalty_method(db)
+            elif next_version == 68:
+                _migrate_v68_rp_group_flag(db)
+            elif next_version == 69:
+                _migrate_v69_backfill_parameter_groups(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3667,6 +3671,108 @@ def _migrate_v67_node_penalty_method(db) -> None:
     _commit_step(db,
         "v67: added node.penalty_method (penalty_methods: regular/off); "
         "'off' removes node balance slack (penalty) variables."
+    )
+
+
+def _migrate_v68_rp_group_flag(db) -> None:
+    """Add ``group.use_for_representative_periods`` (v67 -> v68).
+
+    A new per-group ``yes_no`` flag that marks a region-group as an
+    aggregation unit for net-load representative-period selection.  When a
+    group carries ``use_for_representative_periods == 'yes'`` the
+    representative-periods preprocessor aggregates that group's member
+    nodes' net load (demand minus available VRE) into a single regional
+    signal used for clustering; when no group carries the flag the
+    selection falls back to per-node net-load signals.
+
+    The flag is consumed only by the representative-periods preprocessor,
+    never by the LP model, so there is no engine wiring here — this
+    migration lands the schema definition alone.  It reuses the existing
+    ``yes_no`` value list (mirroring ``has_inertia`` /
+    ``include_stochastics``) and attaches the parameter to the
+    ``solve_advanced`` parameter group (consistent with the other
+    representative-period parameters such as
+    ``representative_period_weights``).
+    """
+    rp_default_val, rp_default_type = to_database("no")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="group",
+        name="use_for_representative_periods",
+        default_value=rp_default_val,
+        default_type=rp_default_type,
+        parameter_value_list_name="yes_no",
+        description=(
+            "A flag whether this group of nodes is an aggregation unit for "
+            "net-load representative-period selection. When 'yes', the "
+            "representative-periods preprocessor aggregates the member "
+            "nodes' net load (demand minus available VRE) into a single "
+            "regional signal used for clustering; when 'no' (default) the "
+            "group is ignored by that selection. If no group carries the "
+            "flag, the selection falls back to per-node net-load signals."
+        ),
+    )
+
+    # Attach to the 'solve_advanced' parameter group when it exists
+    # (consistent with representative_period_weights).
+    has_solve_advanced_group = bool(
+        db.get_item("parameter_group", name="solve_advanced")
+    )
+    if has_solve_advanced_group:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="group",
+            name="use_for_representative_periods",
+            parameter_group_name="solve_advanced",
+        )
+
+    _commit_step(db,
+        "v68: added group.use_for_representative_periods (yes_no flag) for "
+        "net-load representative-period aggregation-unit selection."
+    )
+
+
+def _migrate_v69_backfill_parameter_groups(db) -> None:
+    """Assign parameter groups to two previously ungrouped params (v68 -> v69).
+
+    ``model.small_number_threshold`` (added in v59) and
+    ``node.penalty_method`` (added in v67) were introduced without a
+    ``parameter_group_name``.  Every parameter must belong to a
+    ``parameter_group`` so it is not dropped from group-filtered tabular
+    exports (this invariant is guarded by
+    ``tests/test_parameter_group_coverage.py``).
+
+    Group assignments follow sibling convention within each class:
+
+    * ``model.small_number_threshold`` -> ``model``.  It is a numerical-
+      conditioning knob for building the LP; its closest class sibling,
+      ``model.max_flow_for_unconstrained_variables`` (also an LP-
+      conditioning knob), sits in ``model``, and every other ``model.*``
+      parameter is in ``model`` except ``output_horizon``.
+    * ``node.penalty_method`` -> ``basics``.  Its balance-behaviour
+      siblings ``node.penalty_up`` / ``node.penalty_down`` / ``node.inflow``
+      / ``node.node_type`` are all in ``basics``.
+
+    Idempotent: ``add_update_item`` backfills the group on existing DBs and
+    is a no-op on fresh builds that already carry it.  Both target groups
+    exist in every FlexTool DB, so no existence guard is needed.
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="model",
+        name="small_number_threshold",
+        parameter_group_name="model",
+    )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="node",
+        name="penalty_method",
+        parameter_group_name="basics",
+    )
+
+    _commit_step(db,
+        "v69: backfilled parameter groups for model.small_number_threshold "
+        "(-> model) and node.penalty_method (-> basics)."
     )
 
 

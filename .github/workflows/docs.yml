@@ -1,0 +1,48 @@
+name: Docs
+
+# Build the MkDocs site from `main` and publish it to the `gh-pages` branch,
+# which GitHub Pages serves at https://irena-flextool.github.io/flextool/.
+#
+# This replaces the previous manual `mkdocs gh-deploy` (run by hand from a
+# checkout) and makes `main` the single, explicit docs build source. GitHub
+# Pages stays configured as-is: legacy build, source = `gh-pages` branch — this
+# workflow just pushes the freshly built site there on every docs change.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write        # push the built site to the gh-pages branch
+
+jobs:
+  deploy:
+    name: Build & deploy docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # gh-deploy needs history to update gh-pages
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install MkDocs toolchain
+        # Matches mkdocs.yml: material theme, mermaid2 plugin, pymdownx extensions.
+        run: |
+          python -m pip install --upgrade pip
+          pip install mkdocs mkdocs-material mkdocs-mermaid2-plugin pymdown-extensions
+
+      - name: Configure git identity for the gh-pages commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Build and deploy to gh-pages
+        run: mkdocs gh-deploy --force

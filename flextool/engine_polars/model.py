@@ -1080,7 +1080,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     #             (d, r) ∈ rp_block_first}
     #            p_rp_weight[b, r] · (v_state[n, d, p_rp_last_step[r]]
     #                                  - v_state_rp_start[n, d, r])
-    #            · p_state_unitsize[n]
+    # The balance is in var-units on both sides — v_state_inter,
+    # v_state and v_state_rp_start are all var-units, so there is NO
+    # p_state_unitsize factor on the RHS.
     # Indexed over (n, b, b_prev) ∈ nodeState_rp × rp_base_chain.
     #
     # The shifted-Var ``v_state_inter[n, b_prev]`` is built by renaming
@@ -1194,12 +1196,15 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                             how="cross"))
             v_last_at = Where(v_state_at_last, n_brdl)
             v_start_at = Where(v_state_rp_start_at_r, n_brdl)
-            # (v_last - v_start) · p_rp_weight[b, r, d, last_step]
-            #                   · p_state_unitsize[n], dim sig
-            # (n, b, r, d, last_step).
+            # (v_last - v_start) · p_rp_weight[b, r, d, last_step], dim
+            # sig (n, b, r, d, last_step).  No p_state_unitsize factor:
+            # v_state / v_state_rp_start are var-units and the LHS
+            # v_state_inter delta is var-units too, so the whole balance
+            # stays in var-units (consistent with rp_inter_period_max_state
+            # / maxState_rp_start below, which bound v_state_inter /
+            # v_state_rp_start as var-units against p_state_upper).
             rhs_inner = ((v_last_at - v_start_at)
-                         * p_rp_weight_brdl
-                         * d.p_state_unitsize)
+                         * p_rp_weight_brdl)
             # Sum out helper dims (r, d, last_step), leaving (n, b).
             # Then Where against nbb_idx broadcasts to (n, b, b_prev).
             rhs_sum_nb = Sum(rhs_inner, over=("r", "d", "last_step"))
@@ -1220,7 +1225,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     #             (d, r) ∈ rp_block_first}
     #            p_rp_weight[b_first, r] · (v_state[n, d, p_rp_last_step[r]]
     #                                       - v_state_rp_start[n, d, r])
-    #            · p_state_unitsize[n]
+    # Var-units on both sides — no p_state_unitsize factor on the RHS
+    # (same framing as rp_inter_period_balance above).
     # Indexed over (n, b_first, b_last) ∈ nodeState_rp × rp_base_first ×
     # rp_base_last.  Both ``rp_base_first`` and ``rp_base_last`` are
     # typically singletons (one row each per solve), so the cross-join
@@ -1358,9 +1364,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                              how="cross"))
             v_last_at = Where(v_state_at_last, n_bfrdl)
             v_start_at = Where(v_state_rp_start_at_r, n_bfrdl)
+            # No p_state_unitsize factor — same var-unit framing as
+            # rp_inter_period_balance above.
             rhs_inner = ((v_last_at - v_start_at)
-                         * p_rp_weight_bfrdl
-                         * d.p_state_unitsize)
+                         * p_rp_weight_bfrdl)
             # Sum out (r, d, last_step), leaving (n, b_first).
             # Then Where against nbfl_idx broadcasts to
             # (n, b_first, b_last).

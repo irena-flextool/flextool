@@ -61,9 +61,13 @@ def _sqlite_url_to_path(sqlite_url: str, cwd: Optional[Path] = None) -> Optional
     if sqlite_url is None:
         return None
     parsed = urlparse(sqlite_url)
-    if parsed.scheme and parsed.scheme != "sqlite":
+    # A bare Windows path like ``C:\foo`` urlparses with ``scheme='c'``; a
+    # single-letter scheme is a drive letter, not a URL scheme, so treat it as
+    # a plain path (otherwise every drive-anchored Windows path returned None).
+    scheme = "" if len(parsed.scheme) == 1 else parsed.scheme
+    if scheme and scheme != "sqlite":
         return None
-    if parsed.scheme == "sqlite":
+    if scheme == "sqlite":
         # ``sqlite:///relative/path``  → parsed.path == '/relative/path'
         #                                (one leading slash from URL syntax;
         #                                 actual path is relative)

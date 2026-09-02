@@ -125,6 +125,9 @@ _EXPECTED_TOTAL_OBJECTIVE = 8544247283.473894
 _EXPECTED_GAP = 0.0
 
 _RTOL = 1e-12
+# Absolute floor so a value pinned at exactly 0.0 (e.g. a converged gap) doesn't
+# fail rtol against a benign ~1e-16 rounding difference on a different platform.
+_ATOL = 1e-9
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -152,7 +155,7 @@ def ti_data(scenario_workdir):
 
 
 def _assert_close(actual: float, expected: float, what: str) -> None:
-    assert math.isclose(actual, expected, rel_tol=_RTOL, abs_tol=0.0), (
+    assert math.isclose(actual, expected, rel_tol=_RTOL, abs_tol=_ATOL), (
         f"{what}: {actual!r} != pinned {expected!r} (rtol={_RTOL})"
     )
 
@@ -201,6 +204,6 @@ def test_lambda0_trajectory_matches_pinned_literals(ti_data) -> None:
     _assert_close(
         res.total_objective, _EXPECTED_TOTAL_OBJECTIVE, "final total_objective"
     )
-    assert math.isclose(res.gap, _EXPECTED_GAP, rel_tol=_RTOL, abs_tol=0.0), (
+    assert math.isclose(res.gap, _EXPECTED_GAP, rel_tol=_RTOL, abs_tol=_ATOL), (
         f"final gap {res.gap!r} != pinned {_EXPECTED_GAP!r}"
     )

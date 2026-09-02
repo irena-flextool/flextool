@@ -201,7 +201,7 @@ def write_outputs_for_solve(
     Calls flextool's ``process_outputs.read_highs_solution.write_all_variables``
     (~30 variable parquets to ``output_raw/``) and
     ``process_outputs.handoff_writers.write_all_handoffs`` (handoff
-    CSVs + 4 capacity CSVs in ``output_raw/``) using the live HiGHS
+    CSVs in ``output_raw/``) using the live HiGHS
     instance carried on :class:`Solution`.  The writers consume the
     support CSVs in ``solve_data/`` that flextool's preprocessing has
     already produced — Δ.1's carry-forward dependency.

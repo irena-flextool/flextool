@@ -16,6 +16,12 @@ from spinedb_api import DatabaseMapping, import_data, Map
 from flextool.engine_polars._db_reader import DictMode, params_to_dict
 from flextool.representative_periods import force_include
 from flextool.representative_periods.clustering import greedy_convex_hull_clustering
+from flextool.representative_periods.netload import (
+    build_group_capacities,
+    build_netload_matrix,
+    demand_match_default_caps,
+)
+from flextool.representative_periods.netload_inputs import read_netload_inputs
 from flextool.representative_periods.weights import compute_weight_matrix
 
 
@@ -477,6 +483,9 @@ def preprocess_representative_periods(
     solves: list[str] | None = None,
     alternative_name: str | None = None,
     alternative_description: str | None = None,
+    netload_clustering: bool = False,
+    vre_penetration: float = 1.0,
+    solved_caps: dict[str, float] | None = None,
 ) -> str:
     """Select representative periods and write results to database.
 
@@ -520,6 +529,25 @@ def preprocess_representative_periods(
         alternative_description: Optional override for the alternative's
             description text. ``None`` (default) keeps the byte-parity
             ``Representative periods: <timeset>`` string.
+        netload_clustering: Opt in to the real-MW net-load clustering matrix
+            (``netload.build_netload_matrix`` over demand-match-sized VRE caps)
+            instead of the per-series normalized profile/inflow stack. ``False``
+            (default) keeps ``_build_clustering_matrix`` — the byte-parity path.
+            Single-shot only: iteration-0 demand-match capacities, no solve
+            feedback (that is Phase 4). When ``True`` the default output name is
+            ``netload_{n_rp}rp_{period_length}h`` so it never collides with the
+            hull path's ``hull_*`` timeset/alternative.
+        vre_penetration: Energy-share target passed to
+            ``demand_match_default_caps`` when ``netload_clustering`` is ``True``
+            (``1.0`` = full-energy VRE match). Ignored on the default path.
+        solved_caps: Optional per-investable-VRE-unit TOTAL capacities from a
+            prior solve, threaded into ``build_group_capacities`` so the
+            net-load signal is built over the *solved* fleet instead of the
+            iteration-0 demand-match default. ``None`` (default) reproduces the
+            Phase-3 single-shot behaviour byte-for-byte (demand-match caps
+            only). Only consulted when ``netload_clustering`` is ``True``; the
+            solve-iteration driver (``netload_iterate``) feeds each iteration's
+            invested caps back through this argument.
 
     Returns:
         Name of the created timeset entity.
@@ -584,13 +612,38 @@ def preprocess_representative_periods(
                 db, region_groups, demand_scalars
             )
 
+        # Net-load inputs are read INSIDE the scenario filter so the builder
+        # sees scenario-specific existing caps / invest_method / group flag —
+        # the same filtered mapping the profile/inflow reads use above. The
+        # returned NetloadInputs dataclass captures the data, so it survives
+        # after the mapping closes.
+        netload_inputs = read_netload_inputs(db) if netload_clustering else None
+
     # ------------------------------------------------------------------
     # 3. Build clustering matrix
     # ------------------------------------------------------------------
     print("Building clustering matrix...")
-    C, n_base_periods = _build_clustering_matrix(
-        profiles, inflows, timestep_keys, period_length
-    )
+    if netload_clustering:
+        # Net-load mode: size the investable VRE fleet by the iteration-0
+        # demand-match default UNLESS the caller feeds back a prior solve's
+        # capacities via ``solved_caps`` (the solve-iteration driver), then
+        # build the real-MW net-load matrix. Same C shape
+        # (n_features · period_length, n_base_periods) the hull path emits, so
+        # everything downstream (clustering, force-include seeding, weights,
+        # DB write) is unchanged.
+        default_caps = demand_match_default_caps(
+            netload_inputs, timestep_keys, vre_penetration
+        )
+        caps = build_group_capacities(
+            netload_inputs, default_caps, solved_caps=solved_caps
+        )
+        C, n_base_periods, _agg_names = build_netload_matrix(
+            netload_inputs, caps, timestep_keys, period_length
+        )
+    else:
+        C, n_base_periods = _build_clustering_matrix(
+            profiles, inflows, timestep_keys, period_length
+        )
 
     # ------------------------------------------------------------------
     # 4. Force-include adequacy-critical base periods (opt-in) — computed
@@ -601,6 +654,14 @@ def preprocess_representative_periods(
     effective_region_budget = force_region_budget
     if force_region_scope and effective_region_budget is None:
         effective_region_budget = max(1, n_rp // 2)
+    # Force-include composes independently of the clustering matrix: it operates
+    # on the same profiles/inflows/demand_scalars, so it runs unchanged in
+    # netload mode. NOTE: force-include's net-load definition here
+    # (``force_include.build_netload_hourly``, a capacity-UNWEIGHTED
+    # ``1 − mean(avail)`` VG signal) DIFFERS from the capacity-weighted real-MW
+    # net load the netload clustering matrix uses. Unifying the two into one
+    # signal is a deliberate open question left to a later phase; for now each
+    # keeps its own definition on purpose.
     forced_indices = force_include.compute_forced_indices(
         profiles,
         inflows,
@@ -685,7 +746,10 @@ def preprocess_representative_periods(
     # already a hull pick) the name is unchanged, preserving byte-parity of the
     # default path and not overwriting the pure-hull timeset.
     suffix = f"+f{n_forced}" if n_forced > 0 else ""
-    default_name = f"hull_{n_rp}rp_{period_length}h{suffix}"
+    # Net-load mode gets a distinct ``netload_*`` prefix so its timeset /
+    # alternative never collides with the hull path's ``hull_*`` name.
+    name_prefix = "netload" if netload_clustering else "hull"
+    default_name = f"{name_prefix}_{n_rp}rp_{period_length}h{suffix}"
     if alternative_name is None:
         # Byte-parity default: derive both names from n_rp/period_length.
         alternative_name = default_name
@@ -827,6 +891,22 @@ def main() -> None:
         help="Override the created alternative's description text. Omitted → "
         "'Representative periods: <timeset>'.",
     )
+    parser.add_argument(
+        "--netload-clustering",
+        action="store_true",
+        help="Cluster on the real-MW net-load signal (demand − VRE·avail over "
+        "demand-match-sized caps) instead of the per-series normalized "
+        "profile/inflow stack. Output name defaults to netload_{n_rp}rp_{PL}h. "
+        "Single-shot (iteration-0 caps, no solve feedback).",
+    )
+    parser.add_argument(
+        "--vre-penetration",
+        type=float,
+        default=1.0,
+        help="Energy-share target for the demand-match VRE sizing under "
+        "--netload-clustering (1.0 = full-energy match; default 1.0). Ignored "
+        "without --netload-clustering.",
+    )
 
     args = parser.parse_args()
     region_groups = (
@@ -856,6 +936,8 @@ def main() -> None:
             solves=solves,
             alternative_name=args.alternative_name,
             alternative_description=args.alternative_description,
+            netload_clustering=args.netload_clustering,
+            vre_penetration=args.vre_penetration,
         )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

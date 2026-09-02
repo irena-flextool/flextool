@@ -24,6 +24,10 @@ from flextool.calibrate._loop import (
     CalibResult,
     run_calibration,
 )
+from flextool.calibrate._final_outputs import (
+    FINAL_WRITE_METHOD_CHOICES,
+    write_final_outputs,
+)
 from flextool.calibrate._report import format_summary, write_report
 
 DEFAULT_WORK_DIR = Path("calib_work")
@@ -172,7 +176,45 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Output-location root; solve outputs land under "
             "<output-location>/output_parquet/<scenario>/ and the report "
-            f"CSVs under <output-location>/report/ (default: {DEFAULT_OUT_ROOT}/)."
+            "CSVs under <output-location>/calibration_reports/<scenario>/ "
+            f"(default: {DEFAULT_OUT_ROOT}/)."
+        ),
+    )
+    parser.add_argument(
+        "--final-write-methods",
+        type=str,
+        nargs="+",
+        default=["csv"],
+        choices=list(FINAL_WRITE_METHOD_CHOICES),
+        dest="final_write_methods",
+        help=(
+            "After the loop, regenerate these output formats from the final "
+            "surviving parquet (<output-location>/output_parquet/<scenario>/) "
+            "WITHOUT re-solving — so the calibrated model's results are "
+            "available just like a regular run's. parquet is always present, "
+            "so it is not a choice here; the rest derive from it. "
+            "Default: csv. Use --skip-final-outputs to leave the results "
+            "parquet-only."
+        ),
+    )
+    parser.add_argument(
+        "--skip-final-outputs",
+        action="store_true",
+        dest="skip_final_outputs",
+        help=(
+            "Do not regenerate any non-parquet outputs after the loop; leave "
+            "the results as the parquet tree written by the final solve."
+        ),
+    )
+    parser.add_argument(
+        "--results-db-url",
+        type=str,
+        default=None,
+        dest="results_db_url",
+        help=(
+            "Target SpineDB URL for the 'spinedb' final-write-method (default: "
+            "<output-location>/results.sqlite). Only consulted when 'spinedb' "
+            "is in --final-write-methods."
         ),
     )
     parser.add_argument(
@@ -195,6 +237,10 @@ def _config_from_args(args: argparse.Namespace) -> CalibConfig:
     warm_start_cache_dir = args.warm_start_cache_dir
     if warm_start_cache_dir is None:
         warm_start_cache_dir = Path(args.work_dir) / "warm_start_cache"
+    # --skip-final-outputs wins over any requested formats.
+    final_write_methods = (
+        () if args.skip_final_outputs else tuple(args.final_write_methods)
+    )
     return CalibConfig(
         iterations=args.iterations,
         slack_threshold_mwh=args.slack_threshold_mwh,
@@ -208,6 +254,7 @@ def _config_from_args(args: argparse.Namespace) -> CalibConfig:
         sizing=args.sizing,
         overshoot=args.overshoot,
         stall_fraction=args.stall_fraction,
+        final_write_methods=final_write_methods,
     )
 
 
@@ -215,8 +262,10 @@ def main(argv: list[str] | None = None) -> int:
     """Run the calibrator from the command line.
 
     Parses *argv* (or ``sys.argv``), runs the calibration, writes the report
-    CSVs under ``<output-location>/report/`` and prints the summary to
-    stdout.  Returns 0 on success; on a fail-closed solve
+    CSVs under ``<output-location>/calibration_reports/<scenario>/``, prints the
+    summary to stdout, and (unless ``--skip-final-outputs``) regenerates the
+    requested non-parquet output formats from the final surviving parquet
+    without re-solving.  Returns 0 on success; on a fail-closed solve
     (:class:`CalibError`) prints the reason to stderr and returns 1.
     """
     parser = build_parser()
@@ -229,10 +278,38 @@ def main(argv: list[str] | None = None) -> int:
         print(f"calibration failed: {exc}", file=sys.stderr)
         return 1
 
-    report_dir = Path(config.out_root) / "report"
+    # Namespace the report CSVs by scenario (matching output_parquet/<scenario>/)
+    # so calibrating several scenarios into one shared output-location root does
+    # not overwrite one scenario's report with the next.
+    report_dir = Path(config.out_root) / "calibration_reports" / args.scenario
     write_report(result, out_dir=report_dir)
     print(format_summary(result))
     print(f"\nReport CSVs written under {report_dir}/")
+
+    # Regenerate the requested regular output formats from the final surviving
+    # parquet (no re-solve).  A failure here does NOT fail the calibration — the
+    # solve succeeded and its results are intact as parquet, so this is a
+    # convenience step; warn and still return 0.
+    if config.final_write_methods:
+        try:
+            written = write_final_outputs(
+                config.out_root,
+                args.scenario,
+                config.final_write_methods,
+                results_db_url=args.results_db_url,
+            )
+            print(
+                f"Final outputs ({', '.join(written)}) regenerated from parquet "
+                f"under {config.out_root}/"
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail the run on output regen
+            print(
+                f"warning: could not regenerate final outputs "
+                f"({', '.join(config.final_write_methods)}) from parquet: {exc}. "
+                f"The parquet results under {config.out_root}/output_parquet/"
+                f"{args.scenario}/ are intact.",
+                file=sys.stderr,
+            )
     return 0
 
 

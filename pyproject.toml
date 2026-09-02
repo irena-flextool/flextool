@@ -3,15 +3,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flextool"
-# First v4 alpha — engine swap, output overhaul and storage-binding
-# restructure are in.  4.0.0 final follows after the remaining
-# minor-functionality additions, cleanup and testing land.  PEP 440
-# pre-release suffix: 4.0.0a1, 4.0.0a2, ... 4.0.0b1, 4.0.0rc1, then 4.0.0.
-version = "4.0.0b26"
+version = "4.0.1"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 authors = [
     { name = "IRENA FlexTool contributors" },
 ]
@@ -26,13 +22,11 @@ keywords = [
     "spine",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -162,23 +156,31 @@ pythonpath = ["."]
 # a [dev] dependency).  Each worker is a separate process, so the per-test
 # global-state resets stay isolated.  Pass ``-n 0`` to disable parallelism for
 # interactive debugging (``-s`` / ``--pdb`` need a single process).
-addopts = "--import-mode=importlib -n 8"
+# ``-n auto`` matches worker count to the host's CPUs so we don't oversubscribe
+# on low-core CI runners (``-n 8`` on a 4-core runner ran heavy solver tests ~2x
+# slower and tripped the per-test timeout). ``--dist loadfile`` keeps every test
+# in a file on ONE worker, so an expensive module-scoped fixture (e.g. the
+# energy-margin double-cascade, ~400s) is built once instead of being rebuilt on
+# each worker that happens to receive one of the module's tests.
+addopts = "--import-mode=importlib -n auto --dist loadfile"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",
     "smoke: fast Layer-1 scenarios for the per-commit gate",
+    "gui: opens a real interactive Tk window; opt-in via --run-gui (deselected by default)",
 ]
 testpaths = ["tests"]
 # Hard per-test wallclock cap.  Used by ``pytest-timeout`` (installed
 # via ``pip install -e .[dev]``).  The default applies to every test
 # unless overridden with ``@pytest.mark.timeout(N)`` or the CLI
-# ``--timeout=N``.  300 s is comfortable headroom for the slowest
-# legitimate rolling scenarios while still cutting off HiGHS runs
-# that wedge in a C extension and ignore SIGTERM.
+# ``--timeout=N``.  The heaviest legitimate fixtures (energy-margin
+# double-cascade) run ~400 s serially, so 900 s leaves headroom on slower CI
+# hardware while still cutting off HiGHS runs that wedge in a C extension and
+# ignore SIGTERM.
 # ``thread`` mode runs the test in a thread and dumps a traceback
 # on timeout — works for tests stuck inside C extensions where the
 # default ``signal`` mode can't fire from a non-main thread.
-timeout = 300
+timeout = 900
 timeout_method = "thread"
 
 [tool.setuptools.packages.find]
@@ -200,6 +202,17 @@ exclude = ["flextool*.__pycache__"]
 #                                         commercial solvers; seeded into
 #                                         solver_config/<solver>.opt on first run)
 #   * export_to_tabular/*.yaml          — export settings (sheet config etc.)
+#   * process_inputs/*.json             — old-Excel/CSV import spec
+#                                         (import_old_excel_input.json), loaded by
+#                                         the flextool-read-tabular-input CLI.
+#
+# NOTE (intentionally NOT shipped): schemas/canonical_databases/_recipes.yaml is
+# a *maintainer/build-only* recipe consumed solely by
+# flextool.update_flextool.generate_canonical, which is source-checkout-only
+# (it reads tests/fixtures/*.json and imports tests.db_utils — neither of which
+# is in a wheel) and fails loudly if run from an installed package.  Shipping it
+# would add an inert file with no runtime reachability, so the
+# canonical_databases glob deliberately stays *.json.
 flextool = [
     "schemas/*.json",
     "schemas/*.md",
@@ -208,4 +221,5 @@ flextool = [
     "schemas/pre_v26/*.json",
     "solver_config/*.opt.template",
     "export_to_tabular/*.yaml",
+    "process_inputs/*.json",
 ]

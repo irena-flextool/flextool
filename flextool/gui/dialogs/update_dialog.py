@@ -34,6 +34,7 @@ class UpdateDialog(tk.Toplevel):
         install_description: str,
         is_git: bool,
         default_toolbox: bool,
+        toolbox_installed: bool,
         check_on_startup: bool,
         update_available: bool | None,
         check_fn: Callable[[], bool],
@@ -45,14 +46,17 @@ class UpdateDialog(tk.Toplevel):
         self.resizable(False, False)
 
         self.proceed: bool = False
-        self.include_toolbox: bool = default_toolbox
+        # For an Update: keep Spine Toolbox current if it is already installed.
+        self.include_toolbox: bool = toolbox_installed
+        # Set True by the dedicated "Install Spine Toolbox" button.
+        self.install_toolbox: bool = False
+        self._toolbox_installed: bool = toolbox_installed
         self.check_on_startup: bool = check_on_startup
         self.update_available: bool | None = update_available
         self._initial_check_on_startup: bool = check_on_startup
         self._check_fn = check_fn
         self._post_to_main = post_to_main
 
-        self._toolbox_var = tk.BooleanVar(value=default_toolbox)
         self._check_startup_var = tk.BooleanVar(value=check_on_startup)
         self._status_var = tk.StringVar()
 
@@ -79,20 +83,31 @@ class UpdateDialog(tk.Toplevel):
             body, textvariable=self._status_var, wraplength=440, justify="left",
         ).pack(anchor="w", pady=(0, 8))
 
-        ttk.Checkbutton(
-            body, text="Install Spine Toolbox", variable=self._toolbox_var,
-        ).pack(anchor="w")
-        ttk.Label(
-            body,
-            text=(
-                "Spine Toolbox is a large optional dependency. It is required "
-                "to open .sqlite input sources in the Spine DB Editor. Leave "
-                "unchecked if you do not need it."
-            ),
-            wraplength=440,
-            justify="left",
-            foreground="#888888",
-        ).pack(anchor="w", padx=(24, 0), pady=(0, 8))
+        if not toolbox_installed:
+            ttk.Label(
+                body,
+                text=(
+                    "Spine Toolbox is not installed. It is a large optional "
+                    "dependency required to open .sqlite input sources in the "
+                    "Spine DB Editor."
+                ),
+                wraplength=440,
+                justify="left",
+                foreground="#888888",
+            ).pack(anchor="w", pady=(0, 4))
+            ttk.Button(
+                body,
+                text="Install Spine Toolbox",
+                command=self._on_install_toolbox,
+            ).pack(anchor="w", pady=(0, 8))
+        else:
+            ttk.Label(
+                body,
+                text="Spine Toolbox is installed.",
+                wraplength=440,
+                justify="left",
+                foreground="#888888",
+            ).pack(anchor="w", pady=(0, 8))
 
         ttk.Label(
             body,
@@ -186,9 +201,18 @@ class UpdateDialog(tk.Toplevel):
 
     # ── Button handlers ─────────────────────────────────────────────
 
+    def _on_install_toolbox(self) -> None:
+        """Install only the Spine Toolbox extra, regardless of FlexTool version."""
+        self.proceed = True
+        self.install_toolbox = True
+        self.include_toolbox = True
+        self.check_on_startup = bool(self._check_startup_var.get())
+        self._close()
+
     def _on_update(self) -> None:
         self.proceed = True
-        self.include_toolbox = bool(self._toolbox_var.get())
+        # include_toolbox already reflects whether Toolbox is installed (kept
+        # current during the update); install_toolbox stays False.
         self.check_on_startup = bool(self._check_startup_var.get())
         self._close()
 

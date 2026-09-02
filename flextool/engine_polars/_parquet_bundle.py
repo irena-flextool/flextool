@@ -212,26 +212,12 @@ for _spec in (
 del _spec
 
 
-# -- raw / handoff capacity CSVs (legacy, kept as CSV for handoff-reader use) -
-for _key, _filename, _first_col in (
-    ("entity_all_capacity",  "entity_all_capacity.csv",   "entity"),
-    ("unit_capacity__period",      "unit_capacity__period.csv",       "unit"),
-    ("connection_capacity__period", "connection_capacity__period.csv", "connection"),
-    ("node_capacity__period",      "node_capacity__period.csv",       "node"),
-):
-    REGISTRY[_key] = ParquetSpec(
-        key=_key,
-        category="raw",
-        filename=_filename,
-        columns=(_first_col, "solve", "period", "existing", "invested", "divested", "total"),
-        indices=(_first_col, "solve", "period"),
-        note=(
-            "Capacity handoff CSV (NOT parquet) — appended across rolls "
-            "by handoff_writers; consumed by downstream readers in CSV form."
-        ),
-        producer="flextool.process_outputs.handoff_writers._write_capacity_per_period",
-    )
-del _key, _filename, _first_col
+# NOTE: the legacy raw/handoff capacity CSVs (``entity_all_capacity.csv``,
+# ``{unit,connection,node}_capacity__period.csv``) were removed 2026-08-07.
+# They were a phase-3 byte-parity artifact with no live consumer; the
+# user-facing capacity tables are the processed
+# ``output_parquet/<scenario>/{unit,connection,node}_capacity_ed_p.parquet``
+# below (produced by ``out_capacity``).
 
 
 # -- processed / output_parquet/<scenario>/*.parquet -------------------------

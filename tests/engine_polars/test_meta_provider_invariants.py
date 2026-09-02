@@ -429,7 +429,7 @@ def _detect_rule3_shim_definitions(
 
 
 def _read_tree(path: Path) -> tuple[str, ast.AST]:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")  # source is UTF-8; Windows defaults to cp1252
     return text, ast.parse(text, filename=str(path))
 
 

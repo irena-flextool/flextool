@@ -26,6 +26,32 @@ RP_MODULE = "flextool.representative_periods.preprocess"
 CALIBRATE_MODULE = "flextool.calibrate"
 
 
+def final_write_methods_from_settings(settings) -> list[str]:
+    """Map the project's "File outputs" choices to the calibrator's final
+    output formats.
+
+    The calibration loop always leaves a ``parquet`` result tree, so parquet is
+    NOT a choice here; the calibrator regenerates the remaining formats from
+    that parquet after the loop (no re-solve).  This mirrors the regular-run
+    write-method assembly in
+    :meth:`flextool.gui.execution_manager.ExecutionManager._build_run_command`
+    (same ``auto_generate_*`` flags, same order) minus parquet, so a
+    calibration's outputs match exactly what a normal run of the same project
+    would produce.  An empty list means the operator unchecked every file
+    output — the caller emits ``--skip-final-outputs`` to honour that.
+    """
+    methods: list[str] = []
+    if settings.auto_generate_scen_plots:
+        methods.append("plot")
+    if settings.auto_generate_scen_excels:
+        methods.append("excel")
+    if settings.auto_generate_scen_csvs:
+        methods.append("csv")
+    if settings.auto_generate_comp_spinedb:
+        methods.append("spinedb")
+    return methods
+
+
 def overshoot_pct_to_multiplier(pct: float) -> float:
     """Convert a planning-safety-margin PERCENT into the CLI ``--overshoot``
     multiplier.
@@ -98,6 +124,7 @@ def build_calibrate_command(
     work_dir: str | None,
     output_location: str | None,
     debug: bool,
+    final_write_methods: list[str] | None = None,
 ) -> list[str]:
     """Build the argv for the calibrate CLI.
 
@@ -105,6 +132,15 @@ def build_calibrate_command(
     converts via :func:`overshoot_pct_to_multiplier`. ``--overshoot`` is
     emitted only when the multiplier differs from ``1.0`` (off). ``--debug``
     is emitted only when True.
+
+    ``final_write_methods`` selects which formats the calibrator regenerates
+    from the final parquet after the loop (see
+    :func:`final_write_methods_from_settings`):
+
+    * ``None`` — emit no final-output flag; the CLI keeps its own default (csv).
+    * ``[]`` — emit ``--skip-final-outputs`` (the operator unchecked every File
+      output, so leave the results parquet-only).
+    * non-empty — emit ``--final-write-methods <methods…>``.
     """
     argv: list[str] = [
         python_exe,
@@ -128,6 +164,11 @@ def build_calibrate_command(
         argv += ["--work-dir", str(work_dir)]
     if output_location:
         argv += ["--output-location", str(output_location)]
+    if final_write_methods is not None:
+        if final_write_methods:
+            argv += ["--final-write-methods", *[str(m) for m in final_write_methods]]
+        else:
+            argv.append("--skip-final-outputs")
     if debug:
         argv.append("--debug")
     return argv

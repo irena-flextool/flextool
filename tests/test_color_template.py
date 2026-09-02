@@ -1290,6 +1290,88 @@ class TestResolveDispatchColorsAndOrder:
         },
     }
 
+    def test_flowgroup_wins_over_nodegroup_on_name_collision(self):
+        """A dispatch band is a FLOW: when the same name exists in both
+        nodeGroup and flowGroup (a real user pattern — e.g. a 'PV_flows'
+        nodeGroup and a 'PV_flows' flowGroup aggregate), the band must take
+        the FLOWGROUP color, not the container nodeGroup's — otherwise editing
+        the flowGroup entry silently does nothing."""
+        template = {
+            "entities": {
+                "nodeGroup": {"PV_flows": "#aec7e8"},   # container, must lose
+                "flowGroup": {"PV_flows": "#d6ca1f"},   # the actual band
+            },
+        }
+        assert ct._lookup_entity_color(
+            template["entities"], "PV_flows", False,
+        ) == "#d6ca1f"
+        colors, order = ct.resolve_dispatch_colors_and_order(
+            template, ["PV_flows"],
+        )
+        assert colors["PV_flows"] == "#d6ca1f"
+        assert order == ["PV_flows"]
+
+    def test_nodegroup_only_name_still_resolves(self):
+        """A name present ONLY in nodeGroup still resolves (nodeGroup is last,
+        not removed) — deprioritized, not dropped."""
+        template = {"entities": {"nodeGroup": {"OnlyGroup": "#123456"}}}
+        assert ct._lookup_entity_color(
+            template["entities"], "OnlyGroup", False,
+        ) == "#123456"
+
+    def test_flowgroup_and_unit_same_name_have_independent_order(self):
+        """A flowGroup 'Wind' and a unit 'wind' must keep DISTINCT stacking
+        positions.  Regression: the order index case-folded and let a later
+        class overwrite an earlier one, so a nodeGroup's 'Wind' aggregate band
+        was pinned to the unit 'wind' slot and did NOT move when the flowGroup
+        section was reordered (while the node's 'wind_out' band did)."""
+        base = {"entities": {
+            "flowGroup": {"Wind": "#111111", "Solar": "#222222"},
+            "unit": {"gas": "#333333", "wind": "#444444"},
+        }}
+        rev = {"entities": {
+            "flowGroup": {"Solar": "#222222", "Wind": "#111111"},
+            "unit": {"gas": "#333333", "wind": "#444444"},
+        }}
+        # Reordering the flowGroup section reorders the flowGroup BANDS.
+        _, o1 = ct.resolve_dispatch_colors_and_order(base, ["Wind", "Solar"])
+        _, o2 = ct.resolve_dispatch_colors_and_order(rev, ["Wind", "Solar"])
+        assert set(o1) == {"Wind", "Solar"}
+        assert o1 != o2, "flowGroup band order ignored the flowGroup reorder"
+
+        # The unit 'wind' band ('wind_out') has its OWN position, independent
+        # of the flowGroup 'Wind' — reordering units reorders unit bands.
+        u1 = {"entities": {"flowGroup": {"Wind": "#1"},
+                           "unit": {"aaa": "#2", "wind": "#3"}}}
+        u2 = {"entities": {"flowGroup": {"Wind": "#1"},
+                           "unit": {"wind": "#3", "aaa": "#2"}}}
+        _, uo1 = ct.resolve_dispatch_colors_and_order(u1, ["wind_out", "aaa_out"])
+        _, uo2 = ct.resolve_dispatch_colors_and_order(u2, ["wind_out", "aaa_out"])
+        assert uo1 != uo2, "unit band order ignored the unit reorder"
+
+    def test_lookup_color_exact_case_before_case_insensitive(self):
+        """A node's 'wind_out' band must take the unit 'wind' COLOR, and a
+        nodeGroup's 'Wind' aggregate the flowGroup 'Wind' colour — exact case
+        wins before the case-insensitive fallback, so the two don't collapse."""
+        ent = {"flowGroup": {"Wind": "#F1F1F1"}, "unit": {"wind": "#0A0A0A"}}
+        assert ct._lookup_entity_color(ent, "wind", False) == "#0A0A0A"
+        assert ct._lookup_entity_color(ent, "Wind", False) == "#F1F1F1"
+        # No exact hit → case-insensitive fallback, flowGroup (first) wins.
+        assert ct._lookup_entity_color(ent, "WIND", False) == "#F1F1F1"
+
+    def test_same_name_collision_order_follows_flowgroup_first(self):
+        """When a name is in two classes with the SAME case, its order slot
+        comes from the first class (flowGroup), matching _lookup_entity_color's
+        first-match-wins color precedence."""
+        base = {"entities": {"flowGroup": {"X": "#1", "Y": "#2"},
+                             "nodeGroup": {"X": "#3"}}}
+        rev = {"entities": {"flowGroup": {"Y": "#2", "X": "#1"},
+                            "nodeGroup": {"X": "#3"}}}
+        _, o1 = ct.resolve_dispatch_colors_and_order(base, ["X", "Y"])
+        _, o2 = ct.resolve_dispatch_colors_and_order(rev, ["X", "Y"])
+        # X's slot tracks the flowGroup order, so a flowGroup reorder moves it.
+        assert o1 != o2
+
     def test_special_tokens_resolve_to_dispatch_category(self):
         colors, order = ct.resolve_dispatch_colors_and_order(
             self.TEMPLATE, ["LossOfLoad", "Charge", "internal_losses"]

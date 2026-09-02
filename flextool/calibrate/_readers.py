@@ -43,6 +43,8 @@ _SLACK_KEY = "node_slack_up_d_e"
 _SLACK_KEY_DT = "node_slack_up_dt_e"
 _CURTAILMENT_KEY = "unit_curtailment_outputNode_d_ee"
 _COST_KEY = "cost_node_discounted_d_ec"
+_UNIT_CAPACITY_KEY = "unit_capacity_ed_p"
+_TOTAL_COST_KEY = "costs_discounted_p_"
 
 _SLACK_PENALTY_CATEGORY = "upward slack penalty"
 
@@ -153,9 +155,69 @@ def read_slack_penalty(assess_dir: Path) -> tuple[float, dict[str, float]]:
     return total, by_node
 
 
+def read_unit_capacity_total(assess_dir: Path) -> dict[str, float]:
+    """Return ``{unit: total_capacity_MW}`` from ``unit_capacity_ed_p``.
+
+    Reads the post-invest fleet the solve actually committed to: the ``total``
+    column of ``unit_capacity_ed_p`` (row index ``(unit, period)``, column
+    levels ``(scenario, parameter)`` with ``parameter`` in
+    ``{existing, invested, divested, total}`` — see
+    ``flextool.process_outputs.out_capacity.unit_capacity``).  ``total`` is the
+    CUMULATIVE ``entity_all_capacity`` (existing + carried-forward invest), so
+    it is non-decreasing across periods.
+
+    Per unit the capacity is taken as the MAX over periods — the *mature*
+    (fully-built) fleet the net-load signal must be sized against; for a
+    single-invest-period solve this is simply that period's total, and for a
+    multi-period invest solve it is the final built-out capacity.  Any
+    ``scenario`` column level is collapsed (summed; a single-scenario solve
+    dir has exactly one) before the per-unit reduction.  Units whose ``total``
+    is entirely null (never realized) are dropped, so a unit absent from the
+    result cleanly falls back to its existing cap in
+    :func:`flextool.representative_periods.netload.build_group_capacities`.
+    Sorted by unit name for determinism.
+
+    This is a plain reader (no solving / DB / network), used by the net-load
+    solve-iteration driver to feed each iteration's invested caps back into the
+    representative-period selection.
+    """
+    path = Path(assess_dir) / _resolve_filename(_UNIT_CAPACITY_KEY)
+    df = read_lean_parquet(path)
+    # Select the ``total`` parameter column, collapsing any scenario level so
+    # the result is a Series indexed by (unit, period).
+    total = df.xs("total", level="parameter", axis=1).sum(axis=1)
+    per_unit = total.groupby(level="unit").max().dropna()
+    return {str(unit): float(val) for unit, val in sorted(per_unit.items())}
+
+
+def read_total_system_cost(assess_dir: Path) -> float:
+    """Return the discounted total system cost (M€) from ``costs_discounted_p_``.
+
+    ``costs_discounted_p_`` is the authoritative full-horizon cost summary
+    (``flextool.process_outputs.out_costs.cost_summaries``): every investment
+    AND dispatch cost category summed over all realized periods, discounted and
+    years-represented-weighted exactly as the LP objective is.  It INCLUDES the
+    ``upward slack penalty`` / ``downward slack penalty`` categories (the
+    monetised unserved-energy penalties) and the negative ``commodity_sales``
+    revenue term, so summing every category cell yields the same signed total
+    the objective minimises — the correct comparability metric for the
+    keep-best selection (same full timeline + same penalty prices each
+    iteration).
+
+    On disk the table is the per-scenario cost Series tagged with a single
+    ``scenario`` column level (row index ``category``); every numeric cell is
+    summed to the scalar total.
+    """
+    path = Path(assess_dir) / _resolve_filename(_TOTAL_COST_KEY)
+    df = read_lean_parquet(path)
+    return float(df.to_numpy().sum())
+
+
 __all__ = [
     "read_curtailment_by_sink",
     "read_residual_unserved",
     "read_residual_unserved_dt",
     "read_slack_penalty",
+    "read_total_system_cost",
+    "read_unit_capacity_total",
 ]

@@ -1,0 +1,127 @@
+name: Publish to PyPI
+
+# Trusted-publishing (OIDC) release workflow — no stored API token.
+#
+# Trigger: pushing a version tag `vX.Y.Z[...]` (matches the existing
+#   v4.0.0b* release scheme). `workflow_dispatch` builds + tests only and
+#   never publishes (it runs on a branch ref, not a tag, so the publish job's
+#   tag guard is false).
+#
+# Flow:
+#   build   — verify the tag equals the pyproject version, build sdist+wheel,
+#             install the wheel into a clean venv and confirm it imports,
+#             resolves its bundled package-data, and exposes its console
+#             scripts, then `twine check` the metadata.
+#   publish — download the vetted artifacts and upload to PyPI via OIDC.
+#
+# ONE-TIME SETUP (maintainer/admin, outside this repo):
+#   1. Own/create the `flextool` project on https://pypi.org (the name is
+#      currently free).
+#   2. Add a PyPI *Trusted Publisher* for it: repo irena-flextool/flextool,
+#      workflow `publish.yml`, environment `pypi`. This authorizes OIDC
+#      uploads with no secret.
+#   3. Create a GitHub Environment named `pypi` (optionally with required
+#      reviewers) for a manual approval gate before the upload step.
+#
+# NOTE on pre-releases: while only pre-release versions (…b26) are published,
+#   `pip install flextool` installs the newest pre-release (pip allows it when
+#   no stable exists). Once any stable (4.0.0) is published, pre-releases become
+#   `--pre`-only. Decide the first-stable moment deliberately.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & verify distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify tag matches pyproject version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          proj="$(python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          echo "tag version:      $tag"
+          echo "pyproject version: $proj"
+          if [ "$tag" != "$proj" ]; then
+            echo "::error::Tag v$tag does not match pyproject version $proj — bump one to match before releasing."
+            exit 1
+          fi
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Install the built wheel in a clean venv and verify it
+        run: |
+          python -m venv /tmp/wheeltest
+          /tmp/wheeltest/bin/python -m pip install --upgrade pip
+          # Install WITH dependencies — proves the full dependency set resolves
+          # from PyPI (spinedb-api, spinetoolbox, polar-high, highspy, …).
+          /tmp/wheeltest/bin/pip install dist/*.whl
+          # Import + confirm bundled package-data resolves from the installed
+          # wheel (guards the packaging-completeness fix), and that the console
+          # entry points are on PATH.
+          /tmp/wheeltest/bin/python - <<'PY'
+          import importlib.metadata as md
+          from flextool._resources import package_data_path
+          print("installed flextool", md.version("flextool"))
+          required = [
+              "schemas/spinedb_schema.json",
+              "schemas/default_plots.yaml",
+              "solver_config",
+              "process_inputs/import_old_excel_input.json",
+          ]
+          for rel in required:
+              p = package_data_path(rel)
+              assert p.exists(), f"bundled resource missing from wheel: {rel}"
+              print("resource ok:", rel)
+          PY
+          for script in flextool-run flextool-update flextool-write-outputs flextool-read-tabular-input; do
+            command -v "/tmp/wheeltest/bin/$script" >/dev/null || { echo "::error::console script missing: $script"; exit 1; }
+            echo "entry point ok: $script"
+          done
+
+      - name: Check distribution metadata
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI (trusted publishing)
+    needs: build
+    runs-on: ubuntu-latest
+    # Only genuine version-tag pushes publish. workflow_dispatch runs on a
+    # branch ref, so this guard is false there → dispatch = build+test only.
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/flextool
+    permissions:
+      id-token: write        # mint the OIDC token for trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

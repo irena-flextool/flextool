@@ -152,10 +152,14 @@ class ProjectSettings:
     calib_rp_force_sustained: bool = True
     calib_rp_force_peak: bool = False
     calib_rp_force_window: int = 24
-    # When True (default) the freshly built RP alternative is appended to each
-    # selected scenario's alternative stack so its investment solve uses the
-    # new periods; when False the alternative is created but left detached.
-    calib_rp_add_to_scenario: bool = True
+    # Disposition of the freshly built RP alternative:
+    #   "detached"     — create the alternative but attach it to nothing;
+    #   "add"          — append it to each selected scenario's stack (default,
+    #                    so its investment solve immediately uses the periods);
+    #   "new_scenario" — leave the selected scenarios untouched and clone each
+    #                    into a new "<scenario>_<alternative>" scenario that
+    #                    carries the same stack plus the new alternative on top.
+    calib_rp_scenario_mode: str = "add"  # "detached" | "add" | "new_scenario"
     calib_selected_solves: list[str] = field(default_factory=list)
     calib_max_iterations: int = 8
     calib_sizing: str = "timed"  # "timed" | "uniform"

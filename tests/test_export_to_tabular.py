@@ -1417,3 +1417,76 @@ class TestRepresentativePeriodWeightsRoundTrip:
             f"representative_period_weights Map JSON differs on round-trip:\n"
             f"src={json.dumps(src_json)}\nrt ={json.dumps(rt_json)}"
         )
+
+
+class TestRepGroupFlagRoundTrip:
+    """``group.use_for_representative_periods`` (schema v68) is a scalar
+    ``yes_no`` flag on the ``group`` class.  ``group`` is not a
+    ``split_params`` class, so its export is fully schema-driven and lands
+    on the constant ``group_c`` sheet — this exercises that a newly added
+    enum/scalar group flag survives a real DB -> xlsx -> DB round-trip
+    rather than being silently dropped.  Built from the live schema (never
+    a checked-in .sqlite), per the JSON-fixture invariant.
+    """
+
+    @pytest.fixture(scope="class")
+    def round_tripped(self, tmp_path_factory: pytest.TempPathFactory) -> dict:
+        from spinedb_api import DatabaseMapping, from_database, to_database
+
+        from flextool.process_inputs.read_self_describing_excel import (
+            read_self_describing_excel,
+        )
+        from flextool.process_inputs.write_self_describing_to_db import (
+            write_sheet_data_to_db,
+        )
+
+        out = tmp_path_factory.mktemp("rp_group_flag_rt")
+        src = out / "src.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(src))
+        src_url = f"sqlite:///{src}"
+        with DatabaseMapping(src_url) as db:
+            db.add_alternative(name="Base")
+            # One flagged group, one explicitly-unflagged group — both the
+            # "yes" and an explicit "no" override must survive.
+            db.add_entity(entity_class_name="group", entity_byname=("rp_region",))
+            db.add_entity(entity_class_name="group", entity_byname=("other",))
+            for ent, flag in (("rp_region", "yes"), ("other", "no")):
+                value, type_ = to_database(flag)
+                db.add_parameter_value(
+                    entity_class_name="group", entity_byname=(ent,),
+                    parameter_definition_name="use_for_representative_periods",
+                    alternative_name="Base", value=value, type=type_,
+                )
+            db.commit_session("setup")
+
+        xlsx = out / "out.xlsx"
+        export_to_excel(src_url, str(xlsx), include_advanced=True)
+
+        rt = out / "rt.sqlite"
+        initialize_database(str(MASTER_TEMPLATE), str(rt))
+        rt_url = f"sqlite:///{rt}"
+        sheets = read_self_describing_excel(
+            str(xlsx), skip_sheets={"navigate", "version"}
+        )
+        write_sheet_data_to_db(sheets, rt_url, purge_first=True, keep_entities=True)
+
+        got: dict = {}
+        with DatabaseMapping(rt_url) as db:
+            for p in db.get_parameter_value_items():
+                if p["parameter_definition_name"] == "use_for_representative_periods":
+                    got[p["entity_byname"][0]] = from_database(
+                        p["value"], p["type"]
+                    )
+        return got
+
+    def test_flagged_group_value_survives(self, round_tripped: dict) -> None:
+        assert round_tripped.get("rp_region") == "yes", (
+            "group.use_for_representative_periods='yes' was dropped or altered "
+            f"on round-trip; got {round_tripped!r}"
+        )
+
+    def test_unflagged_group_value_survives(self, round_tripped: dict) -> None:
+        assert round_tripped.get("other") == "no", (
+            "explicit group.use_for_representative_periods='no' was dropped or "
+            f"altered on round-trip; got {round_tripped!r}"
+        )

@@ -97,6 +97,12 @@ class CalibConfig:
                               or ``"timed"`` — the same total energy placed
                               per-cell at the low-VRE stress hours (folded from
                               ``node_slack_up_dt_e``).
+    ``final_write_methods`` — output formats to regenerate from the final
+                              surviving parquet AFTER the loop, without
+                              re-solving (a subset of csv/excel/spinedb/plot;
+                              parquet is always already present).  Empty ⇒ leave
+                              the parquet-only outputs as-is.  Consumed by the
+                              CLI, not the loop itself.
     """
 
     iterations: int
@@ -111,6 +117,7 @@ class CalibConfig:
     sizing: str = "uniform"
     overshoot: float = 1.0
     stall_fraction: float = 0.05
+    final_write_methods: tuple[str, ...] = ("csv",)
 
 
 @dataclass

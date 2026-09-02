@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import textwrap
 from pathlib import Path
 
@@ -37,6 +38,10 @@ def _write_yaml(path: Path, body: str) -> None:
     path.write_text(textwrap.dedent(body).lstrip())
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="staging sqlite in a TemporaryDirectory can't be unlinked while its handle is open on Windows",
+)
 def test_apply_delta_adds_entries(staged_fixture: Path, tmp_path: Path) -> None:
     """Happy path: delta adds entity + parameter_value + scenario."""
     yaml_file = tmp_path / "delta.yaml"
@@ -87,6 +92,10 @@ def test_apply_delta_adds_entries(staged_fixture: Path, tmp_path: Path) -> None:
     assert len(pv) == 1, pv
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="staging sqlite in a TemporaryDirectory can't be unlinked while its handle is open on Windows",
+)
 def test_second_apply_raises_on_collision(staged_fixture: Path, tmp_path: Path) -> None:
     """Re-applying the same YAML must fail (append-only)."""
     yaml_file = tmp_path / "delta.yaml"

@@ -296,3 +296,72 @@ def test_layout_params_consistent_across_batches() -> None:
     assert layout_b1.total_label_width == layout_b2.total_label_width
     assert layout_b1.bar_label_width == layout_all.bar_label_width
     assert layout_b1.total_label_width == layout_all.total_label_width
+
+
+# ---------------------------------------------------------------------------
+# Regression: grouped bars with a single group member must not overflow
+# their row slot when value labels are on (they used to be fattened by
+# VALUE_LABEL_BAR_THICKNESS_MULT while the slot was not — every adjacent
+# row then overlapped). See _plot_grouped_bars / _slot_height_for_n_grouped.
+# ---------------------------------------------------------------------------
+
+
+def _grouped_bar_heights_and_slot(value_label):
+    """Build a grouped bar figure with n_grouped == 1 and return the drawn
+    bar heights plus the per-row slot spacing (ylim span / n_bars)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib.patches import Rectangle
+    from flextool.plot_outputs.plot_bars import _build_bar_figure, _compute_bar_layout
+
+    nodes = [f"node_{i}" for i in range(8)]
+    # A single grouped member (one period) -> n_grouped collapses to 1.
+    cols = pd.MultiIndex.from_tuples(
+        [("total", "y2050")], names=["parameter", "period"]
+    )
+    df = pd.DataFrame(
+        [[v] for v in [900, 650, 720, 480, 810, 300, 560, 410]],
+        index=pd.Index(nodes, name="node"),
+        columns=cols,
+    )
+    eff = [("total", df)]
+    layout = _compute_bar_layout(
+        eff, df, [], [], [], [], [0], ["period"], "right", 2, 4.0
+    )
+    fig = _build_bar_figure(
+        eff, df, "cap", "",
+        [], [], [], [], [], [0], ["period"], "right", 2,
+        None, None, "horizontal", 4.0, value_label, None, None, True,
+        layout, None, True,
+    )
+    ax = fig.axes[0]
+    heights = [
+        p.get_height() for p in ax.patches
+        if isinstance(p, Rectangle) and p.get_height() > 0
+    ]
+    slot = ax.get_ylim()[1] / len(heights)
+    import matplotlib.pyplot as plt
+    plt.close(fig)
+    return heights, slot
+
+
+def test_grouped_single_member_bar_fits_slot_with_value_labels() -> None:
+    """n_grouped == 1 + value labels: bar height must not exceed the slot.
+
+    Regression for the overlap where a lone grouped bar was scaled by
+    VALUE_LABEL_BAR_THICKNESS_MULT (0.1116 -> 0.279) into a 0.18 slot,
+    overlapping every neighbouring row.
+    """
+    heights, slot = _grouped_bar_heights_and_slot("dynamic")
+    assert heights, "expected drawn bars"
+    assert max(heights) <= slot + 1e-9, (
+        f"grouped single-member bar (h={max(heights):.4f}) overflows its "
+        f"slot ({slot:.4f}) with value labels on"
+    )
+
+
+def test_grouped_single_member_bar_unaffected_without_value_labels() -> None:
+    """Without value labels the geometry is unchanged (thickness_mult == 1)."""
+    heights, slot = _grouped_bar_heights_and_slot(None)
+    assert heights
+    assert max(heights) <= slot + 1e-9

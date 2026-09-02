@@ -1,11 +1,13 @@
 """Tests for the non-modal color/order picker (Stage 6.2).
 
 Covers:
-* ``PlotSettingsPicker`` builds a Notebook with one tab per present
-  section, each tab's Treeview populated with the right names, and a
+* ``PlotSettingsPicker`` builds a two-pane layout — a left category
+  selector (fixed order, not reorderable) + a right entity list per
+  category — each entity Treeview populated with the right names, and a
   composite swatch ``PhotoImage`` kept alive (not GC'd) per row.
-* ``_write`` round-trips the working dict to byte-valid YAML; Apply writes
-  + invokes ``on_apply``; Save-and-exit writes + invokes + closes; Cancel
+* ``_write`` round-trips the working dict to byte-valid YAML; the debounced
+  live flush writes + invokes ``on_apply`` (leaving the Cancel baseline
+  untouched); Close writes + invokes + closes (keeps changes); Cancel
   restores the on-open file text + invokes ``on_apply``.
 * ``ResultViewer._on_change_colors`` seeds a project ``plot_settings.yaml``
   when absent, never overwrites an existing one, edits only the project
@@ -87,17 +89,16 @@ def _make_picker(tk_root, tmp_path, data=None, on_apply=None):
 
 
 def _tab_titles(picker) -> list[str]:
-    nb = picker._notebook
-    return [nb.tab(tid, "text") for tid in nb.tabs()]
+    # Category titles in display order — read from the left selector so this
+    # asserts the on-screen list, not just the bookkeeping attribute.
+    cat = picker._category_list
+    titles = [cat.item(i, "text") for i in cat.get_children("")]
+    assert titles == picker._category_order
+    return titles
 
 
 def _tree_in_tab(picker, index):
-    nb = picker._notebook
-    frame = nb.nametowidget(nb.tabs()[index])
-    for child in frame.winfo_children():
-        if isinstance(child, ttk.Treeview):
-            return child
-    raise AssertionError("no Treeview in tab")
+    return picker._category_trees[picker._category_order[index]]
 
 
 def _row_names(tree) -> list[str]:
@@ -223,30 +224,367 @@ class TestPickerBuild:
 
 
 # ---------------------------------------------------------------------------
-#  PlotSettingsPicker — Apply / Save / Cancel + on_apply wiring
+#  PlotSettingsPicker — two-pane category-list + entity-list layout
+# ---------------------------------------------------------------------------
+
+
+class TestPickerTwoPaneLayout:
+    def test_category_list_is_single_select_selector(self, tk_root, tmp_path):
+        """The left pane is a single-select ttk.Treeview listing the category
+        titles in the fixed display order."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        cat = picker._category_list
+        assert isinstance(cat, ttk.Treeview)
+        assert str(cat.cget("selectmode")) == "browse"
+        left_titles = [cat.item(i, "text") for i in cat.get_children("")]
+        assert (
+            left_titles
+            == picker._category_order
+            == [
+                "nodeGroup", "flowGroup", "unit", "connection", "node",
+                "costs", "dispatch", "scenarios",
+            ]
+        )
+
+    def test_category_list_not_bound_to_reorder(self, tk_root, tmp_path):
+        """The left selector is a pure selector: no drag / Alt-arrow / move
+        reorder bindings are attached (only the entity trees carry those)."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        cat = picker._category_list
+        assert not cat.bind("<Alt-Up>")
+        assert not cat.bind("<Alt-Down>")
+        assert not cat.bind("<ButtonPress-1>")
+        assert not cat.bind("<B1-Motion>")
+        # ... while every entity tree DOES carry the move bindings.
+        for tree in picker._category_trees.values():
+            assert tree.bind("<Alt-Up>")
+            assert tree.bind("<ButtonPress-1>")
+
+    def test_selecting_category_shows_its_entity_tree(self, tk_root, tmp_path):
+        """Selecting a left category shows that category's entity tree and
+        hides the previously shown one."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        # Default open shows the first category (nodeGroup).
+        assert picker._current_category == "nodeGroup"
+        assert picker._category_frames["nodeGroup"].winfo_manager() == "grid"
+
+        # Select 'unit' via the left list → its entity tree becomes visible.
+        picker._category_list.selection_set(picker._category_items["unit"])
+        picker._on_category_select()
+        assert picker._current_category == "unit"
+        assert picker._category_frames["unit"].winfo_manager() == "grid"
+        # The previously-shown category's tree is now hidden.
+        assert picker._category_frames["nodeGroup"].winfo_manager() == ""
+
+    def test_undo_preserves_selected_category(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """A rebuild (undo) keeps the currently-selected category shown when
+        it still exists."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        picker._category_list.selection_set(picker._category_items["unit"])
+        picker._on_category_select()
+        assert picker._current_category == "unit"
+
+        unit = picker._category_trees["unit"]
+        coal = unit.get_children("")[0]
+        _patch_dialog(monkeypatch, ("#00ff00", None))
+        picker._edit_row_color(unit, coal)
+        picker._on_undo()
+        # After the rebuild the selection is still 'unit' (not reset to first).
+        assert picker._current_category == "unit"
+        assert picker._category_frames["unit"].winfo_manager() == "grid"
+
+    def test_default_height_is_about_80pct_screen(self, tk_root, tmp_path):
+        """The dialog defaults to ~80% of the screen height.  Skipped
+        gracefully if the WM ignores the requested geometry under Xvfb."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        picker.deiconify()
+        picker.update()
+        if not picker.winfo_ismapped():
+            pytest.skip("WM did not map the window under Xvfb")
+        expected = int(picker.winfo_screenheight() * 0.8)
+        actual = picker.winfo_height()
+        if abs(actual - expected) > 10:
+            pytest.skip("WM ignored the requested geometry under Xvfb")
+        assert abs(actual - expected) <= 10
+
+
+# ---------------------------------------------------------------------------
+#  PlotSettingsPicker — entity tabs auto-populate on OPEN (DB ∪ aggregates)
+# ---------------------------------------------------------------------------
+
+
+class TestPickerEntitySeeding:
+    """On open the entity tabs seed additively from the UNION of the input
+    DB(s) and the dispatch output aggregates — no manual Refresh needed."""
+
+    def test_entities_populate_from_db_on_open(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        # DB FALLBACK path: tmp_path has no output_parquet, so the parquet-first
+        # discovery finds nothing and the on-open merge falls back to the input
+        # DB.  Seed the DB discovery BEFORE construction so the merge runs.
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
+
+        picker, _ = _make_picker(
+            tk_root, tmp_path, data={"entities": {"unit": {}}},
+        )
+        # DB entities appear on open (no Refresh click) with palette colors.
+        unit = _section(picker._data, ("entities", "unit"))
+        assert set(unit) == {"coal", "gas"}
+        assert all(
+            isinstance(v, str) and v.startswith("#") for v in unit.values()
+        )
+        # A class absent from the seed data is created from discovery too.
+        assert set(_section(picker._data, ("entities", "node"))) == {"n1"}
+
+    def test_dispatch_aggregate_populates_flowgroup_on_open(
+        self, tk_root, tmp_path,
+    ):
+        # A processGroup aggregate that lives ONLY in solved output (never the
+        # input DB) must become listable under flowGroup on open.
+        import pandas as pd
+
+        pq = tmp_path / "output_parquet" / "base_1"
+        pq.mkdir(parents=True)
+        pd.DataFrame(
+            {"group": ["elec"], "group_aggregate": ["Fossil"]},
+        ).to_parquet(
+            pq / "nodeGroupDispatch__processGroup_Unit_to_group.parquet",
+        )
+
+        picker, _ = _make_picker(
+            tk_root, tmp_path, data={"entities": {"flowGroup": {}}},
+        )
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        assert "Fossil" in fg
+        assert isinstance(fg["Fossil"], str) and fg["Fossil"].startswith("#")
+
+    def test_on_open_entity_merge_is_add_only(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        # DB knows coal + gas; 'chp' is a pre-existing entry absent from the DB.
+        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"]})
+        data = {"entities": {"unit": {"coal": "#123456", "chp": "#654321"}}}
+
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        unit = _section(picker._data, ("entities", "unit"))
+        # Existing colors + order preserved; chp NOT pruned (add-only); gas
+        # appended after the existing entries.
+        assert unit["coal"] == "#123456"
+        assert unit["chp"] == "#654321"
+        assert list(unit.keys())[:2] == ["coal", "chp"]
+        assert "gas" in unit and unit["gas"].startswith("#")
+
+    def test_on_open_merge_noop_without_sources(self, tk_root, tmp_path):
+        # No input DB and no output_parquet → on-open entity merge is a no-op
+        # (preserves the prior behaviour for projects with nothing to discover).
+        data = {"entities": {"unit": {"coal": "#212121"}}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        assert picker._data["entities"] == {"unit": {"coal": "#212121"}}
+
+    def test_new_flowgroup_entries_ordered_by_std_on_open(
+        self, tk_root, tmp_path,
+    ):
+        """New flowGroup entries are appended in std-dev order (ascending,
+        matching ``_order_dispatch_columns``' remaining buckets), independent
+        of the discovery (alphabetical) order."""
+        pq = tmp_path / "output_parquet" / "base_1"
+        _write_dispatch_flowgroup_bundle(
+            pq, "base_1",
+            [
+                ("Fossil", "u_fossil", [10.0, 0.0, 10.0, 0.0]),  # high std
+                ("Wind", "u_wind", [1.0, 2.0, 1.0, 2.0]),        # low std
+            ],
+        )
+        picker, _ = _make_picker(
+            tk_root, tmp_path, data={"entities": {"flowGroup": {}}},
+        )
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        # Ascending std dev → Wind (low) before Fossil (high), NOT alphabetical
+        # (which discovery would yield as Fossil, Wind).
+        assert list(fg.keys()) == ["Wind", "Fossil"]
+        assert all(
+            isinstance(v, str) and v.startswith("#") for v in fg.values()
+        )
+
+    def test_on_open_merge_add_only_ignores_std_reorder(
+        self, tk_root, tmp_path,
+    ):
+        """An existing user order + colors are preserved on open even when the
+        parquet std-dev order would place the entries differently (add-only:
+        the std order applies ONLY to genuinely new names)."""
+        pq = tmp_path / "output_parquet" / "base_1"
+        _write_dispatch_flowgroup_bundle(
+            pq, "base_1",
+            [
+                ("Fossil", "u_fossil", [10.0, 0.0, 10.0, 0.0]),
+                ("Wind", "u_wind", [1.0, 2.0, 1.0, 2.0]),
+            ],
+        )
+        # Both already present, in alphabetical order (std order is Wind,
+        # Fossil) with the user's own colors.
+        data = {"entities": {
+            "flowGroup": {"Fossil": "#aaaaaa", "Wind": "#bbbbbb"},
+        }}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        # Neither reordered nor recolored.
+        assert list(fg.keys()) == ["Fossil", "Wind"]
+        assert fg["Fossil"] == "#aaaaaa"
+        assert fg["Wind"] == "#bbbbbb"
+
+
+# ---------------------------------------------------------------------------
+#  PlotSettingsPicker — flowGroup tab lists ONLY dispatch aggregators
+# ---------------------------------------------------------------------------
+
+
+def _mock_flow_aggregators(monkeypatch, names):
+    """Patch ``fetch_flow_aggregator_flowgroups`` to a fixed set (no real DB)."""
+    import flextool.scenario_comparison.input_entity_colors as iec
+
+    monkeypatch.setattr(
+        iec, "fetch_flow_aggregator_flowgroups", lambda _url: set(names),
+    )
+
+
+class TestFlowGroupDispatchFilter:
+    """The flowGroup tab lists ONLY dispatch-aggregator flowGroups — the union
+    of the input-DB ``flow_aggregator`` ∈ {dispatch_plots_only, both} and the
+    parquet ``group_aggregate`` names.  Non-aggregators stay in ``self._data``
+    (the file round-trips) but are not drawn."""
+
+    def test_db_aggregator_listed_others_hidden_but_kept(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        # DB says only 'AggBoth' is a dispatch aggregator.
+        _mock_flow_aggregators(monkeypatch, {"AggBoth"})
+        data = {"entities": {
+            "flowGroup": {"AggBoth": "#111111", "PlainNone": "#222222"},
+            "unit": {"coal": "#333333"},
+        }}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+
+        # Only the aggregator is drawn in the flowGroup tab…
+        assert _row_names(picker._category_trees["flowGroup"]) == ["AggBoth"]
+        # …but BOTH remain in the working dict so the file round-trips.
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        assert set(fg) == {"AggBoth", "PlainNone"}
+        # Other categories are never filtered.
+        assert _row_names(picker._category_trees["unit"]) == ["coal"]
+
+    def test_parquet_group_aggregate_listed_others_hidden(
+        self, tk_root, tmp_path,
+    ):
+        # A processGroup aggregate present as a parquet ``group_aggregate`` is a
+        # dispatch aggregator; a plain flowGroup in the file is not.
+        pq = tmp_path / "output_parquet" / "base_1"
+        _write_dispatch_flowgroup_bundle(
+            pq, "base_1", [("Fossil", "u_fossil", [10.0, 0.0, 10.0, 0.0])],
+        )
+        data = {"entities": {"flowGroup": {
+            "Fossil": "#aaaaaa", "PlainNone": "#bbbbbb",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+
+        assert _row_names(picker._category_trees["flowGroup"]) == ["Fossil"]
+        fg = _section(picker._data, ("entities", "flowGroup"))
+        assert set(fg) == {"Fossil", "PlainNone"}
+        assert "Fossil" in picker._dispatch_flowgroup_aggregators
+
+    def test_empty_aggregator_set_shows_all_flowgroups(
+        self, tk_root, tmp_path,
+    ):
+        # No parquet and no input DB → empty aggregator set → filter DISABLED
+        # (never wrongly hide every flowGroup on a pre-solve project).
+        data = {"entities": {"flowGroup": {
+            "A": "#aaaaaa", "B": "#bbbbbb",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        assert picker._dispatch_flowgroup_aggregators == set()
+        assert _row_names(picker._category_trees["flowGroup"]) == ["A", "B"]
+
+    def test_rebuild_reapplies_filter(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        # Undo/redo rebuild via ``_build_panes`` → the same filter must reapply.
+        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
+
+        monkeypatch.setattr(
+            PlotSettingsPicker, "_discover_input_dbs",
+            lambda self: ["sqlite:///fake.sqlite"],
+        )
+        _mock_flow_aggregators(monkeypatch, {"AggBoth"})
+        data = {"entities": {"flowGroup": {
+            "AggBoth": "#111111", "PlainNone": "#222222",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        picker._rebuild_panes()
+        assert _row_names(picker._category_trees["flowGroup"]) == ["AggBoth"]
+
+
+# ---------------------------------------------------------------------------
+#  PlotSettingsPicker — live flush / Close / Cancel + on_apply wiring
 # ---------------------------------------------------------------------------
 
 
 class TestPickerButtons:
-    def test_apply_writes_roundtrip_and_calls_on_apply(self, tk_root, tmp_path):
+    def test_flush_writes_roundtrip_and_calls_on_apply(self, tk_root, tmp_path):
         calls = []
         picker, f = _make_picker(
             tk_root, tmp_path, on_apply=lambda: calls.append(1),
         )
-        picker._on_apply_clicked()
-        # on_apply fired; window stayed open.
+        # The debounced live flush writes the file and re-renders; the window
+        # stays open (it is not a close action).
+        picker._flush_live_update()
         assert calls == [1]
         assert picker.winfo_exists()
         # File round-trips equal to the working dict.
         assert yaml.safe_load(f.read_text(encoding="utf-8")) == picker._data
         assert picker._data == _SAMPLE
 
-    def test_save_and_exit_writes_and_closes(self, tk_root, tmp_path):
+    def test_flush_does_not_touch_cancel_baseline(self, tk_root, tmp_path):
+        """A live flush must NOT move the on-open baseline: a later Cancel
+        still reverts every change made since the dialog opened."""
+        picker, f = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        original = f.read_text(encoding="utf-8")
+        # Edit the working dict, then let a live flush write it to disk.
+        picker._data["scenarios"]["S1"] = "#123456"
+        picker._flush_live_update()
+        assert (
+            yaml.safe_load(f.read_text(encoding="utf-8"))["scenarios"]["S1"]
+            == "#123456"
+        )
+        # Cancel reverts to the on-open text (baseline untouched by the flush).
+        picker._on_cancel()
+        assert f.read_text(encoding="utf-8") == original
+
+    def test_close_writes_and_closes(self, tk_root, tmp_path):
         calls = []
         picker, f = _make_picker(
             tk_root, tmp_path, on_apply=lambda: calls.append(1),
         )
-        picker._on_save_exit()
+        picker._on_close()
         assert calls == [1]
         assert not picker.winfo_exists()
         assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE
@@ -257,7 +595,7 @@ class TestPickerButtons:
             tk_root, tmp_path, on_apply=lambda: calls.append(1),
         )
         original = f.read_text(encoding="utf-8")
-        # Simulate a prior Apply that changed the file on disk.
+        # Simulate a prior live write that changed the file on disk.
         f.write_text("scenarios:\n  X: '#000000'\n", encoding="utf-8")
         picker._on_cancel()
         # Original on-open text restored byte-for-byte; on_apply (revert) fired.
@@ -266,10 +604,138 @@ class TestPickerButtons:
         assert not picker.winfo_exists()
 
     def test_no_on_apply_is_fine(self, tk_root, tmp_path):
-        """Picker opened with no callback (PNG dialog) just writes."""
+        """Picker opened with no callback (PNG dialog) just writes on flush."""
         picker, f = _make_picker(tk_root, tmp_path, on_apply=None)
-        picker._on_apply_clicked()  # must not raise
+        picker._flush_live_update()  # must not raise
         assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE
+
+    def test_close_keeps_edit(self, tk_root, tmp_path):
+        """After an edit, Close writes the edited content and destroys; the
+        file holds the edit (Close keeps changes)."""
+        picker, f = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        picker._data["scenarios"]["S1"] = "#abcdef"
+        picker._on_close()
+        assert not picker.winfo_exists()
+        assert (
+            yaml.safe_load(f.read_text(encoding="utf-8"))["scenarios"]["S1"]
+            == "#abcdef"
+        )
+
+    def test_cancel_reverts_edit_to_on_open_text(self, tk_root, tmp_path):
+        """After an edit (and its live write), Cancel restores the on-open
+        text byte-for-byte."""
+        picker, f = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        original = f.read_text(encoding="utf-8")
+        picker._data["scenarios"]["S1"] = "#abcdef"
+        picker._flush_live_update()  # live write to disk
+        picker._on_cancel()
+        assert f.read_text(encoding="utf-8") == original
+
+    def test_escape_and_window_x_route_to_keep_handler(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Escape and the window ``X`` (WM_DELETE_WINDOW) route to the KEEP
+        handler (``_on_close``), NOT ``_on_cancel`` — live edits must not be
+        silently reverted on close."""
+        picker, _ = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        called = []
+        # Both bindings dispatch through instance attribute lookup, so the
+        # recorders are seen.
+        picker._on_close = lambda: called.append("close")
+        picker._on_cancel = lambda: called.append("cancel")
+
+        # A key event is only delivered to a mapped, focused, NON-transient
+        # window under bare Xvfb (a transient Toplevel never takes focus), so
+        # clear transient + force focus purely to route the synthesised key.
+        picker.wm_transient("")
+        picker.deiconify()
+        picker.update()
+        picker.focus_force()
+        picker.update()
+        picker.event_generate("<Escape>", when="now")
+        # The window ``X`` handler is invoked directly (no event needed).
+        picker.tk.call(picker.protocol("WM_DELETE_WINDOW"))
+
+        assert called == ["close", "close"]
+        assert "cancel" not in called
+
+    def test_apply_and_refresh_buttons_are_gone(self, tk_root, tmp_path):
+        """No Apply button and no Refresh button in the dialog."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        texts = {str(b.cget("text")) for b in _iter_buttons(picker)}
+        assert "Apply" not in texts
+        assert "Refresh from DB" not in texts
+
+
+class TestPickerLiveUpdate:
+    """Every user mutation schedules a debounced live write + on_apply."""
+
+    def test_reorder_schedules_live_update(self, tk_root, tmp_path):
+        calls = []
+        picker, f = _make_picker(
+            tk_root, tmp_path, on_apply=lambda: calls.append(1),
+        )
+        # Opening alone does not schedule a write.
+        assert picker._live_after_id is None
+
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        first = unit.get_children("")[0]
+        unit.focus(first)
+        unit.selection_set(first)
+        picker._key_move(unit, +1)  # coal → below chp (a real reorder)
+
+        # A live update is now pending (debounced); flushing it writes + fires.
+        assert picker._live_after_id is not None
+        picker._flush_live_update()
+        assert picker._live_after_id is None
+        assert calls == [1]
+        loaded = yaml.safe_load(f.read_text(encoding="utf-8"))
+        assert list(loaded["entities"]["unit"].keys()) == ["chp", "coal"]
+
+    def test_color_edit_schedules_live_update(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        calls = []
+        picker, f = _make_picker(
+            tk_root, tmp_path, on_apply=lambda: calls.append(1),
+        )
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal = unit.get_children("")[0]
+
+        _patch_dialog(monkeypatch, ("#00ff00", None))
+        picker._edit_row_color(unit, coal)
+
+        assert picker._live_after_id is not None
+        picker._flush_live_update()
+        assert calls == [1]
+        loaded = yaml.safe_load(f.read_text(encoding="utf-8"))
+        assert loaded["entities"]["unit"]["coal"] == "#00ff00"
+
+    def test_noop_reorder_does_not_schedule(self, tk_root, tmp_path):
+        """An Alt-Up at the top (no actual reorder) schedules nothing."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        scen = _tree_in_tab(picker, titles.index("scenarios"))
+        top = scen.get_children("")[0]
+        scen.focus(top)
+        picker._key_move(scen, -1)  # already at top → no change
+        assert picker._live_after_id is None
+
+    def test_schedule_debounces_to_single_pending(self, tk_root, tmp_path):
+        """A burst of mutations collapses into ONE pending after id."""
+        picker, _ = _make_picker(tk_root, tmp_path, on_apply=lambda: None)
+        picker._schedule_live_update()
+        first = picker._live_after_id
+        assert first is not None
+        picker._schedule_live_update()
+        second = picker._live_after_id
+        assert second is not None
+        # The prior pending call was cancelled and replaced (not stacked).
+        assert second != first
+        picker._flush_live_update()
+        assert picker._live_after_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +748,59 @@ def _section(data: dict, path: tuple[str, ...]) -> dict:
     for key in path:
         cur = cur[key]
     return cur
+
+
+def _write_dispatch_flowgroup_bundle(pdir, scenario, aggregates):
+    """Write a minimal-but-real dispatch output bundle under *pdir*.
+
+    Lets the picker's parquet-first discovery run end-to-end
+    (``discover_dispatch_entities`` for the class names + ``prepare_dispatch_data``
+    for the per-entity std devs) instead of monkeypatching the DB path.
+
+    *aggregates* is a list of ``(aggregate_name, unit_name, values)`` — each an
+    ``Unit_to_group`` processGroup aggregate whose single member unit produces
+    *values* (a per-time flow series) into node ``n1`` of nodeGroup ``elec``.
+    The aggregate's dispatch column std dev is therefore
+    ``pd.Series(values).std()`` (all-positive columns keep their name).
+    """
+    import pandas as pd
+
+    pdir.mkdir(parents=True, exist_ok=True)
+    k = len(aggregates)
+    # nodeGroup 'elec' flagged for dispatch, with member node 'n1'.
+    pd.DataFrame({"group": ["elec"]}).to_parquet(
+        pdir / "nodeGroupDispatch.parquet",
+    )
+    pd.DataFrame({"group": ["elec"], "node": ["n1"]}).to_parquet(
+        pdir / "group_node.parquet",
+    )
+    # Unit_to_group aggregates + their single-unit membership.
+    pd.DataFrame({
+        "group": ["elec"] * k,
+        "group_aggregate": [a for a, _u, _v in aggregates],
+    }).to_parquet(
+        pdir / "nodeGroupDispatch__processGroup_Unit_to_group.parquet",
+    )
+    pd.DataFrame({
+        "group": ["elec"] * k,
+        "group_aggregate": [a for a, _u, _v in aggregates],
+        "process": [u for _a, u, _v in aggregates],
+        "unit": [u for _a, u, _v in aggregates],
+        "node": ["n1"] * k,
+    }).to_parquet(
+        pdir / "nodeGroupDispatch__processGroup__process__unit__to_node.parquet",
+    )
+    # unit_outputNode_dt_ee: (scenario, unit, node) columns over a time index.
+    n = len(aggregates[0][2]) if aggregates else 0
+    time_idx = pd.Index(range(n), name="time")
+    flow = pd.DataFrame(
+        {i: v for i, (_a, _u, v) in enumerate(aggregates)}, index=time_idx,
+    )
+    flow.columns = pd.MultiIndex.from_tuples(
+        [(scenario, u, "n1") for _a, u, _v in aggregates],
+        names=["scenario", "unit", "node"],
+    )
+    flow.to_parquet(pdir / "unit_outputNode_dt_ee.parquet")
 
 
 class TestPickerReorder:
@@ -391,11 +910,12 @@ class TestPickerReorder:
         assert list(sect.keys()) == ["chp", "coal"]
         assert sect["chp"] == {"color": "#E64A19", "neg_color": "#9c3010"}
 
-    def test_drag_on_unselected_row_does_not_move(
+    def test_drag_on_unselected_row_selects_and_moves(
         self, tk_root, tmp_path, monkeypatch,
     ):
-        """Pressing an unselected row starts a DRAW-select (native), not a
-        move — our handlers must not reorder."""
+        """Pressing an UNSELECTED row (no modifier) collapses the selection
+        onto it and starts a MOVE drag, so a drag begun on a not-yet-selected
+        item picks it up and reorders."""
         picker, _ = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
         unit = _tree_in_tab(picker, titles.index("unit"))
@@ -406,13 +926,106 @@ class TestPickerReorder:
         def _ev(y):
             return types.SimpleNamespace(widget=unit, y=y)
 
-        # Nothing selected → press on coal is NOT a move; drag is a no-op
-        # for our reorder logic (ttk handles selection natively).
-        assert picker._on_drag_start(_ev(0)) is None
-        assert picker._drag_move[unit] is False
+        # Another row is selected; press on the UNSELECTED coal.
+        unit.selection_set(chp)
+        assert picker._on_drag_start(_ev(0)) == "break"
+        # coal is now the (sole) selection and a move drag is engaged.
+        assert picker._drag_move[unit] is True
+        assert unit.selection() == (coal,)
         picker._on_drag_motion(_ev(1))
         picker._on_drag_end(_ev(1))
-        assert _row_names(unit) == ["coal", "chp"]
+        assert _row_names(unit) == ["chp", "coal"]
+        sect = _section(picker._data, ("entities", "unit"))
+        assert list(sect.keys()) == ["chp", "coal"]
+
+    def test_drag_start_with_modifier_defers_to_native(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """A Shift/Ctrl press is left to ttk (extend/toggle multi-select),
+        so no move drag is primed."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        titles = _tab_titles(picker)
+        unit = _tree_in_tab(picker, titles.index("unit"))
+        coal, chp = unit.get_children("")
+        monkeypatch.setattr(
+            unit, "identify_row", lambda y: {0: coal, 1: chp}.get(y, ""))
+        # Control (0x0004) held while pressing coal → native selection.
+        evt = types.SimpleNamespace(widget=unit, y=0, state=0x0004)
+        assert picker._on_drag_start(evt) is None
+        assert picker._drag_move[unit] is False
+
+    def test_drag_to_upper_half_of_top_row_reaches_index_zero(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Dragging onto the UPPER half of the first row drops the block at
+        index 0 — the top slot must be reachable (regression: a hard '+1'
+        made it impossible to drag anything above the first row)."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        coal, chp = unit.get_children("")
+        # coal occupies y-rows 0..20 (midpoint 10); chp 20..40.
+        monkeypatch.setattr(
+            unit, "identify_row",
+            lambda y: coal if y < 20 else chp,
+        )
+        monkeypatch.setattr(
+            unit, "bbox",
+            lambda item: (0, 0, 100, 20) if item == coal else (0, 20, 100, 20),
+        )
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=unit, y=y)
+
+        # Grab the BOTTOM row and drag it onto the UPPER half of the top row.
+        unit.selection_set(chp)
+        picker._on_drag_start(_ev(30))          # press on chp
+        picker._on_drag_motion(_ev(2))          # hover coal's upper half
+        picker._on_drag_end(_ev(2))
+        assert _row_names(unit) == ["chp", "coal"]
+        assert list(_section(picker._data, ("entities", "unit")).keys()) == [
+            "chp", "coal",
+        ]
+
+    def test_drag_to_lower_half_keeps_below(self, tk_root, tmp_path, monkeypatch):
+        """Dragging onto the LOWER half of a row drops the block after it."""
+        data = {"entities": {"unit": {
+            "a": "#111111", "b": "#222222", "c": "#333333",
+        }}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        a, b, c = unit.get_children("")
+        rows = {a: (0, 0, 100, 20), b: (0, 20, 100, 20), c: (0, 40, 100, 20)}
+        monkeypatch.setattr(
+            unit, "identify_row",
+            lambda y: a if y < 20 else (b if y < 40 else c),
+        )
+        monkeypatch.setattr(unit, "bbox", lambda item: rows[item])
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=unit, y=y)
+
+        # Drag 'a' (top) down onto the LOWER half of 'b' → lands after b.
+        unit.selection_set(a)
+        picker._on_drag_start(_ev(5))
+        picker._on_drag_motion(_ev(38))  # b's lower half
+        picker._on_drag_end(_ev(38))
+        assert _row_names(unit) == ["b", "a", "c"]
+
+    def test_drag_start_takes_keyboard_focus(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Pressing a row must claim the tree's KEYBOARD focus so the
+        Alt-Up/Alt-Down reorder bindings fire (they were dead because the
+        press returned 'break' and suppressed ttk's default focus grab)."""
+        picker, _ = _make_picker(tk_root, tmp_path)
+        unit = _tree_in_tab(picker, _tab_titles(picker).index("unit"))
+        coal = unit.get_children("")[0]
+        monkeypatch.setattr(unit, "identify_row", lambda y: coal)
+        focus_calls = []
+        monkeypatch.setattr(unit, "focus_set", lambda: focus_calls.append(1))
+
+        picker._on_drag_start(types.SimpleNamespace(widget=unit, y=0))
+        assert focus_calls == [1]
 
     def test_extended_selectmode(self, tk_root, tmp_path):
         """Trees allow multi-selection (Shift/Ctrl + native draw-select)."""
@@ -437,8 +1050,8 @@ class TestPickerReorder:
         ]
 
     def test_reordered_order_is_written_to_file(self, tk_root, tmp_path):
-        """After a reorder, Apply writes the file with the new key order
-        and values intact (sort_keys=False preserves it)."""
+        """After a reorder, the live flush writes the file with the new key
+        order and values intact (sort_keys=False preserves it)."""
         picker, f = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
         unit = _tree_in_tab(picker, titles.index("unit"))
@@ -447,7 +1060,7 @@ class TestPickerReorder:
         unit.selection_set(first)
         picker._key_move(unit, +1)  # coal → below chp
 
-        picker._on_apply_clicked()
+        picker._flush_live_update()
 
         loaded = yaml.safe_load(f.read_text(encoding="utf-8"))
         # File key order matches the tree's new top-to-bottom order.
@@ -784,6 +1397,399 @@ class TestPickerDoubleClickEdit:
 
 
 # ---------------------------------------------------------------------------
+#  PlotSettingsPicker — dispatch specials reorderable WITHIN each sign group
+#  (the flowGroups divider is the boundary; positives above, negatives below)
+# ---------------------------------------------------------------------------
+
+
+# All six special columns in the default visual (top-to-bottom) order — the
+# file's ``categories.dispatch`` key order IS the visual stack order the engine
+# honors — plus a couple of ordinary categories/entities so the "other
+# categories stay reorderable" checks have something to move.
+_DISPATCH_ALL = {
+    "scenarios": {"S1": "#1f77b4"},
+    "categories": {
+        "costs": {"co2": "#4d4d4d", "vom": "#222222"},
+        "dispatch": {
+            # positive group, visual top→bottom
+            "LossOfLoad": "crimson",
+            "Discharge": "aqua",
+            "Import": "indigo",
+            # negative group, visual top→bottom
+            "internal_losses": "darkgray",
+            "Export": "purple",
+            "Charge": "lime",
+        },
+    },
+    "entities": {"unit": {"coal": "#212121", "gas": "#333333"}},
+}
+
+_DISPATCH_ROWS = [
+    "LossOfLoad", "Discharge", "Import",
+    "flowGroups",
+    "internal_losses", "Export", "Charge",
+]
+
+
+def _divider_iid(tree):
+    """Return the synthetic divider row's item id (by its display text)."""
+    for iid in tree.get_children(""):
+        if tree.item(iid, "text") == "flowGroups":
+            return iid
+    return None
+
+
+class TestDispatchSignGroupReorderDivider:
+    """The dispatch category renders its specials in two sign groups separated
+    by an immovable, non-editable ``flowGroups`` divider.  Specials are
+    reorderable WITHIN each sign group (positives among themselves above the
+    divider, negatives among themselves below), never across it; the divider
+    itself never moves and is never written to ``self._data``.  Colors stay
+    editable."""
+
+    def test_rows_follow_file_order_within_each_group(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        # Positives (file order), divider, negatives (file order).
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+
+    def test_scrambled_file_order_is_preserved_within_groups(
+        self, tk_root, tmp_path,
+    ):
+        """A non-default file key order is honored within each sign group (the
+        picker no longer forces a canonical special order)."""
+        data = {
+            "categories": {"dispatch": {
+                "Export": "purple",
+                "Import": "indigo",
+                "Charge": "lime",
+                "Discharge": "aqua",
+                "internal_losses": "darkgray",
+                "LossOfLoad": "crimson",
+            }},
+            "entities": {"unit": {}},
+        }
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        dispatch = picker._category_trees["dispatch"]
+        # Positives in file order (Import, Discharge, LossOfLoad), divider, then
+        # negatives in file order (Export, Charge, internal_losses).
+        assert _row_names(dispatch) == [
+            "Import", "Discharge", "LossOfLoad",
+            "flowGroups",
+            "Export", "Charge", "internal_losses",
+        ]
+
+    def test_divider_is_not_a_data_key(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        sect = _section(picker._data, ("categories", "dispatch"))
+        assert "flowGroups" not in sect
+        assert set(sect) == {
+            "LossOfLoad", "Discharge", "Import",
+            "internal_losses", "Export", "Charge",
+        }
+
+    def test_divider_is_tracked_and_tagged(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        div = _divider_iid(dispatch)
+        assert div is not None
+        assert (dispatch, div) in picker._divider_items
+        assert picker._is_divider(dispatch, div) is True
+        from flextool.gui.dialogs.plot_settings_picker import _DIVIDER_TAG
+        assert _DIVIDER_TAG in dispatch.item(div, "tags")
+
+    def test_color_edit_on_divider_is_noop(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        div = _divider_iid(dispatch)
+
+        captured = _patch_dialog(monkeypatch, ("#00ff00", None))
+        before = dict(_section(picker._data, ("categories", "dispatch")))
+        picker._edit_row_color(dispatch, div)
+
+        assert "dialog" not in captured
+        assert _section(picker._data, ("categories", "dispatch")) == before
+        assert "flowGroups" not in _section(
+            picker._data, ("categories", "dispatch"),
+        )
+
+    def test_real_special_row_is_color_editable(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, f = _make_picker(
+            tk_root, tmp_path, data=_DISPATCH_ALL, on_apply=lambda: None,
+        )
+        dispatch = picker._category_trees["dispatch"]
+        lol = dispatch.get_children("")[0]
+        assert dispatch.item(lol, "text") == "LossOfLoad"
+
+        captured = _patch_dialog(monkeypatch, ("#00ff00", None))
+        picker._edit_row_color(dispatch, lol)
+        assert captured["dialog"].opened[0] == "LossOfLoad"
+        sect = _section(picker._data, ("categories", "dispatch"))
+        assert sect["LossOfLoad"] == "#00ff00"
+        # A color edit does not reorder the rows.
+        picker._flush_live_update()
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+
+    # ── Reorder WITHIN a sign group (Alt-move) ─────────────────────
+    def test_alt_move_positive_within_top_group_reorders_and_writes(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        # Move Discharge (2nd positive) up above LossOfLoad.
+        discharge = dispatch.get_children("")[1]
+        assert dispatch.item(discharge, "text") == "Discharge"
+        dispatch.focus(discharge)
+        dispatch.selection_set(discharge)
+        assert picker._key_move(dispatch, -1) == "break"
+
+        assert _row_names(dispatch) == [
+            "Discharge", "LossOfLoad", "Import",
+            "flowGroups",
+            "internal_losses", "Export", "Charge",
+        ]
+        # categories.dispatch rewritten in the new (divider-excluded) order,
+        # positives first then negatives; live update scheduled.
+        assert list(
+            _section(picker._data, ("categories", "dispatch")).keys()
+        ) == [
+            "Discharge", "LossOfLoad", "Import",
+            "internal_losses", "Export", "Charge",
+        ]
+        assert picker._live_after_id is not None
+        assert "flowGroups" not in _section(
+            picker._data, ("categories", "dispatch"),
+        )
+
+    def test_alt_move_negative_within_bottom_group_reorders_and_writes(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        # Move Export (2nd negative) up above internal_losses.
+        export = dispatch.get_children("")[5]
+        assert dispatch.item(export, "text") == "Export"
+        dispatch.focus(export)
+        dispatch.selection_set(export)
+        assert picker._key_move(dispatch, -1) == "break"
+
+        assert _row_names(dispatch) == [
+            "LossOfLoad", "Discharge", "Import",
+            "flowGroups",
+            "Export", "internal_losses", "Charge",
+        ]
+        assert list(
+            _section(picker._data, ("categories", "dispatch")).keys()
+        ) == [
+            "LossOfLoad", "Discharge", "Import",
+            "Export", "internal_losses", "Charge",
+        ]
+
+    def test_alt_move_positive_down_into_divider_is_clamped(
+        self, tk_root, tmp_path,
+    ):
+        """A positive at the bottom of its group cannot cross the divider — the
+        move is clamped (no crossing) and nothing changes; the divider stays."""
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        imp = dispatch.get_children("")[2]  # Import — last positive
+        assert dispatch.item(imp, "text") == "Import"
+        dispatch.focus(imp)
+        dispatch.selection_set(imp)
+        assert picker._key_move(dispatch, +1) == "break"
+
+        # Unchanged, divider still at index 3, no live update, no undo.
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        assert dispatch.get_children("")[3] == _divider_iid(dispatch)
+        assert picker._live_after_id is None
+        assert picker._undo_stack == []
+
+    def test_alt_move_negative_up_into_divider_is_clamped(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        il = dispatch.get_children("")[4]  # internal_losses — top negative
+        assert dispatch.item(il, "text") == "internal_losses"
+        dispatch.focus(il)
+        dispatch.selection_set(il)
+        assert picker._key_move(dispatch, -1) == "break"
+
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        assert dispatch.get_children("")[3] == _divider_iid(dispatch)
+        assert picker._live_after_id is None
+
+    def test_divider_itself_never_moves_via_alt(self, tk_root, tmp_path):
+        """Focusing the divider and Alt-moving it is a no-op (it drops out of
+        the movable selection); it never enters self._data."""
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        div = _divider_iid(dispatch)
+        dispatch.focus(div)
+        dispatch.selection_set(div)
+        assert picker._key_move(dispatch, -1) == "break"
+        assert picker._key_move(dispatch, +1) == "break"
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        assert "flowGroups" not in _section(
+            picker._data, ("categories", "dispatch"),
+        )
+        assert picker._undo_stack == []
+
+    # ── Reorder WITHIN a sign group (drag) + clamp ─────────────────
+    def test_drag_positive_within_group_reorders_and_persists(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        rows = dispatch.get_children("")
+        lol, imp = rows[0], rows[2]  # LossOfLoad (top), Import (last positive)
+        # Map cursor-y to rows: 0→LossOfLoad, 2→Import.
+        monkeypatch.setattr(
+            dispatch, "identify_row",
+            lambda y: {0: lol, 2: imp}.get(y, ""),
+        )
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=dispatch, y=y)
+
+        dispatch.selection_set(lol)
+        assert picker._on_drag_start(_ev(0)) == "break"
+        assert picker._drag_move[dispatch] is True
+        picker._on_drag_motion(_ev(2))   # drag down onto Import
+        picker._on_drag_end(_ev(2))
+
+        # LossOfLoad moved to the bottom of the positive group (above divider).
+        assert _row_names(dispatch) == [
+            "Discharge", "Import", "LossOfLoad",
+            "flowGroups",
+            "internal_losses", "Export", "Charge",
+        ]
+        assert list(
+            _section(picker._data, ("categories", "dispatch")).keys()
+        ) == [
+            "Discharge", "Import", "LossOfLoad",
+            "internal_losses", "Export", "Charge",
+        ]
+
+    def test_drag_positive_onto_negative_is_clamped_to_boundary(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        """Dragging a positive down onto a negative row clamps it to just above
+        the divider (no crossing); the divider stays put."""
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        rows = dispatch.get_children("")
+        imp, chg = rows[2], rows[6]  # Import (last positive), Charge (last neg)
+        monkeypatch.setattr(
+            dispatch, "identify_row",
+            lambda y: {2: imp, 6: chg}.get(y, ""),
+        )
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=dispatch, y=y)
+
+        dispatch.selection_set(imp)
+        assert picker._on_drag_start(_ev(2)) == "break"
+        picker._on_drag_motion(_ev(6))   # drag down onto Charge (a negative)
+        picker._on_drag_end(_ev(6))
+
+        # No crossing: rows unchanged, divider still at index 3.
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        assert dispatch.get_children("")[3] == _divider_iid(dispatch)
+
+    def test_drag_start_on_divider_swallows_and_primes_no_move(
+        self, tk_root, tmp_path, monkeypatch,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        dispatch = picker._category_trees["dispatch"]
+        div = _divider_iid(dispatch)
+        monkeypatch.setattr(dispatch, "identify_row", lambda y: div)
+
+        def _ev(y):
+            return types.SimpleNamespace(widget=dispatch, y=y)
+
+        before_rows = _row_names(dispatch)
+        # Press on the divider is swallowed ("break"), no move primed, and it
+        # is not selected.
+        assert picker._on_drag_start(_ev(0)) == "break"
+        assert picker._drag_move[dispatch] is False
+        assert div not in dispatch.selection()
+        picker._on_drag_end(_ev(0))
+        assert _row_names(dispatch) == before_rows
+
+    # ── Other categories / entity classes unaffected ──────────────
+    def test_other_category_still_reorderable_and_no_divider(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        costs = picker._category_trees["costs"]
+        assert costs not in picker._fixed_order_trees
+        assert _divider_iid(costs) is None
+        assert _row_names(costs) == ["co2", "vom"]
+
+        top = costs.get_children("")[0]
+        costs.focus(top)
+        costs.selection_set(top)
+        picker._key_move(costs, +1)  # co2 → below vom
+        assert _row_names(costs) == ["vom", "co2"]
+        assert list(_section(picker._data, ("categories", "costs")).keys()) == [
+            "vom", "co2",
+        ]
+
+    def test_entity_class_still_reorderable(self, tk_root, tmp_path):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        unit = picker._category_trees["unit"]
+        assert unit not in picker._fixed_order_trees
+        assert _divider_iid(unit) is None
+        top = unit.get_children("")[0]
+        unit.focus(top)
+        unit.selection_set(top)
+        picker._key_move(unit, +1)
+        assert _row_names(unit) == ["gas", "coal"]
+
+    def test_rebuild_reconstructs_order_and_single_divider(
+        self, tk_root, tmp_path,
+    ):
+        picker, _ = _make_picker(tk_root, tmp_path, data=_DISPATCH_ALL)
+        picker._rebuild_panes()
+        dispatch = picker._category_trees["dispatch"]
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+        dividers = [
+            iid for iid in dispatch.get_children("")
+            if dispatch.item(iid, "text") == "flowGroups"
+        ]
+        assert len(dividers) == 1
+        assert (dispatch, dividers[0]) in picker._divider_items
+        # Reorder still constrained after the rebuild (Import can't cross down).
+        imp = dispatch.get_children("")[2]
+        dispatch.focus(imp)
+        dispatch.selection_set(imp)
+        picker._key_move(dispatch, +1)
+        assert _row_names(dispatch) == _DISPATCH_ROWS
+
+    def test_partial_specials_only_present_rows_and_divider(
+        self, tk_root, tmp_path,
+    ):
+        """Only specials present in the file are shown; the divider still sits
+        between the positive and negative groups."""
+        data = {
+            "categories": {"dispatch": {
+                "Charge": "lime", "Import": "indigo",
+            }},
+            "entities": {"unit": {}},
+        }
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        dispatch = picker._category_trees["dispatch"]
+        assert _row_names(dispatch) == ["Import", "flowGroups", "Charge"]
+
+
+# ---------------------------------------------------------------------------
 #  PlotDialog — shared "Colors, order..." button opens the picker
 # ---------------------------------------------------------------------------
 
@@ -860,14 +1866,13 @@ class TestPlotDialogColorsButton:
 
 
 # ---------------------------------------------------------------------------
-#  Refresh from DB — re-fetch entities, ADD new + PRUNE stale (Stage 6.5)
+#  Entity discovery helpers (input-DB fallback, used by on-open seeding)
 # ---------------------------------------------------------------------------
 
 
 def _mock_fetch(monkeypatch, per_class):
     """Patch ``fetch_entities_by_class`` to return a fixed per-class mapping
-    (no real DB), and patch ``_discover_input_dbs`` to report one DB so the
-    refresh runs the union/add/prune path headlessly."""
+    (no real DB) so the on-open DB-fallback merge runs headlessly."""
     import flextool.scenario_comparison.input_entity_colors as iec
 
     monkeypatch.setattr(
@@ -875,118 +1880,7 @@ def _mock_fetch(monkeypatch, per_class):
     )
 
 
-class TestPickerRefresh:
-    def test_refresh_adds_new_and_prunes_stale(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        # Discovery returns one DB; the DB has unit {coal, gas} and node {n1}.
-        # → unit: "chp" is stale (pruned), "gas" is new (added); node: n1 stays.
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
-        )
-        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
-
-        picker._on_refresh()
-
-        unit = _section(picker._data, ("entities", "unit"))
-        # coal kept (with its edited value), chp pruned, gas added.
-        assert "coal" in unit
-        assert "chp" not in unit
-        assert "gas" in unit
-        assert unit["coal"] == "#212121"  # existing value preserved
-        # New name got a palette hex color appended AFTER existing entries.
-        assert list(unit.keys()) == ["coal", "gas"]
-        assert isinstance(unit["gas"], str) and unit["gas"].startswith("#")
-        # node unchanged.
-        assert _section(picker._data, ("entities", "node")) == {"n1": "#4FC3F7"}
-        # categories / scenarios untouched.
-        assert picker._data["categories"] == _SAMPLE["categories"]
-        assert picker._data["scenarios"] == _SAMPLE["scenarios"]
-
-    def test_refresh_rebuilds_trees(self, tk_root, tmp_path, monkeypatch):
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
-        )
-        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
-
-        picker._on_refresh()
-
-        titles = _tab_titles(picker)
-        unit = _tree_in_tab(picker, titles.index("unit"))
-        # Tree rows match the rebuilt dict: chp gone, gas present.
-        assert _row_names(unit) == ["coal", "gas"]
-
-    def test_refresh_records_one_undo_step(self, tk_root, tmp_path, monkeypatch):
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
-        )
-        _mock_fetch(monkeypatch, {"unit": ["coal", "gas"], "node": ["n1"]})
-
-        before = {k: dict(v) if isinstance(v, dict) else v
-                  for k, v in picker._data["entities"].items()}
-        picker._on_refresh()
-        assert len(picker._undo_stack) == 1
-        # Undo restores the pre-refresh entities.
-        picker._on_undo()
-        assert picker._data["entities"]["unit"] == before["unit"]
-
-    def test_refresh_no_db_shows_info_and_no_change(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        from flextool.gui.dialogs import plot_settings_picker as mod
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs", lambda self: [],
-        )
-        shown = []
-        monkeypatch.setattr(
-            mod.messagebox, "showinfo",
-            lambda *a, **k: shown.append((a, k)),
-        )
-
-        before = picker._data
-        picker._on_refresh()
-        assert len(shown) == 1  # info box shown
-        assert picker._data == _SAMPLE  # unchanged
-        assert picker._data is before
-        assert picker._undo_stack == []  # no edit recorded
-
-    def test_refresh_idempotent_no_change_no_undo(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        """A refresh whose DB exactly matches the current entities records no
-        undo step (nothing added or pruned)."""
-        from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
-
-        picker, _ = _make_picker(tk_root, tmp_path)
-        monkeypatch.setattr(
-            PlotSettingsPicker, "_discover_input_dbs",
-            lambda self: ["sqlite:///fake.sqlite"],
-        )
-        # Exactly the current entities (unit: coal, chp; node: n1).
-        _mock_fetch(
-            monkeypatch, {"unit": ["coal", "chp"], "node": ["n1"]},
-        )
-        picker._on_refresh()
-        assert picker._undo_stack == []
-        assert list(_section(picker._data, ("entities", "unit")).keys()) == [
-            "coal", "chp",
-        ]
-
+class TestPickerEntityDiscovery:
     def test_discover_input_dbs_scans_both_dirs(self, tk_root, tmp_path):
         """Discovery scans <project>/input_sources and <project>/intermediate
         for *.sqlite (project root = settings file's parent)."""
@@ -1156,6 +2050,9 @@ def _make_stub_viewer(project_path: Path, live_plan=None):
     stub = types.SimpleNamespace()
     stub._project_path = project_path
     stub._live_plan = live_plan
+    # Dispatch order/ylim caches that _apply_color_settings must invalidate.
+    stub._dispatch_ylims = {}
+    stub._dispatch_columns = {}
     stub.calls = []
     stub._clear_figure_cache = lambda: stub.calls.append("clear_figure_cache")
     stub._clear_prefetched_figures = lambda: stub.calls.append(
@@ -1285,6 +2182,27 @@ class TestApplyColorSettings:
         assert plan.shared_color_map == {'coal': (0.0, 1.0, 0.0)}
         assert stub.calls == ["clear_prefetched_figures", "trigger_replot"]
 
+    def test_clears_dispatch_order_cache(self, tk_root, tmp_path):
+        """Apply must invalidate the dispatch column/ylim caches so a
+        dispatch re-render re-derives its stacking order from the edited
+        template (else colors update but order stays frozen until reopen)."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "plot_settings.yaml").write_text(
+            "entities:\n  node:\n    n1: '#abcdef'\n", encoding="utf-8",
+        )
+
+        stub = _make_stub_viewer(project, live_plan=None)
+        # Prime the caches as a prior dispatch render would.
+        stub._dispatch_columns = {"elec": ["a", "b"]}
+        stub._dispatch_ylims = {"elec": (0.0, 1.0)}
+
+        stub._apply_color_settings()
+
+        # Both order-bearing caches are cleared in lockstep.
+        assert stub._dispatch_columns == {}
+        assert stub._dispatch_ylims == {}
+
 
 # ---------------------------------------------------------------------------
 #  Minor UX fixes: Enter-to-apply + focus, neg round-trip, tab order
@@ -1384,43 +2302,13 @@ class TestPickerNegRoundTrip:
 class TestPickerTabOrder:
     def test_button_traversal_order(self, tk_root, tmp_path):
         """Tk focus traversal follows child creation order; the buttons must
-        be created Refresh → Undo → Redo → Apply → Save → Cancel."""
+        be created Undo → Redo → Cancel → Close (no Apply, no Refresh)."""
         picker, _ = _make_picker(tk_root, tmp_path)
         texts = [str(b.cget("text")) for b in _iter_buttons(picker)]
-        assert texts == [
-            "Refresh from DB", "Undo", "Redo",
-            "Apply", "Save and exit", "Cancel",
-        ]
+        assert texts == ["Undo", "Redo", "Cancel", "Close"]
 
 
-class TestPickerApplyShortcut:
-    def test_ctrl_enter_bound_to_apply(self, tk_root, tmp_path, monkeypatch):
-        picker, _ = _make_picker(tk_root, tmp_path)
-        # Ctrl+Enter is bound at the window level (→ tool Apply).
-        assert picker.bind("<Control-Return>") != ""
-        # AND on the tree, so it wins over the tree's plain <Return> (edit)
-        # when the tree is focused (no-modifier binding also matches Ctrl).
-        titles = _tab_titles(picker)
-        unit = _tree_in_tab(picker, titles.index("unit"))
-        assert unit.bind("<Return>") != ""
-        assert unit.bind("<Control-Return>") != ""
-
-    def test_ctrl_enter_on_tree_applies_not_edits(
-        self, tk_root, tmp_path, monkeypatch,
-    ):
-        calls = {"apply": 0, "edit": 0}
-        picker, _ = _make_picker(
-            tk_root, tmp_path, on_apply=lambda: calls.__setitem__(
-                "apply", calls["apply"] + 1),
-        )
-        monkeypatch.setattr(
-            picker, "_edit_row_color",
-            lambda *a, **k: calls.__setitem__("edit", calls["edit"] + 1),
-        )
-        # The tree's Ctrl+Enter handler must Apply, not open the editor.
-        assert picker._on_apply_shortcut() == "break"
-        assert calls == {"apply": 1, "edit": 0}
-
+class TestPickerFocusAndHint:
     def test_focus_in_activates_first_row_when_none(
         self, tk_root, tmp_path,
     ):
@@ -1452,4 +2340,6 @@ class TestPickerApplyShortcut:
         ]
         assert labels
         assert "\n" in str(labels[-1].cget("text"))
-        assert "Ctrl+Enter" in str(labels[-1].cget("text"))
+        # The hint mentions live updates, not a Ctrl+Enter Apply.
+        assert "apply live" in str(labels[-1].cget("text"))
+        assert "Ctrl+Enter" not in str(labels[-1].cget("text"))

@@ -1,3 +1,196 @@
+## Release 4.0.1 (1.9.2026) — Spine Toolbox install & detection fixes
+
+Patch release fixing the in-app Spine Toolbox install flow (all GUI, no schema
+or model changes).
+
+- **Install Spine Toolbox from the GUI now works.** The install action was tied
+  to the "Update FlexTool" button, which is disabled when FlexTool is already the
+  latest — so on a fresh install (always the latest) the Spine Toolbox extra
+  could never be installed. It is now a dedicated **"Install Spine Toolbox"**
+  button, shown only when Toolbox is missing, that installs just the extra
+  independent of any version update (`pip install "flextool[toolbox]"`, or the
+  editable `-e ".[toolbox]"` in a git checkout).
+- **Environment-scoped Toolbox detection and launch.** `toolbox_installed()` no
+  longer falls back to a PATH lookup for `spine-db-editor`, which reported
+  "installed" when a copy from a *different* environment was on PATH even though
+  Spine Toolbox was not in the venv running FlexTool. Detection now checks only
+  the current environment, and the Spine DB Editor is launched from it
+  (`python -m spinetoolbox.spine_db_editor.main`) rather than a PATH executable —
+  so the dialog and the open-`.sqlite` path agree.
+- **Docs.** The recommended install now pulls the Spine Toolbox and result-viewer
+  extras (`pip install "flextool[toolbox,viewer]"`); a note explains that plain
+  `pip install flextool` gives a spreadsheet-only install without the Spine DB
+  Editor.
+
+## Release 4.0.0 (31.8.2026) — first stable v4: pip-installable; net-load representative-period clustering (schema v68); dispatch-plot & colors GUI rework; multi-use storage & existing-capacity output fixes
+
+This is the first stable **4.0.0** release. FlexTool is now **pip-installable**
+from PyPI — `pip install flextool` — instead of only being available as a git
+distribution; `main` is now the default branch and `master` is deprecated.
+
+**Database migration v67 → v69** (two steps, automatic on load): v68 adds the
+representative-period group flag (additive, defaults to prior behaviour — a
+migrated database selects representative periods byte-identically until you opt
+into net-load clustering), and v69 backfills parameter groups for two previously
+ungrouped parameters (`model.small_number_threshold`, `node.penalty_method`) so
+they are no longer dropped from group-filtered tabular exports.
+
+### Packaging & distribution
+
+- **Now on PyPI (`pip install flextool`).** A new OIDC trusted-publishing
+  release workflow builds the sdist + wheel on every `v*` tag, verifies the tag
+  matches the `pyproject` version, installs the wheel into a clean venv to
+  confirm imports, bundled package data and console scripts, twine-checks the
+  metadata, and publishes to PyPI.
+- **`process_inputs/*.json` now ship in the wheel.** The xlsx/CSV import spec
+  (`import_old_excel_input.json`) loaded at runtime by the
+  `flextool-read-tabular-input` CLI was covered by no package-data glob, so a
+  pip-installed wheel (and the sdist) raised `FileNotFoundError` on that path;
+  a tight glob now bundles it.
+- **`main` is the default branch; `master` deprecated.** CI (`ci.yml` /
+  `tests.yml`) now fires on push/PR to `main`, and a new docs workflow builds
+  the MkDocs site from `main` and publishes it to `gh-pages`, replacing the
+  manual `mkdocs gh-deploy`. The README now calls out polar-high's automatic
+  problem scaling as its own capability (better conditioning often speeds the
+  HiGHS solve well beyond the faster build).
+- **GUI tests that open a real Tk window are opt-in** (the `gui` marker /
+  `--run-gui` flag), skipped by default locally and in CI.
+
+### Representative periods — net-load clustering
+
+- **Net-load representative-period clustering (`--netload-clustering`).** The
+  representative-period preprocessor can cluster on a real-MW net-load signal
+  (demand − Σ VRE·availability over demand-match-sized capacities) instead of
+  the default per-series normalized profile/inflow stack. VRE is any
+  `unit__node__profile` arc whose `profile_method` is `upper_limit` (the schema
+  default). `--vre-penetration` scales the demand-match energy-share target.
+  Energy is duration-weighted, partial-coverage series are skipped, and
+  co-located VRE raises a warning. The default (non-`--netload-clustering`)
+  path is byte-parity with prior behaviour.
+- **`group.use_for_representative_periods` (schema v68).** A per-group `yes_no`
+  flag that marks a region-group as a net-load aggregation unit: when one or
+  more groups carry `yes`, net load is summed per flagged group; when none do,
+  selection falls back to per-node net-load signals.
+- **Net-load iteration driver (`python -m
+  flextool.representative_periods.netload_iterate`).** An invest-only
+  iterate-until-stable loop that bootstraps on demand-match capacities, then
+  feeds each iteration's solved investment capacities back into the next
+  net-load selection until the representative set stabilises (early-stop on
+  stability; bootstrap dispatch skipped). `--keep-best` additionally dispatches
+  each mature iteration and keeps the lowest full-year dispatch-cost set,
+  deterministically re-materialising an earlier winner. Subsets are run via a
+  `model.solves` override alternative; a fail-closed guard rejects an active
+  timed `energy_margin_adder`.
+
+### GUI — dispatch plots & colors/order
+
+- **Live colors/order picker.** The dispatch colors/order dialog now updates the
+  plot live (debounced) and drops the separate Apply / Refresh-from-DB buttons;
+  closing the dialog commits the edit instead of reverting it, and edited
+  colors/order are honoured on plain navigation and on live edits even without a
+  tree selection.
+- **Two-pane category/entity layout, driven by solved output.** The dialog uses
+  a fixed category list plus an entity list (categories are not reorderable) at
+  a narrower/taller default size. Entities are discovered from the solved
+  `output_parquet` (dispatch) rather than the input DB — the DB is kept as a
+  pre-solve fallback and the picker seeds from the union of input-DB and
+  dispatch-output aggregates — and newly-discovered entries are ordered by
+  standard deviation as a one-time default (deterministic name tie-break),
+  while a stored `plot_settings.yaml` remains the source of truth.
+- **Stack & legend ordering.** The per-node dispatch stack follows the
+  `plot_settings` order, mixed-sign entities are placed adjacent to the zero
+  axis, negatives are ordered like the list, and the legend reads top-to-bottom
+  to match the stack. flowGroup bands take precedence over nodeGroup for band
+  colors/order and reorder with their section; the colors/order dialog lists
+  only dispatch-aggregator flowGroups; a special-category order is engine-fixed
+  with an immovable, highlighted "flowGroups" divider marking where flow bands
+  stack, and specials are reorderable only within each sign group (divider as
+  the boundary) while their colors stay editable. Dragging reaches the top slot,
+  Alt-arrow reorder works, and dropping onto unselected rows applies.
+- **Plot fixes.** Line traces and grouped bars are ordered by color-map key
+  order, a lone grouped bar no longer overflows its slot with value labels, and
+  the nodeGroup dispatch y-axis is scaled per scenario.
+
+### Outputs
+
+- **Multi-use storage nodes surfaced in node balance & price.** Storage nodes
+  were unconditionally dropped from the node-balance summary and nodal-price
+  outputs to keep plain batteries from cluttering results, which also hid
+  genuinely interesting multi-use storage hubs. An arc-level heuristic now
+  surfaces a storage node only when it is wired to more than two distinct
+  processes, so a battery stays hidden while a multi-use hub appears
+  automatically — also the economically sound price split.
+- **`existing` capacity column is the pre-invest baseline, not cumulative.** The
+  unit/connection/node capacity outputs sourced `existing` from the cumulative
+  chain-sum, so on a multi-solve run a later dispatch/rolling sub-solve reported
+  previously-invested capacity under `existing`. It now comes from the static
+  pre-invest baseline; `invested` stays the per-sub-solve/roll investment and
+  `total` still carries the cumulative capacity, propagating to CSV / Excel /
+  SpineDB / plots / GUI viewer.
+- **Removed dead legacy per-period capacity CSV writers.** An exhaustive sweep
+  found no live consumer of the `*_capacity__period.csv` /
+  `entity_all_capacity.csv` phase-3 artifacts (all paths read
+  `output_parquet/*.parquet`), so the writers and their exclusive loaders were
+  removed.
+- **Upgrade-safe results DB schema.** `ensure_results_db` short-circuited on file
+  existence, so additive schema changes (e.g. the per-entity cost break-down
+  parameters) never reached a `results.sqlite` created by an older FlexTool
+  version and `write_spinedb` crashed at end-of-run. It now takes a lock-free
+  read gate that additively tops up a lagging DB under lock (a no-op when
+  already current).
+
+### GUI — Calibrate investments
+
+- **Three-way RP-alternative disposition.** The representative-periods tool's
+  single "add to scenario" checkbox is now a radio: `detached` (create but
+  attach to nothing), `add` (append to each selected scenario's stack, the
+  default), or `new_scenario` (clone each scenario into
+  `<scenario>_<alternative>` carrying the same stack plus the new alternative).
+  The legacy boolean setting migrates automatically (True → add, False →
+  detached).
+- **Final outputs from the project's File-outputs choices.** The calibration
+  dialog now regenerates the same output formats a regular run would — the
+  project's "File outputs" checkboxes — from the final parquet, so a calibrated
+  scenario's results match a normal run without a re-solve. The live CLI preview
+  and the run path share the same setting.
+- **Per-scenario report folder.** Calibration report CSVs are now written under
+  `<output-location>/calibration_reports/<scenario>/` instead of a flat
+  `report/`, so calibrating several scenarios into one shared output root no
+  longer silently overwrites one scenario's report with the next. Final results
+  are regenerated from the last iteration's parquet via the engine's disk-replay
+  path, without re-solving.
+
+### Fixes — invest & representative periods
+
+- **Var-unit inter-period storage balance for blended weights.** The
+  representative-period blended-weights inter-period storage coupling multiplied
+  the seasonal-drift right-hand side by unit size, but both sides of the balance
+  are already var-units, so a storage node with unit size ≠ 1 (the default is
+  1000) either slammed its inter-period state into the invest ceiling or
+  collapsed the store to zero. The spurious factor is removed; byte-identical at
+  unit size 1.
+- **`max_flow_for_unconstrained_variables` override now honoured.** Two source-
+  parameter lookups queried the parameter under a spurious `p_`-prefixed name
+  that never matches the DB, so every `invest_no_limit` entity was silently
+  capped at the hard-coded 1e6 default regardless of the model override. Both
+  sites now query the raw DB name (the 1e6 fallback is kept for genuine
+  absence).
+- **Representative-period hull seeded with force-included periods.** The
+  generator selected the greedy hull blind to force-included periods and bolted
+  them on afterwards, so forced and clustered picks could redundantly represent
+  the same region. Force-include now runs before clustering and seeds the greedy
+  hull (filling the rest to complement the forced periods), with the total
+  pinned at `n_rp`. The `grow` / `fixed` count modes and `--force-count-mode`
+  are removed; no seed reproduces the byte-identical default.
+- **v38 `node_type` migration floor.** The v38 `has_balance` / `has_storage` →
+  `node_type` consolidation blanket-wrote `commodity` into the Spine default
+  `Base` alternative, which — being often the highest-ranked alternative —
+  overrode real `balance` / `storage` assignments in lower-ranked alternatives,
+  turning every node into a commodity node and crashing the solve on a
+  zero-balance node. The migration now writes the `commodity` floor into a
+  dedicated lowest-rank alternative (`default_node_type_from_migration`) so any
+  real assignment always overrides it.
+
 ## Release 4.0.0b26 (30.7.2026) — adequacy calibrator + Calibrate-investments GUI; additive energy-margin & hard node balance; near-optimal IPM acceptance
 
 **Database migration v65 → v67** (two steps, automatic on load). **The

@@ -602,12 +602,20 @@ def order_labels_by_template(
 # last as a LEGACY fallback so projects seeded before the
 # nodeGroup/flowGroup split still resolve their old ``entities.group``
 # colors; new seeds write ``nodeGroup`` / ``flowGroup``.
+# Class resolution order for a dispatch column → entity color/order.  A
+# dispatch band is a FLOW: a flowGroup aggregate, or an individual unit /
+# connection / node.  A ``nodeGroup`` is the plot's CONTAINER, never a band,
+# so it must have the LOWEST priority — otherwise a nodeGroup that happens to
+# share a name with a flowGroup aggregate (e.g. a "PV_flows" nodeGroup and a
+# "PV_flows" flowGroup) would shadow it, and editing the flowGroup entry would
+# silently do nothing.  First case-insensitive match wins (see
+# ``_lookup_entity_color`` / ``template_entity_names``).
 _DISPATCH_ENTITY_CLASSES: tuple[str, ...] = (
-    "nodeGroup",
     "flowGroup",
     "unit",
     "connection",
     "node",
+    "nodeGroup",
     "group",
 )
 
@@ -686,17 +694,29 @@ def _lookup_entity_color(entities: dict, name: str, negative: bool):
     Returns the raw color value (positive side, or ``neg_color`` when
     *negative* and present) or ``None`` if no class lists *name*.
     """
-    name_lc = str(name).lower()
-    for cls in _DISPATCH_ENTITY_CLASSES:
-        class_map = entities.get(cls)
-        if not isinstance(class_map, dict):
-            continue
-        for key, val in class_map.items():
-            if str(key).lower() == name_lc:
-                color_val, neg_val = _resolve_entity_value(val)
-                if negative and neg_val is not None:
-                    return neg_val
-                return color_val
+    name_str = str(name)
+    name_lc = name_str.lower()
+    # Two passes: EXACT case first (across all classes, flowGroup first), then
+    # a case-insensitive fallback.  The exact pass keeps a unit ``wind`` and a
+    # flowGroup ``Wind`` distinct — a node's ``wind_out`` band then takes the
+    # unit colour and a nodeGroup's ``Wind`` aggregate the flowGroup colour,
+    # instead of both collapsing to whichever class comes first case-folded.
+    # This mirrors the exact-then-lower order index in
+    # ``resolve_dispatch_colors_and_order`` so colour and order agree.
+    for exact in (True, False):
+        for cls in _DISPATCH_ENTITY_CLASSES:
+            class_map = entities.get(cls)
+            if not isinstance(class_map, dict):
+                continue
+            for key, val in class_map.items():
+                hit = (str(key) == name_str) if exact else (
+                    str(key).lower() == name_lc
+                )
+                if hit:
+                    color_val, neg_val = _resolve_entity_value(val)
+                    if negative and neg_val is not None:
+                        return neg_val
+                    return color_val
     return None
 
 
@@ -778,9 +798,28 @@ def resolve_dispatch_colors_and_order(
     entity_file_order: list[str] = []
     for cls in _DISPATCH_ENTITY_CLASSES:
         entity_file_order.extend(template_label_order(template, entity_class=cls))
-    entity_order_index = {
-        str(k).lower(): i for i, k in enumerate(entity_file_order)
-    }
+    # Order index, first-occurrence-wins (``setdefault``) so it agrees with
+    # ``_lookup_entity_color``'s first-match-wins class precedence
+    # (``_DISPATCH_ENTITY_CLASSES`` has flowGroup first).  Keep BOTH an
+    # exact-case and a lowercase map: the exact map is consulted first so a
+    # flowGroup ``Wind`` and a unit ``wind`` keep DISTINCT positions — a
+    # nodeGroup's ``Wind`` aggregate band then tracks the flowGroup order and a
+    # node's ``wind_out`` band tracks the unit order, instead of one silently
+    # overwriting the other in a flat case-folded, last-wins index (which
+    # pinned flowGroup bands to an unrelated unit/node slot).  The lowercase
+    # map preserves case-insensitive tolerance as a fallback.
+    entity_order_index: dict[str, int] = {}
+    entity_order_index_lc: dict[str, int] = {}
+    for i, k in enumerate(entity_file_order):
+        entity_order_index.setdefault(str(k), i)
+        entity_order_index_lc.setdefault(str(k).lower(), i)
+
+    def _entity_order_pos(name: str) -> int:
+        if name in entity_order_index:
+            return entity_order_index[name]
+        return entity_order_index_lc.get(
+            name.lower(), len(entity_file_order),
+        )
 
     entity_cols: list[str] = []
     for col in cols:
@@ -823,9 +862,7 @@ def resolve_dispatch_colors_and_order(
     # historical std-dev ordering of unlisted columns) is preserved.
     ordered_entities = sorted(
         entity_cols,
-        key=lambda c: entity_order_index.get(
-            str(_extract_dispatch_entity_name(c)).lower(), len(entity_order_index)
-        ),
+        key=lambda c: _entity_order_pos(str(_extract_dispatch_entity_name(c))),
     )
 
     config_order = list(ordered_entities)

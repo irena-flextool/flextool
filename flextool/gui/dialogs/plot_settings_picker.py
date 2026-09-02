@@ -4,18 +4,24 @@ This is the GUI editor that replaces the old plain-text
 ``PlotSettingsEditor``.  It treats the project ``plot_settings.yaml`` as a
 plain STRUCTURED data file (pyyaml load -> dict -> dump with
 ``sort_keys=False``).  The window is **non-modal** so it can be used at the
-same time as the result viewer: the **Apply** button writes the file and
-calls an ``on_apply`` callback (the viewer re-renders = live preview) while
-the window stays open.
+same time as the result viewer: every user edit writes the file **live**
+(debounced) and calls an ``on_apply`` callback (the viewer re-renders = live
+preview) while the window stays open — there is no Apply button.
 
-The window loads the file, renders one ``ttk.Notebook`` tab per present
-section, lists every entry in a ``ttk.Treeview`` with a composite
-``[pos][neg]`` swatch image next to its name, and wires Apply / Save and
-exit / Cancel to the file + the ``on_apply`` callback.  Editing
-interactions: reorder (drag + Alt-arrow), per-row color dialog
-(double-click), **Refresh from DB** (re-fetch entity names from the
-project's input DB(s) and add new + prune stale), and multi-level
-**Undo/Redo** over the in-memory working dict.
+The window loads the file and renders a two-pane layout: a LEFT
+``ttk.Treeview`` selector lists every present section (fixed order, not
+reorderable) and the RIGHT pane shows the selected section's reorderable
+``ttk.Treeview``, each entry with a composite ``[pos][neg]`` swatch image
+next to its name.  Editing interactions:
+reorder (drag + Alt-arrow), per-row color dialog (double-click), and
+multi-level **Undo/Redo** over the in-memory working dict — each mutation
+schedules a debounced live write + ``on_apply``.  **Close** keeps all
+changes (flushes the pending live write); **Cancel** reverts to the on-open
+file text.  On open, the entity tabs are seeded additively from the solved
+``output_parquet`` dispatch (falling back to the project input DB(s) only
+when there is no dispatch output yet), with newly-discovered entries given a
+one-time std-dev order (see ``_order_new_names_by_std``); this on-open
+discovery does not itself write the file (only user actions do).
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ import tkinter as tk
 import zlib
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 import numpy as np
 import yaml
@@ -42,6 +48,21 @@ logger = logging.getLogger(__name__)
 _ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
 # Category subsections, in tab order.
 _CATEGORY_SECTIONS = ("costs", "node_flows", "nodegroup_flows", "dispatch")
+
+# The ``("categories", "dispatch")`` category is ENGINE-FIXED order (see the
+# module docstring for the stack): its special columns are pinned by the
+# engine — positive specials at the top, negative specials at the bottom — with
+# the movable flowGroup entity bands stacked near the zero axis in between.  In
+# the picker it is therefore rendered as a NON-reorderable list that mirrors
+# that stack, with a synthetic, immovable divider row marking where the flow
+# bands stack.  ``_DIVIDER_TAG`` tags the divider row (a Treeview tag used for
+# its distinct highlight); ``_DIVIDER_TEXT`` is the display-only label — it is
+# NEVER a key in ``self._data`` and must never be treated as an entity.
+_DISPATCH_SECTION = ("categories", "dispatch")
+_DIVIDER_TAG = "flowgroups_divider"
+_DIVIDER_TEXT = "flowGroups"
+# Sentinel marking the divider's position in the dispatch display sequence.
+_DIVIDER = object()
 
 # Swatch geometry (pixels).  Entity rows show two boxes (positive | gap |
 # negative); categories / scenarios show one.  ``_SWATCH_GAP`` separates the
@@ -587,12 +608,17 @@ class PlotSettingsPicker(tk.Toplevel):
         Path to the project ``plot_settings.yaml`` (already seeded by the
         caller via ``seed_plot_settings``).
     on_apply:
-        Optional zero-arg callback invoked after every successful write
-        (Apply / Save and exit) and after a Cancel restore, so an opener
-        with a live preview (the result viewer) re-renders with the
-        current on-disk colors.  Pass ``None`` for no live preview (the
-        PNG batch dialog).
+        Optional zero-arg callback invoked after every live write
+        (debounced, on each user edit), on Close, and after a Cancel
+        restore, so an opener with a live preview (the result viewer)
+        re-renders with the current on-disk colors.  Pass ``None`` for no
+        live preview (the PNG batch dialog).
     """
+
+    # Debounce for the live write + re-render: a burst of edits (e.g. a
+    # hue drag committed through several handler calls) collapses into one
+    # write after the last change settles.
+    _LIVE_UPDATE_MS = 250
 
     def __init__(
         self,
@@ -604,6 +630,8 @@ class PlotSettingsPicker(tk.Toplevel):
         self.title("Colors and order")
         self._settings_path = Path(settings_path)
         self._on_apply = on_apply
+        # Pending debounced live-update ``after`` id (None = none pending).
+        self._live_after_id: str | None = None
 
         # Non-modal: transient (stacks with the parent, no taskbar entry on
         # some WMs) but NO grab_set / wait_window — the viewer stays live.
@@ -634,6 +662,17 @@ class PlotSettingsPicker(tk.Toplevel):
         # keyed by ``(tree, item_id)`` so the replacement survives GC
         # (the originals in ``self._swatches`` stay too).
         self._row_swatches: dict[tuple[ttk.Treeview, str], tk.PhotoImage] = {}
+        # Trees rendered in a FIXED (engine-pinned) order — currently only the
+        # dispatch category.  Their rows are never reorderable (drag / Alt-move
+        # are no-ops) and never synced back to ``self._data``; the specials'
+        # colors stay editable.  ``_divider_items`` holds every synthetic
+        # divider row as ``(tree, item_id)`` so it can be recognised (and
+        # skipped) everywhere a tree row maps back to an entity.
+        self._fixed_order_trees: set[ttk.Treeview] = set()
+        self._divider_items: set[tuple[ttk.Treeview, str]] = set()
+        # Lazily-built italic font for the divider row (None until first use);
+        # a copy of TkDefaultFont so it tracks the theme's default face/size.
+        self._divider_font: object | None = None
 
         # Working state = parsed dict; snapshot the original TEXT for Cancel.
         self._original_text = self._read_text()
@@ -642,6 +681,28 @@ class PlotSettingsPicker(tk.Toplevel):
         # the always-shown scenarios tab is useful before any comparison run.
         # Add-only; Cancel still restores the on-disk text untouched.
         self._merge_scenarios_from_folders()
+        # Populate the entity sections from the input DB(s) ∪ the dispatch
+        # output aggregates so every drawn entity — including processGroup
+        # aggregates that live only in solved output (e.g. ``Fossil``) — is
+        # listable/colorable on open, without a manual "Refresh from DB".
+        # Add-only; Cancel still restores the on-disk text untouched.
+        self._merge_entities_from_sources()
+
+        # Dispatch-aggregator flowGroup set (display filter only — never
+        # touches ``self._data``): parquet ``group_aggregate`` names ∪ input-DB
+        # ``flow_aggregator`` ∈ {dispatch_plots_only, both}.  Computed ONCE here
+        # and reused by every (re)build (including undo/redo) so the flowGroup
+        # tab lists only dispatch aggregators; a non-aggregator flowGroup stays
+        # in the file but is not drawn.  Guarded like the merge above so a
+        # discovery failure can never break the window opening — an empty set
+        # then disables the filter (all flowGroups show).
+        try:
+            self._dispatch_flowgroup_aggregators = (
+                self._compute_dispatch_flowgroup_aggregators()
+            )
+        except Exception as exc:  # never let discovery break the window open
+            logger.warning("flowGroup aggregator discovery on open failed: %s", exc)
+            self._dispatch_flowgroup_aggregators = set()
 
         # In-memory edit history (deep copies of ``self._data``).  Every
         # mutator calls ``_snapshot()`` (push pre-edit state, clear redo)
@@ -661,58 +722,98 @@ class PlotSettingsPicker(tk.Toplevel):
         _metrics = get_metrics(self)
         cw = _metrics.cw
         lh = _metrics.lh
-        # Sized so all entity-class tabs fit by default: 30% wider and 50%
-        # taller than the previous 91x61 default (which itself grew from the
-        # original 70x34) → fewer hidden tabs and less vertical scrolling.
-        # Clamp to the screen (40px margin) so the bigger default never runs
-        # off a smaller display.
+        # The two-pane layout (a narrow left category selector + one entity
+        # list) needs only ~half the old notebook width, so the default is
+        # much narrower.  Width clamps to the screen (40px margin); height is
+        # a fixed 80% of the screen, positioned with a 10% top/bottom margin
+        # and centred horizontally.
         _margin = 40
-        _w = min(cw * 118, self.winfo_screenwidth() - _margin)
-        _h = min(lh * 92, self.winfo_screenheight() - _margin)
-        self.geometry(f"{_w}x{_h}")
+        _w = min(cw * 59, self.winfo_screenwidth() - _margin)
+        _h = int(self.winfo_screenheight() * 0.8)
+        _y = int(self.winfo_screenheight() * 0.1)
+        _x = max(0, (self.winfo_screenwidth() - _w) // 2)
+        self.geometry(f"{_w}x{_h}+{_x}+{_y}")
         self.resizable(True, True)
-        self.minsize(cw * 40, lh * 16)
+        self.minsize(cw * 22, lh * 16)
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
         self._tree_style = self._make_tree_style()
 
-        # ── Notebook with one tab per present section ─────────────
-        self._notebook = ttk.Notebook(self)
-        self._notebook.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
-        self._build_tabs()
+        # ── Two-pane category-list + entity-list layout ───────────
+        # A horizontal ``PanedWindow`` (user-resizable sash): the LEFT pane is
+        # a narrow, single-select category selector (fixed order — a selector
+        # only, never reorderable); the RIGHT pane holds one entity Treeview
+        # per category, of which only the selected category's tree is shown.
+        self._paned = ttk.PanedWindow(self, orient="horizontal")
+        self._paned.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
+
+        left = ttk.Frame(self._paned)
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(0, weight=1)
+        self._category_list = ttk.Treeview(
+            left, show="tree", selectmode="browse",
+        )
+        self._category_list.grid(row=0, column=0, sticky="nsew")
+        _cat_scroll = ttk.Scrollbar(
+            left, orient="vertical", command=self._category_list.yview,
+        )
+        _cat_scroll.grid(row=0, column=1, sticky="ns")
+        self._category_list.configure(yscrollcommand=_cat_scroll.set)
+        # Pure selector: selection swaps the visible right-pane tree.  NO
+        # drag / Alt-arrow / move bindings are attached here.
+        self._category_list.bind(
+            "<<TreeviewSelect>>", self._on_category_select,
+        )
+
+        # Right pane: a container holding every category's entity tree; only
+        # the selected one is shown (grid / grid_remove) so per-tree state
+        # persists across selections.
+        self._entity_container = ttk.Frame(self._paned)
+        self._entity_container.columnconfigure(0, weight=1)
+        self._entity_container.rowconfigure(0, weight=1)
+
+        self._paned.add(left, weight=0)
+        self._paned.add(self._entity_container, weight=1)
+
+        # Category-selector state (exposed for tests): display order + the
+        # per-category entity tree / frame / left-list item, and the title of
+        # the currently-shown category.
+        self._category_order: list[str] = []
+        self._category_trees: dict[str, ttk.Treeview] = {}
+        self._category_frames: dict[str, ttk.Frame] = {}
+        self._category_items: dict[str, str] = {}
+        self._current_category: str | None = None
+
+        self._build_panes()
 
         # ── Buttons ───────────────────────────────────────────────
-        # Buttons are CREATED in tab-traversal order (Refresh → Undo → Redo
-        # → Apply → Save and exit → Cancel) — Tk's focus traversal follows
-        # the parent's child order.  ``grid`` then places them visually
-        # (left cluster / flexible spacer / right cluster), decoupling the
-        # on-screen layout from the traversal order.
+        # Buttons are CREATED in tab-traversal order (Undo → Redo → Cancel →
+        # Close) — Tk's focus traversal follows the parent's child order.
+        # ``grid`` then places them visually (left cluster / flexible spacer /
+        # right cluster), decoupling the on-screen layout from the traversal
+        # order.  Edits now write the file LIVE (debounced), so there is no
+        # Apply button; Refresh is gone too — the on-open discovery already
+        # seeds every listable entity add-only (stale entries are harmless).
         btn_frame = ttk.Frame(self)
         btn_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 10))
-        btn_frame.columnconfigure(3, weight=1)  # spacer between clusters
+        btn_frame.columnconfigure(2, weight=1)  # spacer between clusters
 
-        ttk.Button(
-            btn_frame, text="Refresh from DB", command=self._on_refresh,
-        ).grid(row=0, column=0)
         self._undo_button = ttk.Button(
             btn_frame, text="Undo", command=self._on_undo,
         )
-        self._undo_button.grid(row=0, column=1, padx=(5, 0))
+        self._undo_button.grid(row=0, column=0)
         self._redo_button = ttk.Button(
             btn_frame, text="Redo", command=self._on_redo,
         )
-        self._redo_button.grid(row=0, column=2, padx=(5, 0))
-        ttk.Button(
-            btn_frame, text="Apply", command=self._on_apply_clicked,
-        ).grid(row=0, column=4, padx=(5, 0))
-        ttk.Button(
-            btn_frame, text="Save and exit", command=self._on_save_exit,
-        ).grid(row=0, column=5, padx=(5, 0))
+        self._redo_button.grid(row=0, column=1, padx=(5, 0))
         ttk.Button(
             btn_frame, text="Cancel", command=self._on_cancel,
-        ).grid(row=0, column=6, padx=(5, 0))
+        ).grid(row=0, column=3, padx=(5, 0))
+        ttk.Button(
+            btn_frame, text="Close", command=self._on_close,
+        ).grid(row=0, column=4, padx=(5, 0))
         self._update_history_buttons()
 
         # ── Keyboard-shortcut hint strip (two rows) ───────────────
@@ -721,23 +822,22 @@ class PlotSettingsPicker(tk.Toplevel):
             text=(
                 "Enter: edit selected row    "
                 "Alt+↑ / Alt+↓: move row    drag: reorder\n"
-                "Ctrl+Enter: Apply    "
-                "Ctrl+Z: undo    Ctrl+Y: redo    Esc: close"
+                "Changes apply live    "
+                "Ctrl+Z: undo    Ctrl+Y: redo    Esc: close (keeps changes)"
             ),
             foreground="gray",
             anchor="w",
             justify="left",
         ).grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 8))
 
-        self.bind("<Escape>", lambda _e: self._on_cancel())
-        # Ctrl+Enter applies the whole tool (write + re-render the open
-        # plot), distinct from a plain Enter (edit the selected row).
-        self.bind("<Control-Return>", lambda _e: self._on_apply_clicked())
-        self.bind("<Control-KP_Enter>", lambda _e: self._on_apply_clicked())
+        # Edits are written live, so Escape and the window ``X`` KEEP the
+        # user's changes (flush the pending write + close) — only the
+        # explicit Cancel button reverts to the on-open text.
+        self.bind("<Escape>", lambda _e: self._on_close())
         self.bind("<Control-z>", lambda _e: self._on_undo())
         self.bind("<Control-y>", lambda _e: self._on_redo())
         self.bind("<Control-Shift-Z>", lambda _e: self._on_redo())
-        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self.protocol("WM_DELETE_WINDOW", lambda: self._on_close())
 
     # ── File I/O ──────────────────────────────────────────────────
     def _read_text(self) -> str:
@@ -808,7 +908,7 @@ class PlotSettingsPicker(tk.Toplevel):
     def _snapshot(self) -> None:
         """Push the PRE-edit ``self._data`` onto the undo stack.
 
-        Called by EVERY mutator (color write-back, reorder sync, refresh)
+        Called by EVERY mutator (color write-back, reorder sync)
         before it changes ``self._data``, so the undo stack always holds the
         states to roll back to.  A fresh edit invalidates any redo history,
         so the redo stack is cleared here.  States are deep copies so later
@@ -824,8 +924,9 @@ class PlotSettingsPicker(tk.Toplevel):
             return
         self._redo_stack.append(copy.deepcopy(self._data))
         self._data = self._undo_stack.pop()
-        self._rebuild_all_tabs()
+        self._rebuild_panes()
         self._update_history_buttons()
+        self._schedule_live_update()
 
     def _on_redo(self) -> None:
         """Re-apply one undone edit."""
@@ -833,8 +934,9 @@ class PlotSettingsPicker(tk.Toplevel):
             return
         self._undo_stack.append(copy.deepcopy(self._data))
         self._data = self._redo_stack.pop()
-        self._rebuild_all_tabs()
+        self._rebuild_panes()
         self._update_history_buttons()
+        self._schedule_live_update()
 
     def _update_history_buttons(self) -> None:
         """Enable/disable Undo/Redo to reflect each stack's emptiness."""
@@ -847,27 +949,43 @@ class PlotSettingsPicker(tk.Toplevel):
                 state="normal" if self._redo_stack else "disabled",
             )
 
-    def _rebuild_all_tabs(self) -> None:
-        """Discard every tab/tree and rebuild them from ``self._data``.
+    def _rebuild_panes(self) -> None:
+        """Discard every entity tree + left-list row and rebuild from
+        ``self._data``.
 
-        Used by undo/redo/refresh so the displayed trees + swatches exactly
+        Used by undo/redo so the displayed trees + swatches exactly
         match the (possibly replaced) working dict — order, colors, and row
         presence.  All per-tree bookkeeping and swatch references are reset
-        so stale rows/images cannot leak across a rebuild.
+        so stale rows/images cannot leak across a rebuild.  The currently
+        selected category is preserved when it still exists, else the first
+        category is selected (``_build_panes`` already selects the first).
         """
-        for tab_id in self._notebook.tabs():
-            self._notebook.forget(tab_id)
-            self.nametowidget(tab_id).destroy()
+        prev = self._current_category
+        for frame in self._category_frames.values():
+            frame.destroy()
+        # Clear category bookkeeping BEFORE deleting the left rows so a
+        # delete-driven ``<<TreeviewSelect>>`` finds no frames and no-ops.
+        self._category_order = []
+        self._category_trees = {}
+        self._category_frames = {}
+        self._category_items = {}
+        self._current_category = None
+        for item in self._category_list.get_children(""):
+            self._category_list.delete(item)
         self._tree_section.clear()
         self._drag_move.clear()
         self._drag_anchor.clear()
         self._drag_moved.clear()
         self._tree_composite.clear()
         self._row_swatches.clear()
+        self._fixed_order_trees.clear()
+        self._divider_items.clear()
         self._swatches.clear()
-        self._build_tabs()
+        self._build_panes()
+        if prev is not None and prev in self._category_trees:
+            self._show_category(prev)
 
-    # ── Tab construction ──────────────────────────────────────────
+    # ── Pane construction ─────────────────────────────────────────
     def _make_tree_style(self) -> str:
         """Return a Treeview style whose item layout drops the disclosure
         indicator, so leaf rows start flush-left (no ~18px indent) — the
@@ -889,21 +1007,22 @@ class PlotSettingsPicker(tk.Toplevel):
             return "Treeview"
         return name
 
-    def _build_tabs(self) -> None:
-        """Create the tabs.
+    def _build_panes(self) -> None:
+        """Populate the left category selector and the right entity trees.
 
-        Entity-class tabs (nodeGroup / flowGroup / unit / connection / node)
-        are ALWAYS shown — even when empty — so it is visible that a class
-        has no entities (and "Refresh from DB" can populate it).  The
-        scenarios tab is ALWAYS shown too, and last.  Category tabs appear
-        only when present.
+        Entity-class categories (nodeGroup / flowGroup / unit / connection /
+        node) are ALWAYS shown — even when empty — so it is visible that a
+        class has no entities (the on-open discovery seeds any it can).  The
+        scenarios category is ALWAYS shown too, and last.  Category
+        subsections appear only when present.  The first category (nodeGroup)
+        is selected by default.
         """
         entities = self._data.get("entities")
         entities = entities if isinstance(entities, dict) else {}
         for cls in _ENTITY_CLASSES:
             section = entities.get(cls)
             rows = list(section.items()) if isinstance(section, dict) else []
-            self._add_tab(
+            self._add_category(
                 title=cls,
                 rows=rows,
                 composite=True,
@@ -915,34 +1034,61 @@ class PlotSettingsPicker(tk.Toplevel):
             for name in _CATEGORY_SECTIONS:
                 section = categories.get(name)
                 if isinstance(section, dict) and section:
-                    self._add_tab(
+                    self._add_category(
                         title=name,
                         rows=list(section.items()),
                         composite=False,
                         section_path=("categories", name),
                     )
 
-        # Scenarios tab is ALWAYS shown, and last — users rarely edit it, but
-        # it must be discoverable so scenario-comparison colors are editable
-        # even before a comparison run (populated from output folders on open).
+        # Scenarios is ALWAYS shown, and last — users rarely edit it, but it
+        # must be discoverable so scenario-comparison colors are editable even
+        # before a comparison run (populated from output folders on open).
         scenarios = self._data.get("scenarios")
         scenarios = scenarios if isinstance(scenarios, dict) else {}
-        self._add_tab(
+        self._add_category(
             title="scenarios",
             rows=list(scenarios.items()),
             composite=False,
             section_path=("scenarios",),
         )
 
-    def _add_tab(
+        # Default selection = the first category (nodeGroup).
+        if self._category_order:
+            self._show_category(self._category_order[0])
+
+    def _add_category(
         self,
         title: str,
         rows: list[tuple[str, object]],
         composite: bool,
         section_path: tuple[str, ...],
     ) -> None:
-        """Add a Notebook tab with a scrollable single-column Treeview."""
-        frame = ttk.Frame(self._notebook)
+        """Register a category: append it to the LEFT selector and build its
+        RIGHT-pane entity Treeview (initially hidden except the first).
+
+        The entity tree is built exactly as the old notebook tab was — same
+        widgets, same per-tree bookkeeping, same drag / Alt-arrow / edit
+        bindings — so all reorder / color-edit behaviour is unchanged; only
+        the container differs (a swapped grid cell instead of a notebook tab).
+        """
+        # Display filter (rows only — ``self._data`` is never touched, so the
+        # file still round-trips every flowGroup): the flowGroup tab lists ONLY
+        # dispatch aggregators (parquet ``group_aggregate`` ∪ input-DB
+        # ``flow_aggregator`` ∈ {dispatch_plots_only, both}).  When the
+        # aggregator set is empty (no DB and no parquet aggregates discovered —
+        # e.g. a pre-solve project with an unreadable DB) the filter is disabled
+        # so we never wrongly hide every flowGroup.
+        aggregators = getattr(self, "_dispatch_flowgroup_aggregators", None)
+        if section_path == ("entities", "flowGroup") and aggregators:
+            rows = [(name, value) for name, value in rows if name in aggregators]
+
+        # Left selector row (pure selector — no reorder bindings attached).
+        item = self._category_list.insert("", "end", text=title)
+        self._category_items[title] = item
+
+        # Right-pane entity tree (same construction as the old tab).
+        frame = ttk.Frame(self._entity_container)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
@@ -959,13 +1105,24 @@ class PlotSettingsPicker(tk.Toplevel):
         hscroll.grid(row=1, column=0, sticky="ew")
         tree.configure(xscrollcommand=hscroll.set)
 
-        for name, value in rows:
-            if composite:
-                pos, neg = _resolve_pos_neg(value)
-                image = self._make_swatch(pos, neg, reserve_neg=True)
-            else:
-                image = self._make_swatch(value, None)
-            tree.insert("", "end", text=str(name), image=image)
+        if section_path == _DISPATCH_SECTION:
+            # Render the stack top→bottom with the flowGroups divider between
+            # the positive and negative specials.  The specials are reorderable
+            # WITHIN each sign group (positives among themselves above the
+            # divider, negatives among themselves below), but a row may not
+            # cross the divider and the divider itself never moves — enforced in
+            # the reorder paths via the divider row index (see
+            # ``_clamp_insert_for_divider``).  The tree is therefore NOT added
+            # to ``_fixed_order_trees``.
+            self._insert_dispatch_rows(tree, rows)
+        else:
+            for name, value in rows:
+                if composite:
+                    pos, neg = _resolve_pos_neg(value)
+                    image = self._make_swatch(pos, neg, reserve_neg=True)
+                else:
+                    image = self._make_swatch(value, None)
+                tree.insert("", "end", text=str(name), image=image)
 
         # Register for reordering and wire drag + keyboard moves.
         self._tree_section[tree] = section_path
@@ -981,14 +1138,190 @@ class PlotSettingsPicker(tk.Toplevel):
         tree.bind("<Double-Button-1>", self._on_row_double_click)
         tree.bind("<Return>", self._on_row_return)
         tree.bind("<FocusIn>", self._on_tree_focus_in)
-        # Ctrl+Enter must Apply even with the tree focused: the plain
-        # ``<Return>`` (no-modifier) binding above otherwise also matches a
-        # Ctrl+Return and consumes it (returns "break"), so bind the more
-        # specific accelerator on the tree too — it wins on this widget.
-        tree.bind("<Control-Return>", self._on_apply_shortcut)
-        tree.bind("<Control-KP_Enter>", self._on_apply_shortcut)
 
-        self._notebook.add(frame, text=title)
+        # All frames share the one container cell; built hidden and shown on
+        # selection (grid / grid_remove) so per-tree state survives swaps.
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.grid_remove()
+
+        self._category_order.append(title)
+        self._category_trees[title] = tree
+        self._category_frames[title] = frame
+
+    # ── Dispatch category: engine-fixed order + flowGroups divider ────
+    @staticmethod
+    def _order_dispatch_rows(
+        rows: list[tuple[str, object]],
+    ) -> list[object]:
+        """Order the dispatch section rows into the two sign groups + divider.
+
+        The dispatch plot's special columns split into a POSITIVE group (above
+        the zero axis) and a NEGATIVE group (below it); the flowGroups divider
+        marks the boundary where the movable flowGroup bands stack.  A special
+        can be reordered WITHIN its sign group but never crosses the divider (a
+        positive special is always positive).  So the picker renders the
+        positive specials, then the divider sentinel, then the negative
+        specials — each group in the FILE's top-to-bottom key order, which is
+        the visual top-to-bottom stack order the engine honors
+        (``categories.dispatch`` order → ``special_order`` in
+        ``dispatch_data._order_dispatch_columns``).  Only rows actually present
+        are emitted.  Any entry that is neither a positive nor a negative
+        special (defensive — should not occur) is appended just BEFORE the
+        divider so it never masquerades as a negative band.
+
+        Returns a display sequence of ``(name, value)`` tuples with the
+        :data:`_DIVIDER` sentinel marking the divider position.
+        """
+        from flextool.scenario_comparison.constants import (
+            NEGATIVE_SPECIAL,
+            POSITIVE_SPECIAL,
+        )
+
+        present = dict(rows)
+        pos_set = set(POSITIVE_SPECIAL)
+        neg_set = set(NEGATIVE_SPECIAL)
+        # Preserve the file's key order within each sign group (that IS the
+        # visual top-to-bottom order the engine renders).
+        pos = [n for n, _v in rows if n in pos_set]
+        neg = [n for n, _v in rows if n in neg_set]
+        # Any unclassified defensive extras keep their raw file order.
+        unknown = [n for n, _v in rows if n not in pos_set and n not in neg_set]
+
+        seq: list[object] = [(n, present[n]) for n in pos]
+        seq += [(n, present[n]) for n in unknown]
+        seq.append(_DIVIDER)
+        seq += [(n, present[n]) for n in neg]
+        return seq
+
+    def _insert_dispatch_rows(
+        self, tree: ttk.Treeview, rows: list[tuple[str, object]],
+    ) -> None:
+        """Insert the fixed-order dispatch rows plus the flowGroups divider.
+
+        Real special rows carry a single-box swatch (dispatch is not
+        composite) and are color-editable; the synthetic divider row carries
+        the distinct ``_DIVIDER_TAG`` highlight, no swatch, and is recorded in
+        ``self._divider_items`` so it is skipped everywhere a row maps back to
+        an entity (it is display-only — never written to ``self._data``).
+        """
+        self._configure_divider_tag(tree)
+        for entry in self._order_dispatch_rows(rows):
+            if entry is _DIVIDER:
+                iid = tree.insert(
+                    "", "end", text=_DIVIDER_TEXT, tags=(_DIVIDER_TAG,),
+                )
+                self._divider_items.add((tree, iid))
+            else:
+                name, value = entry
+                image = self._make_swatch(value, None)
+                tree.insert("", "end", text=str(name), image=image)
+
+    def _configure_divider_tag(self, tree: ttk.Treeview) -> None:
+        """Style the divider tag: a contrasting band + italic text.
+
+        A muted blue-gray background reads as a divider against the default
+        (light) ttk Treeview row background in both the classic and modern
+        themes.  The italic font is a copy of ``TkDefaultFont`` (so it tracks
+        the theme's default face / size); font creation is guarded so a Tk
+        without font introspection still gets the background highlight.
+        """
+        if self._divider_font is None:
+            try:
+                import tkinter.font as tkfont
+
+                base = tkfont.nametofont("TkDefaultFont")
+                self._divider_font = tkfont.Font(**base.actual())
+                self._divider_font.configure(slant="italic")
+            except tk.TclError:
+                self._divider_font = ""  # sentinel: font unavailable
+        opts = {"background": "#c8d4e0", "foreground": "#1a1a1a"}
+        if self._divider_font:
+            opts["font"] = self._divider_font
+        tree.tag_configure(_DIVIDER_TAG, **opts)
+
+    def _is_divider(self, tree: ttk.Treeview, item: str) -> bool:
+        """True iff *item* in *tree* is the synthetic flowGroups divider row."""
+        return (tree, item) in self._divider_items
+
+    def _divider_index(self, tree: ttk.Treeview) -> int | None:
+        """Row index of *tree*'s flowGroups divider, or ``None`` if it has none.
+
+        Used by the reorder paths to keep a special on its own side of the
+        divider (positives above, negatives below) and to keep the divider
+        itself pinned.  A tree without a divider (every non-dispatch tree)
+        returns ``None``, so the sign-group clamp is a no-op there.
+        """
+        for i, iid in enumerate(tree.get_children("")):
+            if (tree, iid) in self._divider_items:
+                return i
+        return None
+
+    def _clamp_insert_for_divider(
+        self,
+        tree: ttk.Treeview,
+        order: list[str],
+        selected: list[str],
+        remaining: list[str],
+        insert_at: int,
+    ) -> int:
+        """Clamp *insert_at* so the moved block stays on its side of the divider.
+
+        *insert_at* is an index into *remaining* (the non-selected rows, which
+        always include the divider).  A block of positive specials (currently
+        above the divider) is clamped so it lands at or above the divider's slot
+        in *remaining*; a block of negatives (below) is clamped so it lands just
+        below it.  A move that would cross is thus clamped to the boundary (no
+        crossing), never rejected.  The divider is never in *selected*, so it
+        never moves.  No-op for trees without a divider.
+        """
+        div_idx = self._divider_index(tree)
+        if div_idx is None:
+            return insert_at
+        div_iid = order[div_idx]
+        if div_iid not in remaining:
+            return insert_at  # divider defensively selected — leave untouched
+        div_rem_idx = remaining.index(div_iid)
+        sel_idx = [order.index(r) for r in selected]
+        if not sel_idx:
+            return insert_at
+        if max(sel_idx) < div_idx:
+            # Positives: keep the block at/above the divider's slot.
+            return min(insert_at, div_rem_idx)
+        if min(sel_idx) > div_idx:
+            # Negatives: keep the block just below the divider's slot.
+            return max(insert_at, div_rem_idx + 1)
+        return insert_at
+
+    def _show_category(self, title: str) -> None:
+        """Show *title*'s entity tree, hiding the previously shown one.
+
+        Also reflects the selection in the left selector so a programmatic
+        show (default open, undo/redo restore) and a user click stay in sync.
+        """
+        if title not in self._category_frames:
+            return
+        if (
+            self._current_category is not None
+            and self._current_category != title
+            and self._current_category in self._category_frames
+        ):
+            self._category_frames[self._current_category].grid_remove()
+        self._category_frames[title].grid()
+        self._current_category = title
+        item = self._category_items.get(title)
+        if (
+            item is not None
+            and self._category_list.exists(item)
+            and self._category_list.selection() != (item,)
+        ):
+            self._category_list.selection_set(item)
+
+    def _on_category_select(self, _event=None) -> None:
+        """Left-list selection changed → show that category's entity tree."""
+        sel = self._category_list.selection()
+        if not sel:
+            return
+        self._show_category(self._category_list.item(sel[0], "text"))
 
     # ── Reordering (drag + keyboard) ──────────────────────────────
     def _selected_rows(self, tree: ttk.Treeview) -> list[str]:
@@ -1010,10 +1343,19 @@ class PlotSettingsPicker(tk.Toplevel):
         the selection, and returns True iff the order actually changed.
         """
         order = list(tree.get_children(""))
-        selected = self._selected_rows(tree)
+        # The flowGroups divider is display-only: never part of a moved block
+        # (so an arrow-key selection that landed on it can't drag it).
+        selected = [
+            r for r in self._selected_rows(tree)
+            if not self._is_divider(tree, r)
+        ]
         if not selected:
             return False
         remaining = [r for r in order if r not in set(selected)]
+        # Keep the block on its side of the divider (no-op without a divider).
+        insert_at = self._clamp_insert_for_divider(
+            tree, order, selected, remaining, insert_at,
+        )
         insert_at = max(0, min(insert_at, len(remaining)))
         new_order = remaining[:insert_at] + selected + remaining[insert_at:]
         if new_order == order:
@@ -1025,19 +1367,52 @@ class PlotSettingsPicker(tk.Toplevel):
         return True
 
     def _on_drag_start(self, event: tk.Event) -> str | None:
-        """Begin a MOVE drag only when the press is on a selected row.
+        """Begin a MOVE drag whenever the press lands on a row.
 
-        Pressing an already-selected row starts moving the whole selection
-        (return ``"break"`` to keep the multi-selection intact).  Pressing
-        an unselected row / empty space is left to ttk's default handler so
-        a click selects and a drag DRAW-selects a range.
+        Pressing an already-selected row moves the whole selection.
+        Pressing an UNSELECTED row (no Shift/Ctrl) first collapses the
+        selection onto that row, then moves it — so a drag started on a
+        not-yet-selected item picks it up, as users expect, instead of
+        ttk's native range draw-select.  Either way we return ``"break"``
+        to own the selection and keep it intact for the drag.
+
+        Shift/Ctrl presses are left to ttk's default handler so extend /
+        toggle multi-selection still works (the user builds a selection,
+        then drags it as a block).  A press on empty space is native too.
         """
         tree = event.widget
         if tree not in self._tree_section:
             return None
+        # Fixed-order (dispatch) trees never reorder — let ttk's native
+        # ButtonPress run (selection / focus) but prime no move drag.
+        if tree in self._fixed_order_trees:
+            self._drag_move[tree] = False
+            self._drag_moved[tree] = False
+            self._drag_anchor[tree] = None
+            return None
         row = tree.identify_row(event.y) or None
         self._drag_moved[tree] = False
-        if row and row in set(tree.selection()):
+        # The flowGroups divider is display-only — never selected or dragged.
+        # Swallow the press (``"break"``) so ttk's native handler does not
+        # select it, and prime no move.
+        if row and self._is_divider(tree, row):
+            self._drag_move[tree] = False
+            self._drag_anchor[tree] = None
+            return "break"
+        # Shift (0x0001) / Control (0x0004) → let ttk extend/toggle select.
+        if getattr(event, "state", 0) & 0x0005:
+            self._drag_move[tree] = False
+            self._drag_anchor[tree] = None
+            return None
+        if row:
+            if row not in set(tree.selection()):
+                tree.selection_set(row)
+                tree.focus(row)
+            # Returning "break" suppresses ttk's default ButtonPress handler,
+            # which is what normally gives the tree KEYBOARD focus — without
+            # this the Alt-Up / Alt-Down reorder bindings (which require the
+            # tree to hold keyboard focus) never fire after a click.
+            tree.focus_set()
             self._drag_move[tree] = True
             self._drag_anchor[tree] = row
             return "break"
@@ -1048,6 +1423,8 @@ class PlotSettingsPicker(tk.Toplevel):
     def _on_drag_motion(self, event: tk.Event) -> None:
         """Move the selection to follow the cursor (move drags only)."""
         tree = event.widget
+        if tree in self._fixed_order_trees:
+            return  # engine-fixed order — no reorder drag
         if not self._drag_move.get(tree):
             return  # native draw-select drag — do not interfere
         target = tree.identify_row(event.y)
@@ -1056,13 +1433,24 @@ class PlotSettingsPicker(tk.Toplevel):
         order = list(tree.get_children(""))
         selected = set(self._selected_rows(tree))
         target_idx = order.index(target)
-        # Drop the block where the cursor is: count non-selected rows above
-        # the target row to get the insertion slot among them.
-        insert_at = sum(
-            1 for r in order[:target_idx] if r not in selected
-        )
-        if target not in selected:
-            insert_at += 1  # land the block just past the hovered row
+        # Number of non-selected rows above the hovered row = the insertion
+        # slot that lands the block JUST ABOVE the target.
+        above = sum(1 for r in order[:target_idx] if r not in selected)
+        # Decide above/below from the cursor's position within the hovered
+        # row: upper half drops before it, lower half after.  Using the row
+        # midpoint (not an unconditional "+1") is what makes the TOP slot
+        # reachable — hovering the upper half of the first row gives
+        # insert_at == 0.  When the row has no geometry (scrolled off), fall
+        # back to "below" (the previous behaviour).
+        if target in selected:
+            insert_at = above
+        else:
+            bbox = tree.bbox(target)
+            drop_below = True
+            if bbox:
+                _bx, by, _bw, bh = bbox
+                drop_below = event.y >= by + bh / 2
+            insert_at = above + 1 if drop_below else above
         if self._reorder_selection_block(tree, insert_at):
             self._drag_moved[tree] = True
             tree.see(target)
@@ -1102,8 +1490,17 @@ class PlotSettingsPicker(tk.Toplevel):
         """
         if tree not in self._tree_section:
             return "break"
+        # Fixed-order trees are engine-pinned — Alt-move is a no-op.
+        if tree in self._fixed_order_trees:
+            return "break"
         order = list(tree.get_children(""))
-        selected = self._selected_rows(tree)
+        # The flowGroups divider never moves and is never part of the block;
+        # drop it from the selection so it can't be Alt-moved even when it holds
+        # focus from arrow-key navigation.
+        selected = [
+            r for r in self._selected_rows(tree)
+            if not self._is_divider(tree, r)
+        ]
         if not selected:
             return "break"
         sset = set(selected)
@@ -1141,9 +1538,14 @@ class PlotSettingsPicker(tk.Toplevel):
         if not isinstance(section, dict):
             return
 
-        # Tree row order, by name (column #0 text).
+        # Tree row order, by name (column #0 text).  Skip any synthetic
+        # divider row so its display-only label ("flowGroups") can never leak
+        # into the working dict as an entity (defensive — fixed-order trees
+        # are never synced, but a stray divider must not round-trip).
         ordered_names = [
-            tree.item(iid, "text") for iid in tree.get_children("")
+            tree.item(iid, "text")
+            for iid in tree.get_children("")
+            if not self._is_divider(tree, iid)
         ]
         # Rebuild preserving values; keep any keys not represented as rows
         # (defensive — should not happen) appended in their original order.
@@ -1161,12 +1563,13 @@ class PlotSettingsPicker(tk.Toplevel):
             return
 
         # Record the pre-edit state, then write back into the parent
-        # container so the change is in-place for the dict Apply/Save dump.
+        # container so the change is in-place for the live write / Close dump.
         self._snapshot()
         parent = self._data
         for key in section_path[:-1]:
             parent = parent[key]
         parent[section_path[-1]] = rebuilt
+        self._schedule_live_update()
 
     # ── Color editing (double-click / Enter) ──────────────────────
     def _restore_tree_focus(self, tree: ttk.Treeview, item: str) -> None:
@@ -1180,11 +1583,6 @@ class PlotSettingsPicker(tk.Toplevel):
             tree.selection_set(item)
             tree.focus(item)
             tree.see(item)
-
-    def _on_apply_shortcut(self, _event: tk.Event | None = None) -> str:
-        """Ctrl+Enter from a tree → Apply (write + re-render), consume key."""
-        self._on_apply_clicked()
-        return "break"
 
     def _on_tree_focus_in(self, event: tk.Event) -> None:
         """Activate a row when the tree gains focus (e.g. via Tab).
@@ -1249,6 +1647,9 @@ class PlotSettingsPicker(tk.Toplevel):
 
     def _edit_row_color(self, tree: ttk.Treeview, item: str) -> None:
         """Open the appropriate color dialog and write the result back."""
+        # The synthetic flowGroups divider is display-only — never editable.
+        if self._is_divider(tree, item):
+            return
         section_path = self._tree_section[tree]
         section = self._section_dict(section_path)
         if section is None:
@@ -1293,6 +1694,7 @@ class PlotSettingsPicker(tk.Toplevel):
         else:
             section[name] = {"color": new_pos, "neg_color": new_neg}
             self._rebuild_row_swatch(tree, item, new_pos, new_neg)
+        self._schedule_live_update()
 
     def _edit_single_color(
         self,
@@ -1319,6 +1721,7 @@ class PlotSettingsPicker(tk.Toplevel):
         self._snapshot()
         section[name] = new_color
         self._rebuild_row_swatch(tree, item, new_color, None)
+        self._schedule_live_update()
 
     def _rebuild_row_swatch(
         self,
@@ -1337,7 +1740,7 @@ class PlotSettingsPicker(tk.Toplevel):
         self._row_swatches[(tree, item)] = image
         tree.item(item, image=image)
 
-    # ── Refresh from the input DB ─────────────────────────────────
+    # ── Entity discovery (on-open seeding) ────────────────────────
     def _discover_input_dbs(self) -> list[str]:
         """Return ``sqlite:///`` URLs for the project's input/intermediate DBs.
 
@@ -1396,6 +1799,282 @@ class PlotSettingsPicker(tk.Toplevel):
             scenarios[name] = color
         self._data["scenarios"] = scenarios
 
+    def _discover_dispatch_sources(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, float]]:
+        """Discover dispatch entities + per-entity std dev from output parquet.
+
+        PRIMARY discovery source: the solved ``output_parquet`` — i.e. exactly
+        what the dispatch plots draw.  For every executed-scenario folder
+        (``_``-prefixed manifest dirs skipped) the dispatch bundle is loaded
+        with :func:`~flextool.scenario_comparison.dispatch_data.load_dispatch_bundle`
+        (the same load sequence the result viewer uses), then:
+
+        * :func:`~flextool.scenario_comparison.config_builder.discover_dispatch_entities`
+          classifies the discovered names into ``nodeGroup`` / ``flowGroup`` /
+          ``unit`` / ``connection`` (processGroup ``group_aggregate`` names —
+          e.g. ``Fossil`` — land in ``flowGroup``), unioned across folders;
+        * :meth:`_accumulate_dispatch_std` runs
+          :func:`~flextool.scenario_comparison.dispatch_data.prepare_dispatch_data`
+          per dispatch node_group and records a per-entity std dev (max across
+          node_groups / scenarios) used to order newly-discovered entries.
+
+        The ``node`` class is intentionally NOT discovered here:
+        ``discover_dispatch_entities`` omits nodes (node colors are
+        dataset-coupled), so the node tab stays file-driven.
+
+        Robust by construction: a missing ``output_parquet``, empty / partial
+        scenario folders, unreadable parquet, a scenario with no dispatch
+        groups, and per-node_group prepare failures are all skipped — never
+        raising.  Returns ``({class -> names}, {entity -> std})`` with empty
+        sets/map when nothing is discoverable.
+        """
+        parquet_dir = self._settings_path.parent / "output_parquet"
+        per_class: dict[str, set[str]] = {
+            "nodeGroup": set(),
+            "flowGroup": set(),
+            "unit": set(),
+            "connection": set(),
+        }
+        std_by_entity: dict[str, float] = {}
+        if not parquet_dir.is_dir():
+            return per_class, std_by_entity
+
+        from flextool.scenario_comparison.config_builder import (
+            discover_dispatch_entities,
+        )
+        from flextool.scenario_comparison.dispatch_data import (
+            load_dispatch_bundle,
+        )
+
+        for scen_dir in sorted(parquet_dir.iterdir()):
+            if not scen_dir.is_dir() or scen_dir.name.startswith("_"):
+                continue
+            scenario = scen_dir.name
+            try:
+                bundle = load_dispatch_bundle(parquet_dir, scenario)
+            except Exception as exc:  # unreadable / partial parquet bundle
+                logger.warning(
+                    "Cannot load dispatch bundle for %s: %s", scenario, exc,
+                )
+                continue
+            if bundle is None:
+                continue
+            mappings, results = bundle
+            try:
+                discovered = discover_dispatch_entities(mappings, [])
+            except Exception as exc:
+                logger.warning(
+                    "discover_dispatch_entities failed for %s: %s",
+                    scenario, exc,
+                )
+                discovered = {}
+            for cls in per_class:
+                per_class[cls].update(discovered.get(cls, []))
+            self._accumulate_dispatch_std(
+                mappings, results, scenario, std_by_entity,
+            )
+        return per_class, std_by_entity
+
+    def _accumulate_dispatch_std(
+        self, mappings, results, scenario: str,
+        std_by_entity: dict[str, float],
+    ) -> None:
+        """Fold per-entity dispatch std devs from one scenario into the map.
+
+        For each dispatch node_group (the ``group`` values of
+        ``mappings.dispatch_groups``) the scenario's dispatch DataFrame is
+        prepared exactly as the plots build it (``config_order=None``).  Each
+        column's std dev (``series.std()``) is attributed to the base entity
+        name — any ``_pos`` / ``_neg`` split suffix stripped — and accumulated
+        as the MAX across occurrences (node_groups / scenarios) so a per-entity
+        value is stable.  ``NaN`` std devs (degenerate single-point series) and
+        any prepare failure are skipped, never raising.
+        """
+        dispatch_groups = getattr(mappings, "dispatch_groups", None)
+        if (
+            dispatch_groups is None
+            or dispatch_groups.empty
+            or "group" not in dispatch_groups.columns
+        ):
+            return
+
+        from flextool.scenario_comparison.dispatch_data import (
+            prepare_dispatch_data,
+        )
+
+        for node_group in dispatch_groups["group"].unique():
+            try:
+                df_dispatch, _ = prepare_dispatch_data(
+                    results, mappings, scenario, str(node_group),
+                    config_order=None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "prepare_dispatch_data failed (%s / %s): %s",
+                    scenario, node_group, exc,
+                )
+                continue
+            if df_dispatch is None or df_dispatch.empty:
+                continue
+            for col in df_dispatch.columns:
+                base = str(col)
+                for suffix in ("_pos", "_neg"):
+                    if base.endswith(suffix):
+                        base = base[: -len(suffix)]
+                        break
+                try:
+                    std = float(df_dispatch[col].std())
+                except (TypeError, ValueError):
+                    continue
+                if std != std:  # NaN
+                    continue
+                prev = std_by_entity.get(base)
+                if prev is None or std > prev:
+                    std_by_entity[base] = std
+
+    def _order_new_names_by_std(
+        self, new_names, std_by_entity: dict[str, float],
+    ) -> list[str]:
+        """Order newly-discovered entity names by std dev (one-time default).
+
+        Matches ``_order_dispatch_columns``' remaining / std-dev buckets, which
+        sort ASCENDING by std dev with the name as a deterministic secondary
+        key (``sorted(..., key=lambda c: (col_std.get(c, 0), c))``), so the
+        persisted order of new entries equals the stacking order the dispatch
+        render would have produced.  Names with no computed std dev (not a
+        dispatch entity, or the DB fallback path where no std is available)
+        sort LAST, by name.
+        """
+        def key(name: str):
+            std = std_by_entity.get(name)
+            if std is None:
+                return (1, 0.0, name)  # no std → after std-bearing, by name
+            return (0, std, name)
+
+        return sorted(new_names, key=key)
+
+    def _discover_all_entities(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, float]]:
+        """Per-class entity names + per-entity std dev for the on-open merge.
+
+        Source of truth for the add-only on-open merge
+        (:meth:`_merge_entities_from_sources`), so the discovery policy lives
+        in one place.
+
+        * **PRIMARY** — dispatch entities discovered from the solved
+          ``output_parquet`` (:meth:`_discover_dispatch_sources`).  This is
+          what the plots actually draw, and it carries the std devs used to
+          order new entries.  Node is not covered here (file-driven).
+        * **FALLBACK** — only when there is NO dispatch output to discover
+          from (e.g. the pre-solve PNG-batch dialog on a project that hasn't
+          solved yet) is the input DB consulted (:meth:`_discover_input_dbs`
+          + :meth:`_fetch_entity_union`).  The DB fallback yields no std devs
+          (new entries then order by name).
+
+        Returns ``({class -> set of names}, {entity -> std})``.  Never raises
+        for a missing ``output_parquet`` or DB (both contribute nothing).
+        """
+        per_class, std_by_entity = self._discover_dispatch_sources()
+        if any(per_class.values()):
+            return per_class, std_by_entity
+        # Fallback: input DB(s).  No std devs → new entries order by name.
+        return self._fetch_entity_union(self._discover_input_dbs()), {}
+
+    def _merge_entities_from_sources(self) -> None:
+        """Additively seed entities from the solved dispatch output (DB fallback).
+
+        Called on open so the entity tabs are populated immediately (fixes
+        the symptom where entities only appeared after a manual "Refresh",
+        and where output-only aggregates like ``Fossil`` were never listable).
+        Discovery is parquet-first with a DB fallback
+        (:meth:`_discover_all_entities`).  **Add-only**: newly discovered
+        names (per class) are appended, ORDERED among themselves by std dev
+        (:meth:`_order_new_names_by_std` — a one-time default matching the
+        dispatch render's stacking order) with a default palette color
+        (:func:`assign_palette_colors`); existing entries — including any
+        edited color and the current order — are never touched, and nothing
+        is pruned.  Node is not seeded from parquet (file-driven; see
+        :meth:`_discover_dispatch_sources`).
+
+        Mutates ``self._data['entities']`` in memory only and records NO undo
+        step; Cancel reverts via the on-disk text snapshot, exactly like
+        :meth:`_merge_scenarios_from_folders`.  Any discovery failure (e.g. a
+        corrupt input DB) is logged and skipped so opening the picker is never
+        broken.
+        """
+        try:
+            discovered, std_by_entity = self._discover_all_entities()
+        except Exception as exc:  # never let discovery break the window open
+            logger.warning("Entity discovery on open failed: %s", exc)
+            return
+        if not any(discovered.values()):
+            return
+
+        from flextool.scenario_comparison.config_builder import (
+            assign_palette_colors,
+        )
+
+        entities = self._data.get("entities")
+        entities = entities if isinstance(entities, dict) else {}
+        changed = False
+        for cls, names in discovered.items():
+            if not names:
+                continue
+            section = entities.get(cls)
+            section = section if isinstance(section, dict) else {}
+            # Add-only: append names not already present, ordered by std dev;
+            # keep existing entries' order + values untouched.
+            new_names = self._order_new_names_by_std(
+                [n for n in names if n not in section], std_by_entity,
+            )
+            if not new_names:
+                continue
+            for name, color in assign_palette_colors(new_names).items():
+                section[name] = color
+            entities[cls] = section
+            changed = True
+        if changed:
+            self._data["entities"] = entities
+
+    def _compute_dispatch_flowgroup_aggregators(self) -> set[str]:
+        """flowGroups that are dispatch aggregators (for the display filter).
+
+        The set is the UNION of:
+
+        * the parquet ``group_aggregate`` flowGroup names discovered from the
+          solved ``output_parquet`` (:meth:`_discover_dispatch_sources` —
+          exactly the aggregates the dispatch plots draw, e.g. ``Fossil``), and
+        * every input-DB flowGroup whose ``flow_aggregator`` parameter is
+          ``dispatch_plots_only`` or ``both``
+          (:func:`~flextool.scenario_comparison.input_entity_colors.fetch_flow_aggregator_flowgroups`,
+          one DB open each over :meth:`_discover_input_dbs`).
+
+        Each source is individually guarded so one failing does not lose the
+        other; a total failure yields an empty set, which
+        :meth:`_add_category` treats as "do not filter" (show all flowGroups).
+        """
+        aggregators: set[str] = set()
+        try:
+            per_class, _std = self._discover_dispatch_sources()
+            aggregators |= set(per_class.get("flowGroup", set()))
+        except Exception as exc:  # parquet discovery must not break the filter
+            logger.warning("Dispatch flowGroup discovery failed: %s", exc)
+
+        from flextool.scenario_comparison.input_entity_colors import (
+            fetch_flow_aggregator_flowgroups,
+        )
+
+        for url in self._discover_input_dbs():
+            try:
+                aggregators |= fetch_flow_aggregator_flowgroups(url)
+            except Exception as exc:  # per-DB read must not break the filter
+                logger.warning(
+                    "flow_aggregator read failed for %s: %s", url, exc,
+                )
+        return aggregators
+
     def _fetch_entity_union(self, db_urls: list[str]) -> dict[str, set[str]]:
         """Union per-class entity names across every input DB (one open each).
 
@@ -1418,96 +2097,80 @@ class PlotSettingsPicker(tk.Toplevel):
                 union[cls].update(names)
         return union
 
-    def _on_refresh(self) -> None:
-        """Re-fetch entities from the project DB(s): ADD new + PRUNE stale.
+    # NOTE: there is deliberately no "Refresh from DB" action any more.  The
+    # on-open discovery (:meth:`_merge_entities_from_sources`) already seeds
+    # every listable entity add-only; the manual add+prune refresh was
+    # dropped along with its button.  Add-only leaves at most a few stale
+    # entries in the file, which are harmless (an unused color/order key never
+    # drawn), so nothing prunes them — the simplicity is worth it.
 
-        Discovers the project's input DB(s), unions their per-class entity
-        names, and updates ``self._data['entities']`` in place: discovered
-        names not already present are appended with a default-palette color
-        (:func:`assign_palette_colors`); existing entries no longer in the DB
-        are removed; surviving entries keep their order and (edited) values.
-        ``categories`` and ``scenarios`` are never touched.  Records one undo
-        step and rebuilds the entity tabs.  Shows an info box and changes
-        nothing when no input DB is found.
+    # ── Live update (debounced) ───────────────────────────────────
+    def _schedule_live_update(self) -> None:
+        """Debounce a live write + re-render after a user mutation.
+
+        Cancels any pending update and schedules a fresh one, so a burst of
+        edits (e.g. a color-drag committed through several handler calls)
+        collapses into a single write once the changes settle.  Guarded
+        against a destroyed window (the ``after`` call raises then).
         """
-        from flextool.scenario_comparison.config_builder import (
-            assign_palette_colors,
-        )
-        from flextool.scenario_comparison.input_entity_colors import (
-            RELEVANT_ENTITY_CLASSES,
-        )
-
-        db_urls = self._discover_input_dbs()
-        if not db_urls:
-            messagebox.showinfo(
-                "Refresh from DB",
-                "No input database found.",
-                parent=self,
+        if self._live_after_id is not None:
+            try:
+                self.after_cancel(self._live_after_id)
+            except tk.TclError:
+                pass
+            self._live_after_id = None
+        try:
+            self._live_after_id = self.after(
+                self._LIVE_UPDATE_MS, self._flush_live_update,
             )
-            return
+        except tk.TclError:
+            self._live_after_id = None
 
-        union = self._fetch_entity_union(db_urls)
+    def _flush_live_update(self) -> None:
+        """Write the working dict to disk and re-render the live preview.
 
-        # Build the new entities mapping per class: keep existing entries (in
-        # order, with their values) that still exist in the DB, append newly
-        # discovered names with a palette color.  Prune the rest.
-        entities = self._data.get("entities")
-        if not isinstance(entities, dict):
-            entities = {}
-
-        new_entities: dict[str, dict] = {}
-        changed = False
-        for cls in RELEVANT_ENTITY_CLASSES:
-            discovered = union.get(cls, set())
-            existing = entities.get(cls)
-            existing = existing if isinstance(existing, dict) else {}
-
-            rebuilt: dict[str, object] = {}
-            # Preserve existing entries (order + value) still in the DB.
-            for name, value in existing.items():
-                if name in discovered:
-                    rebuilt[name] = value
-                else:
-                    changed = True  # pruned a stale entry
-            # Append newly discovered names with a palette color.
-            new_names = sorted(n for n in discovered if n not in rebuilt)
-            if new_names:
-                changed = True
-                for name, color in assign_palette_colors(new_names).items():
-                    rebuilt[name] = color
-
-            if rebuilt:
-                new_entities[cls] = rebuilt
-            elif cls in existing and existing:
-                # The class lost all its entities; dropping it is a change.
-                changed = True
-
-        if not changed:
-            return
-
-        self._snapshot()
-        if new_entities:
-            self._data["entities"] = new_entities
-        else:
-            self._data.pop("entities", None)
-        self._rebuild_all_tabs()
-
-    # ── Buttons ───────────────────────────────────────────────────
-    def _on_apply_clicked(self) -> None:
-        """Write the working dict and re-render the preview; stay open."""
+        This is the debounced live commit: it never touches
+        ``self._original_text`` (the on-open baseline), so a later Cancel can
+        still revert every change made since the dialog opened.
+        """
+        self._live_after_id = None
         self._write()
         if self._on_apply is not None:
             self._on_apply()
 
-    def _on_save_exit(self) -> None:
-        """Write, re-render the preview, and close."""
+    # ── Buttons ───────────────────────────────────────────────────
+    def _on_close(self) -> None:
+        """Flush any pending live write, then close — KEEPING all changes.
+
+        Bound to the Close button, the window ``X``, and Escape.  Because
+        edits are written live, closing must not discard them: cancel the
+        pending debounce, write the final in-memory ``self._data`` (including
+        entities discovered on open), re-render, and destroy.
+        """
+        if self._live_after_id is not None:
+            try:
+                self.after_cancel(self._live_after_id)
+            except tk.TclError:
+                pass
+            self._live_after_id = None
         self._write()
         if self._on_apply is not None:
             self._on_apply()
         self.destroy()
 
     def _on_cancel(self) -> None:
-        """Restore the on-open file text, revert any preview, and close."""
+        """Revert to the on-open file text, revert the preview, and close.
+
+        Cancels the pending live write, restores the byte-for-byte on-open
+        text (undoing every live write made since the dialog opened), and
+        re-renders so the preview matches.
+        """
+        if self._live_after_id is not None:
+            try:
+                self.after_cancel(self._live_after_id)
+            except tk.TclError:
+                pass
+            self._live_after_id = None
         try:
             self._settings_path.write_text(
                 self._original_text, encoding="utf-8",

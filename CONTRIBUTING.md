@@ -230,7 +230,7 @@ elif next_version == N:
 
 ### Branching
 
-- Create a feature branch from `master` for your work.
+- Create a feature branch from `main` for your work.
 - Use descriptive branch names: `fix-reserve-output`, `add-ramp-cost`, `update-excel-export`.
 
 ### What a PR Should Contain
@@ -256,7 +256,7 @@ elif next_version == N:
 
 ### Review Process
 
-- PRs to `master` trigger CI tests on Linux, Windows, and macOS.
+- PRs to `main` trigger CI tests on Linux, Windows, and macOS.
 - At least one review approval is recommended before merging.
 - Prefer merge commits over squash to preserve commit history.
 
@@ -266,4 +266,4 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
 
 ## CI Workflows
 
-- **`tests.yml`** — runs pytest on all three platforms and verifies the master template is up to date. Triggered on push/PR to `master`.
+- **`tests.yml`** — runs pytest on all three platforms and verifies the master template is up to date. Triggered on push/PR to `main`.

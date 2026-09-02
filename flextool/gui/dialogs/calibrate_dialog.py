@@ -54,6 +54,7 @@ from flextool.gui.calibrate_commands import (
     build_calibrate_command,
     build_rp_command,
     command_to_display_string,
+    final_write_methods_from_settings,
     overshoot_pct_to_multiplier,
 )
 from flextool.gui.calibrate_jobs import (
@@ -67,6 +68,7 @@ from flextool.gui.hover_tooltip import attach_tooltip
 from flextool.gui.solve_reader import read_scenario_solves
 from flextool.representative_periods.scenario_stack import (
     add_alternative_to_scenario,
+    create_scenario_with_alternative,
     dedup_alternative_name,
     existing_alternative_names,
 )
@@ -89,11 +91,12 @@ _RP_EXPLANATION = (
     "weighted periods that stand in for the whole span. Solving over these "
     "instead of every time step makes investment runs far faster while keeping "
     "the demand and weather patterns that drive the result. This tool clusters "
-    "the scenario's profiles and inflows, writes the periods into a NEW "
-    "alternative, and — if the box below is ticked — adds that alternative to "
-    "the selected scenario(s) so their solve uses the new periods. Nothing "
-    "existing is overwritten: the change lives entirely in the new alternative, "
-    "so you can undo it any time by deleting that alternative."
+    "the scenario's profiles and inflows and writes the periods into a NEW "
+    "alternative; the option below then decides whether that alternative is "
+    "left detached, added to the selected scenario(s) so their solve uses the "
+    "new periods, or used to spin up new scenarios. Nothing existing is "
+    "overwritten: the change lives entirely in the new alternative (and any "
+    "new scenario), so you can undo it any time by deleting them."
 )
 _CALIB_EXPLANATION = (
     "Calibration repeatedly solves each scenario and nudges its energy-margin "
@@ -147,14 +150,26 @@ _TIPS = {
         "solves are left untouched. Investment solves are ticked by default "
         "because that is where representative periods usually matter."
     ),
-    "add_to_scenario": (
-        "When ticked, the new representative-period alternative is appended to "
-        "each selected scenario's alternative stack (at the bottom, so it "
-        "wins — the bottommost alternative overrides whatever the ones above "
-        "it set), meaning the scenario immediately uses the new periods on its "
-        "next run. When unticked, the alternative is still created but stays "
-        "detached — you can add it to a scenario yourself later. Either way, "
-        "deleting the alternative fully reverts the change."
+    "rp_mode_detached": (
+        "Create the new representative-period alternative but attach it to "
+        "nothing. The scenarios run exactly as before until you add the "
+        "alternative to a scenario yourself later. Deleting the alternative "
+        "fully reverts the change."
+    ),
+    "rp_mode_add": (
+        "Append the new representative-period alternative to each selected "
+        "scenario's alternative stack (at the bottom, so it wins — the "
+        "bottommost alternative overrides whatever the ones above it set), "
+        "meaning the scenario immediately uses the new periods on its next "
+        "run. Deleting the alternative fully reverts the change."
+    ),
+    "rp_mode_new_scenario": (
+        "Leave every selected scenario untouched and instead create a NEW "
+        "scenario for each — named '<scenario>_<alternative>' — that carries "
+        "the same alternative stack plus the new representative-period "
+        "alternative on top. Lets you compare the original and the "
+        "representative-period runs side by side; delete the new scenario "
+        "(and the alternative) to revert."
     ),
     "max_iterations": (
         "The maximum number of solve-and-resize rounds the calibrator runs per "
@@ -199,6 +214,35 @@ _TIPS = {
         "save disk space."
     ),
 }
+
+
+def _rp_on_success(
+    rp_mode: str, db_url: str, scenario_name: str, alt: str
+) -> Callable[[str], None] | None:
+    """Build the post-RP-subprocess hook for the chosen disposition.
+
+    Returns a ``scenario -> None`` callback run on the worker thread after the
+    RP preprocess succeeds, or ``None`` for the detached mode (nothing to do):
+
+    * ``"add"`` — append the RP alternative onto the scenario's stack;
+    * ``"new_scenario"`` — clone the scenario into ``<scenario>_<alt>`` carrying
+      the RP alternative, leaving the original untouched;
+    * anything else (``"detached"``) — no hook.
+
+    Kept at module scope (not a per-iteration lambda) so the captured
+    ``db_url`` / ``alt`` are bound explicitly rather than by late-binding a loop
+    variable.
+    """
+    if rp_mode == "add":
+        def _add(scenario: str) -> None:
+            add_alternative_to_scenario(db_url, scenario, alt)
+        return _add
+    if rp_mode == "new_scenario":
+        new_scen = f"{scenario_name}_{alt}"
+        def _new(scenario: str) -> None:
+            create_scenario_with_alternative(db_url, scenario, new_scen, alt)
+        return _new
+    return None
 
 
 class CalibrateDialog(tk.Toplevel):
@@ -281,7 +325,7 @@ class CalibrateDialog(tk.Toplevel):
         self._var_force_sustained = tk.BooleanVar()
         self._var_force_peak = tk.BooleanVar()
         self._var_force_window = tk.StringVar()
-        self._var_add_to_scenario = tk.BooleanVar()
+        self._var_rp_mode = tk.StringVar()
         self._var_max_iterations = tk.StringVar()
         self._var_sizing = tk.StringVar()
         self._var_overshoot_pct = tk.StringVar()
@@ -328,7 +372,7 @@ class CalibrateDialog(tk.Toplevel):
         self._var_force_sustained.set(bool(s.calib_rp_force_sustained))
         self._var_force_peak.set(bool(s.calib_rp_force_peak))
         self._var_force_window.set(str(s.calib_rp_force_window))
-        self._var_add_to_scenario.set(bool(s.calib_rp_add_to_scenario))
+        self._var_rp_mode.set(s.calib_rp_scenario_mode or "add")
         self._var_max_iterations.set(str(s.calib_max_iterations))
         self._var_sizing.set(s.calib_sizing or "timed")
         self._var_overshoot_pct.set(str(s.calib_overshoot_pct))
@@ -569,13 +613,32 @@ class CalibrateDialog(tk.Toplevel):
         attach_tooltip(solves_lbl, _TIPS["solves"], wraplength=_TIP_WRAP)
         self._build_solve_checklist(rp)
 
-        cb_add = ttk.Checkbutton(
+        # Three-way disposition of the freshly built RP alternative.
+        rb_detached = ttk.Radiobutton(
+            rp,
+            text="Just make new alternative with the new representative periods",
+            value="detached", variable=self._var_rp_mode,
+        )
+        rb_detached.pack(anchor="w", padx=8, pady=(4, 0))
+        attach_tooltip(
+            rb_detached, _TIPS["rp_mode_detached"], wraplength=_TIP_WRAP
+        )
+        rb_add = ttk.Radiobutton(
             rp,
             text="Add the new alternative to the selected scenario(s)",
-            variable=self._var_add_to_scenario,
+            value="add", variable=self._var_rp_mode,
         )
-        cb_add.pack(anchor="w", padx=8, pady=(2, 2))
-        attach_tooltip(cb_add, _TIPS["add_to_scenario"], wraplength=_TIP_WRAP)
+        rb_add.pack(anchor="w", padx=8, pady=(2, 0))
+        attach_tooltip(rb_add, _TIPS["rp_mode_add"], wraplength=_TIP_WRAP)
+        rb_new = ttk.Radiobutton(
+            rp,
+            text="Make new scenario(s) with the new alternative",
+            value="new_scenario", variable=self._var_rp_mode,
+        )
+        rb_new.pack(anchor="w", padx=8, pady=(2, 2))
+        attach_tooltip(
+            rb_new, _TIPS["rp_mode_new_scenario"], wraplength=_TIP_WRAP
+        )
 
         self._rp_button = ttk.Button(
             rp, text="Create new representative periods",
@@ -881,7 +944,7 @@ class CalibrateDialog(tk.Toplevel):
         every = [
             self._var_n_rp, self._var_period_length, self._var_force_sustained,
             self._var_force_peak, self._var_force_window,
-            self._var_add_to_scenario,
+            self._var_rp_mode,
             self._var_max_iterations, self._var_sizing, self._var_overshoot_pct,
             self._var_damping_first, self._var_damping_remaining,
             self._var_stall_fraction, self._var_keep_artifacts,
@@ -920,7 +983,9 @@ class CalibrateDialog(tk.Toplevel):
         s.calib_rp_force_window = self._as_int(
             self._var_force_window, s.calib_rp_force_window
         )
-        s.calib_rp_add_to_scenario = bool(self._var_add_to_scenario.get())
+        rp_mode = self._var_rp_mode.get()
+        if rp_mode in ("detached", "add", "new_scenario"):
+            s.calib_rp_scenario_mode = rp_mode
         s.calib_max_iterations = self._as_int(
             self._var_max_iterations, s.calib_max_iterations
         )
@@ -1018,15 +1083,21 @@ class CalibrateDialog(tk.Toplevel):
     def _on_create_rp(self) -> None:
         """Launch one RP-preprocess job per runnable scenario.
 
-        Each job carries an ``on_success(scenario)`` hook — enabled only when
-        "Add the new alternative to the selected scenario(s)" is ticked — that,
-        AFTER the RP subprocess finishes successfully, on the worker thread,
-        appends the freshly written RP alternative onto that scenario's stack
-        so a subsequent calibration sees the new periods.
+        Each job carries an ``on_success(scenario)`` hook whose behaviour
+        follows the disposition radio; it fires AFTER the RP subprocess
+        finishes successfully, on the worker thread:
+
+        * ``"detached"`` — no hook; the alternative is created but attached to
+          nothing.
+        * ``"add"`` — append the freshly written RP alternative onto that
+          scenario's stack so a subsequent calibration sees the new periods.
+        * ``"new_scenario"`` — clone the scenario into a new
+          ``"<scenario>_<alternative>"`` scenario carrying the RP alternative,
+          leaving the original untouched.
         """
         self._flush()
         s = self._settings
-        add_to_scenario = bool(self._var_add_to_scenario.get())
+        rp_mode = self._var_rp_mode.get()
         # Reserve (commit) the per-scenario names so the preview immediately
         # advances (base → base_2) and a second launch cannot collide.
         plan = self._rp_plan(commit=True)
@@ -1034,11 +1105,7 @@ class CalibrateDialog(tk.Toplevel):
             return
         specs: list[RpJobSpec] = []
         for _sc, name, db_url, applicable, alt, desc in plan:
-            on_success = (
-                (lambda scenario, u=db_url, a=alt:
-                 add_alternative_to_scenario(u, scenario, a))
-                if add_to_scenario else None
-            )
+            on_success = _rp_on_success(rp_mode, db_url, name, alt)
             specs.append(
                 RpJobSpec(
                     db_url=db_url,
@@ -1085,6 +1152,9 @@ class CalibrateDialog(tk.Toplevel):
                     damping_remaining=s.calib_damping_remaining,
                     stall_fraction=s.calib_stall_fraction,
                     debug=s.calib_keep_artifacts,
+                    # Regenerate the same formats a regular run would (the
+                    # project's "File outputs" choices), from the final parquet.
+                    final_write_methods=final_write_methods_from_settings(s),
                 )
             )
         launch_calibration_jobs(
@@ -1149,6 +1219,7 @@ class CalibrateDialog(tk.Toplevel):
                 work_dir=work,
                 output_location=out,
                 debug=s.calib_keep_artifacts,
+                final_write_methods=final_write_methods_from_settings(s),
             )
             lines.append(command_to_display_string(argv))
         return "\n".join(lines)

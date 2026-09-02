@@ -143,25 +143,29 @@ categories:
     slack_downward:              '#ff7f7f'   # light red — downward slack (spill)
 
   # Dispatch special tokens.  These are the fixed-name columns that the
-  # dispatch stacked-area plots add alongside the per-entity flows: load of
+  # dispatch stacked-area plots add alongside the per-entity flows: loss of
   # load / discharge / import on the POSITIVE side (top of the stack) and
   # charge / export / internal losses on the NEGATIVE side (bottom).  Their
-  # stack positions are fixed by the pipeline (POSITIVE_SPECIAL /
-  # NEGATIVE_SPECIAL in scenario_comparison/constants.py), so only their
-  # color is configurable here.  Looked up by EXACT label match.  The values
-  # below are the historical dispatch defaults (DEFAULT_SPECIAL_COLORS); a
-  # project with no per-entity dispatch colors renders exactly as before.
+  # color is configurable, and their KEY ORDER here is honored by the engine:
+  # this list is read TOP-TO-BOTTOM as the visual stack order.  A positive
+  # special always stacks above the zero axis and a negative special always
+  # below it (they never cross), but WITHIN each sign group the order of these
+  # keys sets the top-to-bottom stacking (and matches the picker's
+  # "Colors, order..." dialog, where they are reorderable within each group).
+  # Looked up by EXACT label match.  The values below are the historical
+  # dispatch defaults (DEFAULT_SPECIAL_COLORS) in the historical stack order,
+  # so a project with no per-entity dispatch colors renders exactly as before.
   # (The dashed ``Curtailed`` line and the solid ``Demand`` line are drawn
   # with fixed red / black and are not configured here.)
   dispatch:
-    # Positive side (top of the stacked area / top of the legend)
+    # Positive side, visual top-to-bottom (top of the stacked area / legend)
     LossOfLoad:      crimson     # upward slack — unmet demand
     Discharge:       aqua        # storage discharge into the group
     Import:          indigo      # imports into the group
-    # Negative side (bottom of the stacked area / bottom of the legend)
-    Charge:          lime        # storage charge drawn from the group
-    Export:          purple      # exports out of the group
+    # Negative side, visual top-to-bottom (nearest the zero axis downward)
     internal_losses: darkgray    # losses dissipated inside the group
+    Export:          purple      # exports out of the group
+    Charge:          lime        # storage charge drawn from the group
 
 entities:
   # Colors for entities, keyed by entity name (case-insensitive).  The

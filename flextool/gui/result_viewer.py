@@ -226,6 +226,16 @@ class ResultViewer(tk.Toplevel):
         self._dispatch_data_tag: str = ""  # in-data scenario tag (may differ from folder)
         self._dispatch_ylims: dict[str, tuple[float, float]] = {}  # accumulated per-nodeGroup
         self._dispatch_columns: dict[str, list[str]] = {}  # accumulated column order
+        # mtime (ns) of the plot-settings file the frozen dispatch order was
+        # derived from; when the file changes (dialog save / live edit) the
+        # accumulated order is stale and must be dropped so the next render
+        # re-derives it — see _maybe_invalidate_dispatch_order_on_settings_change.
+        self._dispatch_order_settings_mtime: int | None = None
+        # Last dispatch iid actually rendered (node / nodeGroup).  A live
+        # colors/order edit refreshes via _trigger_replot, which normally reads
+        # the tree selection; this is the fallback when the selection is empty
+        # so the dispatch plot still updates.
+        self._last_dispatch_iid: str | None = None
         # Dispatch node-child iid → node name.  A node can be a member of
         # several nodeGroups, so its child iids must be unique per parent
         # (Treeview iids are global); this map recovers the node name from
@@ -2251,6 +2261,17 @@ class ResultViewer(tk.Toplevel):
         from flextool.plot_outputs.plan import rebuild_plan_color_map
         _clear_cache()
 
+        # Dispatch plots don't use ``_live_plan``: they freeze their column
+        # (stacking) order in a per-nodeGroup cache that reindexes every
+        # render (``_display_*_dispatch``), so a freshly derived template
+        # order would be overridden by the stale cached order — colors would
+        # update on Apply but the ORDER would not, until the viewer is
+        # reopened.  Drop the order/ylim caches (kept in lockstep — both are
+        # keyed by nodeGroup and set together) so the next dispatch render
+        # re-derives its order from the edited ``plot_settings.yaml``.
+        self._dispatch_ylims.clear()
+        self._dispatch_columns.clear()
+
         # True in-place recolor/reorder: when a plan is already cached AND
         # it carries color hints (``color_category`` / ``color_entity_class``),
         # rebuild ONLY its shared_color_map (new colors + new file order)
@@ -3217,8 +3238,17 @@ class ResultViewer(tk.Toplevel):
         # Dispatch mode is handled directly by _on_tree_selected
         if mode == "dispatch":
             selection = self._plot_tree.selection()
+            # Prefer the live tree selection, but fall back to the
+            # last-rendered dispatch iid when the tree has no (plotting)
+            # selection — otherwise a live colors/order edit (whose refresh
+            # routes through here) would silently no-op and the dispatch plot
+            # would not update.  Guard that the iid still exists in the tree.
             if selection and _is_dispatch_iid(selection[0]):
-                self._display_dispatch_iid(scenarios[0], selection[0])
+                iid = selection[0]
+            else:
+                iid = self._last_dispatch_iid
+            if iid and self._plot_tree.exists(iid) and _is_dispatch_iid(iid):
+                self._display_dispatch_iid(scenarios[0], iid)
             return
 
         selection = self._plot_tree.selection()
@@ -3965,6 +3995,7 @@ class ResultViewer(tk.Toplevel):
         if iid.startswith(_DISPATCH_NODE_PREFIX):
             node = self._dispatch_node_iids.get(iid)
             if node is not None:
+                self._last_dispatch_iid = iid
                 self._display_node_dispatch(scenario, node)
             return
         if iid.startswith(_DISPATCH_GROUP_PREFIX):
@@ -3975,6 +4006,7 @@ class ResultViewer(tk.Toplevel):
                     "its dispatch"
                 )
                 return
+            self._last_dispatch_iid = iid
             self._display_dispatch(scenario, label)
 
     def _resolve_dispatch_template(self):
@@ -3997,8 +4029,32 @@ class ResultViewer(tk.Toplevel):
         )
         return template, config_order
 
+    def _maybe_invalidate_dispatch_order_on_settings_change(self) -> None:
+        """Drop the frozen dispatch order/ylim caches when the settings changed.
+
+        The per-nodeGroup ``_dispatch_columns`` accumulator freezes the stack
+        order on a nodeGroup's first render and every later render reindexes to
+        it — so an edited ``plot_settings.yaml`` order would be ignored on a
+        plain navigate (it only refreshed when the picker's Apply, or a rescan,
+        happened to clear the cache).  Stamp the accumulator with the settings
+        file's mtime and, whenever it changes (a dialog save or a live edit),
+        clear the frozen order + ylims so the next render re-derives them from
+        the current ``config_order``.  Cheap ``stat`` per render; no file read.
+        """
+        try:
+            mtime = resolve_plot_settings_path(
+                self._project_path
+            ).stat().st_mtime_ns
+        except OSError:
+            return
+        if mtime != self._dispatch_order_settings_mtime:
+            self._dispatch_columns.clear()
+            self._dispatch_ylims.clear()
+            self._dispatch_order_settings_mtime = mtime
+
     def _display_node_dispatch(self, scenario: str, node: str) -> None:
         """Render and display an individual node dispatch plot."""
+        self._maybe_invalidate_dispatch_order_on_settings_change()
         from flextool.plot_outputs.color_template import (
             resolve_dispatch_colors_and_order,
         )
@@ -4014,11 +4070,20 @@ class ResultViewer(tk.Toplevel):
 
         # Node dispatch threads the same plot_settings.yaml colors/order the
         # group path uses, so the live node plot matches the PNG export.
-        template, _config_order = self._resolve_dispatch_template()
+        template, config_order = self._resolve_dispatch_template()
 
         # Slice by the in-data scenario tag (may differ from folder name).
+        # Thread config_order so the per-node stack follows the picker's
+        # order (not just the std-dev fallback), like the nodeGroup path.
+        # special_order carries the dispatch specials' file order so the
+        # engine stacks the positive/negative specials within each sign group
+        # in the order the picker shows.
+        special_order = list(
+            template.get('categories', {}).get('dispatch', {}).keys()
+        )
         df_node, inflow = prepare_node_dispatch_data(
-            results, self._dispatch_data_tag, node,
+            results, self._dispatch_data_tag, node, config_order=config_order,
+            special_order=special_order,
         )
 
         if (df_node is None or df_node.empty) and (
@@ -4094,6 +4159,7 @@ class ResultViewer(tk.Toplevel):
         """Render and display a dispatch plot for a nodeGroup."""
         from flextool.scenario_comparison.dispatch_plots import _compute_ylim
 
+        self._maybe_invalidate_dispatch_order_on_settings_change()
         if not self._load_dispatch_data(scenario):
             self._plot_canvas.show_message(f"Could not load dispatch data for {scenario}")
             return
@@ -4116,12 +4182,18 @@ class ResultViewer(tk.Toplevel):
         _, config_order = resolve_dispatch_colors_and_order(
             template, template_entity_names(template),
         )
+        # Dispatch specials' file order (picker top-to-bottom) so the engine
+        # stacks the positive/negative specials within each sign group to
+        # match the picker.
+        special_order = list(
+            template.get('categories', {}).get('dispatch', {}).keys()
+        )
 
         # Prepare dispatch data — slice by the in-data scenario tag, which
         # may differ from the folder name (GUI run-index suffix).
         df_dispatch, inflow = prepare_dispatch_data(
             results, mappings, self._dispatch_data_tag, node_group,
-            config_order=config_order,
+            config_order=config_order, special_order=special_order,
         )
 
         if df_dispatch is None or df_dispatch.empty:
@@ -4159,13 +4231,14 @@ class ResultViewer(tk.Toplevel):
                 df_dispatch[col] = 0.0
         df_dispatch = df_dispatch[[c for c in self._dispatch_columns[node_group] if c in df_dispatch.columns]]
 
-        # Also apply pre-computed metadata from comparison pipeline if available
-        dispatch_meta = self._load_dispatch_metadata()
-        if dispatch_meta:
-            ng_meta = dispatch_meta.get("nodeGroups", {}).get(node_group)
-            if ng_meta and "ylim" in ng_meta:
-                pre_min, pre_max = ng_meta["ylim"]
-                ylim = (min(ylim[0], pre_min), max(ylim[1], pre_max))
+        # Scale the y-axis to THIS scenario's own dispatch, mirroring the
+        # per-node path (_display_node_dispatch).  We deliberately do NOT merge
+        # the cross-scenario comparison-metadata ylim here: unioning ylims
+        # across scenarios of very different magnitude (e.g. a represented-
+        # period solve vs an 8760 h trade-only snapshot ~1000x larger) forces
+        # the smaller scenario onto the larger one's axis and squashes its
+        # flows into a flat line at the bottom.  Per-scenario scaling keeps
+        # every nodeGroup dispatch plot readable.
 
         # Load break times
         break_times = self._load_break_times(scenario)

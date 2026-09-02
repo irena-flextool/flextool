@@ -36,9 +36,15 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from spinedb_api import DatabaseMapping
+from spinedb_api import DatabaseMapping, from_database
 
 logger = logging.getLogger(__name__)
+
+# ``flowGroup.flow_aggregator`` enum values that request dispatch bands — i.e.
+# the flowGroup aggregates the flows of its members into a dispatch-plot band.
+# ``none`` / ``standalone_aggregator_only`` do NOT draw dispatch bands and so
+# are not dispatch aggregators for the picker's flowGroup display filter.
+_DISPATCH_AGGREGATOR_VALUES = frozenset({"dispatch_plots_only", "both"})
 
 
 # ``plot_settings.yaml`` ``entities`` subsections that plot legend labels map
@@ -115,6 +121,90 @@ def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
         "node": sorted(nodes),
     }
     return {cls: names for cls, names in by_class.items() if names}
+
+
+def _decode_flow_aggregator_value(item) -> str | None:
+    """Best-effort decode of a ``flow_aggregator`` parameter value to a string.
+
+    ``flow_aggregator`` is a single-valued enum method, so its stored value is a
+    plain string (spinedb JSON-encodes it as ``b'"both"'`` with ``type is
+    None``).  Prefer the already-decoded ``parsed_value`` when the mapping
+    provides one, else decode the raw ``(value, type)`` via
+    :func:`~spinedb_api.from_database`.  Defensively unwrap a ``{"type": ...,
+    "data"/"value": ...}`` JSON wrapper and a bytes payload so a comparison
+    always runs against a bare ``str``.  Returns ``None`` (never raises) when the
+    value is missing / unparseable / not a string.
+    """
+    value = None
+    # ``parsed_value`` (when present) is already decoded to a Python object.
+    try:
+        value = item["parsed_value"]
+    except (KeyError, TypeError, IndexError):
+        value = None
+    if value is None:
+        try:
+            value = from_database(item["value"], item["type"])
+        except Exception:
+            return None
+    # Defensively unwrap a dict / bytes payload down to a plain string.
+    if isinstance(value, dict):
+        value = value.get("data", value.get("value"))
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except Exception:
+            return None
+    return value if isinstance(value, str) else None
+
+
+def fetch_flow_aggregator_flowgroups(db_url: str) -> set[str]:
+    """Return flowGroup names whose ``flow_aggregator`` requests dispatch bands.
+
+    Opens one :class:`~spinedb_api.DatabaseMapping` (``create=False``), reads the
+    ``flowGroup`` class' ``flow_aggregator`` parameter values (via
+    :meth:`DatabaseMapping.find_parameter_values`, the same filtered read
+    :mod:`flextool.input_derivation._validators` uses), decodes each value
+    (:func:`_decode_flow_aggregator_value`) and collects the flowGroup names
+    whose value is ``dispatch_plots_only`` or ``both`` — i.e. the dispatch
+    aggregators.  Non-aggregators (``none`` / ``standalone_aggregator_only`` /
+    absent) are excluded.
+
+    Robust by construction: a missing class / parameter, an unparseable value,
+    an un-openable or already-closed DB all contribute nothing and NEVER raise —
+    the caller gets whatever could be read (possibly an empty set).
+    """
+    result: set[str] = set()
+    try:
+        db = DatabaseMapping(db_url, create=False)
+    except Exception as exc:  # un-openable / missing DB
+        logger.warning("Cannot open %s for flow_aggregator read: %s", db_url, exc)
+        return result
+    try:
+        try:
+            items = db.find_parameter_values(
+                entity_class_name="flowGroup",
+                parameter_definition_name="flow_aggregator",
+            )
+        except Exception as exc:  # missing class / parameter
+            logger.warning(
+                "Cannot read flow_aggregator from %s: %s", db_url, exc,
+            )
+            items = []
+        for pv in items:
+            if _decode_flow_aggregator_value(pv) not in _DISPATCH_AGGREGATOR_VALUES:
+                continue
+            try:
+                byname = pv["entity_byname"]
+            except (KeyError, TypeError):
+                byname = None
+            if byname:
+                result.add(byname[0])  # flowGroup is the single dimension
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return result
 
 
 def _url_to_path(db_url: str) -> Path | None:
