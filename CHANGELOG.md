@@ -1,3 +1,27 @@
+## Release 4.0.1 (1.9.2026) — Spine Toolbox install & detection fixes
+
+Patch release fixing the in-app Spine Toolbox install flow (all GUI, no schema
+or model changes).
+
+- **Install Spine Toolbox from the GUI now works.** The install action was tied
+  to the "Update FlexTool" button, which is disabled when FlexTool is already the
+  latest — so on a fresh install (always the latest) the Spine Toolbox extra
+  could never be installed. It is now a dedicated **"Install Spine Toolbox"**
+  button, shown only when Toolbox is missing, that installs just the extra
+  independent of any version update (`pip install "flextool[toolbox]"`, or the
+  editable `-e ".[toolbox]"` in a git checkout).
+- **Environment-scoped Toolbox detection and launch.** `toolbox_installed()` no
+  longer falls back to a PATH lookup for `spine-db-editor`, which reported
+  "installed" when a copy from a *different* environment was on PATH even though
+  Spine Toolbox was not in the venv running FlexTool. Detection now checks only
+  the current environment, and the Spine DB Editor is launched from it
+  (`python -m spinetoolbox.spine_db_editor.main`) rather than a PATH executable —
+  so the dialog and the open-`.sqlite` path agree.
+- **Docs.** The recommended install now pulls the Spine Toolbox and result-viewer
+  extras (`pip install "flextool[toolbox,viewer]"`); a note explains that plain
+  `pip install flextool` gives a spreadsheet-only install without the Spine DB
+  Editor.
+
 ## Release 4.0.0 (31.8.2026) — first stable v4: pip-installable; net-load representative-period clustering (schema v68); dispatch-plot & colors GUI rework; multi-use storage & existing-capacity output fixes
 
 This is the first stable **4.0.0** release. FlexTool is now **pip-installable**

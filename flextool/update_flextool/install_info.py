@@ -18,7 +18,6 @@ from __future__ import annotations
 import importlib.metadata as _im
 import json
 import logging
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -58,12 +57,15 @@ def flextool_version() -> str:
 
 
 def toolbox_installed() -> bool:
-    """Whether Spine Toolbox (and thus the Spine DB Editor) is installed."""
+    """Whether Spine Toolbox is installed *in the current environment* (the venv
+    running FlexTool). Deliberately does NOT fall back to a PATH lookup — a
+    ``spine-db-editor`` from a different environment would otherwise read as
+    installed even though it isn't importable here."""
     try:
         _im.distribution("spinetoolbox")
         return True
     except _im.PackageNotFoundError:
-        return shutil.which("spine-db-editor") is not None
+        return False
 
 
 def describe_install() -> str:
@@ -72,6 +74,27 @@ def describe_install() -> str:
     if root is not None:
         return f"git checkout at {root}\n(version {flextool_version()})"
     return f"PyPI install (version {flextool_version()})"
+
+
+def manual_toolbox_command() -> str:
+    """Shell command a user can run by hand to add Spine Toolbox, matched to the
+    current install type — editable ``-e .[toolbox]`` in a git checkout (running
+    the PyPI form there would clobber the editable install), otherwise the PyPI
+    ``flextool[toolbox]`` form."""
+    if git_checkout_root() is not None:
+        return 'pip install -e ".[toolbox]"'
+    return 'pip install "flextool[toolbox]"'
+
+
+def install_toolbox_steps() -> tuple[list[list[str]], Path | None]:
+    """Command(s) to install *just* the Spine Toolbox extra, without updating
+    FlexTool itself. Editable ``-e .[toolbox]`` (run in the repo root) for a git
+    checkout, otherwise the PyPI ``flextool[toolbox]`` form."""
+    py = sys.executable
+    root = git_checkout_root()
+    if root is not None:
+        return [[py, "-m", "pip", "install", "-e", ".[toolbox]"]], root
+    return [[py, "-m", "pip", "install", "flextool[toolbox]"]], None
 
 
 def upgrade_steps(include_toolbox: bool) -> tuple[list[list[str]], Path | None]:

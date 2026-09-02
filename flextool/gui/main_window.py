@@ -3126,14 +3126,15 @@ class MainWindow(tk.Tk):
                 # spine-db-editor not found: point at 'Update FlexTool' and
                 # offer the system default .sqlite app as a fallback.
                 # askyesnocancel: Yes=Update, No=default app, Cancel=nothing.
+                from flextool.update_flextool import install_info
                 choice = messagebox.askyesnocancel(
                     "Spine DB Editor not available",
                     "The 'spine-db-editor' command was not found, so .sqlite "
                     "input sources cannot be opened in the Spine DB Editor.\n\n"
                     "It is part of Spine Toolbox. You can install it via "
                     "'Update FlexTool' (tick 'Install Spine Toolbox'), or "
-                    'manually from the flextool directory:\n\n'
-                    '  pip install -e ".[toolbox]"\n\n'
+                    "manually:\n\n"
+                    f"  {install_info.manual_toolbox_command()}\n\n"
                     "Open 'Update FlexTool' now?\n\n"
                     "Choose 'No' to open the file with your system's default "
                     "application for .sqlite files instead.",
@@ -3175,6 +3176,7 @@ class MainWindow(tk.Tk):
             install_description=install_info.describe_install(),
             is_git=install_info.is_git_install(),
             default_toolbox=default_toolbox,
+            toolbox_installed=install_info.toolbox_installed(),
             check_on_startup=self.global_settings.check_updates_on_startup,
             update_available=self._update_available,
             check_fn=install_info.update_available,
@@ -3194,16 +3196,25 @@ class MainWindow(tk.Tk):
         if not dlg.proceed:
             return
 
-        steps, cwd = install_info.upgrade_steps(dlg.include_toolbox)
+        if dlg.install_toolbox:
+            steps, cwd = install_info.install_toolbox_steps()
+            description = "Install Spine Toolbox"
+            intro = "Installing Spine Toolbox…\n"
+        else:
+            steps, cwd = install_info.upgrade_steps(dlg.include_toolbox)
+            description = "Update FlexTool"
+            intro = (
+                "Updating FlexTool"
+                + (" with Spine Toolbox" if dlg.include_toolbox else "")
+                + "…\n"
+            )
         self._run_cli_job(
             steps,
             job_type=JobType.UPDATE,
-            description="Update FlexTool",
+            description=description,
             action_key="update_flextool",
             cwd=cwd,
-            intro="Updating FlexTool"
-            + (" with Spine Toolbox" if dlg.include_toolbox else "")
-            + "…\n",
+            intro=intro,
             on_finish=self._update_finished,
         )
 
@@ -3284,6 +3295,7 @@ class MainWindow(tk.Tk):
             if self.execution_window is not None:
                 self.execution_window.select_job(job.job_id)
 
+        from flextool.update_flextool import install_info
         if messagebox.askyesno(
             "Could not open database",
             "The Spine DB Editor failed to start, so the database could not "
@@ -3292,7 +3304,7 @@ class MainWindow(tk.Tk):
             "The full error is shown in the Execution window. You can "
             "(re)install Spine Toolbox via 'Update FlexTool' (tick 'Install "
             "Spine Toolbox'), or manually:\n\n"
-            '  pip install -e ".[toolbox]"\n\n'
+            f"  {install_info.manual_toolbox_command()}\n\n"
             "Open 'Update FlexTool' now?",
             parent=self,
         ):
