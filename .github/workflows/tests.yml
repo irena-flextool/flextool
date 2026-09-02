@@ -3,8 +3,13 @@ on:
   push:
     # `main` is the default branch; `master` kept transitionally (see ci.yml).
     branches: [main, master]
+    # Docs-only changes don't affect tests — skip the heavy cross-platform
+    # matrix. ci.yml's required Smoke check has NO paths filter, so it still
+    # runs and gates PRs (path-ignoring a required check would block it).
+    paths-ignore: ['**.md']
   pull_request:
     branches: [main, master]
+    paths-ignore: ['**.md']
   workflow_dispatch:
 
 jobs:
