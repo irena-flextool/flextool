@@ -1,3 +1,36 @@
+## Release 4.0.3 (11.9.2026) — multi-period stochastic continuation fix
+
+Patch release. No schema changes.
+
+- **Multi-period stochastic solves no longer silently truncate the horizon
+  after the branching period.** Previously, periods after the one where the
+  stochastic branches fan out received no active timesteps at all — the solve
+  built zero variables for them and quietly optimized a shortened horizon. The
+  branch fan-out now extends through every continuation period: the realized
+  branch keeps the real period names (with its realized output windows), and
+  each non-realized branch with a nonzero weight gets its own copy of every
+  later period, with the branch probability weights carried forward along each
+  branch.
+- **Cross-period step linkage follows each branch's own lineage.** The first
+  timestep of a continuation period (storage state carry-over, ramp linkage)
+  now links to the last timestep of the *same branch's* previous period,
+  instead of self-cycling or linking positionally across branches.
+- **Period year-share rows no longer leak between periods with
+  prefix-overlapping names** (e.g. `p1` / `p10`): the branch-copy matching in
+  the years-represented bookkeeping now uses exact equality instead of
+  substring containment.
+- **Newly explicit error.** Stochastic solves now require the solve's
+  `years_represented` (when defined) to cover *all* of the solve's periods,
+  including continuation periods. Configurations that defined it for only some
+  periods previously ran silently on the truncated horizon; they now fail with
+  a clear configuration error.
+- **Tests.** New hand-calculated multi-period stochastic fixture (two periods,
+  branch-varying timeseries) verified down to the objective value, plus unit
+  tests pinning the continuation fan-out, cross-period step linkage, and the
+  year-share fix.
+- **Docs.** New "Stochastics over multiple periods" subsection in the how-to
+  describing the continuation fan-out semantics.
+
 ## Release 4.0.2 (2.9.2026) — results-database schema seeding fix
 
 Patch release. No schema or model changes.
