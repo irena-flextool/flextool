@@ -520,6 +520,23 @@ def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
     emit the canonical ``"{period}_{branch}"`` token for every
     encountered (period, branch) pair across all solve entities.
 
+    Continuation fan-out: after the branching period, the cascade
+    extends every non-realized nonzero-weight branch through the
+    remaining periods of the solve with the same
+    ``"{period}_{branch}"`` splice (``_stochastic.py``
+    continuation-after-branching), and ``period__branch.csv`` carries
+    the full metadata fan (realized branches included) for those
+    periods too.  The vocabulary therefore splices every declared
+    branch name with EVERY period of the declaring solve's
+    ``period_timeset`` — not just the periods keyed in the
+    ``stochastic_branches`` map.  For single-period solves this is
+    identical to the map-keyed splice (byte-compatible with the
+    committed fixtures); for multi-period solves it adds the
+    continuation tokens (e.g. ``p2040_low``) whose absence would
+    otherwise null the ``d`` / ``b`` columns of every continuation
+    row.  Extra tokens are harmless — an Enum category without rows
+    costs nothing.
+
     Returns
     -------
     list[str]
@@ -531,6 +548,22 @@ def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
         entity_class_name="solve",
         parameter_definition_name="stochastic_branches",
     )
+    # Per-solve horizon periods (period_timeset map keys, horizon
+    # order) for the continuation-token splice.
+    pt_rows = backend.find_parameter_values(
+        entity_class_name="solve",
+        parameter_definition_name="period_timeset",
+    )
+    solve_periods: dict[str, list[str]] = {}
+    for param in pt_rows:
+        if param.get("type") != "map":
+            continue
+        pv = param.get("parsed_value")
+        if pv is None or not hasattr(pv, "indexes"):
+            continue
+        ent = param.get("entity_byname")
+        key = ent[0] if isinstance(ent, (tuple, list)) else str(ent)
+        solve_periods[key] = [str(i) for i in pv.indexes]
     out: list[str] = []
     for param in rows:
         if param.get("type") != "map":
@@ -538,6 +571,7 @@ def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
         pv = param.get("parsed_value")
         if pv is None or not hasattr(pv, "indexes"):
             continue
+        branch_names: list[str] = []
         # Top level: period keys.  Each value is itself a Map keyed by
         # branch name.
         for period, branch_map in zip(pv.indexes, pv.values):
@@ -545,6 +579,16 @@ def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
             if not hasattr(branch_map, "indexes"):
                 continue
             for branch in branch_map.indexes:
+                out.append(f"{period_str}_{branch}")
+                branch_names.append(str(branch))
+        # Continuation splice: every period of the declaring solve's
+        # horizon × every declared branch name.  Appended after the
+        # map-keyed tokens so single-period fixtures keep the exact
+        # pre-existing vocabulary order.
+        ent = param.get("entity_byname")
+        key = ent[0] if isinstance(ent, (tuple, list)) else str(ent)
+        for period_str in solve_periods.get(key, []):
+            for branch in _dedup_keep_order(branch_names):
                 out.append(f"{period_str}_{branch}")
     return _dedup_keep_order(out)
 

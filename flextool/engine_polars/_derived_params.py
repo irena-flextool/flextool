@@ -6576,9 +6576,19 @@ def dtttdt_from_source(source: "InputSource",
     pbf: pl.DataFrame | None = None
     period_col, branch_col = "period", "branch"
     # Path B Cat B: prefer ctx.period_branch (schema [d_anchor, b]).
+    # Null-guard: the accessor casts against the live axis enums, and
+    # the ``d_anchor`` enum vocabulary is empty by contract ("built at
+    # Phase 3 handoff") — under enum activation every anchor value
+    # casts to null, which would poison the anchors_with_self /
+    # branch_anchor classification below (a null==null self-row turns
+    # EVERY period into a "branch").  Only trust the ctx frame when
+    # both columns are fully populated; otherwise fall through to the
+    # provider/workdir CSV (raw Utf8 columns).
     if ctx is not None:
         pb_ctx = ctx.period_branch
-        if pb_ctx.height > 0:
+        if (pb_ctx.height > 0
+                and pb_ctx["d_anchor"].null_count() == 0
+                and pb_ctx["b"].null_count() == 0):
             pbf = pb_ctx
             period_col, branch_col = "d_anchor", "b"
     if pbf is None and workdir is not None:
