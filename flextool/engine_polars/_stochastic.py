@@ -30,10 +30,15 @@ Behavioural quirks
   ``branch != period`` AND the realized flag is not ``"yes"``.  Subtle
   three-way condition.
 
-* **Continuation-after-branching**: when a roll's jump exceeds a
-  period length, branches continue into subsequent periods using the
-  same ``period + "_" + branch`` naming.  The naming is "sticky"
-  across periods.
+* **Continuation-after-branching**: every period after the branching
+  period continues the fan.  The realized branch keeps the REAL period
+  name (with its active / realized / fix-storage windows); each
+  non-realized nonzero-weight branch gets a synthetic
+  ``period + "_" + branch`` copy of the period's active time (LP
+  variables, never committed).  The naming is "sticky" across periods.
+  ``period__branch`` mirrors the branching period's metadata rows
+  (``(period, period)`` self-row plus one row per fan member,
+  realized and zero-weight included).
 
 * **Single realized branch per period**: each period must have
   exactly one ``realized: yes`` row (or zero before any branching has
@@ -378,6 +383,17 @@ class StochasticSolver:
         but NOT to ``realized_time_lists`` / ``fix_storage_time_lists``;
         branches are future scenarios that aren't committed.
 
+        After the branching period, the fan extends through every
+        remaining period of the solve: the realized branch keeps the
+        REAL period names (and their realized / fix-storage windows),
+        while each non-realized nonzero-weight branch ``b`` gets one
+        synthetic ``period + "_" + b`` period per continuation period
+        carrying a full copy of that period's active time.
+        ``period__branch`` mirrors the branching period's metadata rows
+        (self-row plus one row per fan member including the realized
+        and zero-weight branches); ``solve_branch__time_branch`` gains
+        rows only for branches that received active time.
+
         IMPORTANT: branches do NOT enter ``invest_periods`` either.
         Per ``audit/a6_b_dim_alternative.md`` (R-O6), ``v_invest`` is
         realized-only — recourse investment is a future capability.
@@ -418,6 +434,10 @@ class StochasticSolver:
 
             branched = False
             branches: list[str] = []
+            # Branches that received active time at the branching period
+            # (nonzero weight, != period, not realized).  Only these are
+            # extended with active time into continuation periods.
+            active_branches: list[str] = []
             branch_start_time_lists[solve] = None
 
             # First step of the solve (used for validation below).
@@ -446,9 +466,14 @@ class StochasticSolver:
                 raise FlexToolConfigError(message)
 
             # Walk periods — at the first branch trigger, fan out into
-            # branches; subsequent periods continue the same branches
-            # (continuation-after-branching at lines 329-340 of the
-            # reference).
+            # branches; subsequent periods continue the same branches.
+            # NB: the reference implementation's continuation block
+            # (flextoolrunner.py:1745-1752) was dead code — it never
+            # wrote active/realized/fix-storage time for continuation
+            # periods, silently truncating the horizon.  This module
+            # intentionally diverges by actually emitting the
+            # continuation timelines (realized branch keeps real period
+            # names; active branches get synthetic copies).
             for period, active_time in active_time_list.items():
                 if not branched:
                     period__branch_lists[solve].append((period, period))
@@ -491,6 +516,7 @@ class StochasticSolver:
                                     and branch != period
                                     and branch__weight__real[2] != "yes"
                                 ):
+                                    active_branches.append(branch)
                                     new_active_time_list[solve_branch] = active_time[0:]
                                     solve_branch__time_branch_lists[solve].append(
                                         (solve_branch, branch)
@@ -506,15 +532,34 @@ class StochasticSolver:
                                     )
                             break
                 else:
-                    # Continuation-after-branching: extend each branch
-                    # into the next period using the same branch-name
-                    # prefix.
+                    # Continuation-after-branching: the realized branch
+                    # keeps the REAL period name; each active branch is
+                    # extended into this period as a synthetic
+                    # '<period>_<branch>' copy.  Append order mirrors
+                    # the branching period: the (period, period)
+                    # self-row first, then fan rows in DB order.  The
+                    # self-row is load-bearing for the branch-weight
+                    # normalization (the realized member of each cohort
+                    # is detected via its (d, d) row) — see
+                    # derive_solve_branch_weight.
+                    period__branch_lists[solve].append((period, period))
+                    new_active_time_list[period] = active_time_list[period]
+                    if period in realized_time_list:
+                        new_realized_time_list[period] = realized_time_list[period]
+                    if period in fix_storage_time_list:
+                        new_fix_storage_time_list[period] = (
+                            fix_storage_time_list[period]
+                        )
                     for branch in branches:
                         solve_branch = period + "_" + branch
                         period__branch_lists[solve].append((period, solve_branch))
-                        solve_branch__time_branch_lists[solve].append(
-                            (solve_branch, branch)
-                        )
+                        if branch in active_branches:
+                            new_active_time_list[solve_branch] = (
+                                active_time_list[period][0:]
+                            )
+                            solve_branch__time_branch_lists[solve].append(
+                                (solve_branch, branch)
+                            )
                         for i in active_time_list[period]:
                             self.state.timeline.stochastic_timesteps[solve].append(
                                 (solve_branch, i.timestep)
