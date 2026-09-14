@@ -561,9 +561,18 @@ class TimelineConfig:
                 solve_config.realized_periods[solve]
                 + solve_config.invest_periods[solve]
             )
-            all_periods = {item for tup in all_periods_tuples for item in tup}
-            for period in all_periods:
-                if solve not in solve_config.solve_period_years_represented:
+            # Ordered de-dup (first occurrence) — a set here would make
+            # the seeded row order vary with PYTHONHASHSEED.
+            all_periods = list(
+                dict.fromkeys(
+                    item for tup in all_periods_tuples for item in tup
+                )
+            )
+            # Membership check OUTSIDE the loop: the first append below
+            # inserts the solve key into the defaultdict, so an in-loop
+            # check would stop after seeding a single period.
+            if solve not in solve_config.solve_period_years_represented:
+                for period in all_periods:
                     solve_config.solve_period_years_represented[solve].append(
                         [period, 1.0]
                     )

@@ -5861,16 +5861,6 @@
       "init"
     ],
     [
-      "solve",
-      "stoch_2p",
-      "years_represented",
-      [
-        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzUiLCAxLjBdLCBbInAyMDQwIiwgMS4wXV19",
-        "map"
-      ],
-      "init"
-    ],
-    [
       "node",
       "city",
       "node_type",

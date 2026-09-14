@@ -157,16 +157,11 @@ def build() -> dict:
          "init"],
         ["solve", "stoch_2p", "solve_mode",
          _pack("single_solve", "str"), "init"],
-        # Explicit 1.0/period — numerically identical to the intended
-        # "default to one year per period" fallback.  The fallback
-        # itself is unusable for multi-period solves at HEAD: the
-        # Rule-6 default in ``_timeline.py`` (``:557-569``) checks
-        # membership inside its per-period loop, so it seeds only ONE
-        # period and the years_represented completeness check then
-        # fails for the rest.  (Pre-existing, deterministic-path bug —
-        # out of scope for the fan-out fix.)
-        ["solve", "stoch_2p", "years_represented",
-         _pack(_map([("p2035", 1.0), ("p2040", 1.0)]), "map"), "init"],
+        # No ``years_represented``: the Rule-6 default in
+        # ``_timeline.py`` seeds 1.0/period for BOTH periods (this
+        # fixture doubles as the integration pin for that default —
+        # it used to seed only one period and fail the completeness
+        # check for multi-period solves).
         # ---- base: system data ----------------------------------------
         ["node", "city", "node_type", _pack("balance", "str"), "base"],
         ["node", "city", "penalty_up", _pack(10000.0, "float"), "base"],
