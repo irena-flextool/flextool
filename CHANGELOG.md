@@ -11,6 +11,13 @@ Patch release. No schema changes.
   each non-realized branch with a nonzero weight gets its own copy of every
   later period, with the branch probability weights carried forward along each
   branch.
+- **The `years_represented` default now covers every period of a solve.**
+  When a solve does not define `years_represented`, each of its periods is
+  meant to default to representing one year. The defaulting logic seeded only
+  a single (arbitrary) period, so multi-period solves relying on the default
+  failed the years-coverage check — including plain deterministic ones.
+  Explicitly defined `years_represented` (full or partial) behaves exactly as
+  before.
 - **Cross-period step linkage follows each branch's own lineage.** The first
   timestep of a continuation period (storage state carry-over, ramp linkage)
   now links to the last timestep of the *same branch's* previous period,
