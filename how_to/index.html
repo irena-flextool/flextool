@@ -930,6 +930,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stochastics-over-multiple-periods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastics over multiple periods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rolling-horizon-stochastics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2331,6 +2342,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stochastics-over-multiple-periods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastics over multiple periods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rolling-horizon-stochastics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3397,6 +3419,15 @@ The columns are: period, branch, analysis_time (starting time of the branch), re
 <p>An option exists to output the stochastic horizons for debugging your system. This is done with the <em>model</em> parameter <code>output_horizon</code>. It will cause errors in the calculation of the cost in each solve (the costs of the unrealized branches will be included) so turn it off when you want the final results.</p>
 <p>If you change the weights of the stochastic branches, you should see the results change.</p>
 <p><img alt="2day stochastics" src="../img/concept/2day_stochastics.png" /></p>
+<h3 id="stochastics-over-multiple-periods">Stochastics over multiple periods</h3>
+<p>When the solve's horizon spans periods beyond the branching period, the branches extend through all the remaining periods: the realized branch keeps the real period names (with its realized output windows), while every non-realized branch with a nonzero weight gets a synthetic <code>&lt;period&gt;_&lt;branch&gt;</code> copy of each later period. The branch probability weights carry forward along each branch, so the weighting is constant along a branch's period chain and sums to one across the branches of each period.</p>
+<p>Notes for multi-period stochastic solves:</p>
+<ul>
+<li>If <code>years_represented</code> is defined for the solve, it must cover <strong>all</strong> of the solve's periods. A configuration that defines it for only some periods fails with a configuration error (older versions silently ran on a truncated horizon instead).</li>
+<li>The realized branch's input weight is always treated as 1.0 along the whole realized chain — the sibling branches' weights are normalized against 1.0, not against a DB value on the realized row.</li>
+<li>In a single solve whose <code>realized_periods</code> span the whole horizon, the non-anticipatory constraints cover the whole horizon: the shared decision types (storage usage, online status, reserve) stay pinned to the realized branch through the later periods, and post-branching divergence shows up only in the flow variables. Use a rolling solve when the branches should be free to commit differently after the information is revealed — each roll then realizes only its jump slice and the non-anticipatory window ends at the reveal.</li>
+<li>A <code>realized: yes</code> row placed at a later period's first timestep does not re-branch the model, but it selects which forecast branch's timeseries the realized chain uses from that period onwards. This can be used deliberately for per-period forecast-series selection; if you did not intend a series swap, keep the <code>realized: yes</code> rows only at the solve (or roll) start.</li>
+</ul>
 <h3 id="rolling-horizon-stochastics">Rolling horizon stochastics</h3>
 <p><strong>(stochastics.sqlite scenario: 1_week_rolling_wind)</strong></p>
 <p>In this scenario we extend the previous timeline to one week and roll through it one day at a time with additional three day stochastic horizon:</p>
