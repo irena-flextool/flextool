@@ -1165,6 +1165,17 @@ If you change the weights of the stochastic branches, you should see the results
 
 ![2day stochastics](./img/concept/2day_stochastics.png)
 
+### Stochastics over multiple periods
+
+When the solve's horizon spans periods beyond the branching period, the branches extend through all the remaining periods: the realized branch keeps the real period names (with its realized output windows), while every non-realized branch with a nonzero weight gets a synthetic `<period>_<branch>` copy of each later period. The branch probability weights carry forward along each branch, so the weighting is constant along a branch's period chain and sums to one across the branches of each period.
+
+Notes for multi-period stochastic solves:
+
+- If `years_represented` is defined for the solve, it must cover **all** of the solve's periods. A configuration that defines it for only some periods fails with a configuration error (older versions silently ran on a truncated horizon instead).
+- The realized branch's input weight is always treated as 1.0 along the whole realized chain — the sibling branches' weights are normalized against 1.0, not against a DB value on the realized row.
+- In a single solve whose `realized_periods` span the whole horizon, the non-anticipatory constraints cover the whole horizon: the shared decision types (storage usage, online status, reserve) stay pinned to the realized branch through the later periods, and post-branching divergence shows up only in the flow variables. Use a rolling solve when the branches should be free to commit differently after the information is revealed — each roll then realizes only its jump slice and the non-anticipatory window ends at the reveal.
+- A `realized: yes` row placed at a later period's first timestep does not re-branch the model, but it selects which forecast branch's timeseries the realized chain uses from that period onwards. This can be used deliberately for per-period forecast-series selection; if you did not intend a series swap, keep the `realized: yes` rows only at the solve (or roll) start.
+
 ### Rolling horizon stochastics
 **(stochastics.sqlite scenario: 1_week_rolling_wind)**
 

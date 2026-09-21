@@ -6572,12 +6572,23 @@ def dtttdt_from_source(source: "InputSource",
     # period__branch.csv (workdir-aware) to discover which periods are
     # branches off a non-self anchor.
     branch_anchor: dict[str, str] = {}
+    anchors_with_self: set[str] = set()
     pbf: pl.DataFrame | None = None
     period_col, branch_col = "period", "branch"
     # Path B Cat B: prefer ctx.period_branch (schema [d_anchor, b]).
+    # Null-guard: the accessor casts against the live axis enums, and
+    # the ``d_anchor`` enum vocabulary is empty by contract ("built at
+    # Phase 3 handoff") — under enum activation every anchor value
+    # casts to null, which would poison the anchors_with_self /
+    # branch_anchor classification below (a null==null self-row turns
+    # EVERY period into a "branch").  Only trust the ctx frame when
+    # both columns are fully populated; otherwise fall through to the
+    # provider/workdir CSV (raw Utf8 columns).
     if ctx is not None:
         pb_ctx = ctx.period_branch
-        if pb_ctx.height > 0:
+        if (pb_ctx.height > 0
+                and pb_ctx["d_anchor"].null_count() == 0
+                and pb_ctx["b"].null_count() == 0):
             pbf = pb_ctx
             period_col, branch_col = "d_anchor", "b"
     if pbf is None and workdir is not None:
@@ -6590,13 +6601,52 @@ def dtttdt_from_source(source: "InputSource",
     if pbf is not None and pbf.height > 0:
         pb_rows = list(zip(pbf[period_col].to_list(),
                               pbf[branch_col].to_list()))
-        anchors_with_self: set[str] = set()
         for a, b in pb_rows:
             if a == b:
                 anchors_with_self.add(a)
         for a, b in pb_rows:
             if b != a and a in anchors_with_self:
                 branch_anchor[b] = a
+    # Continuation fan-out: the time-branch map (period -> time_branch,
+    # from solve_branch__time_branch.csv) lets a continuation branch
+    # period wrap to the nearest earlier period of the SAME time-branch
+    # instead of self-wrapping, mirroring ``make_step_jump``.  Ctx-first
+    # (typed accessor), provider/workdir fallback.
+    time_branch_of: dict[str, str] = {}
+    if ctx is not None:
+        sbtb_ctx = ctx.solve_branch_time_branch
+        if sbtb_ctx.height > 0:
+            time_branch_of = dict(zip(sbtb_ctx["d"].to_list(),
+                                        sbtb_ctx["time_branch"].to_list()))
+    if not time_branch_of and workdir is not None:
+        sbtb_path = (Path(workdir) / "solve_data"
+                     / "solve_branch__time_branch.csv")
+        if _provider_has_key(provider, sbtb_path):  # Phase E-j — seed-aware
+            try:
+                sbtb_df = _provider_read(provider, sbtb_path)
+            except Exception:
+                sbtb_df = None
+            if (sbtb_df is not None and sbtb_df.height > 0
+                    and "period" in sbtb_df.columns
+                    and "branch" in sbtb_df.columns):
+                time_branch_of = dict(zip(sbtb_df["period"].to_list(),
+                                            sbtb_df["branch"].to_list()))
+    if branch_anchor and not time_branch_of:
+        # Failure semantics (do NOT fall back to self-wrap): a
+        # period__branch with branch rows but no time-branch map means
+        # the per-solve preprocessing artefacts are inconsistent.  A
+        # silent self-wrap fallback would sever continuation branch
+        # periods from their own branch chain — the exact silent
+        # truncation bug this walk repairs — so raise instead.
+        raise ValueError(
+            "dtttdt_from_source: period__branch declares branch periods "
+            f"({sorted(branch_anchor)}) but solve_branch__time_branch is "
+            "missing or empty — cannot resolve cross-period wrap "
+            "predecessors for branch periods.  The per-solve emitter "
+            "(emit_branch_weights_and_map) writes this frame for every "
+            "solve; its absence indicates an inconsistent workdir/"
+            "Provider state."
+        )
     out_rows: list[tuple[str, str, str, str, str, str]] = []
     len(period_order)
     # Find within-solve predecessor for first-of-period rows.
@@ -6606,19 +6656,36 @@ def dtttdt_from_source(source: "InputSource",
             continue
         # Determine the predecessor period for the j=0 wrap row.
         # Mirrors ``timeline_config.make_step_jump``:
-        #   * branch (non-anchor) period → self-wrap;
+        #   * branch (non-anchor) period → nearest earlier period with
+        #     the SAME time-branch (continuation linkage); self-wrap
+        #     when none exists (the branching period's own fan);
         #   * first anchor period (== first_period_name in flextool's
         #     reversed walk) → wrap to last_period_name (last in
-        #     active_time_list iteration order, == period_order[-1]);
-        #   * non-first anchor period → wrap to the period at
-        #     period_order[pi - 1].
+        #     active_time_list iteration order, == period_order[-1] —
+        #     retained quirk);
+        #   * non-first anchor period → nearest earlier ANCHOR period
+        #     (skips branch periods so a realized continuation period
+        #     wraps to the previous realized period); positional
+        #     ``period_order[pi - 1]`` fallback when there is no
+        #     period__branch data (deterministic path, where
+        #     positional ≡ previous-anchor anyway).
         if period in branch_anchor:
             wrap_period = period
+            tb = time_branch_of.get(period)
+            if tb is not None:
+                for qi in range(pi - 1, -1, -1):
+                    if time_branch_of.get(period_order[qi]) == tb:
+                        wrap_period = period_order[qi]
+                        break
         else:
             if pi == 0:
                 wrap_period = period_order[-1]
             else:
                 wrap_period = period_order[pi - 1]
+                for qi in range(pi - 1, -1, -1):
+                    if period_order[qi] in anchors_with_self:
+                        wrap_period = period_order[qi]
+                        break
         prev_solve_steps = per_period.get(wrap_period) or []
         prev_solve_last_t = prev_solve_steps[-1][0] if prev_solve_steps \
                             else steps[-1][0]

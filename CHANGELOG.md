@@ -1,3 +1,70 @@
+## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
+
+Patch release. No schema changes. This release also ships the 4.0.3 changes
+below, which were prepared but never published to PyPI.
+
+- **VRE potential and curtailment outputs no longer collapse to empty when a
+  wind/solar process leaves `availability` at its default.** The
+  potential-generation calculation multiplied the resource profile by the
+  `availability` parameter, but that parameter only carries processes that set
+  it explicitly. Profile-driven VRE that relies on the implicit 1.0 default was
+  silently dropped to NaN, zeroing the potential and curtailment outputs. The
+  1.0 default is now applied to every VRE process, matching how the solver
+  treats it.
+- **Curtailment output no longer crashes when a flow carries more than one
+  `upper_limit` profile** (e.g. an availability profile plus a scheduling upper
+  bound). Such flows now collapse to their binding (minimum) potential instead
+  of raising on a duplicate-column subtraction.
+- **Cost summaries no longer crash when every node uses `penalty_method=off`.**
+  With node-state slack disabled model-wide the upward/downward slack-penalty
+  lookup raised `KeyError`; it now falls back to zero, matching the
+  reserve-slack terms.
+- **The `highspy` requirement now has a lower bound of 1.14.0.** Autoscale
+  Layer 3 conditions the objective through HiGHS' `user_objective_scale`
+  option, which older 1.x wheels (before HiGHS renamed `user_cost_scale`)
+  reject — silently degrading the solve to an un-conditioned objective. Fresh
+  installs can no longer resolve to a wheel that lacks the option.
+
+## Release 4.0.3 (11.9.2026) — multi-period stochastic continuation fix
+
+Patch release. No schema changes.
+
+- **Multi-period stochastic solves no longer silently truncate the horizon
+  after the branching period.** Previously, periods after the one where the
+  stochastic branches fan out received no active timesteps at all — the solve
+  built zero variables for them and quietly optimized a shortened horizon. The
+  branch fan-out now extends through every continuation period: the realized
+  branch keeps the real period names (with its realized output windows), and
+  each non-realized branch with a nonzero weight gets its own copy of every
+  later period, with the branch probability weights carried forward along each
+  branch.
+- **The `years_represented` default now covers every period of a solve.**
+  When a solve does not define `years_represented`, each of its periods is
+  meant to default to representing one year. The defaulting logic seeded only
+  a single (arbitrary) period, so multi-period solves relying on the default
+  failed the years-coverage check — including plain deterministic ones.
+  Explicitly defined `years_represented` (full or partial) behaves exactly as
+  before.
+- **Cross-period step linkage follows each branch's own lineage.** The first
+  timestep of a continuation period (storage state carry-over, ramp linkage)
+  now links to the last timestep of the *same branch's* previous period,
+  instead of self-cycling or linking positionally across branches.
+- **Period year-share rows no longer leak between periods with
+  prefix-overlapping names** (e.g. `p1` / `p10`): the branch-copy matching in
+  the years-represented bookkeeping now uses exact equality instead of
+  substring containment.
+- **Newly explicit error.** Stochastic solves now require the solve's
+  `years_represented` (when defined) to cover *all* of the solve's periods,
+  including continuation periods. Configurations that defined it for only some
+  periods previously ran silently on the truncated horizon; they now fail with
+  a clear configuration error.
+- **Tests.** New hand-calculated multi-period stochastic fixture (two periods,
+  branch-varying timeseries) verified down to the objective value, plus unit
+  tests pinning the continuation fan-out, cross-period step linkage, and the
+  year-share fix.
+- **Docs.** New "Stochastics over multiple periods" subsection in the how-to
+  describing the continuation fan-out semantics.
+
 ## Release 4.0.2 (2.9.2026) — results-database schema seeding fix
 
 Patch release. No schema or model changes.

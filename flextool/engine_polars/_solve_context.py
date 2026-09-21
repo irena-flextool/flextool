@@ -192,6 +192,13 @@ class SolveContext:
         ),
         repr=False,
     )
+    _solve_branch_time_branch_loaded: bool = field(default=False, repr=False)
+    _solve_branch_time_branch: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={"d": pl.Utf8, "time_branch": pl.Utf8}
+        ),
+        repr=False,
+    )
 
     # Internal: ad-hoc CSV cache.  Keyed by ``str(path)`` (no syscall).
     # Values are ``None`` when the file is absent so we don't re-stat
@@ -451,6 +458,27 @@ class SolveContext:
             )
             self._solve_branch_weight_loaded = True
         return self._solve_branch_weight
+
+    @property
+    def solve_branch_time_branch(self) -> pl.DataFrame:
+        """``[d, time_branch]`` from ``solve_branch__time_branch.csv``
+        (rename ``period`` → ``d``, ``branch`` → ``time_branch``).
+        Empty when the file is missing.
+
+        Continuation fan-out: ``dtttdt_from_source`` walks this map so
+        a continuation branch period wraps to the nearest earlier
+        period sharing the same time-branch instead of self-wrapping.
+        Columns stay ``Utf8`` — the ``time_branch`` vocabulary (DB
+        branch names like ``rlz`` / ``low``) is not a canonical axis
+        enum, and consumers use the frame as a plain dict.
+        """
+        if not self._solve_branch_time_branch_loaded:
+            self._solve_branch_time_branch = _load_solve_branch_time_branch(
+                self.solve_data_dir / "solve_branch__time_branch.csv",
+                provider=self.provider,
+            )
+            self._solve_branch_time_branch_loaded = True
+        return self._solve_branch_time_branch
 
     # ------------------------------------------------------------------
     # Typed-field convenience accessors
@@ -854,6 +882,32 @@ def _load_period_share(solve_data_dir: Path,
             if cols:
                 return out.select(cols)
     return empty
+
+
+def _load_solve_branch_time_branch(path: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> pl.DataFrame:
+    """Load ``solve_branch__time_branch.csv`` as ``[d, time_branch]``.
+
+    Plain ``Utf8`` columns — the time-branch vocabulary is not a
+    canonical axis enum (see :pyattr:`SolveContext.solve_branch_time_branch`).
+    """
+    empty = pl.DataFrame(schema={"d": pl.Utf8, "time_branch": pl.Utf8})
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.solve_branch_time_branch")
+    if df is None:
+        return empty
+    rename = {}
+    if "period" in df.columns:
+        rename["period"] = "d"
+    if "branch" in df.columns:
+        rename["branch"] = "time_branch"
+    df = df.rename(rename)
+    cols = [c for c in ("d", "time_branch") if c in df.columns]
+    if len(cols) < 2:
+        return empty
+    return (df.select(pl.col(c).cast(pl.Utf8) for c in cols)
+              .unique(maintain_order=True))
 
 
 def _load_solve_branch_weight(path: Path,

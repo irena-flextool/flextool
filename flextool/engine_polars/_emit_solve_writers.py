@@ -241,7 +241,10 @@ def derive_years_represented(
                 str(years_to_cover_within_year),
             ))
             for pd_pair in period__branch:
-                if pd_pair[0] in period__years[0] and pd_pair[0] != pd_pair[1]:
+                # Equality, not substring containment (``in``): with
+                # prefix-overlapping period names (p1 / p10), ``in``
+                # would copy p10's year rows to p1's branches.
+                if pd_pair[0] == period__years[0] and pd_pair[0] != pd_pair[1]:
                     rows.append((
                         pd_pair[1], str(year_count), str(year_count),
                         str(years_to_cover_within_year),
@@ -278,7 +281,9 @@ def derive_period_years(
     for period__year in years_represented:
         rows.append((period__year[0], str(year_count)))
         for pd_pair in stochastic_branches:
-            if pd_pair[0] in period__year[0] and pd_pair[0] != pd_pair[1]:
+            # Equality, not substring containment — see
+            # derive_years_represented.
+            if pd_pair[0] == period__year[0] and pd_pair[0] != pd_pair[1]:
                 rows.append((pd_pair[1], str(year_count)))
         year_count += float(period__year[1])
     return _to_utf8_frame(("period", "param"), rows)

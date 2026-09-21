@@ -561,9 +561,18 @@ class TimelineConfig:
                 solve_config.realized_periods[solve]
                 + solve_config.invest_periods[solve]
             )
-            all_periods = {item for tup in all_periods_tuples for item in tup}
-            for period in all_periods:
-                if solve not in solve_config.solve_period_years_represented:
+            # Ordered de-dup (first occurrence) — a set here would make
+            # the seeded row order vary with PYTHONHASHSEED.
+            all_periods = list(
+                dict.fromkeys(
+                    item for tup in all_periods_tuples for item in tup
+                )
+            )
+            # Membership check OUTSIDE the loop: the first append below
+            # inserts the solve key into the defaultdict, so an in-loop
+            # check would stop after seeding a single period.
+            if solve not in solve_config.solve_period_years_represented:
+                for period in all_periods:
                     solve_config.solve_period_years_represented[solve].append(
                         [period, 1.0]
                     )
@@ -1097,14 +1106,29 @@ def make_step_jump(
     """Build a list of step-jump entries for the solver.
 
     Each entry describes the jump from one simulation step to the
-    next, including cross-period jumps.  Stochastic branches use the
-    last-realized-step on a sibling branch as the predecessor.
+    next, including cross-period jumps.
+
+    Cross-period linkage for the first step of a period:
+
+    * **anchor periods** (``(period, period) ∈ period__branch``): the
+      nearest previous ANCHOR key in ``active_time_list`` order (skips
+      branch periods, so a realized continuation period links to the
+      previous realized period).  The solve's FIRST period keeps the
+      cyclic wrap to the last dict key (a branch period in stochastic
+      solves — retained quirk, consumed only by cyclic storage-binding
+      paths).
+    * **branch periods**: the nearest earlier period sharing the same
+      time-branch in ``solve_branch__time_branch_list`` (a continuation
+      branch period continues from the same branch's previous period);
+      when no such period exists (the branching period's own fan) the
+      period self-cycles on its own last step.
     """
     step_lengths: list[tuple] = []
     period_start_pos = 0
     period_counter = -1
-    first_period_name = list(active_time_list)[0]
-    last_period_name = list(active_time_list)[-1]
+    period_names = list(active_time_list)
+    first_period_name = period_names[0]
+    last_period_name = period_names[-1]
     for period, active_time in reversed(active_time_list.items()):
         period_counter -= 1
         period_last = len(active_time)
@@ -1112,7 +1136,18 @@ def make_step_jump(
         if period == first_period_name:
             previous_period_name = last_period_name
         else:
-            previous_period_name = list(active_time_list)[period_counter]
+            previous_period_name = period_names[period_counter]
+            if (period, period) in period__branch:
+                # Anchor period: skip branch periods — link to the
+                # nearest previous key that is itself an anchor.
+                # Deterministic solves (every key an anchor) reduce to
+                # the positional previous; when no earlier anchor
+                # exists the positional previous is kept as fallback.
+                pos = period_names.index(period)
+                for k in range(pos - 1, -1, -1):
+                    if (period_names[k], period_names[k]) in period__branch:
+                        previous_period_name = period_names[k]
+                        break
         for i, step in enumerate(reversed(active_time)):
             j = period_last - i - 1
             if j > 0:
@@ -1146,77 +1181,40 @@ def make_step_jump(
                     )
             else:
                 if (period, period) not in period__branch:
-                    original_period = None
-                    for pb in period__branch:
-                        if pb[1] == period:
-                            original_period = pb[0]
-                    if (
-                        original_period is not None
-                        and (original_period, original_period)
-                        in period__branch
-                        and original_period in active_time_list
+                    # Branch period: find the nearest EARLIER period
+                    # sharing this period's time-branch — the
+                    # continuation linkage (a continuation branch
+                    # period continues from the same branch's previous
+                    # period).  When none exists (the branching
+                    # period's own fan: earlier periods carry only the
+                    # realized time-branch), fall back to the
+                    # self-cycle row on the period's own last step.
+                    time_branch = None
+                    for sb_tb in solve_branch__time_branch_list:
+                        if sb_tb[0] == period:
+                            time_branch = sb_tb[1]
+                    past = False
+                    found = False
+                    previous_period_with_branch = None
+                    for solve_period, _a_t in reversed(
+                        active_time_list.items()
                     ):
-                        jump = (
-                            active_time[j].index - active_time[-1].index
-                        )
-                        step_lengths.insert(
-                            period_start_pos,
-                            (
-                                period,
-                                step.timestep,
-                                active_time[j - 1].timestep,
-                                active_time[block_last].timestep,
-                                period,
-                                active_time_list[period][-1].timestep,
-                                jump,
-                            ),
-                        )
-                    elif (
-                        original_period is not None
-                        and (original_period, original_period)
-                        in period__branch
-                    ):
-                        jump = (
-                            active_time[j].index - active_time[-1].index
-                        )
-                        step_lengths.insert(
-                            period_start_pos,
-                            (
-                                period,
-                                step.timestep,
-                                active_time[j - 1].timestep,
-                                active_time[block_last].timestep,
-                                period,
-                                active_time_list[period][-1].timestep,
-                                jump,
-                            ),
-                        )
-                    else:
-                        time_branch = None
-                        for sb_tb in solve_branch__time_branch_list:
-                            if sb_tb[0] == period:
-                                time_branch = sb_tb[1]
-                        past = False
-                        found = False
-                        previous_period_with_branch = None
-                        for solve_period, _a_t in reversed(
-                            active_time_list.items()
-                        ):
-                            if past:
-                                for sb_tb in solve_branch__time_branch_list:
-                                    if (
-                                        sb_tb[0] == solve_period
-                                        and sb_tb[1] == time_branch
-                                    ):
-                                        previous_period_with_branch = (
-                                            solve_period
-                                        )
-                                        found = True
-                                if found:
-                                    break
-                            else:
-                                if solve_period == period:
-                                    past = True
+                        if past:
+                            for sb_tb in solve_branch__time_branch_list:
+                                if (
+                                    sb_tb[0] == solve_period
+                                    and sb_tb[1] == time_branch
+                                ):
+                                    previous_period_with_branch = (
+                                        solve_period
+                                    )
+                                    found = True
+                            if found:
+                                break
+                        else:
+                            if solve_period == period:
+                                past = True
+                    if found:
                         jump = (
                             active_time[j].index
                             - active_time_list[
@@ -1234,6 +1232,22 @@ def make_step_jump(
                                 active_time_list[
                                     previous_period_with_branch
                                 ][-1].timestep,
+                                jump,
+                            ),
+                        )
+                    else:
+                        jump = (
+                            active_time[j].index - active_time[-1].index
+                        )
+                        step_lengths.insert(
+                            period_start_pos,
+                            (
+                                period,
+                                step.timestep,
+                                active_time[j - 1].timestep,
+                                active_time[block_last].timestep,
+                                period,
+                                active_time_list[period][-1].timestep,
                                 jump,
                             ),
                         )
