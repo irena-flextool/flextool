@@ -41,8 +41,18 @@ def cost_summaries(par, s, v, r, debug):
     costs_dt['co2'] = r.cost_co2_dt
     costs_dt['other operational'] = r.cost_process_other_operational_cost_dt.sum(axis=1)
     costs_dt['starts'] = r.cost_startup_dt.sum(axis=1)
-    costs_dt['upward slack penalty'] = r.costPenalty_node_state_upDown_dt.xs('up', level='upDown', axis=1).sum(axis=1)
-    costs_dt['downward slack penalty'] = r.costPenalty_node_state_upDown_dt.xs('down', level='upDown', axis=1).sum(axis=1)
+    # With penalty_method=off on every node, v.q_state_up/down have no
+    # columns, so costPenalty_node_state_upDown_dt is empty and the 'up'/
+    # 'down' keys never attach to the upDown level (KeyError on .xs).  Guard
+    # like the reserve slack terms below and the per-entity path (line ~265).
+    try:
+        costs_dt['upward slack penalty'] = r.costPenalty_node_state_upDown_dt.xs('up', level='upDown', axis=1).sum(axis=1)
+    except KeyError:
+        costs_dt['upward slack penalty'] = 0
+    try:
+        costs_dt['downward slack penalty'] = r.costPenalty_node_state_upDown_dt.xs('down', level='upDown', axis=1).sum(axis=1)
+    except KeyError:
+        costs_dt['downward slack penalty'] = 0
     costs_dt['inertia slack penalty'] = r.costPenalty_inertia_dt.sum(axis=1)
     costs_dt['non-synchronous slack penalty'] = r.costPenalty_non_synchronous_dt.sum(axis=1)
     try:

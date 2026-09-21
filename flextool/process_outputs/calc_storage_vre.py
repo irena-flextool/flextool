@@ -126,12 +126,33 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     profile_level_of_vre_node_profile_upper = vre_node_profile_upper.get_level_values('profile')
     vre_processes_in_use = vre_profiles_in_use[profile_level_of_vre_node_profile_upper]
     vre_processes_in_use.columns = vre_node_profile_upper
+    # par.process_availability only carries processes that authored
+    # unit/connection.availability.  A profile-driven VRE process typically
+    # leaves the availability *parameter* at its 1.0 default and is therefore
+    # absent from the frame.  A plain ``.mul`` aligns on the shared 'process'
+    # level and drops those columns to NaN, silently zeroing VRE potential /
+    # curtailment.  The engine applies availability=1.0 to every unauthored
+    # process (model.py: left-join + fill_null(1.0)); reproduce that here by
+    # densifying availability to 1.0 over the VRE process set before the mul.
+    vre_procs = vre_processes_in_use.columns.get_level_values('process').unique()
+    availability_dt = par.process_availability.reindex(columns=vre_procs).fillna(1.0)
     r.potentialVREgen_dt = (
         vre_processes_in_use
-        .mul(par.process_availability)
+        .mul(availability_dt, level='process')
         .mul(r.entity_all_capacity, axis=1, level=0)
         .droplevel(axis=1, level=['profile', 'profile_method'])
     )
+    # A (process, node) flow may carry more than one ``upper_limit`` profile
+    # (e.g. an availability profile plus a scheduling upper bound under a
+    # ``free_schedule`` alternative).  The engine enforces flow ≤ profile ×
+    # capacity for each, so the achievable potential is the tightest (min)
+    # cap; collapsing to the min also keeps curtailment = potential − actual
+    # ≥ 0.  Only rewrite when duplicates exist so single-profile models stay
+    # byte-identical (min-collapse preserves first-seen column order).
+    if r.potentialVREgen_dt.columns.duplicated().any():
+        r.potentialVREgen_dt = (
+            r.potentialVREgen_dt.T.groupby(level=['process', 'node'], sort=False).min().T
+        )
     # potentialVREgen_dt is MW (profile × availability × capacity); multiply
     # by step_duration to get MWh per step before summing to MWh per period.
     r.potentialVREgen_d = (
