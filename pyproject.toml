@@ -65,10 +65,15 @@ dependencies = [
     # path (engine_polars/_solve_acceptance.py) calls to decide whether a
     # HiGHS-uncertified solve is usable — required, or that call AttributeErrors.
     "polar-high>=3.7.0",
-    # Cap pins the install default to 1.14.0 (the highest tested
-    # version) while leaving room for users to downgrade to older
-    # 1.x releases that have been validated against their setup.
-    "highspy<=1.14.0",
+    # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
+    # through the ``user_objective_scale`` option.  HiGHS renamed the older
+    # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older
+    # 1.x wheels reject it ("getOptionIndex: Option "user_objective_scale"
+    # is unknown") and the Layer-3 objective centering silently degrades to
+    # an un-conditioned solve.  Pin to 1.14.0 — the highest tested version
+    # and one that ships the option — with a lower bound so a fresh install
+    # can't resolve to an older wheel that lacks it.
+    "highspy>=1.14.0,<=1.14.0",
     # polars 1.40 introduced `pl.struct(...).is_sorted()` (and polar_high's
     # `_verify_dense_sorted` relies on the same call); older versions raise
     # "could not apply comparison on series of dtype 'binary[offset]'" and
