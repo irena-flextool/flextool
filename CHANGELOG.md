@@ -1,3 +1,30 @@
+## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
+
+Patch release. No schema changes. This release also ships the 4.0.3 changes
+below, which were prepared but never published to PyPI.
+
+- **VRE potential and curtailment outputs no longer collapse to empty when a
+  wind/solar process leaves `availability` at its default.** The
+  potential-generation calculation multiplied the resource profile by the
+  `availability` parameter, but that parameter only carries processes that set
+  it explicitly. Profile-driven VRE that relies on the implicit 1.0 default was
+  silently dropped to NaN, zeroing the potential and curtailment outputs. The
+  1.0 default is now applied to every VRE process, matching how the solver
+  treats it.
+- **Curtailment output no longer crashes when a flow carries more than one
+  `upper_limit` profile** (e.g. an availability profile plus a scheduling upper
+  bound). Such flows now collapse to their binding (minimum) potential instead
+  of raising on a duplicate-column subtraction.
+- **Cost summaries no longer crash when every node uses `penalty_method=off`.**
+  With node-state slack disabled model-wide the upward/downward slack-penalty
+  lookup raised `KeyError`; it now falls back to zero, matching the
+  reserve-slack terms.
+- **The `highspy` requirement now has a lower bound of 1.14.0.** Autoscale
+  Layer 3 conditions the objective through HiGHS' `user_objective_scale`
+  option, which older 1.x wheels (before HiGHS renamed `user_cost_scale`)
+  reject — silently degrading the solve to an un-conditioned objective. Fresh
+  installs can no longer resolve to a wheel that lacks the option.
+
 ## Release 4.0.3 (11.9.2026) — multi-period stochastic continuation fix
 
 Patch release. No schema changes.
