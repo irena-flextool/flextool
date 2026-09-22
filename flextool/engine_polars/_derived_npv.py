@@ -526,6 +526,7 @@ def period_walk_iterator(
         bounded: bool,
         life_lf: pl.LazyFrame,
         factor_side: str,
+        lineage: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Δ.5-era public alias delegating to :mod:`._derived_walks`.
 
@@ -536,7 +537,10 @@ def period_walk_iterator(
     :class:`._derived_walks.WindowMethod` enum.
 
     See :func:`._derived_walks.period_walk_iterator` for the canonical
-    semantics.
+    semantics.  ``bounded`` and ``lineage`` are orthogonal — the bool
+    selects the window predicate, ``lineage`` restricts the
+    ``(d, d_all)`` pair domain (Slice B; always ``None`` until the
+    recourse flag lands, Slice C/D); the keyword is forwarded verbatim.
     """
     from ._derived_walks import (
         period_walk_iterator as _walk,
@@ -547,7 +551,7 @@ def period_walk_iterator(
         source, active_solve, ed_lf,
         period_in_use, period_universe,
         window_method=method, life_lf=life_lf,
-        factor_side=factor_side)
+        factor_side=factor_side, lineage=lineage)
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +696,8 @@ def npv_invest_discounted_lf(
         period_invest: list[str],
         period_in_use: list[str],
         period_universe: list[str],
+        *,
+        lineage: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Variant 1: ``ed_entity_annual_discounted`` (invest-side NPV).
 
@@ -704,6 +710,9 @@ def npv_invest_discounted_lf(
     bounded; ``reinvest_automatic`` → unbounded).  An entity may have
     multiple methods; each contributes a separate sum.  See
     ``entity_annual_calc_params.py:222-251``.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
 
     Returns lazy ``[e, d, value]``.
     """
@@ -748,11 +757,13 @@ def npv_invest_discounted_lf(
     bounded = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
-        bounded=True, life_lf=life_lf, factor_side="inv")
+        bounded=True, life_lf=life_lf, factor_side="inv",
+        lineage=lineage)
     unbounded = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
-        bounded=False, life_lf=life_lf, factor_side="inv")
+        bounded=False, life_lf=life_lf, factor_side="inv",
+        lineage=lineage)
 
     # Combine.
     bounded = bounded.rename({"factor": "factor_b"})
@@ -790,6 +801,8 @@ def npv_divest_discounted_lf(
         period_invest: list[str],
         period_in_use: list[str],
         period_universe: list[str],
+        *,
+        lineage: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Variant 2: ``ed_entity_annual_divest_discounted`` (divest-side NPV).
 
@@ -800,6 +813,9 @@ def npv_divest_discounted_lf(
     where ``life`` is the **raw** ``lifetime`` value (not edEntity_lifetime),
     and the gate is restricted to e ∈ node ∪ process (mirrors
     L266-285 — no fallback for unclassified entities).
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
 
     Returns lazy ``[e, d, value]``.
     """
@@ -833,7 +849,8 @@ def npv_divest_discounted_lf(
     walk = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
-        bounded=True, life_lf=life_lf, factor_side="inv")
+        bounded=True, life_lf=life_lf, factor_side="inv",
+        lineage=lineage)
 
     return (ed_anchor_lf
               .join(ann_lf, on=["e", "d"], how="left")
@@ -880,6 +897,8 @@ def lifetime_fixed_cost_invest_lf(
         period_with_history: list[str],
         period_in_use: list[str],
         period_universe: list[str],
+        *,
+        lineage: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Variant 3: ``ed_lifetime_fixed_cost`` (invest-side lifetime FC).
 
@@ -891,6 +910,9 @@ def lifetime_fixed_cost_invest_lf(
     (choice/no_invest → bounded; automatic → unbounded), with
     ops_factor (not inv_factor) and edEntity_lifetime as the bound.
     See L292-321.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_with_history:
         return pl.LazyFrame(schema={
@@ -924,11 +946,13 @@ def lifetime_fixed_cost_invest_lf(
     bounded = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
-        bounded=True, life_lf=life_lf, factor_side="ops")
+        bounded=True, life_lf=life_lf, factor_side="ops",
+        lineage=lineage)
     unbounded = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
-        bounded=False, life_lf=life_lf, factor_side="ops")
+        bounded=False, life_lf=life_lf, factor_side="ops",
+        lineage=lineage)
 
     bounded = bounded.rename({"factor": "factor_b"})
     unbounded = unbounded.rename({"factor": "factor_u"})
@@ -965,6 +989,8 @@ def lifetime_fixed_cost_divest_lf(
         period_invest: list[str],
         period_in_use: list[str],
         period_universe: list[str],
+        *,
+        lineage: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Variant 4: ``ed_lifetime_fixed_cost_divest`` (divest-side FC).
 
@@ -974,6 +1000,9 @@ def lifetime_fixed_cost_divest_lf(
 
     where ``life`` is raw lifetime and ``inv_factor`` (NOT ops_factor)
     is used — mod L1651 asymmetry.  See L325-348.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_invest:
         return pl.LazyFrame(schema={
@@ -1003,7 +1032,8 @@ def lifetime_fixed_cost_divest_lf(
     walk = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
-        bounded=True, life_lf=life_lf, factor_side="inv")
+        bounded=True, life_lf=life_lf, factor_side="inv",
+        lineage=lineage)
 
     return (ed_anchor_lf
               .join(fc_lf, on=["e", "d"], how="left")
@@ -1093,6 +1123,8 @@ def ed_entity_annual_discounted_from_source(
         period_invest: list[str],
         period_in_use: list[str],
         period_universe: list[str],
+        *,
+        lineage: pl.DataFrame | None = None,
         ) -> "Param | None":
     """Public entry: ``ed_entity_annual_discounted[e, d]``.
 
@@ -1104,12 +1136,16 @@ def ed_entity_annual_discounted_from_source(
     returns a non-None frame, so emitting the zero rows is required
     for the lazy result to match the seed on fixtures where every
     (e, d) value is zero (e.g. ``work_wind_battery_invest``).
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_invest:
         return None
     out = (npv_invest_discounted_lf(
               source, active_solve,
-              period_invest, period_in_use, period_universe)
+              period_invest, period_in_use, period_universe,
+              lineage=lineage)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1124,17 +1160,23 @@ def ed_entity_annual_divest_discounted_from_source(
         period_invest: list[str],
         period_in_use: list[str],
         period_universe: list[str],
+        *,
+        lineage: pl.DataFrame | None = None,
         ) -> "Param | None":
     """Public entry: ``ed_entity_annual_divest_discounted[e, d]``.
 
     Unfiltered ``entityDivest × period_invest`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_invest:
         return None
     out = (npv_divest_discounted_lf(
               source, active_solve,
-              period_invest, period_in_use, period_universe)
+              period_invest, period_in_use, period_universe,
+              lineage=lineage)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1149,17 +1191,23 @@ def ed_lifetime_fixed_cost_from_source(
         period_with_history: list[str],
         period_in_use: list[str],
         period_universe: list[str],
+        *,
+        lineage: pl.DataFrame | None = None,
         ) -> "Param | None":
     """Public entry: ``ed_lifetime_fixed_cost[e, d]``.
 
     Unfiltered ``entity × period_with_history`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_with_history:
         return None
     out = (lifetime_fixed_cost_invest_lf(
               source, active_solve,
-              period_with_history, period_in_use, period_universe)
+              period_with_history, period_in_use, period_universe,
+              lineage=lineage)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1174,17 +1222,23 @@ def ed_lifetime_fixed_cost_divest_from_source(
         period_invest: list[str],
         period_in_use: list[str],
         period_universe: list[str],
+        *,
+        lineage: pl.DataFrame | None = None,
         ) -> "Param | None":
     """Public entry: ``ed_lifetime_fixed_cost_divest[e, d]``.
 
     Unfiltered ``entityDivest × period_invest`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_invest:
         return None
     out = (lifetime_fixed_cost_divest_lf(
               source, active_solve,
-              period_invest, period_in_use, period_universe)
+              period_invest, period_in_use, period_universe,
+              lineage=lineage)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())

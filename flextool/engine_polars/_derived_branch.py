@@ -1052,6 +1052,247 @@ def pd_non_anticipativity_df(
 
 
 # ---------------------------------------------------------------------------
+# check_recourse_npv_preconditions — the three Slice A §2.2 NPV proof
+# obligations, shipped as a pure checker (Slice B design §6).  Exercised
+# by tests only until the Slice D activation sites wire it at runtime.
+# ---------------------------------------------------------------------------
+
+
+def _read_solve_data_csv(workdir: Path | None,
+                         provider: "object | None",
+                         name: str) -> pl.DataFrame | None:
+    """Provider-first / workdir-CSV-fallback read of
+    ``solve_data/<name>`` (the Slice A T12 harness acquisition idiom).
+    Returns ``None`` when neither source carries the file.
+    """
+    if workdir is None:
+        return None
+    p = Path(workdir) / "solve_data" / name
+    df = _provider_get(provider, p)
+    if df is not None and df.height > 0:
+        return df
+    if p.exists():
+        try:
+            df = pl.read_csv(p, infer_schema_length=0)
+        except Exception:
+            return None
+        if df.height > 0:
+            return df
+    return None
+
+
+def _p_years_d_rows(workdir: Path | None,
+                    provider: "object | None",
+                    ) -> dict[str, float] | None:
+    """``{period: cumulative year}`` from ``solve_data/p_years_d.csv``
+    (fallback ``period_with_history.csv``, ``param`` column) — the
+    canonical emitted CSVs that carry the fan-member byte-copies
+    (``_emit_solve_writers.py`` years-represented / period-years
+    copy loops)."""
+    df = _read_solve_data_csv(workdir, provider, "p_years_d.csv")
+    val_col = None
+    if df is not None and "period" in df.columns:
+        val_col = "value" if "value" in df.columns else df.columns[-1]
+    else:
+        df = _read_solve_data_csv(workdir, provider,
+                                  "period_with_history.csv")
+        if df is not None and "period" in df.columns:
+            val_col = "param" if "param" in df.columns else df.columns[-1]
+    if df is None or val_col is None:
+        return None
+    out: dict[str, float] = {}
+    for d, v in zip(df["period"].to_list(), df[val_col].to_list()):
+        if d is None or v is None:
+            continue
+        try:
+            out[str(d)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _p_years_represented_rows(workdir: Path | None,
+                              provider: "object | None",
+                              ) -> dict[str, list[tuple[str, float]]] | None:
+    """Ordered ``{period: [(year_label, width), ...]}`` from
+    ``solve_data/p_years_represented.csv`` (canonical columns
+    ``period, years_from_solve, p_years_from_solve,
+    p_years_represented`` — label = second column, width = last)."""
+    df = _read_solve_data_csv(workdir, provider,
+                              "p_years_represented.csv")
+    if df is None or "period" not in df.columns or len(df.columns) < 2:
+        return None
+    label_col = df.columns[1]
+    width_col = df.columns[-1]
+    out: dict[str, list[tuple[str, float]]] = {}
+    for d, y, w in zip(df["period"].to_list(), df[label_col].to_list(),
+                       df[width_col].to_list()):
+        if d is None or y is None or w is None:
+            continue
+        try:
+            out.setdefault(str(d), []).append((str(y), float(w)))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def check_recourse_npv_preconditions(
+        workdir: Path | None,
+        source: "InputSource | None" = None,
+        active_solve: str | None = None,
+        *,
+        ctx: "object | None" = None,
+        provider: "object | None" = None,
+        weight_tol: float = 1e-9,
+        ) -> list[str]:
+    """Return violation messages for the three Slice A §2.2 NPV
+    obligations ((i) leaf-weight constancy, (ii) cohort sum-to-1,
+    (iii) byte-equal fan-member year rows).  Empty list == all hold.
+    Deterministic message order.  Raising wrapper:
+    :func:`assert_recourse_npv_preconditions`.
+
+    These obligations pin the arithmetic that makes a SET-shaped
+    (unweighted) lineage filter numerically correct for
+    trunk-crossing windows and realized-anchor windows (recourse plan
+    §9.4) — on the invest AND divest side (variant-agnostic: they
+    constrain inputs, not any one walker).  Runtime wiring is the
+    Slice D activation site (once per solve, before the first
+    lineage-passing call); until then this checker is exercised by
+    tests only.
+
+    SOUNDNESS SCOPE (Slice B design F4/§6.2): obligation (iii) is
+    checked against the emitted solve_data CSVs (``p_years_d`` /
+    ``period_with_history`` / ``p_years_represented``).  The check
+    underwrites the lineage-filter arithmetic IF AND ONLY IF the
+    walker's year/factor source is those same CSVs (the Slice D
+    year-threading prerequisite, Slice B design §6.4).  If Slice D
+    instead anchor-maps branch-period years/factors inside the
+    walker, a FOURTH obligation is required: per fan member, the
+    anchor-map's resolved (year, factor) equals the CSV rows this
+    checker verified — without it the checker re-decouples from the
+    walker, recreating the §6.4 defect.
+
+    Obligation (i)'s chains are defined against SBTB (which carries
+    the realized branch's real-named members too, so the trunk chain
+    is covered).  A Slice E mid-horizon reveal will need to re-scope
+    constancy to post-reveal segments — out of scope here.
+    """
+    violations: list[str] = []
+    pb_rows, piu, tb_of = _lineage_inputs(
+        workdir, source, active_solve, ctx=ctx, provider=provider)
+    if not piu:
+        return []
+    piu_set = dict.fromkeys(piu)
+
+    wdf = pd_branch_weight_lf(workdir, source, active_solve,
+                              ctx=ctx, provider=provider).collect()
+    weights: dict[str, float] = {}
+    for d, v in zip(wdf["d"].to_list(), wdf["value"].to_list()):
+        if d is not None and v is not None:
+            weights[str(d)] = float(v)
+
+    # --- (i) per-leaf weight constancy ------------------------------------
+    # Member chains = PIU representatives grouped by SBTB time-branch.
+    chains: dict[str, list[str]] = {}
+    for m in piu:
+        tb = tb_of.get(m)
+        if tb is not None:
+            chains.setdefault(tb, []).append(m)
+    for tb, members in chains.items():
+        present = [(m, weights[m]) for m in members if m in weights]
+        missing = [m for m in members if m not in weights]
+        if missing and present:
+            violations.append(
+                "obligation (i) leaf-weight constancy: chain "
+                f"{tb!r} member(s) {missing} carry no pd_branch_weight "
+                "row while sibling members do."
+            )
+        if len({v for _, v in present}) > 1:
+            detail = ", ".join(f"{m}={v!r}" for m, v in present)
+            violations.append(
+                "obligation (i) leaf-weight constancy: chain "
+                f"{tb!r} weights are not constant along the leaf: "
+                f"{detail}."
+            )
+
+    # --- (ii) cohort weights sum to 1 -------------------------------------
+    # Fan rows (anchor -> members) in period__branch row order.
+    fan_of: dict[str, list[str]] = {}
+    for d, b in pb_rows:
+        if b != d:
+            fan_of.setdefault(d, []).append(b)
+    for a, members in fan_of.items():
+        if a not in piu_set:
+            continue
+        cohort = [a] + [m for m in members if m in piu_set]
+        s = sum(weights.get(m, 0.0) for m in cohort)
+        if abs(s - 1.0) > weight_tol:
+            violations.append(
+                "obligation (ii) cohort weights sum to 1: anchor "
+                f"{a!r} cohort {cohort} weights sum to {s!r}."
+            )
+
+    # --- (iii) byte-equal fan-member year rows ----------------------------
+    fan_pairs = [(a, m) for a, members in fan_of.items()
+                 for m in members if a in piu_set and m in piu_set]
+    if fan_pairs:
+        pyd = _p_years_d_rows(workdir, provider)
+        pyr = _p_years_represented_rows(workdir, provider)
+        if pyd is None:
+            violations.append(
+                "obligation (iii) byte-equal year rows: cannot verify "
+                "— neither solve_data/p_years_d.csv nor "
+                "period_with_history.csv is readable while fan pairs "
+                "exist."
+            )
+        if pyr is None:
+            violations.append(
+                "obligation (iii) byte-equal year rows: cannot verify "
+                "— solve_data/p_years_represented.csv is not readable "
+                "while fan pairs exist."
+            )
+        for a, m in fan_pairs:
+            if pyd is not None:
+                ya, ym = pyd.get(a), pyd.get(m)
+                if ym != ya:
+                    violations.append(
+                        "obligation (iii) byte-equal year rows: "
+                        f"p_years_d[{m!r}] = {ym!r} differs from its "
+                        f"anchor p_years_d[{a!r}] = {ya!r}."
+                    )
+            if pyr is not None:
+                ra = pyr.get(a, [])
+                rm = pyr.get(m, [])
+                if rm != ra:
+                    violations.append(
+                        "obligation (iii) byte-equal year rows: "
+                        f"p_years_represented rows of {m!r} ({rm!r}) "
+                        f"differ from its anchor {a!r} ({ra!r})."
+                    )
+    return violations
+
+
+def assert_recourse_npv_preconditions(
+        workdir: Path | None,
+        source: "InputSource | None" = None,
+        active_solve: str | None = None,
+        *,
+        ctx: "object | None" = None,
+        provider: "object | None" = None,
+        weight_tol: float = 1e-9,
+        ) -> None:
+    """Raising wrapper for :func:`check_recourse_npv_preconditions`."""
+    violations = check_recourse_npv_preconditions(
+        workdir, source, active_solve, ctx=ctx, provider=provider,
+        weight_tol=weight_tol)
+    if violations:
+        raise ValueError(
+            "recourse NPV preconditions violated:\n  "
+            + "\n  ".join(violations)
+        )
+
+
+# ---------------------------------------------------------------------------
 # apply_branch_cluster — single-pass entry for the apply_derived_g
 # integration.  Mutates ``flex_data`` in place.
 # ---------------------------------------------------------------------------
@@ -1182,4 +1423,6 @@ __all__ = [
     "period_branch_full_df",
     "period_in_use_set_df",
     "apply_branch_cluster",
+    "check_recourse_npv_preconditions",
+    "assert_recourse_npv_preconditions",
 ]
