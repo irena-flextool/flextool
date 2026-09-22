@@ -84,7 +84,8 @@ split_params:
                "solver_mip_gap", "scaling",
                "timeline_hole_multiplier",
                "decomposition", "benders_tolerance",
-               "benders_max_iter", "benders_in_out_weight"]
+               "benders_max_iter", "benders_in_out_weight",
+               "stochastic_invest_method"]
     solve_period:
       params: ["period_timeset", "years_represented", "realized_periods",
                "invest_periods", "realized_invest_periods", "fix_storage_periods"]

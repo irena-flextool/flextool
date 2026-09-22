@@ -1761,6 +1761,8 @@ def migrate_database(
                 _migrate_v68_rp_group_flag(db)
             elif next_version == 69:
                 _migrate_v69_backfill_parameter_groups(db)
+            elif next_version == 70:
+                _migrate_v70_stochastic_invest_method(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3773,6 +3775,65 @@ def _migrate_v69_backfill_parameter_groups(db) -> None:
     _commit_step(db,
         "v69: backfilled parameter groups for model.small_number_threshold "
         "(-> model) and node.penalty_method (-> basics)."
+    )
+
+
+def _migrate_v70_stochastic_invest_method(db) -> None:
+    """Add the solve.stochastic_invest_method opt-in (v69 -> v70).
+
+    Two-stage stochastic investment with recourse (recourse plan
+    §6b Slice D) is enabled per solve by this enum.  'none' (default,
+    byte-identical to prior behaviour) keeps the R-O6 invariant —
+    stochastic branches never enter the invest axis; v_invest stays
+    realized-only.  'recourse' selects the Slice D machinery.
+
+    Slice C ships only the schema + the validation guards: flag-on is
+    HARD-REJECTED until Slice D lands (branch periods on the invest
+    axis).  Bound to a new 'stochastic_invest_methods' value list;
+    grouped under 'solve_advanced' when that group exists.
+    """
+    add_value_list_manual(db, [
+        ["stochastic_invest_methods", "none"],
+        ["stochastic_invest_methods", "recourse"],
+    ])
+
+    default_val, default_type = to_database("none")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="stochastic_invest_method",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="stochastic_invest_methods",
+        description=(
+            "How stochastic branches participate in investment. 'none' "
+            "(default) keeps investment realized-only: stochastic "
+            "branches never enter the invest axis (v_invest stays on "
+            "realized periods), byte-identical to prior behaviour. "
+            "'recourse' enables two-stage stochastic investment with "
+            "recourse — shared (non-anticipative) investment before the "
+            "branch point plus per-branch recourse investment at and "
+            "after the branching period, with probability-weighted "
+            "investment costs. Reserved for future expected-value and "
+            "nested-tree modes."
+        ),
+    )
+    has_solve_advanced = (
+        db.item(db.mapped_table("parameter_group"), name="solve_advanced")
+        is not None
+    )
+    if has_solve_advanced:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="stochastic_invest_method",
+            parameter_group_name="solve_advanced",
+        )
+
+    _commit_step(db,
+        "v70: added solve.stochastic_invest_method "
+        "(stochastic_invest_methods: none/recourse, default none); "
+        "opt-in for recourse stochastic investment (Slice D)."
     )
 
 
