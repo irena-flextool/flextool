@@ -1061,9 +1061,21 @@ def pd_non_anticipativity_df(
 def _read_solve_data_csv(workdir: Path | None,
                          provider: "object | None",
                          name: str) -> pl.DataFrame | None:
-    """Provider-first / workdir-CSV-fallback read of
-    ``solve_data/<name>`` (the Slice A T12 harness acquisition idiom).
-    Returns ``None`` when neither source carries the file.
+    """Provider-only fetch of ``solve_data/<name>`` — the canonical
+    cascade pathway (matches every other reader in this module).
+    Returns ``None`` when the Provider is missing or does not carry the
+    frame.
+
+    The obligation checker verifies the *emitted* solve_data year rows
+    (design §6.2 obligation (iii)); post-Step-2 those bytes reach the
+    cascade through the Provider, so this reader routes through
+    ``provider.get`` and never touches disk.  The caller owns ensuring
+    the Provider carries the true emitted CSVs — in tests the fixtures
+    seed the Provider from the workdir (``seed_provider_from_dir`` /
+    ``_mk_provider``); at the Slice D activation site the same
+    solve_data frames the rest of the cascade already consumes are in
+    the Provider by construction.  ``workdir`` is retained in the
+    signature only to key the canonical Provider path.
     """
     if workdir is None:
         return None
@@ -1071,13 +1083,6 @@ def _read_solve_data_csv(workdir: Path | None,
     df = _provider_get(provider, p)
     if df is not None and df.height > 0:
         return df
-    if p.exists():
-        try:
-            df = pl.read_csv(p, infer_schema_length=0)
-        except Exception:
-            return None
-        if df.height > 0:
-            return df
     return None
 
 
@@ -1161,9 +1166,14 @@ def check_recourse_npv_preconditions(
     tests only.
 
     SOUNDNESS SCOPE (Slice B design F4/§6.2): obligation (iii) is
-    checked against the emitted solve_data CSVs (``p_years_d`` /
-    ``period_with_history`` / ``p_years_represented``).  The check
-    underwrites the lineage-filter arithmetic IF AND ONLY IF the
+    checked against the emitted solve_data year frames (``p_years_d`` /
+    ``period_with_history`` / ``p_years_represented``).  This checker
+    performs NO disk I/O — it reads those frames through the Provider
+    (``provider.get``), so the CALLER owns making the true emitted CSVs
+    available on the Provider before invoking it (tests seed the
+    Provider from the workdir; the Slice D activation site inherits the
+    same solve_data frames the rest of the cascade already consumes).
+    The check underwrites the lineage-filter arithmetic IF AND ONLY IF the
     walker's year/factor source is those same CSVs (the Slice D
     year-threading prerequisite, Slice B design §6.4).  If Slice D
     instead anchor-maps branch-period years/factors inside the
