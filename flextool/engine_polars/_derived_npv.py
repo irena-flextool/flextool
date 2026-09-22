@@ -1287,12 +1287,26 @@ def apply_npv(flex_data: object,
         _read_active_solve, _solve_periods, _period_in_use_set,
         _periodAll_from_source, _read_period_with_history,
         _expand_invest_branch_periods, _enter_recourse_anchor_scope,
+        _recourse_invest_active, _has_branch_invest_axis,
     )
 
-    # Slice D §4 — arm the per-period anchor-map scope for the annuity /
-    # lifetime / fixed-cost resolution below (no-op flag-off).
+    # Slice D §4 — arm the per-period anchor-map + walker-Provider scope for
+    # the annuity / lifetime / fixed-cost resolution below (no-op flag-off).
     _enter_recourse_anchor_scope(workdir, provider=provider)
     active_solve = _read_active_solve(workdir, provider=provider)
+    # Slice D §8 (E) — scenario-lineage frame for the four NPV walks (gated
+    # on recourse AND a genuine branch invest axis).  The precondition check
+    # is hoisted here, above the (unwrapped) NPV builder calls (§6).  ``None``
+    # flag-off → walks keep today's unfiltered behaviour → byte-parity.
+    _npv_lineage = (
+        getattr(flex_data, "dd_same_scenario", None)
+        if _recourse_invest_active(workdir, provider=provider)
+           and _has_branch_invest_axis(flex_data)
+        else None)
+    if _npv_lineage is not None:
+        from ._derived_branch import assert_recourse_npv_preconditions
+        assert_recourse_npv_preconditions(
+            None, source, active_solve, provider=provider)
     period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
     period_universe = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
     period_invest = _expand_invest_branch_periods(
@@ -1336,22 +1350,26 @@ def apply_npv(flex_data: object,
     _set_if("ed_entity_annual_discounted",
             ed_entity_annual_discounted_from_source(
                 source, active_solve,
-                period_invest, period_in_use, period_universe))
+                period_invest, period_in_use, period_universe,
+                lineage=_npv_lineage))
 
     _set_if("ed_entity_annual_divest_discounted",
             ed_entity_annual_divest_discounted_from_source(
                 source, active_solve,
-                period_invest, period_in_use, period_universe))
+                period_invest, period_in_use, period_universe,
+                lineage=_npv_lineage))
 
     _set_if("ed_lifetime_fixed_cost",
             ed_lifetime_fixed_cost_from_source(
                 source, active_solve,
-                period_with_history, period_in_use, period_universe))
+                period_with_history, period_in_use, period_universe,
+                lineage=_npv_lineage))
 
     _set_if("ed_lifetime_fixed_cost_divest",
             ed_lifetime_fixed_cost_divest_from_source(
                 source, active_solve,
-                period_invest, period_in_use, period_universe))
+                period_invest, period_in_use, period_universe,
+                lineage=_npv_lineage))
 
 
 __all__ = [

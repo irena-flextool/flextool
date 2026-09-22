@@ -155,6 +155,20 @@ def _recourse_invest_active(
 # before any producer runs, and producers run nowhere else.
 _RECOURSE_ANCHOR_PAIRS: "pl.DataFrame | None" = None
 
+# Slice D α-1 — boundary-scoped Provider for the walker's canonical year/
+# factor arms.  Set (to ``provider`` under recourse, else ``None``) at each
+# Layer-4 boundary alongside the anchor pairs, so ``period_walk_iterator``
+# revives the canonical ``p_years_d.csv`` / ``p_years_represented.csv`` arms
+# (correct branch-period years) WITHOUT threading ``provider`` through the
+# ~12 NPV/edd walker-caller signatures.  ``None`` (flag-off / deterministic)
+# → arms dead → today's fill_null(0.0) walker behaviour → the W6 pin.
+_RECOURSE_WALK_PROVIDER: "object | None" = None
+
+
+def _recourse_walk_provider() -> "object | None":
+    """The active boundary's recourse walker Provider (α-1), or ``None``."""
+    return _RECOURSE_WALK_PROVIDER
+
 
 def _build_recourse_anchor_pairs(
     workdir: Path | None,
@@ -216,12 +230,16 @@ def _enter_recourse_anchor_scope(
     """Set :data:`_RECOURSE_ANCHOR_PAIRS` for the active solve.
 
     Called at the top of each Layer-4 apply boundary BEFORE any explicit-
-    per-period producer runs.  Overwrites unconditionally (to ``None``
-    when flag-off) so no stale value from a prior solve can leak.
+    per-period producer OR walker runs.  Overwrites unconditionally (to
+    ``None`` when flag-off) so no stale value from a prior solve can leak.
+    Also arms the boundary-scoped walker Provider (α-1).
     """
-    global _RECOURSE_ANCHOR_PAIRS
-    _RECOURSE_ANCHOR_PAIRS = _build_recourse_anchor_pairs(
-        workdir, ctx=ctx, provider=provider)
+    global _RECOURSE_ANCHOR_PAIRS, _RECOURSE_WALK_PROVIDER
+    active = _recourse_invest_active(workdir, ctx=ctx, provider=provider)
+    _RECOURSE_WALK_PROVIDER = provider if active else None
+    _RECOURSE_ANCHOR_PAIRS = (
+        _build_recourse_anchor_pairs(workdir, ctx=ctx, provider=provider)
+        if active else None)
 
 
 def _anchor_expand_explicit(explicit_lf: pl.LazyFrame) -> pl.LazyFrame:
@@ -5494,6 +5512,21 @@ def apply_derived_c(
     # Slice D §4 — arm the per-period anchor-map scope for the invest/
     # divest set predicates + cap readers built below (no-op flag-off).
     _enter_recourse_anchor_scope(workdir, ctx=ctx, provider=provider)
+    # Slice D §8 (E) — the scenario-lineage frame for the edd builders.
+    # Active only under recourse AND a genuine branch invest axis
+    # (capability conjunct §2).  Hoist the precondition check ABOVE the
+    # edd try/except blocks (§6) so a LineageFilterError is loud, not
+    # swallowed.  ``None`` flag-off → the edd builders keep today's
+    # unfiltered (all-pairs) behaviour → byte-parity.
+    _c_lineage = (
+        getattr(flex_data, "dd_same_scenario", None)
+        if flex_data.recourse_invest and _has_branch_invest_axis(flex_data)
+        else None)
+    if _c_lineage is not None:
+        from flextool.engine_polars._derived_branch import (
+            assert_recourse_npv_preconditions as _assert_recourse,
+        )
+        _assert_recourse(None, source, active_solve, ctx=ctx, provider=provider)
 
     # Δ.12b — assignment is unconditional except for fields with
     # documented helper-coverage gaps (multi-year cascade extends
@@ -5677,7 +5710,8 @@ def apply_derived_c(
                    else getattr(flex_data, "ed_invest_set", None)
     try:
         eil_db = edd_invest_lookback_set_from_source(
-            source, active_solve, ed_inv_used, workdir)
+            source, active_solve, ed_inv_used, workdir,
+            provider=provider, lineage=_c_lineage)
     except LineageFilterError:
         raise
     except Exception:
@@ -5699,7 +5733,8 @@ def apply_derived_c(
         try:
             edd_inv_db = _edd_invest_lf(
                 source, active_solve, ed_inv_used.lazy(),
-                period_with_history, period_in_use, workdir).collect()
+                period_with_history, period_in_use, workdir,
+                lineage=_c_lineage).collect()
         except LineageFilterError:
             raise
         except Exception:
@@ -5710,7 +5745,8 @@ def apply_derived_c(
     pd_div_used = getattr(flex_data, "pd_divest_set", None)
     try:
         edda_db = edd_divest_active_from_source(
-            source, active_solve, pd_div_used)
+            source, active_solve, pd_div_used,
+            provider=provider, lineage=_c_lineage)
     except LineageFilterError:
         raise
     except Exception:
@@ -10107,10 +10143,22 @@ def apply_synthetic_invest_sets(flex_data: object,
         period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
         period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
+        # Slice D §8 — synthetic edd lineage filter (gated + hoisted check).
+        _s_lineage = (
+            getattr(flex_data, "dd_same_scenario", None)
+            if _recourse_invest_active(workdir, provider=provider)
+               and _has_branch_invest_axis(flex_data)
+            else None)
+        if _s_lineage is not None:
+            from flextool.engine_polars._derived_branch import (
+                assert_recourse_npv_preconditions as _assert_recourse,
+            )
+            _assert_recourse(None, source, active_solve, provider=provider)
         try:
             edd_inv = _edd_invest_lf(
                 source, active_solve, ed_inv.lazy(),
-                period_with_history, period_in_use, workdir).collect()
+                period_with_history, period_in_use, workdir,
+                lineage=_s_lineage).collect()
         except LineageFilterError:
             raise
         except Exception:  # pragma: no cover — defensive

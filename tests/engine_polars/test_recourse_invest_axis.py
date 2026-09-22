@@ -22,10 +22,12 @@ from flextool.engine_polars._emit_solve_writers import (
 
 @pytest.fixture(autouse=True)
 def _reset_anchor_scope():
-    """Never leak the module-global anchor-pairs holder to another test."""
+    """Never leak the module-global recourse holders to another test."""
     dp._RECOURSE_ANCHOR_PAIRS = None
+    dp._RECOURSE_WALK_PROVIDER = None
     yield
     dp._RECOURSE_ANCHOR_PAIRS = None
+    dp._RECOURSE_WALK_PROVIDER = None
 
 
 def _emit(prov, key, cols, rows):

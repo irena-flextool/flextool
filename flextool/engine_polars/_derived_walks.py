@@ -261,6 +261,14 @@ def period_walk_iterator(
       triple).
     """
     from flextool.engine_polars._axis_enums import empty_like
+    # Slice D α-1: fall back to the boundary-scoped recourse Provider so the
+    # canonical year/factor arms revive under the flag without threading
+    # ``provider`` through every NPV/edd walker caller.  ``None`` off-flag.
+    if provider is None:
+        from flextool.engine_polars._derived_params import (
+            _recourse_walk_provider,
+        )
+        provider = _recourse_walk_provider()
     if not period_in_use:
         if factor_side is None:
             return empty_like(ed_lf, ["e", "d"],
