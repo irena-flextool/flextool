@@ -142,6 +142,118 @@ def _recourse_invest_active(
     return str(val).strip().lower() == "recourse" if val is not None else False
 
 
+# ─── Slice D (B, §4) — per-period parameter anchor-mapping ─────────────
+# Module-level holder for the (anchor, br) synthetic-branch pairs of the
+# ACTIVE solve.  Set fresh at the top of every Layer-4 apply boundary
+# (``apply_derived_c`` / ``apply_npv`` / ``apply_synthetic_invest_sets``)
+# to the recourse pairs, or ``None`` when the flag is off / deterministic.
+# Read by the three explicit-per-period producers (_resolve_per_period_lf,
+# _per_entity_period_cost, _ed_explicit_period_param) to inherit each
+# anchor's per-(e,d) value onto its branch periods (§4.1).  ``None`` ==
+# no-op == flag-off byte-parity.  The set-at-boundary-top invariant means
+# a stale value can never reach a producer: every boundary overwrites it
+# before any producer runs, and producers run nowhere else.
+_RECOURSE_ANCHOR_PAIRS: "pl.DataFrame | None" = None
+
+
+def _build_recourse_anchor_pairs(
+    workdir: Path | None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> "pl.DataFrame | None":
+    """(anchor, br) pairs for in-use synthetic branches under recourse.
+
+    Returns ``None`` when the recourse flag is off (byte-parity default).
+    Mirrors :func:`_expand_branch_periods`' acquisition (ctx-first, then
+    provider/workdir ``period__branch`` + ``period_in_use``); keeps only
+    synthetic (``anchor != br``) branches that carry LP variables (``br``
+    in ``period_in_use``).
+    """
+    if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
+        return None
+    pb_df: "pl.DataFrame | None" = None
+    in_use: set[str] = set()
+    if ctx is not None:
+        pb_ctx = ctx.period_branch
+        if pb_ctx.height > 0:
+            pb_df = pb_ctx.rename({"d_anchor": "anchor", "b": "br"})
+        piu_ctx = ctx.period_in_use
+        if piu_ctx.height > 0:
+            in_use = set(piu_ctx["d"].to_list())
+    if pb_df is None:
+        if workdir is None:
+            return None
+        p = Path(workdir) / "solve_data" / "period__branch.csv"
+        if not _provider_has_key(provider, p):
+            return None
+        pb_df = _provider_read(provider, p)
+        if pb_df.height == 0:
+            return None
+        if not in_use:
+            piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
+            if _provider_has_key(provider, piu_path):
+                piu = _provider_read(provider, piu_path)
+                if piu.height > 0:
+                    in_use = set(piu["period"].to_list())
+        pb_df = pb_df.rename({"period": "anchor", "branch": "br"})
+    out = (pb_df.select(
+                pl.col("anchor").cast(pl.Utf8),
+                pl.col("br").cast(pl.Utf8))
+               .filter(pl.col("anchor") != pl.col("br")))
+    if in_use:
+        out = out.filter(pl.col("br").is_in(list(in_use)))
+    out = out.unique()
+    return out if out.height > 0 else None
+
+
+def _enter_recourse_anchor_scope(
+    workdir: Path | None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> None:
+    """Set :data:`_RECOURSE_ANCHOR_PAIRS` for the active solve.
+
+    Called at the top of each Layer-4 apply boundary BEFORE any explicit-
+    per-period producer runs.  Overwrites unconditionally (to ``None``
+    when flag-off) so no stale value from a prior solve can leak.
+    """
+    global _RECOURSE_ANCHOR_PAIRS
+    _RECOURSE_ANCHOR_PAIRS = _build_recourse_anchor_pairs(
+        workdir, ctx=ctx, provider=provider)
+
+
+def _anchor_expand_explicit(explicit_lf: pl.LazyFrame) -> pl.LazyFrame:
+    """§4.1 — add branch rows inheriting each anchor's per-(e, d) value.
+
+    ``explicit_lf`` is an ``(e, d, <value…>)`` lazy frame keyed by REAL
+    anchor periods (any value-column name(s); all are preserved).  When
+    the recourse anchor-pairs holder is set, each
+    ``(e, anchor, v)`` row spawns ``(e, br, v)`` for every in-use branch
+    ``br`` of ``anchor``; a branch that already carries its OWN explicit
+    row keeps it (branch-native wins, via order-preserving dedupe).
+    Holder ``None`` (flag-off / deterministic) → returns the frame
+    unchanged (byte-parity).  Operates in Utf8 on ``d`` then restores the
+    original dtype so an Enum-vocab mismatch cannot silently null a token.
+    """
+    pairs = _RECOURSE_ANCHOR_PAIRS
+    if pairs is None or pairs.height == 0:
+        return explicit_lf
+    d_dtype = explicit_lf.collect_schema().get("d")
+    base = explicit_lf.with_columns(pl.col("d").cast(pl.Utf8))
+    inherited = (base.join(pairs.lazy(),
+                              left_on="d", right_on="anchor", how="inner")
+                     .drop("d")
+                     .rename({"br": "d"})
+                     .select(base.collect_schema().names()))
+    combined = pl.concat([base, inherited], how="vertical_relaxed")
+    out = combined.unique(subset=["e", "d"], keep="first", maintain_order=True)
+    if d_dtype is not None:
+        out = out.with_columns(pl.col("d").cast(d_dtype, strict=False))
+    return out
+
+
 def _has_branch_invest_axis(flex_data: "object | None") -> bool:
     """Capability conjunct (Slice B §8, design §2): True iff the invest
     axis actually carries synthetic branch members.
@@ -3303,7 +3415,9 @@ def _per_entity_period_cost(source: "InputSource",
             ).join(pi_lf, how="cross"))
     if not parts:
         return None
-    return pl.concat(parts).unique()
+    # Slice D §4 — anchor-map period-Map rows onto branch periods so the
+    # eea predicate keeps branch (e, d) pairs (no-op flag-off).
+    return _anchor_expand_explicit(pl.concat(parts).unique())
 
 
 # ---------------------------------------------------------------------------
@@ -3459,6 +3573,9 @@ def ed_invest_forbidden_no_investment_from_source(
         active_solve: str | None,
         workdir: Path | None,
         ed_invest: pl.DataFrame | None = None,  # noqa: ARG001 — kept for back-compat
+        *,
+        ctx: "SolveContext | None" = None,
+        provider: "object | None" = None,
         ) -> pl.DataFrame | None:
     """Audit §3.7 — ``ed_invest`` rows whose ``no_investment`` lifetime
     window has already ended.
@@ -3478,7 +3595,9 @@ def ed_invest_forbidden_no_investment_from_source(
       * ``e`` has ``lifetime_method == 'no_investment'``,
       * ``yr[d] >= life_sum(e)``.
     """
-    period_invest = _solve_periods(source, active_solve, "invest_periods")
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, ctx=ctx, provider=provider)
     if not period_invest:
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
@@ -3507,6 +3626,9 @@ def ed_invest_forbidden_no_investment_from_source(
 def ed_invest_set_from_source(source: "InputSource",
                                 active_solve: str | None,
                                 workdir: Path | None = None,
+                                *,
+                                ctx: "SolveContext | None" = None,
+                                provider: "object | None" = None,
                                 ) -> pl.DataFrame | None:
     """Compute the (entity, period) pairs where invest is allowed.
 
@@ -3526,7 +3648,9 @@ def ed_invest_set_from_source(source: "InputSource",
     ``invest_divest_sets.py:write_ed_invest_forbidden_no_investment``
     consumed by ``fix_v_invest_no_investment_eq`` (mod L3930).
     """
-    period_invest = _solve_periods(source, active_solve, "invest_periods")
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, ctx=ctx, provider=provider)
     if not period_invest:
         # Empty invest_periods → empty ed_invest (the dispatch-only solve case).
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
@@ -3568,6 +3692,10 @@ def ed_invest_set_from_source(source: "InputSource",
 
 def ed_divest_set_from_source(source: "InputSource",
                                 active_solve: str | None,
+                                workdir: Path | None = None,
+                                *,
+                                ctx: "SolveContext | None" = None,
+                                provider: "object | None" = None,
                                 ) -> pl.DataFrame | None:
     """Mirror of ``ed_invest_set`` for divest.  Algorithm
     (``invest_divest_sets.py:185-193``):
@@ -3576,7 +3704,9 @@ def ed_divest_set_from_source(source: "InputSource",
                        e ∈ entityDivest, d ∈ period_invest_of_solve,
                        (eead[e, d] != 0  OR  e has capacity constraint) }
     """
-    period_invest = _solve_periods(source, active_solve, "invest_periods")
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, ctx=ctx, provider=provider)
     if not period_invest:
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
@@ -4075,7 +4205,10 @@ def _ed_explicit_period_param(source: "InputSource", parameter_name: str
         return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
                                        "d": schema_dtype(_enums, "d"),
                                        "value": pl.Float64})
-    return pl.concat(parts).unique(subset=["e", "d"], keep="last")
+    # Slice D §4 — anchor-map explicit per-period cap rows onto branch
+    # periods (invest_max_period / cumulative_max_capacity); no-op flag-off.
+    return _anchor_expand_explicit(
+        pl.concat(parts).unique(subset=["e", "d"], keep="last"))
 
 
 def p_entity_max_units_from_source(source: "InputSource",
@@ -5358,6 +5491,9 @@ def apply_derived_c(
     # so the model layer reads ``d.recourse_invest`` without a workdir touch.
     flex_data.recourse_invest = _recourse_invest_active(
         workdir, ctx=ctx, provider=provider)
+    # Slice D §4 — arm the per-period anchor-map scope for the invest/
+    # divest set predicates + cap readers built below (no-op flag-off).
+    _enter_recourse_anchor_scope(workdir, ctx=ctx, provider=provider)
 
     # Δ.12b — assignment is unconditional except for fields with
     # documented helper-coverage gaps (multi-year cascade extends
@@ -5440,11 +5576,13 @@ def apply_derived_c(
     # ─── §3.7 invest / divest ─────────────────────────────────────────
     # Δ.12b — set frames (None or non-empty); keep height>0 as a
     # structural filter to preserve the SET-frame contract.
-    ed_inv_db = ed_invest_set_from_source(source, active_solve, workdir)
+    ed_inv_db = ed_invest_set_from_source(
+        source, active_solve, workdir, ctx=ctx, provider=provider)
     if ed_inv_db is not None and ed_inv_db.height > 0:
         flex_data.ed_invest_set = ed_inv_db
 
-    ed_div_db = ed_divest_set_from_source(source, active_solve)
+    ed_div_db = ed_divest_set_from_source(
+        source, active_solve, workdir, ctx=ctx, provider=provider)
     if ed_div_db is not None and ed_div_db.height > 0:
         flex_data.ed_divest_set = ed_div_db
 
@@ -5504,7 +5642,8 @@ def apply_derived_c(
         ed_inv_db if ed_inv_db is not None
         else getattr(flex_data, "ed_invest_set", None))
     forbidden_db = ed_invest_forbidden_no_investment_from_source(
-        source, active_solve, workdir, ed_invest_for_forbidden)
+        source, active_solve, workdir, ed_invest_for_forbidden,
+        ctx=ctx, provider=provider)
     if forbidden_db is not None:
         flex_data.ed_invest_forbidden_no_investment = (
             forbidden_db if forbidden_db.height > 0 else None)
@@ -6174,6 +6313,31 @@ def _expand_branch_periods(period_order: list[str],
             out.append(br)
             seen.add(br)
     return out
+
+
+def _expand_invest_branch_periods(period_invest: "list[str] | None",
+                                     workdir: Path | None,
+                                     *,
+                                     ctx: "SolveContext | None" = None,
+                                     provider: "object | None" = None,
+                                     ) -> "list[str] | None":
+    """Slice D (A, §3.1) — invest-side mirror of
+    :func:`_expand_branch_periods`.
+
+    When the recourse flag is active, append each real invest period's
+    synthetic branch members (filtered to ``period_in_use``) after the
+    anchor, so ``period_invest`` carries ``{p_k, p_k_b, …}`` — the axis
+    on which ``pd/nd_invest_set`` (and thus ``v_invest``) get their
+    columns.  Flag-off (or empty axis) → returns ``period_invest``
+    unchanged (byte-parity).  Reuses — does not fork — the dispatch-side
+    helper so invest and dispatch axes stay consistent.
+    """
+    if not period_invest:
+        return period_invest
+    if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
+        return period_invest
+    return _expand_branch_periods(list(period_invest), workdir,
+                                     ctx=ctx, provider=provider)
 
 
 def _dt_period_active_steps_from_workdir(
@@ -8906,6 +9070,7 @@ def ed_entity_annual_family_from_source(source: "InputSource",
                                             ed_divest: pl.DataFrame | None,
                                             workdir: Path | None = None,
                                             *,
+                                            ctx: "SolveContext | None" = None,
                                             provider: "object | None" = None,
                                             ) -> dict[str, "Param | None"]:
     """Compute ``ed_entity_annual``, ``ed_entity_annual_discounted``,
@@ -8919,7 +9084,9 @@ def ed_entity_annual_family_from_source(source: "InputSource",
     """
     factors = _inflation_yearly_from_source(source, active_solve, workdir)
     period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
-    period_invest = _solve_periods(source, active_solve, "invest_periods") or []
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, ctx=ctx, provider=provider) or []
 
     cost_invest = _per_entity_period_value(source, "invest_cost")
     cost_invest_scalar = _per_entity_scalar(source, "invest_cost")
@@ -9859,13 +10026,17 @@ def apply_synthetic_invest_sets(flex_data: object,
     (deferred per the Gap D dispatch).
     """
     base, anchor = synthetic
+    # Slice D §4 — arm the per-period anchor-map scope (no-op flag-off).
+    _enter_recourse_anchor_scope(workdir, provider=provider)
     # ed_invest_set / ed_divest_set — eager helpers use _solve_periods
     # which is synthetic-aware (Δ.19); pass the synthetic name through.
     # Γ.6.D forbidden filter is applied internally by the helper.
-    ed_inv = ed_invest_set_from_source(source, active_solve, workdir=workdir)
+    ed_inv = ed_invest_set_from_source(
+        source, active_solve, workdir=workdir, provider=provider)
     if ed_inv is not None and ed_inv.height > 0:
         flex_data.ed_invest_set = ed_inv
-    ed_div = ed_divest_set_from_source(source, active_solve)
+    ed_div = ed_divest_set_from_source(
+        source, active_solve, workdir, provider=provider)
     if ed_div is not None and ed_div.height > 0:
         flex_data.ed_divest_set = ed_div
 
@@ -9873,7 +10044,7 @@ def apply_synthetic_invest_sets(flex_data: object,
     # gate; consumed by apply_existing_chain.
     try:
         forbidden = ed_invest_forbidden_no_investment_from_source(
-            source, active_solve, workdir, ed_inv)
+            source, active_solve, workdir, ed_inv, provider=provider)
     except Exception:  # pragma: no cover — defensive
         forbidden = None
     if forbidden is not None and forbidden.height > 0:

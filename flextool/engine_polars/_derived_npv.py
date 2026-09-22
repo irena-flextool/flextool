@@ -249,9 +249,11 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
     Returns ``ed_lf`` with an extra ``value`` column (Float64).
     ``ed_lf`` must carry columns ``[e, d, ...]``.
     """
-    explicit = (per_param
-                  .filter(~pl.col("is_scalar"))
-                  .select("e", "d", pl.col("value").alias("v_explicit")))
+    from ._derived_params import _anchor_expand_explicit
+    explicit = _anchor_expand_explicit(
+        per_param
+          .filter(~pl.col("is_scalar"))
+          .select("e", "d", pl.col("value").alias("v_explicit")))
     scalar = (per_param
                 .filter(pl.col("is_scalar"))
                 .select("e", pl.col("value").alias("v_scalar")))
@@ -1277,12 +1279,18 @@ def apply_npv(flex_data: object,
     from ._derived_params import (
         _read_active_solve, _solve_periods, _period_in_use_set,
         _periodAll_from_source, _read_period_with_history,
+        _expand_invest_branch_periods, _enter_recourse_anchor_scope,
     )
 
+    # Slice D §4 — arm the per-period anchor-map scope for the annuity /
+    # lifetime / fixed-cost resolution below (no-op flag-off).
+    _enter_recourse_anchor_scope(workdir, provider=provider)
     active_solve = _read_active_solve(workdir, provider=provider)
     period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
     period_universe = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
-    period_invest = _solve_periods(source, active_solve, "invest_periods") or []
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, provider=provider) or []
     period_with_history = (_read_period_with_history(workdir, provider=provider)
                               or list(period_in_use))
 
