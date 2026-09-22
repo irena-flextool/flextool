@@ -939,6 +939,13 @@ class FlexData:
     dd_same_scenario: pl.DataFrame | None = None       # (d, d_other)
     pd_non_anticipativity: pl.DataFrame | None = None  # (d, b)
 
+    # Slice D — per-scenario (wait-and-see) stochastic investment gate.
+    # Set once in ``apply_derived_c`` from
+    # ``solve_data/stochastic_invest_method.csv`` == 'recourse'.  Survives
+    # ``dataclasses.replace`` (region filter) like the lineage frames so
+    # ``model.py`` reads ``d.recourse_invest`` without a second CSV read.
+    recourse_invest: bool = False
+
     # ─── Gap F final — handoff-path auxiliaries ───────────────────────────
     # Per-solve in-memory carriers for fields that ``build_handoff_from_solution``
     # would otherwise re-read from ``solve_data/`` to capture the post-solve

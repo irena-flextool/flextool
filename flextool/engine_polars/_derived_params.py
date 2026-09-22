@@ -113,6 +113,52 @@ def _provider_read(provider, path: "Path | str") -> "pl.DataFrame":
         )
     return provider.get(_provider_key(path))
 
+
+def _recourse_invest_active(
+    workdir: "Path | None",
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> bool:
+    """True iff ``solve_data/stochastic_invest_method.csv`` == ``'recourse'``.
+
+    Slice D's single gate.  False when the CSV is absent (deterministic /
+    flag-off / pre-Slice-D dumps) — the byte-parity-safe default.  Reads
+    provider-first (canonical key), then a workdir-disk fallback so a
+    dumped/reloaded solve still resolves the flag.
+    """
+    path = Path("solve_data") / "stochastic_invest_method.csv"
+    df: "pl.DataFrame | None" = None
+    if _provider_has_key(provider, path):
+        df = _provider_read(provider, path)
+    elif workdir is not None:
+        disk = Path(workdir) / "solve_data" / "stochastic_invest_method.csv"
+        if disk.exists():
+            df = pl.read_csv(disk)
+    if df is None or df.height == 0 or "method" not in df.columns:
+        return False
+    val = df["method"].cast(pl.Utf8, strict=False).to_list()[0]
+    return str(val).strip().lower() == "recourse" if val is not None else False
+
+
+def _has_branch_invest_axis(flex_data: "object | None") -> bool:
+    """Capability conjunct (Slice B §8, design §2): True iff the invest
+    axis actually carries synthetic branch members.
+
+    Reuses :func:`_stochastic_detect.is_genuinely_stochastic` — a branch
+    period enters ``period_invest`` iff it is a synthetic ``period__branch``
+    token that is also in ``period_in_use_set``.  Keeps the lineage filter
+    provably inert on any solve whose invest axis carries no branch member
+    even if the flag was authored (defense-in-depth behind Guard 1).
+    """
+    if flex_data is None:
+        return False
+    from flextool.engine_polars._stochastic_detect import (
+        is_genuinely_stochastic as _igs,
+    )
+    return _igs(flex_data)
+
+
 # Substrate handle for the cascade-wide axis enum vocabulary.
 # Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
 # ``_axis_enums`` fall back to ``_LIVE_AXIS_ENUMS_CTX`` (the live
@@ -5305,6 +5351,12 @@ def apply_derived_c(
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
     dt_csv = getattr(flex_data, "dt", None)
     sd_csv = getattr(flex_data, "p_step_duration", None)
+
+    # Slice D — resolve the per-scenario stochastic-invest flag once and
+    # stamp it on FlexData (survives the region-filter dataclasses.replace)
+    # so the model layer reads ``d.recourse_invest`` without a workdir touch.
+    flex_data.recourse_invest = _recourse_invest_active(
+        workdir, ctx=ctx, provider=provider)
 
     # Δ.12b — assignment is unconditional except for fields with
     # documented helper-coverage gaps (multi-year cascade extends
