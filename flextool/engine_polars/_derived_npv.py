@@ -370,17 +370,21 @@ def _solve_inflation_scalars(source: "InputSource"
 def _years_for_period_lf(source: "InputSource",
                               active_solve: str | None,
                               period_universe: list[str],
+                              *,
+                              provider: "object | None" = None,
                               ) -> pl.LazyFrame:
     """Build the per-(d, year_label, width) frame from
     ``solve.years_represented`` mirroring
     :func:`._derived_params._years_for_period_from_source` in lazy form.
 
     Returns columns ``[d, y, width]`` where ``y`` is a string label.
-    Empty if no rows.
+    Empty if no rows.  ``provider`` (Slice D α-1) revives the canonical
+    ``p_years_represented.csv`` arm carrying fan-member year rows.
     """
     # Materialise scalars eagerly — they're solve-level, tiny.
     from ._derived_params import _years_for_period_from_source
-    yfp = _years_for_period_from_source(source, active_solve, period_universe)
+    yfp = _years_for_period_from_source(
+        source, active_solve, period_universe, provider=provider)
     rows: list[tuple[str, str, float]] = []
     for d, years in yfp.items():
         for y, w in years:
@@ -397,6 +401,8 @@ def _years_for_period_lf(source: "InputSource",
 def _inflation_factors_lf(source: "InputSource",
                                 active_solve: str | None,
                                 period_universe: list[str],
+                                *,
+                                provider: "object | None" = None,
                                 ) -> pl.LazyFrame:
     """Lazy ``(d, inv_factor, ops_factor)`` frame.
 
@@ -426,7 +432,8 @@ def _inflation_factors_lf(source: "InputSource",
         })
     rate, off_inv, off_ops = _solve_inflation_scalars(source)
     one_plus_inv = (1.0 / (1.0 + rate)) if rate != -1.0 else 1.0
-    yfp_lf = _years_for_period_lf(source, active_solve, period_universe)
+    yfp_lf = _years_for_period_lf(
+        source, active_solve, period_universe, provider=provider)
 
     # Materialise per-period × per-y.  At LP scale this is small (typically
     # ≤ 100 (d, y) rows even for 50-year horizon × 20 representative years),

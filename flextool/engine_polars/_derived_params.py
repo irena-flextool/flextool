@@ -8382,6 +8382,8 @@ def _solve_inflation_inputs(source: "InputSource") -> tuple[float, float, float]
 def _years_for_period_from_source(source: "InputSource",
                                     active_solve: str | None,
                                     period_set: list[str],
+                                    *,
+                                    provider: "object | None" = None,
                                     ) -> dict[str, list[tuple[str, float]]]:
     """Derive the per-period ``(year_label, width)`` list emitted into
     ``solve_data/p_years_represented.csv`` (matches the
@@ -8404,6 +8406,27 @@ def _years_for_period_from_source(source: "InputSource",
     parameter is absent or active_solve has no rows, default to one row
     per period in the order supplied (width=1, year_label = "0", "1", …).
     """
+    # Slice D α-1 (§5.1): under recourse the emitted
+    # ``p_years_represented.csv`` already byte-copies fan-member year rows
+    # (``derive_years_represented`` branch loop), so read it directly to
+    # give branch periods their anchor's (year_label, width) rows.  The
+    # caller forwards ``provider`` ONLY on the recourse walker arm; every
+    # other caller passes ``provider=None`` so this arm stays dead and the
+    # source path below is byte-identical (flag-off parity).
+    if provider is not None:
+        p = Path("solve_data") / "p_years_represented.csv"
+        if _provider_has_key(provider, p):
+            df = _provider_read(provider, p)
+            need = {"period", "years_from_solve", "p_years_represented"}
+            if df.height > 0 and need.issubset(df.columns):
+                canon: dict[str, list[tuple[str, float]]] = {}
+                for r in df.iter_rows(named=True):
+                    canon.setdefault(str(r["period"]), []).append(
+                        (str(r["years_from_solve"]),
+                         float(r["p_years_represented"])))
+                if canon:
+                    return canon
+
     yr_p = _try_param(source, "solve", "years_represented")
     out: dict[str, list[tuple[str, float]]] = {}
     if active_solve is None or yr_p is None or "period" not in yr_p.columns:

@@ -196,6 +196,7 @@ def period_walk_iterator(
         factor_side: str | None,
         workdir = None,
         lineage: pl.DataFrame | None = None,
+        provider: "object | None" = None,
         ) -> pl.LazyFrame:
     """Lazy per-(e, d) walk over ``period_in_use``, gated by lifetime.
 
@@ -270,7 +271,12 @@ def period_walk_iterator(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
     from ._derived_params import _p_years_d_lf
-    pyd_lf = _p_years_d_lf(source, active_solve, workdir)
+    # Slice D α-1 (§5.1): under recourse the caller forwards ``provider`` so
+    # the canonical ``p_years_d.csv`` arm — which byte-copies fan-member year
+    # rows — goes live, giving branch periods their anchor's year-from-start
+    # (correct annuity windows).  ``provider is None`` → arm dead → today's
+    # fill_null(0.0) behaviour → flag-off byte-parity (the W6 today-bug pin).
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         # Without years offsets, the integral collapses to 0 / no rows.
         if factor_side is None:
@@ -365,7 +371,8 @@ def period_walk_iterator(
 
     # Inflation factor sum.
     from ._derived_npv import _inflation_factors_lf
-    factors_lf = _inflation_factors_lf(source, active_solve, period_universe)
+    factors_lf = _inflation_factors_lf(
+        source, active_solve, period_universe, provider=provider)
     if factor_side == "inv":
         factors_lf = factors_lf.select(
             "d", pl.col("inv_factor").alias("factor"))
