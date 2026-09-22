@@ -127,7 +127,8 @@ def _assert_lineage_castable(lineage: pl.DataFrame,
         bad.extend(str(v) for v, c in zip(raw.to_list(), cast.to_list())
                    if c is None)
     if bad:
-        raise ValueError(
+        from flextool.engine_polars._solve_state import LineageFilterError
+        raise LineageFilterError(
             "period_walk_iterator lineage filter: token(s) "
             f"{sorted(set(bad))} in the lineage frame are not castable "
             f"to the walk's d dtype {d_dtype!r} — a silently-nulled "

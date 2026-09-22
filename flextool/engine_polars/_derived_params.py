@@ -55,6 +55,7 @@ from ._axis_enums import (
     schema_dtype,
 )
 from ._emit_provider_io import _provider_key
+from ._solve_state import LineageFilterError
 from ._param_shapes import (
     broadcast_to_period_time,
     promote_param_to_dt,
@@ -5538,6 +5539,8 @@ def apply_derived_c(
     try:
         eil_db = edd_invest_lookback_set_from_source(
             source, active_solve, ed_inv_used, workdir)
+    except LineageFilterError:
+        raise
     except Exception:
         eil_db = None
     if eil_db is not None and eil_db.height > 0:
@@ -5558,6 +5561,8 @@ def apply_derived_c(
             edd_inv_db = _edd_invest_lf(
                 source, active_solve, ed_inv_used.lazy(),
                 period_with_history, period_in_use, workdir).collect()
+        except LineageFilterError:
+            raise
         except Exception:
             edd_inv_db = None
         if edd_inv_db is not None and edd_inv_db.height > 0:
@@ -5567,6 +5572,8 @@ def apply_derived_c(
     try:
         edda_db = edd_divest_active_from_source(
             source, active_solve, pd_div_used)
+    except LineageFilterError:
+        raise
     except Exception:
         edda_db = None
     if edda_db is not None and edda_db.height > 0:
@@ -9910,6 +9917,8 @@ def apply_synthetic_invest_sets(flex_data: object,
             edd_inv = _edd_invest_lf(
                 source, active_solve, ed_inv.lazy(),
                 period_with_history, period_in_use, workdir).collect()
+        except LineageFilterError:
+            raise
         except Exception:  # pragma: no cover — defensive
             edd_inv = None
         if edd_inv is not None and edd_inv.height > 0:

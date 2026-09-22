@@ -39,6 +39,22 @@ class FlexToolSolveError(FlexToolError):
     """Raised for solver execution errors."""
 
 
+class LineageFilterError(ValueError):
+    """Raised when the recourse scenario-lineage filter cannot be applied
+    soundly (Slice D §6).
+
+    Subclasses ``ValueError`` so the Slice B lineage guards
+    (``_derived_walks._assert_lineage_castable``,
+    ``_derived_branch.assert_recourse_npv_preconditions``) can raise it
+    without churning their ``pytest.raises(ValueError)`` pins.  Its
+    dedicated type lets the four blanket ``except Exception`` swallows in
+    ``apply_derived_c`` / ``apply_synthetic_invest_sets`` re-raise lineage
+    failures loudly instead of silently reverting to the unfiltered
+    first-stage sets — the exact silent failure the recourse guards exist
+    to prevent.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Lightweight value types
 # ---------------------------------------------------------------------------

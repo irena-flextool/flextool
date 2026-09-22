@@ -1296,7 +1296,8 @@ def assert_recourse_npv_preconditions(
         workdir, source, active_solve, ctx=ctx, provider=provider,
         weight_tol=weight_tol)
     if violations:
-        raise ValueError(
+        from flextool.engine_polars._solve_state import LineageFilterError
+        raise LineageFilterError(
             "recourse NPV preconditions violated:\n  "
             + "\n  ".join(violations)
         )
