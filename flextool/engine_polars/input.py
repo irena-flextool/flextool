@@ -929,6 +929,15 @@ class FlexData:
     dt_non_anticipativity: pl.DataFrame | None = None  # (d, t) — realised dispatch + fix-storage timesteps
     groupStochastic: pl.DataFrame | None = None   # (g,) — groups enabling storage non-anticipativity
     period_in_use_set: pl.DataFrame | None = None  # (d,) — periods active this solve (filters branches)
+    # Scenario-lineage frames (recourse plan §6b Slice A).  Built by
+    # apply_branch_cluster for every solve; None only when the derived
+    # cascade never ran (hand-built FlexData).  dd_same_scenario:
+    # (d, d_other) pairs sharing a scenario leaf-path (all-pairs over
+    # period_in_use for deterministic solves).  pd_non_anticipativity:
+    # (d, b) invest-NA period pairs — empty until mid-horizon branch
+    # points exist (Slice E).
+    dd_same_scenario: pl.DataFrame | None = None       # (d, d_other)
+    pd_non_anticipativity: pl.DataFrame | None = None  # (d, b)
 
     # ─── Gap F final — handoff-path auxiliaries ───────────────────────────
     # Per-solve in-memory carriers for fields that ``build_handoff_from_solution``
