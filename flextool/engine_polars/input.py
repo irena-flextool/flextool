@@ -5655,6 +5655,11 @@ def build_handoff_from_solution(
     import polars as pl  # local — keep this helper's import surface narrow
     # Native import — Γ.8.D moved SolveHandoff into engine_polars.
     from flextool.engine_polars._solve_handoff import SolveHandoff
+    # Slice C Guard 3 — local imports keep this helper's import surface narrow.
+    from flextool.engine_polars._solve_state import FlexToolConfigError
+    from flextool.engine_polars._stochastic_detect import (
+        synthetic_branch_tokens,
+    )
 
     sd = work_folder / "solve_data"
     first_solve = _read_solve_first(work_folder, provider=provider)
@@ -5752,6 +5757,46 @@ def build_handoff_from_solution(
             invested += v * us
         inv_rows.append((e, d, invested))
         exist_rows.append((e, d, existing))
+
+    # ---- Slice C Guard 3: no committed realized_invest period may be a
+    #      synthetic stochastic-branch fan member (recourse plan §3.3).
+    #      The token set is the BROAD d != b b-token set of
+    #      period_branch_full (shared idiom ``synthetic_branch_tokens``) —
+    #      deliberately broader than Guard 2's PIU-intersected set:
+    #      committing invest at a metadata mirror (e.g. period1_realized,
+    #      the rolling-bookkeeping token) must ALSO be forbidden, and those
+    #      rolling metadata tokens never legitimately appear in
+    #      realized_invest.  None-degrade: when flex_data /
+    #      period_branch_full is unavailable (the Benders TIER-1 snapshot
+    #      call passes flex_data=None by design, :2278-2290) the check is a
+    #      no-op — that path is a Benders invest solve, which Guard 2
+    #      already forbids for stochastic models, so no synthetic token can
+    #      reach it.  On today's (flag-off) code both branches are empty
+    #      (realized branch keeps real names end-to-end), so the guard is
+    #      inert and adds no golden change.
+    _pbf = getattr(flex_data, "period_branch_full", None)
+    _synth = synthetic_branch_tokens(_pbf)
+    if _synth:
+        # (a) config-level: realize_invest lists no synthetic token.
+        _bad_cfg = sorted(set(map(str, realize_invest)) & _synth)
+        if _bad_cfg:
+            raise FlexToolConfigError(
+                f"Solve '{solve_name}': realized_invest_periods lists "
+                f"synthetic stochastic-branch period(s) {_bad_cfg}. "
+                f"Only real (realized-branch) period names may be "
+                f"realized for investment."
+            )
+        # (b) committed rows carry no synthetic period.
+        _bad_commit = sorted({
+            d for (e, d, v) in inv_rows if v != 0.0 and d in _synth
+        })
+        if _bad_commit:
+            raise FlexToolConfigError(
+                f"Solve '{solve_name}': handoff would commit investment "
+                f"at synthetic stochastic-branch period(s) {_bad_commit} "
+                f"— these belong to a non-realized scenario and must not "
+                f"enter the committed capacity chain (recourse plan §3.3)."
+            )
 
     # ---- divest_cumulative: prior + sum_d v_divest * unitsize ----
     entity_divest = set(_read_singles_csv(sd / "entityDivest.csv",
