@@ -1627,6 +1627,8 @@ __all__ = [
     "period_branch_full_lf",
     "dd_same_scenario_lf",
     "dd_same_scenario_df",
+    "dd_same_scenario_annuity_lf",
+    "dd_same_scenario_annuity_df",
     "d_leaf_lf",
     "d_leaf_df",
     "pd_non_anticipativity_lf",
