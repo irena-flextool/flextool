@@ -114,6 +114,10 @@ from flextool.engine_polars.autoscale import (
     unscale_solution,
 )
 from flextool.engine_polars._region_filter import HalfFlow, RegionSplit
+from flextool.engine_polars._solve_state import FlexToolConfigError
+from flextool.engine_polars._stochastic_detect import (
+    is_genuinely_stochastic as _is_genuinely_stochastic,
+)
 from flextool.engine_polars.input import FlexData
 
 _logger = logging.getLogger(__name__)
@@ -2043,6 +2047,18 @@ def solve_benders(
     -------
     BendersResult
     """
+    # Slice C Guard 2 (defensive): a caller reaching solve_benders while
+    # bypassing _run_benders_solve (the primary guard site) still fails
+    # loudly on a stochastic model.  Same shared detector on the master
+    # ``data``.  Benders x stochastics is not supported (recourse plan §4).
+    if _is_genuinely_stochastic(data):
+        raise FlexToolConfigError(
+            "solve_benders called on a stochastic model "
+            "(period__branch has non-realized branch periods with active "
+            "time); Benders x stochastics is not supported "
+            "(recourse plan §4)."
+        )
+
     if build_problem is None:
         def build_problem(pb, d):
             _build_flextool(pb, d, scale_the_objective=scale_the_objective)

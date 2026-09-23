@@ -279,6 +279,18 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine_polars/model.py:2457
     "maxDivest_entity_total_n": CstrFamily(QuantityType.ENERGY),
 
+    # Slice D per-path total caps (design §7.2/§14) — one cap row per
+    # (entity, scenario-leaf).  Emitted by
+    # ``_emit_entity_total_cap`` (model.py) when >1 scenario leaf exists
+    # (recourse); the leaf-suffixed sums replace the cross-scenario
+    # ``over=("d",)`` total.  Registered EXACTLY (``_path`` is not a
+    # known ``lookup_cstr`` suffix, so a missing row silently reverts to
+    # an un-scaled LP under STRICT).
+    "maxInvest_entity_total_path": CstrFamily(QuantityType.POWER),
+    "maxInvest_entity_total_path_n": CstrFamily(QuantityType.ENERGY),
+    "maxDivest_entity_total_path": CstrFamily(QuantityType.POWER),
+    "maxDivest_entity_total_path_n": CstrFamily(QuantityType.ENERGY),
+
     # min-invest / min-divest entity totals — group_capacity resolved
     # via _p / _n suffix in _cumulative_invest.py.
     # flextool/engine_polars/_cumulative_invest.py:456 (minInvest_entity_total_p)
@@ -331,6 +343,14 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
         None, member_class_resolver="group_capacity"
     ),
     "minDivestGroup_entity_total": CstrFamily(
+        None, member_class_resolver="group_capacity"
+    ),
+    # Slice D per-path divest-group total cap (design §7.2 item 4 /
+    # §14): ``maxDivestGroup_entity_total_path_{p,n}`` emitted by
+    # ``_emit_group_total_divest_cap`` when >1 scenario leaf exists.  The
+    # ``_p`` / ``_n`` member-class suffix resolves POWER vs ENERGY off
+    # this key (``lookup_cstr`` strips it since the resolver is set).
+    "maxDivestGroup_entity_total_path": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
     # flextool/engine_polars/_cumulative_invest.py:845 (maxInvestGroup_entity_cumulative_p)

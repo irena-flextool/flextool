@@ -440,30 +440,55 @@ class StochasticSolver:
             active_branches: list[str] = []
             branch_start_time_lists[solve] = None
 
-            # First step of the solve (used for validation below).
-            first_step: tuple[str, str] | None = None
-            for period, active_time in active_time_list.items():
-                first_step = (period, active_time[0].timestep)
-                break
-
-            # Validate: when stochastic_branches has rows for this
-            # complete-solve, at least one row's start_step must match
-            # the solve's first step AND be marked realized.
-            found_start = False
+            # Validate the stochastic_branches rows as a WELL-FORMED
+            # (possibly mid-horizon) reveal (Slice E design §3.3).  Two
+            # checks replace the old "realized row at the solve's first
+            # step" guard while preserving fan-at-first-step behaviour
+            # byte-for-byte:
+            #   (1) every row must start at the FIRST step of the period
+            #       it names — investment is period-granular, so a reveal
+            #       is a PERIOD BOUNDARY (§3.1); a mid-period start_step
+            #       is ill-defined.
+            #   (2) each branching period must carry EXACTLY ONE
+            #       realized:yes branch.  For fan-at-first-step this
+            #       reproduces the old found_start guarantee (one realized
+            #       row at the solve start); it additionally rejects a
+            #       malformed reveal with zero or two realized rows in a
+            #       period.
+            # Because pre-reveal periods author NO stochastic_branches
+            # rows, the trigger loop below simply keeps them as real-named
+            # trunk periods (Option B — non-anticipativity by
+            # construction); no trigger-body change is needed for
+            # mid-horizon.
+            first_step_of = {
+                p: at[0].timestep for p, at in active_time_list.items()
+            }
             for row in info:
-                if first_step is not None and first_step[1] == row[2] and "yes" == row[3]:
-                    found_start = True
-            if found_start is False and len(info) != 0:
-                message = (
-                    "A realized start time of the solve cannot be found from "
-                    "the stochastic_branches parameter. "
-                    "Check that stochastic_branches has a realized : yes, "
-                    "branch for the start of the solve "
-                    "and that the possible rolling_jump matches with the "
-                    "branch starts"
-                )
-                self.logger.error(message)
-                raise FlexToolConfigError(message)
+                if row[0] not in first_step_of or row[2] != first_step_of[row[0]]:
+                    message = (
+                        "A stochastic branch must start at the FIRST step of "
+                        "its branching period (period-boundary reveal). "
+                        f"Branch {row[1]!r} of period {row[0]!r} declares "
+                        f"start_step {row[2]!r}, which is not that period's "
+                        "first step. Check stochastic_branches."
+                    )
+                    self.logger.error(message)
+                    raise FlexToolConfigError(message)
+            by_period: defaultdict[str, list] = defaultdict(list)
+            for row in info:
+                by_period[row[0]].append(row)
+            for period_k, rows_k in by_period.items():
+                n_real = sum(1 for r in rows_k if r[3] == "yes")
+                if n_real != 1:
+                    message = (
+                        f"stochastic branching period {period_k!r} must have "
+                        f"exactly one realized:yes branch; found {n_real}. "
+                        "Check stochastic_branches (one realized branch per "
+                        "branching period; start_step at the period's first "
+                        "step)."
+                    )
+                    self.logger.error(message)
+                    raise FlexToolConfigError(message)
 
             # Walk periods — at the first branch trigger, fan out into
             # branches; subsequent periods continue the same branches.
