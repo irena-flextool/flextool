@@ -45,6 +45,19 @@ The aggregation is configurable: callers can either pass a per-d_all
 weight column to sum (``factor_side``: ``"inv"`` / ``"ops"`` →
 inflation factor), or skip aggregation entirely and return the
 ``(e, d, d_all)`` triples (``factor_side=None``) for set-shape outputs.
+
+Scenario-lineage filter (recourse plan §6b Slice B)
+---------------------------------------------------
+
+``lineage`` optionally restricts the ``(d, d_all)`` pair domain to the
+Slice A ``dd_same_scenario`` contract
+(``specs/sliceA_lineage_frames_design.md`` §2.2/§2.5.3) BEFORE the
+``factor_side`` aggregation — remove a walk row ``(e, d, d_all)`` iff
+``d ∈ period_in_use`` AND ``d_all ∈ period_in_use`` AND
+``(d, d_all) ∉ lineage``; any row with either end outside
+``period_in_use`` (history-anchored rows) passes unconditionally.
+Every production caller passes ``lineage=None`` (no filtering) until
+the Slice C/D recourse activation lands.
 """
 from __future__ import annotations
 
@@ -90,6 +103,86 @@ class WindowMethod(enum.Enum):
     BOUNDED_INCLUSIVE_LOOKBACK = "bounded_inclusive_lookback"
 
 
+def _assert_lineage_castable(lineage: pl.DataFrame,
+                             d_dtype: pl.DataType) -> None:
+    """Raise ``ValueError`` when any lineage token nulls under a
+    non-strict cast to the walk's ``d`` dtype.
+
+    A silently-nulled token would make the marker left-join miss and
+    DELETE a pair that IS in the lineage frame — exactly the
+    silent-lineage failure class the recourse program keeps
+    eliminating.  Mirrors the Slice A ``_finalize_lineage_frame``
+    live-assert idiom (``_derived_branch.py``).
+
+    Empirical polars 1.40.1 behavior this guard exists for (Slice B
+    design W5(c)): a NON-STRICT cast between two different Enum
+    vocabularies (and Utf8 → Enum) NULLS every token missing from the
+    target vocabulary instead of raising — so it is THIS guard that
+    raises, never polars itself.
+    """
+    bad: list[str] = []
+    for col in ("d", "d_other"):
+        raw = lineage[col]
+        cast = raw.cast(d_dtype, strict=False)
+        bad.extend(str(v) for v, c in zip(raw.to_list(), cast.to_list())
+                   if c is None)
+    if bad:
+        raise ValueError(
+            "period_walk_iterator lineage filter: token(s) "
+            f"{sorted(set(bad))} in the lineage frame are not castable "
+            f"to the walk's d dtype {d_dtype!r} — a silently-nulled "
+            "token would delete lineage pairs from the walk (Slice B "
+            "design §4.2 null guard)."
+        )
+
+
+def _apply_lineage_filter(
+        walk: pl.LazyFrame,
+        lineage: pl.DataFrame,
+        period_in_use: list[str],
+        d_dtype: pl.DataType,
+        *,
+        anchor_col: str = "d",
+        dall_col: str = "d_all",
+        ) -> pl.LazyFrame:
+    """Slice A semi-join contract (sliceA design §2.2/§2.5.3):
+    remove ``(anchor, other)`` iff BOTH ends ∈ ``period_in_use`` AND
+    the pair is not in ``lineage``; rows with either end outside
+    ``period_in_use`` (history-anchored walk rows) pass through
+    unconditionally.
+
+    Dtype alignment is fixed-direction: the LINEAGE side is cast
+    (non-strict) to the walk's ``d`` dtype; the walk's column dtypes
+    are invariant under the filter.  ``align_join_dtypes`` was
+    evaluated for this seam and REJECTED (Slice B design §4.2 F6): its
+    preference rule casts toward whichever side is Enum, so on the
+    raw-CSV cascade path (walk ``d`` = Utf8, lineage = Enum) it would
+    mutate the walk's output dtype mid-pipeline and null-poison walk
+    tokens outside the lineage vocabulary (history anchors are exactly
+    such candidates).
+
+    ``anchor_col`` / ``dall_col`` parametrise the walk-side column
+    names so the one helper also serves the non-walker pair-former
+    ``edd_divest_active_from_source`` (``(d_divest, d)`` frame —
+    Slice B design §7.0); both resolve to the d-axis vocabulary.
+    """
+    lin = (lineage.lazy()
+             .select(
+                 pl.col("d").cast(d_dtype, strict=False)
+                     .alias(anchor_col),
+                 pl.col("d_other").cast(d_dtype, strict=False)
+                     .alias(dall_col))
+             .unique()                      # mandatory: a duplicated
+                                            # pair must not fan the join
+             .with_columns(_lin=pl.lit(True)))
+    in_piu = (pl.col(anchor_col).cast(pl.Utf8).is_in(period_in_use)
+              & pl.col(dall_col).cast(pl.Utf8).is_in(period_in_use))
+    return (walk
+              .join(lin, on=[anchor_col, dall_col], how="left")
+              .filter(pl.col("_lin").fill_null(False) | ~in_piu)
+              .drop("_lin"))
+
+
 def period_walk_iterator(
         source: "InputSource",
         active_solve: str | None,
@@ -101,6 +194,7 @@ def period_walk_iterator(
         life_lf: pl.LazyFrame | None,
         factor_side: str | None,
         workdir = None,
+        lineage: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Lazy per-(e, d) walk over ``period_in_use``, gated by lifetime.
 
@@ -140,6 +234,21 @@ def period_walk_iterator(
         callers don't pass this (they're called from the apply_npv
         boundary which has consumed the workdir already); Cluster B's
         invest-history callers do.
+    lineage
+        Optional ``(d, d_other)`` scenario-lineage frame
+        (``flex_data.dd_same_scenario``, Slice A — see
+        ``specs/sliceA_lineage_frames_design.md`` §2.2/§2.5.3).  When
+        provided, the ``(d, d_all)`` pairs are filtered BEFORE the
+        ``factor_side`` aggregation / set-shape dedup under the
+        Slice A semi-join contract: remove a walk row
+        ``(e, d, d_all)`` iff ``d ∈ period_in_use`` AND
+        ``d_all ∈ period_in_use`` AND ``(d, d_all) ∉ lineage``; any
+        row with either end outside ``period_in_use`` passes through
+        unconditionally.  ``None`` (the default, and every production
+        call at HEAD) applies no filtering — the hot path gains one
+        pointer comparison.  The two empty-input early returns below
+        deliberately do not consult ``lineage`` (with no pairs there
+        is nothing to filter).
 
     Returns
     -------
@@ -240,6 +349,13 @@ def period_walk_iterator(
                   .filter(pl.col("yr_dall") >= pl.col("yr_d"))
                   .filter(pl.col("yr_dall") < pl.col("yr_d") + pl.col("life"))
                 )
+
+    # Scenario-lineage filter (Slice B) — PRE-aggregation, so the
+    # factor-side Σ over d_all only ever sees same-scenario pairs.
+    if lineage is not None:
+        _assert_lineage_castable(lineage, ed_d_dtype)
+        walk = _apply_lineage_filter(walk, lineage,
+                                     period_in_use, ed_d_dtype)
 
     if factor_side is None:
         return (walk

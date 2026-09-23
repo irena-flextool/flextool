@@ -3730,6 +3730,7 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
                                             workdir: Path | None = None,
                                             *,
                                             provider: "object | None" = None,
+                                            lineage: pl.DataFrame | None = None,
                                             ) -> pl.DataFrame | None:
     """Build the strict-lookback (e, d_invest, d) tuples used by the
     user-constraint LHS prebuilt-capacity term (mod L2885-2898).
@@ -3753,6 +3754,9 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
     new ``STRICT_LOOKBACK_*`` modes.  The previous eager
     ``for r in out.iter_rows`` lifetime gate is replaced with a fully
     lazy join + filter on the shared walker.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if ed_invest is None or ed_invest.height == 0:
         return pl.DataFrame(schema={
@@ -3778,7 +3782,8 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
     from ._derived_existing import edd_invest_lookback_set_lf
     ed_invest_lf = ed_invest.lazy().select("e", "d")
     return edd_invest_lookback_set_lf(
-        source, active_solve, ed_invest_lf, periods, workdir).collect()
+        source, active_solve, ed_invest_lf, periods, workdir,
+        lineage=lineage).collect()
 
 
 def edd_divest_active_from_source(source: "InputSource",
@@ -3786,11 +3791,23 @@ def edd_divest_active_from_source(source: "InputSource",
                                       pd_divest: pl.DataFrame | None,
                                       *,
                                       provider: "object | None" = None,
+                                      lineage: pl.DataFrame | None = None,
                                       ) -> pl.DataFrame | None:
     """Build the active-divest (p, d_divest, d) tuples — see audit §3.7.3.
 
     pd_divest ⊆ ed_divest with ``p ∈ process``; the active set further
     filters d_divest ≤ d using year ordering.
+
+    ``lineage`` — the one non-walker cross-period pair-former
+    (Slice B design §7.0, inventory #18): when not ``None``, the
+    shared :func:`._derived_walks._apply_lineage_filter` is applied to
+    the ``(d_divest, d)`` pairs with ``anchor_col="d_divest"``,
+    ``dall_col="d"``, under the same Slice A semi-join contract.  The
+    ``period_in_use`` list the filter tests membership against is the
+    function-local source-derived ``periods`` list below (NOT the
+    workdir-CSV PIU — this helper resolves its period domain from the
+    source only).  Always ``None`` until the recourse flag lands
+    (Slice C/D).
     """
     if pd_divest is None or pd_divest.height == 0:
         return pl.DataFrame(schema={
@@ -3816,11 +3833,22 @@ def edd_divest_active_from_source(source: "InputSource",
     pdd_lf = pd_divest.lazy().pipe(rename_to_axis, {"d": "d_divest"})
     yr_div = pyd_lf.pipe(rename_to_axis, {"d": "d_divest", "yr": "yr_divest"})
     yr_d = pyd_lf.rename({"yr": "yr"})
-    out = (pdd_lf
-              .join(period_lf, how="cross")
-              .join(yr_div, on="d_divest", how="inner")
-              .join(yr_d, on="d", how="inner")
-              .filter(pl.col("yr_divest") <= pl.col("yr"))
+    chain = (pdd_lf
+               .join(period_lf, how="cross")
+               .join(yr_div, on="d_divest", how="inner")
+               .join(yr_d, on="d", how="inner")
+               .filter(pl.col("yr_divest") <= pl.col("yr")))
+    if lineage is not None:
+        from ._derived_walks import (
+            _apply_lineage_filter,
+            _assert_lineage_castable,
+        )
+        d_dtype = chain.collect_schema().get("d", pl.Utf8)
+        _assert_lineage_castable(lineage, d_dtype)
+        chain = _apply_lineage_filter(chain, lineage, periods, d_dtype,
+                                      anchor_col="d_divest",
+                                      dall_col="d")
+    out = (chain
               .select("p", "d_divest", "d")
               .sort("p", "d_divest", "d")
               .collect())
