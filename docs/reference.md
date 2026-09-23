@@ -525,6 +525,44 @@ For `reserve__upDown__group` entities:
 - `reservation` - [MW] Amount of reserve required. Constant or time.
 - `penalty_reserve` - [CUR/MW] Penalty cost for not fulfilling the reserve requirement. Constant.
 - `increase_reserve_ratio` - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.
+- `reserve_duration` - [h] Time span over which committed reserve power must be sustainable from storage. Constant. Absent or 0 means the reserve is instantaneous-power-only (legacy behaviour); no storage-energy coupling is added.
+
+#### Storage-backed reserve energy adequacy (`reserve_duration`)
+
+By default a reserve reservation only withholds *power* (MW of headroom) from
+the provider. `reserve_duration` additionally requires the provider to hold
+enough *energy* to actually sustain that committed power for the given number
+of hours, when the provider draws on (upward reserve) or charges into
+(downward reserve) a storage node. This is a single-scalar simplification of
+Backbone's duty-cycle formulation (self-discharge over the window is ignored
+in this first version).
+
+For each committed reserve MW the required energy is `reservation_MW ×
+reserve_duration`, corrected by the provider's efficiency:
+
+- **Upward / discharge** — the storage node is the provider's *source*, so the
+  energy drawn is divided by the efficiency (`÷ η`): a lossy discharge must
+  draw more stored energy to deliver the same MW. The stored energy floor is
+  `v_state · unitsize ≥ Σ reservation_MW · reserve_duration / η`.
+- **Downward / charge** — the storage node is the provider's *sink*, so the
+  energy stored is multiplied by the efficiency (`× η`): a lossy charge stores
+  less per MW of charging. The free-headroom bound is
+  `v_state · unitsize + Σ reservation_MW · reserve_duration · η ≤ capacity`
+  (with the same invest/divest capacity replication as the storage state
+  bound).
+
+The coupling is storage-only: reserve provided by non-storage units (e.g. a
+gas turbine drawing on a fuel commodity) is unaffected. The obligation uses the
+provider's full committed MW — the trust derating (`reliability`) is
+deliberately excluded, since the physical energy required is independent of how
+much of the reservation is counted towards the requirement.
+
+Limitation under representative periods: the constraints reference the
+intra-representative-period storage state (`v_state`) only. Under the
+representative-period *blended-weights* storage modes the seasonal inter-period
+state is bounded separately and is not aligned to the reserve's time index, so
+`reserve_duration` couples reserve to intra-period state only — matching
+FlexTool's own intra-period capacity approximation.
 
 ### Reserve provision by units
 

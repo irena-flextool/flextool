@@ -4434,6 +4434,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             res_vars["v_invest_p"]   = v_invest_p
         if has_divest_p:
             res_vars["v_divest_p"]   = v_divest_p
+        # Storage energy-adequacy coupling for reserve_duration (#322):
+        # v_state precedes this dispatch site (declared above), so threading
+        # it (+ v_invest_n / v_divest_n for the down-headroom capacity
+        # replication) is order-safe.  Each gated on its own has_* flag.
+        if has_storage:
+            res_vars["v_state"]      = v_state
+        if has_invest_n:
+            res_vars["v_invest_n"]   = v_invest_n
+        if has_divest_n:
+            res_vars["v_divest_n"]   = v_divest_n
         _reserve.add_constraints(m, d, res_vars)
         res_obj = _reserve.add_objective_terms(m, d, res_vars, op_factor)
         if res_obj is not None:

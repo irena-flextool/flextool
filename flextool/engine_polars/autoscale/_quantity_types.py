@@ -451,6 +451,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
     ('reservation', 'reserve__upDown__group'): QuantityType.POWER,
     # [MW] Amount of reserve to be reserved. Constant or time.
+    ('reserve_duration', 'reserve__upDown__group'): QuantityType.DURATION,
+    # [h] Time span over which committed reserve power must be sustainable from storage. Constant.
     ('reserve_method', 'reserve__upDown__group'): QuantityType.DIMENSIONLESS,
     # Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failur...
     ('retire_max_period', 'connection'): QuantityType.POWER,

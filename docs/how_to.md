@@ -633,6 +633,8 @@ Next, the reserve requirement will be defined. An entity between the `reserve__u
 
 Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Note that the entities in this class need to be added to the `Entity Alternative` sheet. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant* may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. *wind_plant* may contribute only 80% of its generation to reserve due to uncertainty).
 
+If the reserve is provided by a **battery** or other storage (a unit discharging from, or a connection/charger tied to, a storage node), set `reserve_duration` (hours) on the `reserve__upDown__group` entity so the storage actually holds enough energy to sustain the committed reserve power. For example, a 4-hour upward reserve from a battery uses `reserve_duration = 4`: the model then guarantees the battery's stored energy can back its reserve commitment for 4 hours (corrected by the round-trip efficiency). Without `reserve_duration` the reserve is instantaneous-power-only — the battery could commit reserve it has no energy to deliver. The coupling only applies to storage-backed providers; ordinary fuel-fed units are unaffected.
+
  ![Add a reserve](./img/concept/reserves.png)
 
 

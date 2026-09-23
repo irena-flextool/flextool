@@ -85,6 +85,7 @@ RESERVE_FIELDS: tuple[str, ...] = (
     "p_process_reserve_upDown_node_reliability",  # (p, r, ud, n) — already coalesced
     "pdtReserve_upDown_group_reservation",        # (r, ud, g, d, t) — RHS demand
     "p_reserve_upDown_group_penalty_reserve",     # (r, ud, g) — objective penalty
+    "p_reserve_upDown_group_reserve_duration",    # (r, ud, g) — storage-energy coupling (#322)
 )
 
 
@@ -613,6 +614,210 @@ def add_constraints(m, d, vars: dict) -> None:
                     lhs_terms = lhs,
                     rhs_terms = {"max":     rhs_param},
                 )
+
+    # ── Storage energy adequacy for reserve_duration (#322) ──────────────
+    _add_storage_reserve_constraints(m, d, vars)
+
+
+# ---------------------------------------------------------------------------
+# Storage energy-adequacy coupling (reserve_duration, issue #322)
+
+def _add_storage_reserve_constraints(m, d, vars: dict) -> None:
+    """Couple committed reserve MW to stored energy over ``reserve_duration``.
+
+    A storage-backed reserve provider must physically hold enough stored
+    energy (UP / discharge) or free charging headroom (DOWN / charge) to
+    sustain its committed reserve power for ``reserve_duration`` hours.
+    Two standalone constraints, both framed in MWh:
+
+      * ``reserve_storage_up_floor``      (>=): ``v_state·unitsize − E_up ≥ 0``
+      * ``reserve_storage_down_headroom`` (<=): ``v_state·unitsize + E_dn
+            (+ divest − invest)·unitsize ≤ p_state_upper·unitsize``
+
+    where, keyed on the storage node ``n`` (after collapsing over the
+    provider axes ``p, r, ud, nb, g``):
+
+      * ``E_up = Σ v_reserve·p_unitsize·dur·p_slope``  (energy DRAWN — the
+        provider's storage is the SOURCE, so multiply by the slope 1/η),
+      * ``E_dn = Σ v_reserve·p_unitsize·dur/p_slope``  (energy STORED — the
+        provider's storage is the SINK, so divide by the slope, i.e. ×η).
+
+    ``dur = p_reserve_upDown_group_reserve_duration[r,ud,g]`` (hours).
+    Reserve provision spans BOTH units and connections (``process_source_sink``
+    is class-agnostic).  ``ud`` is pre-filtered ('up' for the floor, 'down'
+    for the headroom) BEFORE the topology join so a reversible battery's two
+    orientations don't cross-contaminate.  ``p_slope`` is coalesced to 1.0
+    over the provider set (noEff providers are absent from ``p_slope``; an
+    unfilled null would silently drop the constraint).
+
+    reliability is DELIBERATELY EXCLUDED: the physical energy a provider must
+    hold equals its full committed MW, independent of the trust derating that
+    the reserve-balance LHS applies.
+
+    No slack variable is added.  With ``v_reserve = 0`` both constraints
+    reduce to already-enforced bounds (``v_state ≥ 0`` and ``maxState``), so a
+    provider that cannot sustain the duration simply commits less reserve and
+    pays the existing ``vq_reserve`` shortfall penalty — feasibility is never
+    lost.  Absent/empty ``reserve_duration`` ⇒ neither constraint is emitted
+    (byte-identical LP).
+
+    # NOTE(reserve_duration RP): both constraints reference ``v_state`` alone
+    # (× ``p_state_unitsize``).  Under RP *_blended_weights modes the seasonal
+    # ``v_state_inter[n,b]`` is bounded separately and indexed by base period
+    # ``b`` (not alignable to reserve's ``(d,t)``), so this couples reserve to
+    # INTRA-representative-period state only — a known limitation matching
+    # FlexTool's own intra-period capacity approximation.  Revisit if/when a
+    # seasonal-state alignment becomes expressible.
+    """
+    dur = getattr(d, "p_reserve_upDown_group_reserve_duration", None)
+    if dur is None or not has_feature(d):
+        return
+    if d.nodeState is None or d.nodeState.height == 0:
+        return
+    if d.process_source_sink is None or d.process_source_sink.height == 0:
+        return
+    v_state = vars.get("v_state")
+    v_reserve = vars.get("v_reserve")
+    us_n = d.p_state_unitsize
+    if v_state is None or v_reserve is None or us_n is None:
+        return
+
+    p_unitsize = d.p_unitsize
+    rug        = d.reserve_upDown_group                       # (r, ud, g)
+    pruna      = d.process_reserve_upDown_node_active         # (p, r, ud, n)
+    gn         = d.group_node.pipe(rename_to_axis, {"n": "n"})  # (g, n) — balance node
+    dur_set    = dur.frame.select("r", "ud", "g")
+    dt         = d.dt
+
+    def _build_join(ud_val: str, balance_pss: str, storage_pss: str):
+        """Provider→storage-node topology join.  Returns a frame with
+        columns ``(p, r, ud, nb, n, g)`` where ``nb`` = the balance
+        (reserve) node and ``n`` = the storage node, or ``None`` when
+        empty.  Mirrors the n-1 RHS relabel and ``pruna_g`` group join."""
+        pr = pruna.filter(pl.col("ud") == ud_val)
+        if pr.height == 0:
+            return None
+        # Cast the balance node to canonical "n" for the pruna join.
+        j = (d.process_source_sink
+                .pipe(rename_to_axis, {balance_pss: "n"})
+                .join(pr, on=["p", "n"], how="inner"))         # n = balance node
+        if j.height == 0:
+            return None
+        # balance n → nb (node enum preserved by plain rename);
+        # storage side → canonical "n" (node-enum cast via rename_to_axis).
+        j = (j.rename({"n": "nb"})
+               .pipe(rename_to_axis, {storage_pss: "n"}))
+        j = (j.join(gn.rename({"n": "nb"}), on="nb", how="inner")     # adds g
+               .join(rug, on=["r", "ud", "g"], how="inner")
+               .join(dur_set, on=["r", "ud", "g"], how="inner")      # absent dur ⇒ empty
+               .join(d.nodeState.select("n"), on="n", how="semi")    # storage ∈ nodeState
+               .select("p", "r", "ud", "nb", "n", "g")
+               .unique())
+        return j if j.height > 0 else None
+
+    def _v_reserve_nb() -> "Var":
+        """``v_reserve`` view with its balance axis ``n`` relabelled to
+        ``nb`` so the storage node ``n`` (added by the Where join) is the
+        only ``n`` that survives the collapse — aligning with ``v_state``.
+        """
+        dims = tuple("nb" if c == "n" else c for c in v_reserve.dims)
+        return Var(name=v_reserve.name, dims=dims,
+                   frame=v_reserve.frame.rename({"n": "nb"}))
+
+    def _slope_factor(providers: "pl.DataFrame", reciprocal: bool) -> Param:
+        """Total ``Param(("p","d","t"))`` slope factor over the provider
+        set × dt — coalesced to 1.0 where ``p_slope`` is absent (noEff
+        providers) so the energy product never silently drops a row.
+        ``reciprocal`` ⇒ ×(1/slope) = ×η for the DOWN / charge direction."""
+        grid = providers.join(dt, how="cross")               # (p, d, t)
+        if d.p_slope is not None:
+            grid = grid.join(d.p_slope.frame, on=["p", "d", "t"], how="left")
+            val = pl.col("value").fill_null(1.0)
+        else:
+            val = pl.lit(1.0)
+        if reciprocal:
+            val = 1.0 / val
+        frame = grid.with_columns(value=val).select("p", "d", "t", "value")
+        return Param(("p", "d", "t"), frame)
+
+    v_res_nb = _v_reserve_nb()
+
+    # ── UP / discharge floor: v_state·unitsize ≥ E_up ────────────────────
+    join_up = _build_join("up", balance_pss="sink", storage_pss="source")
+    if join_up is not None:
+        slope_up = _slope_factor(join_up.select("p").unique(), reciprocal=False)
+        e_up = Sum(
+            Where(v_res_nb * p_unitsize * dur * slope_up, join_up),
+            over=("p", "r", "ud", "nb", "g"),
+        )
+        over_up = join_up.select("n").unique().join(dt, how="cross")
+        m.add_cstr(
+            "reserve_storage_up_floor",
+            over      = over_up,
+            sense     = ">=",
+            lhs_terms = {"state": v_state * us_n, "energy_neg": -e_up},
+            rhs_terms = {"zero": 0.0},
+        )
+
+    # ── DOWN / charge headroom: v_state·unitsize + E_dn ≤ cap·unitsize ───
+    join_dn = _build_join("down", balance_pss="source", storage_pss="sink")
+    if join_dn is not None:
+        slope_dn = _slope_factor(join_dn.select("p").unique(), reciprocal=True)
+        e_dn = Sum(
+            Where(v_res_nb * p_unitsize * dur * slope_dn, join_dn),
+            over=("p", "r", "ud", "nb", "g"),
+        )
+        over_dn = join_dn.select("n").unique().join(dt, how="cross")
+        state_lhs: dict = {"state": v_state * us_n, "energy": e_dn}
+        # Invest/divest headroom replication — mirrors maxState EXACTLY
+        # (flextool/engine_polars/model.py:3523-3559), scaled by
+        # p_state_unitsize (→ MWh).  Gated on has_invest_n / has_divest_n
+        # (presence in ``vars``).  With neither, RHS is just cap·unitsize.
+        v_invest_n = vars.get("v_invest_n")
+        v_divest_n = vars.get("v_divest_n")
+        if v_divest_n is not None and d.edd_divest_active is not None:
+            v_div_n_at = Var(
+                name=v_divest_n.name + "__at_reserve_down_divest",
+                dims=("n", "d_divest"),
+                frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
+                lower=v_divest_n.lower, upper=v_divest_n.upper,
+            )
+            # Cross-Enum is_in (p-axis vs n-axis vocab); up-cast n→p.
+            _p_dt = d.edd_divest_active.schema["p"]
+            _n_in_p = (d.nodeState
+                         .select(pl.col("n").cast(_p_dt, strict=False).alias("p"))
+                         .unique())
+            edd_div_n = (d.edd_divest_active
+                           .join(_n_in_p, on="p", how="semi")
+                           .pipe(rename_to_axis, {"p": "n"}))
+            if edd_div_n.height > 0:
+                state_lhs["divest"] = Sum(
+                    Where(v_div_n_at, edd_div_n), over=("d_divest",)) * us_n
+        if v_invest_n is not None and d.edd_invest_set is not None:
+            v_inv_n_at = Var(
+                name=v_invest_n.name + "__at_reserve_down_invest",
+                dims=("n", "d_invest"),
+                frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
+                lower=v_invest_n.lower, upper=v_invest_n.upper,
+            )
+            # Cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
+            _e_dt = d.edd_invest_set.schema["e"]
+            _n_in_e = (d.nodeState
+                         .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
+                         .unique())
+            edd_inv_n = (d.edd_invest_set
+                           .join(_n_in_e, on="e", how="semi")
+                           .pipe(rename_to_axis, {"e": "n"}))
+            if edd_inv_n.height > 0:
+                state_lhs["invest_neg"] = -(Sum(
+                    Where(v_inv_n_at, edd_inv_n), over=("d_invest",)) * us_n)
+        m.add_cstr(
+            "reserve_storage_down_headroom",
+            over      = over_dn,
+            sense     = "<=",
+            lhs_terms = state_lhs,
+            rhs_terms = {"upper": d.p_state_upper * us_n},
+        )
 
 
 # ---------------------------------------------------------------------------

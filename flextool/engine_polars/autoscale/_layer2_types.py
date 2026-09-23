@@ -447,6 +447,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine_polars/_reserve.py:576 (reserve_process_upward / _downward)
     "reserve_process_upward": CstrFamily(QuantityType.POWER),
     "reserve_process_downward": CstrFamily(QuantityType.POWER),
+    # Storage energy-adequacy coupling for reserve_duration (#322).  Both
+    # framed in MWh: v_state·unitsize (± E) vs a stored-energy bound.
+    # flextool/engine_polars/_reserve.py _add_storage_reserve_constraints
+    "reserve_storage_up_floor": CstrFamily(QuantityType.ENERGY),
+    "reserve_storage_down_headroom": CstrFamily(QuantityType.ENERGY),
 
     # ── Group slack constraints.
     # flextool/engine_polars/_group_slack.py:859
