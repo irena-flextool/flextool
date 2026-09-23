@@ -957,6 +957,75 @@ def dd_same_scenario_df(
                                ctx=ctx, provider=provider).collect()
 
 
+def d_leaf_lf(
+    workdir: Path | None,
+    source: "InputSource | None" = None,
+    active_solve: str | None = None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> pl.LazyFrame:
+    """``d_leaf`` — (d, leaf) scenario-leaf PARTITION of ``period_in_use``.
+
+    Each in-use period maps to exactly ONE scenario leaf (design §7.2):
+    real-named anchors → the ``"__realized"`` leaf; synthetic fan
+    members → their time-branch id (``tb_of[m]``).  Because the
+    continuation fan starts at the solve's first step (§K), leaves
+    PARTITION the invest axis — no period is on two leaves — so the map
+    is well-defined and the per-leaf invest sums are disjoint.
+
+    Consumed by the per-path total caps
+    (``maxInvest/maxDivest_entity_total_path`` — ``model.py`` — and the
+    divest ``maxDivestGroup_entity_total_path`` — ``_cumulative_invest.py``):
+    the leaf column joins into each cap row's key so a total cap applies
+    once per scenario path, never cross-scenario double-counting.
+
+    Deterministic / flag-off solves degenerate to a single
+    ``"__realized"`` leaf (``period__branch`` silent → every in-use
+    member is an anchor, mirroring :func:`_classify_lineage`'s
+    ``pb_rows == []`` branch), so the total caps stay on the legacy
+    single-row shape (byte-parity).  ``leaf`` is a plain ``Utf8``
+    column — it is NOT an axis vocabulary; it only keys constraint rows.
+    """
+    schema = {"d": schema_dtype(_enums, "d"), "leaf": pl.Utf8}
+    pb_rows, piu, tb_of = _lineage_inputs(
+        workdir, source, active_solve, ctx=ctx, provider=provider)
+    if not piu:
+        return _empty_lf(schema)
+    anchors, _pos, synthetic, _anchor_of = _classify_lineage(
+        pb_rows, piu, tb_of)
+    rows: list[tuple[str, str]] = [(a, "__realized") for a in anchors]
+    rows += [(m, tb_of[m]) for m in synthetic]
+    raw = pl.DataFrame({"d": [r[0] for r in rows],
+                        "leaf": [r[1] for r in rows]},
+                       schema={"d": pl.Utf8, "leaf": pl.Utf8})
+    out = raw.select(cast_dim(pl.col("d"), _enums, "d"), pl.col("leaf"))
+    if out["d"].null_count():
+        bad = sorted({v for v, c in zip(raw["d"].to_list(),
+                                        out["d"].to_list()) if c is None})
+        raise ValueError(
+            f"d_leaf: axis-enum cast nulled period token(s) {bad} — the "
+            "token is missing from the live d-axis vocabulary (wiring "
+            "bug; the 4.0.4 vocabulary splice includes every continuation "
+            "branch-period token)."
+        )
+    out = out.sort(pl.col("d").cast(pl.Utf8), "leaf")
+    return out.lazy()
+
+
+def d_leaf_df(
+    workdir: Path | None,
+    source: "InputSource | None" = None,
+    active_solve: str | None = None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Collect wrapper for :func:`d_leaf_lf` — always a typed frame."""
+    return d_leaf_lf(workdir, source, active_solve,
+                     ctx=ctx, provider=provider).collect()
+
+
 def pd_non_anticipativity_lf(
     workdir: Path | None,
     source: "InputSource | None" = None,
@@ -1373,6 +1442,11 @@ def apply_branch_cluster(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     flex_data.pd_non_anticipativity = pd_non_anticipativity_df(
         workdir, source, active_solve, ctx=ctx, provider=provider)
+    # Slice D per-path total caps (design §7.2): the (d, leaf) partition
+    # that keeps entity/group total caps per-scenario-path.  Single
+    # "__realized" leaf for deterministic solves (byte-parity).
+    flex_data.d_leaf = d_leaf_df(
+        workdir, source, active_solve, ctx=ctx, provider=provider)
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
     # helpers in ``_derived_params.py``).
@@ -1426,6 +1500,8 @@ __all__ = [
     "period_branch_full_lf",
     "dd_same_scenario_lf",
     "dd_same_scenario_df",
+    "d_leaf_lf",
+    "d_leaf_df",
     "pd_non_anticipativity_lf",
     "pd_non_anticipativity_df",
     "pd_branch_weight_param",

@@ -23,9 +23,12 @@ which is why the demand variation is supply-side here:
   * unit ``peaker`` → ``elec`` — variable cost 0, virtual_unitsize 1 MW,
     invest_method=invest_total, invest_cost 1 CUR/kW, discount_rate 0.05,
     lifetime 1 (→ annuity 1000·CRF(0.05,1) = 1050 exactly),
-    invest_max_total 250 (non-binding at D5; the design's per-path
-    demonstration value 150 belongs to D6 per-path caps — the legacy
-    all-``d`` sum 210 would spuriously bind it before per-path caps exist).
+    invest_max_total 150 (the design §15.1 per-path demonstration value:
+    each leaf's own total — realized 60+30 = 90, low 80+40 = 120 — is
+    ≤ 150 so the cap is non-binding PER LEAF, while the legacy all-``d``
+    sum 210 would spuriously bind.  With D6 per-path caps
+    ``maxInvest_entity_total_path`` splits the cap by scenario leaf so
+    the objective stays 196 875).
 
 Hand calculation (design §15.1): with the invest axis fanned, per-scenario
 optimal invest {p2035:60, p2040:30, p2035_low:80, p2040_low:40}; annuity
@@ -211,7 +214,7 @@ def build() -> dict:
         ["unit", "peaker", "invest_cost", _pack(1.0, "float"), "base"],
         ["unit", "peaker", "discount_rate", _pack(0.05, "float"), "base"],
         ["unit", "peaker", "lifetime", _pack(1.0, "float"), "base"],
-        ["unit", "peaker", "invest_max_total", _pack(250.0, "float"),
+        ["unit", "peaker", "invest_max_total", _pack(150.0, "float"),
          "base"],
         ["unit__outputNode", ["peaker", "elec"], "other_operational_cost",
          _pack(0.0, "float"), "base"],

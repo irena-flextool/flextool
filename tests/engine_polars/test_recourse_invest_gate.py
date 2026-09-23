@@ -151,6 +151,34 @@ def test_recourse_committed_output_realized_only(recourse_wf):
 
 
 @pytest.mark.solver
+def test_recourse_per_path_cap_two_leaf_rows(_resolved):
+    """§15.1 / §7.2 (D6): under recourse the entity total cap fans into
+    ONE row per scenario leaf (peaker × {__realized, low}) under the
+    ``…_path`` name — the legacy single-row ``maxInvest_entity_total``
+    (which summed all four periods, 210 > 150, and would spuriously
+    bind) is gone.  Each leaf row sums only its two periods; the D2
+    per-leaf-invest test pins those sums to 90 (60+30) and 120 (80+40),
+    both ≤ 150 → non-binding, hence objective stays 196 875.  The naive
+    all-``d`` sum 210 asymmetry is the proof the caps are per-path."""
+    data, _sol = _resolved
+    from flextool.engine_polars import build_flextool
+    from polar_high import Problem
+
+    pb = Problem()
+    build_flextool(pb, data)
+    names = pb.cstr_names()
+    assert "maxInvest_entity_total_path" in names
+    assert "maxInvest_entity_total" not in names  # legacy replaced
+    recs = pb.cstrs_named("maxInvest_entity_total_path")
+    over = recs[0].over
+    assert over.height == 2  # (peaker, __realized), (peaker, low)
+    leaves = sorted(str(v) for v in over["leaf"].to_list())
+    assert leaves == ["__realized", "low"]
+    ents = {str(v) for v in over["p"].to_list()}
+    assert ents == {"peaker"}
+
+
+@pytest.mark.solver
 def test_recourse_no_invest_na_constraints(_resolved):
     """§13 (K): the fan starts at the solve's first step, so
     pd_non_anticipativity is empty — no invest-NA constraint exists."""
