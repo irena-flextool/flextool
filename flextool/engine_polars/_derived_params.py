@@ -326,7 +326,12 @@ def _anchor_expand_explicit(explicit_lf: pl.LazyFrame) -> pl.LazyFrame:
     row keeps it (branch-native wins, via order-preserving dedupe).
     Holder ``None`` (flag-off / deterministic) → returns the frame
     unchanged (byte-parity).  Operates in Utf8 on ``d`` then restores the
-    original dtype so an Enum-vocab mismatch cannot silently null a token.
+    original dtype.  The Utf8→Enum round-trip is lossless for anchor rows
+    by construction (their ``d`` arrived already typed as ``d_dtype``, so
+    each token is in-vocab), and every inherited branch (``br``) token is
+    covered by the 4.0.4 vocabulary splice; a nulled token therefore
+    signals a wiring bug and is hard-raised (mirroring
+    :func:`._derived_branch.d_leaf_lf`) rather than silently dropped.
     """
     pairs = _RECOURSE_ANCHOR_PAIRS
     if pairs is None or pairs.height == 0:
@@ -340,8 +345,24 @@ def _anchor_expand_explicit(explicit_lf: pl.LazyFrame) -> pl.LazyFrame:
                      .select(base.collect_schema().names()))
     combined = pl.concat([base, inherited], how="vertical_relaxed")
     out = combined.unique(subset=["e", "d"], keep="first", maintain_order=True)
-    if d_dtype is not None:
-        out = out.with_columns(pl.col("d").cast(d_dtype, strict=False))
+    if d_dtype is not None and d_dtype != pl.Utf8:
+        # Restore the original (non-Utf8, i.e. Enum) ``d`` dtype.  A
+        # ``strict=False`` cast would SILENTLY null any token absent from
+        # the live ``d``-axis vocabulary; hard-raise instead so a splice
+        # gap surfaces loudly (never fires in valid runs — see docstring).
+        out_df = out.collect()
+        casted = out_df.with_columns(pl.col("d").cast(d_dtype, strict=False))
+        if casted["d"].null_count():
+            bad = sorted({v for v, c in zip(out_df["d"].to_list(),
+                                            casted["d"].to_list())
+                          if c is None})
+            raise ValueError(
+                f"_anchor_expand_explicit: axis-enum cast nulled period "
+                f"token(s) {bad} — the token is missing from the live "
+                "d-axis vocabulary (wiring bug; the 4.0.4 vocabulary splice "
+                "includes every continuation branch-period token)."
+            )
+        return casted.lazy()
     return out
 
 
