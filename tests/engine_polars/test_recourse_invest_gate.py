@@ -150,6 +150,29 @@ def test_recourse_committed_output_realized_only(recourse_wf):
     assert got == {"p2035": 60.0, "p2040": 30.0}
 
 
+@pytest.fixture(scope="module")
+def horizon_wf(scenario_workdir):
+    """Cascade run of the recourse fixture with ``model.output_horizon``
+    enabled — the non-realized branch invest rows must surface (§11.2)."""
+    return scenario_workdir("recourse_horizon",
+                            db_fixture="stoch_two_period_invest")
+
+
+@pytest.mark.solver
+def test_recourse_output_horizon_branch_rows(horizon_wf):
+    """§11.2 / §15.5 (D8): under ``output_horizon`` the invest-axis output
+    surfaces the non-realized branch rows (80 at p2035_low, 40 at
+    p2040_low) alongside the committed realized rows (60 / 30)."""
+    inv = pl.read_parquet(
+        horizon_wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
+    got = {r["period"]: round(float(r["peaker"]), 6)
+           for r in inv.iter_rows(named=True)}
+    assert got.get("p2035") == 60.0
+    assert got.get("p2040") == 30.0
+    assert got.get("p2035_low") == 80.0
+    assert got.get("p2040_low") == 40.0
+
+
 @pytest.mark.solver
 def test_recourse_per_path_cap_two_leaf_rows(_resolved):
     """§15.1 / §7.2 (D6): under recourse the entity total cap fans into

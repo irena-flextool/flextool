@@ -108,15 +108,23 @@ def build() -> dict:
         ["base", "System data (peaker invest + wind + elec demand)"],
         ["stoch", "Stochastic branches + branch-varying wind profile"],
         ["recourse", "stochastic_invest_method = recourse"],
+        ["horizon", "model.output_horizon = yes (branch invest rows)"],
     ]
     spec["scenarios"] = [
         ["recourse", False, "Per-scenario stochastic investment (flag on)"],
+        ["recourse_horizon", False,
+         "Recourse + output_horizon (non-realized branch invest visible)"],
     ]
     spec["scenario_alternatives"] = [
         ["recourse", "init", "base"],
         ["recourse", "base", "stoch"],
         ["recourse", "stoch", "recourse"],
         ["recourse", "recourse", None],
+        ["recourse_horizon", "init", "base"],
+        ["recourse_horizon", "base", "stoch"],
+        ["recourse_horizon", "stoch", "recourse"],
+        ["recourse_horizon", "recourse", "horizon"],
+        ["recourse_horizon", "horizon", None],
     ]
 
     spec["entities"] = [
@@ -228,6 +236,9 @@ def build() -> dict:
         # ---- recourse: opt-in flag -------------------------------------
         ["solve", "stoch_2p_inv", "stochastic_invest_method",
          _pack("recourse", "str"), "recourse"],
+        # ---- horizon: surface non-realized branch invest (§11.2) -------
+        ["model", "flextool", "output_horizon", _pack("yes", "str"),
+         "horizon"],
     ]
     return spec
 

@@ -5607,6 +5607,10 @@
     [
       "recourse",
       "stochastic_invest_method = recourse"
+    ],
+    [
+      "horizon",
+      "model.output_horizon = yes (branch invest rows)"
     ]
   ],
   "scenarios": [
@@ -5614,6 +5618,11 @@
       "recourse",
       false,
       "Per-scenario stochastic investment (flag on)"
+    ],
+    [
+      "recourse_horizon",
+      false,
+      "Recourse + output_horizon (non-realized branch invest visible)"
     ]
   ],
   "scenario_alternatives": [
@@ -5635,6 +5644,31 @@
     [
       "recourse",
       "recourse",
+      null
+    ],
+    [
+      "recourse_horizon",
+      "init",
+      "base"
+    ],
+    [
+      "recourse_horizon",
+      "base",
+      "stoch"
+    ],
+    [
+      "recourse_horizon",
+      "stoch",
+      "recourse"
+    ],
+    [
+      "recourse_horizon",
+      "recourse",
+      "horizon"
+    ],
+    [
+      "recourse_horizon",
+      "horizon",
       null
     ]
   ],
@@ -6086,6 +6120,16 @@
         "str"
       ],
       "recourse"
+    ],
+    [
+      "model",
+      "flextool",
+      "output_horizon",
+      [
+        "InllcyI=",
+        "str"
+      ],
+      "horizon"
     ]
   ]
 }
