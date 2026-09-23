@@ -57,7 +57,9 @@ _PENALTY = 1000.0
 
 def data(*, direction: str = "up", duration: float | None = 0.5,
          eta: float = 1.0, cap: float = 20.0,
-         provider: str = "prov") -> FlexData:
+         provider: str = "prov", invest: bool = False,
+         divest: bool = False, invest_cost: float = 10.0,
+         max_units: float = 100.0) -> FlexData:
     """Build the storage-backed reserve toy.
 
     Parameters
@@ -74,6 +76,25 @@ def data(*, direction: str = "up", duration: float | None = 0.5,
     cap : float
         Storage ``p_state_upper`` in var-units (max stored energy = cap ·
         p_state_unitsize MWh).
+    invest : bool
+        Make the storage node ``bat`` invest-eligible (adds ``v_invest_n``,
+        ``edd_invest_set`` and an annuity cost ``invest_cost`` per invested
+        var-unit).  Exercises the DOWN-headroom ceiling's
+        ``+ v_invest_n·unitsize`` capacity-relaxation term (and its
+        ``__at_reserve_down_invest`` view + n→e Enum cast through
+        ``canonicalise()``).  Only meaningful in the DOWN direction.
+    divest : bool
+        Make ``bat`` divest-eligible (adds ``v_divest_n`` +
+        ``edd_divest_active``).  No divest credit is authored, so the LP
+        leaves ``v_divest_n = 0`` — but the DOWN-headroom's
+        ``+ v_divest_n·unitsize`` term (``__at_reserve_down_divest`` view +
+        n→p Enum cast) is still *built and canonicalised*, closing the
+        runtime-coverage gap on the divest branch (structurally identical
+        to invest, mirrored sign).
+    invest_cost : float
+        Annuity (``ed_entity_annual_discounted``) per invested var-unit.
+    max_units : float
+        ``p_entity_max_units`` structural cap on invest/divest.
     """
     ud = "up" if direction == "up" else "down"
     slope = 1.0 / eta
@@ -239,4 +260,39 @@ def data(*, direction: str = "up", duration: float | None = 0.5,
             ("r", "ud", "g"),
             pl.DataFrame({"r": ["r1"], "ud": [ud], "g": ["g"],
                           "value": [float(duration)]}))
+
+    # ── Invest / divest eligibility on the storage node ``bat`` ───────────
+    # Mirrors the storage-invest setup in
+    # ``tests/engine_polars/constraints/test_b01_b02_balance_storage.py``
+    # (``test_profile_state_upper_invest_tightening``).  Exercises the
+    # DOWN-headroom capacity-replication block in ``_reserve.py`` — the
+    # ``__at_reserve_down_{invest,divest}`` virtual-var views and the cross-
+    # Enum n→e / n→p casts that ride through ``canonicalise()``.
+    if invest or divest:
+        # ``p_entity_max_units`` is the shared invest/divest structural cap
+        # (required by the ``INVEST`` field check and the maxInvest/maxDivest
+        # var bounds).
+        kwargs["p_entity_max_units"] = Param(("e", "d"),
+            pl.DataFrame({"e": ["bat"], "d": ["p2020"],
+                          "value": [float(max_units)]}))
+    if invest:
+        kwargs["nd_invest_set"] = pl.DataFrame({"n": ["bat"], "d": ["p2020"]})
+        kwargs["ed_invest_set"] = pl.DataFrame({"e": ["bat"], "d": ["p2020"]})
+        kwargs["edd_invest_set"] = pl.DataFrame(
+            {"e": ["bat"], "d_invest": ["p2020"], "d": ["p2020"]})
+        # Annuity per invested var-unit — cheap enough that relaxing the
+        # DOWN-headroom ceiling by investing beats paying the reserve
+        # shortfall penalty.
+        kwargs["ed_entity_annual_discounted"] = Param(("e", "d"),
+            pl.DataFrame({"e": ["bat"], "d": ["p2020"],
+                          "value": [float(invest_cost)]}))
+    if divest:
+        kwargs["nd_divest_set"] = pl.DataFrame({"n": ["bat"], "d": ["p2020"]})
+        # edd_divest_active carries the entity on the ``p`` axis (shared
+        # process/node entity vocab); the DOWN-headroom block casts the
+        # storage node n→p to semi-join it.  No divest credit is authored,
+        # so ``v_divest_n`` stays 0 at the optimum — the term is still built.
+        kwargs["edd_divest_active"] = pl.DataFrame(
+            {"p": ["bat"], "d_divest": ["p2020"], "d": ["p2020"]})
+
     return FlexData(**kwargs)

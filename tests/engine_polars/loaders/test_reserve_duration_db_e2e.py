@@ -45,11 +45,11 @@ def test_reserve_duration_reads_from_real_spinedb(tmp_path: Path):
     with DatabaseMapping(url) as dbm:
         count, errors = import_data(
             dbm,
-            # tests.json was exported at v70 (before this param); add the
-            # definition so the value import resolves.  The schema itself
-            # already declares it — the version bump + fixture re-migration
-            # (which propagates the definition into tests.json) is the next
-            # agent's job.
+            # tests.json now ships at v71 WITH the reserve_duration
+            # parameter_definition (regenerated in commit 30286318), so this
+            # re-declaration is a harmless idempotent upsert — kept only so
+            # the value import still resolves if the fixture is ever rebuilt
+            # from an older export.
             parameter_definitions=[[
                 "reserve__upDown__group", "reserve_duration"]],
             parameter_values=[[

@@ -164,3 +164,74 @@ def test_feasibility_with_long_duration():
     # Autoscale STRICT stays clean under the extreme coefficient range.
     _, scaled = _solve_scaled(data(direction="up", duration=10.0))
     assert scaled.obj == pytest.approx(sol.obj, rel=1e-9)
+
+
+# ── Case 6: invest/divest DOWN-headroom capacity replication ─────────────
+# These exercise the invest/divest branch of the DOWN-headroom block in
+# ``_reserve._add_storage_reserve_constraints`` — the
+# ``__at_reserve_down_{invest,divest}`` virtual-var views and the cross-Enum
+# n→e / n→p casts that ride through ``canonicalise()``.  Before this case no
+# synthetic fixture built an invest/divest storage node, so ``v_invest_n`` /
+# ``v_divest_n`` were never present when the DOWN-headroom constraint was
+# emitted — that whole (canonicalise-crash-risk) code path was untested.
+
+def test_down_headroom_invest_relaxes_ceiling():
+    """The ``+ v_invest_n·unitsize`` term on the DOWN-headroom ceiling is
+    real: with investment allowed the storage node grows just enough
+    capacity to commit MORE down-reserve (and pay LESS shortfall penalty)
+    than the same model with capacity fixed at the existing level.
+
+    Closed form (down, eta=1, dur=0.5, cap=20, unitsize_bat=1,
+    provider unitsize=100, reservation=50, penalty=1000):
+
+    * Fixed capacity (no invest set):
+        E_dn = v_reserve·100·0.5 ≤ cap·1 = 20 ⇒ v_reserve ≤ 0.4;
+        reserveBalance ⇒ vq = (50−40)/50 = 0.2, obj = 0.2·50·1000·2 = 20000.
+    * Invest allowed (annuity 10 / var-unit):
+        ceiling relaxes to (20 + v_invest_n)·1.  Fully covering the 50 MW
+        reservation needs v_reserve = 0.5 ⇒ E_dn = 25 ⇒ v_invest_n ≥ 5.
+        Cost 5·10 = 50 ≪ 20000 penalty ⇒ the LP invests 5, vq → 0.
+    """
+    base_pb, base = _solve(data(direction="down", eta=1.0, duration=0.5))
+    inv_pb, inv = _solve(
+        data(direction="down", eta=1.0, duration=0.5, invest=True))
+    assert _DN in inv_pb.cstr_names()
+
+    # Fixed-capacity baseline: headroom-bound at 0.4, 0.2 shortfall.
+    assert _vals(base, "v_reserve") == pytest.approx([0.4, 0.4])
+    assert _vals(base, "vq_reserve") == pytest.approx([0.2, 0.2])
+
+    # Invest term relaxes the ceiling — non-tautological: strictly more
+    # down-reserve is committed and the shortfall strictly drops.
+    v_inv = _vals(inv, "v_invest_n")
+    assert v_inv[0] > 0.0                                  # investment happens
+    assert v_inv[0] == pytest.approx(5.0)                  # closed form
+    assert _vals(inv, "v_reserve") == pytest.approx([0.5, 0.5])
+    assert _vals(inv, "vq_reserve") == pytest.approx([0.0, 0.0])
+    assert _vals(inv, "v_reserve")[0] > _vals(base, "v_reserve")[0]
+    assert _vals(inv, "vq_reserve")[0] < _vals(base, "vq_reserve")[0]
+
+
+def test_down_headroom_invest_divest_autoscale_strict_roundtrip():
+    """Build + solve + Layer-2 autoscale roundtrip with BOTH an invest- and
+    a divest-eligible storage node must NOT raise: this drives the
+    ``__at_reserve_down_invest`` (n→e) AND ``__at_reserve_down_divest`` (n→p)
+    virtual-var views and their cross-Enum casts through ``canonicalise()``
+    — the core value of this case.  The unscaled objective is bit-exact.
+
+    No divest credit is authored, so the LP leaves ``v_divest_n = 0`` (the
+    term is built and canonicalised regardless); investment still relaxes
+    the ceiling exactly as in the invest-only case.
+    """
+    d_kw = dict(direction="down", eta=1.0, duration=0.5,
+                invest=True, divest=True)
+    raw_pb, raw = _solve(data(**d_kw))
+    assert _DN in raw_pb.cstr_names()
+    # Both capacity vars are present in the built LP (``sol.value`` would
+    # raise otherwise): invest realized (5), divest untouched (0) — the
+    # divest term is still built and canonicalised regardless.
+    assert _vals(raw, "v_invest_n") == pytest.approx([5.0])
+    assert _vals(raw, "v_divest_n") == pytest.approx([0.0])
+
+    _, scaled = _solve_scaled(data(**d_kw))
+    assert scaled.obj == pytest.approx(raw.obj, rel=1e-9)
