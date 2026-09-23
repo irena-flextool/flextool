@@ -1359,8 +1359,21 @@ def check_recourse_npv_preconditions(
 
     Obligation (i)'s chains are defined against SBTB (which carries
     the realized branch's real-named members too, so the trunk chain
-    is covered).  A Slice E mid-horizon reveal will need to re-scope
-    constancy to post-reveal segments — out of scope here.
+    is covered).  Slice E mid-horizon reveals re-scope constancy to the
+    POST-REVEAL segment of each chain: a strictly pre-reveal shared-trunk
+    anchor is a certain first-stage decision carrying weight 1.0, so the
+    body below (see the §5/§9.3 note by the obligation-(i) loop) excludes
+    such anchors from the leaf-weight-constancy chains — mixing their 1.0
+    with a branch's scenario weight would be a false violation.  For
+    fan-at-first-step / deterministic solves there are no pre-reveal
+    anchors, so the exclusion is a no-op and the check is byte-unchanged.
+
+    Note: the excluded pre-reveal anchor's own weight-1.0 is STRUCTURAL —
+    it is a cohort-of-one in ``pd_branch_weight_lf`` (no fan siblings on
+    the shared trunk), so it is verified by NEITHER obligation (i) (it is
+    excluded from the chains) NOR obligation (ii) (a lone anchor forms no
+    fan cohort).  This is an acceptable structural blind spot, not an
+    unchecked assumption.
     """
     violations: list[str] = []
     pb_rows, piu, tb_of = _lineage_inputs(

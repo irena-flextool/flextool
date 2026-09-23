@@ -23,6 +23,7 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars._derived_branch import (
+    dd_same_scenario_annuity_df,
     dd_same_scenario_df,
     pd_non_anticipativity_df,
 )
@@ -496,3 +497,121 @@ def test_t12_stoch_dump_reload_roundtrip(stoch_data, stoch_wf, tmp_path):
     assert _rows(dd_rebuilt) == _rows(stoch_data.dd_same_scenario)
     assert pd_rebuilt.columns == ["d", "b"]
     assert _rows(pd_rebuilt) == _rows(stoch_data.pd_non_anticipativity)
+
+
+# ---------------------------------------------------------------------------
+# Annuity-lineage dedup (Slice E design §4.1 vs §8.1): the NPV ANNUITY /
+# fixed-cost window frame ``dd_same_scenario_annuity`` collapses branch
+# copies of the SAME calendar slot to one representative per anchor ``d``,
+# so a shared pre-reveal trunk period is charged its fixed-cost annuity
+# ONCE per calendar year — not once per surviving branch (the latent NPV
+# over-count).  These are direct, solver-free frame-content pins; the
+# 173,250 objective gate covers the dedup only INDIRECTLY, so a per-frame
+# regression here localises the failure (keep-diagnostic-tests).
+# ---------------------------------------------------------------------------
+
+# Shared-trunk 2-period: reveal at p2040 — p2035 is a shared pre-reveal
+# anchor (NO p2035_low branch copy); only p2040 fans to p2040_low.
+PB_ST2 = [
+    ("p2035", "p2035"),
+    ("p2040", "p2040"),
+    ("p2040", "p2040_rlz"),
+    ("p2040", "p2040_low"),
+]
+PIU_ST2 = ["p2035", "p2040", "p2040_low"]
+SBTB_ST2 = [
+    ("p2040_low", "low"),
+    ("p2035", "rlz"),
+    ("p2040", "rlz"),
+]
+
+# Shared-trunk 3-period: reveal at p2040, low branch p2040_low + p2045_low
+# (p2035 the shared pre-reveal anchor).
+PB_ST3 = [
+    ("p2035", "p2035"),
+    ("p2040", "p2040"),
+    ("p2045", "p2045"),
+    ("p2040", "p2040_low"),
+    ("p2045", "p2045_low"),
+]
+PIU_ST3 = ["p2035", "p2040", "p2045", "p2040_low", "p2045_low"]
+SBTB_ST3 = [
+    ("p2040_low", "low"), ("p2045_low", "low"),
+    ("p2035", "rlz"), ("p2040", "rlz"), ("p2045", "rlz"),
+]
+
+
+def _cap_and_annuity(tmp_path, pb=None, piu=None, sbtb=None):
+    """Build BOTH the capacity frame (``dd_same_scenario``) and the
+    annuity frame from ONE seeded provider (provider.get is
+    non-destructive) — the pair under comparison for the dedup pins."""
+    prov = _mk_provider(pb=pb, piu=piu, sbtb=sbtb)
+    cap = dd_same_scenario_df(tmp_path, provider=prov)
+    ann = dd_same_scenario_annuity_df(tmp_path, provider=prov)
+    return cap, ann
+
+
+def test_annuity_shared_trunk_2period_dedup(tmp_path):
+    """Shared-trunk 2-period (reveal at p2040): the trunk p2035 gets the
+    DEDUPED annuity forward reachability {p2035, p2040} — NOT
+    {p2035, p2040, p2040_low}.  The branch copy p2040_low is collapsed to
+    its calendar anchor p2040 for the annuity frame, so the shared
+    first-stage capacity is charged 2 period-annuities (one per physical
+    period), never 3."""
+    cap, ann = _cap_and_annuity(tmp_path, pb=PB_ST2, piu=PIU_ST2,
+                                sbtb=SBTB_ST2)
+    assert ann.columns == ["d", "d_other"]
+    assert [r for r in _rows(ann) if r[0] == "p2035"] == [
+        ("p2035", "p2035"), ("p2035", "p2040")]
+    # The capacity frame KEEPS the branch copy (the shared first-stage
+    # capacity must be alive in the low scenario's dispatch).
+    assert ("p2035", "p2040_low") in _rows(cap)
+    assert ("p2035", "p2040_low") not in _rows(ann)
+
+
+def test_annuity_shared_trunk_3period_window(tmp_path):
+    """Shared-trunk 3-period (reveal at p2040, low branch p2040_low +
+    p2045_low) — the general-case fix: trunk p2035's annuity reachability
+    is the window-3 calendar set {p2035, p2040, p2045}, NOT the window-5
+    set that would carry both branch copies p2040_low / p2045_low."""
+    _, ann = _cap_and_annuity(tmp_path, pb=PB_ST3, piu=PIU_ST3,
+                              sbtb=SBTB_ST3)
+    assert [r for r in _rows(ann) if r[0] == "p2035"] == [
+        ("p2035", "p2035"), ("p2035", "p2040"), ("p2035", "p2045")]
+
+
+def test_annuity_branch_window_not_collapsed(tmp_path):
+    """A genuine recourse window is NOT wrongly collapsed: for the branch
+    anchor p2040_low the annuity frame EQUALS the capacity frame on its
+    leaf.  The real-named calendar siblings p2040 / p2045 live on the
+    ``__realized`` leaf, unreachable from p2040_low's branch leaf — so
+    there is nothing to dedup its own window against."""
+    cap, ann = _cap_and_annuity(tmp_path, pb=PB_ST3, piu=PIU_ST3,
+                                sbtb=SBTB_ST3)
+    cap_low = [r for r in _rows(cap) if r[0] == "p2040_low"]
+    ann_low = [r for r in _rows(ann) if r[0] == "p2040_low"]
+    assert ann_low == cap_low
+    assert ann_low == [
+        ("p2040_low", "p2035"),
+        ("p2040_low", "p2040_low"),
+        ("p2040_low", "p2045_low")]
+
+
+def test_annuity_noop_parity(tmp_path):
+    """No-op parity — the "true no-op for existing models" property: for a
+    fan-at-first-step shape (no shared trunk) AND a deterministic shape,
+    the annuity frame is BYTE-IDENTICAL to ``dd_same_scenario``.  Every
+    leaf's members carry distinct calendar anchors, so the dedup finds
+    nothing to collapse."""
+    # Fan-at-first-step (§4.1 fixture shape) — each branch owns its own
+    # first-step copy, so no anchor is a shared pre-reveal trunk.
+    cap, ann = _cap_and_annuity(tmp_path, pb=PB_41, piu=PIU_41,
+                                sbtb=SBTB_41)
+    assert ann.equals(cap)
+    assert _rows(ann) == DD_41
+    # Deterministic multi-period (§4.3) — single trunk leaf, all-pairs.
+    cap_d, ann_d = _cap_and_annuity(
+        tmp_path, pb=[("p2035", "p2035"), ("p2040", "p2040")],
+        piu=["p2035", "p2040"])
+    assert ann_d.equals(cap_d)
+    assert _rows(ann_d) == DD_43
