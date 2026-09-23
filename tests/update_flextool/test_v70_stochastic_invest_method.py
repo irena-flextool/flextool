@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, from_database
+from spinedb_api import DatabaseMapping, from_database, import_data
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
@@ -102,23 +102,61 @@ def test_stochastic_invest_methods_value_list(tmp_path: Path) -> None:
         db.close()
 
 
+def _build_v69_solve_db(url: str) -> None:
+    """Create a minimal v69 DB (``model`` + ``solve`` classes) carrying no
+    ``stochastic_invest_method`` — so the v70 block is the ONLY path that
+    can add it.
+
+    Built from scratch (never a checked-in .sqlite, never the
+    ``test_fixtures`` corpus): that corpus is regenerated to HEAD (>= v70),
+    so loading one would start AT v70 and never exercise the v70 block.
+    ``model.version`` default is pinned to 69 so ``migrate_database(...,
+    up_to=70)`` runs only the v70 step, keeping this a faithful v70 test
+    even as later migrations extend the chain.  The v70 step is designed
+    to tolerate such minimal DBs (it creates ``solve_advanced`` if absent).
+    """
+    with DatabaseMapping(url, create=True) as db:
+        _count, errors = import_data(
+            db,
+            entity_classes=[
+                ["model", ()],
+                ["solve", ()],
+            ],
+            parameter_definitions=[
+                ["model", "version", 69.0, None, "Database version."],
+            ],
+            alternatives=[["Base", ""]],
+            entities=[
+                ["solve", "s1"],
+            ],
+        )
+        assert not errors, f"seed import errors: {errors[:5]}"
+        db.commit_session("Seed v69 DB (model + solve, no invest method)")
+
+
 def test_migration_reaches_v70_and_is_idempotent(tmp_path: Path) -> None:
-    """A pre-v70 fixture migrates to exactly v70 (>= 70), and re-running
-    ``migrate_database`` is a no-op that keeps the parameter present —
-    the ``add_value_list_manual`` / ``add_update_item`` helpers tolerate
-    re-adds."""
-    db_path = tmp_path / "lh2.sqlite"
-    url = json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
+    """A pre-v70 DB migrates to exactly v70, and re-running the v70 step
+    is a no-op that keeps the parameter present — the
+    ``add_value_list_manual`` / ``add_update_item`` helpers tolerate
+    re-adds.
+
+    Seeded from scratch at v69 (see ``_build_v69_solve_db``) so it starts
+    genuinely BELOW v70 and exercises the v70 migration block from below,
+    independent of the auto-migrated ``test_fixtures`` corpus.
+    """
+    db_path = tmp_path / "v69_base.sqlite"
+    url = f"sqlite:///{db_path.resolve()}"
+    _build_v69_solve_db(url)
     start_version = _db_version(url)
     assert start_version < 70, (
-        "fixture must start below v70 so the v70 block is exercised"
+        "seed DB must start below v70 so the v70 block is exercised"
     )
 
-    migrate_database(url)
-    assert _db_version(url) == FLEXTOOL_DB_VERSION >= 70
+    migrate_database(url, up_to=70)
+    assert _db_version(url) == 70
 
-    # Idempotent re-run — no crash, parameter still present.
-    migrate_database(url)
+    # Idempotent re-run of the v70 step — no crash, parameter still present.
+    migrate_database(url, up_to=70)
     with DatabaseMapping(url, create=False) as db:
         db.fetch_all()
         pdef = db.get_parameter_definition_item(
