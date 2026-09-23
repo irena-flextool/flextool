@@ -7068,6 +7068,25 @@ def dtttdt_from_source(source: "InputSource",
                     if time_branch_of.get(period_order[qi]) == tb:
                         wrap_period = period_order[qi]
                         break
+            if wrap_period == period:
+                # No earlier same-time-branch period exists.  MID-HORIZON
+                # reveal: this branch copy's own anchor period is not the
+                # first period, so link its first step to the nearest
+                # anchor STRICTLY BEFORE the copy's own anchor — the copy
+                # inherits the shared pre-reveal trunk end-state (two-stage
+                # storage-state non-anticipativity, Slice E design §5.2).
+                # FIRST-PERIOD fan: the copy's anchor IS the first period
+                # → empty range → wrap_period stays == period (self-wrap,
+                # byte-parity with the pre-Slice-E behaviour).  This mirror
+                # of ``make_step_jump`` is pinned by the Step-0.5 parity
+                # guard.
+                p_anchor = branch_anchor.get(period)
+                if p_anchor is not None and p_anchor in period_order:
+                    pos_anchor = period_order.index(p_anchor)
+                    for qi in range(pos_anchor - 1, -1, -1):
+                        if period_order[qi] in anchors_with_self:
+                            wrap_period = period_order[qi]
+                            break
         else:
             if pi == 0:
                 wrap_period = period_order[-1]
