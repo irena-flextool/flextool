@@ -155,19 +155,56 @@ def _recourse_invest_active(
 # before any producer runs, and producers run nowhere else.
 _RECOURSE_ANCHOR_PAIRS: "pl.DataFrame | None" = None
 
-# Slice D α-1 — boundary-scoped Provider for the walker's canonical year/
-# factor arms.  Set (to ``provider`` under recourse, else ``None``) at each
-# Layer-4 boundary alongside the anchor pairs, so ``period_walk_iterator``
-# revives the canonical ``p_years_d.csv`` / ``p_years_represented.csv`` arms
-# (correct branch-period years) WITHOUT threading ``provider`` through the
-# ~12 NPV/edd walker-caller signatures.  ``None`` (flag-off / deterministic)
-# → arms dead → today's fill_null(0.0) walker behaviour → the W6 pin.
+# Slice D α-1 — boundary-scoped Provider (+ its workdir, which the
+# canonical readers need to key the Provider path) for the walker's year/
+# factor arms.  Set (under recourse, else ``None``) at each Layer-4
+# boundary alongside the anchor pairs, so ``period_walk_iterator`` revives
+# the canonical ``p_years_d.csv`` / ``p_years_represented.csv`` arms
+# (correct branch-period years) WITHOUT threading ``provider``/``workdir``
+# through the ~12 NPV/edd walker-caller signatures.  ``None`` (flag-off /
+# deterministic) → arms dead → today's fill_null(0.0) walker behaviour →
+# the W6 pin.
 _RECOURSE_WALK_PROVIDER: "object | None" = None
+_RECOURSE_WALK_WORKDIR: "Path | None" = None
 
 
 def _recourse_walk_provider() -> "object | None":
     """The active boundary's recourse walker Provider (α-1), or ``None``."""
     return _RECOURSE_WALK_PROVIDER
+
+
+def _recourse_walk_workdir() -> "Path | None":
+    """The active boundary's recourse walker workdir (α-1), or ``None``."""
+    return _RECOURSE_WALK_WORKDIR
+
+
+def _recourse_branch_axis_present() -> bool:
+    """True iff the active boundary is recourse-active with a genuine branch
+    invest axis — i.e. the anchor-pairs holder was armed non-empty.  The
+    capability conjunct (§2), computed from the provider (branch-cluster
+    frames on ``flex_data`` are not populated until derived_g)."""
+    return _RECOURSE_ANCHOR_PAIRS is not None
+
+
+def _recourse_usable_ctx(ctx: "object | None") -> "object | None":
+    """Return *ctx* iff its ``period_branch`` frame is usable for branch
+    expansion (≥1 row with a NON-NULL anchor), else ``None``.
+
+    On the snapshot-reload path (``load_flextool`` off a dumped workdir)
+    the SolveContext's ``period_branch`` can carry all-null ``d_anchor``
+    values; the ctx-first arms would then silently produce an empty
+    anchor map (no fan) instead of falling through to the provider CSV
+    (which is correct on that path).  Sanitizing here keeps the recourse
+    helpers robust without touching the shared dispatch-side helper.
+    """
+    if ctx is None:
+        return None
+    pb_ctx = ctx.period_branch
+    if pb_ctx.height == 0:
+        return ctx  # empty is a legitimate "fall through" signal already
+    if pb_ctx["d_anchor"].null_count() == pb_ctx.height:
+        return None
+    return ctx
 
 
 def _build_recourse_anchor_pairs(
@@ -186,6 +223,7 @@ def _build_recourse_anchor_pairs(
     """
     if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
         return None
+    ctx = _recourse_usable_ctx(ctx)
     pb_df: "pl.DataFrame | None" = None
     in_use: set[str] = set()
     if ctx is not None:
@@ -234,9 +272,12 @@ def _enter_recourse_anchor_scope(
     ``None`` when flag-off) so no stale value from a prior solve can leak.
     Also arms the boundary-scoped walker Provider (α-1).
     """
-    global _RECOURSE_ANCHOR_PAIRS, _RECOURSE_WALK_PROVIDER
+    global _RECOURSE_ANCHOR_PAIRS, _RECOURSE_WALK_PROVIDER, \
+        _RECOURSE_WALK_WORKDIR
     active = _recourse_invest_active(workdir, ctx=ctx, provider=provider)
     _RECOURSE_WALK_PROVIDER = provider if active else None
+    _RECOURSE_WALK_WORKDIR = (
+        Path(workdir) if active and workdir is not None else None)
     _RECOURSE_ANCHOR_PAIRS = (
         _build_recourse_anchor_pairs(workdir, ctx=ctx, provider=provider)
         if active else None)
@@ -5513,20 +5554,27 @@ def apply_derived_c(
     # divest set predicates + cap readers built below (no-op flag-off).
     _enter_recourse_anchor_scope(workdir, ctx=ctx, provider=provider)
     # Slice D §8 (E) — the scenario-lineage frame for the edd builders.
-    # Active only under recourse AND a genuine branch invest axis
-    # (capability conjunct §2).  Hoist the precondition check ABOVE the
-    # edd try/except blocks (§6) so a LineageFilterError is loud, not
-    # swallowed.  ``None`` flag-off → the edd builders keep today's
-    # unfiltered (all-pairs) behaviour → byte-parity.
-    _c_lineage = (
-        getattr(flex_data, "dd_same_scenario", None)
-        if flex_data.recourse_invest and _has_branch_invest_axis(flex_data)
-        else None)
-    if _c_lineage is not None:
+    # Active only under recourse AND a genuine branch invest axis — the
+    # anchor-pairs holder just armed above is exactly that conjunct
+    # (non-None ⟺ recourse-active AND synthetic branches in PIU).  Build
+    # the lineage frame ON-DEMAND from the provider (``dd_same_scenario_df``
+    # is a standalone builder): ``flex_data.dd_same_scenario`` is not
+    # populated until ``apply_branch_cluster`` in derived_g, which runs
+    # AFTER this boundary.  Hoist the precondition check ABOVE the edd
+    # try/except blocks (§6) so a LineageFilterError is loud, not swallowed.
+    # ``None`` flag-off → edd builders keep today's unfiltered behaviour.
+    if _RECOURSE_ANCHOR_PAIRS is not None:
         from flextool.engine_polars._derived_branch import (
             assert_recourse_npv_preconditions as _assert_recourse,
+            dd_same_scenario_df as _dd_same_scenario_df,
         )
-        _assert_recourse(None, source, active_solve, ctx=ctx, provider=provider)
+        _lin_ctx = _recourse_usable_ctx(ctx)
+        _c_lineage = _dd_same_scenario_df(
+            workdir, source, active_solve, ctx=_lin_ctx, provider=provider)
+        _assert_recourse(workdir, source, active_solve,
+                         ctx=_lin_ctx, provider=provider)
+    else:
+        _c_lineage = None
 
     # Δ.12b — assignment is unconditional except for fields with
     # documented helper-coverage gaps (multi-year cascade extends
@@ -6372,8 +6420,11 @@ def _expand_invest_branch_periods(period_invest: "list[str] | None",
         return period_invest
     if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
         return period_invest
+    # Sanitize the ctx (snapshot-reload all-null anchors → fall through
+    # to the provider CSV arm inside the dispatch helper).
     return _expand_branch_periods(list(period_invest), workdir,
-                                     ctx=ctx, provider=provider)
+                                     ctx=_recourse_usable_ctx(ctx),
+                                     provider=provider)
 
 
 def _dt_period_active_steps_from_workdir(
@@ -10144,16 +10195,18 @@ def apply_synthetic_invest_sets(flex_data: object,
         period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
         # Slice D §8 — synthetic edd lineage filter (gated + hoisted check).
-        _s_lineage = (
-            getattr(flex_data, "dd_same_scenario", None)
-            if _recourse_invest_active(workdir, provider=provider)
-               and _has_branch_invest_axis(flex_data)
-            else None)
-        if _s_lineage is not None:
+        # Build on-demand from the provider (branch-cluster runs later); the
+        # anchor-pairs holder armed at the top of this fn is the conjunct.
+        if _RECOURSE_ANCHOR_PAIRS is not None:
             from flextool.engine_polars._derived_branch import (
                 assert_recourse_npv_preconditions as _assert_recourse,
+                dd_same_scenario_df as _dd_same_scenario_df,
             )
-            _assert_recourse(None, source, active_solve, provider=provider)
+            _s_lineage = _dd_same_scenario_df(
+                workdir, source, active_solve, provider=provider)
+            _assert_recourse(workdir, source, active_solve, provider=provider)
+        else:
+            _s_lineage = None
         try:
             edd_inv = _edd_invest_lf(
                 source, active_solve, ed_inv.lazy(),

@@ -4147,19 +4147,35 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 * d.p_storage_state_reference_price * ref_price_factor)
 
     # Invest / divest objective contributions.
-    # NOTE: per .mod:2116-2119 — investment / divestment objective terms
-    # are explicitly NOT weighted by pd_branch_weight under the current
-    # stochastics regime.  The .mod author's note:
     #
-    #     "Currently investment happens only on the realized branch and
-    #      the rest get them as existing.  Only one period investment is
-    #      supported with stochastics.  The branch weight should be added
-    #      if this is changed."
-    #
-    # Preprocessing excludes branch periods from ``period_invest`` so
-    # ``v_invest[e, d]`` only exists on realised periods — the weight
-    # would be 1.0 anyway.  No multiplier needed.  Recourse-investment is
-    # explicitly out of scope (see audit/a6_b_dim_alternative.md).
+    # Slice D — per-scenario (wait-and-see) stochastic investment.  Under
+    # ``recourse`` the invest axis is fanned, so every scenario branch
+    # (realised included) carries its OWN ``v_invest[e, d]`` columns at and
+    # after the branching period; each is probability-weighted by
+    # ``pd_branch_weight[d]`` so the objective is the expected value over
+    # scenario leaves.  Under ``none`` (default) the invest axis is
+    # realised-only, the weight would be 1.0, and the multiply is skipped
+    # for byte-parity.  (Replaces the .mod:2116-2119 "NOT weighted / the
+    # branch weight should be added if this is changed" note — this is that
+    # change.)  ALL EIGHT invest/divest annuity/fixed-cost Params are
+    # weighted: process-side annu/lf/lfd/annd AND node-side
+    # annu_n/lf_n/lfd_n/annd_n (else storage/node invest stays unweighted).
+    _recourse_wt = (getattr(d, "recourse_invest", False)
+                    and d.pd_branch_weight is not None)
+
+    def _wt(param):
+        """Multiply a ``(x, d)`` cost Param by ``pd_branch_weight[d]``
+        (Slice D).  No-op when the param is None or the flag is off."""
+        if param is None or not _recourse_wt:
+            return param
+        f = (param.frame
+                  .join(d.pd_branch_weight.frame.rename({"value": "w"}),
+                        on="d", how="left")
+                  .with_columns(value=pl.col("value")
+                                * pl.col("w").fill_null(1.0))
+                  .drop("w"))
+        return Param(param.dims, f)
+
     if has_invest_p:
         annu = Param(("p", "d"),
             d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
@@ -4168,9 +4184,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu is not None:
-            obj = obj + Sum(v_invest_p * d.p_unitsize * annu)
+            obj = obj + Sum(v_invest_p * d.p_unitsize * _wt(annu))
         if lf is not None:
-            obj = obj + Sum(v_invest_p * d.p_unitsize * lf)
+            obj = obj + Sum(v_invest_p * d.p_unitsize * _wt(lf))
     if has_divest_p:
         lfd = Param(("p", "d"),
             d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})) \
@@ -4179,9 +4195,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd is not None:
-            obj = obj - Sum(v_divest_p * d.p_unitsize * lfd)
+            obj = obj - Sum(v_divest_p * d.p_unitsize * _wt(lfd))
         if annd is not None:
-            obj = obj - Sum(v_divest_p * d.p_unitsize * annd)
+            obj = obj - Sum(v_divest_p * d.p_unitsize * _wt(annd))
     if has_invest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         annu_n = Param(("n", "d"),
@@ -4191,9 +4207,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu_n is not None:
-            obj = obj + Sum(v_invest_n * us_n * annu_n)
+            obj = obj + Sum(v_invest_n * us_n * _wt(annu_n))
         if lf_n is not None:
-            obj = obj + Sum(v_invest_n * us_n * lf_n)
+            obj = obj + Sum(v_invest_n * us_n * _wt(lf_n))
     if has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         lfd_n = Param(("n", "d"),
@@ -4203,9 +4219,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd_n is not None:
-            obj = obj - Sum(v_divest_n * us_n * lfd_n)
+            obj = obj - Sum(v_divest_n * us_n * _wt(lfd_n))
         if annd_n is not None:
-            obj = obj - Sum(v_divest_n * us_n * annd_n)
+            obj = obj - Sum(v_divest_n * us_n * _wt(annd_n))
 
     # ─── §8.1 Existing-entity fixed cost (constant term) — opt-in ─────────
     # mod:2107-2115:

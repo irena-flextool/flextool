@@ -1287,26 +1287,30 @@ def apply_npv(flex_data: object,
         _read_active_solve, _solve_periods, _period_in_use_set,
         _periodAll_from_source, _read_period_with_history,
         _expand_invest_branch_periods, _enter_recourse_anchor_scope,
-        _recourse_invest_active, _has_branch_invest_axis,
+        _recourse_branch_axis_present,
     )
 
     # Slice D §4 — arm the per-period anchor-map + walker-Provider scope for
     # the annuity / lifetime / fixed-cost resolution below (no-op flag-off).
     _enter_recourse_anchor_scope(workdir, provider=provider)
     active_solve = _read_active_solve(workdir, provider=provider)
-    # Slice D §8 (E) — scenario-lineage frame for the four NPV walks (gated
-    # on recourse AND a genuine branch invest axis).  The precondition check
-    # is hoisted here, above the (unwrapped) NPV builder calls (§6).  ``None``
-    # flag-off → walks keep today's unfiltered behaviour → byte-parity.
-    _npv_lineage = (
-        getattr(flex_data, "dd_same_scenario", None)
-        if _recourse_invest_active(workdir, provider=provider)
-           and _has_branch_invest_axis(flex_data)
-        else None)
-    if _npv_lineage is not None:
-        from ._derived_branch import assert_recourse_npv_preconditions
+    # Slice D §8 (E) — scenario-lineage frame for the four NPV walks, gated
+    # on the anchor-pairs conjunct just armed (recourse-active AND branch
+    # axis).  Built ON-DEMAND from the provider: ``flex_data.dd_same_scenario``
+    # is not populated until ``apply_branch_cluster`` (derived_g), which runs
+    # AFTER apply_npv.  Precondition check hoisted above the NPV builder
+    # calls (§6).  ``None`` flag-off → walks unfiltered → byte-parity.
+    if _recourse_branch_axis_present():
+        from ._derived_branch import (
+            assert_recourse_npv_preconditions,
+            dd_same_scenario_df,
+        )
+        _npv_lineage = dd_same_scenario_df(
+            workdir, source, active_solve, provider=provider)
         assert_recourse_npv_preconditions(
-            None, source, active_solve, provider=provider)
+            workdir, source, active_solve, provider=provider)
+    else:
+        _npv_lineage = None
     period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
     period_universe = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
     period_invest = _expand_invest_branch_periods(

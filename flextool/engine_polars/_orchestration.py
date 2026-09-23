@@ -1563,15 +1563,28 @@ def _write_scale_csv(
 # ---------------------------------------------------------------------------
 
 
-def _stochastic_invest_guard_message(solve_name: str, mode: str) -> str:
-    """Slice C Guard 1 message: recourse stochastic invest not yet available."""
-    return (
-        f"Solve '{solve_name}' sets stochastic_invest_method='{mode}', but "
-        f"recourse stochastic investment is not yet available; it requires "
-        f"the branch-period invest capability (branch periods on the invest "
-        f"axis — recourse plan Slice D). Set stochastic_invest_method=none "
-        f"(the default) to run this solve."
-    )
+def _stochastic_invest_raw_guard(solve_cfg, base_name: str) -> None:
+    """Slice D Guard 1 — validate the RAW authored stochastic_invest_method.
+
+    ``'recourse'`` is now ACCEPTED (per-scenario stochastic investment
+    landed in Slice D).  The guard reads the RAW authored value rather than
+    the resolver's output: :meth:`SolveConfig.stochastic_invest_method_for`
+    silently collapses any UNrecognised value to ``'none'`` (a typo like
+    ``'recuorse'`` would then run deterministic), so an authoring-time check
+    must inspect the raw dict and reject anything that is neither blank /
+    ``'none'`` nor ``'recourse'``.  Blank / absent tolerate-as-none (matches
+    the resolver).  No-op when the solve authors nothing.
+    """
+    raw = solve_cfg.stochastic_invest_method.get(base_name)
+    if raw is None:
+        return
+    val = str(raw).strip().lower()
+    if val not in ("", "none", "recourse"):
+        raise FlexToolConfigError(
+            f"Solve '{base_name}' sets stochastic_invest_method='{raw}' — "
+            f"unrecognised value. Supported: 'none' (default), 'recourse' "
+            f"(per-scenario stochastic investment)."
+        )
 
 
 def _validate_model_solve(state: RunnerState) -> list[str]:
@@ -1592,17 +1605,15 @@ def _validate_model_solve(state: RunnerState) -> list[str]:
     solves = next(iter(state.solve.model_solve.values()))
     if not solves:
         raise FlexToolConfigError("No solves in model.")
-    # Slice C Guard 1 (fail-fast pass): reject stochastic_invest_method
-    # != none for the model's top-level solves before any solve runs.
-    # This only sees the top-level ``solves`` array (not solves reached
-    # via ``contains_solves`` recursion), so it is a convenience — the
-    # authoritative per-solve guard lives at the top of ``run()``.
+    # Slice D Guard 1 (fail-fast pass): validate the RAW authored
+    # stochastic_invest_method for the model's top-level solves before any
+    # solve runs — 'recourse' is accepted; only unrecognised authored
+    # values raise.  This only sees the top-level ``solves`` array (not
+    # solves reached via ``contains_solves`` recursion), so it is a
+    # convenience — the authoritative per-solve guard lives at the top of
+    # ``run()``.
     for _s in solves:
-        _mode = state.solve.stochastic_invest_method_for(_s)
-        if _mode != "none":
-            raise FlexToolConfigError(
-                _stochastic_invest_guard_message(_s, _mode)
-            )
+        _stochastic_invest_raw_guard(state.solve, _s)
     return solves
 
 
@@ -2374,18 +2385,15 @@ def _drive_cascade(
 
         def run(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
-            # Slice C Guard 1 (authoritative): recourse stochastic
-            # investment is opt-in but not yet implemented (Slice D).
-            # Reject flag-on for any solve that RUNS — including each roll
-            # of a rolling solve and each contained/chained solve — before
-            # building its FlexData/LP.  The roll-suffix strip mirrors the
+            # Slice D Guard 1 (authoritative): validate the RAW authored
+            # stochastic_invest_method for any solve that RUNS — including
+            # each roll of a rolling solve and each contained/chained solve
+            # — before building its FlexData/LP.  'recourse' is accepted
+            # (per-scenario stochastic investment); only unrecognised
+            # authored values raise.  The roll-suffix strip mirrors the
             # base-name derivation below (``:2486``).
             _guard_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
-            _si_mode = state.solve.stochastic_invest_method_for(_guard_base)
-            if _si_mode != "none":
-                raise FlexToolConfigError(
-                    _stochastic_invest_guard_message(_guard_base, _si_mode)
-                )
+            _stochastic_invest_raw_guard(state.solve, _guard_base)
             # Cross-level eviction — release any EXHAUSTED prior solve-level's
             # live HiGHS instance + flex_data_provider BEFORE this solve builds
             # its FlexData/LP, so two level footprints never coexist (the DES

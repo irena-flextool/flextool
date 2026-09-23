@@ -86,17 +86,42 @@ def test_g1_resolver_normalisation():
     assert sc.stochastic_invest_method_for("absent") == "none"  # default
 
 
-def test_g1_validate_model_solve_rejects_flag_on():
+def test_g1_validate_model_solve_accepts_recourse():
+    """Slice D: Guard 1 is LIFTED for 'recourse' — the fail-fast pass no
+    longer raises on a recourse solve and returns the solve list."""
     from flextool.engine_polars._orchestration import _validate_model_solve
 
-    sc = _solve_config_with_flag({"m": ["s_ok", "s_bad"]},
-                                  {"s_bad": "recourse"})
+    sc = _solve_config_with_flag({"m": ["s_ok", "s_rec"]},
+                                  {"s_rec": "recourse"})
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
-    with pytest.raises(FlexToolConfigError) as exc:
-        _validate_model_solve(state)
-    msg = str(exc.value)
-    assert "s_bad" in msg
-    assert "branch-period invest capability" in msg
+    assert _validate_model_solve(state) == ["s_ok", "s_rec"]
+
+
+def test_g1_raw_value_typo_rejected():
+    """Slice D §12/F4: the guard inspects the RAW authored value (the
+    resolver would silently collapse a typo to 'none'), so an unrecognised
+    authored value raises — while 'recourse' / blank / absent do not."""
+    from flextool.engine_polars._orchestration import (
+        _stochastic_invest_raw_guard,
+        _validate_model_solve,
+    )
+
+    for bad in ("recuorse", "expected_value"):
+        sc = _solve_config_with_flag({"m": ["s"]}, {"s": bad})
+        with pytest.raises(FlexToolConfigError) as exc:
+            _stochastic_invest_raw_guard(sc, "s")
+        assert bad in str(exc.value)
+        state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
+        with pytest.raises(FlexToolConfigError):
+            _validate_model_solve(state)
+
+    # Accepted / tolerated raw values → no raise.
+    for ok in ("recourse", "", "none", "RECOURSE"):
+        sc = _solve_config_with_flag({"m": ["s"]}, {"s": ok})
+        _stochastic_invest_raw_guard(sc, "s")  # no raise
+    # Absent → no raise.
+    _stochastic_invest_raw_guard(
+        _solve_config_with_flag({"m": ["s"]}, {}), "s")
 
 
 def test_g1_validate_model_solve_passes_flag_none():

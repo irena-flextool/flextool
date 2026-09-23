@@ -491,6 +491,27 @@ def stoch_two_period_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="session")
+def stoch_two_period_invest_db_url(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> str:
+    """``stoch_two_period_invest`` fixture DB — Slice D per-scenario
+    (wait-and-see) stochastic-investment gate (design
+    ``specs/sliceD_recourse_invest_design.md`` §15.1).
+
+    Built from ``tests/fixtures/stoch_two_period_invest.json`` (generated
+    by ``tests/fixtures/build_stoch_two_period_invest.py``).  Defensive
+    migration as in :func:`stochastic_db_url`.
+    """
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = (tmp_path_factory.mktemp("db_stpi")
+               / "stoch_two_period_invest.sqlite")
+    url = json_to_db(FIXTURES_DIR / "stoch_two_period_invest.json", db_path)
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
 def branch2_parent_period_db_url(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> str:
@@ -540,6 +561,7 @@ _DB_FIXTURE_NAMES: dict[str, str] = {
     "h2_trade_parity": "h2_trade_parity_db_url",
     "stochastics_pbt_inflow": "stochastics_pbt_inflow_db_url",
     "stoch_two_period": "stoch_two_period_db_url",
+    "stoch_two_period_invest": "stoch_two_period_invest_db_url",
     "branch2_parent_period": "branch2_parent_period_db_url",
     "case14": "case14_db_url",
 }
@@ -582,6 +604,7 @@ def scenario_workdir(
     h2_trade_parity_db_url,
     stochastics_pbt_inflow_db_url,
     stoch_two_period_db_url,
+    stoch_two_period_invest_db_url,
     branch2_parent_period_db_url,
     case14_db_url,
     test_solver_config_dir,
@@ -637,6 +660,7 @@ def scenario_workdir(
         "h2_trade_parity": h2_trade_parity_db_url,
         "stochastics_pbt_inflow": stochastics_pbt_inflow_db_url,
         "stoch_two_period": stoch_two_period_db_url,
+        "stoch_two_period_invest": stoch_two_period_invest_db_url,
         "branch2_parent_period": branch2_parent_period_db_url,
         "case14": case14_db_url,
     }
