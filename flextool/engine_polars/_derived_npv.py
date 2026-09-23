@@ -1303,9 +1303,15 @@ def apply_npv(flex_data: object,
     if _recourse_branch_axis_present():
         from ._derived_branch import (
             assert_recourse_npv_preconditions,
-            dd_same_scenario_df,
+            dd_same_scenario_annuity_df,
         )
-        _npv_lineage = dd_same_scenario_df(
+        # Slice E (§4.1 vs §8.1): the NPV annuity / fixed-cost window
+        # walks use the CALENDAR-anchor-deduplicated lineage so a shared
+        # pre-reveal trunk's window counts each future calendar period
+        # once (not once per branch) — the capacity edd walks keep the
+        # full ``dd_same_scenario``.  Byte-parity for every non-shared-
+        # trunk solve (the dedup is a no-op there).
+        _npv_lineage = dd_same_scenario_annuity_df(
             workdir, source, active_solve, provider=provider)
         assert_recourse_npv_preconditions(
             workdir, source, active_solve, provider=provider)

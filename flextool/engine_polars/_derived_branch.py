@@ -835,8 +835,14 @@ def _lineage_leaves(
     synthetic: list[str],
     anchor_of: dict[str, str],
     tb_of: dict[str, str],
-) -> list[list[str]]:
+) -> list[tuple[str, list[str]]]:
     """Build the solve's scenario leaves (design §2.2).
+
+    Returns ``(label, members)`` pairs (F4, Slice E design §6.2): the
+    trunk leaf labeled ``"__realized"`` and each branch leaf labeled its
+    time-branch id — so a caller that keys constraint rows off the leaf
+    (``d_leaf``) carries the authoritative label rather than re-deriving
+    and zipping it (a brittle two-independent-iteration alignment).
 
     Trunk leaf = all anchors (period order).  One leaf per time-branch
     possessing at least one synthetic ``period_in_use`` member (F3 —
@@ -845,9 +851,10 @@ def _lineage_leaves(
     leaf, the per-period representative follows the F6 authority rule:
     the branch-local member is authoritative; a real anchor joins the
     leaf only when it is strictly pre-reveal AND the branch has no
-    member for that period.
+    member for that period (Slice E Option B: a shared pre-reveal trunk
+    period thus belongs to EVERY branch leaf's path).
     """
-    leaves: list[list[str]] = [list(anchors)]
+    leaves: list[tuple[str, list[str]]] = [("__realized", list(anchors))]
     branch_tbs = dict.fromkeys(tb_of[m] for m in synthetic)
     for br in branch_tbs:
         members = [m for m in synthetic if tb_of[m] == br]
@@ -857,7 +864,7 @@ def _lineage_leaves(
         leaf = sorted(pre + members,
                       key=lambda x: pos[x] if x in pos
                       else pos[anchor_of[x]])
-        leaves.append(leaf)
+        leaves.append((br, leaf))
     return leaves
 
 
@@ -933,7 +940,7 @@ def dd_same_scenario_lf(
         pb_rows, piu, tb_of)
     leaves = _lineage_leaves(anchors, pos, synthetic, anchor_of, tb_of)
     seen: dict[tuple[str, str], None] = {}
-    for leaf in leaves:
+    for _label, leaf in leaves:
         for x in leaf:
             for y in leaf:
                 seen[(x, y)] = None
@@ -955,6 +962,94 @@ def dd_same_scenario_df(
     typed frame, never ``None`` (design §2.5)."""
     return dd_same_scenario_lf(workdir, source, active_solve,
                                ctx=ctx, provider=provider).collect()
+
+
+def dd_same_scenario_annuity_lf(
+    workdir: Path | None,
+    source: "InputSource | None" = None,
+    active_solve: str | None = None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> pl.LazyFrame:
+    """``dd_same_scenario`` for the NPV ANNUITY / fixed-cost window walks
+    — the capacity frame :func:`dd_same_scenario_lf` with branch copies
+    of the SAME calendar slot collapsed to one representative on the
+    ``d_other`` side, per anchor ``d`` (Slice E design §4.1 vs §8.1
+    reconciliation).
+
+    The capacity lineage (``dd_same_scenario``, consumed by the ``edd``
+    walks) must put a shared pre-reveal trunk period on EVERY branch
+    leaf's path — e.g. ``(p2035, p2040_low)`` present — so the shared
+    first-stage capacity is alive in every scenario's dispatch.  But the
+    ANNUITY window sums an inflation factor over the leaf's periods: if
+    the shared trunk's window kept BOTH ``p2040`` and ``p2040_low`` (the
+    same calendar year 2040 under two mutually-exclusive scenarios) it
+    would charge the first-stage capacity THREE period-annuities instead
+    of two — the latent NPV over-count.  The capacity is physically alive
+    for ONE second-stage calendar period; the scenario only affects
+    dispatch, not the certain capacity payment.  So for the annuity we
+    keep one member per CALENDAR anchor (preferring the real-named
+    anchor, whose inflation factor is authoritative), giving the shared
+    trunk the window ``{p2035, p2040}`` → Σ = 2.
+
+    Byte-parity: deterministic / fan-at-first / single-period solves have
+    no shared trunk — no anchor's leaf-union carries two members with the
+    same calendar anchor — so the dedup is a no-op and the frame equals
+    :func:`dd_same_scenario_lf`.  Deterministic periods that happen to
+    share a calendar year are DISTINCT anchors, so they are never
+    collapsed (the dedup keys on the anchor, not the year).
+    """
+    schema = {"d": schema_dtype(_enums, "d"),
+              "d_other": schema_dtype(_enums, "d")}
+    pb_rows, piu, tb_of = _lineage_inputs(
+        workdir, source, active_solve, ctx=ctx, provider=provider)
+    if not piu:
+        return _empty_lf(schema)
+    anchors, pos, synthetic, anchor_of = _classify_lineage(
+        pb_rows, piu, tb_of)
+    leaves = _lineage_leaves(anchors, pos, synthetic, anchor_of, tb_of)
+    # Calendar anchor of every in-use period (anchors map to themselves).
+    calendar_anchor = {a: a for a in anchors}
+    for m in synthetic:
+        calendar_anchor[m] = anchor_of[m]
+    # Gather every d_other reachable from d across ALL leaves (a shared
+    # trunk sits on more than one leaf, so its reachable set unions the
+    # branches — exactly the over-count source).
+    reachable: dict[str, dict[str, None]] = {}
+    for _label, leaf in leaves:
+        for x in leaf:
+            bucket = reachable.setdefault(x, {})
+            for y in leaf:
+                bucket[y] = None
+    seen: dict[tuple[str, str], None] = {}
+    for x, ys in reachable.items():
+        best: dict[str, str] = {}
+        for y in ys:
+            a = calendar_anchor[y]
+            # Prefer the real-named anchor member as the representative;
+            # otherwise the first-seen member for that calendar slot.
+            if a not in best or y == a:
+                best[a] = y
+        for y in best.values():
+            seen[(x, y)] = None
+    if not seen:
+        return _empty_lf(schema)
+    return _finalize_lineage_frame(list(seen), "d", "d", "d_other",
+                                   "d_other", "dd_same_scenario_annuity")
+
+
+def dd_same_scenario_annuity_df(
+    workdir: Path | None,
+    source: "InputSource | None" = None,
+    active_solve: str | None = None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> pl.DataFrame:
+    """Collect wrapper for :func:`dd_same_scenario_annuity_lf`."""
+    return dd_same_scenario_annuity_lf(workdir, source, active_solve,
+                                       ctx=ctx, provider=provider).collect()
 
 
 def d_leaf_lf(
@@ -992,10 +1087,21 @@ def d_leaf_lf(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     if not piu:
         return _empty_lf(schema)
-    anchors, _pos, synthetic, _anchor_of = _classify_lineage(
+    anchors, pos, synthetic, anchor_of = _classify_lineage(
         pb_rows, piu, tb_of)
-    rows: list[tuple[str, str]] = [(a, "__realized") for a in anchors]
-    rows += [(m, tb_of[m]) for m in synthetic]
+    # Partition → RELATION (Slice E design §6.2).  Under Option B a shared
+    # pre-reveal trunk anchor belongs to EVERY scenario leaf's path, so it
+    # must count into every leaf's per-path total cap — the strict
+    # partition (anchor → __realized only) would under-count the branch
+    # leaves' totals.  Rebuild from ``_lineage_leaves`` (the same relation
+    # ``dd_same_scenario`` uses), carrying the authoritative leaf label
+    # (F4).  Byte-parity: deterministic / fan-at-first solves have no
+    # pre-reveal anchors, so each branch leaf gains nothing and the map is
+    # identical to the legacy partition.
+    labeled = _lineage_leaves(anchors, pos, synthetic, anchor_of, tb_of)
+    rows: list[tuple[str, str]] = []
+    for label, members in labeled:
+        rows += [(d, label) for d in members]
     raw = pl.DataFrame({"d": [r[0] for r in rows],
                         "leaf": [r[1] for r in rows]},
                        schema={"d": pl.Utf8, "leaf": pl.Utf8})
@@ -1272,10 +1378,31 @@ def check_recourse_npv_preconditions(
 
     # --- (i) per-leaf weight constancy ------------------------------------
     # Member chains = PIU representatives grouped by SBTB time-branch.
+    #
+    # Slice E mid-horizon re-scoping (design §5, §9.3; the note at the head
+    # of this function): under Option B a SHARED pre-reveal trunk anchor is
+    # a cohort-of-one first-stage decision carrying weight 1.0, while the
+    # post-reveal members of the same (realized) chain carry the scenario
+    # weight (e.g. 0.25).  That is the CORRECT two-stage weighting — the
+    # first stage is certain, the recourse is probability-weighted — not a
+    # violation.  Constancy is therefore required only over the POST-REVEAL
+    # segment of each chain; the shared pre-reveal anchors are excluded.
+    # For fan-at-first-step / deterministic solves there are no pre-reveal
+    # anchors, so the check is byte-unchanged.
+    anchors_i, pos_i, synthetic_i, anchor_of_i = _classify_lineage(
+        pb_rows, piu, tb_of)
+    pre_reveal_anchors: set[str] = set()
+    if synthetic_i:
+        for br in dict.fromkeys(tb_of[m] for m in synthetic_i):
+            br_members = [m for m in synthetic_i if tb_of[m] == br]
+            k_reveal = min(pos_i[anchor_of_i[m]] for m in br_members)
+            for a in anchors_i:
+                if pos_i[a] < k_reveal:
+                    pre_reveal_anchors.add(a)
     chains: dict[str, list[str]] = {}
     for m in piu:
         tb = tb_of.get(m)
-        if tb is not None:
+        if tb is not None and m not in pre_reveal_anchors:
             chains.setdefault(tb, []).append(m)
     for tb, members in chains.items():
         present = [(m, weights[m]) for m in members if m in weights]

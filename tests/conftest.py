@@ -536,6 +536,29 @@ def stoch_two_period_invest_na_db_url(
 
 
 @pytest.fixture(scope="session")
+def stoch_two_period_hedge_db_url(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> str:
+    """``stoch_two_period_hedge`` fixture DB — Slice E hedged two-stage
+    (mid-horizon reveal) gate (design ``specs/sliceE_invest_na_design.md``
+    §8).
+
+    Built from ``tests/fixtures/stoch_two_period_hedge.json`` (generated
+    by ``tests/fixtures/build_stoch_two_period_hedge.py``): two scenarios
+    (``hedge`` = mid-horizon reveal at p2040 → RP 173 250; ``hedge_ws`` =
+    wait-and-see fan-at-p2035 → WS 157 500) on identical scenario data.
+    Defensive migration as in :func:`stochastic_db_url`.
+    """
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = (tmp_path_factory.mktemp("db_stph")
+               / "stoch_two_period_hedge.sqlite")
+    url = json_to_db(FIXTURES_DIR / "stoch_two_period_hedge.json", db_path)
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
 def branch2_parent_period_db_url(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> str:
@@ -587,6 +610,7 @@ _DB_FIXTURE_NAMES: dict[str, str] = {
     "stoch_two_period": "stoch_two_period_db_url",
     "stoch_two_period_invest": "stoch_two_period_invest_db_url",
     "stoch_two_period_invest_na": "stoch_two_period_invest_na_db_url",
+    "stoch_two_period_hedge": "stoch_two_period_hedge_db_url",
     "branch2_parent_period": "branch2_parent_period_db_url",
     "case14": "case14_db_url",
 }
@@ -631,6 +655,7 @@ def scenario_workdir(
     stoch_two_period_db_url,
     stoch_two_period_invest_db_url,
     stoch_two_period_invest_na_db_url,
+    stoch_two_period_hedge_db_url,
     branch2_parent_period_db_url,
     case14_db_url,
     test_solver_config_dir,
@@ -688,6 +713,7 @@ def scenario_workdir(
         "stoch_two_period": stoch_two_period_db_url,
         "stoch_two_period_invest": stoch_two_period_invest_db_url,
         "stoch_two_period_invest_na": stoch_two_period_invest_na_db_url,
+        "stoch_two_period_hedge": stoch_two_period_hedge_db_url,
         "branch2_parent_period": branch2_parent_period_db_url,
         "case14": case14_db_url,
     }
