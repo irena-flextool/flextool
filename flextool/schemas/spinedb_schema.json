@@ -2098,6 +2098,14 @@
     ],
     [
       "reserve__upDown__group",
+      "reserve_duration",
+      null,
+      null,
+      "[h] Time span over which committed reserve power must be sustainable from storage. Energy obligation = reservation_MW × reserve_duration, corrected by the reserve provider's efficiency. Only affects reserve provided by units/connections that draw on (up) or charge (down) a storage node. Absent or 0 means no storage-energy coupling. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__group",
       "reserve_method",
       "no_reserve",
       "reserve_methods",
@@ -4067,6 +4075,12 @@
       "reservation",
       "map",
       3
+    ],
+    [
+      "reserve__upDown__group",
+      "reserve_duration",
+      "float",
+      0
     ],
     [
       "reserve__upDown__group",

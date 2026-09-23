@@ -138,6 +138,58 @@ def test_p_commodity_unitsize_inmemory_explicit():
     assert p.frame.sort("c")["value"].to_list() == pytest.approx([2.0])
 
 
+def test_p_reserve_duration_inmemory_explicit():
+    """Explicit ``reserve_duration`` row →
+    ``Param(("r", "ud", "g"), [r, ud, g, value])``."""
+    src = InMemoryReader(
+        entities={"reserve__upDown__group": pl.DataFrame({
+            "reserve": ["primary"], "upDown": ["up"], "group": ["elecG"],
+        })},
+        parameters={
+            ("reserve__upDown__group", "reserve_duration"): pl.DataFrame({
+                "reserve": ["primary"], "upDown": ["up"], "group": ["elecG"],
+                "value": [0.5],
+            }),
+        },
+    )
+    p = dp.p_reserve_upDown_group_reserve_duration_from_source(src)
+    assert isinstance(p, Param)
+    assert p.dims == ("r", "ud", "g")
+    got = p.frame.sort("r", "ud", "g")
+    assert got["r"].to_list() == ["primary"]
+    assert got["ud"].to_list() == ["up"]
+    assert got["g"].to_list() == ["elecG"]
+    assert got["value"].to_list() == pytest.approx([0.5])
+
+
+def test_p_reserve_duration_inmemory_absent():
+    """No ``reserve_duration`` parameter at all → helper returns None
+    (byte-identical LP: the storage-coupling constraints are skipped)."""
+    src = InMemoryReader(
+        entities={"reserve__upDown__group": pl.DataFrame({
+            "reserve": ["primary"], "upDown": ["up"], "group": ["elecG"],
+        })},
+        parameters={},
+    )
+    assert dp.p_reserve_upDown_group_reserve_duration_from_source(src) is None
+
+
+def test_p_reserve_duration_inmemory_empty_rows():
+    """Header-only ``reserve_duration`` frame → helper returns None."""
+    src = InMemoryReader(
+        entities={"reserve__upDown__group": pl.DataFrame({
+            "reserve": ["primary"], "upDown": ["up"], "group": ["elecG"],
+        })},
+        parameters={
+            ("reserve__upDown__group", "reserve_duration"): pl.DataFrame(
+                schema={"reserve": pl.Utf8, "upDown": pl.Utf8,
+                        "group": pl.Utf8, "value": pl.Float64},
+            ),
+        },
+    )
+    assert dp.p_reserve_upDown_group_reserve_duration_from_source(src) is None
+
+
 # ---------------------------------------------------------------------------
 # Fixture-driven CSV vs DB-direct frame parity.
 

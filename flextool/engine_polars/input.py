@@ -825,6 +825,7 @@ class FlexData:
     p_process_reserve_upDown_node_reliability: Param | None = None      # (p, r, ud, n)
     pdtReserve_upDown_group_reservation: Param | None = None            # (r, ud, g, d, t)
     p_reserve_upDown_group_penalty_reserve: Param | None = None         # (r, ud, g)
+    p_reserve_upDown_group_reserve_duration: Param | None = None        # (r, ud, g)
     p_process_reserve_upDown_node_max_share: Param | None = None        # (p, r, ud, n)
     p_process_reserve_upDown_node_large_failure_ratio_value: Param | None = None     # (p, r, ud, n)
     p_process_reserve_upDown_node_increase_reserve_ratio_value: Param | None = None  # (p, r, ud, n)

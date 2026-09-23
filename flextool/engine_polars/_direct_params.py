@@ -1537,6 +1537,35 @@ def p_reserve_upDown_group_penalty_reserve_from_source(source: "InputSource") ->
     return Param(("r", "ud", "g"), out.lazy())
 
 
+def p_reserve_upDown_group_reserve_duration_from_source(source: "InputSource") -> Param | None:
+    """``reserve__upDown__group.reserve_duration`` scalar →
+    ``Param(("r", "ud", "g"))``.  None default — explicit rows only.
+
+    Hours over which committed reserve power must be sustainable from a
+    storage-backed provider.  Absent (or 0) rows leave the LP untouched
+    (no storage-energy coupling) — see ``_reserve._add_storage_reserve_constraints``.
+    """
+    try:
+        df = source.parameter_explicit("reserve__upDown__group", "reserve_duration")
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("reserve__upDown__group", "reserve_duration")
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    cols = df.columns
+    if not {"reserve", "upDown", "group", "value"}.issubset(cols):
+        return None
+    lf = (df.lazy()
+            .rename({"reserve": "r", "upDown": "ud", "group": "g"})
+            .filter(pl.col("value").is_not_null()))
+    out = lf.select("r", "ud", "g", "value").collect()
+    if out.height == 0:
+        return None
+    return Param(("r", "ud", "g"), out.lazy())
+
+
 def _process_reserve_node_param(source: "InputSource",
                                   parameter_name: str) -> Param | None:
     """Union ``reserve__upDown__unit__node`` ∪
@@ -2126,6 +2155,8 @@ def apply_direct_params_b(source: "InputSource",
         flex_data.pdtReserve_upDown_group_reservation = v
     flex_data.p_reserve_upDown_group_penalty_reserve = (
         p_reserve_upDown_group_penalty_reserve_from_source(source))
+    flex_data.p_reserve_upDown_group_reserve_duration = (
+        p_reserve_upDown_group_reserve_duration_from_source(source))
     flex_data.p_process_reserve_upDown_node_reliability = (
         p_process_reserve_upDown_node_reliability_from_source(source))
     flex_data.p_process_reserve_upDown_node_max_share = (

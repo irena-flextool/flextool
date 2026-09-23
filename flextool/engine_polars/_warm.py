@@ -321,6 +321,7 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     # Reserves.
     "pdtReserve_upDown_group_reservation",
     "p_reserve_upDown_group_penalty_reserve",
+    "p_reserve_upDown_group_reserve_duration",
     "p_process_reserve_upDown_node_reliability",
     "p_process_reserve_upDown_node_max_share",
     "p_process_reserve_upDown_node_large_failure_ratio_value",
@@ -430,6 +431,7 @@ _WARM_PARAM_GATES: dict[str, tuple[str, ...]] = {
     # Reserves.
     "pdtReserve_upDown_group_reservation":     ("reserve_upDown_group",),
     "p_reserve_upDown_group_penalty_reserve":  ("reserve_upDown_group",),
+    "p_reserve_upDown_group_reserve_duration": ("reserve_upDown_group",),
     "p_process_reserve_upDown_node_reliability": ("prundt",),
     "p_process_reserve_upDown_node_max_share":   ("prundt",),
     "p_process_reserve_upDown_node_large_failure_ratio_value":
