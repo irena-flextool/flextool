@@ -54,6 +54,7 @@ def _summary_row(csv_dir: Path, label: str) -> float:
 
 
 @pytest.mark.slow
+@pytest.mark.solver
 def test_recourse_invest_cost_reconciles_to_objective(
     stoch_two_period_invest_db_url: str,
     test_solver_config_dir: Path,
