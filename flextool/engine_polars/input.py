@@ -4848,6 +4848,13 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     from flextool.engine_polars import _projection_params as _pp
     from flextool.engine_polars import _derived_params as _drv
 
+    # F1 — defensive per-solve reset of the recourse process-globals BEFORE
+    # any cascade pass runs, so no producer can inherit a stale anchor-pairs
+    # holder / walker Provider from a prior solve in a chained multi-solve.
+    # (The flag-aware Layer-4 boundaries still overwrite them; this just
+    # guarantees the invariant for any future earlier-step per-period producer.)
+    _drv._reset_recourse_scope()
+
     from flextool.engine_polars._orchestration import get_phase_recorder
     _rec = get_phase_recorder()
     _logger = logging.getLogger("flextool.engine_polars.input")

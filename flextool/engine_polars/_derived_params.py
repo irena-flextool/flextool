@@ -271,6 +271,26 @@ def _build_recourse_anchor_pairs(
     return out if out.height > 0 else None
 
 
+def _reset_recourse_scope() -> None:
+    """Clear all three recourse process-globals to ``None``.
+
+    Defensive per-solve reset: called once at the top of the cascade
+    entry (:func:`.input._apply_db_overrides`) BEFORE any pass runs, so a
+    future per-period producer wired into an EARLIER cascade step cannot
+    inherit a stale anchor-pairs holder / walker Provider from a prior
+    flag-on solve in a chained flag-on→flag-off multi-solve.  The three
+    flag-aware Layer-4 boundaries still overwrite these unconditionally
+    (to ``None`` when flag-off), so this reset is belt-and-suspenders;
+    the invariant it guards is "no producer sees a global from a
+    different solve".
+    """
+    global _RECOURSE_ANCHOR_PAIRS, _RECOURSE_WALK_PROVIDER, \
+        _RECOURSE_WALK_WORKDIR
+    _RECOURSE_ANCHOR_PAIRS = None
+    _RECOURSE_WALK_PROVIDER = None
+    _RECOURSE_WALK_WORKDIR = None
+
+
 def _enter_recourse_anchor_scope(
     workdir: Path | None,
     *,
