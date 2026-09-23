@@ -179,6 +179,35 @@ def test_recourse_per_path_cap_two_leaf_rows(_resolved):
 
 
 @pytest.mark.solver
+def test_recourse_handoff_drops_non_realized(_resolved, recourse_wf, caplog):
+    """§10.1 (D7): the handoff pre-filter drops branch-named v_invest rows
+    (non-realized scenario) BEFORE the commit loop, debug-logging the
+    dropped mass (low leaf 80 + 40 = 120), and commits only real periods
+    (60 / 30).  Guard 3 stays inert (no raise)."""
+    import logging
+
+    data, sol = _resolved
+    from flextool.engine_polars.input import build_handoff_from_solution
+
+    with caplog.at_level(logging.DEBUG,
+                         logger="flextool.engine_polars.input"):
+        handoff = build_handoff_from_solution(
+            sol, recourse_wf, SOLVE, flex_data=data)
+    assert handoff is not None
+    ri = handoff.realized_invest
+    periods = {str(r["period"]) for r in ri.iter_rows(named=True)
+               if float(r["value"]) > 0}
+    assert periods == {"p2035", "p2040"}
+    assert not (periods & {"p2035_low", "p2040_low"})
+    # The pre-filter debug-logged the dropped low-branch mass = 120.
+    msgs = [r.getMessage() for r in caplog.records
+            if "non-realized invest" in r.getMessage()]
+    assert msgs, "pre-filter debug log not emitted"
+    assert "120" in msgs[0]
+    assert "p2035_low" in msgs[0] and "p2040_low" in msgs[0]
+
+
+@pytest.mark.solver
 def test_recourse_no_invest_na_constraints(_resolved):
     """§13 (K): the fan starts at the solve's first step, so
     pd_non_anticipativity is empty — no invest-NA constraint exists."""

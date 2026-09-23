@@ -5719,6 +5719,31 @@ def build_handoff_from_solution(
                 e = str(r[entity_col])
                 divest_by_e[e] = divest_by_e.get(e, 0.0) + v
 
+    # ---- Slice D (H, §10.1): EXPLICIT non-realized invest drop ----
+    # ``invest_by_ed`` collects every solved v_invest row, including
+    # branch-named (non-realized-scenario) ones fanned in under recourse.
+    # Historically the ``d in realize_invest`` commit gate below dropped
+    # those by accident; make it explicit here — partition on synthetic
+    # branch membership and debug-log the dropped mass BEFORE the commit
+    # loop, so the belt-and-braces Slice C Guard 3 (which asserts no
+    # synthetic token survived into the committed rows) is a true
+    # invariant check, not the mechanism.  Flag-off / deterministic:
+    # ``_synth`` is empty and this block is a no-op (byte-parity).
+    _synth_handoff = synthetic_branch_tokens(
+        getattr(flex_data, "period_branch_full", None))
+    if _synth_handoff:
+        _dropped = {k: v for k, v in invest_by_ed.items()
+                    if k[1] in _synth_handoff}
+        if _dropped:
+            logging.getLogger("flextool.engine_polars.input").debug(
+                "recourse handoff: dropping %d non-realized invest rows, "
+                "total capacity %.6g (periods %s)",
+                len(_dropped), sum(_dropped.values()),
+                sorted({k[1] for k in _dropped}),
+            )
+        invest_by_ed = {k: v for k, v in invest_by_ed.items()
+                        if k[1] not in _synth_handoff}
+
     # ---- iteration set: prior keys ∪ entity × iteration_periods ----
     realize_invest = _read_realize_invest_periods(
         sd / "realized_invest_periods_of_current_solve.csv",
