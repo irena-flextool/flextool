@@ -5611,6 +5611,10 @@
     [
       "ws",
       "stochastic_branches at p2035 (wait-and-see / fan-at-first)"
+    ],
+    [
+      "storage",
+      "stochastic-group storage node (T-S: storage NA + mid-horizon predecessor linkage)"
     ]
   ],
   "scenarios": [
@@ -5623,6 +5627,11 @@
       "hedge_ws",
       false,
       "Wait-and-see fan-at-p2035 control (WS = 157 500)"
+    ],
+    [
+      "hedge_storage",
+      false,
+      "Mid-horizon reveal + stochastic-group storage node (T-S)"
     ]
   ],
   "scenario_alternatives": [
@@ -5665,6 +5674,31 @@
       "hedge_ws",
       "ws",
       null
+    ],
+    [
+      "hedge_storage",
+      "init",
+      "base"
+    ],
+    [
+      "hedge_storage",
+      "base",
+      "stoch"
+    ],
+    [
+      "hedge_storage",
+      "stoch",
+      "rp"
+    ],
+    [
+      "hedge_storage",
+      "rp",
+      "storage"
+    ],
+    [
+      "hedge_storage",
+      "storage",
+      null
     ]
   ],
   "entities": [
@@ -5681,6 +5715,11 @@
     [
       "node",
       "elec",
+      null
+    ],
+    [
+      "node",
+      "resv",
       null
     ],
     [
@@ -5719,10 +5758,28 @@
       null
     ],
     [
+      "unit",
+      "charge",
+      null
+    ],
+    [
+      "unit",
+      "discharge",
+      null
+    ],
+    [
       "group__unit",
       [
         "stoch_g",
         "wind"
+      ],
+      null
+    ],
+    [
+      "group__node",
+      [
+        "stoch_g",
+        "resv"
       ],
       null
     ],
@@ -5738,6 +5795,38 @@
       "unit__outputNode",
       [
         "wind",
+        "elec"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "charge",
+        "elec"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "charge",
+        "resv"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "discharge",
+        "resv"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "discharge",
         "elec"
       ],
       null
@@ -5775,6 +5864,30 @@
         "wind"
       ],
       "init",
+      true
+    ],
+    [
+      "node",
+      [
+        "resv"
+      ],
+      "storage",
+      true
+    ],
+    [
+      "unit",
+      [
+        "charge"
+      ],
+      "storage",
+      true
+    ],
+    [
+      "unit",
+      [
+        "discharge"
+      ],
+      "storage",
       true
     ]
   ],
@@ -6125,6 +6238,106 @@
         "map"
       ],
       "ws"
+    ],
+    [
+      "node",
+      "resv",
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
+        "str"
+      ],
+      "storage"
+    ],
+    [
+      "node",
+      "resv",
+      "existing",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "storage"
+    ],
+    [
+      "node",
+      "resv",
+      "storage_state_start",
+      [
+        "MC41",
+        "float"
+      ],
+      "storage"
+    ],
+    [
+      "node",
+      "resv",
+      "storage_start_end_method",
+      [
+        "ImZpeF9zdGFydCI=",
+        "str"
+      ],
+      "storage"
+    ],
+    [
+      "node",
+      "resv",
+      "storage_solve_horizon_method",
+      [
+        "InVzZV9yZWZlcmVuY2VfdmFsdWUi",
+        "str"
+      ],
+      "storage"
+    ],
+    [
+      "node",
+      "resv",
+      "storage_state_reference_value",
+      [
+        "MC41",
+        "float"
+      ],
+      "storage"
+    ],
+    [
+      "unit",
+      "charge",
+      "efficiency",
+      [
+        "MS4w",
+        "float"
+      ],
+      "storage"
+    ],
+    [
+      "unit",
+      "charge",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "storage"
+    ],
+    [
+      "unit",
+      "discharge",
+      "efficiency",
+      [
+        "MS4w",
+        "float"
+      ],
+      "storage"
+    ],
+    [
+      "unit",
+      "discharge",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "storage"
     ]
   ]
 }

@@ -1143,6 +1143,14 @@ Read the results with these three points in mind:
 
 `recourse` is incompatible with Benders decomposition (the solver rejects the combination).
 
+#### Hedged two-stage investment (mid-horizon reveal)
+
+The wait-and-see behaviour above comes from declaring every branch at the solve's **first** step, so each scenario has perfect foresight from the start. You can instead reveal the uncertainty **mid-horizon**: keep the first periods deterministic (a single, shared *here-and-now* investment) and let the branches fan out only from a later period. Set the branching period of the `stochastic_branches` map to that later period, and put the branches' analysis time at that period's first step (the reveal must fall on a period boundary — investment is period-granular).
+
+With this shape the pre-reveal periods stay a single real-named trunk with **one shared `v_invest`** — the genuine first-stage (here-and-now) decision. Its non-anticipativity holds by construction (there is only one variable, so nothing to tie), and its cost is counted once at full weight. The post-reveal periods fan per branch exactly as the wait-and-see case does, giving the second-stage recourse investments. The result is a real **two-stage hedge**: the shared first stage is chosen knowing only the distribution of futures, and its objective sits strictly *between* the wait-and-see bound and the deterministic mean-value plan (positive EVPI and VSS). Only the realized trunk is committed to the output.
+
+The multi-period restriction of earlier versions is lifted: a branch may now start at any period boundary, and the pre-reveal horizon can be any number of periods. Mid-horizon reveal is a general stochastics capability — it works for dispatch-only hedged stochastics too, not only for `recourse` investment.
+
 In this example, we show two ways to use stochastics: Single solve, rolling horizon. They all share the same test system that includes: 
 
 - A demand node 

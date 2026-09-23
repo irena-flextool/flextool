@@ -129,11 +129,15 @@ def build() -> dict:
         ["stoch", "include_stochastics + branch-varying wind + recourse"],
         ["rp", "stochastic_branches at p2040 (mid-horizon reveal)"],
         ["ws", "stochastic_branches at p2035 (wait-and-see / fan-at-first)"],
+        ["storage", "stochastic-group storage node (T-S: storage NA + "
+                    "mid-horizon predecessor linkage)"],
     ]
     spec["scenarios"] = [
         ["hedge", False, "Mid-horizon reveal at p2040 (RP = 173 250)"],
         ["hedge_ws", False,
          "Wait-and-see fan-at-p2035 control (WS = 157 500)"],
+        ["hedge_storage", False,
+         "Mid-horizon reveal + stochastic-group storage node (T-S)"],
     ]
     spec["scenario_alternatives"] = [
         ["hedge", "init", "base"],
@@ -144,12 +148,18 @@ def build() -> dict:
         ["hedge_ws", "base", "stoch"],
         ["hedge_ws", "stoch", "ws"],
         ["hedge_ws", "ws", None],
+        ["hedge_storage", "init", "base"],
+        ["hedge_storage", "base", "stoch"],
+        ["hedge_storage", "stoch", "rp"],
+        ["hedge_storage", "rp", "storage"],
+        ["hedge_storage", "storage", None],
     ]
 
     spec["entities"] = [
         ["group", "stoch_g", None],
         ["model", "flextool", None],
         ["node", "elec", None],
+        ["node", "resv", None],
         ["profile", "wprof", None],
         ["solve", "stoch_2p_hedge", None],
         ["timeline", "y6h", None],
@@ -157,15 +167,25 @@ def build() -> dict:
         ["timeset", "ts2", None],
         ["unit", "base", None],
         ["unit", "wind", None],
+        ["unit", "charge", None],
+        ["unit", "discharge", None],
         ["group__unit", ["stoch_g", "wind"], None],
+        ["group__node", ["stoch_g", "resv"], None],
         ["unit__outputNode", ["base", "elec"], None],
         ["unit__outputNode", ["wind", "elec"], None],
+        ["unit__inputNode", ["charge", "elec"], None],
+        ["unit__outputNode", ["charge", "resv"], None],
+        ["unit__inputNode", ["discharge", "resv"], None],
+        ["unit__outputNode", ["discharge", "elec"], None],
         ["unit__node__profile", ["wind", "elec", "wprof"], None],
     ]
     spec["entity_alternatives"] = [
         ["node", ["elec"], "init", True],
         ["unit", ["base"], "init", True],
         ["unit", ["wind"], "init", True],
+        ["node", ["resv"], "storage", True],
+        ["unit", ["charge"], "storage", True],
+        ["unit", ["discharge"], "storage", True],
     ]
 
     # ---- init: model / solve / time structure --------------------------
@@ -271,6 +291,28 @@ def build() -> dict:
         # ---- ws: wait-and-see reveal at p2035 --------------------------
         ["solve", "stoch_2p_hedge", "stochastic_branches",
          _pack(stochastic_branches_ws, "map"), "ws"],
+        # ---- storage: a stochastic-group storage node (T-S) ------------
+        # ``resv`` is a storage node in ``stoch_g`` (via group__node), so
+        # under recourse mid-horizon the dispatch NA net-charge pinning
+        # (``non_anticipativity_storage_use``) fires on (p2040, p2040_low),
+        # and the storage-continuity linkage couples the branch copy's
+        # v_state to the shared pre-reveal trunk's end-state.  It is idle
+        # (base+wind already meet demand) so the RP objective is unchanged;
+        # this scenario is structural-only.
+        ["node", "resv", "node_type", _pack("storage", "str"), "storage"],
+        ["node", "resv", "existing", _pack(1000.0, "float"), "storage"],
+        ["node", "resv", "storage_state_start",
+         _pack(0.5, "float"), "storage"],
+        ["node", "resv", "storage_start_end_method",
+         _pack("fix_start", "str"), "storage"],
+        ["node", "resv", "storage_solve_horizon_method",
+         _pack("use_reference_value", "str"), "storage"],
+        ["node", "resv", "storage_state_reference_value",
+         _pack(0.5, "float"), "storage"],
+        ["unit", "charge", "efficiency", _pack(1.0, "float"), "storage"],
+        ["unit", "charge", "existing", _pack(100.0, "float"), "storage"],
+        ["unit", "discharge", "efficiency", _pack(1.0, "float"), "storage"],
+        ["unit", "discharge", "existing", _pack(100.0, "float"), "storage"],
     ]
     return spec
 
