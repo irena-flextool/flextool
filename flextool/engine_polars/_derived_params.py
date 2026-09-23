@@ -124,18 +124,30 @@ def _recourse_invest_active(
     """True iff ``solve_data/stochastic_invest_method.csv`` == ``'recourse'``.
 
     Slice D's single gate.  False when the CSV is absent (deterministic /
-    flag-off / pre-Slice-D dumps) — the byte-parity-safe default.  Reads
-    provider-first (canonical key), then a workdir-disk fallback so a
-    dumped/reloaded solve still resolves the flag.
+    flag-off / pre-Slice-D dumps) — the byte-parity-safe default.
+
+    Provider-only read (canonical key), matching every other reader in
+    this module (``_build_recourse_anchor_pairs`` et al.) and the post-
+    Step-2 cascade invariant (``test_meta_provider_invariants``): the
+    flag CSV reaches the cascade exclusively through the Provider, never
+    from disk.  On the snapshot-reload path (``load_flextool`` off a
+    dumped workdir) the Provider is seeded from ``solve_data/`` before
+    the cascade runs (``input.load_flextool`` →
+    ``seed_provider_from_dir``), so it carries this key by construction;
+    cascade entry points always thread an explicit Provider.  Tests that
+    exercise the flag seed the Provider from the workdir the same way.
+    ``workdir`` is retained in the signature only to key the canonical
+    Provider path (``_provider_key`` ignores the prefix, so the key is
+    stable whether or not a workdir is supplied).
     """
-    path = Path("solve_data") / "stochastic_invest_method.csv"
-    df: "pl.DataFrame | None" = None
-    if _provider_has_key(provider, path):
-        df = _provider_read(provider, path)
-    elif workdir is not None:
-        disk = Path(workdir) / "solve_data" / "stochastic_invest_method.csv"
-        if disk.exists():
-            df = pl.read_csv(disk)
+    path = (
+        Path(workdir) / "solve_data" / "stochastic_invest_method.csv"
+        if workdir is not None
+        else Path("solve_data") / "stochastic_invest_method.csv"
+    )
+    if not _provider_has_key(provider, path):
+        return False
+    df = _provider_read(provider, path)
     if df is None or df.height == 0 or "method" not in df.columns:
         return False
     val = df["method"].cast(pl.Utf8, strict=False).to_list()[0]

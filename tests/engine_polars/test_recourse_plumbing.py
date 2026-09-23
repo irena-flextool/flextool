@@ -27,23 +27,48 @@ def _write(workdir, text: str) -> None:
     (p / "stochastic_invest_method.csv").write_text(text)
 
 
+def _seeded_provider(workdir):
+    """Provider seeded from ``workdir/solve_data`` — mirrors the cascade,
+    which reads the flag exclusively from the Provider (never disk).  On
+    the real run/reload paths ``load_flextool`` seeds the Provider the
+    same way before the reader runs.
+    """
+    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine_polars._input_source import seed_provider_from_dir
+
+    prov = FlexDataProvider()
+    sd = workdir / "solve_data"
+    if sd.exists():
+        seed_provider_from_dir(prov, sd, "solve_data")
+    return prov
+
+
 # ---------------------------------------------------------------------------
-# Reader — workdir-disk fallback + absent-default
+# Reader — provider-only read + absent-default
 # ---------------------------------------------------------------------------
 
 
 def test_recourse_active_true(tmp_path):
     _write(tmp_path, "method\nrecourse\n")
-    assert _recourse_invest_active(tmp_path) is True
+    assert _recourse_invest_active(
+        tmp_path, provider=_seeded_provider(tmp_path)) is True
 
 
 def test_recourse_active_none_flag_false(tmp_path):
     _write(tmp_path, "method\nnone\n")
-    assert _recourse_invest_active(tmp_path) is False
+    assert _recourse_invest_active(
+        tmp_path, provider=_seeded_provider(tmp_path)) is False
 
 
 def test_recourse_active_absent_csv_false(tmp_path):
-    # No CSV emitted — the byte-parity-safe default.
+    # No CSV emitted — the byte-parity-safe default (Provider carries no key).
+    assert _recourse_invest_active(
+        tmp_path, provider=_seeded_provider(tmp_path)) is False
+
+
+def test_recourse_active_no_provider_false(tmp_path):
+    # No Provider → no key → byte-parity-safe default (never touches disk).
+    _write(tmp_path, "method\nrecourse\n")
     assert _recourse_invest_active(tmp_path) is False
 
 
