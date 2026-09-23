@@ -3790,7 +3790,7 @@ def _migrate_v70_stochastic_invest_method(db) -> None:
     Slice C ships only the schema + the validation guards: flag-on is
     HARD-REJECTED until Slice D lands (branch periods on the invest
     axis).  Bound to a new 'stochastic_invest_methods' value list;
-    grouped under 'solve_advanced' when that group exists.
+    grouped under 'solve_advanced' (created if the DB lacks it).
     """
     add_value_list_manual(db, [
         ["stochastic_invest_methods", "none"],
@@ -3818,17 +3818,30 @@ def _migrate_v70_stochastic_invest_method(db) -> None:
             "nested-tree modes."
         ),
     )
-    has_solve_advanced = (
-        db.item(db.mapped_table("parameter_group"), name="solve_advanced")
-        is not None
-    )
-    if has_solve_advanced:
+    # Attach to the 'solve_advanced' parameter group, creating it if the
+    # DB lacks it.  Every parameter must belong to a parameter_group so it
+    # is not dropped from group-filtered tabular exports (v69 invariant,
+    # guarded by tests/test_parameter_group_coverage.py), and solve_advanced
+    # is this param's canonical home in the schema.  Real DBs always have it
+    # (created in v44, recoloured in v45), but a DB built from scratch at a
+    # version above v44 — e.g. the minimal fixtures the migration tests seed
+    # — never ran the v44 step and so carries no parameter_groups.  Use the
+    # non-raising get_item (db.item raises SpineDBAPIError when absent) and
+    # get-or-create; the create only fires on such group-less DBs and mirrors
+    # v44's colour/priority for solve_advanced (post-v45 colour b56f6f).
+    if not db.get_item("parameter_group", name="solve_advanced"):
         db.add_update_item(
-            "parameter_definition",
-            entity_class_name="solve",
-            name="stochastic_invest_method",
-            parameter_group_name="solve_advanced",
+            "parameter_group",
+            name="solve_advanced",
+            color="b56f6f",
+            priority=87,
         )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="stochastic_invest_method",
+        parameter_group_name="solve_advanced",
+    )
 
     _commit_step(db,
         "v70: added solve.stochastic_invest_method "
