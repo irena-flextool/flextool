@@ -1,3 +1,18 @@
+## Unreleased
+
+Schema change (adds `solve.stochastic_invest_method`; migrated automatically).
+
+- **Per-scenario stochastic investment** (opt-in
+  `solve.stochastic_invest_method = recourse`): each stochastic branch can now
+  make its own investment decisions at and after the branching period, with
+  probability-weighted investment costs and per-scenario investment limits — a
+  wait-and-see analysis giving per-scenario optimal plans and their expected
+  cost. Committed results report the realized scenario; non-realized branch
+  investments are available under the horizon-output debug flag
+  (`model.output_horizon`). Shared (hedged) pre-branch investment is a planned
+  follow-up. Default behaviour (`none`) is unchanged, and the option is
+  rejected in combination with Benders decomposition.
+
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 
 Patch release. No schema changes. This release also ships the 4.0.3 changes

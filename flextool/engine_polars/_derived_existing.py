@@ -387,6 +387,8 @@ def edd_history_choice_lf(source: "InputSource",
                                   period_with_history: list[str],
                                   period_in_use: list[str],
                                   workdir: Path | None = None,
+                                  *,
+                                  lineage: pl.DataFrame | None = None,
                                   ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_choice``.
 
@@ -394,10 +396,14 @@ def edd_history_choice_lf(source: "InputSource",
     ``lifetime_method = reinvest_choice``::
 
         keep iff pdy[d] >= pdy[d_h] AND pdy[d] < pdy[d_h] + life[e, d_h]
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
-        method="reinvest_choice", bounded=True, workdir=workdir)
+        method="reinvest_choice", bounded=True, workdir=workdir,
+        lineage=lineage)
 
 
 def edd_history_automatic_lf(source: "InputSource",
@@ -405,6 +411,8 @@ def edd_history_automatic_lf(source: "InputSource",
                                        period_with_history: list[str],
                                        period_in_use: list[str],
                                        workdir: Path | None = None,
+                                       *,
+                                       lineage: pl.DataFrame | None = None,
                                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_automatic`` —
     entities with ``lifetime_method = reinvest_automatic``.
@@ -412,10 +420,14 @@ def edd_history_automatic_lf(source: "InputSource",
     Mirror of ``invest_divest_sets.py:245-246``::
 
         keep iff pdy[d] >= pdy[d_h]
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
-        method="reinvest_automatic", bounded=False, workdir=workdir)
+        method="reinvest_automatic", bounded=False, workdir=workdir,
+        lineage=lineage)
 
 
 def edd_history_no_investment_lf(source: "InputSource",
@@ -423,15 +435,21 @@ def edd_history_no_investment_lf(source: "InputSource",
                                             period_with_history: list[str],
                                             period_in_use: list[str],
                                             workdir: Path | None = None,
+                                            *,
+                                            lineage: pl.DataFrame | None = None,
                                             ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_no_investment``.
 
     Mirror of ``invest_divest_sets.py:247-248``: same predicate as
     ``edd_history_choice`` but for the ``no_investment`` cohort.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
-        method="no_investment", bounded=True, workdir=workdir)
+        method="no_investment", bounded=True, workdir=workdir,
+        lineage=lineage)
 
 
 def _edd_history_lf_for(source: "InputSource",
@@ -442,9 +460,13 @@ def _edd_history_lf_for(source: "InputSource",
                               method: str,
                               bounded: bool,
                               workdir: Path | None = None,
+                              lineage: pl.DataFrame | None = None,
                               ) -> pl.LazyFrame:
     """Internal helper: build edd_history sub-set for a single
     lifetime_method cohort.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
@@ -478,14 +500,14 @@ def _edd_history_lf_for(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
             life_lf=life_lf, factor_side=None,
-            workdir=workdir)
+            workdir=workdir, lineage=lineage)
     else:
         walk = period_walk_iterator(
             source, active_solve, anchor,
             period_in_use, period_in_use,
             window_method=WindowMethod.UNBOUNDED_FORWARD,
             life_lf=None, factor_side=None,
-            workdir=workdir)
+            workdir=workdir, lineage=lineage)
     return walk.pipe(rename_to_axis, {"d": "d_history", "d_all": "d"})
 
 
@@ -494,6 +516,8 @@ def edd_history_lf(source: "InputSource",
                        period_with_history: list[str],
                        period_in_use: list[str],
                        workdir: Path | None = None,
+                       *,
+                       lineage: pl.DataFrame | None = None,
                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for the union ``edd_history`` set.
 
@@ -502,6 +526,9 @@ def edd_history_lf(source: "InputSource",
     walks (:func:`edd_history_choice_lf`,
     :func:`edd_history_automatic_lf`,
     :func:`edd_history_no_investment_lf`).
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
@@ -512,13 +539,13 @@ def edd_history_lf(source: "InputSource",
     parts = [
         edd_history_choice_lf(source, active_solve,
                                   period_with_history, period_in_use,
-                                  workdir),
+                                  workdir, lineage=lineage),
         edd_history_automatic_lf(source, active_solve,
                                        period_with_history, period_in_use,
-                                       workdir),
+                                       workdir, lineage=lineage),
         edd_history_no_investment_lf(source, active_solve,
                                             period_with_history, period_in_use,
-                                            workdir),
+                                            workdir, lineage=lineage),
     ]
     return pl.concat(parts, how="vertical").unique()
 
@@ -669,6 +696,8 @@ def edd_invest_set_lf(source: "InputSource",
                               period_with_history: list[str],
                               period_in_use: list[str],
                               workdir: Path | None = None,
+                              *,
+                              lineage: pl.DataFrame | None = None,
                               ) -> pl.LazyFrame:
     """Lazy ``[e, d_invest, d]`` — ``edd_history_invest`` filtered to
     ``(e, d_invest) ∈ ed_invest``.
@@ -682,10 +711,13 @@ def edd_invest_set_lf(source: "InputSource",
     every entity with a recognised lifetime_method; this helper filters
     to those whose ``d_history`` (renamed ``d_invest``) is also a
     valid invest decision in the current solve.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     edd = edd_history_lf(source, active_solve,
                               period_with_history, period_in_use,
-                              workdir)
+                              workdir, lineage=lineage)
     inv_pairs = ed_invest_lf.pipe(rename_to_axis, {"d": "d_history"})
     return (edd
               .join(inv_pairs, on=["e", "d_history"], how="inner")
@@ -698,6 +730,8 @@ def edd_invest_lookback_set_lf(source: "InputSource",
                                        ed_invest_lf: pl.LazyFrame,
                                        period_in_use: list[str],
                                        workdir: Path | None = None,
+                                       *,
+                                       lineage: pl.DataFrame | None = None,
                                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_invest, d]`` — ``edd_invest_lookback_set``.
 
@@ -722,6 +756,9 @@ def edd_invest_lookback_set_lf(source: "InputSource",
     The eager helper now delegates to this lazy port — the previous
     Python ``for r in out.iter_rows`` lifetime gate is replaced with
     a fully lazy join + filter on the shared walker.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_in_use:
         return pl.LazyFrame(schema={
@@ -781,7 +818,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.STRICT_LOOKBACK_BOUNDED,
             life_lf=life_lf, factor_side=None,
-            workdir=workdir)
+            workdir=workdir, lineage=lineage)
 
     # Unbounded cohort — strict-lookback only, no lifetime cap.
     unbounded_anchor = anchor_lf.join(unbounded_e, on="e", how="inner")
@@ -795,7 +832,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.STRICT_LOOKBACK_UNBOUNDED,
             life_lf=None, factor_side=None,
-            workdir=workdir)
+            workdir=workdir, lineage=lineage)
 
     return (pl.concat([bounded_walk, unbounded_walk], how="vertical")
               .pipe(rename_to_axis, {"d": "d_invest", "d_all": "d"})

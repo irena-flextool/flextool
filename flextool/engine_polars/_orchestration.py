@@ -60,6 +60,9 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from flextool.engine_polars._solve_acceptance import classify_acceptance
 from flextool.engine_polars._solve_handoff import SolveHandoff
+from flextool.engine_polars._stochastic_detect import (
+    is_genuinely_stochastic as _is_genuinely_stochastic,
+)
 from flextool.engine_polars._solve_state import (
     FlexToolConfigError,
     PathConfig,
@@ -1560,6 +1563,30 @@ def _write_scale_csv(
 # ---------------------------------------------------------------------------
 
 
+def _stochastic_invest_raw_guard(solve_cfg, base_name: str) -> None:
+    """Slice D Guard 1 — validate the RAW authored stochastic_invest_method.
+
+    ``'recourse'`` is now ACCEPTED (per-scenario stochastic investment
+    landed in Slice D).  The guard reads the RAW authored value rather than
+    the resolver's output: :meth:`SolveConfig.stochastic_invest_method_for`
+    silently collapses any UNrecognised value to ``'none'`` (a typo like
+    ``'recuorse'`` would then run deterministic), so an authoring-time check
+    must inspect the raw dict and reject anything that is neither blank /
+    ``'none'`` nor ``'recourse'``.  Blank / absent tolerate-as-none (matches
+    the resolver).  No-op when the solve authors nothing.
+    """
+    raw = solve_cfg.stochastic_invest_method.get(base_name)
+    if raw is None:
+        return
+    val = str(raw).strip().lower()
+    if val not in ("", "none", "recourse"):
+        raise FlexToolConfigError(
+            f"Solve '{base_name}' sets stochastic_invest_method='{raw}' — "
+            f"unrecognised value. Supported: 'none' (default), 'recourse' "
+            f"(per-scenario stochastic investment)."
+        )
+
+
 def _validate_model_solve(state: RunnerState) -> list[str]:
     """Validate ``state.solve.model_solve`` and return the solve list.
 
@@ -1578,6 +1605,15 @@ def _validate_model_solve(state: RunnerState) -> list[str]:
     solves = next(iter(state.solve.model_solve.values()))
     if not solves:
         raise FlexToolConfigError("No solves in model.")
+    # Slice D Guard 1 (fail-fast pass): validate the RAW authored
+    # stochastic_invest_method for the model's top-level solves before any
+    # solve runs — 'recourse' is accepted; only unrecognised authored
+    # values raise.  This only sees the top-level ``solves`` array (not
+    # solves reached via ``contains_solves`` recursion), so it is a
+    # convenience — the authoritative per-solve guard lives at the top of
+    # ``run()``.
+    for _s in solves:
+        _stochastic_invest_raw_guard(state.solve, _s)
     return solves
 
 
@@ -2093,6 +2129,25 @@ def _drive_cascade(
                 discover_decomposition_regions_from_db,
             )
 
+            # Slice C Guard 2 (primary): Benders x genuine stochastics is
+            # not yet supported (the master's C_by_conn sum over all invest
+            # periods would double-count exclusive branch futures — recourse
+            # plan §4).  Flag-independent: it closes the today-untested
+            # Benders x stochastics combination regardless of
+            # stochastic_invest_method.  The detector reads two FlexData
+            # frames already in scope on ``data``.
+            if _is_genuinely_stochastic(data):
+                raise FlexToolConfigError(
+                    f"Solve '{base_solve_name}' requests decomposition=benders "
+                    f"on a stochastic model (period__branch has non-realized "
+                    f"branch periods with active time). Benders x stochastics "
+                    f"is not yet supported (the master's C_by_conn sum over "
+                    f"all invest periods would double-count exclusive branch "
+                    f"futures — recourse plan §4). Run this solve "
+                    f"monolithically (decomposition=none) or remove the "
+                    f"stochastic branches."
+                )
+
             # Regions are discovered from the DB (the same source the
             # group-level decomposition_method lives in).  The DB-driven
             # run path (run_chain_from_db) always supplies ``db_url``; a
@@ -2330,6 +2385,15 @@ def _drive_cascade(
 
         def run(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
+            # Slice D Guard 1 (authoritative): validate the RAW authored
+            # stochastic_invest_method for any solve that RUNS — including
+            # each roll of a rolling solve and each contained/chained solve
+            # — before building its FlexData/LP.  'recourse' is accepted
+            # (per-scenario stochastic investment); only unrecognised
+            # authored values raise.  The roll-suffix strip mirrors the
+            # base-name derivation below (``:2486``).
+            _guard_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
+            _stochastic_invest_raw_guard(state.solve, _guard_base)
             # Cross-level eviction — release any EXHAUSTED prior solve-level's
             # live HiGHS instance + flex_data_provider BEFORE this solve builds
             # its FlexData/LP, so two level footprints never coexist (the DES

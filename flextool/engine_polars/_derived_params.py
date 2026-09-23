@@ -55,6 +55,7 @@ from ._axis_enums import (
     schema_dtype,
 )
 from ._emit_provider_io import _provider_key
+from ._solve_state import LineageFilterError
 from ._param_shapes import (
     broadcast_to_period_time,
     promote_param_to_dt,
@@ -112,6 +113,276 @@ def _provider_read(provider, path: "Path | str") -> "pl.DataFrame":
             "_provider_has_key first."
         )
     return provider.get(_provider_key(path))
+
+
+def _recourse_invest_active(
+    workdir: "Path | None",
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> bool:
+    """True iff ``solve_data/stochastic_invest_method.csv`` == ``'recourse'``.
+
+    Slice D's single gate.  False when the CSV is absent (deterministic /
+    flag-off / pre-Slice-D dumps) — the byte-parity-safe default.
+
+    Provider-only read (canonical key), matching every other reader in
+    this module (``_build_recourse_anchor_pairs`` et al.) and the post-
+    Step-2 cascade invariant (``test_meta_provider_invariants``): the
+    flag CSV reaches the cascade exclusively through the Provider, never
+    from disk.  On the snapshot-reload path (``load_flextool`` off a
+    dumped workdir) the Provider is seeded from ``solve_data/`` before
+    the cascade runs (``input.load_flextool`` →
+    ``seed_provider_from_dir``), so it carries this key by construction;
+    cascade entry points always thread an explicit Provider.  Tests that
+    exercise the flag seed the Provider from the workdir the same way.
+    ``workdir`` is retained in the signature only to key the canonical
+    Provider path (``_provider_key`` ignores the prefix, so the key is
+    stable whether or not a workdir is supplied).
+    """
+    path = (
+        Path(workdir) / "solve_data" / "stochastic_invest_method.csv"
+        if workdir is not None
+        else Path("solve_data") / "stochastic_invest_method.csv"
+    )
+    if not _provider_has_key(provider, path):
+        return False
+    df = _provider_read(provider, path)
+    if df is None or df.height == 0 or "method" not in df.columns:
+        return False
+    val = df["method"].cast(pl.Utf8, strict=False).to_list()[0]
+    return str(val).strip().lower() == "recourse" if val is not None else False
+
+
+# ─── Slice D (B, §4) — per-period parameter anchor-mapping ─────────────
+# Module-level holder for the (anchor, br) synthetic-branch pairs of the
+# ACTIVE solve.  Set fresh at the top of every Layer-4 apply boundary
+# (``apply_derived_c`` / ``apply_npv`` / ``apply_synthetic_invest_sets``)
+# to the recourse pairs, or ``None`` when the flag is off / deterministic.
+# Read by the three explicit-per-period producers (_resolve_per_period_lf,
+# _per_entity_period_cost, _ed_explicit_period_param) to inherit each
+# anchor's per-(e,d) value onto its branch periods (§4.1).  ``None`` ==
+# no-op == flag-off byte-parity.  The set-at-boundary-top invariant means
+# a stale value can never reach a producer: every boundary overwrites it
+# before any producer runs, and producers run nowhere else.
+_RECOURSE_ANCHOR_PAIRS: "pl.DataFrame | None" = None
+
+# Slice D α-1 — boundary-scoped Provider (+ its workdir, which the
+# canonical readers need to key the Provider path) for the walker's year/
+# factor arms.  Set (under recourse, else ``None``) at each Layer-4
+# boundary alongside the anchor pairs, so ``period_walk_iterator`` revives
+# the canonical ``p_years_d.csv`` / ``p_years_represented.csv`` arms
+# (correct branch-period years) WITHOUT threading ``provider``/``workdir``
+# through the ~12 NPV/edd walker-caller signatures.  ``None`` (flag-off /
+# deterministic) → arms dead → today's fill_null(0.0) walker behaviour →
+# the W6 pin.
+_RECOURSE_WALK_PROVIDER: "object | None" = None
+_RECOURSE_WALK_WORKDIR: "Path | None" = None
+
+
+def _recourse_walk_provider() -> "object | None":
+    """The active boundary's recourse walker Provider (α-1), or ``None``."""
+    return _RECOURSE_WALK_PROVIDER
+
+
+def _recourse_walk_workdir() -> "Path | None":
+    """The active boundary's recourse walker workdir (α-1), or ``None``."""
+    return _RECOURSE_WALK_WORKDIR
+
+
+def _recourse_branch_axis_present() -> bool:
+    """True iff the active boundary is recourse-active with a genuine branch
+    invest axis — i.e. the anchor-pairs holder was armed non-empty.  The
+    capability conjunct (§2), computed from the provider (branch-cluster
+    frames on ``flex_data`` are not populated until derived_g)."""
+    return _RECOURSE_ANCHOR_PAIRS is not None
+
+
+def _recourse_usable_ctx(ctx: "object | None") -> "object | None":
+    """Return *ctx* iff its ``period_branch`` frame is usable for branch
+    expansion (≥1 row with a NON-NULL anchor), else ``None``.
+
+    On the snapshot-reload path (``load_flextool`` off a dumped workdir)
+    the SolveContext's ``period_branch`` can carry all-null ``d_anchor``
+    values; the ctx-first arms would then silently produce an empty
+    anchor map (no fan) instead of falling through to the provider CSV
+    (which is correct on that path).  Sanitizing here keeps the recourse
+    helpers robust without touching the shared dispatch-side helper.
+    """
+    if ctx is None:
+        return None
+    pb_ctx = ctx.period_branch
+    if pb_ctx.height == 0:
+        return ctx  # empty is a legitimate "fall through" signal already
+    if pb_ctx["d_anchor"].null_count() == pb_ctx.height:
+        return None
+    return ctx
+
+
+def _build_recourse_anchor_pairs(
+    workdir: Path | None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> "pl.DataFrame | None":
+    """(anchor, br) pairs for in-use synthetic branches under recourse.
+
+    Returns ``None`` when the recourse flag is off (byte-parity default).
+    Mirrors :func:`_expand_branch_periods`' acquisition (ctx-first, then
+    provider/workdir ``period__branch`` + ``period_in_use``); keeps only
+    synthetic (``anchor != br``) branches that carry LP variables (``br``
+    in ``period_in_use``).
+    """
+    if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
+        return None
+    ctx = _recourse_usable_ctx(ctx)
+    pb_df: "pl.DataFrame | None" = None
+    in_use: set[str] = set()
+    if ctx is not None:
+        pb_ctx = ctx.period_branch
+        if pb_ctx.height > 0:
+            pb_df = pb_ctx.rename({"d_anchor": "anchor", "b": "br"})
+        piu_ctx = ctx.period_in_use
+        if piu_ctx.height > 0:
+            in_use = set(piu_ctx["d"].to_list())
+    if pb_df is None:
+        if workdir is None:
+            return None
+        p = Path(workdir) / "solve_data" / "period__branch.csv"
+        if not _provider_has_key(provider, p):
+            return None
+        pb_df = _provider_read(provider, p)
+        if pb_df.height == 0:
+            return None
+        if not in_use:
+            piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
+            if _provider_has_key(provider, piu_path):
+                piu = _provider_read(provider, piu_path)
+                if piu.height > 0:
+                    in_use = set(piu["period"].to_list())
+        pb_df = pb_df.rename({"period": "anchor", "branch": "br"})
+    out = (pb_df.select(
+                pl.col("anchor").cast(pl.Utf8),
+                pl.col("br").cast(pl.Utf8))
+               .filter(pl.col("anchor") != pl.col("br")))
+    if in_use:
+        out = out.filter(pl.col("br").is_in(list(in_use)))
+    out = out.unique()
+    return out if out.height > 0 else None
+
+
+def _reset_recourse_scope() -> None:
+    """Clear all three recourse process-globals to ``None``.
+
+    Defensive per-solve reset: called once at the top of the cascade
+    entry (:func:`.input._apply_db_overrides`) BEFORE any pass runs, so a
+    future per-period producer wired into an EARLIER cascade step cannot
+    inherit a stale anchor-pairs holder / walker Provider from a prior
+    flag-on solve in a chained flag-on→flag-off multi-solve.  The three
+    flag-aware Layer-4 boundaries still overwrite these unconditionally
+    (to ``None`` when flag-off), so this reset is belt-and-suspenders;
+    the invariant it guards is "no producer sees a global from a
+    different solve".
+    """
+    global _RECOURSE_ANCHOR_PAIRS, _RECOURSE_WALK_PROVIDER, \
+        _RECOURSE_WALK_WORKDIR
+    _RECOURSE_ANCHOR_PAIRS = None
+    _RECOURSE_WALK_PROVIDER = None
+    _RECOURSE_WALK_WORKDIR = None
+
+
+def _enter_recourse_anchor_scope(
+    workdir: Path | None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> None:
+    """Set :data:`_RECOURSE_ANCHOR_PAIRS` for the active solve.
+
+    Called at the top of each Layer-4 apply boundary BEFORE any explicit-
+    per-period producer OR walker runs.  Overwrites unconditionally (to
+    ``None`` when flag-off) so no stale value from a prior solve can leak.
+    Also arms the boundary-scoped walker Provider (α-1).
+    """
+    global _RECOURSE_ANCHOR_PAIRS, _RECOURSE_WALK_PROVIDER, \
+        _RECOURSE_WALK_WORKDIR
+    active = _recourse_invest_active(workdir, ctx=ctx, provider=provider)
+    _RECOURSE_WALK_PROVIDER = provider if active else None
+    _RECOURSE_WALK_WORKDIR = (
+        Path(workdir) if active and workdir is not None else None)
+    _RECOURSE_ANCHOR_PAIRS = (
+        _build_recourse_anchor_pairs(workdir, ctx=ctx, provider=provider)
+        if active else None)
+
+
+def _anchor_expand_explicit(explicit_lf: pl.LazyFrame) -> pl.LazyFrame:
+    """§4.1 — add branch rows inheriting each anchor's per-(e, d) value.
+
+    ``explicit_lf`` is an ``(e, d, <value…>)`` lazy frame keyed by REAL
+    anchor periods (any value-column name(s); all are preserved).  When
+    the recourse anchor-pairs holder is set, each
+    ``(e, anchor, v)`` row spawns ``(e, br, v)`` for every in-use branch
+    ``br`` of ``anchor``; a branch that already carries its OWN explicit
+    row keeps it (branch-native wins, via order-preserving dedupe).
+    Holder ``None`` (flag-off / deterministic) → returns the frame
+    unchanged (byte-parity).  Operates in Utf8 on ``d`` then restores the
+    original dtype.  The Utf8→Enum round-trip is lossless for anchor rows
+    by construction (their ``d`` arrived already typed as ``d_dtype``, so
+    each token is in-vocab), and every inherited branch (``br``) token is
+    covered by the 4.0.4 vocabulary splice; a nulled token therefore
+    signals a wiring bug and is hard-raised (mirroring
+    :func:`._derived_branch.d_leaf_lf`) rather than silently dropped.
+    """
+    pairs = _RECOURSE_ANCHOR_PAIRS
+    if pairs is None or pairs.height == 0:
+        return explicit_lf
+    d_dtype = explicit_lf.collect_schema().get("d")
+    base = explicit_lf.with_columns(pl.col("d").cast(pl.Utf8))
+    inherited = (base.join(pairs.lazy(),
+                              left_on="d", right_on="anchor", how="inner")
+                     .drop("d")
+                     .rename({"br": "d"})
+                     .select(base.collect_schema().names()))
+    combined = pl.concat([base, inherited], how="vertical_relaxed")
+    out = combined.unique(subset=["e", "d"], keep="first", maintain_order=True)
+    if d_dtype is not None and d_dtype != pl.Utf8:
+        # Restore the original (non-Utf8, i.e. Enum) ``d`` dtype.  A
+        # ``strict=False`` cast would SILENTLY null any token absent from
+        # the live ``d``-axis vocabulary; hard-raise instead so a splice
+        # gap surfaces loudly (never fires in valid runs — see docstring).
+        out_df = out.collect()
+        casted = out_df.with_columns(pl.col("d").cast(d_dtype, strict=False))
+        if casted["d"].null_count():
+            bad = sorted({v for v, c in zip(out_df["d"].to_list(),
+                                            casted["d"].to_list())
+                          if c is None})
+            raise ValueError(
+                f"_anchor_expand_explicit: axis-enum cast nulled period "
+                f"token(s) {bad} — the token is missing from the live "
+                "d-axis vocabulary (wiring bug; the 4.0.4 vocabulary splice "
+                "includes every continuation branch-period token)."
+            )
+        return casted.lazy()
+    return out
+
+
+def _has_branch_invest_axis(flex_data: "object | None") -> bool:
+    """Capability conjunct (Slice B §8, design §2): True iff the invest
+    axis actually carries synthetic branch members.
+
+    Reuses :func:`_stochastic_detect.is_genuinely_stochastic` — a branch
+    period enters ``period_invest`` iff it is a synthetic ``period__branch``
+    token that is also in ``period_in_use_set``.  Keeps the lineage filter
+    provably inert on any solve whose invest axis carries no branch member
+    even if the flag was authored (defense-in-depth behind Guard 1).
+    """
+    if flex_data is None:
+        return False
+    from flextool.engine_polars._stochastic_detect import (
+        is_genuinely_stochastic as _igs,
+    )
+    return _igs(flex_data)
+
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
 # Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
@@ -3256,7 +3527,9 @@ def _per_entity_period_cost(source: "InputSource",
             ).join(pi_lf, how="cross"))
     if not parts:
         return None
-    return pl.concat(parts).unique()
+    # Slice D §4 — anchor-map period-Map rows onto branch periods so the
+    # eea predicate keeps branch (e, d) pairs (no-op flag-off).
+    return _anchor_expand_explicit(pl.concat(parts).unique())
 
 
 # ---------------------------------------------------------------------------
@@ -3412,6 +3685,9 @@ def ed_invest_forbidden_no_investment_from_source(
         active_solve: str | None,
         workdir: Path | None,
         ed_invest: pl.DataFrame | None = None,  # noqa: ARG001 — kept for back-compat
+        *,
+        ctx: "SolveContext | None" = None,
+        provider: "object | None" = None,
         ) -> pl.DataFrame | None:
     """Audit §3.7 — ``ed_invest`` rows whose ``no_investment`` lifetime
     window has already ended.
@@ -3431,7 +3707,9 @@ def ed_invest_forbidden_no_investment_from_source(
       * ``e`` has ``lifetime_method == 'no_investment'``,
       * ``yr[d] >= life_sum(e)``.
     """
-    period_invest = _solve_periods(source, active_solve, "invest_periods")
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, ctx=ctx, provider=provider)
     if not period_invest:
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
@@ -3460,6 +3738,9 @@ def ed_invest_forbidden_no_investment_from_source(
 def ed_invest_set_from_source(source: "InputSource",
                                 active_solve: str | None,
                                 workdir: Path | None = None,
+                                *,
+                                ctx: "SolveContext | None" = None,
+                                provider: "object | None" = None,
                                 ) -> pl.DataFrame | None:
     """Compute the (entity, period) pairs where invest is allowed.
 
@@ -3479,7 +3760,9 @@ def ed_invest_set_from_source(source: "InputSource",
     ``invest_divest_sets.py:write_ed_invest_forbidden_no_investment``
     consumed by ``fix_v_invest_no_investment_eq`` (mod L3930).
     """
-    period_invest = _solve_periods(source, active_solve, "invest_periods")
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, ctx=ctx, provider=provider)
     if not period_invest:
         # Empty invest_periods → empty ed_invest (the dispatch-only solve case).
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
@@ -3521,6 +3804,10 @@ def ed_invest_set_from_source(source: "InputSource",
 
 def ed_divest_set_from_source(source: "InputSource",
                                 active_solve: str | None,
+                                workdir: Path | None = None,
+                                *,
+                                ctx: "SolveContext | None" = None,
+                                provider: "object | None" = None,
                                 ) -> pl.DataFrame | None:
     """Mirror of ``ed_invest_set`` for divest.  Algorithm
     (``invest_divest_sets.py:185-193``):
@@ -3529,7 +3816,9 @@ def ed_divest_set_from_source(source: "InputSource",
                        e ∈ entityDivest, d ∈ period_invest_of_solve,
                        (eead[e, d] != 0  OR  e has capacity constraint) }
     """
-    period_invest = _solve_periods(source, active_solve, "invest_periods")
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, ctx=ctx, provider=provider)
     if not period_invest:
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
@@ -3730,6 +4019,7 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
                                             workdir: Path | None = None,
                                             *,
                                             provider: "object | None" = None,
+                                            lineage: pl.DataFrame | None = None,
                                             ) -> pl.DataFrame | None:
     """Build the strict-lookback (e, d_invest, d) tuples used by the
     user-constraint LHS prebuilt-capacity term (mod L2885-2898).
@@ -3753,6 +4043,9 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
     new ``STRICT_LOOKBACK_*`` modes.  The previous eager
     ``for r in out.iter_rows`` lifetime gate is replaced with a fully
     lazy join + filter on the shared walker.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if ed_invest is None or ed_invest.height == 0:
         return pl.DataFrame(schema={
@@ -3778,7 +4071,8 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
     from ._derived_existing import edd_invest_lookback_set_lf
     ed_invest_lf = ed_invest.lazy().select("e", "d")
     return edd_invest_lookback_set_lf(
-        source, active_solve, ed_invest_lf, periods, workdir).collect()
+        source, active_solve, ed_invest_lf, periods, workdir,
+        lineage=lineage).collect()
 
 
 def edd_divest_active_from_source(source: "InputSource",
@@ -3786,11 +4080,23 @@ def edd_divest_active_from_source(source: "InputSource",
                                       pd_divest: pl.DataFrame | None,
                                       *,
                                       provider: "object | None" = None,
+                                      lineage: pl.DataFrame | None = None,
                                       ) -> pl.DataFrame | None:
     """Build the active-divest (p, d_divest, d) tuples — see audit §3.7.3.
 
     pd_divest ⊆ ed_divest with ``p ∈ process``; the active set further
     filters d_divest ≤ d using year ordering.
+
+    ``lineage`` — the one non-walker cross-period pair-former
+    (Slice B design §7.0, inventory #18): when not ``None``, the
+    shared :func:`._derived_walks._apply_lineage_filter` is applied to
+    the ``(d_divest, d)`` pairs with ``anchor_col="d_divest"``,
+    ``dall_col="d"``, under the same Slice A semi-join contract.  The
+    ``period_in_use`` list the filter tests membership against is the
+    function-local source-derived ``periods`` list below (NOT the
+    workdir-CSV PIU — this helper resolves its period domain from the
+    source only).  Always ``None`` until the recourse flag lands
+    (Slice C/D).
     """
     if pd_divest is None or pd_divest.height == 0:
         return pl.DataFrame(schema={
@@ -3816,11 +4122,22 @@ def edd_divest_active_from_source(source: "InputSource",
     pdd_lf = pd_divest.lazy().pipe(rename_to_axis, {"d": "d_divest"})
     yr_div = pyd_lf.pipe(rename_to_axis, {"d": "d_divest", "yr": "yr_divest"})
     yr_d = pyd_lf.rename({"yr": "yr"})
-    out = (pdd_lf
-              .join(period_lf, how="cross")
-              .join(yr_div, on="d_divest", how="inner")
-              .join(yr_d, on="d", how="inner")
-              .filter(pl.col("yr_divest") <= pl.col("yr"))
+    chain = (pdd_lf
+               .join(period_lf, how="cross")
+               .join(yr_div, on="d_divest", how="inner")
+               .join(yr_d, on="d", how="inner")
+               .filter(pl.col("yr_divest") <= pl.col("yr")))
+    if lineage is not None:
+        from ._derived_walks import (
+            _apply_lineage_filter,
+            _assert_lineage_castable,
+        )
+        d_dtype = chain.collect_schema().get("d", pl.Utf8)
+        _assert_lineage_castable(lineage, d_dtype)
+        chain = _apply_lineage_filter(chain, lineage, periods, d_dtype,
+                                      anchor_col="d_divest",
+                                      dall_col="d")
+    out = (chain
               .select("p", "d_divest", "d")
               .sort("p", "d_divest", "d")
               .collect())
@@ -4000,7 +4317,10 @@ def _ed_explicit_period_param(source: "InputSource", parameter_name: str
         return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
                                        "d": schema_dtype(_enums, "d"),
                                        "value": pl.Float64})
-    return pl.concat(parts).unique(subset=["e", "d"], keep="last")
+    # Slice D §4 — anchor-map explicit per-period cap rows onto branch
+    # periods (invest_max_period / cumulative_max_capacity); no-op flag-off.
+    return _anchor_expand_explicit(
+        pl.concat(parts).unique(subset=["e", "d"], keep="last"))
 
 
 def p_entity_max_units_from_source(source: "InputSource",
@@ -5278,6 +5598,37 @@ def apply_derived_c(
     dt_csv = getattr(flex_data, "dt", None)
     sd_csv = getattr(flex_data, "p_step_duration", None)
 
+    # Slice D — resolve the per-scenario stochastic-invest flag once and
+    # stamp it on FlexData (survives the region-filter dataclasses.replace)
+    # so the model layer reads ``d.recourse_invest`` without a workdir touch.
+    flex_data.recourse_invest = _recourse_invest_active(
+        workdir, ctx=ctx, provider=provider)
+    # Slice D §4 — arm the per-period anchor-map scope for the invest/
+    # divest set predicates + cap readers built below (no-op flag-off).
+    _enter_recourse_anchor_scope(workdir, ctx=ctx, provider=provider)
+    # Slice D §8 (E) — the scenario-lineage frame for the edd builders.
+    # Active only under recourse AND a genuine branch invest axis — the
+    # anchor-pairs holder just armed above is exactly that conjunct
+    # (non-None ⟺ recourse-active AND synthetic branches in PIU).  Build
+    # the lineage frame ON-DEMAND from the provider (``dd_same_scenario_df``
+    # is a standalone builder): ``flex_data.dd_same_scenario`` is not
+    # populated until ``apply_branch_cluster`` in derived_g, which runs
+    # AFTER this boundary.  Hoist the precondition check ABOVE the edd
+    # try/except blocks (§6) so a LineageFilterError is loud, not swallowed.
+    # ``None`` flag-off → edd builders keep today's unfiltered behaviour.
+    if _RECOURSE_ANCHOR_PAIRS is not None:
+        from flextool.engine_polars._derived_branch import (
+            assert_recourse_npv_preconditions as _assert_recourse,
+            dd_same_scenario_df as _dd_same_scenario_df,
+        )
+        _lin_ctx = _recourse_usable_ctx(ctx)
+        _c_lineage = _dd_same_scenario_df(
+            workdir, source, active_solve, ctx=_lin_ctx, provider=provider)
+        _assert_recourse(workdir, source, active_solve,
+                         ctx=_lin_ctx, provider=provider)
+    else:
+        _c_lineage = None
+
     # Δ.12b — assignment is unconditional except for fields with
     # documented helper-coverage gaps (multi-year cascade extends
     # apply_derived_a's path; fall-throughs noted inline).
@@ -5359,11 +5710,13 @@ def apply_derived_c(
     # ─── §3.7 invest / divest ─────────────────────────────────────────
     # Δ.12b — set frames (None or non-empty); keep height>0 as a
     # structural filter to preserve the SET-frame contract.
-    ed_inv_db = ed_invest_set_from_source(source, active_solve, workdir)
+    ed_inv_db = ed_invest_set_from_source(
+        source, active_solve, workdir, ctx=ctx, provider=provider)
     if ed_inv_db is not None and ed_inv_db.height > 0:
         flex_data.ed_invest_set = ed_inv_db
 
-    ed_div_db = ed_divest_set_from_source(source, active_solve)
+    ed_div_db = ed_divest_set_from_source(
+        source, active_solve, workdir, ctx=ctx, provider=provider)
     if ed_div_db is not None and ed_div_db.height > 0:
         flex_data.ed_divest_set = ed_div_db
 
@@ -5423,7 +5776,8 @@ def apply_derived_c(
         ed_inv_db if ed_inv_db is not None
         else getattr(flex_data, "ed_invest_set", None))
     forbidden_db = ed_invest_forbidden_no_investment_from_source(
-        source, active_solve, workdir, ed_invest_for_forbidden)
+        source, active_solve, workdir, ed_invest_for_forbidden,
+        ctx=ctx, provider=provider)
     if forbidden_db is not None:
         flex_data.ed_invest_forbidden_no_investment = (
             forbidden_db if forbidden_db.height > 0 else None)
@@ -5457,7 +5811,10 @@ def apply_derived_c(
                    else getattr(flex_data, "ed_invest_set", None)
     try:
         eil_db = edd_invest_lookback_set_from_source(
-            source, active_solve, ed_inv_used, workdir)
+            source, active_solve, ed_inv_used, workdir,
+            provider=provider, lineage=_c_lineage)
+    except LineageFilterError:
+        raise
     except Exception:
         eil_db = None
     if eil_db is not None and eil_db.height > 0:
@@ -5477,7 +5834,10 @@ def apply_derived_c(
         try:
             edd_inv_db = _edd_invest_lf(
                 source, active_solve, ed_inv_used.lazy(),
-                period_with_history, period_in_use, workdir).collect()
+                period_with_history, period_in_use, workdir,
+                lineage=_c_lineage).collect()
+        except LineageFilterError:
+            raise
         except Exception:
             edd_inv_db = None
         if edd_inv_db is not None and edd_inv_db.height > 0:
@@ -5486,7 +5846,10 @@ def apply_derived_c(
     pd_div_used = getattr(flex_data, "pd_divest_set", None)
     try:
         edda_db = edd_divest_active_from_source(
-            source, active_solve, pd_div_used)
+            source, active_solve, pd_div_used,
+            provider=provider, lineage=_c_lineage)
+    except LineageFilterError:
+        raise
     except Exception:
         edda_db = None
     if edda_db is not None and edda_db.height > 0:
@@ -6087,6 +6450,34 @@ def _expand_branch_periods(period_order: list[str],
             out.append(br)
             seen.add(br)
     return out
+
+
+def _expand_invest_branch_periods(period_invest: "list[str] | None",
+                                     workdir: Path | None,
+                                     *,
+                                     ctx: "SolveContext | None" = None,
+                                     provider: "object | None" = None,
+                                     ) -> "list[str] | None":
+    """Slice D (A, §3.1) — invest-side mirror of
+    :func:`_expand_branch_periods`.
+
+    When the recourse flag is active, append each real invest period's
+    synthetic branch members (filtered to ``period_in_use``) after the
+    anchor, so ``period_invest`` carries ``{p_k, p_k_b, …}`` — the axis
+    on which ``pd/nd_invest_set`` (and thus ``v_invest``) get their
+    columns.  Flag-off (or empty axis) → returns ``period_invest``
+    unchanged (byte-parity).  Reuses — does not fork — the dispatch-side
+    helper so invest and dispatch axes stay consistent.
+    """
+    if not period_invest:
+        return period_invest
+    if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
+        return period_invest
+    # Sanitize the ctx (snapshot-reload all-null anchors → fall through
+    # to the provider CSV arm inside the dispatch helper).
+    return _expand_branch_periods(list(period_invest), workdir,
+                                     ctx=_recourse_usable_ctx(ctx),
+                                     provider=provider)
 
 
 def _dt_period_active_steps_from_workdir(
@@ -8131,6 +8522,8 @@ def _solve_inflation_inputs(source: "InputSource") -> tuple[float, float, float]
 def _years_for_period_from_source(source: "InputSource",
                                     active_solve: str | None,
                                     period_set: list[str],
+                                    *,
+                                    provider: "object | None" = None,
                                     ) -> dict[str, list[tuple[str, float]]]:
     """Derive the per-period ``(year_label, width)`` list emitted into
     ``solve_data/p_years_represented.csv`` (matches the
@@ -8153,6 +8546,27 @@ def _years_for_period_from_source(source: "InputSource",
     parameter is absent or active_solve has no rows, default to one row
     per period in the order supplied (width=1, year_label = "0", "1", …).
     """
+    # Slice D α-1 (§5.1): under recourse the emitted
+    # ``p_years_represented.csv`` already byte-copies fan-member year rows
+    # (``derive_years_represented`` branch loop), so read it directly to
+    # give branch periods their anchor's (year_label, width) rows.  The
+    # caller forwards ``provider`` ONLY on the recourse walker arm; every
+    # other caller passes ``provider=None`` so this arm stays dead and the
+    # source path below is byte-identical (flag-off parity).
+    if provider is not None:
+        p = Path("solve_data") / "p_years_represented.csv"
+        if _provider_has_key(provider, p):
+            df = _provider_read(provider, p)
+            need = {"period", "years_from_solve", "p_years_represented"}
+            if df.height > 0 and need.issubset(df.columns):
+                canon: dict[str, list[tuple[str, float]]] = {}
+                for r in df.iter_rows(named=True):
+                    canon.setdefault(str(r["period"]), []).append(
+                        (str(r["years_from_solve"]),
+                         float(r["p_years_represented"])))
+                if canon:
+                    return canon
+
     yr_p = _try_param(source, "solve", "years_represented")
     out: dict[str, list[tuple[str, float]]] = {}
     if active_solve is None or yr_p is None or "period" not in yr_p.columns:
@@ -8819,6 +9233,7 @@ def ed_entity_annual_family_from_source(source: "InputSource",
                                             ed_divest: pl.DataFrame | None,
                                             workdir: Path | None = None,
                                             *,
+                                            ctx: "SolveContext | None" = None,
                                             provider: "object | None" = None,
                                             ) -> dict[str, "Param | None"]:
     """Compute ``ed_entity_annual``, ``ed_entity_annual_discounted``,
@@ -8832,7 +9247,9 @@ def ed_entity_annual_family_from_source(source: "InputSource",
     """
     factors = _inflation_yearly_from_source(source, active_solve, workdir)
     period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
-    period_invest = _solve_periods(source, active_solve, "invest_periods") or []
+    period_invest = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"),
+        workdir, ctx=ctx, provider=provider) or []
 
     cost_invest = _per_entity_period_value(source, "invest_cost")
     cost_invest_scalar = _per_entity_scalar(source, "invest_cost")
@@ -9772,13 +10189,17 @@ def apply_synthetic_invest_sets(flex_data: object,
     (deferred per the Gap D dispatch).
     """
     base, anchor = synthetic
+    # Slice D §4 — arm the per-period anchor-map scope (no-op flag-off).
+    _enter_recourse_anchor_scope(workdir, provider=provider)
     # ed_invest_set / ed_divest_set — eager helpers use _solve_periods
     # which is synthetic-aware (Δ.19); pass the synthetic name through.
     # Γ.6.D forbidden filter is applied internally by the helper.
-    ed_inv = ed_invest_set_from_source(source, active_solve, workdir=workdir)
+    ed_inv = ed_invest_set_from_source(
+        source, active_solve, workdir=workdir, provider=provider)
     if ed_inv is not None and ed_inv.height > 0:
         flex_data.ed_invest_set = ed_inv
-    ed_div = ed_divest_set_from_source(source, active_solve)
+    ed_div = ed_divest_set_from_source(
+        source, active_solve, workdir, provider=provider)
     if ed_div is not None and ed_div.height > 0:
         flex_data.ed_divest_set = ed_div
 
@@ -9786,7 +10207,7 @@ def apply_synthetic_invest_sets(flex_data: object,
     # gate; consumed by apply_existing_chain.
     try:
         forbidden = ed_invest_forbidden_no_investment_from_source(
-            source, active_solve, workdir, ed_inv)
+            source, active_solve, workdir, ed_inv, provider=provider)
     except Exception:  # pragma: no cover — defensive
         forbidden = None
     if forbidden is not None and forbidden.height > 0:
@@ -9826,10 +10247,26 @@ def apply_synthetic_invest_sets(flex_data: object,
         period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
         period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
+        # Slice D §8 — synthetic edd lineage filter (gated + hoisted check).
+        # Build on-demand from the provider (branch-cluster runs later); the
+        # anchor-pairs holder armed at the top of this fn is the conjunct.
+        if _RECOURSE_ANCHOR_PAIRS is not None:
+            from flextool.engine_polars._derived_branch import (
+                assert_recourse_npv_preconditions as _assert_recourse,
+                dd_same_scenario_df as _dd_same_scenario_df,
+            )
+            _s_lineage = _dd_same_scenario_df(
+                workdir, source, active_solve, provider=provider)
+            _assert_recourse(workdir, source, active_solve, provider=provider)
+        else:
+            _s_lineage = None
         try:
             edd_inv = _edd_invest_lf(
                 source, active_solve, ed_inv.lazy(),
-                period_with_history, period_in_use, workdir).collect()
+                period_with_history, period_in_use, workdir,
+                lineage=_s_lineage).collect()
+        except LineageFilterError:
+            raise
         except Exception:  # pragma: no cover — defensive
             edd_inv = None
         if edd_inv is not None and edd_inv.height > 0:

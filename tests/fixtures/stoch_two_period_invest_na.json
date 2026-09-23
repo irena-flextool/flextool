@@ -1272,20 +1272,6 @@
       ]
     ],
     [
-      "stochastic_invest_methods",
-      [
-        "Im5vbmUi",
-        "str"
-      ]
-    ],
-    [
-      "stochastic_invest_methods",
-      [
-        "InJlY291cnNlIg==",
-        "str"
-      ]
-    ],
-    [
       "storage_binding_methods",
       [
         "ImJpbmRfZm9yd2FyZF9vbmx5Ig==",
@@ -1506,6 +1492,20 @@
       "yes_no",
       [
         "InllcyI=",
+        "str"
+      ]
+    ],
+    [
+      "stochastic_invest_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "stochastic_invest_methods",
+      [
+        "InJlY291cnNlIg==",
         "str"
       ]
     ]
@@ -2527,7 +2527,7 @@
       "model",
       "version",
       [
-        "NzA=",
+        "Njk=",
         "float"
       ],
       null,
@@ -3438,17 +3438,6 @@
     ],
     [
       "solve",
-      "stochastic_invest_method",
-      [
-        "Im5vbmUi",
-        "str"
-      ],
-      "stochastic_invest_methods",
-      "How stochastic branches participate in investment. 'none' (default) keeps investment realized-only: stochastic branches never enter the invest axis (v_invest stays on realized periods), byte-identical to prior behaviour. 'recourse' enables two-stage stochastic investment with recourse \u2014 shared (non-anticipative) investment before the branch point plus per-branch recourse investment at and after the branching period, with probability-weighted investment costs. Reserved for future expected-value and nested-tree modes.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "timeline_hole_multiplier",
       [
         "MS4w",
@@ -4128,6 +4117,17 @@
       null,
       "[per unit  / minute] Maximum ramp up speed. Constant.",
       "tech_advanced"
+    ],
+    [
+      "solve",
+      "stochastic_invest_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "stochastic_invest_methods",
+      "How stochastic branches participate in investment (none/recourse).",
+      "solve_advanced"
     ]
   ],
   "parameter_types": [
@@ -6472,6 +6472,96 @@
         "map"
       ],
       "system"
+    ],
+    [
+      "solve",
+      "2day_dispatch",
+      "stochastic_invest_method",
+      [
+        "InJlY291cnNlIg==",
+        "str"
+      ],
+      "recourse_na"
+    ],
+    [
+      "solve",
+      "2day_dispatch",
+      "invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwZXJpb2QxIl19",
+        "array"
+      ],
+      "recourse_na"
+    ],
+    [
+      "solve",
+      "2day_dispatch",
+      "realized_invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwZXJpb2QxIl19",
+        "array"
+      ],
+      "recourse_na"
+    ],
+    [
+      "solve",
+      "2day_dispatch",
+      "years_represented",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicGVyaW9kMSIsIDEuMF1dfQ==",
+        "map"
+      ],
+      "recourse_na"
+    ],
+    [
+      "node",
+      "hydro_reservoir",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "recourse_na"
+    ],
+    [
+      "node",
+      "hydro_reservoir",
+      "invest_cost",
+      [
+        "MS4w",
+        "float"
+      ],
+      "recourse_na"
+    ],
+    [
+      "node",
+      "hydro_reservoir",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "recourse_na"
+    ],
+    [
+      "node",
+      "hydro_reservoir",
+      "lifetime",
+      [
+        "MS4w",
+        "float"
+      ],
+      "recourse_na"
+    ],
+    [
+      "node",
+      "hydro_reservoir",
+      "invest_max_total",
+      [
+        "MTAwMDAwLjA=",
+        "float"
+      ],
+      "recourse_na"
     ]
   ],
   "alternatives": [
@@ -6502,6 +6592,10 @@
     [
       "system",
       ""
+    ],
+    [
+      "recourse_na",
+      "Recourse invest on the stochastic storage node"
     ]
   ],
   "scenarios": [
@@ -6519,6 +6613,11 @@
       "2_day_stochastic_dispatch_no_storage",
       false,
       null
+    ],
+    [
+      "recourse_na",
+      false,
+      "Variant B \u2014 cross-scenario coupling (stochastic storage node)"
     ]
   ],
   "scenario_alternatives": [
@@ -6585,6 +6684,31 @@
     [
       "2_day_stochastic_dispatch_no_storage",
       "no_storage_override",
+      null
+    ],
+    [
+      "recourse_na",
+      "base",
+      "init"
+    ],
+    [
+      "recourse_na",
+      "init",
+      "system"
+    ],
+    [
+      "recourse_na",
+      "system",
+      "2day"
+    ],
+    [
+      "recourse_na",
+      "2day",
+      "recourse_na"
+    ],
+    [
+      "recourse_na",
+      "recourse_na",
       null
     ]
   ]
