@@ -217,6 +217,17 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "minFlow_minload_linear", "minFlow_minload_integer",
     "minimum_uptime_linear", "minimum_uptime_integer",
     "minimum_downtime_linear", "minimum_downtime_integer",
+    # Slice D per-path total caps — model.py ``_emit_entity_total_cap``
+    # and _cumulative_invest.py ``_emit_group_total_divest_cap`` pass the
+    # constraint name as a variable (legacy vs ``…_path``), so the
+    # literal-grep test above cannot see them.  Pin both the legacy and
+    # the ``_path`` shapes behaviorally (design §7.3/§14).
+    "maxInvest_entity_total", "maxInvest_entity_total_n",
+    "maxDivest_entity_total", "maxDivest_entity_total_n",
+    "maxInvest_entity_total_path", "maxInvest_entity_total_path_n",
+    "maxDivest_entity_total_path", "maxDivest_entity_total_path_n",
+    "maxDivestGroup_entity_total_path_p",
+    "maxDivestGroup_entity_total_path_n",
 ]
 
 

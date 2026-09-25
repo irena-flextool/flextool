@@ -80,6 +80,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - Stochastic parameters:
 
     - *stochastic_branches*: 4D-map to set up the stochastic branches, their weights and to choose which of them are realized. See 'How to use stochastics' for more information.
+    - *stochastic_invest_method*: `none` (default) or `recourse`. `none` makes a single shared investment plan across all branches. `recourse` gives per-scenario (wait-and-see) investment: every branch invests on its own data at and after the branching period, with probability-weighted investment costs and per-scenario investment limits. Non-realized branch investments are output only under `model.output_horizon`. Incompatible with Benders decomposition. See 'How to use stochastics' for the interpretation caveats.
   
   - For commercial solvers:
 

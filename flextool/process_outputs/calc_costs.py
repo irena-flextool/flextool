@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
@@ -216,6 +217,36 @@ def compute_costs(par, s, v, r) -> None:
     # column — direct indexing is safe.
     r.cost_entity_fixed_invested = (v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]))
     r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
+
+    # --- Slice D (I-a, §11.3): probability-weight the invest/divest cost ---
+    # Under ``recourse`` the LP objective weights every invest/divest
+    # annuity + lifetime-fixed contribution by ``pd_branch_weight[period]``
+    # (§9.1).  The post-hoc recompute above uses the raw annuity, so the
+    # reported cost would over-state the realized invest by ``1/w_R``.
+    # Multiply each invest/divest cost row by its period's branch weight so
+    # the cost breakdown reconciles to the reported (expected) objective.
+    # Gated on the recourse flag — absent / off → factor 1.0 (byte-parity).
+    if getattr(par, "recourse_invest", False):
+        _wser = getattr(par, "pd_branch_weight", None)
+        _wmap: dict[str, float] = {}
+        if _wser is not None:
+            for _idx, _val in _wser.items():
+                _period = _idx[-1] if isinstance(_idx, tuple) else _idx
+                _wmap[str(_period)] = float(_val)
+
+        def _weight_by_branch(df):
+            if df is None or df.empty:
+                return df
+            _periods = df.index.get_level_values('period')
+            _factors = np.array([_wmap.get(str(_p), 1.0) for _p in _periods])
+            return df.mul(_factors, axis=0)
+
+        r.cost_entity_invest_d = _weight_by_branch(r.cost_entity_invest_d)
+        r.cost_entity_divest_d = _weight_by_branch(r.cost_entity_divest_d)
+        r.cost_entity_fixed_invested = _weight_by_branch(
+            r.cost_entity_fixed_invested)
+        r.cost_entity_fixed_divested = _weight_by_branch(
+            r.cost_entity_fixed_divested)
 
     # --- Aggregate operational costs (depends on r.costPenalty_* from compute_slacks) ---
     r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) -

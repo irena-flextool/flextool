@@ -810,6 +810,7 @@ _META_FILES_TO_COPY: tuple[tuple[str, str], ...] = (
     ("solve_data", "p_nested_model.csv"),
     ("solve_data", "fix_storage_timesteps.csv"),
     ("solve_data", "realized_invest_periods_of_current_solve.csv"),
+    ("solve_data", "stochastic_invest_method.csv"),
     ("solve_data", "realized_dispatch.csv"),
     ("solve_data", "p_entity_pre_existing.csv"),
     ("solve_data", "entity.csv"),
