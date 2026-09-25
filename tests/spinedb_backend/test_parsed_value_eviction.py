@@ -89,15 +89,21 @@ def test_mapped_item_parsed_value_contract() -> None:
 
 
 @pytest.fixture(scope="module")
-def backend_with_index() -> SpineDBBackend:
+def backend_with_index(examples_db_path) -> SpineDBBackend:
     """A backend whose ``_parameter_value_index`` is populated.
 
     Constructed unscoped (no scenario filter) because the SpineDBBackend's
     in-constructor scenario_filter path has a documented limitation around
     session binding that is orthogonal to Track A — the eviction logic
     fires regardless of scenario state.
+
+    ``examples_db_path`` (tests/conftest.py) is a per-worker ISOLATED copy
+    of ``templates/examples.sqlite`` (byte-identical) rather than the
+    shared checked-in file, so concurrent xdist workers cannot deadlock on
+    a sqlite lock (CLAUDE.md invariant #3).  The session-scoped fixture is
+    a valid dependency for this module-scoped one.
     """
-    b = SpineDBBackend(str(EXAMPLES_DB))
+    b = SpineDBBackend(str(examples_db_path))
     yield b
     b.close()
 

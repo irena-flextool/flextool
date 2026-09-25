@@ -594,6 +594,50 @@ def case14_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     return url
 
 
+@pytest.fixture(scope="session")
+def examples_db_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Session-scoped ISOLATED copy of ``templates/examples.sqlite``.
+
+    Several test files read the checked-in ``templates/examples.sqlite``
+    directly.  Under ``-n auto --dist loadfile`` those files run on
+    DIFFERENT xdist workers, so multiple worker PROCESSES open the SAME
+    sqlite file concurrently.  On Windows, sqlite lock contention on a
+    shared file can block indefinitely, and ``pytest-timeout`` (900s,
+    ``thread`` method) cannot interrupt a native lock wait — the job then
+    hangs until GitHub's 6h cap cancels it (observed:
+    ``test_parameter_group_coverage`` hung ~3h48m on windows-3.12).  It
+    also violates CLAUDE.md invariant #3 (tests must not read a
+    checked-in ``.sqlite``).
+
+    This fixture copies the materialized template to a per-worker temp
+    path so no two workers ever touch the same file.  Session scope +
+    ``tmp_path_factory`` yields exactly one copy per xdist worker (the
+    factory's basetemp is made unique per worker by pytest-xdist), which
+    removes all cross-worker contention while copying only once per
+    worker; a copy is byte-identical, so every reader's assertions are
+    unchanged.  Session scope also lets module-scoped consumer fixtures
+    depend on it without a ScopeMismatch.
+    """
+    src = REPO_ROOT / "templates" / "examples.sqlite"
+    if not src.is_file():
+        # pytest_configure normally materializes this from JSON; be
+        # defensive in case a caller invokes the fixture without that
+        # hook, or the file was removed mid-session.
+        from flextool.update_flextool.canonical_databases import materialize
+        materialize(overwrite=False)
+    if not src.is_file():
+        pytest.skip(f"templates/examples.sqlite not available at {src}")
+    dest = tmp_path_factory.mktemp("examples_db_copy") / "examples.sqlite"
+    shutil.copy(src, dest)
+    return dest
+
+
+@pytest.fixture(scope="session")
+def examples_db_url(examples_db_path: Path) -> str:
+    """SQLite URL for the isolated :func:`examples_db_path` copy."""
+    return f"sqlite:///{examples_db_path}"
+
+
 # Map scenarios.yaml ``db_fixture`` values to fixture names — kept in
 # conftest so adding a new fixture requires touching exactly two
 # places: the fixture definition above and this map.
