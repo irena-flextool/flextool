@@ -476,9 +476,33 @@ def commissioning_year_lf(source: "InputSource",
                      & (pl.col("yr_c") != pl.col("yr_o")))
              .select("e", "d", "yr_c"))
 
-    if out.collect().height == 0:
+    out_df = out.collect()
+    if out_df.height == 0:
         return None
-    return out
+    return out_df.lazy()
+
+
+def _construction_lag_configured(source: "InputSource") -> bool:
+    """True when some entity carries a non-default (> 0)
+    ``construction_lead_time`` — i.e. the model genuinely configures a
+    commissioning lag (Slice H MINOR-3).
+
+    Used to decide whether a :func:`commissioning_year_lf` failure must be
+    LOUD (a lag-configured model → surface the bug rather than silently
+    solve the wrong, unlagged model) or is harmless (no lag anywhere → the
+    helper legitimately returns ``None`` and the walk keeps ``yr_d``, so a
+    swallow-to-``None`` is byte-parity-safe).  Deliberately conservative:
+    any ``construction_lead_time > 0`` counts, even paired with an explicit
+    ``immediate`` method, so a real misconfiguration is never masked.
+    """
+    try:
+        lead = _per_entity_param_lf(source, "construction_lead_time")
+        return bool(
+            lead.select((pl.col("value") > 0.0).any().alias("has"))
+                .collect()
+                .item())
+    except Exception:  # pragma: no cover — defensive: absence == no lag
+        return False
 
 
 def assert_no_forced_out_of_horizon_commission(

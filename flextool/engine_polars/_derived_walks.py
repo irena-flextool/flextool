@@ -392,7 +392,10 @@ def period_walk_iterator(
                                 .select(pl.col("yr_c").is_not_null().sum())
                                 .collect().item())
             if post_survivors == 0:
-                raise ValueError(
+                from flextool.engine_polars._solve_state import (
+                    CommissioningLagError,
+                )
+                raise CommissioningLagError(
                     "commission_lf join produced no surviving lag rows "
                     "despite a non-empty pre-cast key overlap — dtype or "
                     "calendar desync (see Slice H design §2.5 F3)")

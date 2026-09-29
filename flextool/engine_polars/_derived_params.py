@@ -55,7 +55,7 @@ from ._axis_enums import (
     schema_dtype,
 )
 from ._emit_provider_io import _provider_key
-from ._solve_state import LineageFilterError
+from ._solve_state import CommissioningLagError, LineageFilterError
 from ._param_shapes import (
     broadcast_to_period_time,
     promote_param_to_dt,
@@ -5575,6 +5575,50 @@ def _set_eq_sorted(a: pl.DataFrame | None,
     return a.sort(sk).equals(b.sort(sk))
 
 
+def _build_commission_lf(source: "InputSource",
+                             active_solve: str | None,
+                             ed_lf: "pl.LazyFrame",
+                             period_in_use,
+                             workdir: "Path | None",
+                             ) -> "pl.LazyFrame | None":
+    """Slice H — build the commissioning-year frame, surfacing failures.
+
+    Shared by :func:`apply_derived_c` and
+    :func:`apply_synthetic_invest_sets` (both thread the result into the
+    availability walk).  Returns the ``[e, d, yr_c]`` lag frame, or ``None``
+    when there are no in-use periods / no entity has a lag-active method.
+
+    A :class:`CommissioningLagError` from the helper propagates unchanged.
+    Any OTHER helper failure is swallowed to ``None`` ONLY when the model
+    configures no construction lead time (``construction_lead_time`` all
+    ``<= 0`` -> the helper legitimately returns ``None`` -> byte-parity for
+    existing models).  On a genuinely lag-configured model the failure is
+    re-raised as :class:`CommissioningLagError` so a real misconfiguration
+    is never masked into a silently-unlagged (byte-parity-looking but
+    wrong) solve (Slice H MINOR-3).
+    """
+    if not period_in_use:
+        return None
+    from flextool.engine_polars._derived_existing import (
+        _construction_lag_configured as _lag_configured,
+        commissioning_year_lf as _commissioning_year_lf,
+    )
+    try:
+        return _commissioning_year_lf(
+            source, active_solve, ed_lf, list(period_in_use),
+            workdir=workdir)
+    except CommissioningLagError:
+        raise
+    except Exception as exc:
+        if _lag_configured(source):
+            raise CommissioningLagError(
+                "commissioning_year_lf failed on a model with a configured "
+                "construction_lead_time (> 0); refusing to silently solve "
+                "the unlagged model (Slice H MINOR-3)."
+            ) from exc
+        return None
+
+
 def apply_derived_c(
     flex_data: object,
     source: "InputSource",
@@ -5824,17 +5868,13 @@ def apply_derived_c(
     if ed_inv_used is not None and ed_inv_used.height > 0 and _c_period_in_use:
         from flextool.engine_polars._derived_existing import (
             assert_no_forced_out_of_horizon_commission as _assert_no_forced_ooh,
-            commissioning_year_lf as _commissioning_year_lf,
         )
-        try:
-            commission_lf = _commissioning_year_lf(
-                source, active_solve,
-                ed_inv_used.lazy().select("e", "d"),
-                list(_c_period_in_use), workdir=workdir)
-        except Exception:
-            commission_lf = None
-        # [F5] Surface a forced out-of-horizon order as a config error —
-        # OUTSIDE the swallow above so it is not silenced.
+        # [MINOR-3] Failures on a lag-configured model surface as a
+        # CommissioningLagError (never a silent unlagged solve).
+        commission_lf = _build_commission_lf(
+            source, active_solve, ed_inv_used.lazy().select("e", "d"),
+            _c_period_in_use, workdir)
+        # [F5] Surface a forced out-of-horizon order as a config error.
         _assert_no_forced_ooh(source, commission_lf)
 
     try:
@@ -5842,7 +5882,7 @@ def apply_derived_c(
             source, active_solve, ed_inv_used, workdir,
             provider=provider, lineage=_c_lineage,
             commission_lf=commission_lf)
-    except LineageFilterError:
+    except (LineageFilterError, CommissioningLagError):
         raise
     except Exception:
         eil_db = None
@@ -5864,7 +5904,7 @@ def apply_derived_c(
                 source, active_solve, ed_inv_used.lazy(),
                 period_with_history, period_in_use, workdir,
                 lineage=_c_lineage, commission_lf=commission_lf).collect()
-        except LineageFilterError:
+        except (LineageFilterError, CommissioningLagError):
             raise
         except Exception:
             edd_inv_db = None
@@ -10298,17 +10338,19 @@ def apply_synthetic_invest_sets(flex_data: object,
         # (deterministic lag applies to every solve).  provider is left to
         # the helper's [F2] mirror (matching the walk, provider=None); the
         # per-sub-solve anchor scope armed at the top of this fn feeds it.
-        commission_lf = None
-        if period_in_use:
+        # [MINOR-3] Failures on a lag-configured model surface loud.
+        commission_lf = _build_commission_lf(
+            source, active_solve, ed_inv.lazy().select("e", "d"),
+            period_in_use, workdir)
+        # [MINOR-2/F5] Mirror apply_derived_c: the synthetic invest path
+        # also threads commission_lf into the availability walk, so a forced
+        # next_seam order with +inf commissioning must be caught here too
+        # (this path may run without apply_derived_c preceding).
+        if commission_lf is not None:
             from flextool.engine_polars._derived_existing import (
-                commissioning_year_lf as _commissioning_year_lf,
+                assert_no_forced_out_of_horizon_commission as _assert_no_forced_ooh,
             )
-            try:
-                commission_lf = _commissioning_year_lf(
-                    source, active_solve, ed_inv.lazy().select("e", "d"),
-                    list(period_in_use), workdir=workdir)
-            except Exception:  # pragma: no cover — defensive
-                commission_lf = None
+            _assert_no_forced_ooh(source, commission_lf)
         # Slice D §8 — synthetic edd lineage filter (gated + hoisted check).
         # Build on-demand from the provider (branch-cluster runs later); the
         # anchor-pairs holder armed at the top of this fn is the conjunct.
@@ -10327,7 +10369,7 @@ def apply_synthetic_invest_sets(flex_data: object,
                 source, active_solve, ed_inv.lazy(),
                 period_with_history, period_in_use, workdir,
                 lineage=_s_lineage, commission_lf=commission_lf).collect()
-        except LineageFilterError:
+        except (LineageFilterError, CommissioningLagError):
             raise
         except Exception:  # pragma: no cover — defensive
             edd_inv = None
