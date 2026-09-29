@@ -1171,20 +1171,19 @@ def _read_invest_tie_periods(
     """Resolve the v72 invest-NA window (the periods to tie) for this solve.
 
     Returns ``None`` when the window is unset (no
-    ``pd_non_anticipativity_invest_periods.csv`` was emitted and ctx
-    carries nothing) — the byte-parity legacy path.  Returns a
-    ``frozenset`` of period tokens otherwise (possibly empty, though the
-    emitter only writes the CSV for a non-empty window).
+    ``pd_non_anticipativity_invest_periods.csv`` was emitted) — the
+    byte-parity legacy path.  Returns a ``frozenset`` of period tokens
+    otherwise (possibly empty, though the emitter only writes the CSV
+    for a non-empty window).
 
-    ctx-first (``SolveContext.non_anticipativity_invest_periods`` — a
-    list of period tokens or ``(p, p)`` tuples), then the per-solve CSV
-    materialised by ``_emit_per_solve.emit_per_solve_sets``.
+    The per-solve CSV materialised by
+    ``_emit_per_solve.emit_per_solve_sets`` is authoritative and requires
+    a ``provider``.  The ``ctx`` argument is accepted for signature parity
+    with sibling readers but is deliberately NOT a source for this window:
+    ``SolveConfig.non_anticipativity_invest_periods`` is a
+    ``{solve: [...]}`` mapping, so reading it off ctx would silently
+    iterate solve-name keys — the CSV avoids that footgun.
     """
-    if ctx is not None:
-        w = getattr(ctx, "non_anticipativity_invest_periods", None)
-        if w is not None:
-            return frozenset(
-                str(p[0] if isinstance(p, (tuple, list)) else p) for p in w)
     if workdir is None:
         return None
     p = Path(workdir) / "solve_data" / "pd_non_anticipativity_invest_periods.csv"
