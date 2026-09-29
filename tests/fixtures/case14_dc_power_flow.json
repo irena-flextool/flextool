@@ -1659,6 +1659,34 @@
       ]
     ],
     [
+      "construction_lead_time_methods",
+      [
+        "ImltbWVkaWF0ZSI=",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "ImNsb3Nlc3Rfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "InByZXZpb3VzX3NlYW0i",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "Im5leHRfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
       "conversion_methods",
       [
         "Im1pbl9sb2FkX2VmZmljaWVuY3ki",
@@ -2741,6 +2769,28 @@
     ],
     [
       "connection",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "connection",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
+    ],
+    [
+      "connection",
       "cumulative_max_capacity",
       [
         "bnVsbA==",
@@ -3579,7 +3629,7 @@
       "model",
       "version",
       [
-        "NzI=",
+        "NzM=",
         "float"
       ],
       null,
@@ -3640,6 +3690,28 @@
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined constraints. [state x coefficient] will be on the left side of the equation.",
       "constraint"
+    ],
+    [
+      "node",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "node",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
     ],
     [
       "node",
@@ -4622,6 +4694,28 @@
     ],
     [
       "unit",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "unit",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
+    ],
+    [
+      "unit",
       "conversion_method",
       [
         "ImNvbnN0YW50X2VmZmljaWVuY3ki",
@@ -5259,6 +5353,24 @@
       "constraint_invested_capacity_coeff",
       "map",
       1
+    ],
+    [
+      "connection",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "construction_lead_time_method",
+      "str",
+      0
     ],
     [
       "connection",
@@ -5910,6 +6022,24 @@
     ],
     [
       "node",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "construction_lead_time_method",
+      "str",
+      0
+    ],
+    [
+      "node",
       "cumulative_max_capacity",
       "float",
       0
@@ -6543,6 +6673,24 @@
       "constraint_invested_capacity_coeff",
       "map",
       1
+    ],
+    [
+      "unit",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "construction_lead_time_method",
+      "str",
+      0
     ],
     [
       "unit",

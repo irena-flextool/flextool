@@ -88,6 +88,18 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, price_period_total
     ('co2_price', 'group'): QuantityType.PRICE_PER_MASS,
     # [CUR/ton] CO2 price for a group of nodes. Constant, period or time.
+    ('construction_lead_time', 'connection'): QuantityType.DURATION,
+    # [years] Construction lead time: capacity ordered in a period becomes available this many years later (snapped to a period boundary). Constant or period.
+    ('construction_lead_time', 'node'): QuantityType.DURATION,
+    # [years] Construction lead time: capacity ordered in a period becomes available this many years later (snapped to a period boundary). Constant or period.
+    ('construction_lead_time', 'unit'): QuantityType.DURATION,
+    # [years] Construction lead time: capacity ordered in a period becomes available this many years later (snapped to a period boundary). Constant or period.
+    ('construction_lead_time_method', 'connection'): QuantityType.DIMENSIONLESS,
+    # How yr(order)+construction_lead_time snaps to a period boundary (immediate/closest_seam/previous_seam/next_seam) — an enum string, no physical unit.
+    ('construction_lead_time_method', 'node'): QuantityType.DIMENSIONLESS,
+    # How yr(order)+construction_lead_time snaps to a period boundary (immediate/closest_seam/previous_seam/next_seam) — an enum string, no physical unit.
+    ('construction_lead_time_method', 'unit'): QuantityType.DIMENSIONLESS,
+    # How yr(order)+construction_lead_time snaps to a period boundary (immediate/closest_seam/previous_seam/next_seam) — an enum string, no physical unit.
     ('debug', 'model'): QuantityType.DIMENSIONLESS,
     # Instruction set for performing model debugging and testing — a string toggle, no physical unit.
     ('constant', 'constraint'): QuantityType.DIMENSIONLESS,

@@ -319,6 +319,7 @@ period_only_params:
     - invest_max_period
     - invest_min_period
     - lifetime
+    - construction_lead_time
     - peak_inflow
     - retire_max_period
     - retire_min_period
@@ -340,6 +341,7 @@ period_only_params:
     - invest_max_period
     - invest_min_period
     - lifetime
+    - construction_lead_time
     - retire_max_period
     - retire_min_period
     - salvage_value
@@ -355,6 +357,7 @@ period_only_params:
     - invest_max_period
     - invest_min_period
     - lifetime
+    - construction_lead_time
     - retire_max_period
     - retire_min_period
     - salvage_value

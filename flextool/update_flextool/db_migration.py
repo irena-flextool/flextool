@@ -1767,6 +1767,8 @@ def migrate_database(
                 _migrate_v71_non_anticipativity_periods(db)
             elif next_version == 72:
                 _migrate_v72_non_anticipativity_invest_periods(db)
+            elif next_version == 73:
+                _migrate_v73_construction_lead_time(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3989,6 +3991,115 @@ def _migrate_v72_non_anticipativity_invest_periods(db) -> None:
         "periods, default unset); the standard two-stage stochastic "
         "investment mode — ties v_invest/v_divest across branches over "
         "the window (shared here-and-now decision), recourse later."
+    )
+
+
+def _migrate_v73_construction_lead_time(db) -> None:
+    """Add construction_lead_time + _method per invest entity (v72 -> v73).
+
+    Slice H — construction lead time.  Two per-entity parameters on each
+    invest entity class (``unit`` / ``connection`` / ``node``):
+
+    * ``construction_lead_time`` — ``[years]`` physical build time.
+      Capacity ordered in a period becomes available this many years
+      later, snapped to a period boundary per
+      ``construction_lead_time_method``.  Constant or period (float / map,
+      mirroring ``lifetime``).  Default 0 (instantaneous, as before).
+    * ``construction_lead_time_method`` — how ``yr(order) +
+      construction_lead_time`` snaps to a period boundary: ``immediate``
+      (no lag; capacity from the decision period; byte-identical to prior
+      behaviour), ``closest_seam`` (nearest boundary, exact tie rounds up;
+      the effective default when a lead time is set), ``previous_seam``
+      (round down), ``next_seam`` (round up).
+
+    Both defaults are ``null`` (see design §0.2 / §6.2): the *unset* vs
+    explicit-``immediate`` distinction is what lets the reader implement
+    the two-level default (unset resolves to ``immediate`` when the lead
+    time is 0, else ``closest_seam``).  A literal ``immediate`` default
+    would materialise on every entity and destroy that distinction.
+
+    Migrating a DB adds only the definitions (never a per-entity value),
+    so every migrated entity resolves to unset -> ``L=0`` -> ``immediate``
+    -> byte-identical to prior behaviour.  Grouped under ``investment``
+    (mirrors ``lifetime``; created if the DB lacks it).
+    """
+    add_value_list_manual(db, [
+        ["construction_lead_time_methods", "immediate"],
+        ["construction_lead_time_methods", "closest_seam"],
+        ["construction_lead_time_methods", "previous_seam"],
+        ["construction_lead_time_methods", "next_seam"],
+    ])
+
+    lead_desc = (
+        "[years] Construction lead time: capacity ordered in a period "
+        "becomes available this many years later, snapped to a period "
+        "boundary per construction_lead_time_method (defaults to "
+        "closest_seam when set; use immediate to keep capacity available "
+        "from the decision period). Constant or period. Default 0 "
+        "(instantaneous, as before)."
+    )
+    method_desc = (
+        "How yr(order)+construction_lead_time snaps to a period boundary: "
+        "immediate (no lag; capacity from the decision period; "
+        "byte-identical to prior behaviour), closest_seam (nearest "
+        "boundary, exact tie rounds up; the effective default when a lead "
+        "time is set), previous_seam (round down), next_seam (round up). "
+        "Unset resolves to immediate when no lead time, else closest_seam."
+    )
+    # ``investment`` group already carries lifetime on these classes; real
+    # DBs have it (created pre-v44).  Minimal fixtures seeded above that
+    # version carry no groups — get-or-create (mirrors v70/v72's
+    # solve_advanced rationale), using the schema colour/priority for
+    # ``investment`` (7fb095 / 20).
+    if not db.get_item("parameter_group", name="investment"):
+        db.add_update_item(
+            "parameter_group",
+            name="investment",
+            color="7fb095",
+            priority=20,
+        )
+    for class_name in ("unit", "connection", "node"):
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=class_name,
+            name="construction_lead_time",
+            default_value=None,
+            default_type=None,
+            parameter_group_name="investment",
+            description=lead_desc,
+        )
+        # ``parameter_type_list=("float","map")`` assigns BOTH types rank 0
+        # in spinedb_api (a quirk of the convenience arg — the map row then
+        # collides with float on the unique (definition, rank) key and is
+        # dropped on re-import).  Add the two allowed types as explicit
+        # ``parameter_type`` items with distinct ranks (float 0, map 1),
+        # matching how ``lifetime`` is stored.
+        for rank, type_name in enumerate(("float", "map")):
+            db.add_update_item(
+                "parameter_type",
+                entity_class_name=class_name,
+                parameter_definition_name="construction_lead_time",
+                type=type_name,
+                rank=rank,
+            )
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=class_name,
+            name="construction_lead_time_method",
+            default_value=None,
+            default_type=None,
+            parameter_type_list=("str",),
+            parameter_value_list_name="construction_lead_time_methods",
+            parameter_group_name="investment",
+            description=method_desc,
+        )
+
+    _commit_step(db,
+        "v73: added construction_lead_time (float/map, [years], default 0) "
+        "and construction_lead_time_method (immediate/closest_seam/"
+        "previous_seam/next_seam, default unset) on unit/connection/node; "
+        "Slice H construction lead time — commissioning lag lives in the "
+        "availability walk, cost stays at the order period."
     )
 
 
