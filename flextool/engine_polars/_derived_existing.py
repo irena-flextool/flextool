@@ -311,6 +311,169 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
 
 
 # ---------------------------------------------------------------------------
+# Slice H — construction lead time: commissioning-year helper
+# ---------------------------------------------------------------------------
+
+# Two-level default: an entity with a lead time but no explicit method
+# commissions at the closest seam; with no lead time it is immediate.
+_CONSTRUCTION_METHOD_DEFAULT_LAG = "closest_seam"
+_CONSTRUCTION_METHOD_IMMEDIATE = "immediate"
+
+
+def _construction_method_with_default_lf(source: "InputSource",
+                                             lead_lf: pl.LazyFrame,
+                                             ) -> pl.LazyFrame:
+    """Lazy ``[e, d, L, method]`` — resolve ``construction_lead_time_method``
+    with the two-level default (Slice H design §2.4 step 2 / §6.2).
+
+    ``lead_lf`` is the per-(e, d) resolved lead time ``[e, d, L]``.  An
+    explicit method (per entity) always wins.  Where unset, the method
+    resolves to ``immediate`` when ``L == 0`` and ``closest_seam`` when
+    ``L > 0`` — so existing (L=0) models stay byte-identical while a set
+    lead time enables the lag without a mandatory method entry.  The
+    resolution is per-row because ``L`` may be period-varying (a Map).
+    """
+    explicit = (_entity_method_lf(source, "construction_lead_time_method")
+                    .filter(pl.col("method").is_not_null())
+                    .unique(subset=["e"]))
+    # Align the explicit-method ``e`` (String from CSV) to lead_lf.e's
+    # dtype (may be Enum on the post-load path) before the join.
+    e_dt = lead_lf.collect_schema().get("e", pl.Utf8)
+    if e_dt != pl.Utf8:
+        explicit = explicit.with_columns(pl.col("e").cast(e_dt, strict=False))
+    return (lead_lf
+              .join(explicit, on="e", how="left")
+              .with_columns(
+                  method=pl.when(pl.col("method").is_not_null())
+                           .then(pl.col("method"))
+                           .when(pl.col("L") > 0.0)
+                           .then(pl.lit(_CONSTRUCTION_METHOD_DEFAULT_LAG))
+                           .otherwise(pl.lit(_CONSTRUCTION_METHOD_IMMEDIATE)),
+              ))
+
+
+def commissioning_year_lf(source: "InputSource",
+                              active_solve: str | None,
+                              anchor_ed_lf: pl.LazyFrame,
+                              period_in_use: list[str],
+                              *,
+                              workdir: Path | None = None,
+                              provider: "object | None" = None,
+                              ) -> pl.LazyFrame | None:
+    """Lazy ``[e, d, yr_c]`` — the commissioning year ``c = snap(yr(o)+L)``
+    per (entity, order-period ``o``), or ``None`` when no entity has a
+    lag-active method (Slice H design §2.4).
+
+    ``d`` is the order period ``o``.  ``yr_c`` is the cumulative-year
+    coordinate of the seam the ordered capacity commissions on, snapped per
+    ``construction_lead_time_method``:
+
+    * ``previous_seam`` — last seam ``<= t*``;
+    * ``next_seam``     — first seam ``>= t*`` (``+inf`` if none, i.e. the
+      order buys no in-horizon capacity — OQ-7);
+    * ``closest_seam``  — nearer of the two, exact tie -> the later seam;
+      snaps to the last seam when ``t*`` is beyond the horizon.
+
+    where ``t* = yr(o) + L``.  Rows resolving to ``immediate`` (or where the
+    snapped ``yr_c`` equals ``yr(o)`` — e.g. ``L == 0``) are dropped: they
+    must not perturb the availability walk (the walk keeps ``yr_d`` for any
+    (e, d) absent from this frame, giving byte-parity).  Returns ``None`` if
+    the resulting frame is empty.
+
+    **[F2] Seam-calendar identity under recourse.**  The seam years are
+    read from :func:`._derived_params._p_years_d_lf` through the *identical*
+    provider/workdir resolution :func:`._derived_walks.period_walk_iterator`
+    uses (the Slice-D fallback block), so that under recourse a branch order
+    period's ``yr(o)`` lands on the same calendar the walk compares
+    ``yr_dall`` against.  Reproduced verbatim below.
+    """
+    if not period_in_use:
+        return None
+    # [F2] Mirror period_walk_iterator's provider/workdir fallback block
+    # (_derived_walks.py:269-276) VERBATIM so this helper's _p_years_d_lf
+    # call hits the identical calendar as the walk's yr_dall.
+    if provider is None:
+        from flextool.engine_polars._derived_params import (
+            _recourse_walk_provider,
+            _recourse_walk_workdir,
+        )
+        provider = _recourse_walk_provider()
+        if provider is not None and workdir is None:
+            workdir = _recourse_walk_workdir()
+
+    from ._derived_params import _p_years_d_lf
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
+    if pyd_lf is None:
+        return None
+
+    # Per-(e, o) lead time over the anchor grid, then resolve the method.
+    lead_lf = (_resolve_per_period_lf(
+                    _per_entity_param_lf(source, "construction_lead_time"),
+                    anchor_ed_lf, fill=0.0)
+                 .rename({"value": "L"})
+                 .select("e", "d", "L"))
+    lead_lf = _construction_method_with_default_lf(source, lead_lf)
+
+    # Order-period year yr(o).  Align pyd.d to the anchor d dtype and
+    # fill_null(0.0) exactly as the walk does for yr_d (calendar identity).
+    d_dt = anchor_ed_lf.collect_schema().get("d", pl.Utf8)
+    pyd_d = pyd_lf.rename({"yr": "yr_o"})
+    if d_dt != pl.Utf8:
+        pyd_d = pyd_d.with_columns(pl.col("d").cast(d_dt, strict=False))
+    work = (lead_lf
+              .join(pyd_d, on="d", how="left")
+              .with_columns(pl.col("yr_o").fill_null(0.0)))
+
+    # Seam set S = distinct period-boundary years (branch-invariant).
+    seams = (pyd_lf.select(pl.col("yr").alias("seam"))
+                    .unique()
+                    .sort("seam"))
+
+    inf = float("inf")
+    work = (work
+              .with_columns(t_star=pl.col("yr_o") + pl.col("L"))
+              .sort("t_star"))
+    # lo = last seam <= t*  (always exists: yr(o) <= t*, yr(o) in S).
+    work = work.join_asof(
+        seams.rename({"seam": "lo"}),
+        left_on="t_star", right_on="lo", strategy="backward")
+    # hi = first seam >= t*  (null when t* is beyond the last seam).
+    work = work.join_asof(
+        seams.rename({"seam": "hi"}),
+        left_on="t_star", right_on="hi", strategy="forward")
+
+    closest = (pl.when(pl.col("hi").is_null())
+                 .then(pl.col("lo"))
+                 .when((pl.col("t_star") - pl.col("lo"))
+                       < (pl.col("hi") - pl.col("t_star")))
+                 .then(pl.col("lo"))
+                 .otherwise(pl.col("hi")))
+    next_seam = (pl.when(pl.col("hi").is_null())
+                   .then(pl.lit(inf))
+                   .otherwise(pl.col("hi")))
+    yr_c = (pl.when(pl.col("method") == "previous_seam")
+              .then(pl.col("lo"))
+              .when(pl.col("method") == "next_seam")
+              .then(next_seam)
+              .when(pl.col("method") == "closest_seam")
+              .then(closest)
+              .otherwise(pl.col("yr_o")))  # immediate / unknown -> no lag
+
+    out = (work
+             .with_columns(yr_c=yr_c.cast(pl.Float64))
+             # Drop immediate rows and any snap that lands on the order
+             # period (L=0, or a snap back to yr(o)) — they must not
+             # perturb the walk (byte-parity by omission).
+             .filter((pl.col("method") != "immediate")
+                     & (pl.col("yr_c") != pl.col("yr_o")))
+             .select("e", "d", "yr_c"))
+
+    if out.collect().height == 0:
+        return None
+    return out
+
+
+# ---------------------------------------------------------------------------
 # §3.7.0 — entityInvest / entityDivest / e_invest_total / e_divest_total
 # ---------------------------------------------------------------------------
 
