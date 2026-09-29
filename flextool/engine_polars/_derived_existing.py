@@ -401,9 +401,25 @@ def commissioning_year_lf(source: "InputSource",
         if provider is not None and workdir is None:
             workdir = _recourse_walk_workdir()
 
+    # [F2b] Whether this model genuinely configures a lag (some entity has
+    # ``construction_lead_time > 0``).  Gates the loud-on-desync guards below
+    # so a no-lag model stays byte-identical (returns ``None`` silently) while
+    # a lag-configured model can never SILENTLY produce an empty commissioning
+    # frame from an unresolvable seam calendar — the exact silent-no-lag the
+    # Slice H guards exist to prevent (e.g. a stale recourse walker Provider
+    # resolving ``p_years_d.csv`` from the wrong solve → no in-use seam).
+    _lag_cfg = _construction_lag_configured(source)
+
     from ._derived_params import _p_years_d_lf
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
+        if _lag_cfg:
+            from ._solve_state import CommissioningLagError
+            raise CommissioningLagError(
+                "commissioning_year_lf could not resolve a period-year "
+                "calendar (_p_years_d_lf returned None) on a model with a "
+                "configured construction_lead_time (> 0); refusing to "
+                "silently solve the unlagged model (Slice H F2b).")
         return None
 
     # Per-(e, o) lead time over the anchor grid, then resolve the method.
@@ -436,6 +452,24 @@ def commissioning_year_lf(source: "InputSource",
                .select(pl.col("yr").alias("seam"))
                .unique()
                .sort("seam"))
+
+    # [F2b] An EMPTY seam set on a lag-configured model is a calendar
+    # DESYNC — none of the in-use periods resolved a year (e.g. the seam
+    # calendar came from the wrong solve's ``p_years_d.csv`` via a stale
+    # recourse walker Provider, whose periods don't intersect
+    # ``period_in_use``).  Every snap would then collapse to null → an empty
+    # frame → the lag SILENTLY vanishes.  This is distinct from a legitimate
+    # round-to-zero / immediate model, whose seam set is non-empty (the lag
+    # simply snaps back onto the order period).  Surface it loudly.
+    if _lag_cfg and seams.select(pl.len()).collect().item() == 0:
+        from ._solve_state import CommissioningLagError
+        raise CommissioningLagError(
+            "commissioning_year_lf resolved an EMPTY seam set over "
+            "period_in_use on a model with a configured "
+            "construction_lead_time (> 0) — the period-year calendar does "
+            "not cover any in-use period (calendar desync, e.g. a stale "
+            "recourse walker Provider); refusing to silently solve the "
+            "unlagged model (Slice H F2b).")
 
     inf = float("inf")
     work = (work

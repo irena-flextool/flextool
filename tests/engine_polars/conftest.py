@@ -61,3 +61,30 @@ def _reset_global_axis_enums():
     set_global_axis_enums(None)
     yield
     set_global_axis_enums(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_recourse_walk_scope():
+    """Reset the recourse walker process-globals before/after each test.
+
+    :func:`._derived_params._enter_recourse_anchor_scope` arms three
+    module-globals for the active solve — the recourse anchor-pairs holder
+    and the boundary-scoped walker Provider + workdir (Slice D α-1).  A real
+    recourse solve leaves them ARMED when it finishes; in production the next
+    solve's cascade clears them (``input._apply_db_overrides`` calls
+    :func:`._derived_params._reset_recourse_scope` first — the F1 guarantee).
+
+    A solver-free unit test that calls ``period_walk_iterator`` /
+    ``commissioning_year_lf`` directly never runs that cascade, so without
+    this fixture it would inherit a PRIOR recourse solve test's Provider +
+    workdir on the same pytest worker and resolve the seam calendar from the
+    wrong solve's ``p_years_d.csv`` — silently producing an empty/garbage
+    commissioning frame (the construction-lead-time staging tests then see
+    the lag "vanish": all periods serving).  Reset before AND after each test
+    to give every test the same clean slate the F1 cascade guarantees a real
+    solve.
+    """
+    from flextool.engine_polars import _derived_params as _drv
+    _drv._reset_recourse_scope()
+    yield
+    _drv._reset_recourse_scope()
