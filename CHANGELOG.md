@@ -1,3 +1,28 @@
+## Unreleased
+
+Schema change (adds `solve.stochastic_invest_method`; migrated automatically).
+
+- **Per-scenario stochastic investment** (opt-in
+  `solve.stochastic_invest_method = recourse`): each stochastic branch can now
+  make its own investment decisions at and after the branching period, with
+  probability-weighted investment costs and per-scenario investment limits — a
+  wait-and-see analysis giving per-scenario optimal plans and their expected
+  cost. Committed results report the realized scenario; non-realized branch
+  investments are available under the horizon-output debug flag
+  (`model.output_horizon`). Default behaviour (`none`) is unchanged, and the
+  option is rejected in combination with Benders decomposition.
+- **Mid-horizon reveal / hedged two-stage stochastics.** A stochastic branch
+  may now start at any period boundary, not only the solve's first step, so the
+  pre-reveal periods stay a single shared *here-and-now* investment (a genuine
+  first stage) while the branches fan out into per-scenario recourse from the
+  reveal onward. Under `recourse` this makes the objective a real two-stage
+  hedge — strictly between the wait-and-see bound and the deterministic
+  mean-value plan (positive EVPI/VSS). Storage state is carried across the
+  reveal for stochastic-group storage nodes. Mid-horizon reveal is a general
+  stochastics capability; the previous multi-period restriction is lifted. A
+  malformed reveal (analysis time off a period boundary, or a branching period
+  without exactly one realized branch) is now rejected with a clear error.
+
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 
 Patch release. No schema changes. This release also ships the 4.0.3 changes

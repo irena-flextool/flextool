@@ -80,6 +80,7 @@ SOLVE_DATA_INVEST_PERIODS_OF_CURRENT_SOLVE = (
 )
 SOLVE_DATA_PROCESS_SOURCE_TOSINK = "solve_data/process_source_toSink"
 SOLVE_DATA_REGION_COUPLING = "solve_data/region_coupling"
+SOLVE_DATA_STOCHASTIC_INVEST_METHOD = "solve_data/stochastic_invest_method"
 
 
 # ---------------------------------------------------------------------------

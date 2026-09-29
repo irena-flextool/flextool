@@ -247,6 +247,7 @@ class SolveConfig:
         benders_tolerance: dict | None = None,
         benders_in_out_weight: dict | None = None,
         scaling: dict | None = None,
+        stochastic_invest_method: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -308,6 +309,14 @@ class SolveConfig:
         # time via :meth:`scaling_for` (absent -> None -> CLI/env/default).
         self.scaling: dict = (
             scaling if scaling is not None else {}
+        )
+
+        # v70 per-solve recourse-invest opt-in (solve-name -> "none"/
+        # "recourse"); only authored solves appear.  Resolved at access
+        # time via :meth:`stochastic_invest_method_for` (absent -> "none").
+        self.stochastic_invest_method: dict = (
+            stochastic_invest_method
+            if stochastic_invest_method is not None else {}
         )
 
         # Computed fields — populated by load_from_db after construction.
@@ -523,6 +532,14 @@ class SolveConfig:
             db=db, cl="solve", par="scaling", mode=DictMode.DICT
         )
 
+        # v70 per-solve recourse-invest opt-in.  Only solves that
+        # explicitly author solve.stochastic_invest_method appear; absent
+        # solves resolve to "none" via ``stochastic_invest_method_for``.
+        stochastic_invest_method: dict = params_to_dict(
+            db=db, cl="solve", par="stochastic_invest_method",
+            mode=DictMode.DICT,
+        )
+
         # rolling_times: assemble per-solve [jump, horizon, duration].
         rolling_duration: dict = params_to_dict(
             db=db, cl="solve", par="rolling_duration", mode=DictMode.DICT
@@ -630,6 +647,7 @@ class SolveConfig:
             benders_tolerance=benders_tolerance,
             benders_in_out_weight=benders_in_out_weight,
             scaling=scaling,
+            stochastic_invest_method=stochastic_invest_method,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
@@ -876,6 +894,25 @@ class SolveConfig:
         return value if value in (
             "off", "solver_only", "basic", "full"
         ) else None
+
+    def stochastic_invest_method_for(self, solve_name: str) -> str:
+        """Resolve ``solve.stochastic_invest_method`` for *solve_name*.
+
+        Returns the normalised lower-case mode (``"none"`` or
+        ``"recourse"``).  Absent / blank / unrecognised -> ``"none"``
+        (the schema default, byte-identical prior behaviour).  Authoring
+        case is ignored.
+
+        Unlike :meth:`scaling_for` (which returns ``None`` for absent so
+        a CLI/env override can win) there is no run-time override for
+        this knob, so absent resolves to the concrete default ``"none"``.
+        Guard 1 (`_orchestration.run`) keys off this resolver.
+        """
+        raw = self.stochastic_invest_method.get(solve_name)
+        if raw is None:
+            return "none"
+        value = str(raw).strip().lower()
+        return value if value in ("none", "recourse") else "none"
 
     def benders_config_for(self, solve_name: str) -> tuple[int, float, float]:
         """Resolve ``(max_iter, tol, in_out_weight)`` for *solve_name*.

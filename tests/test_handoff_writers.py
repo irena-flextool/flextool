@@ -430,11 +430,20 @@ def _clean_run_dirs(repo: Path) -> None:
                 p.unlink()
 
 
-def _run_scenario(repo: Path, scenario: str, *, use_old_raw_csv: bool) -> dict[str, str]:
-    """Run a real scenario via subprocess and return handoff CSV contents."""
+def _run_scenario(
+    repo: Path, scenario: str, *, use_old_raw_csv: bool, input_db_url: str,
+) -> dict[str, str]:
+    """Run a real scenario via subprocess and return handoff CSV contents.
+
+    ``input_db_url`` is a per-worker ISOLATED copy of
+    ``templates/examples.sqlite`` (byte-identical) rather than the shared
+    checked-in file, so concurrent xdist workers cannot deadlock on a
+    sqlite read lock (CLAUDE.md invariant #3).  Solver output still lands
+    under ``repo`` (cwd) exactly as before.
+    """
     cmd = [
         sys.executable, "run_flextool.py",
-        "sqlite:///templates/examples.sqlite",
+        input_db_url,
         "sqlite:///output_info.sqlite",
         "--scenario-name", scenario,
     ]
@@ -477,11 +486,15 @@ def _normalise_csv(text: str, *, decimals: int = 6) -> str:
     "fullYear_roll",
     "network_all_tech",
 ])
-def test_handoff_csv_matches_phase3(scenario: str) -> None:
+def test_handoff_csv_matches_phase3(scenario: str, examples_db_url: str) -> None:
     """End-to-end: handoff writer's output equals phase 3's, byte-for-byte
     after row-sort + 6-decimal rounding."""
-    phase3 = _run_scenario(REPO_ROOT, scenario, use_old_raw_csv=True)
-    new = _run_scenario(REPO_ROOT, scenario, use_old_raw_csv=False)
+    phase3 = _run_scenario(
+        REPO_ROOT, scenario, use_old_raw_csv=True, input_db_url=examples_db_url,
+    )
+    new = _run_scenario(
+        REPO_ROOT, scenario, use_old_raw_csv=False, input_db_url=examples_db_url,
+    )
     for fname in phase3:
         assert _normalise_csv(phase3[fname]) == _normalise_csv(new[fname]), (
             f"{scenario}/{fname} differs.\n"

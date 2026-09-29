@@ -105,6 +105,9 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "b_f": "block",
     # Period history column — holds period tokens (subset of d).
     "d_h": "d",
+    # Scenario-lineage pair column (``dd_same_scenario``, recourse plan
+    # §6b Slice A) — holds period tokens (subset of d).
+    "d_other": "d",
     # ``d_first`` — column holding period tokens of "first" periods
     # (e.g. in ``_lifetime_expired_pairs_lf`` cascade).  Subset of d.
     "d_first": "d",

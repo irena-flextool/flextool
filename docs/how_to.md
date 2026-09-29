@@ -1123,9 +1123,9 @@ Stochastics are used to represent the uncertainty of the future in the decision 
 
 ![Stochastic system](./img/concept/non-anticipatory.png)
 
-For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take (e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch. Only one period investment stochastic models are supported currently.
+For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take (e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch.
 
-In this example, we show two ways to use stochastics: Single solve, rolling horizon. They all share the same test system that includes: 
+In this example, we show two ways to use stochastics: single solve and rolling horizon. They all share the same test system that includes: 
 
 - A demand node 
 - Coal, gas and wind power plants 
@@ -1139,7 +1139,7 @@ Notes about the storage options with stochastics:
 
 - The best options to use are:
 
-  - `Storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
+  - `storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
   - `storage_solve_horizon_method`: fix_value or fix_price (and their values)
 
 - Do not use any of the `storage_binding_methods`, they do not work correctly with stochastics (there is no unambigious end state that could circle back to the first time step). 
@@ -1193,6 +1193,26 @@ Otherwise there is no difference to the previous example.
 ![Rolling Branching](./img/concept/rolling_non-anticipatory.png)
 
 ![1Week stochastics](./img/concept/1week_stochastics.png)
+
+### Stochastic investment
+
+By default (`solve.stochastic_invest_method = none`) a stochastic model makes a **single** investment plan shared by every branch — one plan for all futures. Setting
+
+```
+solve.stochastic_invest_method = recourse
+```
+
+instead lets each branch (the realized one included) invest on its own data at and after the branching period, with probability-weighted investment costs and per-scenario investment limits. Non-realized branch investments are output only under `model.output_horizon` (a debug flag); committed results always report the realized scenario. `recourse` is incompatible with Benders decomposition (the solver rejects the combination).
+
+When every branch starts at the solve's **first** step, `recourse` is a *wait-and-see* analysis: the objective is the expected value of per-scenario optimal plans weighted by their probabilities. It is **not** a single hedged plan — so it typically costs less than `none` (each branch gets tailor-made capacity) and is not directly comparable across the flag (turning on `recourse` also corrects the realized branch's own investment-annuity windows). This approach might have some very specific use cases, but the main stochastic investment mode is the hedged mid-horizon form below.
+
+#### Hedged two-stage investment (mid-horizon reveal)
+
+In hedged two-stage investment the uncertainty is revealed **mid-horizon**: keep the first periods deterministic (a single, shared *here-and-now* investment) and let the branches fan out only from a later period. Set the branching period of the `stochastic_branches` map to that later period, and put the branches' analysis time at that period's first step (the reveal must fall on a period boundary — investment is period-granular).
+
+With this shape the pre-reveal periods stay a single real-named trunk with **one shared `v_invest`** — the genuine first-stage (here-and-now) decision. Its non-anticipativity holds by construction (there is only one variable, so nothing to tie), and its cost is counted once at full weight. The post-reveal periods fan per branch exactly as the wait-and-see case does, giving the second-stage recourse investments. The result is a real **two-stage hedge**: the shared first stage is chosen knowing only the distribution of futures, and its objective sits strictly *between* the wait-and-see bound and the deterministic mean-value plan (positive EVPI and VSS). Only the realized trunk is committed to the output.
+
+The multi-period restriction of earlier versions is lifted: a branch may now start at any period boundary, and the pre-reveal horizon can be any number of periods. Mid-horizon reveal is a general stochastics capability — it works for dispatch-only hedged stochastics too, not only for `recourse` investment.
 
 ## How to use CPLEX as the solver
 

@@ -56,6 +56,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "period_solve.csv",
     "time.csv",
     "enable_optional_outputs.csv",
+    "stochastic_invest_method.csv",
     "nodeState_rp.csv",
     "nodeStateBlock.csv",
     "timeline.csv",
