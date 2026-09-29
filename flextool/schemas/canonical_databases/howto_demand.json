@@ -1129,7 +1129,7 @@
       "model",
       "version",
       [
-        "71",
+        "72",
         "float"
       ],
       null,
@@ -1747,6 +1747,14 @@
       null,
       "Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.",
       "timeline"
+    ],
+    [
+      "solve",
+      "non_anticipativity_invest_periods",
+      null,
+      null,
+      "Array of periods over which investment is non-anticipative (v_invest and v_divest tied across stochastic branches — a single shared here-and-now decision). Unset (default) or an empty Array means NO tie (byte-identical to prior behaviour: recourse stays per-branch, none stays shared). A period list -- e.g. the first period -- ties investment over those periods while later periods invest per-branch (recourse), the standard two-stage stochastic capacity-expansion mode. Requires stochastic_invest_method=recourse; a no-op under none (investment is already shared across all periods).",
+      "solve_advanced"
     ],
     [
       "solve",

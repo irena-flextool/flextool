@@ -13,7 +13,7 @@ Architecture notes
   Loading order matters (``make_roll_counter`` →
   ``get_period_timesets`` → 4× ``periods_to_tuples`` →
   ``non_anticipativity_periods_to_tristate``) because each may call
-  :meth:`duplicate_solve`, which mutates 20 sibling dicts in lockstep.
+  :meth:`duplicate_solve`, which mutates 21 sibling dicts in lockstep.
 * The DB schema is assumed to be v50+.  v50 moved
   ``new_stepduration`` from ``timeset`` to ``solve``;
   ``update_flextool/db_migration.py`` handles upgrades for older DBs
@@ -334,6 +334,13 @@ class SolveConfig:
         # A plain dict (not a defaultdict) so a missing key reads back as
         # None (unset) rather than an empty list ([] = the free-ops mode).
         self.non_anticipativity_periods: dict[str, list | None] = {}
+        # Invest-NA window — the standard two-stage stochastic-investment
+        # mode.  Periods over which v_invest / v_divest are TIED across
+        # stochastic branches (a single shared here-and-now decision).
+        # Unlike the operational window above, unset == [] == NO tie, so a
+        # plain defaultdict(list) (from ``periods_to_tuples``) is
+        # byte-parity-safe (both empty-ish states resolve to no ties).
+        self.non_anticipativity_invest_periods: defaultdict = defaultdict(list)
 
         # Mutable tracking — populated during the recursive solve loop.
         self.real_solves: list[str] = []
@@ -659,7 +666,7 @@ class SolveConfig:
         )
 
         # Computed fields — loading order MUST be preserved exactly.
-        # ``duplicate_solve`` mutates 20 sibling dicts in lockstep, so
+        # ``duplicate_solve`` mutates 21 sibling dicts in lockstep, so
         # any reordering desyncs them and downstream reads silently
         # produce empty/zero results.
         obj.roll_counter = obj.make_roll_counter()
@@ -685,6 +692,14 @@ class SolveConfig:
             obj.non_anticipativity_periods_to_tristate(
                 db=db, cl="solve", par="non_anticipativity_periods"
             )
+        )
+        # Invest-NA window (v72) — plain periods_to_tuples: unset == [] ==
+        # no tie, so a defaultdict(list) is byte-parity-safe (no tri-state
+        # needed).  Read AFTER the period dicts so duplicate_solve has
+        # registered any duplicated solve names; the value for those is
+        # carried by duplicate_solve's dup_map_list.
+        obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
+            db=db, cl="solve", par="non_anticipativity_invest_periods"
         )
 
         return obj
@@ -830,9 +845,9 @@ class SolveConfig:
         """Duplicate every solve-level dict entry from *old_solve* under
         *new_name*.
 
-        Mutates 20 sibling dicts (and ``model_solve`` when
+        Mutates 21 sibling dicts (and ``model_solve`` when
         *update_model_solves* is set) so downstream readers can address
-        the duplicated solve transparently.  One of the 20 —
+        the duplicated solve transparently.  One of the 21 —
         ``non_anticipativity_periods`` — is a plain tri-state dict, not a
         defaultdict; the ``if old_solve in dup_map.keys()`` guard copies
         it the same way (an unset parent solve simply has no key to
@@ -863,6 +878,7 @@ class SolveConfig:
                 self.invest_periods,
                 self.fix_storage_periods,
                 self.non_anticipativity_periods,
+                self.non_anticipativity_invest_periods,
                 self.decomposition,
                 self.benders_max_iter,
                 self.benders_tolerance,

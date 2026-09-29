@@ -1765,6 +1765,8 @@ def migrate_database(
                 _migrate_v70_stochastic_invest_method(db)
             elif next_version == 71:
                 _migrate_v71_non_anticipativity_periods(db)
+            elif next_version == 72:
+                _migrate_v72_non_anticipativity_invest_periods(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3913,6 +3915,80 @@ def _migrate_v71_non_anticipativity_periods(db) -> None:
         "v71: added solve.non_anticipativity_periods (Array of periods, "
         "default unset); decouples the operational non-anticipativity "
         "window from realized_periods (Slice G)."
+    )
+
+
+def _migrate_v72_non_anticipativity_invest_periods(db) -> None:
+    """Add the solve.non_anticipativity_invest_periods knob (v71 -> v72).
+
+    The invest-NA window is the standard two-stage stochastic-investment
+    mode: an Array-of-periods parameter selecting the periods over which
+    ``v_invest`` / ``v_divest`` are TIED across stochastic branches (a
+    single shared here-and-now decision).  It pins the four
+    ``non_anticipativity_invest_p/n`` and ``non_anticipativity_divest_p/n``
+    constraint families across the branch fan of those periods:
+
+    * unset (default) OR empty Array ``[]`` -> NO tie, byte-identical to
+      prior behaviour (``recourse`` stays per-branch everywhere; ``none``
+      stays shared);
+    * ``[p, ...]`` -> tie invest/divest at each branch's copy of those
+      periods to the realized anchor -> shared first-stage investment with
+      per-branch (recourse) investment in later periods.
+
+    Unlike the operational ``non_anticipativity_periods`` (v71), the
+    unset/``[]`` distinction carries no behaviour here (both = no tie),
+    so it is read by the plain ``periods_to_tuples`` (not a tri-state).
+
+    Array-shaped (read by ``periods_to_tuples``, same as
+    ``realized_periods`` / ``non_anticipativity_periods``):
+    ``default_value`` and ``default_type`` are ``None`` and it has NO
+    parameter_value_list.  Migrating a DB adds only the definition (no
+    per-solve value), so every migrated solve resolves to unset -> no
+    tie -> today's behaviour.  Grouped under 'solve_advanced' (created if
+    the DB lacks it).
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_invest_periods",
+        default_value=None,
+        default_type=None,
+        description=(
+            "Array of periods over which investment is non-anticipative "
+            "(v_invest and v_divest tied across stochastic branches — a "
+            "single shared here-and-now decision). Unset (default) or an "
+            "empty Array means NO tie (byte-identical to prior behaviour: "
+            "recourse stays per-branch, none stays shared). A period list "
+            "-- e.g. the first period -- ties investment over those "
+            "periods while later periods invest per-branch (recourse), "
+            "the standard two-stage stochastic capacity-expansion mode. "
+            "Requires stochastic_invest_method=recourse; a no-op under "
+            "none (investment is already shared across all periods)."
+        ),
+    )
+    # Attach to the 'solve_advanced' parameter group, creating it if the
+    # DB lacks it (mirrors v70/v71; see those migrations for the
+    # get-or-create rationale — minimal fixtures seeded above v44 carry
+    # no groups).
+    if not db.get_item("parameter_group", name="solve_advanced"):
+        db.add_update_item(
+            "parameter_group",
+            name="solve_advanced",
+            color="b56f6f",
+            priority=87,
+        )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_invest_periods",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v72: added solve.non_anticipativity_invest_periods (Array of "
+        "periods, default unset); the standard two-stage stochastic "
+        "investment mode — ties v_invest/v_divest across branches over "
+        "the window (shared here-and-now decision), recourse later."
     )
 
 
