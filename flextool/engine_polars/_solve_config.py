@@ -1069,9 +1069,21 @@ class SolveConfig:
 
         The tuple shape ``[(p, p), ...]`` matches
         :meth:`periods_to_tuples` so the emit site can treat both readers
-        the same.  Only real ``solve`` entities are enumerated here;
-        duplicated (rolling / laddered) sub-solves inherit their value via
+        the same.  Only real ``solve`` entities are enumerated here.
+        Solve-time duplicated sub-solves (rolling / laddered dispatch,
+        created after config load) inherit their value via
         ``duplicate_solve``'s ``dup_map_list`` (which lists this dict).
+        Note: solves fanned at *config-load* time from a 2D-Map
+        ``period_timeset`` / ``invest_periods`` do NOT inherit an explicit
+        window here — this reader runs after those fans and enumerates only
+        the original solve entities, so such children resolve to the legacy
+        default (consistent with the sibling period dicts, which also do not
+        propagate to config-load-fanned children). Explicit windows on
+        2D-Map-laddered solves are therefore not supported in v1.
+
+        A malformed value that is not an Array (e.g. a stray scalar) is
+        treated as unset (legacy window), never as the behaviour-changing
+        empty-Array free-operations opt-in.
         """
         entities = db.find_entities(entity_class_name=cl)
         params = db.find_parameter_values(
@@ -1082,13 +1094,15 @@ class SolveConfig:
         present: dict[str, list] = {}
         for param in params:
             param_value = api.from_database(param["value"], param["type"])
-            tuples: list = []
-            # An empty Array has an empty ``.values``; a populated one
-            # yields one (p, p) per element (mirrors periods_to_tuples).
+            # An empty Array has an empty ``.values`` ([]); a populated one
+            # yields one (p, p) per element (mirrors periods_to_tuples). A
+            # value that is not an Array has no ``.values`` (None) — malformed
+            # authoring; skip it so it resolves to the legacy window rather
+            # than silently freeing operations from t0.
             values = getattr(param_value, "values", None)
-            if values:
-                for row in values:
-                    tuples.append((row, row))
+            if values is None:
+                continue
+            tuples: list = [(row, row) for row in values]
             present[param["entity_name"]] = tuples
         result: dict[str, list | None] = {}
         for entity in entities:
