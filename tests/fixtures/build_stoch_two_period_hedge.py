@@ -129,6 +129,12 @@ def build() -> dict:
         ["stoch", "include_stochastics + branch-varying wind + recourse"],
         ["rp", "stochastic_branches at p2040 (mid-horizon reveal)"],
         ["ws", "stochastic_branches at p2035 (wait-and-see / fan-at-first)"],
+        ["na_window", "invest-NA window = [p2035] + ops free "
+                      "(the standard two-stage mode, v72)"],
+        ["divest", "base invest_retire_total + existing 50 so v_divest "
+                   "exists (T-Divest: divest tied too, F2)"],
+        ["invest_none", "stochastic_invest_method=none (T-None: window is "
+                        "a graceful no-op)"],
         ["storage", "stochastic-group storage node (T-S: storage NA + "
                     "mid-horizon predecessor linkage)"],
     ]
@@ -138,6 +144,15 @@ def build() -> dict:
          "Wait-and-see fan-at-p2035 control (WS = 157 500)"],
         ["hedge_storage", False,
          "Mid-horizon reveal + stochastic-group storage node (T-S)"],
+        ["hedge_na_window", False,
+         "Invest-NA window main mode: fan-at-t0 + "
+         "non_anticipativity_invest_periods=[p2035] (RP = 173 250)"],
+        ["hedge_na_divest", False,
+         "T-Divest: divest-eligible base under recourse+window — "
+         "non_anticipativity_divest_p ties first-period divest too (F2)"],
+        ["hedge_na_none", False,
+         "T-None: window set on a stochastic_invest_method=none solve "
+         "— graceful no-op (no invest-NA rows)"],
     ]
     spec["scenario_alternatives"] = [
         ["hedge", "init", "base"],
@@ -148,6 +163,24 @@ def build() -> dict:
         ["hedge_ws", "base", "stoch"],
         ["hedge_ws", "stoch", "ws"],
         ["hedge_ws", "ws", None],
+        # Main mode: the fan-at-t0 (ws) topology PLUS the invest-NA window.
+        ["hedge_na_window", "init", "base"],
+        ["hedge_na_window", "base", "stoch"],
+        ["hedge_na_window", "stoch", "ws"],
+        ["hedge_na_window", "ws", "na_window"],
+        ["hedge_na_window", "na_window", None],
+        ["hedge_na_divest", "init", "base"],
+        ["hedge_na_divest", "base", "stoch"],
+        ["hedge_na_divest", "stoch", "ws"],
+        ["hedge_na_divest", "ws", "na_window"],
+        ["hedge_na_divest", "na_window", "divest"],
+        ["hedge_na_divest", "divest", None],
+        ["hedge_na_none", "init", "base"],
+        ["hedge_na_none", "base", "stoch"],
+        ["hedge_na_none", "stoch", "ws"],
+        ["hedge_na_none", "ws", "na_window"],
+        ["hedge_na_none", "na_window", "invest_none"],
+        ["hedge_na_none", "invest_none", None],
         ["hedge_storage", "init", "base"],
         ["hedge_storage", "base", "stoch"],
         ["hedge_storage", "stoch", "rp"],
@@ -291,6 +324,33 @@ def build() -> dict:
         # ---- ws: wait-and-see reveal at p2035 --------------------------
         ["solve", "stoch_2p_hedge", "stochastic_branches",
          _pack(stochastic_branches_ws, "map"), "ws"],
+        # ---- na_window: invest-NA window main mode (v72) ---------------
+        # Layered on ``ws`` (fan-at-t0 recourse): tie v_invest/v_divest at
+        # p2035 across branches (shared first stage) while p2040 invests
+        # per-branch (recourse), and free operations from t0.  The tie
+        # reproduces the Option-B hedge RP = 173 250 by CONSTRAINT (vs the
+        # mid-horizon ``hedge`` scenario's shared trunk by construction).
+        ["solve", "stoch_2p_hedge", "non_anticipativity_invest_periods",
+         _pack({"value_type": "str", "data": ["p2035"]}, "array"),
+         "na_window"],
+        ["solve", "stoch_2p_hedge", "non_anticipativity_periods",
+         _pack({"value_type": "str", "data": []}, "array"),
+         "na_window"],
+        # ---- divest: base divest-eligible (T-Divest, F2) ---------------
+        # invest_retire_total is in BOTH the invest- and divest-allowed
+        # method sets; a non-zero salvage_value makes the divest annuity
+        # (eead) structurally non-zero so the entity enters ed_divest and
+        # v_divest_p exists at every fanned invest period.  Existing 50
+        # gives it capacity to retire.  Under recourse+window the invest
+        # AND divest ties both fire, so the NET first-stage capacity
+        # (existing + invest − divest) is shared across branches.
+        ["unit", "base", "invest_method",
+         _pack("invest_retire_total", "str"), "divest"],
+        ["unit", "base", "existing", _pack(50.0, "float"), "divest"],
+        ["unit", "base", "salvage_value", _pack(1.0, "float"), "divest"],
+        # ---- invest_none: none composition (T-None) --------------------
+        ["solve", "stoch_2p_hedge", "stochastic_invest_method",
+         _pack("none", "str"), "invest_none"],
         # ---- storage: a stochastic-group storage node (T-S) ------------
         # ``resv`` is a storage node in ``stoch_g`` (via group__node), so
         # under recourse mid-horizon the dispatch NA net-charge pinning

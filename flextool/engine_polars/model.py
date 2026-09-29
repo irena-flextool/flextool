@@ -4555,16 +4555,28 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # this block never fires.  Under stochastic_invest_method=none the frame
     # may build but the domain guard drops every pair (no fanned invest
     # column) — a graceful no-op.
-    if (getattr(d, "recourse_invest", False)
-            and d.pd_non_anticipativity is not None
-            and d.pd_non_anticipativity.height > 0):
-        _add_non_anticipativity_invest_constraints(
-            m, d,
-            v_invest_p = locals().get("v_invest_p") if has_invest_p else None,
-            v_invest_n = locals().get("v_invest_n") if has_invest_n else None,
-            v_divest_p = locals().get("v_divest_p") if has_divest_p else None,
-            v_divest_n = locals().get("v_divest_n") if has_divest_n else None,
-        )
+    _pdna = d.pd_non_anticipativity
+    if _pdna is not None and _pdna.height > 0:
+        if getattr(d, "recourse_invest", False):
+            _add_non_anticipativity_invest_constraints(
+                m, d,
+                v_invest_p = locals().get("v_invest_p") if has_invest_p else None,
+                v_invest_n = locals().get("v_invest_n") if has_invest_n else None,
+                v_divest_p = locals().get("v_divest_p") if has_divest_p else None,
+                v_divest_n = locals().get("v_divest_n") if has_divest_n else None,
+            )
+        else:
+            # Window set on a non-recourse (none) solve: investment is
+            # already shared across all periods, so there is nothing to
+            # tie.  Graceful no-op + advisory (never mutates the problem,
+            # design §4.5 / OQ-3).
+            _LOG.info(
+                "non_anticipativity_invest_periods is set but "
+                "stochastic_invest_method is not 'recourse'; investment is "
+                "already shared across all periods, so the invest-NA window "
+                "has no effect (use 'recourse' for shared-first-period / "
+                "recourse-later)."
+            )
 
     # Apply objective scaling if provided (default 1.0 = no scaling).
     if scale_the_objective != 1.0:

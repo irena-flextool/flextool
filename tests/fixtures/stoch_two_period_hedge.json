@@ -991,6 +991,20 @@
       ]
     ],
     [
+      "stochastic_invest_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "stochastic_invest_methods",
+      [
+        "InJlY291cnNlIg==",
+        "str"
+      ]
+    ],
+    [
       "storage_binding_methods",
       [
         "ImJpbmRfZm9yd2FyZF9vbmx5Ig==",
@@ -1211,20 +1225,6 @@
       "yes_no",
       [
         "InllcyI=",
-        "str"
-      ]
-    ],
-    [
-      "stochastic_invest_methods",
-      [
-        "Im5vbmUi",
-        "str"
-      ]
-    ],
-    [
-      "stochastic_invest_methods",
-      [
-        "InJlY291cnNlIg==",
         "str"
       ]
     ]
@@ -2246,7 +2246,7 @@
       "model",
       "version",
       [
-        "Njk=",
+        "NzI=",
         "float"
       ],
       null,
@@ -3014,6 +3014,28 @@
     ],
     [
       "solve",
+      "non_anticipativity_invest_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which investment is non-anticipative (v_invest and v_divest tied across stochastic branches \u2014 a single shared here-and-now decision). Unset (default) or an empty Array means NO tie (byte-identical to prior behaviour: recourse stays per-branch, none stays shared). A period list -- e.g. the first period -- ties investment over those periods while later periods invest per-branch (recourse), the standard two-stage stochastic capacity-expansion mode. Requires stochastic_invest_method=recourse; a no-op under none (investment is already shared across all periods).",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "non_anticipativity_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which operational non-anticipativity (storage / online / reserve dispatch tied across stochastic branches) is enforced. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list ties operations only over those periods' timesteps.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "period_timeset",
       [
         "bnVsbA==",
@@ -3153,6 +3175,17 @@
       ],
       null,
       "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "stochastic_invest_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "stochastic_invest_methods",
+      "How stochastic branches participate in investment. 'none' (default) keeps investment realized-only: stochastic branches never enter the invest axis (v_invest stays on realized periods), byte-identical to prior behaviour. 'recourse' enables two-stage stochastic investment with recourse \u2014 shared (non-anticipative) investment before the branch point plus per-branch recourse investment at and after the branching period, with probability-weighted investment costs. Reserved for future expected-value and nested-tree modes.",
       "solve_advanced"
     ],
     [
@@ -3836,17 +3869,6 @@
       null,
       "[per unit  / minute] Maximum ramp up speed. Constant.",
       "tech_advanced"
-    ],
-    [
-      "solve",
-      "stochastic_invest_method",
-      [
-        "Im5vbmUi",
-        "str"
-      ],
-      "stochastic_invest_methods",
-      "How stochastic branches participate in investment (none/recourse).",
-      "solve_advanced"
     ]
   ],
   "parameter_types": [
@@ -5613,6 +5635,18 @@
       "stochastic_branches at p2035 (wait-and-see / fan-at-first)"
     ],
     [
+      "na_window",
+      "invest-NA window = [p2035] + ops free (the standard two-stage mode, v72)"
+    ],
+    [
+      "divest",
+      "base invest_retire_total + existing 50 so v_divest exists (T-Divest: divest tied too, F2)"
+    ],
+    [
+      "invest_none",
+      "stochastic_invest_method=none (T-None: window is a graceful no-op)"
+    ],
+    [
       "storage",
       "stochastic-group storage node (T-S: storage NA + mid-horizon predecessor linkage)"
     ]
@@ -5632,6 +5666,21 @@
       "hedge_storage",
       false,
       "Mid-horizon reveal + stochastic-group storage node (T-S)"
+    ],
+    [
+      "hedge_na_window",
+      false,
+      "Invest-NA window main mode: fan-at-t0 + non_anticipativity_invest_periods=[p2035] (RP = 173 250)"
+    ],
+    [
+      "hedge_na_divest",
+      false,
+      "T-Divest: divest-eligible base under recourse+window \u2014 non_anticipativity_divest_p ties first-period divest too (F2)"
+    ],
+    [
+      "hedge_na_none",
+      false,
+      "T-None: window set on a stochastic_invest_method=none solve \u2014 graceful no-op (no invest-NA rows)"
     ]
   ],
   "scenario_alternatives": [
@@ -5673,6 +5722,91 @@
     [
       "hedge_ws",
       "ws",
+      null
+    ],
+    [
+      "hedge_na_window",
+      "init",
+      "base"
+    ],
+    [
+      "hedge_na_window",
+      "base",
+      "stoch"
+    ],
+    [
+      "hedge_na_window",
+      "stoch",
+      "ws"
+    ],
+    [
+      "hedge_na_window",
+      "ws",
+      "na_window"
+    ],
+    [
+      "hedge_na_window",
+      "na_window",
+      null
+    ],
+    [
+      "hedge_na_divest",
+      "init",
+      "base"
+    ],
+    [
+      "hedge_na_divest",
+      "base",
+      "stoch"
+    ],
+    [
+      "hedge_na_divest",
+      "stoch",
+      "ws"
+    ],
+    [
+      "hedge_na_divest",
+      "ws",
+      "na_window"
+    ],
+    [
+      "hedge_na_divest",
+      "na_window",
+      "divest"
+    ],
+    [
+      "hedge_na_divest",
+      "divest",
+      null
+    ],
+    [
+      "hedge_na_none",
+      "init",
+      "base"
+    ],
+    [
+      "hedge_na_none",
+      "base",
+      "stoch"
+    ],
+    [
+      "hedge_na_none",
+      "stoch",
+      "ws"
+    ],
+    [
+      "hedge_na_none",
+      "ws",
+      "na_window"
+    ],
+    [
+      "hedge_na_none",
+      "na_window",
+      "invest_none"
+    ],
+    [
+      "hedge_na_none",
+      "invest_none",
       null
     ],
     [
@@ -6238,6 +6372,66 @@
         "map"
       ],
       "ws"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "non_anticipativity_invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
+        "array"
+      ],
+      "na_window"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "non_anticipativity_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogW119",
+        "array"
+      ],
+      "na_window"
+    ],
+    [
+      "unit",
+      "base",
+      "invest_method",
+      [
+        "ImludmVzdF9yZXRpcmVfdG90YWwi",
+        "str"
+      ],
+      "divest"
+    ],
+    [
+      "unit",
+      "base",
+      "existing",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "divest"
+    ],
+    [
+      "unit",
+      "base",
+      "salvage_value",
+      [
+        "MS4w",
+        "float"
+      ],
+      "divest"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "stochastic_invest_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "invest_none"
     ],
     [
       "node",
