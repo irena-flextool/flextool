@@ -1146,6 +1146,26 @@ Notes about the storage options with stochastics:
 
 ![Stocahstic system](./img/concept/stochastic_system.png)
 
+### What the model ties across branches (dispatch vs. investment defaults)
+
+Wherever the branches share the same information — the *realized* (committed) part of the horizon, before a forecast is revealed — the model **ties** some decisions across all branches to the realized branch and lets the rest **diverge**. What is tied depends on whether the solve invests.
+
+**Any stochastic solve (dispatch or investment) assumes, by default:**
+
+- **Storage state, unit commitment (online status) and reserves are tied** across the branches over the solve's realized/committed periods — the branches must take the same storage and start-up decisions while they still share information. In a **single** solve whose realized periods span the whole horizon this pins them over the whole horizon (so only the flows differ between branches); in a **rolling** solve the tie covers only each roll's committed (jump) slice, and the branches operate freely in the forecast horizon beyond the reveal.
+- **Energy flows are always free** — each scenario dispatches its flows independently.
+
+**An investment solve additionally assumes, by default:**
+
+- **A single, shared here-and-now investment plan** for all branches (`stochastic_invest_method = none`) — you commit one set of investments regardless of which future occurs.
+
+So a plain **dispatch** solve = commit the realized part (shared storage / online / reserve), forecast the rest, flows free. An **investment** solve = the same operational tie **plus** one shared investment plan.
+
+**Overriding the defaults:**
+
+- *Investment* — set `stochastic_invest_method = recourse` for per-scenario (wait-and-see) investment, or declare a mid-horizon reveal for a genuine two-stage hedge (see *Stochastic investment* below).
+- *Operations* — set the `solve` array parameter `non_anticipativity_periods` to change the operational tie window: an **empty array** frees operations from the first timestep (each scenario operates freely — combined with a single shared investment this is the classic two-stage capacity-expansion model), or a **list of periods** ties operations only over those periods. See *Stochastics over multiple periods* for the details.
+
 ### Single solve stochastics
 **(stochastics.sqlite scenario: 2_day_stochastic_dispatch)**
 
