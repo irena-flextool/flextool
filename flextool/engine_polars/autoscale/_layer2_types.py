@@ -476,6 +476,14 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "non_anticipativity_online_linear": CstrFamily(None),
     "non_anticipativity_reserve": CstrFamily(None),
 
+    # ── Investment non-anticipativity (cross-branch invest/divest
+    # equality; v72). RHS = 0; skip per-row.  Divest is mandatory (§4.4).
+    # flextool/engine_polars/model.py:_add_non_anticipativity_invest_constraints
+    "non_anticipativity_invest_p": CstrFamily(None),
+    "non_anticipativity_invest_n": CstrFamily(None),
+    "non_anticipativity_divest_p": CstrFamily(None),
+    "non_anticipativity_divest_n": CstrFamily(None),
+
     # ── Profile constraints (per timestep).
     # Node profiles emit at model.py:2879 with names
     # ``profile_state_upper_limit`` / ``_lower_limit`` / ``_fixed``;

@@ -156,8 +156,13 @@ def run(
     # ``solve_name`` here is ``complete_solve[solve]`` (the caller passes
     # it), the same key the window dict is populated under.
     na_window = state.solve.non_anticipativity_periods.get(solve_name)
+    # v72 — invest-NA window (unset == [] == no tie).  .get avoids the
+    # defaultdict's default-factory insertion; None/[] emit no CSV.
+    na_invest_window = state.solve.non_anticipativity_invest_periods.get(
+        solve_name)
     _per_solve.emit_per_solve_sets(
-        solve_data_dir, provider=provider, na_window=na_window
+        solve_data_dir, provider=provider, na_window=na_window,
+        na_invest_window=na_invest_window,
     )
     _ck("per_solve_sets")
 

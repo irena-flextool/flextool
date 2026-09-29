@@ -228,6 +228,13 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxDivest_entity_total_path", "maxDivest_entity_total_path_n",
     "maxDivestGroup_entity_total_path_p",
     "maxDivestGroup_entity_total_path_n",
+    # Invest non-anticipativity (v72) — model.py
+    # ``_add_non_anticipativity_invest_constraints`` passes the family
+    # name as a variable (the ``_tie`` helper), so the literal grep above
+    # cannot see them.  All four resolve via an exact CONSTRAINT_FAMILIES
+    # entry (RHS = 0, CstrFamily(None)); divest is mandatory (§4.4).
+    "non_anticipativity_invest_p", "non_anticipativity_invest_n",
+    "non_anticipativity_divest_p", "non_anticipativity_divest_n",
 ]
 
 

@@ -446,6 +446,85 @@ def _add_non_anticipativity_constraints(
                 )
 
 
+def _add_non_anticipativity_invest_constraints(
+    m, d, *,
+    v_invest_p, v_invest_n, v_divest_p, v_divest_n,
+) -> None:
+    """Emit the four invest non-anticipativity families (v72, design §4).
+
+    Ties ``v_invest`` / ``v_divest`` across stochastic branches over the
+    resolved window ``pd_non_anticipativity`` (d, b): for every window
+    pair the branch copy's invest/divest column ``[·, b]`` is pinned equal
+    to the realized anchor's column ``[·, d]`` (RHS 0).  Four families:
+
+      * ``non_anticipativity_invest_p`` — process invest (p, d) vs (p, b)
+      * ``non_anticipativity_invest_n`` — node/storage invest (n, d)/(n, b)
+      * ``non_anticipativity_divest_p`` — process divest (mandatory, F2)
+      * ``non_anticipativity_divest_n`` — node/storage divest
+
+    Tying invest AND divest is mandatory (design §4.4): divest fans under
+    recourse exactly as invest does, so a tied invest with a per-branch
+    divest would leak the NET first-stage capacity
+    ``(existing + invest − divest)`` across branches on every
+    invest+divest-eligible (reinvest / lifetime) entity.
+
+    The domain guard (design §4.2-4.3, F3) is load-bearing AND cross-Enum:
+    ``pd_non_anticipativity.b`` is on the BRANCH axis (its values are
+    period-copy tokens like ``p2035_low``) while ``pd_invest_set.d``
+    renamed ``d→b`` is on the PERIOD axis — polars refuses a join between
+    the two Enum vocabularies.  So the guard join casts BOTH ``b`` keys to
+    Utf8 (the ``db_pairs`` dance, :func:`build_flextool` ~line 4440) and
+    restores the axis types via ``cast_dim`` afterwards.  This is the
+    FIRST test-covered use of this cross-Enum guard join (the operational
+    online guard is dormant), so the solver-level invest-tie test is its
+    mandatory coverage.
+    """
+    pdb = d.pd_non_anticipativity                       # (d, b)
+    if pdb is None or pdb.height == 0:
+        return
+
+    def _tie(name: str, v, inv_set, ent: str) -> None:
+        if v is None or inv_set is None or inv_set.height == 0:
+            return
+        pd_inv = inv_set.select(ent, "d").unique()                  # (ent, d)
+        # d-side join is same-axis (both period-Enum) → native.
+        cstr = pd_inv.join(pdb, on="d", how="inner")                # (ent, d, b)
+        if cstr.height == 0:
+            return
+        # ── F3 guard: (ent, b) must be a declared invest cell.  b is
+        #    branch-Enum on cstr, period-Enum on pd_inv.d → cast both b
+        #    keys to Utf8 for the join, restore axis types afterwards.
+        guard = (pd_inv.rename({"d": "b"})
+                 .with_columns(pl.col("b").cast(pl.Utf8)))
+        cstr_over = (cstr
+            .with_columns(pl.col("b").cast(pl.Utf8))
+            .join(guard, on=[ent, "b"], how="inner")
+            .with_columns(cast_dim(pl.col("d"), None, "d"),
+                          cast_dim(pl.col("b"), None, "b"))
+            .select(ent, "d", "b").unique())
+        if cstr_over.height == 0:
+            return
+        v_at_b = Var(
+            name=v.name + "__nab",
+            dims=(ent, "b"),
+            frame=v.frame.rename({"d": "b"}),
+            lower=v.lower, upper=v.upper,
+        )
+        m.add_cstr(
+            name,
+            over      = cstr_over,
+            sense     = "==",
+            lhs_terms = {"v_d":  v,
+                         "v_b": -v_at_b},
+            rhs_terms = {},
+        )
+
+    _tie("non_anticipativity_invest_p", v_invest_p, d.pd_invest_set, "p")
+    _tie("non_anticipativity_invest_n", v_invest_n, d.nd_invest_set, "n")
+    _tie("non_anticipativity_divest_p", v_divest_p, d.pd_divest_set, "p")
+    _tie("non_anticipativity_divest_n", v_divest_n, d.nd_divest_set, "n")
+
+
 def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                    scale_the_objective: float = 1.0) -> None:
     """Build the flextool LP into ``m`` from data ``d``.
@@ -4466,6 +4545,26 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 v_flow           = locals().get("v_flow")           if has_proc       else None,
                 has_minload_eff  = has_minload_eff,
             )
+
+    # ─── Investment non-anticipativity (v72 — the standard two-stage
+    # stochastic-investment mode) ────────────────────────────────────────
+    # Ties v_invest / v_divest across stochastic branches over the resolved
+    # window pd_non_anticipativity (design §4).  Gated on recourse_invest
+    # (per-branch invest columns must exist to tie) AND a non-empty frame;
+    # under the unset window the frame is provably empty (byte-parity) and
+    # this block never fires.  Under stochastic_invest_method=none the frame
+    # may build but the domain guard drops every pair (no fanned invest
+    # column) — a graceful no-op.
+    if (getattr(d, "recourse_invest", False)
+            and d.pd_non_anticipativity is not None
+            and d.pd_non_anticipativity.height > 0):
+        _add_non_anticipativity_invest_constraints(
+            m, d,
+            v_invest_p = locals().get("v_invest_p") if has_invest_p else None,
+            v_invest_n = locals().get("v_invest_n") if has_invest_n else None,
+            v_divest_p = locals().get("v_divest_p") if has_divest_p else None,
+            v_divest_n = locals().get("v_divest_n") if has_divest_n else None,
+        )
 
     # Apply objective scaling if provided (default 1.0 = no scaling).
     if scale_the_objective != 1.0:

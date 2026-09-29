@@ -132,6 +132,7 @@ def emit_per_solve_sets(
     *,
     provider,
     na_window: "list | None" = None,
+    na_invest_window: "list | None" = None,
 ) -> None:
     """Emit ``per_solve_sets`` to the Provider.
     Emits the same ~24 frames under ``solve_data/<basename>`` keys via
@@ -152,6 +153,17 @@ def emit_per_solve_sets(
     * ``[(p, p), ...]``     -> those periods' timesteps, intersected with
       ``steps_in_use`` (the ONLY domain guard for the storage family,
       which joins the (d,t) set on ``d`` alone — F7).
+
+    *na_invest_window* is the resolved v72 invest-NA window
+    (``SolveConfig.non_anticipativity_invest_periods``, plain
+    ``periods_to_tuples`` — unset == [] == no tie).  When non-empty it
+    materialises ``pd_non_anticipativity_invest_periods.csv`` (a
+    one-column period list), read back by
+    ``_derived_branch.pd_non_anticipativity_lf`` to populate the invest
+    tie-set.  When unset/empty NO file is emitted, so the frame builder's
+    reader returns ``None`` -> the legacy branch_start path -> a provably
+    empty frame -> zero constraints -> byte-identical to prior behaviour
+    (and no new CSV appears in any existing fixture's solve_data).
     """
     input_dir = solve_data_dir.parent / "input"
 
@@ -385,6 +397,17 @@ def emit_per_solve_sets(
                 dtna_seen[(d, t)] = None
     _emit_tuples(provider, "solve_data/dt_non_anticipativity_set.csv",
                  ("period", "time"), list(dtna_seen.keys()))
+
+    # v72 — invest-NA window.  Materialise the tie period list ONLY when
+    # the window is non-empty; absent file -> reader returns None ->
+    # legacy empty frame -> byte-parity (no new CSV for unset fixtures).
+    if na_invest_window:
+        na_invest_periods = list(dict.fromkeys(
+            p for (p, _p_in) in na_invest_window))
+        _emit_singles(
+            provider,
+            "solve_data/pd_non_anticipativity_invest_periods.csv",
+            "period", na_invest_periods)
 
     cn_df = _read_csv(input_dir / "commodity__node.csv",
                       ["commodity", "node"], provider=provider)

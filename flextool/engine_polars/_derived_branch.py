@@ -1162,6 +1162,41 @@ def d_leaf_df(
                      ctx=ctx, provider=provider).collect()
 
 
+def _read_invest_tie_periods(
+    workdir: Path | None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> "frozenset[str] | None":
+    """Resolve the v72 invest-NA window (the periods to tie) for this solve.
+
+    Returns ``None`` when the window is unset (no
+    ``pd_non_anticipativity_invest_periods.csv`` was emitted and ctx
+    carries nothing) — the byte-parity legacy path.  Returns a
+    ``frozenset`` of period tokens otherwise (possibly empty, though the
+    emitter only writes the CSV for a non-empty window).
+
+    ctx-first (``SolveContext.non_anticipativity_invest_periods`` — a
+    list of period tokens or ``(p, p)`` tuples), then the per-solve CSV
+    materialised by ``_emit_per_solve.emit_per_solve_sets``.
+    """
+    if ctx is not None:
+        w = getattr(ctx, "non_anticipativity_invest_periods", None)
+        if w is not None:
+            return frozenset(
+                str(p[0] if isinstance(p, (tuple, list)) else p) for p in w)
+    if workdir is None:
+        return None
+    p = Path(workdir) / "solve_data" / "pd_non_anticipativity_invest_periods.csv"
+    df = _provider_get(provider, p)
+    if df is None:
+        return None
+    if df.height == 0:
+        return frozenset()
+    col = "period" if "period" in df.columns else df.columns[0]
+    return frozenset(str(v) for v in df[col].to_list() if v is not None)
+
+
 def pd_non_anticipativity_lf(
     workdir: Path | None,
     source: "InputSource | None" = None,
@@ -1170,6 +1205,7 @@ def pd_non_anticipativity_lf(
     ctx: "object | None" = None,
     provider: "object | None" = None,
     branch_start: pl.DataFrame | None = None,
+    tie_periods: "frozenset[str] | None" = None,
 ) -> pl.LazyFrame:
     """``pd_non_anticipativity`` — (d, b) invest-NA period pairs.
 
@@ -1181,6 +1217,16 @@ def pd_non_anticipativity_lf(
     ``b``'s branch (the branching period itself is NOT tied — recourse
     invest at the branching period is per-scenario by owner decision,
     plan §7).
+
+    The v72 invest-NA window drives the emit by MEMBERSHIP: ``tie_periods``
+    is the resolved window (a ``frozenset`` of anchor periods).  When
+    supplied, ``(anchor_of[m], m)`` is emitted for every synthetic member
+    ``m`` whose anchor lies in the window — the standard two-stage mode
+    (design §3.2).  When ``tie_periods`` is ``None`` it is auto-resolved
+    from ctx / the per-solve CSV via :func:`_read_invest_tie_periods`;
+    still ``None`` (unset) falls back to the legacy ``branch_start``
+    reveal-boundary path below, which is provably EMPTY for every
+    currently-constructible solve (byte-parity, design §2.3).
 
     ``branch_start`` (optional, ``[time_branch, d_start]``) supplies
     the authoritative reveal period per time-branch — the Slice E
@@ -1199,6 +1245,9 @@ def pd_non_anticipativity_lf(
     """
     schema = {"d": schema_dtype(_enums, "d"),
               "b": schema_dtype(_enums, "b")}
+    if tie_periods is None:
+        tie_periods = _read_invest_tie_periods(
+            workdir, ctx=ctx, provider=provider)
     pb_rows, piu, tb_of = _lineage_inputs(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     if not piu:
@@ -1207,6 +1256,17 @@ def pd_non_anticipativity_lf(
         pb_rows, piu, tb_of)
     if not synthetic:
         return _empty_lf(schema)
+    if tie_periods is not None:
+        # v72 window-membership emit (design §3.2): tie every synthetic
+        # member whose real-named anchor is in the window.  Supersedes the
+        # reveal-boundary gate below (which cannot express an at-branching-
+        # period tie).  An empty window -> no rows -> empty frame.
+        rows = [(anchor_of[m], m) for m in synthetic
+                if anchor_of[m] in tie_periods]
+        if not rows:
+            return _empty_lf(schema)
+        return _finalize_lineage_frame(rows, "d", "d", "b", "b",
+                                       "pd_non_anticipativity")
     bs_of: dict[str, str] = {}
     if branch_start is not None and branch_start.height > 0:
         bs_of = {str(tb): str(d) for tb, d in
@@ -1248,12 +1308,13 @@ def pd_non_anticipativity_df(
     ctx: "object | None" = None,
     provider: "object | None" = None,
     branch_start: pl.DataFrame | None = None,
+    tie_periods: "frozenset[str] | None" = None,
 ) -> pl.DataFrame:
     """Collect wrapper for :func:`pd_non_anticipativity_lf` — always a
     typed frame, never ``None`` (design §2.5)."""
     return pd_non_anticipativity_lf(
         workdir, source, active_solve, ctx=ctx, provider=provider,
-        branch_start=branch_start).collect()
+        branch_start=branch_start, tie_periods=tie_periods).collect()
 
 
 # ---------------------------------------------------------------------------
