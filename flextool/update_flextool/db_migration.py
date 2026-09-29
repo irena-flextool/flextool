@@ -1763,6 +1763,8 @@ def migrate_database(
                 _migrate_v69_backfill_parameter_groups(db)
             elif next_version == 70:
                 _migrate_v70_stochastic_invest_method(db)
+            elif next_version == 71:
+                _migrate_v71_non_anticipativity_periods(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3847,6 +3849,70 @@ def _migrate_v70_stochastic_invest_method(db) -> None:
         "v70: added solve.stochastic_invest_method "
         "(stochastic_invest_methods: none/recourse, default none); "
         "opt-in for recourse stochastic investment (Slice D)."
+    )
+
+
+def _migrate_v71_non_anticipativity_periods(db) -> None:
+    """Add the solve.non_anticipativity_periods window knob (v70 -> v71).
+
+    Slice G decouples the operational non-anticipativity window from
+    ``realized_periods``.  This Array-of-periods parameter selects the
+    (d,t) set over which the four ``non_anticipativity_*`` families
+    (storage/online/reserve) are pinned across stochastic branches:
+
+    * unset (default) -> legacy ``realized_dispatch u fix_storage``
+      window, byte-identical to prior behaviour;
+    * empty Array ``[]`` -> empty window, operations branch freely from
+      t0 (classic two-stage capacity expansion);
+    * ``[p, ...]`` -> tie only over those periods' timesteps
+      (intersected with steps_in_use at emit).
+
+    Array-shaped (read by ``periods_to_tuples``, same as
+    ``realized_periods`` / ``fix_storage_periods``): ``default_value`` and
+    ``default_type`` are ``None`` and it has NO parameter_value_list.
+    Migrating a DB adds only the definition (no per-solve value), so every
+    migrated solve resolves to the unset -> legacy-window case.  Grouped
+    under 'solve_advanced' (created if the DB lacks it).
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_periods",
+        default_value=None,
+        default_type=None,
+        description=(
+            "Array of periods over which operational non-anticipativity "
+            "(storage / online / reserve dispatch tied across stochastic "
+            "branches) is enforced. Unset (default) uses the legacy window "
+            "= all realized-dispatch timesteps union the fix_storage "
+            "timesteps (byte-identical to prior behaviour). An explicitly "
+            "empty Array frees operations from t0 (classic two-stage "
+            "capacity expansion: one shared here-and-now investment plus "
+            "operations that branch freely per scenario). A period list "
+            "ties operations only over those periods' timesteps."
+        ),
+    )
+    # Attach to the 'solve_advanced' parameter group, creating it if the
+    # DB lacks it (mirrors v70; see that migration for the get-or-create
+    # rationale — minimal fixtures seeded above v44 carry no groups).
+    if not db.get_item("parameter_group", name="solve_advanced"):
+        db.add_update_item(
+            "parameter_group",
+            name="solve_advanced",
+            color="b56f6f",
+            priority=87,
+        )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_periods",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v71: added solve.non_anticipativity_periods (Array of periods, "
+        "default unset); decouples the operational non-anticipativity "
+        "window from realized_periods (Slice G)."
     )
 
 

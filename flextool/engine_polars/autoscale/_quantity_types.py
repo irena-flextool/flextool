@@ -343,6 +343,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other ti...
     ('node_type', 'node'): QuantityType.DIMENSIONLESS,
     # Role of this node in the LP.  'commodity' = price-exposed source/sink with no balance constraint (e.g. fuel imports, no storage); 'balance' ...
+    ('non_anticipativity_periods', 'solve'): QuantityType.DIMENSIONLESS,
+    # Array of periods over which operational non-anticipativity is enforced (Slice G). Unset = legacy realized_dispatch u fix_storage window; empty = operations free from t0.
     ('non_synchronous_limit', 'group'): QuantityType.FRACTION,
     # [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.
     ('other_operational_cost', 'connection'): QuantityType.PRICE_PER_ENERGY,

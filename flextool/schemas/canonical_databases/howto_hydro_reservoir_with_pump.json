@@ -1231,7 +1231,7 @@
       "model",
       "version",
       [
-        "70",
+        "71",
         "float"
       ],
       null,
@@ -1849,6 +1849,14 @@
       null,
       "Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.",
       "timeline"
+    ],
+    [
+      "solve",
+      "non_anticipativity_periods",
+      null,
+      null,
+      "Array of periods over which operational non-anticipativity (storage / online / reserve dispatch tied across stochastic branches) is enforced. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list ties operations only over those periods' timesteps.",
+      "solve_advanced"
     ],
     [
       "solve",
