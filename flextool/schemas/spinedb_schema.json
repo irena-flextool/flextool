@@ -710,6 +710,14 @@
       "binary"
     ],
     [
+      "stochastic_invest_methods",
+      "none"
+    ],
+    [
+      "stochastic_invest_methods",
+      "recourse"
+    ],
+    [
       "storage_binding_methods",
       "bind_within_period"
     ],
@@ -1603,7 +1611,7 @@
     [
       "model",
       "version",
-      69.0,
+      70.0,
       null,
       "Contains database version information.",
       "model"
@@ -2254,6 +2262,14 @@
       null,
       null,
       "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "stochastic_invest_method",
+      "none",
+      "stochastic_invest_methods",
+      "How stochastic branches participate in investment. 'none' (default) keeps investment realized-only: stochastic branches never enter the invest axis (v_invest stays on realized periods), byte-identical to prior behaviour. 'recourse' enables two-stage stochastic investment with recourse — shared (non-anticipative) investment before the branch point plus per-branch recourse investment at and after the branching period, with probability-weighted investment costs. Reserved for future expected-value and nested-tree modes.",
       "solve_advanced"
     ],
     [
