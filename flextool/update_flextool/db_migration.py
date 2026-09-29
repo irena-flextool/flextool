@@ -1761,6 +1761,12 @@ def migrate_database(
                 _migrate_v68_rp_group_flag(db)
             elif next_version == 69:
                 _migrate_v69_backfill_parameter_groups(db)
+            elif next_version == 70:
+                _migrate_v70_stochastic_invest_method(db)
+            elif next_version == 71:
+                _migrate_v71_non_anticipativity_periods(db)
+            elif next_version == 72:
+                _migrate_v72_non_anticipativity_invest_periods(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3773,6 +3779,216 @@ def _migrate_v69_backfill_parameter_groups(db) -> None:
     _commit_step(db,
         "v69: backfilled parameter groups for model.small_number_threshold "
         "(-> model) and node.penalty_method (-> basics)."
+    )
+
+
+def _migrate_v70_stochastic_invest_method(db) -> None:
+    """Add the solve.stochastic_invest_method opt-in (v69 -> v70).
+
+    Two-stage stochastic investment with recourse (recourse plan
+    §6b Slice D) is enabled per solve by this enum.  'none' (default,
+    byte-identical to prior behaviour) keeps the R-O6 invariant —
+    stochastic branches never enter the invest axis; v_invest stays
+    realized-only.  'recourse' selects the Slice D machinery.
+
+    Slice C ships only the schema + the validation guards: flag-on is
+    HARD-REJECTED until Slice D lands (branch periods on the invest
+    axis).  Bound to a new 'stochastic_invest_methods' value list;
+    grouped under 'solve_advanced' (created if the DB lacks it).
+    """
+    add_value_list_manual(db, [
+        ["stochastic_invest_methods", "none"],
+        ["stochastic_invest_methods", "recourse"],
+    ])
+
+    default_val, default_type = to_database("none")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="stochastic_invest_method",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="stochastic_invest_methods",
+        description=(
+            "How stochastic branches participate in investment. 'none' "
+            "(default) keeps investment realized-only: stochastic "
+            "branches never enter the invest axis (v_invest stays on "
+            "realized periods), byte-identical to prior behaviour. "
+            "'recourse' enables two-stage stochastic investment with "
+            "recourse — shared (non-anticipative) investment before the "
+            "branch point plus per-branch recourse investment at and "
+            "after the branching period, with probability-weighted "
+            "investment costs. Reserved for future expected-value and "
+            "nested-tree modes."
+        ),
+    )
+    # Attach to the 'solve_advanced' parameter group, creating it if the
+    # DB lacks it.  Every parameter must belong to a parameter_group so it
+    # is not dropped from group-filtered tabular exports (v69 invariant,
+    # guarded by tests/test_parameter_group_coverage.py), and solve_advanced
+    # is this param's canonical home in the schema.  Real DBs always have it
+    # (created in v44, recoloured in v45), but a DB built from scratch at a
+    # version above v44 — e.g. the minimal fixtures the migration tests seed
+    # — never ran the v44 step and so carries no parameter_groups.  Use the
+    # non-raising get_item (db.item raises SpineDBAPIError when absent) and
+    # get-or-create; the create only fires on such group-less DBs and mirrors
+    # v44's colour/priority for solve_advanced (post-v45 colour b56f6f).
+    if not db.get_item("parameter_group", name="solve_advanced"):
+        db.add_update_item(
+            "parameter_group",
+            name="solve_advanced",
+            color="b56f6f",
+            priority=87,
+        )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="stochastic_invest_method",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v70: added solve.stochastic_invest_method "
+        "(stochastic_invest_methods: none/recourse, default none); "
+        "opt-in for recourse stochastic investment (Slice D)."
+    )
+
+
+def _migrate_v71_non_anticipativity_periods(db) -> None:
+    """Add the solve.non_anticipativity_periods window knob (v70 -> v71).
+
+    Slice G decouples the operational non-anticipativity window from
+    ``realized_periods``.  This Array-of-periods parameter selects the
+    (d,t) set over which the four ``non_anticipativity_*`` families
+    (storage/online/reserve) are pinned across stochastic branches:
+
+    * unset (default) -> legacy ``realized_dispatch u fix_storage``
+      window, byte-identical to prior behaviour;
+    * empty Array ``[]`` -> empty window, operations branch freely from
+      t0 (classic two-stage capacity expansion);
+    * ``[p, ...]`` -> tie only over those periods' timesteps
+      (intersected with steps_in_use at emit).
+
+    Array-shaped (read by ``periods_to_tuples``, same as
+    ``realized_periods`` / ``fix_storage_periods``): ``default_value`` and
+    ``default_type`` are ``None`` and it has NO parameter_value_list.
+    Migrating a DB adds only the definition (no per-solve value), so every
+    migrated solve resolves to the unset -> legacy-window case.  Grouped
+    under 'solve_advanced' (created if the DB lacks it).
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_periods",
+        default_value=None,
+        default_type=None,
+        description=(
+            "Array of periods over which operational non-anticipativity "
+            "(storage / online / reserve dispatch tied across stochastic "
+            "branches) is enforced. Unset (default) uses the legacy window "
+            "= all realized-dispatch timesteps union the fix_storage "
+            "timesteps (byte-identical to prior behaviour). An explicitly "
+            "empty Array frees operations from t0 (classic two-stage "
+            "capacity expansion: one shared here-and-now investment plus "
+            "operations that branch freely per scenario). A period list "
+            "ties operations only over those periods' timesteps."
+        ),
+    )
+    # Attach to the 'solve_advanced' parameter group, creating it if the
+    # DB lacks it (mirrors v70; see that migration for the get-or-create
+    # rationale — minimal fixtures seeded above v44 carry no groups).
+    if not db.get_item("parameter_group", name="solve_advanced"):
+        db.add_update_item(
+            "parameter_group",
+            name="solve_advanced",
+            color="b56f6f",
+            priority=87,
+        )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_periods",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v71: added solve.non_anticipativity_periods (Array of periods, "
+        "default unset); decouples the operational non-anticipativity "
+        "window from realized_periods (Slice G)."
+    )
+
+
+def _migrate_v72_non_anticipativity_invest_periods(db) -> None:
+    """Add the solve.non_anticipativity_invest_periods knob (v71 -> v72).
+
+    The invest-NA window is the standard two-stage stochastic-investment
+    mode: an Array-of-periods parameter selecting the periods over which
+    ``v_invest`` / ``v_divest`` are TIED across stochastic branches (a
+    single shared here-and-now decision).  It pins the four
+    ``non_anticipativity_invest_p/n`` and ``non_anticipativity_divest_p/n``
+    constraint families across the branch fan of those periods:
+
+    * unset (default) OR empty Array ``[]`` -> NO tie, byte-identical to
+      prior behaviour (``recourse`` stays per-branch everywhere; ``none``
+      stays shared);
+    * ``[p, ...]`` -> tie invest/divest at each branch's copy of those
+      periods to the realized anchor -> shared first-stage investment with
+      per-branch (recourse) investment in later periods.
+
+    Unlike the operational ``non_anticipativity_periods`` (v71), the
+    unset/``[]`` distinction carries no behaviour here (both = no tie),
+    so it is read by the plain ``periods_to_tuples`` (not a tri-state).
+
+    Array-shaped (read by ``periods_to_tuples``, same as
+    ``realized_periods`` / ``non_anticipativity_periods``):
+    ``default_value`` and ``default_type`` are ``None`` and it has NO
+    parameter_value_list.  Migrating a DB adds only the definition (no
+    per-solve value), so every migrated solve resolves to unset -> no
+    tie -> today's behaviour.  Grouped under 'solve_advanced' (created if
+    the DB lacks it).
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_invest_periods",
+        default_value=None,
+        default_type=None,
+        description=(
+            "Array of periods over which investment is non-anticipative "
+            "(v_invest and v_divest tied across stochastic branches — a "
+            "single shared here-and-now decision). Unset (default) or an "
+            "empty Array means NO tie (byte-identical to prior behaviour: "
+            "recourse stays per-branch, none stays shared). A period list "
+            "-- e.g. the first period -- ties investment over those "
+            "periods while later periods invest per-branch (recourse), "
+            "the standard two-stage stochastic capacity-expansion mode. "
+            "Requires stochastic_invest_method=recourse; a no-op under "
+            "none (investment is already shared across all periods)."
+        ),
+    )
+    # Attach to the 'solve_advanced' parameter group, creating it if the
+    # DB lacks it (mirrors v70/v71; see those migrations for the
+    # get-or-create rationale — minimal fixtures seeded above v44 carry
+    # no groups).
+    if not db.get_item("parameter_group", name="solve_advanced"):
+        db.add_update_item(
+            "parameter_group",
+            name="solve_advanced",
+            color="b56f6f",
+            priority=87,
+        )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_invest_periods",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v72: added solve.non_anticipativity_invest_periods (Array of "
+        "periods, default unset); the standard two-stage stochastic "
+        "investment mode — ties v_invest/v_divest across branches over "
+        "the window (shared here-and-now decision), recourse later."
     )
 
 

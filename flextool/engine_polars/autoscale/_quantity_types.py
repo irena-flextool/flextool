@@ -343,6 +343,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other ti...
     ('node_type', 'node'): QuantityType.DIMENSIONLESS,
     # Role of this node in the LP.  'commodity' = price-exposed source/sink with no balance constraint (e.g. fuel imports, no storage); 'balance' ...
+    ('non_anticipativity_invest_periods', 'solve'): QuantityType.DIMENSIONLESS,
+    # Array of periods over which investment (v_invest/v_divest) is tied across stochastic branches (the standard two-stage mode). Unset/empty = no tie.
+    ('non_anticipativity_periods', 'solve'): QuantityType.DIMENSIONLESS,
+    # Array of periods over which operational non-anticipativity is enforced (Slice G). Unset = legacy realized_dispatch u fix_storage window; empty = operations free from t0.
     ('non_synchronous_limit', 'group'): QuantityType.FRACTION,
     # [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.
     ('other_operational_cost', 'connection'): QuantityType.PRICE_PER_ENERGY,
@@ -523,6 +527,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Choice of startup method. Linear startup means that the unit can start partially (anything between 0 and full capacity) but will face startu...
     ('stochastic_branches', 'solve'): QuantityType.DIMENSIONLESS,
     # [4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the...
+    ('stochastic_invest_method', 'solve'): QuantityType.DIMENSIONLESS,
+    # Opt-in mode string (none/recourse) for how stochastic branches participate in investment; a mode carries no physical unit.
     ('storage_binding_method', 'node'): QuantityType.DIMENSIONLESS,
     # Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over an...
     ('storage_nested_fix_method', 'node'): QuantityType.DIMENSIONLESS,

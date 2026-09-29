@@ -929,6 +929,30 @@ class FlexData:
     dt_non_anticipativity: pl.DataFrame | None = None  # (d, t) — realised dispatch + fix-storage timesteps
     groupStochastic: pl.DataFrame | None = None   # (g,) — groups enabling storage non-anticipativity
     period_in_use_set: pl.DataFrame | None = None  # (d,) — periods active this solve (filters branches)
+    # Scenario-lineage frames (recourse plan §6b Slice A).  Built by
+    # apply_branch_cluster for every solve; None only when the derived
+    # cascade never ran (hand-built FlexData).  dd_same_scenario:
+    # (d, d_other) pairs sharing a scenario leaf-path (all-pairs over
+    # period_in_use for deterministic solves).  pd_non_anticipativity:
+    # (d, b) invest-NA period pairs — empty until mid-horizon branch
+    # points exist (Slice E).
+    dd_same_scenario: pl.DataFrame | None = None       # (d, d_other)
+    pd_non_anticipativity: pl.DataFrame | None = None  # (d, b)
+    # Slice D — per-scenario-leaf partition of period_in_use (design §7.2):
+    # (d, leaf) with real-named anchors → "__realized", synthetic fan
+    # members → their time-branch id.  Drives the per-path total caps
+    # (maxInvest/maxDivest_entity_total_path, maxDivestGroup_entity_total_path)
+    # so a total cap applies once per scenario path, never cross-scenario.
+    # Single "__realized" leaf for deterministic / flag-off solves →
+    # caps stay on the legacy single-row shape (byte-parity).
+    d_leaf: pl.DataFrame | None = None                 # (d, leaf)
+
+    # Slice D — per-scenario (wait-and-see) stochastic investment gate.
+    # Set once in ``apply_derived_c`` from
+    # ``solve_data/stochastic_invest_method.csv`` == 'recourse'.  Survives
+    # ``dataclasses.replace`` (region filter) like the lineage frames so
+    # ``model.py`` reads ``d.recourse_invest`` without a second CSV read.
+    recourse_invest: bool = False
 
     # ─── Gap F final — handoff-path auxiliaries ───────────────────────────
     # Per-solve in-memory carriers for fields that ``build_handoff_from_solution``
@@ -4824,6 +4848,13 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     from flextool.engine_polars import _projection_params as _pp
     from flextool.engine_polars import _derived_params as _drv
 
+    # F1 — defensive per-solve reset of the recourse process-globals BEFORE
+    # any cascade pass runs, so no producer can inherit a stale anchor-pairs
+    # holder / walker Provider from a prior solve in a chained multi-solve.
+    # (The flag-aware Layer-4 boundaries still overwrite them; this just
+    # guarantees the invariant for any future earlier-step per-period producer.)
+    _drv._reset_recourse_scope()
+
     from flextool.engine_polars._orchestration import get_phase_recorder
     _rec = get_phase_recorder()
     _logger = logging.getLogger("flextool.engine_polars.input")
@@ -5646,6 +5677,11 @@ def build_handoff_from_solution(
     import polars as pl  # local — keep this helper's import surface narrow
     # Native import — Γ.8.D moved SolveHandoff into engine_polars.
     from flextool.engine_polars._solve_handoff import SolveHandoff
+    # Slice C Guard 3 — local imports keep this helper's import surface narrow.
+    from flextool.engine_polars._solve_state import FlexToolConfigError
+    from flextool.engine_polars._stochastic_detect import (
+        synthetic_branch_tokens,
+    )
 
     sd = work_folder / "solve_data"
     first_solve = _read_solve_first(work_folder, provider=provider)
@@ -5689,6 +5725,31 @@ def build_handoff_from_solution(
                     continue
                 e = str(r[entity_col])
                 divest_by_e[e] = divest_by_e.get(e, 0.0) + v
+
+    # ---- Slice D (H, §10.1): EXPLICIT non-realized invest drop ----
+    # ``invest_by_ed`` collects every solved v_invest row, including
+    # branch-named (non-realized-scenario) ones fanned in under recourse.
+    # Historically the ``d in realize_invest`` commit gate below dropped
+    # those by accident; make it explicit here — partition on synthetic
+    # branch membership and debug-log the dropped mass BEFORE the commit
+    # loop, so the belt-and-braces Slice C Guard 3 (which asserts no
+    # synthetic token survived into the committed rows) is a true
+    # invariant check, not the mechanism.  Flag-off / deterministic:
+    # ``_synth`` is empty and this block is a no-op (byte-parity).
+    _synth_handoff = synthetic_branch_tokens(
+        getattr(flex_data, "period_branch_full", None))
+    if _synth_handoff:
+        _dropped = {k: v for k, v in invest_by_ed.items()
+                    if k[1] in _synth_handoff}
+        if _dropped:
+            logging.getLogger("flextool.engine_polars.input").debug(
+                "recourse handoff: dropping %d non-realized invest rows, "
+                "total capacity %.6g (periods %s)",
+                len(_dropped), sum(_dropped.values()),
+                sorted({k[1] for k in _dropped}),
+            )
+        invest_by_ed = {k: v for k, v in invest_by_ed.items()
+                        if k[1] not in _synth_handoff}
 
     # ---- iteration set: prior keys ∪ entity × iteration_periods ----
     realize_invest = _read_realize_invest_periods(
@@ -5743,6 +5804,46 @@ def build_handoff_from_solution(
             invested += v * us
         inv_rows.append((e, d, invested))
         exist_rows.append((e, d, existing))
+
+    # ---- Slice C Guard 3: no committed realized_invest period may be a
+    #      synthetic stochastic-branch fan member (recourse plan §3.3).
+    #      The token set is the BROAD d != b b-token set of
+    #      period_branch_full (shared idiom ``synthetic_branch_tokens``) —
+    #      deliberately broader than Guard 2's PIU-intersected set:
+    #      committing invest at a metadata mirror (e.g. period1_realized,
+    #      the rolling-bookkeeping token) must ALSO be forbidden, and those
+    #      rolling metadata tokens never legitimately appear in
+    #      realized_invest.  None-degrade: when flex_data /
+    #      period_branch_full is unavailable (the Benders TIER-1 snapshot
+    #      call passes flex_data=None by design, :2278-2290) the check is a
+    #      no-op — that path is a Benders invest solve, which Guard 2
+    #      already forbids for stochastic models, so no synthetic token can
+    #      reach it.  On today's (flag-off) code both branches are empty
+    #      (realized branch keeps real names end-to-end), so the guard is
+    #      inert and adds no golden change.
+    _pbf = getattr(flex_data, "period_branch_full", None)
+    _synth = synthetic_branch_tokens(_pbf)
+    if _synth:
+        # (a) config-level: realize_invest lists no synthetic token.
+        _bad_cfg = sorted(set(map(str, realize_invest)) & _synth)
+        if _bad_cfg:
+            raise FlexToolConfigError(
+                f"Solve '{solve_name}': realized_invest_periods lists "
+                f"synthetic stochastic-branch period(s) {_bad_cfg}. "
+                f"Only real (realized-branch) period names may be "
+                f"realized for investment."
+            )
+        # (b) committed rows carry no synthetic period.
+        _bad_commit = sorted({
+            d for (e, d, v) in inv_rows if v != 0.0 and d in _synth
+        })
+        if _bad_commit:
+            raise FlexToolConfigError(
+                f"Solve '{solve_name}': handoff would commit investment "
+                f"at synthetic stochastic-branch period(s) {_bad_commit} "
+                f"— these belong to a non-realized scenario and must not "
+                f"enter the committed capacity chain (recourse plan §3.3)."
+            )
 
     # ---- divest_cumulative: prior + sum_d v_divest * unitsize ----
     entity_divest = set(_read_singles_csv(sd / "entityDivest.csv",

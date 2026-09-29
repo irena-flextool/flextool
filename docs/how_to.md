@@ -1123,9 +1123,9 @@ Stochastics are used to represent the uncertainty of the future in the decision 
 
 ![Stochastic system](./img/concept/non-anticipatory.png)
 
-For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take (e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch. Only one period investment stochastic models are supported currently.
+For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take (e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch.
 
-In this example, we show two ways to use stochastics: Single solve, rolling horizon. They all share the same test system that includes: 
+In this example, we show two ways to use stochastics: single solve and rolling horizon. They all share the same test system that includes: 
 
 - A demand node 
 - Coal, gas and wind power plants 
@@ -1139,12 +1139,32 @@ Notes about the storage options with stochastics:
 
 - The best options to use are:
 
-  - `Storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
+  - `storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
   - `storage_solve_horizon_method`: fix_value or fix_price (and their values)
 
 - Do not use any of the `storage_binding_methods`, they do not work correctly with stochastics (there is no unambigious end state that could circle back to the first time step). 
 
 ![Stocahstic system](./img/concept/stochastic_system.png)
+
+### What the model ties across branches (dispatch vs. investment defaults)
+
+Wherever the branches share the same information — the *realized* (committed) part of the horizon, before a forecast is revealed — the model **ties** some decisions across all branches to the realized branch and lets the rest **diverge**. What is tied depends on whether the solve invests.
+
+**Any stochastic solve (dispatch or investment) assumes, by default:**
+
+- **Storage state, unit commitment (online status) and reserves are tied** across the branches over the solve's realized/committed periods — the branches must take the same storage and start-up decisions while they still share information. In a **single** solve whose realized periods span the whole horizon this pins them over the whole horizon (so only the flows differ between branches); in a **rolling** solve the tie covers only each roll's committed (jump) slice, and the branches operate freely in the forecast horizon beyond the reveal.
+- **Energy flows are always free** — each scenario dispatches its flows independently.
+
+**An investment solve additionally assumes, by default:**
+
+- **A single, shared here-and-now investment plan** for all branches (`stochastic_invest_method = none`) — you commit one set of investments regardless of which future occurs.
+
+So a plain **dispatch** solve = commit the realized part (shared storage / online / reserve), forecast the rest, flows free. An **investment** solve = the same operational tie **plus** one shared investment plan.
+
+**Overriding the defaults:**
+
+- *Investment* — set `stochastic_invest_method = recourse` for per-scenario (wait-and-see) investment, or declare a mid-horizon reveal for a genuine two-stage hedge (see *Stochastic investment* below).
+- *Operations* — set the `solve` array parameter `non_anticipativity_periods` to change the operational tie window: an **empty array** frees operations from the first timestep (each scenario operates freely — combined with a single shared investment this is the classic two-stage capacity-expansion model), or a **list of periods** ties operations only over those periods. See *Stochastics over multiple periods* for the details.
 
 ### Single solve stochastics
 **(stochastics.sqlite scenario: 2_day_stochastic_dispatch)**
@@ -1174,6 +1194,7 @@ Notes for multi-period stochastic solves:
 - If `years_represented` is defined for the solve, it must cover **all** of the solve's periods. A configuration that defines it for only some periods fails with a configuration error (older versions silently ran on a truncated horizon instead).
 - The realized branch's input weight is always treated as 1.0 along the whole realized chain — the sibling branches' weights are normalized against 1.0, not against a DB value on the realized row.
 - In a single solve whose `realized_periods` span the whole horizon, the non-anticipatory constraints cover the whole horizon: the shared decision types (storage usage, online status, reserve) stay pinned to the realized branch through the later periods, and post-branching divergence shows up only in the flow variables. Use a rolling solve when the branches should be free to commit differently after the information is revealed — each roll then realizes only its jump slice and the non-anticipatory window ends at the reveal.
+- To free the operational branches within a *single* solve (without moving to a rolling solve), set the `solve` array parameter `non_anticipativity_periods`. Left unset (the default) it keeps the behaviour above — the operational non-anticipativity window equals the realized-dispatch timesteps (plus any `fix_storage` timesteps), so operations stay pinned across the whole realized horizon. Set it to an **empty array** to free operations from the first timestep: the shared decision types then branch freely per scenario while the investment plan is still a single shared decision (`stochastic_invest_method = none`) — this is the classic two-stage capacity-expansion structure (one here-and-now investment, wait-and-see operations). Set it to a **list of periods** to pin operations only over those periods (e.g. a mid-horizon reveal: pin the pre-reveal periods, free the rest); the listed periods' timesteps are intersected with the solve's active timeline, and a curated list *replaces* (does not add to) the default realized-dispatch window. The dispatch output window is unaffected — `realized_periods` still governs which periods are reported.
 - A `realized: yes` row placed at a later period's first timestep does not re-branch the model, but it selects which forecast branch's timeseries the realized chain uses from that period onwards. This can be used deliberately for per-period forecast-series selection; if you did not intend a series swap, keep the `realized: yes` rows only at the solve (or roll) start.
 
 ### Rolling horizon stochastics
@@ -1193,6 +1214,34 @@ Otherwise there is no difference to the previous example.
 ![Rolling Branching](./img/concept/rolling_non-anticipatory.png)
 
 ![1Week stochastics](./img/concept/1week_stochastics.png)
+
+### Stochastic investment
+
+By default (`solve.stochastic_invest_method = none`) a stochastic model makes a **single** investment plan shared by every branch — one plan for all futures. The stochastic-investment modes below differ in *what is decided before the uncertainty is revealed*.
+
+#### Standard two-stage stochastic investment (the main mode)
+
+The usual goal is a genuine two-stage plan: **one shared here-and-now investment decision, made before the uncertainty resolves, with every scenario then operating that fleet freely from the first timestep** according to its own realization. The investment is the first-stage (non-anticipative) decision; *all operations are second-stage recourse* — nothing operational is tied across the branches.
+
+For a model that invests in a single period this is available today: keep `stochastic_invest_method = none` (one shared investment) and set `non_anticipativity_periods = []` (operations branch freely from t0 — see *What the model ties across branches* above). The result is the classic stochastic capacity-expansion model — commit one fleet, minimise the probability-weighted cost of operating it across the scenarios.
+
+For a **multi-period** investment horizon the ideal is that only the *first* period's investment is shared (the genuine here-and-now decision) while later-period investment adapts per scenario (recourse), since by then some uncertainty has resolved. This is delivered by the **investment non-anticipativity window** — the `solve` array parameter `non_anticipativity_invest_periods`. Compose three knobs:
+
+- `stochastic_invest_method = recourse` (so per-branch investment variables exist to tie);
+- `non_anticipativity_invest_periods = [<first period>]` (tie the first period's `v_invest`/`v_divest` across branches — a single shared here-and-now decision — while later periods invest per-branch);
+- `non_anticipativity_periods = []` (operations branch freely from t0).
+
+The result is the standard two-stage stochastic capacity-expansion structure: **shared first-period investment + per-branch (recourse) investment later + free operations**. Set `non_anticipativity_invest_periods` to more than one period to extend the shared window (e.g. `[p2035, p2040]` shares the first two periods, recourse from the third). Left unset (the default) or set to an empty array it adds no tie — `recourse` stays per-branch everywhere, byte-identical to before. Both invest and divest are tied over the window, so the *net* first-stage capacity (existing + invest − divest) is genuinely shared. The window requires `recourse`; on a `none` solve it is a harmless no-op (investment is already shared across all periods).
+
+#### Per-scenario (wait-and-see) investment
+
+`stochastic_invest_method = recourse` lets each branch (the realized one included) invest on its own data at and after the branching period, with probability-weighted investment costs and per-scenario limits. When branches start at the solve's **first** step this is a *wait-and-see* analysis — each scenario has perfect foresight, so the objective is an EVPI lower bound, **not** a committed plan (it typically costs less than any single plan can). Useful for scenario screening and per-scenario capacity ranges; it is not a plan you can build. Non-realized branch investments are output only under `model.output_horizon` (a debug flag); committed results always report the realized scenario. `recourse` is incompatible with Benders decomposition (the solver rejects the combination).
+
+#### Hedged mid-horizon reveal (first periods deterministic for investment *and* operations)
+
+A third structure keeps the first periods **fully deterministic — a single shared trunk for both investment and operations** — and lets the branches fan out only from a later period. Set the branching period of the `stochastic_branches` map to that later period, with the branches' analysis time at that period's first step (the reveal must fall on a period boundary — investment is period-granular).
+
+The pre-reveal periods stay a single real-named trunk with one shared `v_invest` *and* one shared operational schedule — non-anticipativity holds by construction (there is only one variable per pre-reveal period, so nothing to tie). The post-reveal periods fan per branch (second-stage recourse). Note how this differs from the standard mode above: here the **near-term operations are shared (committed) too**, not just the investment — appropriate when the first periods genuinely are deterministic (a committed near-term operating schedule) rather than a first period that should already be operated per scenario. The objective sits strictly *between* the wait-and-see bound and the deterministic mean-value plan (positive EVPI and VSS); only the realized trunk is output. Mid-horizon reveal is a general stochastics capability — it works for dispatch-only hedged stochastics too, not only for `recourse` investment.
 
 ## How to use CPLEX as the solver
 

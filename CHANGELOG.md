@@ -1,3 +1,42 @@
+## Unreleased
+
+Schema change (adds `solve.stochastic_invest_method` and
+`solve.non_anticipativity_invest_periods`; migrated automatically).
+
+- **Standard two-stage stochastic investment (the main mode).** The new
+  `solve.non_anticipativity_invest_periods` parameter names the periods over
+  which investment is a single shared *here-and-now* decision: `v_invest` and
+  `v_divest` are tied across the stochastic branches over those periods, while
+  later periods invest per branch (recourse). Compose it with
+  `stochastic_invest_method = recourse` and `non_anticipativity_periods = []`
+  to get the classic capacity-expansion structure — shared first-period
+  investment, per-scenario recourse investment thereafter, operations free from
+  the first timestep. Both invest and divest are tied so the *net* first-stage
+  capacity is genuinely shared. Left unset (or empty) it adds no tie and every
+  existing result is byte-identical; on a non-`recourse` solve it is a harmless
+  no-op.
+
+- **Per-scenario stochastic investment** (opt-in
+  `solve.stochastic_invest_method = recourse`): each stochastic branch can now
+  make its own investment decisions at and after the branching period, with
+  probability-weighted investment costs and per-scenario investment limits — a
+  wait-and-see analysis giving per-scenario optimal plans and their expected
+  cost. Committed results report the realized scenario; non-realized branch
+  investments are available under the horizon-output debug flag
+  (`model.output_horizon`). Default behaviour (`none`) is unchanged, and the
+  option is rejected in combination with Benders decomposition.
+- **Mid-horizon reveal / hedged two-stage stochastics.** A stochastic branch
+  may now start at any period boundary, not only the solve's first step, so the
+  pre-reveal periods stay a single shared *here-and-now* investment (a genuine
+  first stage) while the branches fan out into per-scenario recourse from the
+  reveal onward. Under `recourse` this makes the objective a real two-stage
+  hedge — strictly between the wait-and-see bound and the deterministic
+  mean-value plan (positive EVPI/VSS). Storage state is carried across the
+  reveal for stochastic-group storage nodes. Mid-horizon reveal is a general
+  stochastics capability; the previous multi-period restriction is lifted. A
+  malformed reveal (analysis time off a period boundary, or a branching period
+  without exactly one realized branch) is now rejected with a clear error.
+
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 
 Patch release. No schema changes. This release also ships the 4.0.3 changes

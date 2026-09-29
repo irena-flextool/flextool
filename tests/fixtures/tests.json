@@ -2247,6 +2247,20 @@
       ]
     ],
     [
+      "stochastic_invest_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "stochastic_invest_methods",
+      [
+        "InJlY291cnNlIg==",
+        "str"
+      ]
+    ],
+    [
       "storage_binding_methods",
       [
         "ImJpbmRfZm9yd2FyZF9vbmx5Ig==",
@@ -3453,7 +3467,7 @@
       "model",
       "version",
       [
-        "Njk=",
+        "NzI=",
         "float"
       ],
       null,
@@ -4210,6 +4224,28 @@
     ],
     [
       "solve",
+      "non_anticipativity_invest_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which investment is non-anticipative (v_invest and v_divest tied across stochastic branches \u2014 a single shared here-and-now decision). Unset (default) or an empty Array means NO tie (byte-identical to prior behaviour: recourse stays per-branch, none stays shared). A period list -- e.g. the first period -- ties investment over those periods while later periods invest per-branch (recourse), the standard two-stage stochastic capacity-expansion mode. Requires stochastic_invest_method=recourse; a no-op under none (investment is already shared across all periods).",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "non_anticipativity_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which operational non-anticipativity (storage / online / reserve dispatch tied across stochastic branches) is enforced. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list ties operations only over those periods' timesteps.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "period_timeset",
       [
         "bnVsbA==",
@@ -4349,6 +4385,17 @@
       ],
       null,
       "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "stochastic_invest_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "stochastic_invest_methods",
+      "How stochastic branches participate in investment. 'none' (default) keeps investment realized-only: stochastic branches never enter the invest axis (v_invest stays on realized periods), byte-identical to prior behaviour. 'recourse' enables two-stage stochastic investment with recourse \u2014 shared (non-anticipative) investment before the branch point plus per-branch recourse investment at and after the branching period, with probability-weighted investment costs. Reserved for future expected-value and nested-tree modes.",
       "solve_advanced"
     ],
     [
