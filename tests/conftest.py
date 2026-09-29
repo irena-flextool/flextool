@@ -559,6 +559,29 @@ def stoch_two_period_hedge_db_url(
 
 
 @pytest.fixture(scope="session")
+def stoch_two_period_free_ops_db_url(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> str:
+    """``stoch_two_period_free_ops`` fixture DB — Slice G configurable
+    non-anticipativity window gate (design
+    ``specs/sliceG_configurable_nonanticipativity_design.md`` §7).
+
+    Built from ``tests/fixtures/stoch_two_period_free_ops.json`` (generated
+    by ``tests/fixtures/build_stoch_two_period_free_ops.py``): two scenarios
+    (``free_ops`` = ``non_anticipativity_periods=[]`` -> operations free
+    from t0; ``pinned_ops`` = unset -> legacy window byte-parity guard) on
+    identical data.  Defensive migration as in :func:`stochastic_db_url`.
+    """
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_path = (tmp_path_factory.mktemp("db_stpf")
+               / "stoch_two_period_free_ops.sqlite")
+    url = json_to_db(FIXTURES_DIR / "stoch_two_period_free_ops.json", db_path)
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
 def branch2_parent_period_db_url(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> str:
@@ -655,6 +678,7 @@ _DB_FIXTURE_NAMES: dict[str, str] = {
     "stoch_two_period_invest": "stoch_two_period_invest_db_url",
     "stoch_two_period_invest_na": "stoch_two_period_invest_na_db_url",
     "stoch_two_period_hedge": "stoch_two_period_hedge_db_url",
+    "stoch_two_period_free_ops": "stoch_two_period_free_ops_db_url",
     "branch2_parent_period": "branch2_parent_period_db_url",
     "case14": "case14_db_url",
 }
@@ -700,6 +724,7 @@ def scenario_workdir(
     stoch_two_period_invest_db_url,
     stoch_two_period_invest_na_db_url,
     stoch_two_period_hedge_db_url,
+    stoch_two_period_free_ops_db_url,
     branch2_parent_period_db_url,
     case14_db_url,
     test_solver_config_dir,
@@ -758,6 +783,7 @@ def scenario_workdir(
         "stoch_two_period_invest": stoch_two_period_invest_db_url,
         "stoch_two_period_invest_na": stoch_two_period_invest_na_db_url,
         "stoch_two_period_hedge": stoch_two_period_hedge_db_url,
+        "stoch_two_period_free_ops": stoch_two_period_free_ops_db_url,
         "branch2_parent_period": branch2_parent_period_db_url,
         "case14": case14_db_url,
     }
