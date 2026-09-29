@@ -1,6 +1,20 @@
 ## Unreleased
 
-Schema change (adds `solve.stochastic_invest_method`; migrated automatically).
+Schema change (adds `solve.stochastic_invest_method` and
+`solve.non_anticipativity_invest_periods`; migrated automatically).
+
+- **Standard two-stage stochastic investment (the main mode).** The new
+  `solve.non_anticipativity_invest_periods` parameter names the periods over
+  which investment is a single shared *here-and-now* decision: `v_invest` and
+  `v_divest` are tied across the stochastic branches over those periods, while
+  later periods invest per branch (recourse). Compose it with
+  `stochastic_invest_method = recourse` and `non_anticipativity_periods = []`
+  to get the classic capacity-expansion structure — shared first-period
+  investment, per-scenario recourse investment thereafter, operations free from
+  the first timestep. Both invest and divest are tied so the *net* first-stage
+  capacity is genuinely shared. Left unset (or empty) it adds no tie and every
+  existing result is byte-identical; on a non-`recourse` solve it is a harmless
+  no-op.
 
 - **Per-scenario stochastic investment** (opt-in
   `solve.stochastic_invest_method = recourse`): each stochastic branch can now

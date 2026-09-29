@@ -1225,7 +1225,13 @@ The usual goal is a genuine two-stage plan: **one shared here-and-now investment
 
 For a model that invests in a single period this is available today: keep `stochastic_invest_method = none` (one shared investment) and set `non_anticipativity_periods = []` (operations branch freely from t0 — see *What the model ties across branches* above). The result is the classic stochastic capacity-expansion model — commit one fleet, minimise the probability-weighted cost of operating it across the scenarios.
 
-For a **multi-period** investment horizon the ideal is that only the *first* period's investment is shared (the genuine here-and-now decision) while later-period investment adapts per scenario (recourse), since by then some uncertainty has resolved. That refinement — an investment non-anticipativity *window* (investment shared over the first period(s), per-branch after, operations free throughout) — is a planned addition. Until it lands, `none` shares investment across **all** periods (so use it when investment is effectively single-period) and `recourse` (below) shares **none**; neither gives the shared-first-period / recourse-later split on its own.
+For a **multi-period** investment horizon the ideal is that only the *first* period's investment is shared (the genuine here-and-now decision) while later-period investment adapts per scenario (recourse), since by then some uncertainty has resolved. This is delivered by the **investment non-anticipativity window** — the `solve` array parameter `non_anticipativity_invest_periods`. Compose three knobs:
+
+- `stochastic_invest_method = recourse` (so per-branch investment variables exist to tie);
+- `non_anticipativity_invest_periods = [<first period>]` (tie the first period's `v_invest`/`v_divest` across branches — a single shared here-and-now decision — while later periods invest per-branch);
+- `non_anticipativity_periods = []` (operations branch freely from t0).
+
+The result is the standard two-stage stochastic capacity-expansion structure: **shared first-period investment + per-branch (recourse) investment later + free operations**. Set `non_anticipativity_invest_periods` to more than one period to extend the shared window (e.g. `[p2035, p2040]` shares the first two periods, recourse from the third). Left unset (the default) or set to an empty array it adds no tie — `recourse` stays per-branch everywhere, byte-identical to before. Both invest and divest are tied over the window, so the *net* first-stage capacity (existing + invest − divest) is genuinely shared. The window requires `recourse`; on a `none` solve it is a harmless no-op (investment is already shared across all periods).
 
 #### Per-scenario (wait-and-see) investment
 
