@@ -424,10 +424,18 @@ def commissioning_year_lf(source: "InputSource",
               .join(pyd_d, on="d", how="left")
               .with_columns(pl.col("yr_o").fill_null(0.0)))
 
-    # Seam set S = distinct period-boundary years (branch-invariant).
-    seams = (pyd_lf.select(pl.col("yr").alias("seam"))
-                    .unique()
-                    .sort("seam"))
+    # Seam set S = distinct period-boundary years over ``period_in_use``
+    # (design §2.1) — the values ``yr_dall`` actually takes in the walk.
+    # Restricting to period_in_use is load-bearing: a stray out-of-horizon
+    # period in ``p_years_d`` would otherwise become a phantom ``hi`` seam
+    # and corrupt closest/next snapping (design §2.2 relies on S being
+    # exactly the in-use year set).  Branch-invariant as a set (branch
+    # copies duplicate anchor years).
+    seams = (pyd_lf
+               .filter(pl.col("d").cast(pl.Utf8).is_in(period_in_use))
+               .select(pl.col("yr").alias("seam"))
+               .unique()
+               .sort("seam"))
 
     inf = float("inf")
     work = (work
@@ -552,6 +560,7 @@ def edd_history_choice_lf(source: "InputSource",
                                   workdir: Path | None = None,
                                   *,
                                   lineage: pl.DataFrame | None = None,
+                                  commission_lf: pl.LazyFrame | None = None,
                                   ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_choice``.
 
@@ -560,13 +569,13 @@ def edd_history_choice_lf(source: "InputSource",
 
         keep iff pdy[d] >= pdy[d_h] AND pdy[d] < pdy[d_h] + life[e, d_h]
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
         method="reinvest_choice", bounded=True, workdir=workdir,
-        lineage=lineage)
+        lineage=lineage, commission_lf=commission_lf)
 
 
 def edd_history_automatic_lf(source: "InputSource",
@@ -576,6 +585,7 @@ def edd_history_automatic_lf(source: "InputSource",
                                        workdir: Path | None = None,
                                        *,
                                        lineage: pl.DataFrame | None = None,
+                                       commission_lf: pl.LazyFrame | None = None,
                                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_automatic`` —
     entities with ``lifetime_method = reinvest_automatic``.
@@ -584,13 +594,13 @@ def edd_history_automatic_lf(source: "InputSource",
 
         keep iff pdy[d] >= pdy[d_h]
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
         method="reinvest_automatic", bounded=False, workdir=workdir,
-        lineage=lineage)
+        lineage=lineage, commission_lf=commission_lf)
 
 
 def edd_history_no_investment_lf(source: "InputSource",
@@ -600,19 +610,20 @@ def edd_history_no_investment_lf(source: "InputSource",
                                             workdir: Path | None = None,
                                             *,
                                             lineage: pl.DataFrame | None = None,
+                                            commission_lf: pl.LazyFrame | None = None,
                                             ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_no_investment``.
 
     Mirror of ``invest_divest_sets.py:247-248``: same predicate as
     ``edd_history_choice`` but for the ``no_investment`` cohort.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
         method="no_investment", bounded=True, workdir=workdir,
-        lineage=lineage)
+        lineage=lineage, commission_lf=commission_lf)
 
 
 def _edd_history_lf_for(source: "InputSource",
@@ -624,12 +635,14 @@ def _edd_history_lf_for(source: "InputSource",
                               bounded: bool,
                               workdir: Path | None = None,
                               lineage: pl.DataFrame | None = None,
+                              commission_lf: pl.LazyFrame | None = None,
                               ) -> pl.LazyFrame:
     """Internal helper: build edd_history sub-set for a single
     lifetime_method cohort.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.  ``commission_lf`` shifts
+    this cohort's availability window to the commissioning year (Slice H).
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
@@ -663,14 +676,14 @@ def _edd_history_lf_for(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
             life_lf=life_lf, factor_side=None,
-            workdir=workdir, lineage=lineage)
+            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
     else:
         walk = period_walk_iterator(
             source, active_solve, anchor,
             period_in_use, period_in_use,
             window_method=WindowMethod.UNBOUNDED_FORWARD,
             life_lf=None, factor_side=None,
-            workdir=workdir, lineage=lineage)
+            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
     return walk.pipe(rename_to_axis, {"d": "d_history", "d_all": "d"})
 
 
@@ -681,6 +694,7 @@ def edd_history_lf(source: "InputSource",
                        workdir: Path | None = None,
                        *,
                        lineage: pl.DataFrame | None = None,
+                       commission_lf: pl.LazyFrame | None = None,
                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for the union ``edd_history`` set.
 
@@ -690,8 +704,8 @@ def edd_history_lf(source: "InputSource",
     :func:`edd_history_automatic_lf`,
     :func:`edd_history_no_investment_lf`).
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
@@ -702,13 +716,16 @@ def edd_history_lf(source: "InputSource",
     parts = [
         edd_history_choice_lf(source, active_solve,
                                   period_with_history, period_in_use,
-                                  workdir, lineage=lineage),
+                                  workdir, lineage=lineage,
+                                  commission_lf=commission_lf),
         edd_history_automatic_lf(source, active_solve,
                                        period_with_history, period_in_use,
-                                       workdir, lineage=lineage),
+                                       workdir, lineage=lineage,
+                                       commission_lf=commission_lf),
         edd_history_no_investment_lf(source, active_solve,
                                             period_with_history, period_in_use,
-                                            workdir, lineage=lineage),
+                                            workdir, lineage=lineage,
+                                            commission_lf=commission_lf),
     ]
     return pl.concat(parts, how="vertical").unique()
 
@@ -861,6 +878,7 @@ def edd_invest_set_lf(source: "InputSource",
                               workdir: Path | None = None,
                               *,
                               lineage: pl.DataFrame | None = None,
+                              commission_lf: pl.LazyFrame | None = None,
                               ) -> pl.LazyFrame:
     """Lazy ``[e, d_invest, d]`` — ``edd_history_invest`` filtered to
     ``(e, d_invest) ∈ ed_invest``.
@@ -880,7 +898,8 @@ def edd_invest_set_lf(source: "InputSource",
     """
     edd = edd_history_lf(source, active_solve,
                               period_with_history, period_in_use,
-                              workdir, lineage=lineage)
+                              workdir, lineage=lineage,
+                              commission_lf=commission_lf)
     inv_pairs = ed_invest_lf.pipe(rename_to_axis, {"d": "d_history"})
     return (edd
               .join(inv_pairs, on=["e", "d_history"], how="inner")
@@ -895,6 +914,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
                                        workdir: Path | None = None,
                                        *,
                                        lineage: pl.DataFrame | None = None,
+                                       commission_lf: pl.LazyFrame | None = None,
                                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_invest, d]`` — ``edd_invest_lookback_set``.
 
@@ -981,7 +1001,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.STRICT_LOOKBACK_BOUNDED,
             life_lf=life_lf, factor_side=None,
-            workdir=workdir, lineage=lineage)
+            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
 
     # Unbounded cohort — strict-lookback only, no lifetime cap.
     unbounded_anchor = anchor_lf.join(unbounded_e, on="e", how="inner")
@@ -995,7 +1015,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.STRICT_LOOKBACK_UNBOUNDED,
             life_lf=None, factor_side=None,
-            workdir=workdir, lineage=lineage)
+            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
 
     return (pl.concat([bounded_walk, unbounded_walk], how="vertical")
               .pipe(rename_to_axis, {"d": "d_invest", "d_all": "d"})

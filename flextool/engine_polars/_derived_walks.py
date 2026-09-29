@@ -197,6 +197,7 @@ def period_walk_iterator(
         workdir = None,
         lineage: pl.DataFrame | None = None,
         provider: "object | None" = None,
+        commission_lf: pl.LazyFrame | None = None,
         ) -> pl.LazyFrame:
     """Lazy per-(e, d) walk over ``period_in_use``, gated by lifetime.
 
@@ -251,6 +252,18 @@ def period_walk_iterator(
         pointer comparison.  The two empty-input early returns below
         deliberately do not consult ``lineage`` (with no pairs there
         is nothing to filter).
+    commission_lf
+        Optional ``[e, d, yr_c]`` commissioning-year frame (Slice H
+        construction lead time — see
+        :func:`._derived_existing.commissioning_year_lf`).  When provided,
+        the availability filters compare ``yr_dall`` against
+        ``yr_avail = coalesce(yr_c, yr_d)`` instead of ``yr_d`` (both the
+        lower bound and the lifetime-expiry upper bound
+        ``yr_avail + life``), so ordered capacity becomes available at its
+        commissioning seam, not the order period.  ``None`` (the default,
+        and every NPV/cost caller) leaves ``yr_avail ≡ yr_d`` — the filters
+        are byte-identical to today, so cost stays keyed on the order
+        period.
 
     Returns
     -------
@@ -342,10 +355,54 @@ def period_walk_iterator(
               )
             )
 
+    # Slice H — construction lead time.  Swap the anchor year ``yr_d`` for
+    # a per-(e, d_invest) COMMISSIONING year ``yr_c`` in the availability
+    # filters (design §2.5).  ``commission_lf`` is passed only by the
+    # availability callers; the NPV/cost callers never pass it, so cost
+    # stays keyed on the order period (overnight, unchanged).
+    if commission_lf is not None:
+        # [F3a] MANDATORY cast — the walk's e/d dtypes may be Enum while
+        # commission_lf emits Utf8.  A dtype-skewed left-join yields
+        # all-null yr_c -> coalesce -> yr_d -> the lag SILENTLY vanishes.
+        # Align both keys exactly as the pyd dance above does for d.
+        walk_e_dtype = walk.collect_schema().get("e", pl.Utf8)
+        c_lf = commission_lf.select("e", "d", "yr_c").with_columns(
+            pl.col("e").cast(walk_e_dtype, strict=False),
+            pl.col("d").cast(ed_d_dtype, strict=False))
+        # [F3 GUARD, round-2] Raise ONLY when the PRE-CAST (string-
+        # normalized) [e,d] key-overlap between the walk's anchors and
+        # commission_lf is NON-EMPTY but the POST-CAST join yields zero
+        # non-null survivors — that is the real dtype/calendar desync (or
+        # partial null-poisoning).  A globally-computed commission_lf
+        # legitimately has ZERO overlap with a cohort carrying no
+        # lag-active entity (the availability walks are per-cohort), which
+        # must NOT raise.
+        anchors_str = walk.select(
+            pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique()
+        c_str = commission_lf.select(
+            pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique()
+        pre_overlap = (anchors_str
+                         .join(c_str, on=["e", "d"], how="inner")
+                         .select(pl.len()).collect().item())
+        walk = (walk
+                  .join(c_lf, on=["e", "d"], how="left")
+                  .with_columns(yr_avail=pl.coalesce("yr_c", "yr_d")))
+        if pre_overlap > 0:
+            post_survivors = (walk
+                                .select(pl.col("yr_c").is_not_null().sum())
+                                .collect().item())
+            if post_survivors == 0:
+                raise ValueError(
+                    "commission_lf join produced no surviving lag rows "
+                    "despite a non-empty pre-cast key overlap — dtype or "
+                    "calendar desync (see Slice H design §2.5 F3)")
+    else:
+        walk = walk.with_columns(yr_avail=pl.col("yr_d"))
+
     if window_method == WindowMethod.UNBOUNDED_FORWARD:
-        walk = walk.filter(pl.col("yr_dall") >= pl.col("yr_d"))
+        walk = walk.filter(pl.col("yr_dall") >= pl.col("yr_avail"))
     elif window_method == WindowMethod.STRICT_LOOKBACK_UNBOUNDED:
-        walk = walk.filter(pl.col("yr_dall") > pl.col("yr_d"))
+        walk = walk.filter(pl.col("yr_dall") > pl.col("yr_avail"))
     elif window_method == WindowMethod.STRICT_LOOKBACK_BOUNDED:
         # Align life_lf's dim-column dtypes to walk's before joining.
         walk_schema = walk.collect_schema()
@@ -355,8 +412,9 @@ def period_walk_iterator(
         walk = (walk
                   .join(life_lf, on=["e", "d"], how="left")
                   .with_columns(life=pl.col("life").fill_null(0.0))
-                  .filter(pl.col("yr_dall") > pl.col("yr_d"))
-                  .filter(pl.col("yr_dall") < pl.col("yr_d") + pl.col("life"))
+                  .filter(pl.col("yr_dall") > pl.col("yr_avail"))
+                  .filter(pl.col("yr_dall")
+                          < pl.col("yr_avail") + pl.col("life"))
                 )
     else:  # BOUNDED / BOUNDED_INCLUSIVE_LOOKBACK
         walk_schema = walk.collect_schema()
@@ -366,8 +424,9 @@ def period_walk_iterator(
         walk = (walk
                   .join(life_lf, on=["e", "d"], how="left")
                   .with_columns(life=pl.col("life").fill_null(0.0))
-                  .filter(pl.col("yr_dall") >= pl.col("yr_d"))
-                  .filter(pl.col("yr_dall") < pl.col("yr_d") + pl.col("life"))
+                  .filter(pl.col("yr_dall") >= pl.col("yr_avail"))
+                  .filter(pl.col("yr_dall")
+                          < pl.col("yr_avail") + pl.col("life"))
                 )
 
     # Scenario-lineage filter (Slice B) — PRE-aggregation, so the

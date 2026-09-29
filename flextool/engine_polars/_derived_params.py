@@ -4020,6 +4020,7 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
                                             *,
                                             provider: "object | None" = None,
                                             lineage: pl.DataFrame | None = None,
+                                            commission_lf: "pl.LazyFrame | None" = None,
                                             ) -> pl.DataFrame | None:
     """Build the strict-lookback (e, d_invest, d) tuples used by the
     user-constraint LHS prebuilt-capacity term (mod L2885-2898).
@@ -4072,7 +4073,7 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
     ed_invest_lf = ed_invest.lazy().select("e", "d")
     return edd_invest_lookback_set_lf(
         source, active_solve, ed_invest_lf, periods, workdir,
-        lineage=lineage).collect()
+        lineage=lineage, commission_lf=commission_lf).collect()
 
 
 def edd_divest_active_from_source(source: "InputSource",
@@ -5809,10 +5810,34 @@ def apply_derived_c(
     # edd_invest_lookback uses the (possibly-overlaid) ed_invest_set.
     ed_inv_used = ed_inv_db if (ed_inv_db is not None and ed_inv_db.height > 0) \
                    else getattr(flex_data, "ed_invest_set", None)
+
+    # Slice H — construction lead time.  Build the commissioning-year frame
+    # ONCE per solve over the ed_invest order-period anchors and thread it
+    # into BOTH availability walks below (edd_invest_lookback_set +
+    # edd_invest_set).  ``None`` when no entity has a lag-active method ->
+    # byte-parity.  provider is left to the helper's [F2] mirror (matching
+    # the walks, which resolve provider=None -> _recourse_walk_provider());
+    # the NPV/cost walks never receive it, so cost stays at the order period.
+    _c_period_in_use = _period_in_use_set(source, active_solve, workdir,
+                                             ctx=ctx, provider=provider)
+    commission_lf = None
+    if ed_inv_used is not None and ed_inv_used.height > 0 and _c_period_in_use:
+        from flextool.engine_polars._derived_existing import (
+            commissioning_year_lf as _commissioning_year_lf,
+        )
+        try:
+            commission_lf = _commissioning_year_lf(
+                source, active_solve,
+                ed_inv_used.lazy().select("e", "d"),
+                list(_c_period_in_use), workdir=workdir)
+        except Exception:
+            commission_lf = None
+
     try:
         eil_db = edd_invest_lookback_set_from_source(
             source, active_solve, ed_inv_used, workdir,
-            provider=provider, lineage=_c_lineage)
+            provider=provider, lineage=_c_lineage,
+            commission_lf=commission_lf)
     except LineageFilterError:
         raise
     except Exception:
@@ -5827,15 +5852,14 @@ def apply_derived_c(
         from flextool.engine_polars._derived_existing import (
             edd_invest_set_lf as _edd_invest_lf,
         )
-        period_in_use = _period_in_use_set(source, active_solve, workdir,
-                                              ctx=ctx, provider=provider)
+        period_in_use = _c_period_in_use
         period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
         try:
             edd_inv_db = _edd_invest_lf(
                 source, active_solve, ed_inv_used.lazy(),
                 period_with_history, period_in_use, workdir,
-                lineage=_c_lineage).collect()
+                lineage=_c_lineage, commission_lf=commission_lf).collect()
         except LineageFilterError:
             raise
         except Exception:
@@ -10266,6 +10290,21 @@ def apply_synthetic_invest_sets(flex_data: object,
         period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
         period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
+        # Slice H — commissioning-year frame for the synthetic snapshot
+        # (deterministic lag applies to every solve).  provider is left to
+        # the helper's [F2] mirror (matching the walk, provider=None); the
+        # per-sub-solve anchor scope armed at the top of this fn feeds it.
+        commission_lf = None
+        if period_in_use:
+            from flextool.engine_polars._derived_existing import (
+                commissioning_year_lf as _commissioning_year_lf,
+            )
+            try:
+                commission_lf = _commissioning_year_lf(
+                    source, active_solve, ed_inv.lazy().select("e", "d"),
+                    list(period_in_use), workdir=workdir)
+            except Exception:  # pragma: no cover — defensive
+                commission_lf = None
         # Slice D §8 — synthetic edd lineage filter (gated + hoisted check).
         # Build on-demand from the provider (branch-cluster runs later); the
         # anchor-pairs holder armed at the top of this fn is the conjunct.
@@ -10283,7 +10322,7 @@ def apply_synthetic_invest_sets(flex_data: object,
             edd_inv = _edd_invest_lf(
                 source, active_solve, ed_inv.lazy(),
                 period_with_history, period_in_use, workdir,
-                lineage=_s_lineage).collect()
+                lineage=_s_lineage, commission_lf=commission_lf).collect()
         except LineageFilterError:
             raise
         except Exception:  # pragma: no cover — defensive
