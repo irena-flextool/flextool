@@ -154,6 +154,17 @@ def test_npv_lazy_vs_eager_parity(
     # eager NPV fields via the existing apply_derived_f path.
     data_eager = load_flextool(work, db_reader=reader)
 
+    # Slice D (§11.4): the eager reference
+    # ``ed_entity_annual_family_from_source`` embeds its own period walk
+    # and is NOT lineage-aware, so under ``recourse`` its per-leaf annuity
+    # windows diverge from the lazy lineage-filtered path by design.  The
+    # byte-equality assumption is valid only while lineage is None — skip
+    # the sweep on any flag-on fixture (guards against a recourse fixture
+    # ever entering PARITY_CASES).
+    if getattr(data_eager, "recourse_invest", False):
+        pytest.skip("eager-vs-lazy NPV parity does not hold under "
+                    "recourse (lineage-filtered windows; design §11.4)")
+
     # Re-read via the lazy entry points and compare per-field.
     provider = _seed_workdir_provider(work)
     active_solve = _read_active_solve(work, provider=provider)

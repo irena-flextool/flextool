@@ -2664,6 +2664,34 @@
       ]
     ],
     [
+      "construction_lead_time_methods",
+      [
+        "ImltbWVkaWF0ZSI=",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "ImNsb3Nlc3Rfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "InByZXZpb3VzX3NlYW0i",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "Im5leHRfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
       "conversion_methods",
       [
         "Im1pbl9sb2FkX2VmZmljaWVuY3ki",
@@ -3301,6 +3329,20 @@
       ]
     ],
     [
+      "stochastic_invest_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "stochastic_invest_methods",
+      [
+        "InJlY291cnNlIg==",
+        "str"
+      ]
+    ],
+    [
       "storage_binding_methods",
       [
         "ImJpbmRfZm9yd2FyZF9vbmx5Ig==",
@@ -3666,6 +3708,28 @@
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the connection capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
       "constraint"
+    ],
+    [
+      "connection",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "connection",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
     ],
     [
       "connection",
@@ -4507,7 +4571,7 @@
       "model",
       "version",
       [
-        "Njk=",
+        "NzM=",
         "float"
       ],
       null,
@@ -4568,6 +4632,28 @@
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined constraints. [state x coefficient] will be on the left side of the equation.",
       "constraint"
+    ],
+    [
+      "node",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "node",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
     ],
     [
       "node",
@@ -5264,6 +5350,28 @@
     ],
     [
       "solve",
+      "non_anticipativity_invest_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which investment is non-anticipative (v_invest and v_divest tied across stochastic branches \u2014 a single shared here-and-now decision). Unset (default) or an empty Array means NO tie (byte-identical to prior behaviour: recourse stays per-branch, none stays shared). A period list -- e.g. the first period -- ties investment over those periods while later periods invest per-branch (recourse), the standard two-stage stochastic capacity-expansion mode. Requires stochastic_invest_method=recourse; a no-op under none (investment is already shared across all periods).",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "non_anticipativity_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which operational non-anticipativity (storage / online / reserve dispatch tied across stochastic branches) is enforced. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list ties operations only over those periods' timesteps.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "period_timeset",
       [
         "bnVsbA==",
@@ -5407,6 +5515,17 @@
     ],
     [
       "solve",
+      "stochastic_invest_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "stochastic_invest_methods",
+      "How stochastic branches participate in investment. 'none' (default) keeps investment realized-only: stochastic branches never enter the invest axis (v_invest stays on realized periods), byte-identical to prior behaviour. 'recourse' enables two-stage stochastic investment with recourse \u2014 shared (non-anticipative) investment before the branch point plus per-branch recourse investment at and after the branching period, with probability-weighted investment costs. Reserved for future expected-value and nested-tree modes.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "timeline_hole_multiplier",
       [
         "MS4w",
@@ -5514,6 +5633,28 @@
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the unit capacity in user-defined constraints.  [(invest - divest variable) x coefficient] will be on the left side of the equation. Invest and divest variables are not multiplied by unitsize.",
       "constraint"
+    ],
+    [
+      "unit",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "unit",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
     ],
     [
       "unit",
@@ -6160,6 +6301,24 @@
       "constraint_invested_capacity_coeff",
       "map",
       1
+    ],
+    [
+      "connection",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "construction_lead_time_method",
+      "str",
+      0
     ],
     [
       "connection",
@@ -6811,6 +6970,24 @@
     ],
     [
       "node",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "construction_lead_time_method",
+      "str",
+      0
+    ],
+    [
+      "node",
       "cumulative_max_capacity",
       "float",
       0
@@ -7456,6 +7633,24 @@
       "constraint_invested_capacity_coeff",
       "map",
       1
+    ],
+    [
+      "unit",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "construction_lead_time_method",
+      "str",
+      0
     ],
     [
       "unit",

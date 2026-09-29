@@ -1430,6 +1430,16 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
 
+    # Slice D (I-a, §11.3): per-period probability weight + the recourse
+    # flag, so ``calc_costs`` can weight the reported invest/divest cost by
+    # ``pd_branch_weight`` under recourse (reconciling the cost breakdown to
+    # the probability-weighted LP objective).  Flag absent / off → the
+    # weighting is skipped (byte-parity).
+    p.recourse_invest = bool(getattr(flex_data, "recourse_invest", False))
+    p.pd_branch_weight = _pd_series_solve_period(
+        getattr(flex_data, "pd_branch_weight", None), solve_name=solve_name,
+    )
+
     # inflation factors — Series((solve, period)).
     p.inflation_factor_operations_yearly = _pd_series_solve_period(
         flex_data.p_inflation_op, solve_name=solve_name,

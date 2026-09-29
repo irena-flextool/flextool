@@ -1,3 +1,59 @@
+## Unreleased
+
+Schema change (adds `solve.stochastic_invest_method`,
+`solve.non_anticipativity_invest_periods`, and per-entity
+`construction_lead_time` / `construction_lead_time_method` on
+`unit`/`connection`/`node`; migrated automatically).
+
+- **Construction lead time.** New per-entity parameters
+  `construction_lead_time` ([years]) and `construction_lead_time_method`
+  (`immediate` / `closest_seam` / `previous_seam` / `next_seam`) model
+  physical build time on `unit`, `connection` and `node` investments.
+  Capacity *ordered* in a period becomes *available* only after the lead
+  time, snapped to a period boundary — the investment decision and its
+  overnight annuity stay in the order period, while balances, flows and
+  reserves see the plant (and its full technical lifetime) only from its
+  commissioning year. It applies to deterministic and stochastic models
+  alike, and composes with the invest non-anticipativity window to stage
+  long- versus short-lead technologies across a stochastic reveal
+  automatically (a long-lead asset serving a post-reveal period must be
+  ordered in a pre-reveal, tied period). Left at the default 0 (or
+  `immediate`) every existing result is byte-identical.
+
+- **Standard two-stage stochastic investment (the main mode).** The new
+  `solve.non_anticipativity_invest_periods` parameter names the periods over
+  which investment is a single shared *here-and-now* decision: `v_invest` and
+  `v_divest` are tied across the stochastic branches over those periods, while
+  later periods invest per branch (recourse). Compose it with
+  `stochastic_invest_method = recourse` and `non_anticipativity_periods = []`
+  to get the classic capacity-expansion structure — shared first-period
+  investment, per-scenario recourse investment thereafter, operations free from
+  the first timestep. Both invest and divest are tied so the *net* first-stage
+  capacity is genuinely shared. Left unset (or empty) it adds no tie and every
+  existing result is byte-identical; on a non-`recourse` solve it is a harmless
+  no-op.
+
+- **Per-scenario stochastic investment** (opt-in
+  `solve.stochastic_invest_method = recourse`): each stochastic branch can now
+  make its own investment decisions at and after the branching period, with
+  probability-weighted investment costs and per-scenario investment limits — a
+  wait-and-see analysis giving per-scenario optimal plans and their expected
+  cost. Committed results report the realized scenario; non-realized branch
+  investments are available under the horizon-output debug flag
+  (`model.output_horizon`). Default behaviour (`none`) is unchanged, and the
+  option is rejected in combination with Benders decomposition.
+- **Mid-horizon reveal / hedged two-stage stochastics.** A stochastic branch
+  may now start at any period boundary, not only the solve's first step, so the
+  pre-reveal periods stay a single shared *here-and-now* investment (a genuine
+  first stage) while the branches fan out into per-scenario recourse from the
+  reveal onward. Under `recourse` this makes the objective a real two-stage
+  hedge — strictly between the wait-and-see bound and the deterministic
+  mean-value plan (positive EVPI/VSS). Storage state is carried across the
+  reveal for stochastic-group storage nodes. Mid-horizon reveal is a general
+  stochastics capability; the previous multi-period restriction is lifted. A
+  malformed reveal (analysis time off a period boundary, or a branching period
+  without exactly one realized branch) is now rejected with a clear error.
+
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 
 Patch release. No schema changes. This release also ships the 4.0.3 changes

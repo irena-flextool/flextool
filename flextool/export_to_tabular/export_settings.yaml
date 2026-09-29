@@ -84,10 +84,12 @@ split_params:
                "solver_mip_gap", "scaling",
                "timeline_hole_multiplier",
                "decomposition", "benders_tolerance",
-               "benders_max_iter", "benders_in_out_weight"]
+               "benders_max_iter", "benders_in_out_weight",
+               "stochastic_invest_method"]
     solve_period:
       params: ["period_timeset", "years_represented", "realized_periods",
-               "invest_periods", "realized_invest_periods", "fix_storage_periods"]
+               "invest_periods", "realized_invest_periods", "fix_storage_periods",
+               "non_anticipativity_periods", "non_anticipativity_invest_periods"]
     rolling_parameters:
       params: ["rolling_solve_jump", "rolling_solve_horizon", "rolling_duration"]
     solve_s_stochastic_branches:
@@ -294,6 +296,8 @@ data_type_overrides:
     realized_invest_periods: "string (2d-map)"
     realized_periods: "string (2d-map)"
     fix_storage_periods: "string (2d-map)"
+    non_anticipativity_periods: "string (2d-map)"
+    non_anticipativity_invest_periods: "string (2d-map)"
 
 # Parameters that are ONLY period-indexed (never time-indexed).
 # Used to filter them out of _t sheets.  Derived from parameter descriptions.
@@ -315,6 +319,7 @@ period_only_params:
     - invest_max_period
     - invest_min_period
     - lifetime
+    - construction_lead_time
     - peak_inflow
     - retire_max_period
     - retire_min_period
@@ -336,6 +341,7 @@ period_only_params:
     - invest_max_period
     - invest_min_period
     - lifetime
+    - construction_lead_time
     - retire_max_period
     - retire_min_period
     - salvage_value
@@ -351,6 +357,7 @@ period_only_params:
     - invest_max_period
     - invest_min_period
     - lifetime
+    - construction_lead_time
     - retire_max_period
     - retire_min_period
     - salvage_value

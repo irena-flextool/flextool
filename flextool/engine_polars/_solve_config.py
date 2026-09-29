@@ -11,9 +11,9 @@ Architecture notes
 * The factory uses :class:`spinedb_api.DatabaseMapping` directly.
 * Reads ``solve``, ``model``, ``unit`` parameter classes only.
   Loading order matters (``make_roll_counter`` →
-  ``get_period_timesets`` → 4× ``periods_to_tuples``) because each
-  may call :meth:`duplicate_solve`, which mutates 19 sibling
-  defaultdicts in lockstep.
+  ``get_period_timesets`` → 4× ``periods_to_tuples`` →
+  ``non_anticipativity_periods_to_tristate``) because each may call
+  :meth:`duplicate_solve`, which mutates 21 sibling dicts in lockstep.
 * The DB schema is assumed to be v50+.  v50 moved
   ``new_stepduration`` from ``timeset`` to ``solve``;
   ``update_flextool/db_migration.py`` handles upgrades for older DBs
@@ -247,6 +247,7 @@ class SolveConfig:
         benders_tolerance: dict | None = None,
         benders_in_out_weight: dict | None = None,
         scaling: dict | None = None,
+        stochastic_invest_method: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -310,6 +311,14 @@ class SolveConfig:
             scaling if scaling is not None else {}
         )
 
+        # v70 per-solve recourse-invest opt-in (solve-name -> "none"/
+        # "recourse"); only authored solves appear.  Resolved at access
+        # time via :meth:`stochastic_invest_method_for` (absent -> "none").
+        self.stochastic_invest_method: dict = (
+            stochastic_invest_method
+            if stochastic_invest_method is not None else {}
+        )
+
         # Computed fields — populated by load_from_db after construction.
         self.roll_counter: dict[str, int] = {}
         self.timesets_used_by_solves: defaultdict = defaultdict(list)
@@ -317,6 +326,21 @@ class SolveConfig:
         self.realized_periods: defaultdict = defaultdict(list)
         self.realized_invest_periods: defaultdict = defaultdict(list)
         self.fix_storage_periods: defaultdict = defaultdict(list)
+        # Slice G (Axis B) — operational non-anticipativity window.
+        # TRI-STATE per solve, distinct from the period dicts above:
+        #   absent key / None -> unset -> legacy realized u fix window;
+        #   []                -> explicit empty -> operations free from t0;
+        #   [(p, p), ...]     -> tie only over those periods.
+        # A plain dict (not a defaultdict) so a missing key reads back as
+        # None (unset) rather than an empty list ([] = the free-ops mode).
+        self.non_anticipativity_periods: dict[str, list | None] = {}
+        # Invest-NA window — the standard two-stage stochastic-investment
+        # mode.  Periods over which v_invest / v_divest are TIED across
+        # stochastic branches (a single shared here-and-now decision).
+        # Unlike the operational window above, unset == [] == NO tie, so a
+        # plain defaultdict(list) (from ``periods_to_tuples``) is
+        # byte-parity-safe (both empty-ish states resolve to no ties).
+        self.non_anticipativity_invest_periods: defaultdict = defaultdict(list)
 
         # Mutable tracking — populated during the recursive solve loop.
         self.real_solves: list[str] = []
@@ -523,6 +547,14 @@ class SolveConfig:
             db=db, cl="solve", par="scaling", mode=DictMode.DICT
         )
 
+        # v70 per-solve recourse-invest opt-in.  Only solves that
+        # explicitly author solve.stochastic_invest_method appear; absent
+        # solves resolve to "none" via ``stochastic_invest_method_for``.
+        stochastic_invest_method: dict = params_to_dict(
+            db=db, cl="solve", par="stochastic_invest_method",
+            mode=DictMode.DICT,
+        )
+
         # rolling_times: assemble per-solve [jump, horizon, duration].
         rolling_duration: dict = params_to_dict(
             db=db, cl="solve", par="rolling_duration", mode=DictMode.DICT
@@ -630,10 +662,11 @@ class SolveConfig:
             benders_tolerance=benders_tolerance,
             benders_in_out_weight=benders_in_out_weight,
             scaling=scaling,
+            stochastic_invest_method=stochastic_invest_method,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
-        # ``duplicate_solve`` mutates 19 sibling dicts in lockstep, so
+        # ``duplicate_solve`` mutates 21 sibling dicts in lockstep, so
         # any reordering desyncs them and downstream reads silently
         # produce empty/zero results.
         obj.roll_counter = obj.make_roll_counter()
@@ -649,6 +682,24 @@ class SolveConfig:
         )
         obj.fix_storage_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="fix_storage_periods"
+        )
+        # Slice G — tri-state operational non-anticipativity window
+        # (read AFTER the four period dicts so any duplicate_solve they
+        # triggered has already registered the new solve names; the
+        # value for those duplicated solves is carried by
+        # ``duplicate_solve``'s dup_map_list).
+        obj.non_anticipativity_periods = (
+            obj.non_anticipativity_periods_to_tristate(
+                db=db, cl="solve", par="non_anticipativity_periods"
+            )
+        )
+        # Invest-NA window (v72) — plain periods_to_tuples: unset == [] ==
+        # no tie, so a defaultdict(list) is byte-parity-safe (no tri-state
+        # needed).  Read AFTER the period dicts so duplicate_solve has
+        # registered any duplicated solve names; the value for those is
+        # carried by duplicate_solve's dup_map_list.
+        obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
+            db=db, cl="solve", par="non_anticipativity_invest_periods"
         )
 
         return obj
@@ -794,9 +845,13 @@ class SolveConfig:
         """Duplicate every solve-level dict entry from *old_solve* under
         *new_name*.
 
-        Mutates 19 sibling defaultdicts (and ``model_solve`` when
+        Mutates 21 sibling dicts (and ``model_solve`` when
         *update_model_solves* is set) so downstream readers can address
-        the duplicated solve transparently.
+        the duplicated solve transparently.  One of the 21 —
+        ``non_anticipativity_periods`` — is a plain tri-state dict, not a
+        defaultdict; the ``if old_solve in dup_map.keys()`` guard copies
+        it the same way (an unset parent solve simply has no key to
+        copy, which is the correct unset default for the new name).
 
         ``update_model_solves=False`` is used by the rolling builder
         (Γ.8.C) where roll-named sub-solves should NOT replace their
@@ -822,6 +877,8 @@ class SolveConfig:
                 self.realized_invest_periods,
                 self.invest_periods,
                 self.fix_storage_periods,
+                self.non_anticipativity_periods,
+                self.non_anticipativity_invest_periods,
                 self.decomposition,
                 self.benders_max_iter,
                 self.benders_tolerance,
@@ -876,6 +933,25 @@ class SolveConfig:
         return value if value in (
             "off", "solver_only", "basic", "full"
         ) else None
+
+    def stochastic_invest_method_for(self, solve_name: str) -> str:
+        """Resolve ``solve.stochastic_invest_method`` for *solve_name*.
+
+        Returns the normalised lower-case mode (``"none"`` or
+        ``"recourse"``).  Absent / blank / unrecognised -> ``"none"``
+        (the schema default, byte-identical prior behaviour).  Authoring
+        case is ignored.
+
+        Unlike :meth:`scaling_for` (which returns ``None`` for absent so
+        a CLI/env override can win) there is no run-time override for
+        this knob, so absent resolves to the concrete default ``"none"``.
+        Guard 1 (`_orchestration.run`) keys off this resolver.
+        """
+        raw = self.stochastic_invest_method.get(solve_name)
+        if raw is None:
+            return "none"
+        value = str(raw).strip().lower()
+        return value if value in ("none", "recourse") else "none"
 
     def benders_config_for(self, solve_name: str) -> tuple[int, float, float]:
         """Resolve ``(max_iter, tol, in_out_weight)`` for *solve_name*.
@@ -988,6 +1064,67 @@ class SolveConfig:
                     else:
                         result_dict[param["entity_name"]].append((row, row))
         return result_dict
+
+    def non_anticipativity_periods_to_tristate(
+        self,
+        db: "DatabaseMapping",
+        cl: str = "solve",
+        par: str = "non_anticipativity_periods",
+    ) -> dict[str, list | None]:
+        """Read ``non_anticipativity_periods`` as a TRI-STATE dict (Slice G).
+
+        Unlike :meth:`periods_to_tuples` (which returns a
+        ``defaultdict(list)`` that cannot tell "no parameter row" apart
+        from "stored empty Array" — both collapse to ``[]``), this reader
+        keys off raw parameter-value presence so the byte-parity default
+        (unset) and the free-operations opt-in (empty Array) are distinct:
+
+        * no ``parameter_value`` row  -> ``None``  (unset -> legacy window)
+        * stored empty Array ``[]``   -> ``[]``    (operations free from t0)
+        * ``["p", ...]``              -> ``[(p, p), ...]``  (curated window)
+
+        The tuple shape ``[(p, p), ...]`` matches
+        :meth:`periods_to_tuples` so the emit site can treat both readers
+        the same.  Only real ``solve`` entities are enumerated here.
+        Solve-time duplicated sub-solves (rolling / laddered dispatch,
+        created after config load) inherit their value via
+        ``duplicate_solve``'s ``dup_map_list`` (which lists this dict).
+        Note: solves fanned at *config-load* time from a 2D-Map
+        ``period_timeset`` / ``invest_periods`` do NOT inherit an explicit
+        window here — this reader runs after those fans and enumerates only
+        the original solve entities, so such children resolve to the legacy
+        default (consistent with the sibling period dicts, which also do not
+        propagate to config-load-fanned children). Explicit windows on
+        2D-Map-laddered solves are therefore not supported in v1.
+
+        A malformed value that is not an Array (e.g. a stray scalar) is
+        treated as unset (legacy window), never as the behaviour-changing
+        empty-Array free-operations opt-in.
+        """
+        entities = db.find_entities(entity_class_name=cl)
+        params = db.find_parameter_values(
+            entity_class_name=cl,
+            parameter_definition_name=par,
+        )
+        # Map entity_name -> resolved value for solves that DO carry a row.
+        present: dict[str, list] = {}
+        for param in params:
+            param_value = api.from_database(param["value"], param["type"])
+            # An empty Array has an empty ``.values`` ([]); a populated one
+            # yields one (p, p) per element (mirrors periods_to_tuples). A
+            # value that is not an Array has no ``.values`` (None) — malformed
+            # authoring; skip it so it resolves to the legacy window rather
+            # than silently freeing operations from t0.
+            values = getattr(param_value, "values", None)
+            if values is None:
+                continue
+            tuples: list = [(row, row) for row in values]
+            present[param["entity_name"]] = tuples
+        result: dict[str, list | None] = {}
+        for entity in entities:
+            name = entity["name"]
+            result[name] = present[name] if name in present else None
+        return result
 
 
 __all__ = [

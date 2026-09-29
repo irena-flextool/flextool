@@ -45,6 +45,19 @@ The aggregation is configurable: callers can either pass a per-d_all
 weight column to sum (``factor_side``: ``"inv"`` / ``"ops"`` →
 inflation factor), or skip aggregation entirely and return the
 ``(e, d, d_all)`` triples (``factor_side=None``) for set-shape outputs.
+
+Scenario-lineage filter (recourse plan §6b Slice B)
+---------------------------------------------------
+
+``lineage`` optionally restricts the ``(d, d_all)`` pair domain to the
+Slice A ``dd_same_scenario`` contract
+(``specs/sliceA_lineage_frames_design.md`` §2.2/§2.5.3) BEFORE the
+``factor_side`` aggregation — remove a walk row ``(e, d, d_all)`` iff
+``d ∈ period_in_use`` AND ``d_all ∈ period_in_use`` AND
+``(d, d_all) ∉ lineage``; any row with either end outside
+``period_in_use`` (history-anchored rows) passes unconditionally.
+Every production caller passes ``lineage=None`` (no filtering) until
+the Slice C/D recourse activation lands.
 """
 from __future__ import annotations
 
@@ -90,6 +103,87 @@ class WindowMethod(enum.Enum):
     BOUNDED_INCLUSIVE_LOOKBACK = "bounded_inclusive_lookback"
 
 
+def _assert_lineage_castable(lineage: pl.DataFrame,
+                             d_dtype: pl.DataType) -> None:
+    """Raise ``ValueError`` when any lineage token nulls under a
+    non-strict cast to the walk's ``d`` dtype.
+
+    A silently-nulled token would make the marker left-join miss and
+    DELETE a pair that IS in the lineage frame — exactly the
+    silent-lineage failure class the recourse program keeps
+    eliminating.  Mirrors the Slice A ``_finalize_lineage_frame``
+    live-assert idiom (``_derived_branch.py``).
+
+    Empirical polars 1.40.1 behavior this guard exists for (Slice B
+    design W5(c)): a NON-STRICT cast between two different Enum
+    vocabularies (and Utf8 → Enum) NULLS every token missing from the
+    target vocabulary instead of raising — so it is THIS guard that
+    raises, never polars itself.
+    """
+    bad: list[str] = []
+    for col in ("d", "d_other"):
+        raw = lineage[col]
+        cast = raw.cast(d_dtype, strict=False)
+        bad.extend(str(v) for v, c in zip(raw.to_list(), cast.to_list())
+                   if c is None)
+    if bad:
+        from flextool.engine_polars._solve_state import LineageFilterError
+        raise LineageFilterError(
+            "period_walk_iterator lineage filter: token(s) "
+            f"{sorted(set(bad))} in the lineage frame are not castable "
+            f"to the walk's d dtype {d_dtype!r} — a silently-nulled "
+            "token would delete lineage pairs from the walk (Slice B "
+            "design §4.2 null guard)."
+        )
+
+
+def _apply_lineage_filter(
+        walk: pl.LazyFrame,
+        lineage: pl.DataFrame,
+        period_in_use: list[str],
+        d_dtype: pl.DataType,
+        *,
+        anchor_col: str = "d",
+        dall_col: str = "d_all",
+        ) -> pl.LazyFrame:
+    """Slice A semi-join contract (sliceA design §2.2/§2.5.3):
+    remove ``(anchor, other)`` iff BOTH ends ∈ ``period_in_use`` AND
+    the pair is not in ``lineage``; rows with either end outside
+    ``period_in_use`` (history-anchored walk rows) pass through
+    unconditionally.
+
+    Dtype alignment is fixed-direction: the LINEAGE side is cast
+    (non-strict) to the walk's ``d`` dtype; the walk's column dtypes
+    are invariant under the filter.  ``align_join_dtypes`` was
+    evaluated for this seam and REJECTED (Slice B design §4.2 F6): its
+    preference rule casts toward whichever side is Enum, so on the
+    raw-CSV cascade path (walk ``d`` = Utf8, lineage = Enum) it would
+    mutate the walk's output dtype mid-pipeline and null-poison walk
+    tokens outside the lineage vocabulary (history anchors are exactly
+    such candidates).
+
+    ``anchor_col`` / ``dall_col`` parametrise the walk-side column
+    names so the one helper also serves the non-walker pair-former
+    ``edd_divest_active_from_source`` (``(d_divest, d)`` frame —
+    Slice B design §7.0); both resolve to the d-axis vocabulary.
+    """
+    lin = (lineage.lazy()
+             .select(
+                 pl.col("d").cast(d_dtype, strict=False)
+                     .alias(anchor_col),
+                 pl.col("d_other").cast(d_dtype, strict=False)
+                     .alias(dall_col))
+             .unique()                      # mandatory: a duplicated
+                                            # pair must not fan the join
+             .with_columns(_lin=pl.lit(True)))
+    in_piu = (pl.col(anchor_col).cast(pl.Utf8).is_in(period_in_use)
+              & pl.col(dall_col).cast(pl.Utf8).is_in(period_in_use))
+    return (walk
+              .join(lin, on=[anchor_col, dall_col], how="left")
+              .filter(pl.col("_lin").fill_null(False) | ~in_piu)
+              .drop("_lin"))
+
+
 def period_walk_iterator(
         source: "InputSource",
         active_solve: str | None,
@@ -101,6 +195,9 @@ def period_walk_iterator(
         life_lf: pl.LazyFrame | None,
         factor_side: str | None,
         workdir = None,
+        lineage: pl.DataFrame | None = None,
+        provider: "object | None" = None,
+        commission_lf: pl.LazyFrame | None = None,
         ) -> pl.LazyFrame:
     """Lazy per-(e, d) walk over ``period_in_use``, gated by lifetime.
 
@@ -140,6 +237,33 @@ def period_walk_iterator(
         callers don't pass this (they're called from the apply_npv
         boundary which has consumed the workdir already); Cluster B's
         invest-history callers do.
+    lineage
+        Optional ``(d, d_other)`` scenario-lineage frame
+        (``flex_data.dd_same_scenario``, Slice A — see
+        ``specs/sliceA_lineage_frames_design.md`` §2.2/§2.5.3).  When
+        provided, the ``(d, d_all)`` pairs are filtered BEFORE the
+        ``factor_side`` aggregation / set-shape dedup under the
+        Slice A semi-join contract: remove a walk row
+        ``(e, d, d_all)`` iff ``d ∈ period_in_use`` AND
+        ``d_all ∈ period_in_use`` AND ``(d, d_all) ∉ lineage``; any
+        row with either end outside ``period_in_use`` passes through
+        unconditionally.  ``None`` (the default, and every production
+        call at HEAD) applies no filtering — the hot path gains one
+        pointer comparison.  The two empty-input early returns below
+        deliberately do not consult ``lineage`` (with no pairs there
+        is nothing to filter).
+    commission_lf
+        Optional ``[e, d, yr_c]`` commissioning-year frame (Slice H
+        construction lead time — see
+        :func:`._derived_existing.commissioning_year_lf`).  When provided,
+        the availability filters compare ``yr_dall`` against
+        ``yr_avail = coalesce(yr_c, yr_d)`` instead of ``yr_d`` (both the
+        lower bound and the lifetime-expiry upper bound
+        ``yr_avail + life``), so ordered capacity becomes available at its
+        commissioning seam, not the order period.  ``None`` (the default,
+        and every NPV/cost caller) leaves ``yr_avail ≡ yr_d`` — the filters
+        are byte-identical to today, so cost stays keyed on the order
+        period.
 
     Returns
     -------
@@ -150,6 +274,19 @@ def period_walk_iterator(
       triple).
     """
     from flextool.engine_polars._axis_enums import empty_like
+    # Slice D α-1: fall back to the boundary-scoped recourse Provider (and
+    # its workdir — the canonical year readers key the Provider path off
+    # it) so the year/factor arms revive under the flag without threading
+    # ``provider``/``workdir`` through every NPV/edd walker caller.
+    # Off-flag both are ``None`` → arms dead → byte-parity.
+    if provider is None:
+        from flextool.engine_polars._derived_params import (
+            _recourse_walk_provider,
+            _recourse_walk_workdir,
+        )
+        provider = _recourse_walk_provider()
+        if provider is not None and workdir is None:
+            workdir = _recourse_walk_workdir()
     if not period_in_use:
         if factor_side is None:
             return empty_like(ed_lf, ["e", "d"],
@@ -160,7 +297,12 @@ def period_walk_iterator(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
     from ._derived_params import _p_years_d_lf
-    pyd_lf = _p_years_d_lf(source, active_solve, workdir)
+    # Slice D α-1 (§5.1): under recourse the caller forwards ``provider`` so
+    # the canonical ``p_years_d.csv`` arm — which byte-copies fan-member year
+    # rows — goes live, giving branch periods their anchor's year-from-start
+    # (correct annuity windows).  ``provider is None`` → arm dead → today's
+    # fill_null(0.0) behaviour → flag-off byte-parity (the W6 today-bug pin).
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         # Without years offsets, the integral collapses to 0 / no rows.
         if factor_side is None:
@@ -213,10 +355,57 @@ def period_walk_iterator(
               )
             )
 
+    # Slice H — construction lead time.  Swap the anchor year ``yr_d`` for
+    # a per-(e, d_invest) COMMISSIONING year ``yr_c`` in the availability
+    # filters (design §2.5).  ``commission_lf`` is passed only by the
+    # availability callers; the NPV/cost callers never pass it, so cost
+    # stays keyed on the order period (overnight, unchanged).
+    if commission_lf is not None:
+        # [F3a] MANDATORY cast — the walk's e/d dtypes may be Enum while
+        # commission_lf emits Utf8.  A dtype-skewed left-join yields
+        # all-null yr_c -> coalesce -> yr_d -> the lag SILENTLY vanishes.
+        # Align both keys exactly as the pyd dance above does for d.
+        walk_e_dtype = walk.collect_schema().get("e", pl.Utf8)
+        c_lf = commission_lf.select("e", "d", "yr_c").with_columns(
+            pl.col("e").cast(walk_e_dtype, strict=False),
+            pl.col("d").cast(ed_d_dtype, strict=False))
+        # [F3 GUARD, round-2] Raise ONLY when the PRE-CAST (string-
+        # normalized) [e,d] key-overlap between the walk's anchors and
+        # commission_lf is NON-EMPTY but the POST-CAST join yields zero
+        # non-null survivors — that is the real dtype/calendar desync (or
+        # partial null-poisoning).  A globally-computed commission_lf
+        # legitimately has ZERO overlap with a cohort carrying no
+        # lag-active entity (the availability walks are per-cohort), which
+        # must NOT raise.
+        anchors_str = walk.select(
+            pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique()
+        c_str = commission_lf.select(
+            pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique()
+        pre_overlap = (anchors_str
+                         .join(c_str, on=["e", "d"], how="inner")
+                         .select(pl.len()).collect().item())
+        walk = (walk
+                  .join(c_lf, on=["e", "d"], how="left")
+                  .with_columns(yr_avail=pl.coalesce("yr_c", "yr_d")))
+        if pre_overlap > 0:
+            post_survivors = (walk
+                                .select(pl.col("yr_c").is_not_null().sum())
+                                .collect().item())
+            if post_survivors == 0:
+                from flextool.engine_polars._solve_state import (
+                    CommissioningLagError,
+                )
+                raise CommissioningLagError(
+                    "commission_lf join produced no surviving lag rows "
+                    "despite a non-empty pre-cast key overlap — dtype or "
+                    "calendar desync (see Slice H design §2.5 F3)")
+    else:
+        walk = walk.with_columns(yr_avail=pl.col("yr_d"))
+
     if window_method == WindowMethod.UNBOUNDED_FORWARD:
-        walk = walk.filter(pl.col("yr_dall") >= pl.col("yr_d"))
+        walk = walk.filter(pl.col("yr_dall") >= pl.col("yr_avail"))
     elif window_method == WindowMethod.STRICT_LOOKBACK_UNBOUNDED:
-        walk = walk.filter(pl.col("yr_dall") > pl.col("yr_d"))
+        walk = walk.filter(pl.col("yr_dall") > pl.col("yr_avail"))
     elif window_method == WindowMethod.STRICT_LOOKBACK_BOUNDED:
         # Align life_lf's dim-column dtypes to walk's before joining.
         walk_schema = walk.collect_schema()
@@ -226,8 +415,9 @@ def period_walk_iterator(
         walk = (walk
                   .join(life_lf, on=["e", "d"], how="left")
                   .with_columns(life=pl.col("life").fill_null(0.0))
-                  .filter(pl.col("yr_dall") > pl.col("yr_d"))
-                  .filter(pl.col("yr_dall") < pl.col("yr_d") + pl.col("life"))
+                  .filter(pl.col("yr_dall") > pl.col("yr_avail"))
+                  .filter(pl.col("yr_dall")
+                          < pl.col("yr_avail") + pl.col("life"))
                 )
     else:  # BOUNDED / BOUNDED_INCLUSIVE_LOOKBACK
         walk_schema = walk.collect_schema()
@@ -237,9 +427,17 @@ def period_walk_iterator(
         walk = (walk
                   .join(life_lf, on=["e", "d"], how="left")
                   .with_columns(life=pl.col("life").fill_null(0.0))
-                  .filter(pl.col("yr_dall") >= pl.col("yr_d"))
-                  .filter(pl.col("yr_dall") < pl.col("yr_d") + pl.col("life"))
+                  .filter(pl.col("yr_dall") >= pl.col("yr_avail"))
+                  .filter(pl.col("yr_dall")
+                          < pl.col("yr_avail") + pl.col("life"))
                 )
+
+    # Scenario-lineage filter (Slice B) — PRE-aggregation, so the
+    # factor-side Σ over d_all only ever sees same-scenario pairs.
+    if lineage is not None:
+        _assert_lineage_castable(lineage, ed_d_dtype)
+        walk = _apply_lineage_filter(walk, lineage,
+                                     period_in_use, ed_d_dtype)
 
     if factor_side is None:
         return (walk
@@ -248,7 +446,8 @@ def period_walk_iterator(
 
     # Inflation factor sum.
     from ._derived_npv import _inflation_factors_lf
-    factors_lf = _inflation_factors_lf(source, active_solve, period_universe)
+    factors_lf = _inflation_factors_lf(
+        source, active_solve, period_universe, provider=provider)
     if factor_side == "inv":
         factors_lf = factors_lf.select(
             "d", pl.col("inv_factor").alias("factor"))
