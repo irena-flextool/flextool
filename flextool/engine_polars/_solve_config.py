@@ -11,9 +11,9 @@ Architecture notes
 * The factory uses :class:`spinedb_api.DatabaseMapping` directly.
 * Reads ``solve``, ``model``, ``unit`` parameter classes only.
   Loading order matters (``make_roll_counter`` →
-  ``get_period_timesets`` → 4× ``periods_to_tuples``) because each
-  may call :meth:`duplicate_solve`, which mutates 19 sibling
-  defaultdicts in lockstep.
+  ``get_period_timesets`` → 4× ``periods_to_tuples`` →
+  ``non_anticipativity_periods_to_tristate``) because each may call
+  :meth:`duplicate_solve`, which mutates 20 sibling dicts in lockstep.
 * The DB schema is assumed to be v50+.  v50 moved
   ``new_stepduration`` from ``timeset`` to ``solve``;
   ``update_flextool/db_migration.py`` handles upgrades for older DBs
@@ -326,6 +326,14 @@ class SolveConfig:
         self.realized_periods: defaultdict = defaultdict(list)
         self.realized_invest_periods: defaultdict = defaultdict(list)
         self.fix_storage_periods: defaultdict = defaultdict(list)
+        # Slice G (Axis B) — operational non-anticipativity window.
+        # TRI-STATE per solve, distinct from the period dicts above:
+        #   absent key / None -> unset -> legacy realized u fix window;
+        #   []                -> explicit empty -> operations free from t0;
+        #   [(p, p), ...]     -> tie only over those periods.
+        # A plain dict (not a defaultdict) so a missing key reads back as
+        # None (unset) rather than an empty list ([] = the free-ops mode).
+        self.non_anticipativity_periods: dict[str, list | None] = {}
 
         # Mutable tracking — populated during the recursive solve loop.
         self.real_solves: list[str] = []
@@ -651,7 +659,7 @@ class SolveConfig:
         )
 
         # Computed fields — loading order MUST be preserved exactly.
-        # ``duplicate_solve`` mutates 19 sibling dicts in lockstep, so
+        # ``duplicate_solve`` mutates 20 sibling dicts in lockstep, so
         # any reordering desyncs them and downstream reads silently
         # produce empty/zero results.
         obj.roll_counter = obj.make_roll_counter()
@@ -667,6 +675,16 @@ class SolveConfig:
         )
         obj.fix_storage_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="fix_storage_periods"
+        )
+        # Slice G — tri-state operational non-anticipativity window
+        # (read AFTER the four period dicts so any duplicate_solve they
+        # triggered has already registered the new solve names; the
+        # value for those duplicated solves is carried by
+        # ``duplicate_solve``'s dup_map_list).
+        obj.non_anticipativity_periods = (
+            obj.non_anticipativity_periods_to_tristate(
+                db=db, cl="solve", par="non_anticipativity_periods"
+            )
         )
 
         return obj
@@ -812,9 +830,13 @@ class SolveConfig:
         """Duplicate every solve-level dict entry from *old_solve* under
         *new_name*.
 
-        Mutates 19 sibling defaultdicts (and ``model_solve`` when
+        Mutates 20 sibling dicts (and ``model_solve`` when
         *update_model_solves* is set) so downstream readers can address
-        the duplicated solve transparently.
+        the duplicated solve transparently.  One of the 20 —
+        ``non_anticipativity_periods`` — is a plain tri-state dict, not a
+        defaultdict; the ``if old_solve in dup_map.keys()`` guard copies
+        it the same way (an unset parent solve simply has no key to
+        copy, which is the correct unset default for the new name).
 
         ``update_model_solves=False`` is used by the rolling builder
         (Γ.8.C) where roll-named sub-solves should NOT replace their
@@ -840,6 +862,7 @@ class SolveConfig:
                 self.realized_invest_periods,
                 self.invest_periods,
                 self.fix_storage_periods,
+                self.non_anticipativity_periods,
                 self.decomposition,
                 self.benders_max_iter,
                 self.benders_tolerance,
@@ -1025,6 +1048,53 @@ class SolveConfig:
                     else:
                         result_dict[param["entity_name"]].append((row, row))
         return result_dict
+
+    def non_anticipativity_periods_to_tristate(
+        self,
+        db: "DatabaseMapping",
+        cl: str = "solve",
+        par: str = "non_anticipativity_periods",
+    ) -> dict[str, list | None]:
+        """Read ``non_anticipativity_periods`` as a TRI-STATE dict (Slice G).
+
+        Unlike :meth:`periods_to_tuples` (which returns a
+        ``defaultdict(list)`` that cannot tell "no parameter row" apart
+        from "stored empty Array" — both collapse to ``[]``), this reader
+        keys off raw parameter-value presence so the byte-parity default
+        (unset) and the free-operations opt-in (empty Array) are distinct:
+
+        * no ``parameter_value`` row  -> ``None``  (unset -> legacy window)
+        * stored empty Array ``[]``   -> ``[]``    (operations free from t0)
+        * ``["p", ...]``              -> ``[(p, p), ...]``  (curated window)
+
+        The tuple shape ``[(p, p), ...]`` matches
+        :meth:`periods_to_tuples` so the emit site can treat both readers
+        the same.  Only real ``solve`` entities are enumerated here;
+        duplicated (rolling / laddered) sub-solves inherit their value via
+        ``duplicate_solve``'s ``dup_map_list`` (which lists this dict).
+        """
+        entities = db.find_entities(entity_class_name=cl)
+        params = db.find_parameter_values(
+            entity_class_name=cl,
+            parameter_definition_name=par,
+        )
+        # Map entity_name -> resolved value for solves that DO carry a row.
+        present: dict[str, list] = {}
+        for param in params:
+            param_value = api.from_database(param["value"], param["type"])
+            tuples: list = []
+            # An empty Array has an empty ``.values``; a populated one
+            # yields one (p, p) per element (mirrors periods_to_tuples).
+            values = getattr(param_value, "values", None)
+            if values:
+                for row in values:
+                    tuples.append((row, row))
+            present[param["entity_name"]] = tuples
+        result: dict[str, list | None] = {}
+        for entity in entities:
+            name = entity["name"]
+            result[name] = present[name] if name in present else None
+        return result
 
 
 __all__ = [

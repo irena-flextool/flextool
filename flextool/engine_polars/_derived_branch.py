@@ -544,22 +544,52 @@ def pdt_branch_weight_lf(
 
 def dt_non_anticipativity_lf(workdir: Path | None,
                               *, provider: "object | None" = None) -> pl.LazyFrame:
-    """Compute ``dt_non_anticipativity`` lazily as ``(d, t)``.
+    """Read ``dt_non_anticipativity`` lazily as ``(d, t)``.
 
-    Mirrors flextool's
-    ``preprocessing/per_solve_sets.py:267-276``::
+    Slice G (F1) — the operational non-anticipativity set is now the
+    single source of truth materialised by
+    ``_emit_per_solve.emit_per_solve_sets`` as
+    ``solve_data/dt_non_anticipativity_set.csv``, driven by the resolved
+    ``non_anticipativity_periods`` window:
 
-        dt_non_anticipativity = realized_dispatch ∪ fix_storage_timesteps
+    * unset window  -> the legacy ``realized_dispatch ∪ fix_storage``
+      union (byte-identical to prior behaviour);
+    * empty window  -> a header-only (present-but-empty) CSV -> the
+      model's ``if dtna.height == 0: return`` (``model.py``) skips ALL
+      four families -> operations free from t0;
+    * curated window -> those periods' timesteps ∩ ``steps_in_use``.
 
     The four ``non_anticipativity_*`` constraints fire on this set
-    (storage_use, online_int, online_lin, reserve).
+    (storage_use, online_int, online_lin, reserve).  This reader sorts,
+    so the CSV's row-order is irrelevant to byte-parity.
 
-    Returns the empty frame (schema only) when no stochastic / chain
-    activity is present — which keeps the model layer's
-    non-anticipativity constraints disabled by default.
+    Defensive fallback: when the set CSV is absent from the Provider
+    (older snapshots / direct callers that never ran per-solve emit),
+    recompute the legacy ``realized_dispatch ∪ fix_storage`` union so
+    behaviour is unchanged.
     """
     schema = {"d": schema_dtype(_enums, "d"),
               "t": schema_dtype(_enums, "t")}
+    if workdir is None:
+        return _empty_lf(schema)
+    # Authoritative set CSV (emitted every solve; may be header-only).
+    p = Path(workdir) / "solve_data" / "dt_non_anticipativity_set.csv"
+    df = _provider_get(provider, p)
+    if df is not None:
+        # Present -> the window has already been resolved into this file.
+        # Empty-but-present -> empty window -> operations free from t0.
+        if df.height == 0:
+            return _empty_lf(schema)
+        cols = df.columns
+        d_col = "period" if "period" in cols else cols[0]
+        t_col = ("step" if "step" in cols else
+                 ("time" if "time" in cols else cols[1]))
+        return (df.lazy()
+                  .select(alias_to_axis(d_col, "d"),
+                          alias_to_axis(t_col, "t"))
+                  .unique()
+                  .sort("d", "t"))
+    # Defensive fallback — recompute the legacy union.
     rd = realized_dispatch_lf(workdir, provider=provider).collect()
     fs = fix_storage_timesteps_lf(workdir, provider=provider).collect()
     if rd.height == 0 and fs.height == 0:
