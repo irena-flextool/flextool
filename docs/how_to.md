@@ -1139,7 +1139,7 @@ Notes about the storage options with stochastics:
 
 - The best options to use are:
 
-  - `Storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
+  - `storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
   - `storage_solve_horizon_method`: fix_value or fix_price (and their values)
 
 - Do not use any of the `storage_binding_methods`, they do not work correctly with stochastics (there is no unambigious end state that could circle back to the first time step). 
@@ -1204,11 +1204,11 @@ solve.stochastic_invest_method = recourse
 
 instead lets each branch (the realized one included) invest on its own data at and after the branching period, with probability-weighted investment costs and per-scenario investment limits. Non-realized branch investments are output only under `model.output_horizon` (a debug flag); committed results always report the realized scenario. `recourse` is incompatible with Benders decomposition (the solver rejects the combination).
 
-When every branch starts at the solve's **first** step, `recourse` is a *wait-and-see* analysis: the objective is the expected value of per-scenario optimal plans — an EVPI-style lower bound, **not** a single hedged plan — so it typically drops relative to `none` (each branch gets tailor-made capacity) and is not directly comparable across the flag (turning on `recourse` also corrects the realized branch's own investment-annuity windows). This form is useful for scenario screening and per-scenario capacity ranges; for a single committed plan chosen before the uncertainty resolves, use the hedged mid-horizon form below.
+When every branch starts at the solve's **first** step, `recourse` is a *wait-and-see* analysis: the objective is the expected value of per-scenario optimal plans weighted by their probabilities. It is **not** a single hedged plan — so it typically costs less than `none` (each branch gets tailor-made capacity) and is not directly comparable across the flag (turning on `recourse` also corrects the realized branch's own investment-annuity windows). This approach might have some very specific use cases, but the main stochastic investment mode is the hedged mid-horizon form below.
 
 #### Hedged two-stage investment (mid-horizon reveal)
 
-The wait-and-see behaviour above comes from declaring every branch at the solve's **first** step, so each scenario has perfect foresight from the start. You can instead reveal the uncertainty **mid-horizon**: keep the first periods deterministic (a single, shared *here-and-now* investment) and let the branches fan out only from a later period. Set the branching period of the `stochastic_branches` map to that later period, and put the branches' analysis time at that period's first step (the reveal must fall on a period boundary — investment is period-granular).
+In hedged two-stage investment the uncertainty is revealed **mid-horizon**: keep the first periods deterministic (a single, shared *here-and-now* investment) and let the branches fan out only from a later period. Set the branching period of the `stochastic_branches` map to that later period, and put the branches' analysis time at that period's first step (the reveal must fall on a period boundary — investment is period-granular).
 
 With this shape the pre-reveal periods stay a single real-named trunk with **one shared `v_invest`** — the genuine first-stage (here-and-now) decision. Its non-anticipativity holds by construction (there is only one variable, so nothing to tie), and its cost is counted once at full weight. The post-reveal periods fan per branch exactly as the wait-and-see case does, giving the second-stage recourse investments. The result is a real **two-stage hedge**: the shared first stage is chosen knowing only the distribution of futures, and its objective sits strictly *between* the wait-and-see bound and the deterministic mean-value plan (positive EVPI and VSS). Only the realized trunk is committed to the output.
 
