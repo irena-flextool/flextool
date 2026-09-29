@@ -5823,6 +5823,7 @@ def apply_derived_c(
     commission_lf = None
     if ed_inv_used is not None and ed_inv_used.height > 0 and _c_period_in_use:
         from flextool.engine_polars._derived_existing import (
+            assert_no_forced_out_of_horizon_commission as _assert_no_forced_ooh,
             commissioning_year_lf as _commissioning_year_lf,
         )
         try:
@@ -5832,6 +5833,9 @@ def apply_derived_c(
                 list(_c_period_in_use), workdir=workdir)
         except Exception:
             commission_lf = None
+        # [F5] Surface a forced out-of-horizon order as a config error —
+        # OUTSIDE the swallow above so it is not silenced.
+        _assert_no_forced_ooh(source, commission_lf)
 
     try:
         eil_db = edd_invest_lookback_set_from_source(

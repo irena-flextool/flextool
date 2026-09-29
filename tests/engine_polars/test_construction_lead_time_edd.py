@@ -20,9 +20,11 @@ import polars as pl
 import pytest
 
 from flextool.engine_polars._derived_existing import (
+    assert_no_forced_out_of_horizon_commission,
     commissioning_year_lf,
     edd_invest_set_lf,
 )
+from flextool.engine_polars._solve_state import FlexToolConfigError
 
 PERIODS = ["p1", "p2", "p3", "p4"]
 YEARS = [0.0, 5.0, 8.0, 20.0]
@@ -62,7 +64,8 @@ def _years_df() -> pl.DataFrame:
 
 
 def _source(*, entity="nuke", lifetime_method="reinvest_automatic",
-            life=None, lead=None, method=None) -> _StubSource:
+            life=None, lead=None, method=None,
+            invest_forced=None) -> _StubSource:
     entities = {"unit": pl.DataFrame({"name": [entity]})}
     params: dict[tuple[str, str], pl.DataFrame] = {
         ("solve", "years_from_start"): _years_df(),
@@ -78,6 +81,10 @@ def _source(*, entity="nuke", lifetime_method="reinvest_automatic",
     if method is not None:
         params[("unit", "construction_lead_time_method")] = pl.DataFrame(
             {"name": [entity], "value": [method]})
+    if invest_forced is not None:
+        period, val = invest_forced
+        params[("unit", "invest_forced")] = pl.DataFrame(
+            {"name": [entity], "period": [period], "value": [float(val)]})
     return _StubSource(entities, params)
 
 
@@ -145,3 +152,39 @@ def test_bounded_cohort_no_lag_control() -> None:
     window in the test above."""
     src = _source(lifetime_method="reinvest_choice", life=15.0)
     assert _alive(src) == ["p1", "p2", "p3"]
+
+
+# --- §7k [F5] forced-order out-of-horizon guard -------------------------
+
+def _commission(src, order="p3"):
+    return commissioning_year_lf(
+        src, "s", pl.LazyFrame({"e": ["nuke"], "d": [order]}), PERIODS)
+
+
+def test_forced_out_of_horizon_raises() -> None:
+    """order p3 (yr 8), L=15 next_seam -> t*=23 > 20 -> yr_c=+inf; with
+    invest_forced pinned at (nuke, p3) the guard raises FlexToolConfigError
+    rather than pay-for-never-delivered capacity."""
+    src = _source(lead=15.0, method="next_seam", invest_forced=("p3", 1.0))
+    commission_lf = _commission(src, "p3")
+    with pytest.raises(FlexToolConfigError, match="beyond the model horizon"):
+        assert_no_forced_out_of_horizon_commission(src, commission_lf)
+
+
+def test_voluntary_out_of_horizon_does_not_raise() -> None:
+    """Same out-of-horizon order but NOT forced -> allowed (the sentinel
+    makes it inert; the model simply never picks it)."""
+    src = _source(lead=15.0, method="next_seam")
+    commission_lf = _commission(src, "p3")
+    # No raise.
+    assert_no_forced_out_of_horizon_commission(src, commission_lf)
+
+
+def test_forced_in_horizon_does_not_raise() -> None:
+    """A forced order whose commissioning IS in-horizon (closest_seam snaps
+    to the last seam) is fine — only +inf (next_seam past the horizon)
+    trips the guard."""
+    src = _source(lead=15.0, method="closest_seam",
+                  invest_forced=("p3", 1.0))
+    commission_lf = _commission(src, "p3")
+    assert_no_forced_out_of_horizon_commission(src, commission_lf)

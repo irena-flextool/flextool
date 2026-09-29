@@ -481,6 +481,59 @@ def commissioning_year_lf(source: "InputSource",
     return out
 
 
+def assert_no_forced_out_of_horizon_commission(
+        source: "InputSource",
+        commission_lf: pl.LazyFrame | None,
+        ) -> None:
+    """[F5] Forbid a FORCED order whose commissioning is out-of-horizon.
+
+    An order whose ``next_seam`` commissioning falls beyond the last seam
+    gets ``yr_c = +inf`` (buys no in-horizon capacity — OQ-7).  For a
+    *voluntary* order that is harmless (the model just never picks it).
+    But when ``invest_forced`` or ``invest_min_period`` PINS
+    ``v_invest >= target`` at that order period, the solve would pay the
+    annuity ``[yr_d, yr_d+life)`` for capacity it never receives (or the
+    forced target becomes unmeetable).  Raise a clear
+    :class:`FlexToolConfigError` rather than solve a silently-degenerate
+    model (design §6 OQ-7 F5).
+
+    ``commission_lf`` is the frame from :func:`commissioning_year_lf`
+    (``None`` -> nothing to check).  Only its ``+inf`` rows are
+    out-of-horizon; ``closest_seam`` / ``previous_seam`` always snap to an
+    in-horizon seam.
+    """
+    if commission_lf is None:
+        return
+    oo = (commission_lf
+            .filter(pl.col("yr_c").is_infinite())
+            .select("e", "d"))
+    if oo.collect().height == 0:
+        return
+    # Does invest_forced or invest_min_period pin v_invest > 0 at (e, o)?
+    forced_parts: list[pl.LazyFrame] = []
+    for name in ("invest_forced", "invest_min_period"):
+        resolved = _resolve_per_period_lf(
+            _per_entity_param_lf(source, name), oo, fill=0.0)
+        forced_parts.append(
+            resolved.filter(pl.col("value") > 0.0).select("e", "d"))
+    forced = pl.concat(forced_parts, how="vertical").unique()
+    bad = oo.join(forced, on=["e", "d"], how="inner").collect()
+    if bad.height > 0:
+        pairs = ", ".join(f"({e}, {d})"
+                          for e, d in bad.select("e", "d").rows())
+        from flextool.engine_polars._solve_state import FlexToolConfigError
+        raise FlexToolConfigError(
+            "construction_lead_time_method=next_seam pins a forced "
+            "investment (invest_forced / invest_min_period) whose "
+            "commissioning falls beyond the model horizon for: "
+            f"{pairs}.  The forced capacity would never be delivered "
+            "in-horizon while still charged its annuity from the order "
+            "period.  Either shorten the lead time, move the order earlier, "
+            "extend the horizon, drop the forced/min-period requirement, or "
+            "use a non-next_seam method (design §6 OQ-7 F5)."
+        )
+
+
 # ---------------------------------------------------------------------------
 # §3.7.0 — entityInvest / entityDivest / e_invest_total / e_divest_total
 # ---------------------------------------------------------------------------
