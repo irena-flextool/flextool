@@ -1,7 +1,24 @@
 ## Unreleased
 
-Schema change (adds `solve.stochastic_invest_method` and
-`solve.non_anticipativity_invest_periods`; migrated automatically).
+Schema change (adds `solve.stochastic_invest_method`,
+`solve.non_anticipativity_invest_periods`, and per-entity
+`construction_lead_time` / `construction_lead_time_method` on
+`unit`/`connection`/`node`; migrated automatically).
+
+- **Construction lead time.** New per-entity parameters
+  `construction_lead_time` ([years]) and `construction_lead_time_method`
+  (`immediate` / `closest_seam` / `previous_seam` / `next_seam`) model
+  physical build time on `unit`, `connection` and `node` investments.
+  Capacity *ordered* in a period becomes *available* only after the lead
+  time, snapped to a period boundary — the investment decision and its
+  overnight annuity stay in the order period, while balances, flows and
+  reserves see the plant (and its full technical lifetime) only from its
+  commissioning year. It applies to deterministic and stochastic models
+  alike, and composes with the invest non-anticipativity window to stage
+  long- versus short-lead technologies across a stochastic reveal
+  automatically (a long-lead asset serving a post-reveal period must be
+  ordered in a pre-reveal, tied period). Left at the default 0 (or
+  `immediate`) every existing result is byte-identical.
 
 - **Standard two-stage stochastic investment (the main mode).** The new
   `solve.non_anticipativity_invest_periods` parameter names the periods over
