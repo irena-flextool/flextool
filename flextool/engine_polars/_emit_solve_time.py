@@ -150,7 +150,15 @@ def run(
     _ck("param_in_use_sets")
 
     # ── Per-solve sets (must run BEFORE period_calculated_params) ─────
-    _per_solve.emit_per_solve_sets(solve_data_dir, provider=provider)
+    # Slice G — resolve this solve's operational non-anticipativity
+    # window (tri-state: None=legacy / []=free-ops / [periods]=curated)
+    # and drive the dt_non_anticipativity_set.csv content from it.
+    # ``solve_name`` here is ``complete_solve[solve]`` (the caller passes
+    # it), the same key the window dict is populated under.
+    na_window = state.solve.non_anticipativity_periods.get(solve_name)
+    _per_solve.emit_per_solve_sets(
+        solve_data_dir, provider=provider, na_window=na_window
+    )
     _ck("per_solve_sets")
 
     # ── L1 batch 13: period_calculated_params ─────────────────────────

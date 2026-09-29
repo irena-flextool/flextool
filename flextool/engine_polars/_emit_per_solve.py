@@ -127,12 +127,31 @@ def _project_column(df: pl.DataFrame, col_idx: int) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def emit_per_solve_sets(solve_data_dir: Path, *, provider) -> None:
+def emit_per_solve_sets(
+    solve_data_dir: Path,
+    *,
+    provider,
+    na_window: "list | None" = None,
+) -> None:
     """Emit ``per_solve_sets`` to the Provider.
     Emits the same ~24 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).  *solve_data_dir* is retained
     because the function still reads sister CSVs from disk via the
     Provider-only read helpers (which derive keys from the path).
+
+    *na_window* is the resolved Slice-G operational non-anticipativity
+    window for this solve (see
+    ``SolveConfig.non_anticipativity_periods_to_tristate``).  It drives
+    the ``dt_non_anticipativity_set.csv`` content — the single source of
+    truth read back by ``_derived_branch.dt_non_anticipativity_lf``:
+
+    * ``None`` (unset)      -> legacy ``realized_dispatch u fix_storage``
+      union, byte-identical to prior behaviour;
+    * ``[]`` (empty)        -> header-only (empty) set -> operations free
+      from t0 (all four non_anticipativity_* families off);
+    * ``[(p, p), ...]``     -> those periods' timesteps, intersected with
+      ``steps_in_use`` (the ONLY domain guard for the storage family,
+      which joins the (d,t) set on ``d`` alone — F7).
     """
     input_dir = solve_data_dir.parent / "input"
 
@@ -334,14 +353,35 @@ def emit_per_solve_sets(solve_data_dir: Path, *, provider) -> None:
                   "solve_data/d_realize_dispatch_or_invest_set.csv", "period",
                   list(union_seen.keys()))
 
-    a_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
-                     ["period", "time"], provider=provider)
-    b_df = _read_csv(solve_data_dir / "fix_storage_timesteps.csv",
-                     ["period", "time"], provider=provider)
+    # Slice G — window-driven operational non-anticipativity set.  This
+    # is the single source of truth: dt_non_anticipativity_lf reads it
+    # back.  The window (na_window) tri-states the content; see the
+    # emit_per_solve_sets docstring.
     dtna_seen: dict[tuple[str, str], None] = {}
-    for src in (a_df, b_df):
-        for d, t in zip(src["period"].to_list(), src["time"].to_list()):
-            if d and t and (d, t) not in dtna_seen:
+    if na_window is None:
+        # Unset -> legacy realized_dispatch u fix_storage union
+        # (byte-identical to prior behaviour for every existing fixture).
+        a_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
+                         ["period", "time"], provider=provider)
+        b_df = _read_csv(solve_data_dir / "fix_storage_timesteps.csv",
+                         ["period", "time"], provider=provider)
+        for src in (a_df, b_df):
+            for d, t in zip(src["period"].to_list(), src["time"].to_list()):
+                if d and t and (d, t) not in dtna_seen:
+                    dtna_seen[(d, t)] = None
+    elif len(na_window) == 0:
+        # Explicit empty window -> emit header-only (operations free
+        # from t0); dtna_seen stays empty.
+        pass
+    else:
+        # Curated period list -> those periods' timesteps, intersected
+        # with steps_in_use (the emit-time domain guard the storage NA
+        # family relies on — it joins the set on ``d`` only, F7).
+        na_periods = {p for (p, _p_in) in na_window}
+        su_df = _read_csv(solve_data_dir / "steps_in_use.csv",
+                          ["period", "time"], provider=provider)
+        for d, t in zip(su_df["period"].to_list(), su_df["time"].to_list()):
+            if d and t and d in na_periods and (d, t) not in dtna_seen:
                 dtna_seen[(d, t)] = None
     _emit_tuples(provider, "solve_data/dt_non_anticipativity_set.csv",
                  ("period", "time"), list(dtna_seen.keys()))

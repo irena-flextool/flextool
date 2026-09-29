@@ -665,6 +665,15 @@ def native_run_model(state, solver) -> int:
                 complete_solve[solve], state.solve.invest_periods,
             ),
         )
+        # Slice D — emit the RESOLVED stochastic_invest_method so the
+        # derived/model layers can gate the recourse feature through the
+        # provider/workdir (they hold no SolveConfig).  Absent CSV ==
+        # flag-off (byte-parity-safe default).
+        solve_writers.emit_stochastic_invest_method(
+            state.solve.stochastic_invest_method_for(complete_solve[solve]),
+            str(wf / "solve_data/stochastic_invest_method.csv"),
+            provider=sub_solve_provider,
+        )
 
         years_rep = state.solve.solve_period_years_represented[
             complete_solve[solve]

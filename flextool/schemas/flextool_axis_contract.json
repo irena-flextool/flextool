@@ -218,8 +218,7 @@
       "solve.realized_invest_periods": "Utf8",
       "solve.realized_periods":        "Utf8",
       "solve.fix_storage_periods":     "Utf8",
-      "solve.period_timeset":          "Utf8",
-      "solve.stochastic_branches":     "Utf8"
+      "solve.period_timeset":          "Utf8"
     }
   },
   "_review_notes": [

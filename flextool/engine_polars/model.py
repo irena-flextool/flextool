@@ -124,6 +124,60 @@ def _check(d, fields: tuple[str, ...], feature: str) -> None:
         )
 
 
+def _emit_entity_total_cap(
+    m, *, legacy_name: str, path_name: str, over_e: pl.DataFrame,
+    var, unitsize, cap_param, d_leaf, lhs_label: str,
+) -> None:
+    """Per-path entity total cap (design §7.2 (G)).
+
+    Sums ``var * unitsize`` over the invest axis's periods against a
+    per-entity total cap.  With a single scenario leaf — deterministic
+    or flag-off, where ``d_leaf`` degenerates to one ``"__realized"``
+    leaf — this emits the legacy ``over=("d",)`` total under the legacy
+    NAME, byte-identical to the pre-recourse constraint.  With more than
+    one leaf (recourse), it emits ``path_name`` indexed by
+    ``(entity, leaf)`` with the inner ``d``-sum masked to each leaf's
+    own periods; the per-entity ``cap_param`` broadcasts across leaves
+    (one cap per scenario path — no cross-scenario double-count).
+
+    ``leaf`` is a plain ``Utf8`` index column carried through the
+    ``Where`` mask exactly as ``g`` is in the group-total builders;
+    ``Sum(over=("d",))`` leaves ``(entity, leaf)`` matching ``over_e ×
+    leaves``.
+    """
+    dl = None
+    if d_leaf is not None and getattr(d_leaf, "height", 0) > 0:
+        inv_periods = var.frame.select("d").unique()
+        _d_dt = var.frame.schema["d"]
+        dlx = d_leaf
+        if dlx.schema["d"] != _d_dt:
+            dlx = dlx.with_columns(pl.col("d").cast(_d_dt, strict=False))
+        dl = dlx.join(inv_periods, on="d", how="semi")
+    n_leaves = (dl["leaf"].n_unique()
+                if dl is not None and dl.height > 0 else 1)
+    if n_leaves <= 1:
+        m.add_cstr(
+            legacy_name,
+            over      = over_e,
+            sense     = "<=",
+            lhs_terms = {lhs_label: Sum(Where(var * unitsize, over_e),
+                                        over=("d",))},
+            rhs_terms = {"cap": cap_param},
+        )
+        return
+    mask = over_e.join(dl, how="cross")
+    over_path = over_e.join(dl.select("leaf").unique().sort("leaf"),
+                            how="cross")
+    m.add_cstr(
+        path_name,
+        over      = over_path,
+        sense     = "<=",
+        lhs_terms = {lhs_label: Sum(Where(var * unitsize, mask),
+                                    over=("d",))},
+        rhs_terms = {"cap": cap_param},
+    )
+
+
 def _add_non_anticipativity_constraints(
     m, d, db_pairs: pl.DataFrame, *,
     v_state, v_online_integer, v_online_linear, v_reserve,
@@ -3080,14 +3134,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
                 "p", max_prior_cap)
             e_inv_max_p = Param(("p",), cap_frame)
-            m.add_cstr(
-                "maxInvest_entity_total",
-                over      = e_inv_p,
-                sense     = "<=",
-                lhs_terms = {"invest_total":
-                    Sum(Where(v_invest_p * d.p_unitsize, e_inv_p),
-                        over=("d",))},
-                rhs_terms = {"cap": e_inv_max_p},
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxInvest_entity_total",
+                path_name   = "maxInvest_entity_total_path",
+                over_e      = e_inv_p,
+                var         = v_invest_p,
+                unitsize    = d.p_unitsize,
+                cap_param   = e_inv_max_p,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "invest_total",
             )
     if (has_divest_p and d.e_divest_total is not None
             and d.e_divest_total.height > 0
@@ -3105,14 +3161,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
                 "p", prior_divested)
             e_div_max_p = Param(("p",), cap_frame)
-            m.add_cstr(
-                "maxDivest_entity_total",
-                over      = e_div_p,
-                sense     = "<=",
-                lhs_terms = {"divest_total":
-                    Sum(Where(v_divest_p * d.p_unitsize, e_div_p),
-                        over=("d",))},
-                rhs_terms = {"cap": e_div_max_p},
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxDivest_entity_total",
+                path_name   = "maxDivest_entity_total_path",
+                over_e      = e_div_p,
+                var         = v_divest_p,
+                unitsize    = d.p_unitsize,
+                cap_param   = e_div_max_p,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "divest_total",
             )
     # Node analogues for per-entity totals.
     if (has_invest_n and d.e_invest_total is not None
@@ -3132,13 +3190,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 "n", max_prior_cap)
             e_inv_max_n = Param(("n",), cap_frame)
             us_n = Param(("n",), d.p_state_unitsize.frame)
-            m.add_cstr(
-                "maxInvest_entity_total_n",
-                over      = e_inv_n,
-                sense     = "<=",
-                lhs_terms = {"invest_total":
-                    Sum(Where(v_invest_n * us_n, e_inv_n), over=("d",))},
-                rhs_terms = {"cap": e_inv_max_n},
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxInvest_entity_total_n",
+                path_name   = "maxInvest_entity_total_path_n",
+                over_e      = e_inv_n,
+                var         = v_invest_n,
+                unitsize    = us_n,
+                cap_param   = e_inv_max_n,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "invest_total",
             )
     if (has_divest_n and d.e_divest_total is not None
             and d.e_divest_total.height > 0
@@ -3157,13 +3218,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 "n", prior_divested)
             e_div_max_n = Param(("n",), cap_frame)
             us_n = Param(("n",), d.p_state_unitsize.frame)
-            m.add_cstr(
-                "maxDivest_entity_total_n",
-                over      = e_div_n,
-                sense     = "<=",
-                lhs_terms = {"divest_total":
-                    Sum(Where(v_divest_n * us_n, e_div_n), over=("d",))},
-                rhs_terms = {"cap": e_div_max_n},
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxDivest_entity_total_n",
+                path_name   = "maxDivest_entity_total_path_n",
+                over_e      = e_div_n,
+                var         = v_divest_n,
+                unitsize    = us_n,
+                cap_param   = e_div_max_n,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "divest_total",
             )
 
     _build_prof("before:conversion_indirect")
@@ -4147,19 +4211,35 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 * d.p_storage_state_reference_price * ref_price_factor)
 
     # Invest / divest objective contributions.
-    # NOTE: per .mod:2116-2119 — investment / divestment objective terms
-    # are explicitly NOT weighted by pd_branch_weight under the current
-    # stochastics regime.  The .mod author's note:
     #
-    #     "Currently investment happens only on the realized branch and
-    #      the rest get them as existing.  Only one period investment is
-    #      supported with stochastics.  The branch weight should be added
-    #      if this is changed."
-    #
-    # Preprocessing excludes branch periods from ``period_invest`` so
-    # ``v_invest[e, d]`` only exists on realised periods — the weight
-    # would be 1.0 anyway.  No multiplier needed.  Recourse-investment is
-    # explicitly out of scope (see audit/a6_b_dim_alternative.md).
+    # Slice D — per-scenario (wait-and-see) stochastic investment.  Under
+    # ``recourse`` the invest axis is fanned, so every scenario branch
+    # (realised included) carries its OWN ``v_invest[e, d]`` columns at and
+    # after the branching period; each is probability-weighted by
+    # ``pd_branch_weight[d]`` so the objective is the expected value over
+    # scenario leaves.  Under ``none`` (default) the invest axis is
+    # realised-only, the weight would be 1.0, and the multiply is skipped
+    # for byte-parity.  (Replaces the .mod:2116-2119 "NOT weighted / the
+    # branch weight should be added if this is changed" note — this is that
+    # change.)  ALL EIGHT invest/divest annuity/fixed-cost Params are
+    # weighted: process-side annu/lf/lfd/annd AND node-side
+    # annu_n/lf_n/lfd_n/annd_n (else storage/node invest stays unweighted).
+    _recourse_wt = (getattr(d, "recourse_invest", False)
+                    and d.pd_branch_weight is not None)
+
+    def _wt(param):
+        """Multiply a ``(x, d)`` cost Param by ``pd_branch_weight[d]``
+        (Slice D).  No-op when the param is None or the flag is off."""
+        if param is None or not _recourse_wt:
+            return param
+        f = (param.frame
+                  .join(d.pd_branch_weight.frame.rename({"value": "w"}),
+                        on="d", how="left")
+                  .with_columns(value=pl.col("value")
+                                * pl.col("w").fill_null(1.0))
+                  .drop("w"))
+        return Param(param.dims, f)
+
     if has_invest_p:
         annu = Param(("p", "d"),
             d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
@@ -4168,9 +4248,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu is not None:
-            obj = obj + Sum(v_invest_p * d.p_unitsize * annu)
+            obj = obj + Sum(v_invest_p * d.p_unitsize * _wt(annu))
         if lf is not None:
-            obj = obj + Sum(v_invest_p * d.p_unitsize * lf)
+            obj = obj + Sum(v_invest_p * d.p_unitsize * _wt(lf))
     if has_divest_p:
         lfd = Param(("p", "d"),
             d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})) \
@@ -4179,9 +4259,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd is not None:
-            obj = obj - Sum(v_divest_p * d.p_unitsize * lfd)
+            obj = obj - Sum(v_divest_p * d.p_unitsize * _wt(lfd))
         if annd is not None:
-            obj = obj - Sum(v_divest_p * d.p_unitsize * annd)
+            obj = obj - Sum(v_divest_p * d.p_unitsize * _wt(annd))
     if has_invest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         annu_n = Param(("n", "d"),
@@ -4191,9 +4271,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu_n is not None:
-            obj = obj + Sum(v_invest_n * us_n * annu_n)
+            obj = obj + Sum(v_invest_n * us_n * _wt(annu_n))
         if lf_n is not None:
-            obj = obj + Sum(v_invest_n * us_n * lf_n)
+            obj = obj + Sum(v_invest_n * us_n * _wt(lf_n))
     if has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         lfd_n = Param(("n", "d"),
@@ -4203,9 +4283,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd_n is not None:
-            obj = obj - Sum(v_divest_n * us_n * lfd_n)
+            obj = obj - Sum(v_divest_n * us_n * _wt(lfd_n))
         if annd_n is not None:
-            obj = obj - Sum(v_divest_n * us_n * annd_n)
+            obj = obj - Sum(v_divest_n * us_n * _wt(annd_n))
 
     # ─── §8.1 Existing-entity fixed cost (constant term) — opt-in ─────────
     # mod:2107-2115:

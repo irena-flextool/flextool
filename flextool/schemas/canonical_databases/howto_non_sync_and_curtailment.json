@@ -1260,7 +1260,7 @@
       "model",
       "version",
       [
-        "69",
+        "71",
         "float"
       ],
       null,
@@ -1870,6 +1870,14 @@
     ],
     [
       "solve",
+      "non_anticipativity_periods",
+      null,
+      null,
+      "Array of periods over which operational non-anticipativity (storage / online / reserve dispatch tied across stochastic branches) is enforced. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list ties operations only over those periods' timesteps.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "period_timeset",
       null,
       null,
@@ -1976,6 +1984,17 @@
       null,
       null,
       "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "stochastic_invest_method",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "stochastic_invest_methods",
+      "How stochastic branches participate in investment. 'none' (default) keeps investment realized-only: stochastic branches never enter the invest axis (v_invest stays on realized periods), byte-identical to prior behaviour. 'recourse' enables two-stage stochastic investment with recourse — shared (non-anticipative) investment before the branch point plus per-branch recourse investment at and after the branching period, with probability-weighted investment costs. Reserved for future expected-value and nested-tree modes.",
       "solve_advanced"
     ],
     [
@@ -5058,6 +5077,20 @@
       "startup_methods",
       [
         "\"no_startup\"",
+        "str"
+      ]
+    ],
+    [
+      "stochastic_invest_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "stochastic_invest_methods",
+      [
+        "\"recourse\"",
         "str"
       ]
     ],
