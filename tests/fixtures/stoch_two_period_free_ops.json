@@ -340,6 +340,34 @@
       ]
     ],
     [
+      "construction_lead_time_methods",
+      [
+        "ImltbWVkaWF0ZSI=",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "ImNsb3Nlc3Rfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "InByZXZpb3VzX3NlYW0i",
+        "str"
+      ]
+    ],
+    [
+      "construction_lead_time_methods",
+      [
+        "Im5leHRfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
       "conversion_methods",
       [
         "Im1pbl9sb2FkX2VmZmljaWVuY3ki",
@@ -1408,6 +1436,28 @@
     ],
     [
       "connection",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "connection",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
+    ],
+    [
+      "connection",
       "cumulative_max_capacity",
       [
         null,
@@ -2246,7 +2296,7 @@
       "model",
       "version",
       [
-        "NzE=",
+        "NzQ=",
         "float"
       ],
       null,
@@ -2307,6 +2357,28 @@
       null,
       "A map of coefficients (Index: constraint name, value: coefficient) to represent the participation of the storage state in user-defined constraints. [state x coefficient] will be on the left side of the equation.",
       "constraint"
+    ],
+    [
+      "node",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "node",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
     ],
     [
       "node",
@@ -2849,6 +2921,17 @@
     ],
     [
       "reserve__upDown__group",
+      "reserve_duration",
+      [
+        null,
+        null
+      ],
+      null,
+      "[h] Time span over which committed reserve power must be sustainable from storage. Energy obligation = reservation_MW \u00d7 reserve_duration, corrected by the reserve provider's efficiency. Only affects reserve provided by units/connections that draw on (up) or charge (down) a storage node. Absent or 0 means no storage-energy coupling. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__group",
       "reserve_method",
       [
         "Im5vX3Jlc2VydmUi",
@@ -3014,17 +3097,6 @@
     ],
     [
       "solve",
-      "non_anticipativity_periods",
-      [
-        null,
-        null
-      ],
-      null,
-      "Array of periods over which operational non-anticipativity (storage / online / reserve dispatch tied across stochastic branches) is enforced. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list ties operations only over those periods' timesteps.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "period_timeset",
       [
         "bnVsbA==",
@@ -3098,6 +3170,28 @@
       ],
       "scaling_modes",
       "Numerical LP-autoscaler mode for this solve. 'full' (default) runs Layer 1 (detection) + Layer 2 (per-quantity-type column/row/cost rescaling) + Layer 3 (HiGHS user_*_scale). 'basic' drops Layer 2 (Layer 1 + Layer 3 only); 'solver_only' leaves scaling to the solver; 'off' disables all scaling including HiGHS-internal. Use 'basic' (or lower) for models whose Layer-2 rescaling mis-solves. The run-time --scaling flag / FLEXTOOL_SCALING env override this per-solve value.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "shared_invest_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which investment is SHARED (identical) across stochastic branches \u2014 the non-anticipative first-stage decision; later periods are per-branch recourse. Unset (default) or an empty Array means NO shared tie (byte-identical to prior behaviour: recourse stays per-branch, none stays shared). A period list -- e.g. the first period -- shares investment over those periods while later periods invest per-branch (recourse), the standard two-stage stochastic capacity-expansion mode. Requires stochastic_invest_method=recourse; a no-op under none (investment is already shared across all periods).",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "shared_operation_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which operations are SHARED (identical) across stochastic branches \u2014 the non-anticipative first-stage decision; later periods are per-branch recourse. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list shares operations only over those periods' timesteps.",
       "solve_advanced"
     ],
     [
@@ -3286,6 +3380,28 @@
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 new-build capacity decided in the current period \u2014 on the left side of the user-defined constraint. Not multiplied by unitsize.",
       "constraint"
+    ],
+    [
+      "unit",
+      "construction_lead_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "investment"
+    ],
+    [
+      "unit",
+      "construction_lead_time_method",
+      [
+        null,
+        null
+      ],
+      "construction_lead_time_methods",
+      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "investment"
     ],
     [
       "unit",
@@ -3926,6 +4042,24 @@
       "constraint_invested_capacity_coeff",
       "map",
       1
+    ],
+    [
+      "connection",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "construction_lead_time_method",
+      "str",
+      0
     ],
     [
       "connection",
@@ -4577,6 +4711,24 @@
     ],
     [
       "node",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "construction_lead_time_method",
+      "str",
+      0
+    ],
+    [
+      "node",
       "cumulative_max_capacity",
       "float",
       0
@@ -5213,6 +5365,24 @@
     ],
     [
       "unit",
+      "construction_lead_time",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "construction_lead_time",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "construction_lead_time_method",
+      "str",
+      0
+    ],
+    [
+      "unit",
       "conversion_method",
       "str",
       0
@@ -5617,19 +5787,19 @@
     ],
     [
       "freeops",
-      "non_anticipativity_periods = [] (operations free from t0)"
+      "shared_operation_periods = [] (operations free from t0)"
     ]
   ],
   "scenarios": [
     [
       "free_ops",
       false,
-      "non_anticipativity_periods = [] -> operations branch freely; shared invest, divergent v_state"
+      "shared_operation_periods = [] -> operations branch freely; shared invest, divergent v_state"
     ],
     [
       "pinned_ops",
       false,
-      "non_anticipativity_periods UNSET -> legacy window; storage NA pins v_state equal across branches (byte-parity guard)"
+      "shared_operation_periods UNSET -> legacy window; storage NA pins v_state equal across branches (byte-parity guard)"
     ]
   ],
   "scenario_alternatives": [
@@ -6303,7 +6473,7 @@
     [
       "solve",
       "stoch_2p_free",
-      "non_anticipativity_periods",
+      "shared_operation_periods",
       [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogW119",
         "array"

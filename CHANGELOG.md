@@ -1,9 +1,13 @@
 ## Unreleased
 
 Schema change (adds `solve.stochastic_invest_method`,
-`solve.non_anticipativity_invest_periods`, and per-entity
+`solve.shared_invest_periods`, `solve.shared_operation_periods`,
+`reserve__upDown__group.reserve_duration`, and per-entity
 `construction_lead_time` / `construction_lead_time_method` on
-`unit`/`connection`/`node`; migrated automatically).
+`unit`/`connection`/`node`; migrated automatically). The stochastic
+shared-decision window parameters use positive names:
+`shared_invest_periods` / `shared_operation_periods` name the periods
+whose decisions are *shared* (identical) across stochastic branches.
 
 - **Construction lead time.** New per-entity parameters
   `construction_lead_time` ([years]) and `construction_lead_time_method`
@@ -21,11 +25,11 @@ Schema change (adds `solve.stochastic_invest_method`,
   `immediate`) every existing result is byte-identical.
 
 - **Standard two-stage stochastic investment (the main mode).** The new
-  `solve.non_anticipativity_invest_periods` parameter names the periods over
+  `solve.shared_invest_periods` parameter names the periods over
   which investment is a single shared *here-and-now* decision: `v_invest` and
   `v_divest` are tied across the stochastic branches over those periods, while
   later periods invest per branch (recourse). Compose it with
-  `stochastic_invest_method = recourse` and `non_anticipativity_periods = []`
+  `stochastic_invest_method = recourse` and `shared_operation_periods = []`
   to get the classic capacity-expansion structure — shared first-period
   investment, per-scenario recourse investment thereafter, operations free from
   the first timestep. Both invest and divest are tied so the *net* first-stage

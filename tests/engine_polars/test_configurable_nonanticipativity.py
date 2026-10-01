@@ -3,7 +3,7 @@
 Design: ``specs/sliceG_configurable_nonanticipativity_design.md`` (§4
 byte-parity, §7 hand-checkable test).
 
-The new ``solve.non_anticipativity_periods`` parameter (v71) decouples the
+The new ``solve.shared_operation_periods`` parameter (v71) decouples the
 operational-NA window (the (d,t) set over which the four
 ``non_anticipativity_*`` families pin storage / online / reserve dispatch
 across stochastic branches) from ``realized_periods``.  Tri-state:
@@ -21,7 +21,7 @@ shared investable ``base`` unit (``stochastic_invest_method=none`` -> ONE
 ``v_invest``), and a stochastic-group storage node ``resv`` fed by
 branch-asymmetric wind timing so each branch has a UNIQUE cost-optimal
 storage trajectory (design F6).  Two scenarios differ ONLY in the
-``non_anticipativity_periods`` value.
+``shared_operation_periods`` value.
 
 Hand-verified reference numbers (deterministic LP; see the builder):
 
@@ -120,7 +120,7 @@ def _v_state_by_branch(sol, period_prefix: str) -> dict[str, list[float]]:
 
 
 # ---------------------------------------------------------------------------
-# free_ops (non_anticipativity_periods = []) — operations free from t0
+# free_ops (shared_operation_periods = []) — operations free from t0
 # ---------------------------------------------------------------------------
 
 

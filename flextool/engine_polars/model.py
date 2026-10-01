@@ -4581,7 +4581,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             # tie.  Graceful no-op + advisory (never mutates the problem,
             # design §4.5 / OQ-3).
             _LOG.info(
-                "non_anticipativity_invest_periods is set but "
+                "shared_invest_periods is set but "
                 "stochastic_invest_method is not 'recourse'; investment is "
                 "already shared across all periods, so the invest-NA window "
                 "has no effect (use 'recourse' for shared-first-period / "

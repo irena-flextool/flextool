@@ -3,7 +3,7 @@ configurable-non-anticipativity fixture (design
 ``specs/sliceG_configurable_nonanticipativity_design.md`` §7).
 
 Goal: a two-period, t0-branching stochastic model that exercises the
-operational non-anticipativity WINDOW knob (``non_anticipativity_periods``)
+operational non-anticipativity WINDOW knob (``shared_operation_periods``)
 on a stochastic-group storage node, with a UNIQUE per-branch storage
 optimum so the "operations differ across branches" assertion is
 deterministic (design §7 / F6).
@@ -42,16 +42,16 @@ realized branch (weight 2); ``up`` / ``low`` carry weight 1 each
   cost`` 5 CUR/MWh so wind + stored energy is preferred to fresh base.
 
 Behaviour under the two scenarios (identical data, differing ONLY in the
-``non_anticipativity_periods`` value):
+``shared_operation_periods`` value):
 
-* ``pinned_ops`` — ``non_anticipativity_periods`` UNSET -> legacy window
+* ``pinned_ops`` — ``shared_operation_periods`` UNSET -> legacy window
   = realized_dispatch u fix_storage = the whole horizon.  The storage NA
   family ties the branches' charge/discharge net-charge equal at every
   step, so with no branch inflow the ``v_state[resv]`` trajectory is
   IDENTICAL across ``mid`` / ``up`` / ``low`` — the branches cannot follow
   their opposite surplus/deficit timing and pay for it.  (Byte-parity
   guard: this is the flag-off behaviour.)
-* ``free_ops`` — ``non_anticipativity_periods = []`` -> empty window ->
+* ``free_ops`` — ``shared_operation_periods = []`` -> empty window ->
   ZERO ``non_anticipativity_*`` rows -> each branch charges/discharges to
   its own optimum, so ``v_state[resv]`` DIVERGES across branches, and the
   objective is <= the pinned objective (freeing operations only relaxes
@@ -104,7 +104,7 @@ def build() -> dict:
 
     # ``stochastics.json`` carries the pre-v70 schema; inject the v70
     # ``solve.stochastic_invest_method`` opt-in and the v71
-    # ``solve.non_anticipativity_periods`` window knob before import
+    # ``solve.shared_operation_periods`` window knob before import
     # (json_to_db validates against the embedded schema BEFORE the
     # idempotent v70/v71 migrations reconcile it).
     if not any(vl[0] == "stochastic_invest_methods"
@@ -121,15 +121,16 @@ def build() -> dict:
             "How stochastic branches participate in investment "
             "(none/recourse).", "solve_advanced",
         ])
-    if not any(pd[0] == "solve" and pd[1] == "non_anticipativity_periods"
+    if not any(pd[0] == "solve" and pd[1] == "shared_operation_periods"
                for pd in spec["parameter_definitions"]):
         # Array param (default null, no value list) — mirrors
         # realized_periods / fix_storage_periods (v71, Slice G).
         spec["parameter_definitions"].append([
-            "solve", "non_anticipativity_periods",
+            "solve", "shared_operation_periods",
             _pack(None, None), None,
-            "Array of periods over which operational non-anticipativity "
-            "is enforced (unset = legacy window; [] = free ops).",
+            "Array of periods over which operations are SHARED (identical) "
+            "across stochastic branches (unset = legacy window; [] = free "
+            "ops).",
             "solve_advanced",
         ])
 
@@ -138,15 +139,15 @@ def build() -> dict:
         ["base", "System data (elec demand + wind + investable base)"],
         ["stoch", "include_stochastics + branch-varying wind + t0 branches "
                   "+ stochastic-group storage (stochastic_invest_method=none)"],
-        ["freeops", "non_anticipativity_periods = [] (operations free "
+        ["freeops", "shared_operation_periods = [] (operations free "
                     "from t0)"],
     ]
     spec["scenarios"] = [
         ["free_ops", False,
-         "non_anticipativity_periods = [] -> operations branch freely; "
+         "shared_operation_periods = [] -> operations branch freely; "
          "shared invest, divergent v_state"],
         ["pinned_ops", False,
-         "non_anticipativity_periods UNSET -> legacy window; storage NA "
+         "shared_operation_periods UNSET -> legacy window; storage NA "
          "pins v_state equal across branches (byte-parity guard)"],
     ]
     spec["scenario_alternatives"] = [
@@ -299,7 +300,7 @@ def build() -> dict:
         ["unit__outputNode", ["discharge", "elec"], "other_operational_cost",
          _pack(0.01, "float"), "stoch"],
         # ---- freeops: empty NA window (operations free from t0) --------
-        ["solve", "stoch_2p_free", "non_anticipativity_periods",
+        ["solve", "stoch_2p_free", "shared_operation_periods",
          _pack({"value_type": "str", "data": []}, "array"), "freeops"],
     ]
     return spec

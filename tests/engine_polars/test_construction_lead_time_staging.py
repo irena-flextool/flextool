@@ -1,7 +1,7 @@
 """Slice H — §7b stochastic staging composition (solver-free).
 
 Encoding A keeps ``v_invest`` order-indexed; the invest-NA window
-(``non_anticipativity_invest_periods``, v72) ties ``v_invest[e, o]`` across
+(``shared_invest_periods``, v72) ties ``v_invest[e, o]`` across
 branches for order periods ``o`` in the window.  Staging is then a
 CONSEQUENCE of the deterministic lag, needing no new constraint (design
 §4): to be online at the reveal period a long-lead asset must be *ordered*
@@ -34,7 +34,7 @@ from flextool.engine_polars._derived_existing import (
 PERIODS = ["p1", "p2", "p3", "p4"]
 YEARS = [0.0, 5.0, 8.0, 20.0]
 REVEAL = "p3"
-WINDOW = {"p1", "p2"}  # pre-reveal (non_anticipativity_invest_periods)
+WINDOW = {"p1", "p2"}  # pre-reveal (shared_invest_periods)
 
 
 class _StubSource:

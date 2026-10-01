@@ -1769,6 +1769,8 @@ def migrate_database(
                 _migrate_v72_non_anticipativity_invest_periods(db)
             elif next_version == 73:
                 _migrate_v73_construction_lead_time(db)
+            elif next_version == 74:
+                _migrate_v74(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -4100,6 +4102,115 @@ def _migrate_v73_construction_lead_time(db) -> None:
         "previous_seam/next_seam, default unset) on unit/connection/node; "
         "Slice H construction lead time — commissioning lag lives in the "
         "availability walk, cost stays at the order period."
+    )
+
+
+# Positive, non-negated descriptions for the renamed stochastic
+# shared-decision window parameters (v74).  The old ``non_anticipativity_*``
+# names were negations of the same concept; the new names state it
+# positively: these periods are SHARED (identical) across branches.
+_SHARED_OPERATION_PERIODS_DESC = (
+    "Array of periods over which operations are SHARED (identical) across "
+    "stochastic branches — the non-anticipative first-stage decision; "
+    "later periods are per-branch recourse. Unset (default) uses the "
+    "legacy window = all realized-dispatch timesteps union the fix_storage "
+    "timesteps (byte-identical to prior behaviour). An explicitly empty "
+    "Array frees operations from t0 (classic two-stage capacity "
+    "expansion: one shared here-and-now investment plus operations that "
+    "branch freely per scenario). A period list shares operations only "
+    "over those periods' timesteps."
+)
+_SHARED_INVEST_PERIODS_DESC = (
+    "Array of periods over which investment is SHARED (identical) across "
+    "stochastic branches — the non-anticipative first-stage decision; "
+    "later periods are per-branch recourse. Unset (default) or an empty "
+    "Array means NO shared tie (byte-identical to prior behaviour: "
+    "recourse stays per-branch, none stays shared). A period list -- e.g. "
+    "the first period -- shares investment over those periods while later "
+    "periods invest per-branch (recourse), the standard two-stage "
+    "stochastic capacity-expansion mode. Requires "
+    "stochastic_invest_method=recourse; a no-op under none (investment is "
+    "already shared across all periods)."
+)
+
+
+def _migrate_v74(db) -> None:
+    """Rename the stochastic shared-decision windows + add reserve_duration
+    (v73 -> v74).
+
+    Two folded changes:
+
+    1. **Rename** the two (unreleased) non-anticipativity window params on
+       the ``solve`` class to positive, non-negated names:
+
+       * ``non_anticipativity_periods``        -> ``shared_operation_periods``
+       * ``non_anticipativity_invest_periods`` -> ``shared_invest_periods``
+
+       The renames are collision-safe (``_rename_or_drop_parameter_definition``)
+       and carry their existing per-solve Array values by definition id, so
+       a migrated DB keeps identical behaviour under the new names.  The
+       descriptions are rewritten to state the meaning positively (these
+       periods are SHARED/identical across branches — the non-anticipative
+       first-stage decision).  No-ops when the source names are absent (a DB
+       built fresh above v74 already carries the new names).
+
+    2. **Add** ``reserve__upDown__group.reserve_duration`` for DBs that
+       predate the parameter (mirrors ``_migrate_v71_reserve_duration`` from
+       the original branch).  A single scalar (hours) coupling a
+       storage-backed reserve provider's committed reserve power to the
+       stored energy (up/discharge) or free headroom (down/charge) needed
+       to sustain it for ``reserve_duration`` hours (issue #322).  Absent or
+       0 means no storage-energy coupling, keeping the LP byte-identical to
+       prior behaviour, so the parameter defaults to null and carries no
+       value list.  Idempotent via ``add_update_item`` — a no-op when the
+       definition is already present (e.g. the master template, which
+       already carries it).  Attached to the existing ``reserve`` parameter
+       group when that group is present.
+    """
+    # 1. Rename the two shared-decision window parameters.
+    _rename_or_drop_parameter_definition(
+        db, "solve", "non_anticipativity_periods",
+        "shared_operation_periods", _SHARED_OPERATION_PERIODS_DESC,
+    )
+    _rename_or_drop_parameter_definition(
+        db, "solve", "non_anticipativity_invest_periods",
+        "shared_invest_periods", _SHARED_INVEST_PERIODS_DESC,
+    )
+
+    # 2. Add reserve__upDown__group.reserve_duration (storage energy
+    #    adequacy for reserves, #322) for DBs that predate it.
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="reserve__upDown__group",
+        name="reserve_duration",
+        default_value=None,
+        default_type=None,
+        parameter_value_list_name=None,
+        description=(
+            "[h] Time span over which committed reserve power must be "
+            "sustainable from storage. Energy obligation = reservation_MW × "
+            "reserve_duration, corrected by the reserve provider's "
+            "efficiency. Only affects reserve provided by units/connections "
+            "that draw on (up) or charge (down) a storage node. Absent or 0 "
+            "means no storage-energy coupling. Constant."
+        ),
+    )
+    # Attach to the 'reserve' parameter group when it exists (consistent
+    # with reservation / reserve_method).
+    if db.get_item("parameter_group", name="reserve"):
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="reserve__upDown__group",
+            name="reserve_duration",
+            parameter_group_name="reserve",
+        )
+
+    _commit_step(db,
+        "v74: renamed non_anticipativity_periods -> shared_operation_periods "
+        "and non_anticipativity_invest_periods -> shared_invest_periods "
+        "(positive names for the stochastic shared-decision windows); added "
+        "reserve__upDown__group.reserve_duration ([h] scalar, default none; "
+        "storage energy-adequacy coupling for reserves, #322)."
     )
 
 

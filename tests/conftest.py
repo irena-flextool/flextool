@@ -568,7 +568,7 @@ def stoch_two_period_free_ops_db_url(
 
     Built from ``tests/fixtures/stoch_two_period_free_ops.json`` (generated
     by ``tests/fixtures/build_stoch_two_period_free_ops.py``): two scenarios
-    (``free_ops`` = ``non_anticipativity_periods=[]`` -> operations free
+    (``free_ops`` = ``shared_operation_periods=[]`` -> operations free
     from t0; ``pinned_ops`` = unset -> legacy window byte-parity guard) on
     identical data.  Defensive migration as in :func:`stochastic_db_url`.
     """

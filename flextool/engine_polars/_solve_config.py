@@ -690,7 +690,7 @@ class SolveConfig:
         # ``duplicate_solve``'s dup_map_list).
         obj.non_anticipativity_periods = (
             obj.non_anticipativity_periods_to_tristate(
-                db=db, cl="solve", par="non_anticipativity_periods"
+                db=db, cl="solve", par="shared_operation_periods"
             )
         )
         # Invest-NA window (v72) — plain periods_to_tuples: unset == [] ==
@@ -699,7 +699,7 @@ class SolveConfig:
         # registered any duplicated solve names; the value for those is
         # carried by duplicate_solve's dup_map_list.
         obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
-            db=db, cl="solve", par="non_anticipativity_invest_periods"
+            db=db, cl="solve", par="shared_invest_periods"
         )
 
         return obj
@@ -1069,9 +1069,9 @@ class SolveConfig:
         self,
         db: "DatabaseMapping",
         cl: str = "solve",
-        par: str = "non_anticipativity_periods",
+        par: str = "shared_operation_periods",
     ) -> dict[str, list | None]:
-        """Read ``non_anticipativity_periods`` as a TRI-STATE dict (Slice G).
+        """Read ``shared_operation_periods`` as a TRI-STATE dict (Slice G).
 
         Unlike :meth:`periods_to_tuples` (which returns a
         ``defaultdict(list)`` that cannot tell "no parameter row" apart

@@ -146,7 +146,7 @@ def build() -> dict:
          "Mid-horizon reveal + stochastic-group storage node (T-S)"],
         ["hedge_na_window", False,
          "Invest-NA window main mode: fan-at-t0 + "
-         "non_anticipativity_invest_periods=[p2035] (RP = 173 250)"],
+         "shared_invest_periods=[p2035] (RP = 173 250)"],
         ["hedge_na_divest", False,
          "T-Divest: divest-eligible base under recourse+window — "
          "non_anticipativity_divest_p ties first-period divest too (F2)"],
@@ -330,10 +330,10 @@ def build() -> dict:
         # per-branch (recourse), and free operations from t0.  The tie
         # reproduces the Option-B hedge RP = 173 250 by CONSTRAINT (vs the
         # mid-horizon ``hedge`` scenario's shared trunk by construction).
-        ["solve", "stoch_2p_hedge", "non_anticipativity_invest_periods",
+        ["solve", "stoch_2p_hedge", "shared_invest_periods",
          _pack({"value_type": "str", "data": ["p2035"]}, "array"),
          "na_window"],
-        ["solve", "stoch_2p_hedge", "non_anticipativity_periods",
+        ["solve", "stoch_2p_hedge", "shared_operation_periods",
          _pack({"value_type": "str", "data": []}, "array"),
          "na_window"],
         # ---- divest: base divest-eligible (T-Divest, F2) ---------------

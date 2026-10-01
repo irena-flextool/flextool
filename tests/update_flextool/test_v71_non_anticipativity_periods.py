@@ -76,15 +76,18 @@ def _db_version(url: str) -> int:
 
 
 def test_non_anticipativity_periods_definition_present(tmp_path: Path) -> None:
-    """``solve.non_anticipativity_periods`` exists as an unset Array param
-    (no default, no value list) grouped under ``solve_advanced``."""
+    """At HEAD the operational shared-window param exists as an unset Array
+    (no default, no value list) grouped under ``solve_advanced``.  Added at
+    v71 as ``non_anticipativity_periods`` and renamed to
+    ``shared_operation_periods`` at v74 — this fixture migrates to HEAD, so
+    it carries the current (renamed) name."""
     db = _migrated_db(tmp_path)
     try:
         pdef = db.get_parameter_definition_item(
             entity_class_name="solve",
-            name="non_anticipativity_periods",
+            name="shared_operation_periods",
         )
-        assert pdef, "non_anticipativity_periods not added by migration"
+        assert pdef, "shared_operation_periods not present at HEAD"
         # Array param — no scalar default, no bound value list.
         assert pdef["default_value"] is None
         assert pdef["default_type"] is None
@@ -97,15 +100,16 @@ def test_non_anticipativity_periods_definition_present(tmp_path: Path) -> None:
 def test_migration_adds_no_per_solve_value(tmp_path: Path) -> None:
     """The v71 migration adds the definition ONLY — never a per-solve
     value — so every migrated solve resolves to the unset (legacy-window)
-    case and stays byte-identical."""
+    case and stays byte-identical.  (Param renamed to
+    ``shared_operation_periods`` at v74; this fixture is at HEAD.)"""
     db = _migrated_db(tmp_path)
     try:
         values = [
             v for v in db.get_parameter_value_items()
-            if v["parameter_definition_name"] == "non_anticipativity_periods"
+            if v["parameter_definition_name"] == "shared_operation_periods"
         ]
         assert values == [], (
-            "migration must not author any non_anticipativity_periods value"
+            "migration must not author any shared_operation_periods value"
         )
     finally:
         db.close()

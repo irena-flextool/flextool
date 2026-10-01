@@ -8723,7 +8723,7 @@
       "model",
       "version",
       [
-        "NzM=",
+        "NzQ=",
         "float"
       ],
       null,
@@ -9348,6 +9348,17 @@
     ],
     [
       "reserve__upDown__group",
+      "reserve_duration",
+      [
+        null,
+        null
+      ],
+      null,
+      "[h] Time span over which committed reserve power must be sustainable from storage. Energy obligation = reservation_MW \u00d7 reserve_duration, corrected by the reserve provider's efficiency. Only affects reserve provided by units/connections that draw on (up) or charge (down) a storage node. Absent or 0 means no storage-energy coupling. Constant.",
+      "reserve"
+    ],
+    [
+      "reserve__upDown__group",
       "reserve_method",
       [
         "Im5vX3Jlc2VydmUi",
@@ -9502,28 +9513,6 @@
     ],
     [
       "solve",
-      "non_anticipativity_invest_periods",
-      [
-        null,
-        null
-      ],
-      null,
-      "Array of periods over which investment is non-anticipative (v_invest and v_divest tied across stochastic branches \u2014 a single shared here-and-now decision). Unset (default) or an empty Array means NO tie (byte-identical to prior behaviour: recourse stays per-branch, none stays shared). A period list -- e.g. the first period -- ties investment over those periods while later periods invest per-branch (recourse), the standard two-stage stochastic capacity-expansion mode. Requires stochastic_invest_method=recourse; a no-op under none (investment is already shared across all periods).",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "non_anticipativity_periods",
-      [
-        null,
-        null
-      ],
-      null,
-      "Array of periods over which operational non-anticipativity (storage / online / reserve dispatch tied across stochastic branches) is enforced. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list ties operations only over those periods' timesteps.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "period_timeset",
       [
         "bnVsbA==",
@@ -9597,6 +9586,28 @@
       ],
       "scaling_modes",
       "Numerical LP-autoscaler mode for this solve. 'full' (default) runs Layer 1 (detection) + Layer 2 (per-quantity-type column/row/cost rescaling) + Layer 3 (HiGHS user_*_scale). 'basic' drops Layer 2 (Layer 1 + Layer 3 only); 'solver_only' leaves scaling to the solver; 'off' disables all scaling including HiGHS-internal. Use 'basic' (or lower) for models whose Layer-2 rescaling mis-solves. The run-time --scaling flag / FLEXTOOL_SCALING env override this per-solve value.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "shared_invest_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which investment is SHARED (identical) across stochastic branches \u2014 the non-anticipative first-stage decision; later periods are per-branch recourse. Unset (default) or an empty Array means NO shared tie (byte-identical to prior behaviour: recourse stays per-branch, none stays shared). A period list -- e.g. the first period -- shares investment over those periods while later periods invest per-branch (recourse), the standard two-stage stochastic capacity-expansion mode. Requires stochastic_invest_method=recourse; a no-op under none (investment is already shared across all periods).",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "shared_operation_periods",
+      [
+        null,
+        null
+      ],
+      null,
+      "Array of periods over which operations are SHARED (identical) across stochastic branches \u2014 the non-anticipative first-stage decision; later periods are per-branch recourse. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list shares operations only over those periods' timesteps.",
       "solve_advanced"
     ],
     [

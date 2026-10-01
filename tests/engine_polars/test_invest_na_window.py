@@ -5,18 +5,18 @@ operations free per scenario from t0.
 
 Design: ``specs/invest_na_window_design.md`` (Revision 2).
 
-The new solve param ``non_anticipativity_invest_periods`` ties
+The new solve param ``shared_invest_periods`` ties
 ``v_invest`` / ``v_divest`` across stochastic branches over the resolved
 window.  Composed with ``stochastic_invest_method=recourse`` (per-branch
-invest columns to tie) and ``non_anticipativity_periods=[]`` (ops free) it
+invest columns to tie) and ``shared_operation_periods=[]`` (ops free) it
 delivers the main mode.
 
 Fixture ``stoch_two_period_hedge.json`` (built via
 ``build_stoch_two_period_hedge.py``) re-uses the Slice E hedge topology
 with the branches FANNING AT t0 (the ``ws`` alternative), plus:
 
-  * ``hedge_na_window`` — fan-at-t0 + ``non_anticipativity_invest_periods
-    =[p2035]`` + ``non_anticipativity_periods=[]``.  The tie reproduces
+  * ``hedge_na_window`` — fan-at-t0 + ``shared_invest_periods
+    =[p2035]`` + ``shared_operation_periods=[]``.  The tie reproduces
     the Option-B hedge **RP = 173 250** BY CONSTRAINT (§9.3): p2035 invest
     shared across branches, p2040 invest per-branch (recourse).
   * ``hedge_ws`` — the same fan-at-t0 topology with the window UNSET —
