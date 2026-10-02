@@ -61,6 +61,7 @@ parameter's structural metadata.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -75,6 +76,8 @@ from flextool.engine_polars._axis_enums import (
     rename_to_axis,
 )
 from flextool.engine_polars._solve_state import FlexToolConfigError
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -1306,9 +1309,42 @@ def broadcast_to_period_time(
     # contract is "Enum when global vocabulary is active"; the resolver
     # reads frames in String land via ``InputSource.parameter*``, so the
     # cast happens here at the broadcast boundary.
+    #
+    # Failed-cast guard (spec fix_map_reading.md §3.4).  ``cast_frame_axes``
+    # runs with ``strict=False``, so a period/time token that is NOT in the
+    # model's Enum vocabulary (an unknown or inactive period / timestep)
+    # silently becomes ``null`` on cast.  The null-pattern split below reads
+    # a ``null`` axis token as a "missing axis" default and broadcasts that
+    # row across the WHOLE axis — spreading a bogus value over every (d, t)
+    # and producing duplicate / wrong keys (reproduced: a MAP_TIME row for
+    # ``t01`` ended up carrying both 50 and 60).  Guard it: record which
+    # rows carried a NON-null token BEFORE the cast, then after the cast
+    # DROP the rows whose token was non-null before but null after (the cast
+    # failures), and drive the null-pattern split off the PRE-cast masks —
+    # never the post-cast nulls.  For data whose tokens are all valid/active
+    # (the normal case) nothing is dropped and the pre-cast masks equal the
+    # post-cast nulls, so this is a byte-for-byte no-op.
+    _axis_cols = [c for c in ("period", "t") if c in lf.collect_schema().names()]
+    _mask_cols = {c: f"__{c}_was_null" for c in _axis_cols}
+    if _axis_cols:
+        lf = lf.with_columns(
+            pl.col(c).is_null().alias(_mask_cols[c]) for c in _axis_cols)
     _enums = get_global_axis_enums()
     if _enums is not None:
         lf = cast_frame_axes(lf, _enums)
+        for c in _axis_cols:
+            # Non-null before the cast, null after → unknown/inactive token
+            # outside the model's vocabulary.  Drop it (do not let the split
+            # treat it as a missing-axis default).
+            _failed = (~pl.col(_mask_cols[c])) & pl.col(c).is_null()
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _n = lf.select(_failed.sum().alias("n")).collect().item()
+                if _n:
+                    _LOGGER.debug(
+                        "broadcast_to_period_time: dropped %d row(s) with "
+                        "unknown/inactive '%s' token (failed Enum cast)",
+                        _n, c)
+            lf = lf.filter(~_failed)
 
     shape = resolved.shape
     if shape in (Shape.MAP_PERIOD_TIME, Shape.MAP_TIME_PERIOD):
@@ -1338,30 +1374,31 @@ def broadcast_to_period_time(
         # keyed, so only the ``lf_full`` branch is non-empty and the
         # result is byte-identical to the old inner-join.
         dt_lf = period_filter.lazy().select("d", "t").unique()
+        # Drive the four-way split off the PRE-cast null masks (§3.4) — a
+        # post-cast null may be a failed cast, not an authored default.
+        _d_null = pl.col(_mask_cols["period"])
+        _t_null = pl.col(_mask_cols["t"])
         lf_dt = (lf.pipe(rename_to_axis, {"period": "d"})
-                    .select(*entity_keys, "d", "t", "value"))
+                    .select(*entity_keys, "d", "t", "value",
+                            _mask_cols["period"], _mask_cols["t"]))
         # Fully-keyed rows: exact (d, t) match against the active grid.
-        lf_full = (lf_dt.filter(pl.col("d").is_not_null()
-                                & pl.col("t").is_not_null())
+        lf_full = (lf_dt.filter(~_d_null & ~_t_null)
                         .join(dt_lf, on=["d", "t"], how="inner")
                         .select(*entity_keys, "d", "t", "value"))
         # Period-only default (null t): broadcast across every active
         # timestep of the matching active period.
-        lf_period = (lf_dt.filter(pl.col("d").is_not_null()
-                                  & pl.col("t").is_null())
+        lf_period = (lf_dt.filter(~_d_null & _t_null)
                           .select(*entity_keys, "d", "value")
                           .join(dt_lf, on="d", how="inner")
                           .select(*entity_keys, "d", "t", "value"))
         # Time-only default (null d): broadcast across every active
         # period of the matching active timestep.
-        lf_time = (lf_dt.filter(pl.col("d").is_null()
-                                & pl.col("t").is_not_null())
+        lf_time = (lf_dt.filter(_d_null & ~_t_null)
                         .select(*entity_keys, "t", "value")
                         .join(dt_lf, on="t", how="inner")
                         .select(*entity_keys, "d", "t", "value"))
         # Scalar default (both null): broadcast across the whole grid.
-        lf_scalar = (lf_dt.filter(pl.col("d").is_null()
-                                  & pl.col("t").is_null())
+        lf_scalar = (lf_dt.filter(_d_null & _t_null)
                           .select(*entity_keys, "value")
                           .join(dt_lf, how="cross")
                           .select(*entity_keys, "d", "t", "value"))
@@ -1382,12 +1419,16 @@ def broadcast_to_period_time(
         # broadcast independently across the active-period universe,
         # then concatenate.
         d_lf = period_filter.lazy().select("d").unique()
+        # Split off the PRE-cast null mask (§3.4): a post-cast null may be
+        # an unknown/inactive period that failed the cast, not a scalar
+        # default — those rows were already dropped above.
+        _d_null = pl.col(_mask_cols["period"])
         lf_p = lf.pipe(rename_to_axis, {"period": "d"})
-        lf_scalar = (lf_p.filter(pl.col("d").is_null())
+        lf_scalar = (lf_p.filter(_d_null)
                           .select(*entity_keys, "value")
                           .join(d_lf, how="cross")
                           .select(*entity_keys, "d", "value"))
-        lf_explicit = (lf_p.filter(pl.col("d").is_not_null())
+        lf_explicit = (lf_p.filter(~_d_null)
                             .select(*entity_keys, "d", "value")
                             .join(d_lf, on="d", how="inner")
                             .select(*entity_keys, "d", "value"))
@@ -1405,11 +1446,15 @@ def broadcast_to_period_time(
         # ``network_coal_wind_battery_co2_fullYear_availability`` where
         # ``coal_plant`` is MAP_TIME but ``wind_plant`` is scalar 0.7.
         t_lf = period_filter.lazy().select("t").unique()
-        lf_scalar = (lf.filter(pl.col("t").is_null())
+        # Split off the PRE-cast null mask (§3.4): a post-cast null may be
+        # an unknown/inactive timestep that failed the cast, not a scalar
+        # default — those rows were already dropped above.
+        _t_null = pl.col(_mask_cols["t"])
+        lf_scalar = (lf.filter(_t_null)
                           .select(*entity_keys, "value")
                           .join(t_lf, how="cross")
                           .select(*entity_keys, "t", "value"))
-        lf_explicit = (lf.filter(pl.col("t").is_not_null())
+        lf_explicit = (lf.filter(~_t_null)
                             .select(*entity_keys, "t", "value")
                             .join(t_lf, on="t", how="inner")
                             .select(*entity_keys, "t", "value"))
