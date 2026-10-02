@@ -9,6 +9,19 @@ shared-decision window parameters use positive names:
 `shared_invest_periods` / `shared_operation_periods` name the periods
 whose decisions are *shared* (identical) across stochastic branches.
 
+- **Mixed period/time Map shapes within one parameter.** A parameter can
+  now be authored with different Map shapes for different entities (for
+  example a `flowGroup.min_instant_flow` that is a `Map(period)` on one
+  group and a `Map(time)` on another). Each row keeps its own index
+  semantics regardless of the order of rows in the database, instead of
+  being silently misplaced or dropped. As a consequence of classifying
+  every row, a Map shape that a parameter does not accept — for example a
+  time Map (or any other non-accepted shape) on a period-only parameter —
+  now **raises** an error that names the offending entity, instead of
+  being silently ignored. Databases that relied on such input being
+  dropped will stop with a clear message identifying the entity and
+  parameter to fix.
+
 - **Construction lead time.** New per-entity parameters
   `construction_lead_time` ([years]) and `construction_lead_time_method`
   (`immediate` / `closest_seam` / `previous_seam` / `next_seam`) model

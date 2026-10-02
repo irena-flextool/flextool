@@ -18,18 +18,30 @@ chain.
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import Any
 
 import numpy as np
 import polars as pl
 
+from flextool.engine_polars._solve_state import FlexToolConfigError
 from flextool.spinedb_backend._axis_enums import (
     AxisContract,
     FlexDataIntegrityError,
     cast_against_contract,
     load_axis_contract,
 )
+
+_LOGGER = logging.getLogger(__name__)
+
+# Test seam (spec fix_map_reading.md §4 golden snapshot): when False, the
+# per-row period/time placement (§3.1) is bypassed and PERIOD_TIME_PARAMS
+# keys fall through to the legacy positional unroll.  Always True in
+# production; the golden snapshot test flips it to capture the legacy
+# baseline and assert the new path is byte-identical for single-shape /
+# non-registry parameters.
+_PERIOD_TIME_PLACEMENT_ENABLED = True
 
 # Late imports of spinedb_api at construction time keep the import
 # graph free of an unconditional dependency for users who only consume
@@ -135,6 +147,9 @@ class SpineDbReader:
         if contract is None:
             contract = load_axis_contract()
         self._contract = contract
+        # Dedupe the "keys hit neither vocabulary" classification WARNING
+        # to one per (entity_class, parameter_name) (spec §3.1).
+        self._pt_classify_warned: set[tuple[str, str]] = set()
 
         # Build caches once.
         from spinedb_api import DatabaseMapping, from_database
@@ -390,6 +405,29 @@ class SpineDbReader:
                 f"unknown parameter ({entity_class!r}, {parameter_name!r})"
             )
         rows = self._param_rows.get((cls_id, pdef["id"]), [])
+
+        # Spec fix_map_reading.md §3.2 — for PERIOD_TIME_PARAMS keys return
+        # the canonical-order union of the per-row classified axes
+        # (``["period"]`` / ``["time"]`` / ``["period", "time"]``) via the
+        # shared classifier, so the resolver sees every row's semantics
+        # rather than just the deepest row's raw label.  Falls back to the
+        # legacy deepest-wins path when classification is not possible
+        # (no enums + silent labels, etc.).
+        from flextool.engine_polars._param_shapes import PERIOD_TIME_PARAMS
+        if (entity_class, parameter_name) in PERIOD_TIME_PARAMS:
+            non_null = [(eid, v) for eid, v in rows if v is not None]
+            if non_null:
+                rows_axes = self._classify_pt_rows(
+                    non_null, entity_class, parameter_name,
+                )
+                if rows_axes is not None:
+                    union: list[str | None] = []
+                    if any("period" in path for path in rows_axes):
+                        union.append("period")
+                    if any("time" in path for path in rows_axes):
+                        union.append("time")
+                    return union
+
         # Probe the deepest-nested row to capture the widest schema.
         # Spine schema invariant: all rows for a parameter under a
         # scenario share the same shape, but we're defensive in case
@@ -409,6 +447,53 @@ class SpineDbReader:
         if default is not None:
             return self._index_name_path(default)
         return []
+
+    def parameter_shape_variants(self, entity_class: str,
+                                  parameter_name: str,
+                                  ) -> "set[tuple[str, ...]]":
+        """Return the distinct per-row classified axis paths for a
+        PERIOD_TIME_PARAMS parameter (spec fix_map_reading.md §3.2).
+
+        Each element is a tuple of canonical axis labels
+        (``("period",)`` / ``("time",)`` / ``("period", "time")`` /
+        ``()`` for scalar).  Returns an empty set for parameters that are
+        not PERIOD_TIME_PARAMS keys, or when classification is not
+        possible (no enums + silent labels) — in both cases the resolver
+        falls back to its combined-shape allow-list check.
+        """
+        cls_id = self._class_name_to_id.get(entity_class)
+        if cls_id is None:
+            raise KeyError(f"unknown entity_class {entity_class!r}")
+        pdef = self._pdef_by_class_name.get((cls_id, parameter_name))
+        if pdef is None:
+            raise KeyError(
+                f"unknown parameter ({entity_class!r}, {parameter_name!r})"
+            )
+        from flextool.engine_polars._param_shapes import PERIOD_TIME_PARAMS
+        if (entity_class, parameter_name) not in PERIOD_TIME_PARAMS:
+            return set()
+        rows = self._param_rows.get((cls_id, pdef["id"]), [])
+        non_null = [(eid, v) for eid, v in rows if v is not None]
+        if not non_null:
+            # No explicit rows — the parameter resolves from its default.
+            default = pdef["default_value"]
+            if default is None:
+                return set()
+            axes = self._classify_pt_path(
+                default,
+                entity_class=entity_class,
+                entity_name="<default>",
+                parameter_name=parameter_name,
+            )
+            if any(a is None for a in axes):
+                return set()
+            return {tuple("time" if a == "t" else "period" for a in axes)}
+        rows_axes = self._classify_pt_rows(
+            non_null, entity_class, parameter_name,
+        )
+        if rows_axes is None:
+            return set()
+        return set(rows_axes)
 
     @staticmethod
     def _index_name_path(v: Any) -> "list[str | None]":
@@ -807,29 +892,51 @@ class SpineDbReader:
         if not rows:
             return {}, [], None
 
-        # Discover index columns from the widest-shaped row (spec
-        # §5.2.5).  In practice flextool's params don't mix shapes
-        # within one scenario — but we're defensive.
+        columns: dict[str, list] | None = None
         index_cols: list[str] = []
-        for _eid, v in rows:
-            cand = self._discover_index_cols(v, parameter_name)
-            if len(cand) > len(index_cols):
-                index_cols = cand
 
-        # Pre-allocate one list per output column.
-        col_names = ent_cols + index_cols + ["value"]
-        columns: dict[str, list] = {name: [] for name in col_names}
-
-        # Walk each (entity_id, parsed_value) pair.  ``idx_path`` is a
-        # positional list mirroring ``index_cols`` — mutated via
-        # append/pop inside the recursion, no per-node dict copy.
-        idx_path: list[Any] = []
-        for eid, v in rows:
-            cls_id, ent_name = self._entity_by_id[eid]
-            ent_values = self._entity_dim_values(cls_id, ent_name)
-            self._unroll_value(
-                v, index_cols, columns, ent_cols, ent_values, idx_path,
+        # Spec fix_map_reading.md §3.1 — per-row period/time placement for
+        # the dual-axis + period-only registry parameters.  Each Map level
+        # of each row is classified as ``period`` or ``t`` (by index_name,
+        # or by value domain against the global axis vocabulary for silent
+        # labels) and written into its OWN canonical column — so a
+        # ``Map(period)`` row and a ``Map(time)`` row of the same
+        # parameter no longer collide by position.  Returns ``None`` when
+        # nothing can be classified (no enums + silent labels, etc.); the
+        # legacy positional path below then runs, byte-for-byte as before.
+        from flextool.engine_polars._param_shapes import PERIOD_TIME_PARAMS
+        if (_PERIOD_TIME_PLACEMENT_ENABLED
+                and (entity_class, parameter_name) in PERIOD_TIME_PARAMS):
+            pt = self._unroll_period_time_rows(
+                rows, ent_cols, parameter_name, entity_class,
             )
+            if pt is not None:
+                columns, index_cols = pt
+
+        if columns is None:
+            # Discover index columns from the widest-shaped row (spec
+            # §5.2.5).  In practice flextool's params don't mix shapes
+            # within one scenario — but we're defensive.
+            index_cols = []
+            for _eid, v in rows:
+                cand = self._discover_index_cols(v, parameter_name)
+                if len(cand) > len(index_cols):
+                    index_cols = cand
+
+            # Pre-allocate one list per output column.
+            col_names = ent_cols + index_cols + ["value"]
+            columns = {name: [] for name in col_names}
+
+            # Walk each (entity_id, parsed_value) pair.  ``idx_path`` is a
+            # positional list mirroring ``index_cols`` — mutated via
+            # append/pop inside the recursion, no per-node dict copy.
+            idx_path: list[Any] = []
+            for eid, v in rows:
+                cls_id, ent_name = self._entity_by_id[eid]
+                ent_values = self._entity_dim_values(cls_id, ent_name)
+                self._unroll_value(
+                    v, index_cols, columns, ent_cols, ent_values, idx_path,
+                )
 
         # Apply the contract dtype only to parameters that contain at
         # least one Spine Map row.  Map is the only shape where Spine
@@ -1148,6 +1255,298 @@ class SpineDbReader:
         for col, v in per_col_value.items():
             columns[col].append(v)
         columns["value"].append(value)
+
+    # ------------------------------------------------------------------
+    # Per-row period/time placement (spec fix_map_reading.md §3.1 / §3.2)
+
+    def _classify_pt_level(
+        self,
+        index_name: "str | None",
+        keys: "Any",
+        *,
+        entity_class: str,
+        entity_name: str,
+        parameter_name: str,
+    ) -> "str | None":
+        """Classify ONE Map/TimeSeries level as ``"period"`` or ``"t"``.
+
+        Shared by the reader's per-row placement (§3.1) and by
+        :meth:`parameter_shape_info` / :meth:`parameter_shape_variants`
+        (§3.2) so the two cannot diverge.
+
+        Returns ``"period"`` / ``"t"`` for a classified level, or ``None``
+        to signal "keep today's positional placement" (silent label with
+        no enums on the reader, or silent-label keys that match neither
+        vocabulary — in the latter case a single WARNING is emitted per
+        (class, param) and the keys are dropped downstream by the
+        scenario trim).
+
+        Raises :class:`FlexDataIntegrityError` when a silent-label level's
+        keys match BOTH the period and timestep vocabularies (ambiguous),
+        and :class:`FlexToolConfigError` when an explicit label is not a
+        valid axis for a period/time parameter.
+        """
+        from flextool.engine_polars._param_shapes import _normalise_label
+        norm = _normalise_label(index_name)
+        if norm == "period":
+            return "period"
+        if norm in ("time", "t"):
+            return "t"
+        if norm is None:
+            # Silent label — classify by value domain against the reader's
+            # GLOBAL axis vocabulary (every period / timestep in the
+            # model, not just the active solve's dt).
+            d_enum = self._axis_enums.get("d") if self._axis_enums else None
+            t_enum = self._axis_enums.get("t") if self._axis_enums else None
+            if d_enum is None and t_enum is None:
+                # No enums on the reader (unit-test setups) — place by
+                # position, as today.
+                return None
+            d_vocab = (set(d_enum.categories.to_list())
+                       if d_enum is not None else set())
+            t_vocab = (set(t_enum.categories.to_list())
+                       if t_enum is not None else set())
+            key_set = {str(k) for k in keys if k is not None}
+            hits_d = bool(key_set & d_vocab)
+            hits_t = bool(key_set & t_vocab)
+            if hits_d and hits_t:
+                raise FlexDataIntegrityError(
+                    f"Parameter {entity_class}.{parameter_name}: entity "
+                    f"{entity_name!r} has a silent-label Map whose keys "
+                    f"match BOTH the period and the timestep vocabulary; "
+                    f"cannot classify the axis.  Author the Map's "
+                    f"index_name as 'period' or 'time'."
+                )
+            if hits_d:
+                return "period"
+            if hits_t:
+                return "t"
+            # Keys hit neither vocabulary — keep today's positional
+            # placement; the scenario trim drops them as before.
+            wkey = (entity_class, parameter_name)
+            if wkey not in self._pt_classify_warned:
+                self._pt_classify_warned.add(wkey)
+                _LOGGER.warning(
+                    "%s.%s: silent-label Map keys match neither the period "
+                    "nor the timestep vocabulary for entity %r; rows kept "
+                    "positionally and trimmed by the scenario filter.",
+                    entity_class, parameter_name, entity_name,
+                )
+            return None
+        # Any other explicit label is not a valid axis for these params.
+        raise FlexToolConfigError(
+            f"Parameter ({entity_class!r}, {parameter_name!r}): entity "
+            f"{entity_name!r} has a Map index_name {index_name!r} which is "
+            f"not a valid axis for a period/time parameter (expected "
+            f"'period' or 'time')."
+        )
+
+    def _classify_pt_path(
+        self,
+        v: Any,
+        *,
+        entity_class: str,
+        entity_name: str,
+        parameter_name: str,
+    ) -> "list[str | None]":
+        """Classify every Map/TimeSeries level of one row value.
+
+        Returns an ordered list of ``"period"`` / ``"t"`` / ``None`` (one
+        per nesting level; empty for a scalar).  ``None`` means "keep
+        positional placement" (see :meth:`_classify_pt_level`)."""
+        from spinedb_api.parameter_value import Map, TimeSeries, Array
+        out: list[str | None] = []
+        cur = v
+        while True:
+            if isinstance(cur, Map):
+                out.append(self._classify_pt_level(
+                    cur.index_name, cur.indexes,
+                    entity_class=entity_class,
+                    entity_name=entity_name,
+                    parameter_name=parameter_name,
+                ))
+                if len(cur.values) == 0:
+                    break
+                cur = cur.values[0]
+                continue
+            if isinstance(cur, TimeSeries):
+                out.append("t")
+                break
+            if isinstance(cur, Array):
+                # Array keys are positional ints — out of scope for the
+                # period/time classifier; keep positional placement.
+                out.append(None)
+                break
+            break
+        return out
+
+    def _classify_pt_rows(
+        self,
+        rows: list[tuple[int, Any]],
+        entity_class: str,
+        parameter_name: str,
+    ) -> "list[tuple[str, ...]] | None":
+        """Classify every row into a canonical axis path tuple.
+
+        Each tuple uses the canonical labels ``"period"`` / ``"time"``
+        (matching :meth:`parameter_shape_info`'s raw-label output) in
+        canonical order (period before time).  Returns ``None`` when ANY
+        level is unclassifiable (silent label with no enums, or keys that
+        match neither vocabulary) — the caller then falls back to the
+        legacy behaviour.  Shared by :meth:`parameter_shape_info` and
+        :meth:`parameter_shape_variants`."""
+        out: list[tuple[str, ...]] = []
+        for eid, v in rows:
+            _cls_id, ent_name = self._entity_by_id[eid]
+            axes = self._classify_pt_path(
+                v,
+                entity_class=entity_class,
+                entity_name=ent_name,
+                parameter_name=parameter_name,
+            )
+            if any(a is None for a in axes):
+                return None
+            path = tuple("time" if a == "t" else "period" for a in axes)
+            out.append(path)
+        return out
+
+    def _unroll_period_time_rows(
+        self,
+        rows: list[tuple[int, Any]],
+        ent_cols: list[str],
+        parameter_name: str,
+        entity_class: str,
+    ) -> "tuple[dict[str, list], list[str]] | None":
+        """Build the columnar dict for a PERIOD_TIME_PARAMS parameter with
+        per-row axis placement (spec §3.1).
+
+        Returns ``(columns, index_cols)`` where ``index_cols`` is the
+        canonical axis column list (``period`` before ``t``, only axes
+        that occur in some row).  Returns ``None`` to signal "fall back to
+        the legacy positional unroll" when nothing can be classified (so
+        the caller rebuilds via the unchanged legacy path).
+        """
+        # Pass 1 — classify each row; collect which canonical axes appear.
+        classified: list[tuple[int, Any, list[str | None]]] = []
+        any_period = False
+        any_t = False
+        for eid, v in rows:
+            _cls_id, ent_name = self._entity_by_id[eid]
+            axes = self._classify_pt_path(
+                v,
+                entity_class=entity_class,
+                entity_name=ent_name,
+                parameter_name=parameter_name,
+            )
+            concrete = [a for a in axes if a is not None]
+            if len(concrete) != len(set(concrete)):
+                raise FlexDataIntegrityError(
+                    f"Parameter {entity_class}.{parameter_name}: entity "
+                    f"{ent_name!r} maps two Map levels to the same axis "
+                    f"({concrete}); each axis may appear at most once."
+                )
+            classified.append((eid, v, axes))
+            for a in axes:
+                if a == "period":
+                    any_period = True
+                elif a == "t":
+                    any_t = True
+
+        canonical: list[str] = []
+        if any_period:
+            canonical.append("period")
+        if any_t:
+            canonical.append("t")
+        if not canonical:
+            # Nothing classified (e.g. no enums + silent labels, or only
+            # scalar/Array rows) — fall back to the legacy path.
+            return None
+
+        columns: dict[str, list] = {
+            name: [] for name in (ent_cols + canonical + ["value"])
+        }
+        for eid, v, axes in classified:
+            cls_id, ent_name = self._entity_by_id[eid]
+            ent_values = self._entity_dim_values(cls_id, ent_name)
+            # Resolve each level to a concrete canonical column.  A
+            # classified level maps directly; an unclassified level keeps
+            # positional placement into the canonical column at its depth.
+            row_cols: list[str] = []
+            for i, a in enumerate(axes):
+                if a == "period":
+                    row_cols.append("period")
+                elif a == "t":
+                    row_cols.append("t")
+                else:
+                    row_cols.append(
+                        canonical[i] if i < len(canonical) else canonical[-1]
+                    )
+            if len(row_cols) != len(set(row_cols)):
+                # Positional fallback collided (pathological depth-2
+                # unclassified row with a 1-axis canonical set) — bail to
+                # the legacy path for the whole parameter.
+                return None
+            self._emit_pt_value(
+                v, row_cols, 0, {}, columns, ent_cols, ent_values, canonical,
+            )
+        return columns, canonical
+
+    def _emit_pt_value(
+        self,
+        v: Any,
+        row_cols: list[str],
+        level: int,
+        pending: dict[str, Any],
+        columns: dict[str, list],
+        ent_cols: list[str],
+        ent_values: list[str],
+        canonical: list[str],
+    ) -> None:
+        """Recursively unroll *v* into ``columns`` using the per-row axis
+        column mapping *row_cols* (spec §3.1).
+
+        ``pending`` maps a canonical column name to the current key at
+        that depth; canonical columns not populated by this row's path are
+        written as ``None``.
+        """
+        from spinedb_api.parameter_value import Map, TimeSeries, Array
+        if not isinstance(v, (Map, TimeSeries, Array)):
+            for col, val in zip(ent_cols, ent_values):
+                columns[col].append(val)
+            for col in canonical:
+                columns[col].append(pending.get(col))
+            columns["value"].append(_coerce_value(v))
+            return
+        col = row_cols[level]
+        if isinstance(v, Map):
+            for idx, child in zip(v.indexes, v.values):
+                pending[col] = _coerce_index(idx)
+                self._emit_pt_value(
+                    child, row_cols, level + 1, pending,
+                    columns, ent_cols, ent_values, canonical,
+                )
+            pending.pop(col, None)
+            return
+        if isinstance(v, TimeSeries):
+            for idx, val in zip(v.indexes, v.values):
+                pending[col] = _coerce_index(idx)
+                for c, ev in zip(ent_cols, ent_values):
+                    columns[c].append(ev)
+                for c in canonical:
+                    columns[c].append(pending.get(c))
+                columns["value"].append(_coerce_value(val))
+            pending.pop(col, None)
+            return
+        if isinstance(v, Array):
+            for i, val in enumerate(v.values):
+                pending[col] = i
+                for c, ev in zip(ent_cols, ent_values):
+                    columns[c].append(ev)
+                for c in canonical:
+                    columns[c].append(pending.get(c))
+                columns["value"].append(_coerce_value(val))
+            pending.pop(col, None)
+            return
 
     # ------------------------------------------------------------------
     # Materialisation

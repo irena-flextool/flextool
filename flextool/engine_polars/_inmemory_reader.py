@@ -121,6 +121,43 @@ class InMemoryReader:
                 out.append(c)
         return out
 
+    def parameter_shape_variants(self, entity_class: str,
+                                  parameter_name: str,
+                                  ) -> "set[tuple[str, ...]]":
+        """Spec fix_map_reading.md §3.2 — distinct per-row classified axis
+        paths for a PERIOD_TIME_PARAMS parameter, inferred from the
+        frame's null patterns.
+
+        InMemoryReader callers author frames already in post-resolution
+        shape (columns ``period`` / ``t`` / ``time``).  Each row's variant
+        is the tuple of canonical axes whose column is non-null, in
+        canonical order (period before time).  Returns an empty set for
+        non-PERIOD_TIME keys so the resolver falls back to its combined
+        allow-list check.
+        """
+        from flextool.engine_polars._param_shapes import PERIOD_TIME_PARAMS
+        if (entity_class, parameter_name) not in PERIOD_TIME_PARAMS:
+            return set()
+        df = self.parameter(entity_class, parameter_name)
+        has_period = "period" in df.columns
+        tcol = "t" if "t" in df.columns else (
+            "time" if "time" in df.columns else None
+        )
+        if not has_period and tcol is None:
+            # Scalar-only frame (or no period/time columns).
+            return {()} if df.height > 0 else set()
+        sel_cols = ([c for c in ("period",) if has_period]
+                    + ([tcol] if tcol is not None else []))
+        variants: set[tuple[str, ...]] = set()
+        for row in df.select(sel_cols).iter_rows(named=True):
+            path: list[str] = []
+            if has_period and row.get("period") is not None:
+                path.append("period")
+            if tcol is not None and row.get(tcol) is not None:
+                path.append("time")
+            variants.add(tuple(path))
+        return variants
+
     # ------------------------------------------------------------------
     # Diagnostics
 

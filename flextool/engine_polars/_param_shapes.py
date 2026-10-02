@@ -422,6 +422,30 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
 
 
 # ---------------------------------------------------------------------------
+# PERIOD_TIME_PARAMS — keys that admit a period/time Map shape
+# ---------------------------------------------------------------------------
+#
+# Spec ``fix_map_reading.md`` §3.1.  Every ``PARAM_ALLOWED_SHAPES`` key
+# whose allow-list contains at least one of ``MAP_PERIOD`` / ``MAP_TIME``
+# / ``MAP_PERIOD_TIME`` — the 16 dual-axis keys PLUS the ~32 period-only
+# keys ({SCALAR, MAP_PERIOD}).  Period-only keys are included on purpose:
+# classifying their rows is what lets the §3.3 per-variant allow-list
+# check catch a stray ``Map(time)`` and raise (today silently dropped).
+#
+# Derived from the registry so the two cannot drift.  Uses the three
+# EXACT Shape enum members — NOT substring matching — so facet shapes
+# such as ``MAP_PERIOD_TIER_FACET`` are correctly EXCLUDED.
+_PERIOD_TIME_SHAPE_MEMBERS: "frozenset[Shape]" = frozenset(
+    (Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME)
+)
+PERIOD_TIME_PARAMS: "frozenset[tuple[str, str]]" = frozenset(
+    key
+    for key, shapes in PARAM_ALLOWED_SHAPES.items()
+    if _PERIOD_TIME_SHAPE_MEMBERS & set(shapes)
+)
+
+
+# ---------------------------------------------------------------------------
 # ParamAxes — derived (map_levels, leaf) view per :class:`Shape`
 # ---------------------------------------------------------------------------
 
@@ -955,6 +979,123 @@ def _entity_dim_columns_for_frame(
     return ["name"]
 
 
+# ---------------------------------------------------------------------------
+# Per-variant allow-list check (spec fix_map_reading.md §3.3)
+# ---------------------------------------------------------------------------
+
+
+# Dedupe the per-(class, param) INFO line to "one per run" (spec §3.3).
+# resolve_param_shape may be called once per sub-solve; this keeps the log
+# to a single line for a mixed-shape parameter across the whole process.
+_MIXED_SHAPE_LOGGED: "set[tuple[str, str]]" = set()
+
+
+def _variant_to_shape(variant: "tuple[str, ...]") -> "Shape | None":
+    """Map one classified axis path (e.g. ``("period",)``) to a Shape.
+
+    Returns ``None`` for a path that does not correspond to a recognised
+    period/time shape (treated as a violation by the caller)."""
+    try:
+        return _shape_from_indices(list(variant))
+    except _UnrecognisedIndex:
+        return None
+
+
+def _entity_axes_map(
+    df: "pl.DataFrame",
+    ent_cols: "tuple[str, ...]",
+) -> "dict[tuple[str, ...], tuple[str, ...]]":
+    """Group *df* rows by entity and return each entity's classified axis
+    path (``("period",)`` / ``("time",)`` / ``("period", "time")`` / ``()``)
+    derived from the non-null ``period`` / ``t`` columns.
+
+    Used only on the error / mixed-shape-logging paths to name entities
+    and count per-shape multiplicities — never on the hot path.
+    """
+    axis_cols = [c for c in ("period", "t") if c in df.columns]
+    ent_present = [c for c in ent_cols if c in df.columns]
+    out: "dict[tuple[str, ...], set[str]]" = {}
+    if not ent_present:
+        return {}
+    for row in df.select(ent_present + axis_cols).iter_rows(named=True):
+        ent = tuple(str(row[c]) for c in ent_present)
+        axes = out.setdefault(ent, set())
+        if "period" in axis_cols and row.get("period") is not None:
+            axes.add("period")
+        if "t" in axis_cols and row.get("t") is not None:
+            axes.add("time")
+    canonical: "dict[tuple[str, ...], tuple[str, ...]]" = {}
+    for ent, axes in out.items():
+        path: list[str] = []
+        if "period" in axes:
+            path.append("period")
+        if "time" in axes:
+            path.append("time")
+        canonical[ent] = tuple(path)
+    return canonical
+
+
+def _validate_shape_variants(
+    variants: "set[tuple[str, ...]]",
+    allowed: "set[Shape]",
+    df: "pl.DataFrame",
+    ent_cols: "tuple[str, ...]",
+    entity_class: str,
+    parameter_name: str,
+) -> None:
+    """Check each per-row shape variant against *allowed* (spec §3.3).
+
+    A combined ``MAP_PERIOD_TIME`` is accepted for a parameter whose
+    allow-list lacks it (e.g. ``commodity.price``) as long as every
+    individual row shape is allowed.  A genuine 2-D row, or a time map
+    on a period-only parameter, is rejected with a
+    :class:`FlexToolConfigError` naming the offending entities and the
+    shape each was authored with.  Logs one INFO line per (class, param)
+    per run when there is more than one variant.
+    """
+    bad_variants = {
+        var for var in variants
+        if (_variant_to_shape(var) is None
+            or _variant_to_shape(var) not in allowed)
+    }
+    if bad_variants:
+        ent_axes = _entity_axes_map(df, ent_cols)
+        parts: list[str] = []
+        for var in sorted(bad_variants, key=lambda t: "+".join(t)):
+            offenders = sorted(
+                "/".join(ent) for ent, path in ent_axes.items()
+                if path == var
+            )
+            shape_name = (
+                _variant_to_shape(var).value
+                if _variant_to_shape(var) is not None
+                else ("+".join(var) if var else "scalar")
+            )
+            who = ", ".join(offenders[:10]) if offenders else "(unknown)"
+            parts.append(f"{shape_name} authored by {who}")
+        raise FlexToolConfigError(
+            f"Parameter ({entity_class!r}, {parameter_name!r}) has rows "
+            f"whose shape is not allowed: {'; '.join(parts)}.  Allowed "
+            f"shapes: {_allowed_shape_names(allowed)}.  Edit the source "
+            "database so every entity uses an allowed shape, or extend "
+            "PARAM_ALLOWED_SHAPES."
+        )
+    key = (entity_class, parameter_name)
+    if len(variants) > 1 and key not in _MIXED_SHAPE_LOGGED:
+        _MIXED_SHAPE_LOGGED.add(key)
+        from collections import Counter
+        ent_axes = _entity_axes_map(df, ent_cols)
+        counts = Counter(ent_axes.values())
+        rendered = ", ".join(
+            f"{('+'.join(path) if path else 'scalar')}: {n}"
+            for path, n in sorted(counts.items(), key=lambda kv: "+".join(kv[0]))
+        )
+        _LOGGER.info(
+            "%s.%s: mixed shapes {%s} -> (d,t)",
+            entity_class, parameter_name, rendered,
+        )
+
+
 def resolve_param_shape(
     source: "InputSource",
     entity_class: str,
@@ -1106,7 +1247,32 @@ def resolve_param_shape(
             and Shape.SCALAR not in allowed):
         shape = Shape.SCALAR_STR
 
-    if shape not in allowed:
+    # Spec fix_map_reading.md §3.3 — per-variant allow-list check.  When
+    # the source exposes ``parameter_shape_variants`` (SpineDbReader /
+    # InMemoryReader, for PERIOD_TIME_PARAMS keys), validate each
+    # per-row shape against ``allowed`` instead of the combined shape.
+    # So a mixed period+time frame (combined ``MAP_PERIOD_TIME``) is
+    # accepted for e.g. ``commodity.price`` — whose allow-list lacks
+    # ``MAP_PERIOD_TIME`` — as long as every individual row shape is
+    # allowed; a genuine 2-D row, or a time map on a period-only
+    # parameter, is still rejected.  Falls back to the combined check
+    # when the source doesn't expose variants (test stubs) or returns an
+    # empty set (non-PERIOD_TIME keys).
+    variants: "set[tuple[str, ...]] | None" = None
+    variants_fn = getattr(source, "parameter_shape_variants", None)
+    if variants_fn is not None:
+        try:
+            raw_variants = variants_fn(entity_class, parameter_name)
+        except (KeyError, AttributeError):
+            raw_variants = None
+        if raw_variants:
+            variants = {tuple(v) for v in raw_variants}
+    if variants:
+        _validate_shape_variants(
+            variants, allowed, df, tuple(ent_cols),
+            entity_class, parameter_name,
+        )
+    elif shape not in allowed:
         # Render observed shape for the message — labels can be empty
         # so reconstruct from the labels list.
         observed = (shape.value if shape is not None
