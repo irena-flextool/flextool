@@ -6,9 +6,15 @@ with helpers for scalar Direct Params previously read by
 
 * ``p_state_self_discharge`` — ``node.self_discharge_loss``
 * ``p_state_start`` — ``node.storage_state_start``
-* ``p_min_load`` — ``unit.min_load``
 * ``p_connection_susceptance`` — ``connection.susceptance``
 * ``p_commodity_unitsize`` — ``commodity.unitsize``
+
+``p_min_load`` (``unit.min_load``) was formerly a Δ.4 scalar Direct Param
+here, but is now produced as a shape-correct (p, d, t) Param by
+``_derived_params.apply_derived_b`` so a period/time Map isn't summed in the
+minFlow_minload constraint (see ``specs/fix_map_reading.md`` §5).  Its
+coverage moved to ``test_min_load_pdt.py`` and the derived-producer unit test
+below.
 
 Each helper mirrors the CSV path's "explicit rows only" semantics
 via :meth:`InputSource.parameter_explicit`.  The DB-direct overlay
@@ -82,7 +88,18 @@ def test_p_state_start_inmemory_explicit():
     assert p.frame.sort("n")["value"].to_list() == pytest.approx([0.5])
 
 
-def test_p_min_load_inmemory_explicit():
+def test_p_min_load_pdt_inmemory_explicit_scalar():
+    """``p_min_load`` is now a derived (p, d, t) Param (not a Δ.4 scalar).
+
+    A scalar min_load broadcasts to the full (d, t) grid — byte-identical
+    floor to the old (p,) broadcast.  See ``specs/fix_map_reading.md`` §5.
+    """
+    from flextool.engine_polars import _derived_params as drv
+
+    dt = pl.DataFrame({
+        "d": ["2025", "2025", "2030", "2030"],
+        "t": ["t01", "t02", "t01", "t02"],
+    })
     src = InMemoryReader(
         entities={"unit": pl.DataFrame({"name": ["coal_chp"]})},
         parameters={
@@ -91,10 +108,12 @@ def test_p_min_load_inmemory_explicit():
             }),
         },
     )
-    p = dp.p_min_load_from_source(src)
+    p = drv.p_min_load_pdt_from_source(src, dt)
     assert isinstance(p, Param)
-    assert p.dims == ("p",)
-    assert p.frame.sort("p")["value"].to_list() == pytest.approx([0.4])
+    assert p.dims == ("p", "d", "t")
+    frame = p.frame.collect() if hasattr(p.frame, "collect") else p.frame
+    # Scalar broadcast → 0.4 for every (d, t).
+    assert frame["value"].to_list() == pytest.approx([0.4] * 4)
 
 
 def test_p_connection_susceptance_inmemory_explicit():
@@ -215,7 +234,8 @@ def _frame(x):
 @pytest.mark.parametrize("field", [
     "p_state_self_discharge",
     "p_state_start",
-    "p_min_load",
+    # ``p_min_load`` moved to the derived (p, d, t) path — see
+    # ``test_min_load_pdt.py`` (specs/fix_map_reading.md §5).
     "p_commodity_unitsize",
     # Δ.4b additions:
     "p_startup_cost",

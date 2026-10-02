@@ -518,13 +518,11 @@ def p_state_start_from_source(source: "InputSource") -> Param | None:
 
 
 # §5.2.7 — process scalars sliced from p_process.csv
-def p_min_load_from_source(source: "InputSource") -> Param | None:
-    """``unit.min_load`` → ``Param(("p",), [p, value])``.
-
-    Default 0.0 (schema).  CSV path filters by processParam=='min_load'
-    and emits rows only when explicit; we mirror via ``parameter_explicit``.
-    """
-    return _entity_scalar_explicit(source, "unit", "min_load", "p")
+# NOTE: ``unit.min_load`` is NOT a direct (p,) scalar.  It is produced as a
+# shape-correct (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+# ``p_min_load_pdt_from_source``) so a period/time Map keeps its per-(d, t)
+# semantics instead of being summed in the minFlow_minload constraint.
+# See ``specs/fix_map_reading.md`` §5.
 
 
 # §5.18 — connection scalars
@@ -1947,7 +1945,12 @@ def apply_direct_params_a(source: "InputSource",
     flex_data.p_state_start = p_state_start_from_source(source)
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
-    flex_data.p_min_load = p_min_load_from_source(source)
+    # ``p_min_load`` is produced authoritatively as a shape-correct
+    # (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+    # ``p_min_load_pdt_from_source``), so a period/time Map isn't summed in
+    # the minFlow_minload constraint.  The synthetic / rolling sub-solve
+    # early-return in ``input.py`` re-wires it (passes 3-10 are skipped
+    # there).  See ``specs/fix_map_reading.md`` §5.
     # Per-output-arc min_capacity_coefficient — scales the minFlow_minload
     # floor.  Assigned in pass 1a so it is present on the synthetic / rolling
     # sub-solve path too (passes 3-10 are skipped there).

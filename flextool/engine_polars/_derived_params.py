@@ -2918,6 +2918,52 @@ def p_slope_from_source(source: "InputSource",
     return Param(("p", "d", "t"), out)
 
 
+# ---------------------------------------------------------------------------
+# §3.3.4b — p_min_load (minFlow_minload floor), shape-correct (p, d, t)
+# ---------------------------------------------------------------------------
+
+
+def p_min_load_pdt_from_source(source: "InputSource",
+                                 dt: pl.DataFrame,
+                                 ) -> "Param | None":
+    """``unit.min_load`` → ``Param(("p", "d", "t"), [p, d, t, value])``.
+
+    Routed through the authoritative shape resolver (:func:`_eff_param_to_pdt`,
+    the same path the efficiency-curve ``p_slope`` / ``p_section`` already use)
+    so a period / time / period-time ``Map`` keeps its per-(d, t) semantics.
+
+    This replaces the old ``(p,)`` direct param (``_direct_params``
+    ``p_min_load_from_source`` → ``_entity_scalar_explicit``) whose
+    ``.select(dim, "value")`` dropped the Map index column: a Map min_load
+    then yielded one ``(unit, value)`` row per key, and polar_high **summed**
+    the duplicate ``(p)`` keys in the ``minFlow_minload`` constraint
+    (``model.py``) — a period Map ``{p1: 0.4, p2: 0.3}`` produced a floor of
+    0.7 in *every* period.  See ``specs/fix_map_reading.md`` §5.
+
+    A **scalar** min_load is broadcast to the full ``(d, t)`` grid, so the
+    constraint RHS (``v_online · min_load``) is byte-identical to the old
+    ``(p,)`` broadcast — only Map authoring changes behaviour.
+
+    Returns ``None`` when the parameter has no usable rows (mirrors the old
+    helper's ``None`` contract so the ONLINE feature-gate check and the
+    constraint's ``process_minload`` inner-join are unchanged).
+    """
+    if dt is None or dt.height == 0:
+        return None
+    # Defend axis-aware join keys on the incoming frame param, mirroring
+    # ``p_slope_from_source``'s treatment of ``dt`` before ``_eff_param_to_pdt``.
+    _enums = get_global_axis_enums()
+    if _enums is not None:
+        dt = cast_frame_axes(dt, _enums)
+    lf = _eff_param_to_pdt(source, "unit", "min_load", dt, "value")
+    if lf is None:
+        return None
+    out = lf.sort("p", "d", "t").collect()
+    if out.height == 0:
+        return None
+    return Param(("p", "d", "t"), out)
+
+
 # ===========================================================================
 # Γ.3.B integration entrypoint
 # ===========================================================================
@@ -2928,6 +2974,7 @@ DERIVED_B_FIELDS = (
     "p_flow_constraint_coef",
     "p_pssdt_varCost",
     "p_slope",
+    "p_min_load",
 )
 
 
@@ -3109,6 +3156,15 @@ def apply_derived_b(
     # Δ.12b: unconditional when (dt, classified) are non-empty.
     if dt_csv is not None and dt_csv.height > 0 and classified.height > 0:
         flex_data.p_slope = p_slope_from_source(source, dt_csv, classified)
+
+    # ─── §3.3.4b p_min_load (minFlow_minload floor, (p, d, t)) ──────────
+    # Shape-correct (p, d, t) min_load routed through the efficiency
+    # resolver so a Map isn't summed in the minFlow_minload constraint.
+    # Gated on dt only (min_load applies to any online+minload unit,
+    # independent of the ct_method classifier).  See
+    # ``p_min_load_pdt_from_source`` / ``specs/fix_map_reading.md`` §5.
+    if dt_csv is not None and dt_csv.height > 0:
+        flex_data.p_min_load = p_min_load_pdt_from_source(source, dt_csv)
 
     # ─── §F.1 p_unitsize  (Δ.10 cluster F) ─────────────────────────────
     # Per-process unitsize cascade restricted to processes appearing in

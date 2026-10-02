@@ -637,7 +637,7 @@ class FlexData:
     p_online_dt: pl.DataFrame | None = None                  # set: (p, d, t) — UC var domain
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
-    p_min_load: Param | None = None                          # (p,)
+    p_min_load: Param | None = None                          # (p, d, t)
     p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: minFlow_minload floor multiplier
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
@@ -2310,8 +2310,11 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                               sd / "p_online_dt_set.csv").pipe(rename_to_axis, {"process": "p", "step": "t"})
     p_odt = p_odt.select("p", "period", "t").pipe(rename_to_axis, {"period": "d"})
 
-    # Δ.12-drop: ``p_min_load`` produced authoritatively by
-    # ``apply_direct_params.p_min_load_from_source``.  Seed dropped.
+    # Δ.12-drop: ``p_min_load`` produced authoritatively as a shape-correct
+    # (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+    # ``p_min_load_pdt_from_source``); the synthetic / no-workdir early-returns
+    # in ``_apply_db_overrides`` re-wire it.  CSV seed dropped.  See
+    # ``specs/fix_map_reading.md`` §5.
     p_min_load = None
 
     # startup_cost is per (p, d) — produced by ``apply_direct_params``
@@ -4905,6 +4908,14 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # (``_SourceShim`` carries ``work_folder``).
         _loadflex_prof("apply_db_overrides:pass_direct_params_b")
         _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
+        # MINLOAD-1 (no-workdir early-return): ``apply_derived_b`` won't run
+        # on this path either, so re-wire the (p, d, t) ``p_min_load`` ONLINE
+        # gate field from the CSV-loaded ``flex_data.dt`` (see the synthetic
+        # MINLOAD-1 patch below and ``specs/fix_map_reading.md`` §5).
+        _dt_noworkdir = getattr(flex_data, "dt", None)
+        if _dt_noworkdir is not None and _dt_noworkdir.height > 0:
+            flex_data.p_min_load = _drv.p_min_load_pdt_from_source(
+                db_reader, _dt_noworkdir)
         return
     workdir_path = Path(workdir)
 
@@ -4992,6 +5003,28 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 db_reader, dt, classified)
         _loadflex_prof("apply_db_overrides:pass_synthetic_section")
         _timed("c.synth section", _wire_section_for_synthetic_solve)
+
+        # MINLOAD-1 — same class of gap as SECTION-1 / RESERVE-1.  The
+        # synthetic-solve early-return skips passes 3-10, so
+        # ``apply_derived_b``'s ``p_min_load`` producer never runs.  After
+        # this fix moved ``p_min_load`` out of pass 1a (``apply_direct_params``)
+        # into ``apply_derived_b`` (so a Map min_load becomes a shape-correct
+        # (p, d, t) Param instead of a summed (p,) scalar — see
+        # ``specs/fix_map_reading.md`` §5), a rolling / synthetic sub-solve
+        # would leave ``p_min_load`` ``None``.  ``p_min_load`` is an ONLINE
+        # feature-gate field (``model.py`` ``_check(ONLINE)``), so every online
+        # unit on the synthetic path would fail the check.
+        # ``p_min_load_pdt_from_source`` is solve-agnostic (no ``active_solve``
+        # filter) and reads the CSV-loaded ``flex_data.dt``, so calling it here
+        # mirrors ``apply_derived_b`` exactly.
+        def _wire_min_load_for_synthetic_solve():
+            dt = getattr(flex_data, "dt", None)
+            if dt is None or dt.height == 0:
+                return
+            flex_data.p_min_load = _drv.p_min_load_pdt_from_source(
+                db_reader, dt)
+        _loadflex_prof("apply_db_overrides:pass_synthetic_min_load")
+        _timed("c.synth min_load", _wire_min_load_for_synthetic_solve)
 
         # INFLOW-1 — synthetic solves skip ``apply_derived_c``; re-wire the
         # inflow signed-split so the non_sync / capacity_margin demand budget

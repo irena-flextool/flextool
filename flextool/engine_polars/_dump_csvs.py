@@ -549,6 +549,11 @@ _PDT_NODE_SLICES = {
 
 _PDT_PROCESS_SLICES = {
     "availability": "p_process_availability",
+    # ``p_min_load`` is a shape-correct (p, d, t) Param (produced by
+    # ``_derived_params.apply_derived_b``), so it dumps to the period+time
+    # keyed ``pdtProcess.csv`` — not the scalar ``p_process.csv`` — mirroring
+    # ``availability``.  See ``specs/fix_map_reading.md`` §5.
+    "min_load": "p_min_load",
 }
 
 _PDT_COMMODITY_SLICES = {
@@ -669,9 +674,10 @@ _P_NODE_SLICES = {
 }
 
 # p_process.csv columns: process, processParam, p_process
-_P_PROCESS_SLICES = {
-    "min_load": "p_min_load",
-}
+# NOTE: ``min_load`` moved to ``_PDT_PROCESS_SLICES`` (pdtProcess.csv) when
+# ``p_min_load`` became a shape-correct (p, d, t) Param — see
+# ``specs/fix_map_reading.md`` §5.
+_P_PROCESS_SLICES: dict[str, str] = {}
 
 
 def _merge_param_slice(path: Path, new_rows: pl.DataFrame,
