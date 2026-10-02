@@ -804,27 +804,45 @@ def _classify_lineage(
       scaffolding), every ``period_in_use`` member is an anchor — the
       deterministic single-trunk fallback, mirroring
       :func:`pd_branch_weight_lf`'s ``pb.height == 0`` branch.
-    * ``pos`` — anchor → period-order index.
+    * ``pos`` — period → GLOBAL period-order index.  The index covers
+      EVERY real period name that appears as a ``d`` in
+      ``period__branch`` (first-appearance / walk order), not merely the
+      in-use anchors.  Under Option B ("realized-not-past-reveal") the
+      realized trunk STOPS at the reveal, so a post-reveal CONTINUATION
+      period appears as a fan-row anchor ``d`` WITHOUT an in-use
+      ``(d, d)`` self-row — it is a known period but not an in-use
+      anchor.  Positioning branch members by the global order (rather
+      than only the in-use anchors) lets the lineage place a
+      committed-only realized trunk and each forecast's continuation
+      periods.  For deterministic / fan-at-first-step solves every ``d``
+      IS an in-use anchor, so the anchor positions are byte-identical to
+      the legacy anchor-only enumeration.
     * ``synthetic`` — ordered ``period_in_use`` members that are not
-      anchors (branch-period fan members with LP variables).
+      real periods (branch-period fan members with LP variables).
     * ``anchor_of`` — synthetic member → its anchor (from the fan rows
       ``d != b``).
 
     Failure semantics (design §3.1.1, mirroring ``dtttdt_from_source``
     ``_derived_params.py:6634-6650``): a synthetic ``period_in_use``
-    member without a ``period__branch`` fan row, with an anchor that
-    has no in-use self-row, or without an SBTB time-branch entry means
-    the per-solve artefacts are inconsistent — RAISE instead of
-    silently mis-classifying branch periods onto the trunk (the same
-    silent-lineage failure class the 4.0.3 fan-out fix eliminated).
+    member without a ``period__branch`` fan row, with an anchor that is
+    not a known ``period__branch`` period, or without an SBTB
+    time-branch entry means the per-solve artefacts are inconsistent —
+    RAISE instead of silently mis-classifying branch periods onto the
+    trunk (the same silent-lineage failure class the 4.0.3 fan-out fix
+    eliminated).  NOTE: a post-reveal continuation anchor WITHOUT an
+    in-use self-row is legitimate under Option B and no longer raises.
     """
     if not pb_rows:
         anchors = list(piu)
         return anchors, {a: i for i, a in enumerate(anchors)}, [], {}
     piu_set = dict.fromkeys(piu)
+    # Global period order: every real period name (``d`` column), in
+    # first-appearance (walk) order — includes post-reveal continuation
+    # periods that have no in-use self-row under Option B.
+    pos = {p: i for i, p in enumerate(
+        dict.fromkeys(d for d, _b in pb_rows))}
     anchors = list(dict.fromkeys(
         d for d, b in pb_rows if d == b and d in piu_set))
-    pos = {a: i for i, a in enumerate(anchors)}
     anchor_of: dict[str, str] = {}
     for d, b in pb_rows:
         if b != d and b not in anchor_of:
@@ -842,9 +860,9 @@ def _classify_lineage(
         if anchor_of[m] not in pos:
             raise ValueError(
                 "scenario lineage: synthetic period_in_use member "
-                f"{m!r} is anchored to {anchor_of[m]!r}, which has no "
-                "in-use (d, d) self-row in period__branch — "
-                "inconsistent per-solve artefacts."
+                f"{m!r} is anchored to {anchor_of[m]!r}, which is not a "
+                "known period in period__branch — inconsistent "
+                "per-solve artefacts."
             )
         if m not in tb_of:
             raise ValueError(

@@ -490,6 +490,26 @@ class StochasticSolver:
                     self.logger.error(message)
                     raise FlexToolConfigError(message)
 
+            # Stage A guard (Option B): a realized branch requires a
+            # COMMITTED (pre-reveal) region — at least one period before
+            # the branching period.  Fan-at-first-with-realized (the
+            # reveal declared at the solve's FIRST period, so there is no
+            # committed region to anchor the realized trunk) is
+            # DEPRECATED.  Detect it by testing whether the solve's first
+            # period is itself a branching period.  ``by_period`` is empty
+            # for the stochastics-OFF path (no stochastic_branches rows),
+            # so that path is never affected.
+            if by_period and active_time_list:
+                first_period = next(iter(active_time_list))
+                if first_period in by_period:
+                    message = (
+                        "a realized branch needs a committed region; "
+                        "declare a mid-horizon reveal (branch at a later "
+                        "period) or run with stochastics off."
+                    )
+                    self.logger.error(message)
+                    raise FlexToolConfigError(message)
+
             # Walk periods — at the first branch trigger, fan out into
             # branches; subsequent periods continue the same branches.
             # NB: the reference implementation's continuation block
@@ -557,24 +577,23 @@ class StochasticSolver:
                                     )
                             break
                 else:
-                    # Continuation-after-branching: the realized branch
-                    # keeps the REAL period name; each active branch is
-                    # extended into this period as a synthetic
-                    # '<period>_<branch>' copy.  Append order mirrors
-                    # the branching period: the (period, period)
-                    # self-row first, then fan rows in DB order.  The
-                    # self-row is load-bearing for the branch-weight
-                    # normalization (the realized member of each cohort
-                    # is detected via its (d, d) row) — see
-                    # derive_solve_branch_weight.
-                    period__branch_lists[solve].append((period, period))
-                    new_active_time_list[period] = active_time_list[period]
-                    if period in realized_time_list:
-                        new_realized_time_list[period] = realized_time_list[period]
-                    if period in fix_storage_time_list:
-                        new_fix_storage_time_list[period] = (
-                            fix_storage_time_list[period]
-                        )
+                    # Continuation-after-branching (Option B,
+                    # "realized-not-past-reveal"): the realized trunk STOPS
+                    # at the reveal.  Post-reveal periods therefore get
+                    # ONLY the synthetic '<period>_<branch>' forecast
+                    # copies — the real-named realized trunk is NOT
+                    # re-emitted here, so it never acquires LP variables,
+                    # realized/fix-storage windows, or a (period, period)
+                    # self-row past the reveal.  The committed (pre-reveal)
+                    # region and the reveal/branching period keep the
+                    # real-named trunk (emitted in the trigger / not-branched
+                    # blocks); ``new_realized_time_list`` /
+                    # ``new_fix_storage_time_list`` thus span only the
+                    # committed region.  Weight consequence (Stage C): a
+                    # post-reveal cohort now contains only forecasts, so
+                    # ``w/Σw`` renormalizes them to sum 1 (no realized
+                    # term); the committed trunk periods stay cohort-of-one
+                    # → 1.0.
                     for branch in branches:
                         solve_branch = period + "_" + branch
                         period__branch_lists[solve].append((period, solve_branch))
@@ -601,7 +620,17 @@ class StochasticSolver:
             # Find the realized branch for each period.  Each period
             # must have exactly one realized: yes row (or zero before
             # any branching has occurred).
+            #
+            # Option B: post-reveal continuation periods carry no realized
+            # trunk (the real-named period was dropped from
+            # ``new_active_time_list`` above), so they have no realized
+            # branch to resolve and must NOT be validated for one.  Skip
+            # any period that is not a real-named key of the fanned-out
+            # active-time list — committed and reveal periods remain
+            # (real-named), continuation periods are absent.
             for period, active_time in active_time_list.items():
+                if period not in new_active_time_list:
+                    continue
                 found = 0
                 # Before branching: row[0]==period, row[2]==first step,
                 # row[3]=='yes'.

@@ -206,40 +206,51 @@ def test_t6b_failure_semantics_orphan_synthetic(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# T7 — future mid-horizon shapes (§4.6; not constructible end-to-end
-# at HEAD — the branch fan always starts at the solve's first step).
-# Pins the parameterized ``branch_start`` rule TODAY so Slice E
-# inherits a tested rule instead of dead code.
+# T7 — mid-horizon shapes under Option B ("realized-not-past-reveal",
+# §4.6).  The realized trunk STOPS at the reveal: a post-reveal
+# CONTINUATION period (p3) carries ONLY forecast fan members, has NO
+# in-use (d, d) self-row, and is NOT in period_in_use — so the
+# __realized leaf is committed-only and each forecast leaf is the shared
+# committed prefix plus its own continuation members.  (Mid-horizon
+# dispatch is now constructible end-to-end via the Option B fan-out;
+# fan-at-first-with-realized is deprecated.)  Pins the parameterized
+# ``branch_start`` rule for the pd_non_anticipativity tie.
 # ---------------------------------------------------------------------------
 
-# Shape A — reveal at p2, NO pre-reveal copies.
+# Shape A — committed p1, reveal p2, continuation p3 (NO p3 trunk).
 PB_A = [
-    ("p1", "p1"), ("p2", "p2"), ("p3", "p3"),
-    ("p2", "p2_low"), ("p3", "p3_low"),
+    ("p1", "p1"), ("p2", "p2"), ("p2", "p2_low"), ("p3", "p3_low"),
 ]
-PIU_A = ["p1", "p2", "p3", "p2_low", "p3_low"]
+PIU_A = ["p1", "p2", "p2_low", "p3_low"]
 SBTB_A = [
     ("p2_low", "low"), ("p3_low", "low"),
-    ("p1", "rlz"), ("p2", "rlz"), ("p3", "rlz"),
+    ("p1", "rlz"), ("p2", "rlz"),
 ]
 
-# §4.6 shape A — 17 unique rows (9 + 9 − shared (p1, p1)).
+# §4.6 shape A (Option B) — 12 unique rows: __realized leaf [p1, p2]
+# (4 pairs) ∪ low leaf [p1, p2_low, p3_low] (9 pairs), − shared (p1, p1).
 DD_A = [
-    ("p1", "p1"), ("p1", "p2"), ("p1", "p2_low"),
-    ("p1", "p3"), ("p1", "p3_low"),
-    ("p2", "p1"), ("p2", "p2"), ("p2", "p3"),
+    ("p1", "p1"), ("p1", "p2"), ("p1", "p2_low"), ("p1", "p3_low"),
+    ("p2", "p1"), ("p2", "p2"),
     ("p2_low", "p1"), ("p2_low", "p2_low"), ("p2_low", "p3_low"),
-    ("p3", "p1"), ("p3", "p2"), ("p3", "p3"),
     ("p3_low", "p1"), ("p3_low", "p2_low"), ("p3_low", "p3_low"),
 ]
 
-# Shape B — reveal at p2 WITH fanned pre-reveal copy p1_low.
-PB_B = PB_A + [("p1", "p1_low")]
-PIU_B = ["p1", "p1_low", "p2", "p3", "p2_low", "p3_low"]
-SBTB_B = SBTB_A + [("p1_low", "low")]
+# Shape B — committed p1 WITH a fanned pre-reveal copy p1_low (nested
+# reveal), reveal p2, continuation p3 (NO p3 trunk).
+PB_B = [
+    ("p1", "p1"), ("p1", "p1_low"), ("p2", "p2"), ("p2", "p2_low"),
+    ("p3", "p3_low"),
+]
+PIU_B = ["p1", "p1_low", "p2", "p2_low", "p3_low"]
+SBTB_B = [
+    ("p2_low", "low"), ("p3_low", "low"), ("p1_low", "low"),
+    ("p1", "rlz"), ("p2", "rlz"),
+]
 
-# §4.6 shape B — 18 rows (R×R 9 ∪ L×L 9, disjoint).
-_R_B = ["p1", "p2", "p3"]
+# §4.6 shape B (Option B) — 13 rows: __realized leaf [p1, p2] (4 pairs)
+# ∪ low leaf [p1_low, p2_low, p3_low] (9 pairs), disjoint.
+_R_B = ["p1", "p2"]
 _L_B = ["p1_low", "p2_low", "p3_low"]
 DD_B = sorted([(x, y) for x in _R_B for y in _R_B]
               + [(x, y) for x in _L_B for y in _L_B])
@@ -250,9 +261,10 @@ def _branch_start_low_p2() -> pl.DataFrame:
 
 
 def test_t7_shape_a_pre_reveal_anchor(tmp_path):
-    """T7/A (§4.6): the pre-reveal anchor p1 joins L(low); 17-row
-    table; (p1, p2_low) present, (p2, p2_low) ABSENT; pd-NA empty
-    under both the fallback and branch_start=[(low, p2)]."""
+    """T7/A (§4.6, Option B): the pre-reveal anchor p1 joins L(low);
+    12-row table (committed-only __realized trunk [p1, p2]); (p1, p2_low)
+    present, (p2, p2_low) ABSENT; pd-NA empty under both the fallback and
+    branch_start=[(low, p2)]."""
     dd, pd_na = _build(tmp_path, pb=PB_A, piu=PIU_A, sbtb=SBTB_A)
     rows = _rows(dd)
     assert rows == DD_A
@@ -265,17 +277,18 @@ def test_t7_shape_a_pre_reveal_anchor(tmp_path):
 
 
 def test_t7_shape_b_authority_rule(tmp_path):
-    """T7/B (§4.6, F6 authority rule): the fanned pre-reveal copy
-    p1_low displaces anchor p1 on L(low) — 18-row table with
-    (p1, p2_low) and (p1, p1_low) ABSENT from dd (the trunk↔branch
-    coupling at period 1 is expressed by pd_non_anticipativity, not
-    leaf membership); dd is branch_start-independent; pd-NA empty
-    under the min-anchor fallback (the documented under-detection) and
-    exactly [(p1, p1_low)] under branch_start=[(low, p2)]."""
+    """T7/B (§4.6, Option B, F6 authority rule): the fanned pre-reveal
+    copy p1_low displaces anchor p1 on L(low) — 13-row table
+    (committed-only __realized trunk [p1, p2]) with (p1, p2_low) and
+    (p1, p1_low) ABSENT from dd (the trunk↔branch coupling at period 1
+    is expressed by pd_non_anticipativity, not leaf membership); dd is
+    branch_start-independent; pd-NA empty under the min-anchor fallback
+    (the documented under-detection) and exactly [(p1, p1_low)] under
+    branch_start=[(low, p2)]."""
     dd, pd_na = _build(tmp_path, pb=PB_B, piu=PIU_B, sbtb=SBTB_B)
     rows = _rows(dd)
     assert rows == DD_B
-    assert len(rows) == 18
+    assert len(rows) == 13
     assert ("p1", "p2_low") not in rows
     assert ("p1", "p1_low") not in rows
     # pd-NA: fallback under-detects by design (§2.3) — empty.
