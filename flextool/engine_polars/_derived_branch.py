@@ -1544,14 +1544,44 @@ def check_recourse_npv_preconditions(
 
     # --- (ii) cohort weights sum to 1 -------------------------------------
     # Fan rows (anchor -> members) in period__branch row order.
+    #
+    # Slice E mid-horizon re-scoping (Option B, design §5/§9.3; the note at
+    # the head of this function, mirroring obligation (i)'s pre-reveal
+    # exclusion): a fan cohort's weights must sum to 1 over the branches
+    # that actually fan out at the anchor.
+    #
+    #   * AT THE REVEAL period the realized branch is itself one of the
+    #     fanning forecasts — it keeps the real period name and carries an
+    #     in-use (d, d) self-row, so ``a in period_in_use``.  It joins the
+    #     cohort and the sum spans {realized + forecasts} (→ 1.0).
+    #   * AT A STRICTLY POST-REVEAL continuation period the realized trunk
+    #     has already stopped (Option B: realized is NOT a post-reveal
+    #     forecast), so the anchor carries NO in-use self-row
+    #     (``a not in period_in_use``).  The cohort is the FORECAST members
+    #     alone, and THOSE renormalize to 1.0 — the realized anchor must be
+    #     EXCLUDED from the sum.  (The legacy code skipped such cohorts
+    #     entirely via ``if a not in piu_set: continue`` — a gap under
+    #     Option B; they are now checked, members-only.)
+    #   * A COMMITTED cohort-of-one carries no fan rows (``b != d`` never
+    #     fires for it), so it never enters ``fan_of`` and stays valid by
+    #     construction (its weight-1.0 is structural, see the head note).
+    #
+    # Keying cohort membership off ``anchor in period_in_use`` thus excludes
+    # the realized anchor from post-reveal cohorts while keeping it in the
+    # reveal cohort.  For fan-at-first / deterministic solves every anchor
+    # is in-use, so the cohort and the check are byte-unchanged.
     fan_of: dict[str, list[str]] = {}
     for d, b in pb_rows:
         if b != d:
             fan_of.setdefault(d, []).append(b)
     for a, members in fan_of.items():
-        if a not in piu_set:
+        members_in_piu = [m for m in members if m in piu_set]
+        anchor_in_piu = a in piu_set
+        if not members_in_piu and not anchor_in_piu:
+            # Metadata-only fan rows: neither the anchor nor any member
+            # has LP variables — not a weighted cohort, nothing to check.
             continue
-        cohort = [a] + [m for m in members if m in piu_set]
+        cohort = ([a] if anchor_in_piu else []) + members_in_piu
         s = sum(weights.get(m, 0.0) for m in cohort)
         if abs(s - 1.0) > weight_tol:
             violations.append(

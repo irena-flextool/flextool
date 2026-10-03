@@ -1,40 +1,95 @@
 """Build ``tests/fixtures/stoch_two_period_invest.json`` — the Slice D
-per-scenario (wait-and-see) stochastic-investment gate fixture
-(design ``specs/sliceD_recourse_invest_design.md`` §15.1, variant A).
+per-scenario (recourse) stochastic-investment gate fixture, rebuilt to a
+MID-HORIZON (Option B "realized-not-past-reveal") structure.
 
-Extends the ``stoch_two_period`` shape (two 3-step periods p2035 / p2040,
-branches ``rlz`` w=1.0 / ``low`` w=3.0 declared at p2035/t0001 so p2040 is
-a CONTINUATION period) with an INVEST entity.  The branch variation rides
-a UNIT profile through ``group__unit`` (the base fixture's mechanism) — no
-NODE enters the stochastic group, so the node-side NA net-charge pinning
-(``model.py`` ``non_anticipativity_storage_use``, gated on ``group_node``
-× ``groupStochastic``) never fires and the LP stays separable per leaf
-(hand-calc-able).  A node-authored branch-keyed ``inflow`` would NOT work
-without the node in the group — the stochastic inflow fold-in
-(``_emit_period_params``) gates on ``group__node`` × include_stochastics —
-which is why the demand variation is supply-side here:
+Option B forbids fan-at-first-with-realized: a realized branch needs a
+COMMITTED (pre-reveal) region.  This fixture therefore has THREE 3-step
+periods — ``p2030`` (committed), ``p2035`` (reveal), ``p2040``
+(continuation) — and declares the branches at ``p2035``/t0004 (a
+mid-horizon reveal), so:
+
+  * ``p2030`` is committed (realized only, weight 1.0 — a cohort-of-one);
+  * ``p2035`` is the reveal — the realized branch ``rlz`` keeps the real
+    name and fans into forecasts ``low`` / ``high`` (synthetic
+    ``p2035_low`` / ``p2035_high``).  Reveal cohort {p2035, p2035_low,
+    p2035_high} weights {0.2, 0.6, 0.2} (inputs rlz 1 / low 3 / high 1);
+  * ``p2040`` is a continuation — under Option B the realized trunk has
+    STOPPED, so p2040 carries ONLY the forecast copies ``p2040_low`` /
+    ``p2040_high`` (the realized copy ``p2040_rlz`` is metadata-only).
+    The post-reveal cohort {p2040_low, p2040_high} renormalizes to
+    {0.75, 0.25} with NO realized term.
+
+System (supply-side branch variation through ``group__unit`` — no NODE in
+the stochastic group, so the LP stays separable per leaf and hand-calc-
+able, mirroring the original §15.1 mechanism note):
 
   * node ``elec`` — balance, high penalty (VOLL), DETERMINISTIC demand
-    100 MW (p2035) / 130 MW (p2040).
+    100 MW (p2030, p2035) / 130 MW (p2040).
   * unit ``wind`` → ``elec`` — existing 100 MW, cost 0, ``upper_limit``
-    profile branch-varying via the stochastic group: rlz 0.40/0.40,
-    low 0.20/0.10 → wind supply rlz 40/40, low 20/10 → peaker residual
-    rlz 60/90, low 80/120 (the §15.1 demand table).
+    profile branch-varying via the stochastic group.  Wind supply (share
+    × 100) carves the residual the peaker must cover:
+      - committed p2030: 0.50 → wind 50 → residual 50 (both periods, all
+        branches share the committed value).
+      - reveal p2035:   rlz 0.40 → residual 60;  low 0.20 → residual 80;
+        high 0.30 → residual 70.
+      - cont.  p2040:                            low 0.0833… → residual
+        120; high 0.2308 → residual 100.  (Authored directly as residual-
+        implied shares; see the per-step shares below.)
   * unit ``peaker`` → ``elec`` — variable cost 0, virtual_unitsize 1 MW,
-    invest_method=invest_total, invest_cost 1 CUR/kW, discount_rate 0.05,
-    lifetime 1 (→ annuity 1000·CRF(0.05,1) = 1050 exactly),
-    invest_max_total 150 (the design §15.1 per-path demonstration value:
-    each leaf's own total — realized 60+30 = 90, low 80+40 = 120 — is
-    ≤ 150 so the cap is non-binding PER LEAF, while the legacy all-``d``
-    sum 210 would spuriously bind.  With D6 per-path caps
-    ``maxInvest_entity_total_path`` splits the cap by scenario leaf so
-    the objective stays 196 875).
+    invest_method=invest_total (cumulative capacity, reinvest-alive
+    forward), invest_cost 1 CUR/kW, discount_rate 0.05, lifetime 1
+    (→ annuity per MW-period = 1000·CRF(0.05,1) = 1050 exactly),
+    invest_max_total 500 (non-binding per path).
 
-Hand calculation (design §15.1): with the invest axis fanned, per-scenario
-optimal invest {p2035:60, p2040:30, p2035_low:80, p2040_low:40}; annuity
-windows 2100 (branching) / 1050 (continuation); weighted objective
+Because capacity is cumulative and alive forward on each scenario leaf,
+each period's INCREMENTAL invest is residual(this period) −
+capacity-so-far on the leaf:
 
-    0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050) = 196 875.
+    committed  I[p2030]      = 50             (from 0)
+    reveal     I[p2035]      = 60 − 50 = 10   (rlz continuation of trunk)
+               I[p2035_low]  = 80 − 50 = 30
+               I[p2035_high] = 70 − 50 = 20
+    cont.      I[p2040_low]  = 120 − (50+30) = 40
+               I[p2040_high] = 100 − (50+20) = 30
+
+Annuity (NPV) forward-reachability windows per scenario leaf (× 1050):
+leaves are __realized = [p2030, p2035] (committed + reveal; realized
+stops at the reveal), low = [p2030, p2035_low, p2040_low], high =
+[p2030, p2035_high, p2040_high].  The shared committed trunk p2030 is
+charged its annuity ONCE per CALENDAR period it reaches across leaves
+(the ``dd_same_scenario_annuity`` dedup) = {p2030, p2035, p2040} →
+window 3 = 3150.  Every other invest reaches forward only to the end of
+its own leaf:
+
+    K[p2030]      = 3·1050 = 3150   (committed, all calendar periods)
+    K[p2035]      = 1·1050 = 1050   (reveal; realized leaf ends here)
+    K[p2035_low]  = 2·1050 = 2100   (p2035_low → p2040_low)
+    K[p2035_high] = 2·1050 = 2100
+    K[p2040_low]  = 1·1050 = 1050
+    K[p2040_high] = 1·1050 = 1050
+
+Expected EXPECTATION objective (per-period branch weight w_d):
+
+    0.2·? no — the objective weights each invest by ITS period's weight:
+      p2030       : 50 ·3150·1.00 = 157 500
+      p2035 (rlz) : 10 ·1050·0.20 =   2 100
+      p2035_low   : 30 ·2100·0.60 =  37 800
+      p2035_high  : 20 ·2100·0.20 =   8 400
+      p2040_low   : 40 ·1050·0.75 =  31 500
+      p2040_high  : 30 ·1050·0.25 =   7 875
+    objective = 245 175.
+
+Committed (realized-period) invest cost — I-a, probability-weighted by
+``pd_branch_weight`` over the realized periods {p2030, p2035}:
+
+    0.20 reveal weight on p2035, 1.00 on committed p2030:
+      p2030 : 50·3150·1.00 = 157 500
+      p2035 : 10·1050·0.20 =   2 100
+    invest_realized = 159 600  (0.1596 M CUR).
+
+These are DERIVED values; the asserts in
+``tests/test_recourse_cost_reconciliation.py`` are confirmed against the
+actual solve.
 
 Run:  ~/venv-spi/bin/python tests/fixtures/build_stoch_two_period_invest.py
 """
@@ -46,9 +101,10 @@ from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent
 
-STEPS = [f"t{i:04d}" for i in range(1, 7)]
-P1_STEPS = STEPS[:3]
-P2_STEPS = STEPS[3:]
+STEPS = [f"t{i:04d}" for i in range(1, 10)]
+P0_STEPS = STEPS[0:3]   # p2030 committed
+P1_STEPS = STEPS[3:6]   # p2035 reveal
+P2_STEPS = STEPS[6:9]   # p2040 continuation
 
 
 def _pack(value: object, value_type: str) -> list:
@@ -106,7 +162,7 @@ def build() -> dict:
     spec["alternatives"] = [
         ["init", "Model, solve and time structure"],
         ["base", "System data (peaker invest + wind + elec demand)"],
-        ["stoch", "Stochastic branches + branch-varying wind profile"],
+        ["stoch", "Mid-horizon stochastic branches + branch wind profile"],
         ["recourse", "stochastic_invest_method = recourse"],
         ["horizon", "model.output_horizon = yes (branch invest rows)"],
     ]
@@ -133,7 +189,8 @@ def build() -> dict:
         ["node", "elec", None],
         ["profile", "wprof", None],
         ["solve", "stoch_2p_inv", None],
-        ["timeline", "y6h", None],
+        ["timeline", "y9h", None],
+        ["timeset", "ts0", None],
         ["timeset", "ts1", None],
         ["timeset", "ts2", None],
         ["unit", "peaker", None],
@@ -150,60 +207,91 @@ def build() -> dict:
     ]
 
     # ---- init: model / solve / time structure --------------------------
+    # Mid-horizon reveal: branches START at p2035/t0004, so p2030 is a
+    # pre-reveal COMMITTED period.
     stochastic_branches = _map([
         ("p2035", _nested([
-            ("rlz", _nested([("t0001", _nested([("yes", 1.0)]))])),
-            ("low", _nested([("t0001", _nested([("no", 3.0)]))])),
+            ("rlz", _nested([("t0004", _nested([("yes", 1.0)]))])),
+            ("low", _nested([("t0004", _nested([("no", 3.0)]))])),
+            ("high", _nested([("t0004", _nested([("no", 1.0)]))])),
         ])),
     ])
-    # Deterministic profile (base alternative) — matches the rlz branch.
+    # Deterministic profile (base alternative) — matches the rlz branch on
+    # the committed + reveal periods (0.50 committed, 0.40 reveal); p2040
+    # uses the rlz-implied 0.0 (no realized continuation, so this value is
+    # only a placeholder for the deterministic control).
     profile_base = _map(
-        [(t, 0.40) for t in P1_STEPS] + [(t, 0.40) for t in P2_STEPS]
+        [(t, 0.50) for t in P0_STEPS]
+        + [(t, 0.40) for t in P1_STEPS]
+        + [(t, 0.0) for t in P2_STEPS]
     )
-    # Branch-varying wind profile (stoch alternative): wind supply
-    # rlz 40/40 MW, low 20/10 MW → peaker residual rlz 60/90, low 80/120.
+    # Branch-varying wind profile (stoch alternative) — 3d map
+    # branch → period-first-step → per-step share of the 100 MW wind cap.
+    # Committed p2030 (t0001) is SHARED (0.50 in every branch; pre-reveal
+    # data must be identical — only the realized/trunk value is read).
+    # Residual (= 100/130 demand − wind) drives the per-period invest.
+    #   rlz : p2030 0.50 (res 50), p2035 0.40 (res 60)  [stops at reveal]
+    #   low : p2035 0.20 (res 80), p2040 0.0833… → wind 8.33 res 120? use
+    #         0.10 → wind 10, res 120.
+    #   high: p2035 0.30 (res 70), p2040 0.30 → wind 30, res 100.
     profile_stoch = _map([
         ("rlz", _nested([
-            ("t0001", _nested([(t, 0.40) for t in P1_STEPS])),
-            ("t0004", _nested([(t, 0.40) for t in P2_STEPS])),
+            ("t0001", _nested([(t, 0.50) for t in P0_STEPS])),
+            ("t0004", _nested([(t, 0.40) for t in P1_STEPS])),
         ])),
         ("low", _nested([
-            ("t0001", _nested([(t, 0.20) for t in P1_STEPS])),
-            ("t0004", _nested([(t, 0.10) for t in P2_STEPS])),
+            ("t0001", _nested([(t, 0.50) for t in P0_STEPS])),
+            ("t0004", _nested([(t, 0.20) for t in P1_STEPS])),
+            ("t0007", _nested([(t, 0.10) for t in P2_STEPS])),
+        ])),
+        ("high", _nested([
+            ("t0001", _nested([(t, 0.50) for t in P0_STEPS])),
+            ("t0004", _nested([(t, 0.30) for t in P1_STEPS])),
+            ("t0007", _nested([(t, 0.30) for t in P2_STEPS])),
         ])),
     ])
-    # Deterministic demand: 100 MW at p2035 steps, 130 MW at p2040 steps.
+    # Deterministic demand: 100 MW at p2030/p2035 steps, 130 MW at p2040.
     inflow = _map(
-        [(t, -100.0) for t in P1_STEPS] + [(t, -130.0) for t in P2_STEPS]
+        [(t, -100.0) for t in P0_STEPS]
+        + [(t, -100.0) for t in P1_STEPS]
+        + [(t, -130.0) for t in P2_STEPS]
     )
 
     spec["parameter_values"] = [
         ["model", "flextool", "solves",
          _pack({"value_type": "str", "data": ["stoch_2p_inv"]}, "array"),
          "init"],
-        ["timeline", "y6h", "timestep_duration",
+        ["timeline", "y9h", "timestep_duration",
          _pack(_map([(t, 1.0) for t in STEPS]), "map"), "init"],
-        ["timeset", "ts1", "timeline", _pack("y6h", "str"), "init"],
-        ["timeset", "ts1", "timeset_duration",
+        ["timeset", "ts0", "timeline", _pack("y9h", "str"), "init"],
+        ["timeset", "ts0", "timeset_duration",
          _pack(_map([("t0001", 3.0)]), "map"), "init"],
-        ["timeset", "ts2", "timeline", _pack("y6h", "str"), "init"],
-        ["timeset", "ts2", "timeset_duration",
+        ["timeset", "ts1", "timeline", _pack("y9h", "str"), "init"],
+        ["timeset", "ts1", "timeset_duration",
          _pack(_map([("t0004", 3.0)]), "map"), "init"],
+        ["timeset", "ts2", "timeline", _pack("y9h", "str"), "init"],
+        ["timeset", "ts2", "timeset_duration",
+         _pack(_map([("t0007", 3.0)]), "map"), "init"],
         ["solve", "stoch_2p_inv", "period_timeset",
-         _pack(_map([("p2035", "ts1"), ("p2040", "ts2")]), "map"), "init"],
+         _pack(_map([("p2030", "ts0"), ("p2035", "ts1"),
+                     ("p2040", "ts2")]), "map"), "init"],
         ["solve", "stoch_2p_inv", "realized_periods",
-         _pack({"value_type": "str", "data": ["p2035", "p2040"]}, "array"),
+         _pack({"value_type": "str",
+                "data": ["p2030", "p2035", "p2040"]}, "array"),
          "init"],
         ["solve", "stoch_2p_inv", "invest_periods",
-         _pack({"value_type": "str", "data": ["p2035", "p2040"]}, "array"),
+         _pack({"value_type": "str",
+                "data": ["p2030", "p2035", "p2040"]}, "array"),
          "init"],
         ["solve", "stoch_2p_inv", "realized_invest_periods",
-         _pack({"value_type": "str", "data": ["p2035", "p2040"]}, "array"),
+         _pack({"value_type": "str",
+                "data": ["p2030", "p2035", "p2040"]}, "array"),
          "init"],
         ["solve", "stoch_2p_inv", "solve_mode",
          _pack("single_solve", "str"), "init"],
         ["solve", "stoch_2p_inv", "years_represented",
-         _pack(_map([("p2035", 1.0), ("p2040", 1.0)]), "map"), "init"],
+         _pack(_map([("p2030", 1.0), ("p2035", 1.0), ("p2040", 1.0)]),
+               "map"), "init"],
         # ---- base: system data ----------------------------------------
         ["node", "elec", "node_type", _pack("balance", "str"), "base"],
         ["node", "elec", "penalty_up", _pack(10000.0, "float"), "base"],
@@ -222,7 +310,7 @@ def build() -> dict:
         ["unit", "peaker", "invest_cost", _pack(1.0, "float"), "base"],
         ["unit", "peaker", "discount_rate", _pack(0.05, "float"), "base"],
         ["unit", "peaker", "lifetime", _pack(1.0, "float"), "base"],
-        ["unit", "peaker", "invest_max_total", _pack(150.0, "float"),
+        ["unit", "peaker", "invest_max_total", _pack(500.0, "float"),
          "base"],
         ["unit__outputNode", ["peaker", "elec"], "other_operational_cost",
          _pack(0.0, "float"), "base"],
