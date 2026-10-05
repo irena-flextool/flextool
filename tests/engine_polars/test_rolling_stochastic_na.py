@@ -20,23 +20,36 @@ This is the W1/W3 defect tracked in ``specs/stochastics_reassessment.md``
 
 W1 has now landed: the triggering-cohort validation replaces that first-step
 guard, so the rolling solve runs to a strict optimum on every roll and
-``test_rolling_stochastic_solve_completes`` asserts for real.  W3 (per-roll NA
-frames) has NOT landed — ``period_branch_full`` / ``dt_non_anticipativity``
-are still ``None`` on every roll, so no non-anticipativity constraint fires in
-rolling yet.  The two NA-coupling tests are ``xfail(strict=True,
-raises=AssertionError)`` until W3 populates those frames; remove their
-decorators (and reconcile the review advisories in their docstrings against the
-real per-roll frames) once W3 merges.
+``test_rolling_stochastic_solve_completes`` asserts for real.
 
-The structural signal the tests assert post-flip is the exact precondition
-the operational-NA gate (``model.py:4519-4522``) requires to emit the four
+W3 HAS NOW LANDED too.  Root cause: the synthetic-solve early-return in
+``_apply_db_overrides`` (``flextool/engine_polars/input.py``) fires for every
+rolling sub-solve (``1week_rolling_roll_N`` is not declared in Spine), so
+passes 3-10 — including ``apply_derived_g`` → ``apply_branch_cluster``, the
+sole producer of ``period_branch_full`` / ``dt_non_anticipativity`` — never
+ran per roll and both frames kept their deliberately-None seeds.  The fix (the
+``NA-1`` re-wire, alongside the existing RESERVE-1/SECTION-1/MINLOAD-1/INFLOW-1
+re-wires) populates ONLY those two frames on the synthetic path by replicating
+``apply_branch_cluster``'s two frame assignments verbatim — it deliberately
+does NOT call the full helper, which would overwrite the correctly-seeded
+``period_in_use_set`` via an unsorted ``.unique()`` and reorder nested-invest
+set outputs.  So the two NA-coupling tests below assert for real (xfail
+decorators removed).
+
+Deferred gap (NOT delivered by W3): absolute storage continuity — forecast
+branches continuing from the committed roll-start state (spec §B / §D.6).  The
+storage NA constraint ties NET CHARGE (per-(n, t) charge delta,
+``model.py:219-234``), not absolute ``v_state``.  The realized trunk
+``period1`` is start-anchored while the three forecast copies cyclic-self-link
+their storage start, so absolute ``v_state`` carries a constant realized↔
+forecast offset (~0.06 here) even though the net-charge deltas are tied to
+~1e-16.  Closing that offset is a separate anchor-repointing slice.
+
+The structural signal the frames test asserts is the exact precondition the
+operational-NA gate (``model.py:4519-4522``) requires to emit the four
 ``non_anticipativity_*`` constraint families: a per-roll ``flex_data`` whose
 ``period_branch_full`` (with a non-empty ``d != b`` sub-cohort) and
-``dt_non_anticipativity`` frames are both populated.  Those frames are
-produced authoritatively by ``apply_branch_cluster`` within
-``apply_derived_g`` (``flextool/engine_polars/input.py:3842-3845``) — the
-``_derived_branch.py`` overlay is only a seed-preserving pass, not the
-producer.
+``dt_non_anticipativity`` frames are both populated.
 """
 from __future__ import annotations
 
@@ -59,14 +72,11 @@ EXPECTED_ROLLS = 7
 # reaches a strict optimum, so ``test_rolling_stochastic_solve_completes``
 # asserts for real (module-level xfail removed).
 #
-# W3 (per-roll NA frames) has NOT landed: ``apply_branch_cluster`` still does
-# not populate ``period_branch_full`` / ``dt_non_anticipativity`` per roll
-# (both come back ``None`` on every roll — confirmed empirically under the W1
-# change), so NO non-anticipativity constraints fire in rolling yet.  The two
-# NA-coupling assertions are therefore marked ``xfail(strict=True,
-# raises=AssertionError)`` until W3 populates those frames.  When W3 lands the
-# two decorators below come off (and the review advisories in each NA test's
-# docstring must be reconciled against the real per-roll frames first).
+# W3 HAS LANDED too: the ``NA-1`` synthetic-path re-wire in
+# ``_apply_db_overrides`` now populates ``period_branch_full`` /
+# ``dt_non_anticipativity`` per roll, so the operational non-anticipativity
+# constraints fire in rolling and both NA-coupling tests below assert for real
+# (their xfail decorators have been removed).
 pytestmark = [pytest.mark.solver]
 
 
@@ -135,20 +145,14 @@ def test_rolling_stochastic_solve_completes(rolling_result):
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="W3: per-roll NA frames (period_branch_full / "
-    "dt_non_anticipativity) not yet populated in rolling.",
-)
 def test_rolling_na_frames_couple_branches_per_roll(rolling_result):
     """PRIMARY structural signal: each roll carries the NA precondition.
 
-    ``apply_branch_cluster`` (in ``apply_derived_g``,
-    ``flextool/engine_polars/input.py:3842-3845``) must populate, on every
-    roll's ``flex_data``, both the ``period_branch_full`` (d, b) anchor→sibling
-    map — with a non-empty ``d != b`` sub-cohort — and the
-    ``dt_non_anticipativity`` (d, t) tie set.  That is exactly the gate the
+    The ``NA-1`` synthetic-path re-wire in ``_apply_db_overrides``
+    (replicating ``apply_branch_cluster``'s two frame assignments) must
+    populate, on every roll's ``flex_data``, both the ``period_branch_full``
+    (d, b) anchor→sibling map — with a non-empty ``d != b`` sub-cohort — and
+    the ``dt_non_anticipativity`` (d, t) tie set.  That is exactly the gate the
     operational-NA families check at ``model.py:4519-4522`` before emitting
     the ``non_anticipativity_*`` constraints.
     """
@@ -181,28 +185,37 @@ def test_rolling_na_frames_couple_branches_per_roll(rolling_result):
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="W3: per-roll NA frames (period_branch_full / "
-    "dt_non_anticipativity) not yet populated in rolling.",
-)
 def test_rolling_na_ties_storage_across_branches(rolling_result):
-    """Storage NA ties ``v_state`` across branches at the tied (d, t) cells.
+    """Storage NA ties NET CHARGE across branches at the tied (d, t) cells.
 
     This fixture authors NO unit commitment (no ``online_method`` /
     ``startup_method`` in ``stochastics.json``), so ``v_online_integer`` never
     exists — the variable NA actually ties here is ``v_state`` (storage params
     ARE present).  The storage non-anticipativity family pins the per-(n, t)
-    net charge across siblings, which is LP-equivalent to
-    ``v_state[n, d, t] == v_state[n, b, t]`` at every tied timestep.
+    NET CHARGE across siblings — the consecutive ``v_state`` delta
+    ``v_state[n, d, t] - v_state[n, d, t_prev]`` (``model.py:219-234``) — NOT
+    absolute ``v_state``.  This test therefore witnesses the net charge: for
+    each branch-period ``d`` in the cohort (``v_state``'s ``d`` axis carries
+    the realized trunk ``period1`` plus the three forecast copies
+    ``period1_{lower,mid,upper}``) and node ``n``, it sorts by tied timestep
+    ``t``, takes the consecutive ``v_state`` delta, and asserts that delta is
+    equal across the cohort ``d`` at each matching ``(n, t)`` tied step.  The
+    cohort includes the realized ``period1``, so this exercises realized↔
+    forecast coupling, not merely forecast↔forecast.
+
+    Absolute storage continuity is explicitly NOT delivered by W3 (spec §B /
+    §D.6): the realized trunk ``period1`` is start-anchored while the forecast
+    copies cyclic-self-link their storage start, so absolute ``v_state``
+    carries a constant realized↔forecast offset (measured ~0.06 here) even
+    though the net-charge deltas collapse to ~1e-16.  Closing that offset —
+    forecast branches continuing from the committed roll-start state — is a
+    separate anchor-repointing slice, not part of W3.
 
     Branches legitimately DIVERGE at non-tied steps, so the cross-branch
-    equality is restricted to the tied timesteps carried by that roll's
-    ``fd.dt_non_anticipativity``.  At those timesteps the spread of
-    ``v_state`` across the branch-period axis must collapse to ~0; the test
-    also asserts that a positive number of tied cells was actually checked so
-    the witness can never be silently vacuous.
+    net-charge equality is restricted to the tied timesteps carried by that
+    roll's ``fd.dt_non_anticipativity``.  The test also asserts that a
+    positive number of tied net-charge cells was actually checked so the
+    witness can never be silently vacuous.
     """
     steps = _steps(rolling_result)
     tol = 1e-6
@@ -223,39 +236,59 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
         cols = vs.columns
         ncol = _pick(cols, "n", "node")
         tcol = _pick(cols, "t", "time")
+        dcol = _pick(cols, "d", "period")
 
         # Restrict to the tied timesteps (the (d, t) tie set's ``t`` axis).
         # ``v_state``'s ``d`` is the branch-period axis, so keeping every
-        # branch at the tied timesteps is what lets the cross-branch spread
-        # be witnessed; cast ``t`` to Utf8 on both sides to join across the
-        # Enum vocabularies.
+        # branch at the tied timesteps is what lets the cross-branch net
+        # charge be witnessed; cast every key to Utf8 so the join / grouping
+        # composes across the Enum vocabularies.
         tied_t = (dtna.select(pl.col("t").cast(pl.Utf8).alias("__t"))
                       .unique())
-        vs_tied = (vs.with_columns(pl.col(tcol).cast(pl.Utf8).alias("__t"))
+        vs_tied = (vs.with_columns(
+                        pl.col(ncol).cast(pl.Utf8).alias("__n"),
+                        pl.col(dcol).cast(pl.Utf8).alias("__d"),
+                        pl.col(tcol).cast(pl.Utf8).alias("__t"),
+                   )
                      .join(tied_t, on="__t", how="inner"))
         if vs_tied.height == 0:
             continue
 
-        # Spread of v_state across the branch-period axis at each (n, t).
-        spread = (vs_tied
-                  .group_by([ncol, "__t"])
+        # Net charge = consecutive v_state delta within each (n, d), over the
+        # tied timesteps sorted by t.  The first tied step per (n, d) has no
+        # predecessor → null delta, dropped.
+        # NB: this takes the delta over consecutive TIED steps, which matches
+        # the constraint's true-predecessor net charge only while the tied set
+        # is contiguous in real time (it is here — each roll's jump is 24
+        # contiguous steps).  A future non-contiguous dt_non_anticipativity
+        # would need the delta taken over real predecessors instead.
+        deltas = (vs_tied
+                  .sort(["__n", "__d", "__t"])
+                  .with_columns(
+                      delta=(pl.col("value") - pl.col("value").shift(1))
+                            .over(["__n", "__d"]))
+                  .drop_nulls("delta"))
+
+        # Spread of net charge across the branch-period axis at each (n, t).
+        spread = (deltas
+                  .group_by(["__n", "__t"])
                   .agg(
-                      n_branches=pl.col("value").len(),
-                      vmax=pl.col("value").max(),
-                      vmin=pl.col("value").min(),
+                      n_branches=pl.col("delta").len(),
+                      dmax=pl.col("delta").max(),
+                      dmin=pl.col("delta").min(),
                   )
                   .filter(pl.col("n_branches") > 1))
         for row in spread.iter_rows(named=True):
-            assert row["vmax"] - row["vmin"] <= tol + 1e-6 * max(
-                1.0, abs(row["vmax"]), abs(row["vmin"])
+            assert row["dmax"] - row["dmin"] <= tol + 1e-6 * max(
+                1.0, abs(row["dmax"]), abs(row["dmin"])
             ), (
-                f"roll {name!r}: v_state spread "
-                f"{row['vmax'] - row['vmin']} at (n={row[ncol]}, "
+                f"roll {name!r}: net-charge spread "
+                f"{row['dmax'] - row['dmin']} at (n={row['__n']}, "
                 f"t={row['__t']}) exceeds tol across branches"
             )
             checked += 1
 
     assert checked > 0, (
-        "no tied (n, t) v_state cells with >1 branch were checked — the "
+        "no tied (n, t) net-charge cells with >1 branch were checked — the "
         "storage NA witness would be vacuous"
     )

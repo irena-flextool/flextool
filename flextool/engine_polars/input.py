@@ -5053,6 +5053,58 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 _drv.pdtNodeInflow_per_step_from_inflow(p_inflow_csv, sd_csv))
         _loadflex_prof("apply_db_overrides:pass_synthetic_inflow")
         _timed("c.synth inflow", _wire_inflow_split_for_synthetic_solve)
+
+        # NA-1 — same class of gap as RESERVE-1 / SECTION-1 / MINLOAD-1 /
+        # INFLOW-1.  The synthetic-solve early-return skips passes 3-10, so
+        # ``apply_derived_g``'s ``apply_branch_cluster`` — the sole producer
+        # of ``period_branch_full`` / ``dt_non_anticipativity`` — never runs
+        # on a rolling sub-solve (each ``<base>_rolling_roll_N`` names a solve
+        # absent from Spine).  Both frames keep their deliberately-None seeds
+        # (input.py:3844-3845), so the non-anticipativity gate
+        # (``model.py`` ``_add_non_anticipativity_constraints``) never fires
+        # and stochastic branches stay uncoupled across the rolling solve.
+        # The two ``*_df`` readers are solve-agnostic — they unroll the
+        # per-roll workdir CSVs (``period__branch.csv`` /
+        # ``dt_non_anticipativity_set.csv``) which the per-roll emit already
+        # writes correctly — and both return ``None`` (height==0) for a
+        # non-stochastic roll.  We replicate ONLY ``apply_branch_cluster``'s
+        # two frame assignments verbatim (seed-preserving overlay,
+        # ``_derived_branch`` lines ~1655-1664) and deliberately do NOT call
+        # the full helper: it would overwrite the already-correctly-seeded
+        # ``period_in_use_set`` via an unsorted ``.unique()`` and reorder
+        # nested-invest set outputs.  Safe for non-stochastic synthetic
+        # solves: with no d≠b fan rows ``period_branch_full`` yields only
+        # self-rows → ``db_pairs.height==0`` → the gate's inner d≠b guard
+        # skips the constraint even though ``dt_non_anticipativity`` is
+        # non-empty.  See ``specs/model_bugs.md::NA-1``.
+        #
+        # NOTE (consumer surface): ``period_branch_full`` also feeds
+        # ``synthetic_branch_tokens`` in the invest handoff guards
+        # (``build_handoff_from_solution`` Slice C/D) and
+        # ``is_genuinely_stochastic`` (benders).  Before this wire those were
+        # inert per roll (frame was ``None``); on a rolling-stochastic solve
+        # WITH investment or benders they now activate — intended parity with
+        # the single-solve path, but not yet exercised by a fixture (the
+        # stochastics fixture has no invest/benders).  A rolling-stochastic-
+        # invest test is the follow-up slice.
+        def _wire_non_anticipativity_for_synthetic_solve():
+            from flextool.engine_polars._derived_branch import (
+                dt_non_anticipativity_df,
+                period_branch_full_df,
+            )
+            _new_pbf = period_branch_full_df(workdir_path, provider=provider)
+            if _new_pbf is not None or getattr(
+                    flex_data, "period_branch_full", None) is None:
+                flex_data.period_branch_full = _new_pbf
+            _new_dtn = dt_non_anticipativity_df(
+                workdir_path, provider=provider)
+            if _new_dtn is not None or getattr(
+                    flex_data, "dt_non_anticipativity", None) is None:
+                flex_data.dt_non_anticipativity = _new_dtn
+        _loadflex_prof(
+            "apply_db_overrides:pass_synthetic_non_anticipativity")
+        _timed("c.synth non_anticipativity",
+               _wire_non_anticipativity_for_synthetic_solve)
         return
 
     _loadflex_prof("apply_db_overrides:pass_derived_a")
