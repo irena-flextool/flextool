@@ -11,18 +11,22 @@ reveal points).  Three equal-probability branches (``upper`` / ``lower`` /
 
 Why this test exists / what it protects
 ---------------------------------------
-Today the rolling solve CRASHES during E0 branch-reveal validation
-(``flextool/engine_polars/_stochastic.py:466-476`` raises
-``FlexToolConfigError`` — "a stochastic branch must start at the FIRST step
-of its branching period").  This is the W1/W3 defect tracked in
-``specs/stochastics_reassessment.md`` §A.1 / §A.2 / §E / §F.
+This file was written BEFORE W1 as a coverage-first guard.  Before W1 the
+rolling solve CRASHED during E0 branch-reveal validation
+(``flextool/engine_polars/_stochastic.py`` raised ``FlexToolConfigError`` —
+"a stochastic branch must start at the FIRST step of its branching period").
+This is the W1/W3 defect tracked in ``specs/stochastics_reassessment.md``
+§A.1 / §A.2 / §E / §F.
 
-This file lands BEFORE that fix.  It keeps the suite GREEN now by documenting
-the crash as a strict xfail (``raises=FlexToolConfigError``) and flips to real
-pass-assertions with a SINGLE one-line change (``W1_W3_LANDED = True``) once
-W1 + W3 merge.  Until then every test memoises and re-raises the one
-``FlexToolConfigError`` so pytest reports ``xfailed`` (never ``failed`` /
-``xpassed``).
+W1 has now landed: the triggering-cohort validation replaces that first-step
+guard, so the rolling solve runs to a strict optimum on every roll and
+``test_rolling_stochastic_solve_completes`` asserts for real.  W3 (per-roll NA
+frames) has NOT landed — ``period_branch_full`` / ``dt_non_anticipativity``
+are still ``None`` on every roll, so no non-anticipativity constraint fires in
+rolling yet.  The two NA-coupling tests are ``xfail(strict=True,
+raises=AssertionError)`` until W3 populates those frames; remove their
+decorators (and reconcile the review advisories in their docstrings against the
+real per-roll frames) once W3 merges.
 
 The structural signal the tests assert post-flip is the exact precondition
 the operational-NA gate (``model.py:4519-4522``) requires to emit the four
@@ -50,51 +54,33 @@ SCENARIO = "1_week_rolling_wind"
 # rolling_solve_jump = 24 → 7 rolls.
 EXPECTED_ROLLS = 7
 
-# >>> ONE-LINE FLIP: set True once W1 + W3 are merged. <<<
+# W1 HAS LANDED (triggering-cohort validation replaces the E0 first-step-only
+# guard) — the rolling stochastic solve no longer crashes and every roll now
+# reaches a strict optimum, so ``test_rolling_stochastic_solve_completes``
+# asserts for real (module-level xfail removed).
 #
-# Before flipping, reconcile the POST-FLIP assertions in
-# ``test_rolling_na_ties_storage_across_branches`` against the real per-roll NA
-# frames (they cannot be observed until W1/W3 exist — auto-memory
-# "Rolling stochastic broken" records that the current stack drops all NA
-# coupling in rolling).  Two review advisories:
-#   (1) The storage-NA family ties per-(n,t) NET CHARGE (a delta), not absolute
-#       ``v_state`` (model.py:4505).  Absolute-state equality holds only when the
-#       tied window is a prefix from a shared initial state; a mid-horizon roll
-#       with a per-branch-free initial state can satisfy the net-charge tie with
-#       a constant ``v_state`` offset.  If so, assert on the tied net-charge LHS,
-#       not absolute ``v_state``.
-#   (2) This fixture reveals multiple times within one 96-step horizon, so tie
-#       windows differ per reveal.  Restrict the cross-branch comparison to the
-#       exact tied (d, t) PAIRS, not just the union of tied ``t`` across all
-#       branch-periods, or a legitimately-diverged branch gets compared against a
-#       still-tied one.
-# The PRIMARY structural signal (test_rolling_na_frames_couple_branches_per_roll)
-# is unaffected by both and is the load-bearing coverage assertion.
-W1_W3_LANDED = False
-
-pytestmark = [
-    pytest.mark.solver,
-    pytest.mark.xfail(
-        not W1_W3_LANDED,
-        strict=True,
-        raises=FlexToolConfigError,
-        reason="E0 validation crashes rolling stochastic UC "
-        "(flextool/engine_polars/_stochastic.py:466-476); "
-        "W1/W3 land after this coverage test — spec §A.1/§E/§F.",
-    ),
-]
+# W3 (per-roll NA frames) has NOT landed: ``apply_branch_cluster`` still does
+# not populate ``period_branch_full`` / ``dt_non_anticipativity`` per roll
+# (both come back ``None`` on every roll — confirmed empirically under the W1
+# change), so NO non-anticipativity constraints fire in rolling yet.  The two
+# NA-coupling assertions are therefore marked ``xfail(strict=True,
+# raises=AssertionError)`` until W3 populates those frames.  When W3 lands the
+# two decorators below come off (and the review advisories in each NA test's
+# docstring must be reconciled against the real per-roll frames first).
+pytestmark = [pytest.mark.solver]
 
 
 @pytest.fixture(scope="module")
 def rolling_result(stochastic_db_url, test_solver_config_dir, tmp_path_factory):
     """Run the rolling stochastic scenario end-to-end ONCE for the module.
 
-    Memoises either the per-step dict (post-fix) or the
-    ``FlexToolConfigError`` the E0 validation raises today, so each test can
-    re-raise it in its own body and report a strict xfail.  The
-    ``run_chain_from_db`` call runs under ``FLEXTOOL_AUTOSCALE_STRICT=1`` so
-    that any future autoscale-registry gap in the NA path is loud rather than
-    silently reverting to an un-scaled LP (invariant #1).
+    Post-W1 the solve runs to completion, so this memoises the per-step dict.
+    The ``except FlexToolConfigError`` is a defensive guard: if a future change
+    re-breaks branch-reveal validation, the crash is memoised and re-raised in
+    each test body (surfacing as a plain failure now that the module-level
+    xfail is gone).  The ``run_chain_from_db`` call runs under
+    ``FLEXTOOL_AUTOSCALE_STRICT=1`` so that any autoscale-registry gap in the NA
+    path is loud rather than silently reverting to an un-scaled LP (invariant #1).
     """
     work_folder = tmp_path_factory.mktemp("rolling_stochastic_na")
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
@@ -119,11 +105,11 @@ def rolling_result(stochastic_db_url, test_solver_config_dir, tmp_path_factory):
 
 
 def _steps(rolling_result):
-    """Return the per-step dict, or re-raise the memoised E0 crash.
+    """Return the per-step ``{solve_name: OrchestrationStep}`` dict.
 
-    Pre-fix this re-raises ``FlexToolConfigError`` inside the test body, which
-    the module-level strict xfail converts to ``xfailed``.  Post-fix it hands
-    back the live ``{solve_name: OrchestrationStep}`` dict.
+    Re-raises the memoised ``FlexToolConfigError`` only in the defensive case
+    where branch-reveal validation has re-broken (see ``rolling_result``); on
+    the normal post-W1 path ``error`` is ``None`` and the dict is returned.
     """
     if rolling_result["error"] is not None:
         raise rolling_result["error"]
@@ -149,6 +135,12 @@ def test_rolling_stochastic_solve_completes(rolling_result):
     }
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="W3: per-roll NA frames (period_branch_full / "
+    "dt_non_anticipativity) not yet populated in rolling.",
+)
 def test_rolling_na_frames_couple_branches_per_roll(rolling_result):
     """PRIMARY structural signal: each roll carries the NA precondition.
 
@@ -189,6 +181,12 @@ def test_rolling_na_frames_couple_branches_per_roll(rolling_result):
         )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="W3: per-roll NA frames (period_branch_full / "
+    "dt_non_anticipativity) not yet populated in rolling.",
+)
 def test_rolling_na_ties_storage_across_branches(rolling_result):
     """Storage NA ties ``v_state`` across branches at the tied (d, t) cells.
 

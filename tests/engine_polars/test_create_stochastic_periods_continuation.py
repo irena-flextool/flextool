@@ -17,7 +17,9 @@ import logging
 from collections import defaultdict
 from types import SimpleNamespace
 
-from flextool.engine_polars._solve_state import ActiveTimeEntry
+import pytest
+
+from flextool.engine_polars._solve_state import ActiveTimeEntry, FlexToolConfigError
 from flextool.engine_polars._stochastic import StochasticSolver
 
 
@@ -190,6 +192,136 @@ def test_zero_weight_branch_metadata_only() -> None:
     assert [("p2040_zero", t) for t in ("t0004", "t0005", "t0006")] == [
         r for r in ts if r[0] == "p2040_zero"
     ]
+
+
+# ---------------------------------------------------------------------------
+# W1 — triggering-cohort validation (spec §A.1/§A.2/§F-step2/§H.3).
+#
+# The shipped ``1_week_rolling_wind`` fixture fans at EVERY roll, so it never
+# exercises the pre-reveal-roll branch of Fix 1.  These solver-free cases cover
+# it (plus the reject paths) directly.  Rolling vs single is detected
+# structurally via ``state.solve.solve_modes[complete_solve] == "rolling_window"``
+# (not the ``_roll_N`` name suffix); so the state stub here grows a ``solve``
+# namespace carrying that map.
+# ---------------------------------------------------------------------------
+
+# A single-period roll window of three steps (period p1).
+ROLL_WIN = _ats([("t0001", 0), ("t0002", 1), ("t0003", 2)])
+
+
+def _make_solver_with_modes(solve_modes: dict) -> StochasticSolver:
+    state = SimpleNamespace(
+        logger=logging.getLogger("test_create_stochastic_periods"),
+        timeline=SimpleNamespace(stochastic_timesteps=defaultdict(list)),
+        solve=SimpleNamespace(solve_modes=dict(solve_modes)),
+    )
+    return StochasticSolver(state)
+
+
+def _run_one(
+    solver, info, active, *, solve="s", complete=None, realized=None,
+    fix_storage=None,
+):
+    complete = solve if complete is None else complete
+    return solver.create_stochastic_periods(
+        {complete: info},
+        [solve],
+        {solve: complete},
+        {solve: active},
+        {solve: fix_storage or {}},
+        {solve: realized or {}},
+    )
+
+
+def test_w1_rolling_pre_reveal_roll_does_not_raise() -> None:
+    """Fix 1: a rolling roll whose sliced window legitimately PRECEDES the
+    first reveal (reveal declared at a later roll's first step, unreachable
+    here) stays a deterministic trunk — no raise, no branching."""
+    solver = _make_solver_with_modes({"roll_c": "rolling_window"})
+    # Reveal declared at t0010 (a later roll's first step); this roll's window
+    # only reaches t0001..t0003, so no reveal is reachable.
+    info = [
+        ("p1", "rlz", "t0010", "yes", "1"),
+        ("p1", "low", "t0010", "no", "3"),
+    ]
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run_one(
+        solver, info, {"p1": ROLL_WIN},
+        solve="roll_c_roll_0", complete="roll_c",
+    )
+    # Deterministic trunk: self-row only, no fan, no branch start.
+    assert pb["roll_c_roll_0"] == [("p1", "p1")]
+    assert sbtb["roll_c_roll_0"] == []
+    assert bstl["roll_c_roll_0"] is None
+    assert list(atl["roll_c_roll_0"].keys()) == ["p1"]
+
+
+def test_w1_rolling_fan_at_first_passes() -> None:
+    """Fix 1: a rolling roll whose reveal triggers at the roll's first step
+    (fan-at-first per roll, Model 2) passes and fans out."""
+    solver = _make_solver_with_modes({"roll_c": "rolling_window"})
+    info = [
+        ("p1", "rlz", "t0001", "yes", "1"),
+        ("p1", "low", "t0001", "no", "3"),
+    ]
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run_one(
+        solver, info, {"p1": ROLL_WIN},
+        solve="roll_c_roll_0", complete="roll_c",
+    )
+    assert bstl["roll_c_roll_0"] == ("p1", "t0001")
+    assert pb["roll_c_roll_0"] == [
+        ("p1", "p1"),
+        ("p1", "p1_rlz"),
+        ("p1", "p1_low"),
+    ]
+    assert sbtb["roll_c_roll_0"] == [("p1_low", "low"), ("p1", "rlz")]
+
+
+def test_w1_trigger_not_at_period_first_step_raises() -> None:
+    """Reject: the triggering reveal's start_step is not the period's first
+    step in this solve (not a period-boundary reveal)."""
+    solver = _make_solver_with_modes({})  # single solve
+    # Reveal declared at t0002, but the window's first step is t0001.
+    info = [
+        ("p1", "rlz", "t0002", "yes", "1"),
+        ("p1", "low", "t0002", "no", "3"),
+    ]
+    with pytest.raises(FlexToolConfigError, match="FIRST step"):
+        _run_one(solver, info, {"p1": ROLL_WIN})
+
+
+def test_w1_trigger_cohort_two_realized_raises() -> None:
+    """Reject: the triggering cohort carries two realized:yes rows."""
+    solver = _make_solver_with_modes({})
+    info = [
+        ("p1", "rlz1", "t0001", "yes", "1"),
+        ("p1", "rlz2", "t0001", "yes", "1"),
+        ("p1", "low", "t0001", "no", "3"),
+    ]
+    with pytest.raises(FlexToolConfigError, match="exactly one realized"):
+        _run_one(solver, info, {"p1": ROLL_WIN})
+
+
+def test_w1_trigger_cohort_zero_realized_raises() -> None:
+    """Reject: the triggering cohort carries no realized:yes row."""
+    solver = _make_solver_with_modes({})
+    info = [
+        ("p1", "low", "t0001", "no", "3"),
+        ("p1", "high", "t0001", "no", "3"),
+    ]
+    with pytest.raises(FlexToolConfigError, match="exactly one realized"):
+        _run_one(solver, info, {"p1": ROLL_WIN})
+
+
+def test_w1_single_solve_no_reachable_reveal_raises() -> None:
+    """Safety net preserved: a SINGLE (non-rolling) solve with non-empty
+    info but no reachable reveal raises (silently-ignored branches)."""
+    solver = _make_solver_with_modes({})  # single solve
+    info = [
+        ("p1", "rlz", "t0099", "yes", "1"),
+        ("p1", "low", "t0099", "no", "3"),
+    ]
+    with pytest.raises(FlexToolConfigError, match="silently ignored"):
+        _run_one(solver, info, {"p1": ROLL_WIN})
 
 
 def test_deterministic_solve_passthrough() -> None:

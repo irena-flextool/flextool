@@ -413,9 +413,13 @@ class StochasticSolver:
             realized_time_lists, branch_start_time_lists)``.
 
         Raises:
-            FlexToolConfigError: When a solve's start time isn't in any
-                ``stochastic_branches`` row, or when more than one
-                ``realized: yes`` row matches a period.
+            FlexToolConfigError: When the reveal that triggers a solve does
+                not start at its branching period's first step (not a
+                period-boundary reveal), when that triggering cohort does
+                not carry exactly one ``realized: yes`` row, or when a
+                single (non-rolling) solve declares ``stochastic_branches``
+                none of which reveal at a reachable step of its active time
+                (silently-ignored branches).
         """
         period__branch_lists: defaultdict[str, list] = defaultdict(list)
         solve_branch__time_branch_lists: defaultdict[str, list] = defaultdict(list)
@@ -440,55 +444,156 @@ class StochasticSolver:
             active_branches: list[str] = []
             branch_start_time_lists[solve] = None
 
-            # Validate the stochastic_branches rows as a WELL-FORMED
-            # (possibly mid-horizon) reveal (Slice E design §3.3).  Two
-            # checks replace the old "realized row at the solve's first
-            # step" guard while preserving fan-at-first-step behaviour
-            # byte-for-byte:
-            #   (1) every row must start at the FIRST step of the period
-            #       it names — investment is period-granular, so a reveal
-            #       is a PERIOD BOUNDARY (§3.1); a mid-period start_step
-            #       is ill-defined.
-            #   (2) each branching period must carry EXACTLY ONE
-            #       realized:yes branch.  For fan-at-first-step this
-            #       reproduces the old found_start guarantee (one realized
-            #       row at the solve start); it additionally rejects a
-            #       malformed reveal with zero or two realized rows in a
-            #       period.
-            # Because pre-reveal periods author NO stochastic_branches
-            # rows, the trigger loop below simply keeps them as real-named
-            # trunk periods (Option B — non-anticipativity by
-            # construction); no trigger-body change is needed for
-            # mid-horizon.
-            first_step_of = {
-                p: at[0].timestep for p, at in active_time_list.items()
-            }
+            # ----------------------------------------------------------
+            # Triggering-cohort validation (W1 — spec §A.1/§A.2/§F-step2/
+            # §H.3; replaces the old "every row at its period's first step"
+            # + "one realized per period NAME" pair, which crashed rolling).
+            #
+            # A solve is triggered by exactly ONE reveal: the FIRST declared
+            # ``start_step`` reachable while walking THIS solve's (already
+            # period/roll-sliced) ``active_time_list`` in order (period,
+            # then step) — the same walk the trigger loop below performs.
+            # ``info`` is read per COMPLETE solve, so for a rolling parent
+            # every roll sees ALL rolls' reveal rows; only the row that
+            # triggers THIS roll is validatable here (the rest are other
+            # rolls' triggers, each validated when it is its own roll's
+            # trigger).  We therefore validate the triggering cohort only
+            # and tolerate the non-triggering rows:
+            #   (i)  the triggering ``start_step`` must be the FIRST step of
+            #        its period in this solve's window — investment is
+            #        period-granular, so a reveal is a PERIOD BOUNDARY; this
+            #        admits BOTH Model-1 mid-horizon reveals and Model-2
+            #        fan-at-first (and does NOT re-introduce Option-B's
+            #        "first period can't branch" guard — see Appendix).
+            #   (ii) the triggering cohort {rows sharing that (period,
+            #        start_step)} must carry EXACTLY ONE realized:yes row.
+            # When no reveal is reachable in this solve's window the solve
+            # stays a deterministic trunk (``branched`` remains False, so
+            # ``branch_start_time_lists[solve]`` stays None and the walk
+            # below copies every period as-is).  That is correct for a
+            # rolling PRE-REVEAL roll; but for a SINGLE (non-rolling) solve
+            # a non-empty ``info`` with no reachable reveal means the
+            # branches would be silently ignored → misconfiguration, raise.
+            # Rolling vs single is detected structurally: a rolling roll's
+            # complete-solve carries ``solve_mode == "rolling_window"`` (set
+            # in RecursiveSolveBuilder), not by sniffing the ``_roll_N``
+            # name suffix.
+            #
+            # Fix 2 (non-triggering malformed reveals): a clean cross-roll
+            # strict check is NOT feasible at this per-roll call site.  Each
+            # roll sees only its own sliced window, and a declared step that
+            # is some OTHER roll's legitimate trigger is indistinguishable
+            # here from a jump-misaligned garbage step.  A cross-roll
+            # pre-pass keyed on roll first-steps is no help either — it
+            # would false-reject a legitimate Model-1 mid-horizon reveal
+            # (which is a PERIOD boundary, not a roll boundary).  So each
+            # reveal is validated in the roll where it triggers; this is the
+            # documented limitation for the rolling case.  For a SINGLE
+            # (non-rolling) solve the WHOLE reveal picture is visible in the
+            # one window, so every declared reveal is validated strictly —
+            # each must sit at its period's first step and each branching
+            # period must carry exactly one realized:yes — restoring the
+            # pre-W1 per-row strictness (a mid-period or extra reveal in a
+            # single solve is a real authoring error, not another roll's
+            # reveal).  This raises, matching the pre-W1 behaviour.
+            # ----------------------------------------------------------
+            is_rolling_sub_solve = (
+                getattr(
+                    getattr(self.state, "solve", None), "solve_modes", {}
+                ).get(complete_solves[solve], "single_solve")
+                == "rolling_window"
+            )
+
+            declared_start_steps: defaultdict[str, set] = defaultdict(set)
             for row in info:
-                if row[0] not in first_step_of or row[2] != first_step_of[row[0]]:
+                declared_start_steps[row[0]].add(row[2])
+
+            trig_period: str | None = None
+            trig_step: str | None = None
+            for period_w, active_time_w in active_time_list.items():
+                if period_w in declared_start_steps:
+                    for step_w in active_time_w:
+                        if step_w.timestep in declared_start_steps[period_w]:
+                            trig_period = period_w
+                            trig_step = step_w.timestep
+                            break
+                if trig_period is not None:
+                    break
+
+            if trig_period is None:
+                if info and not is_rolling_sub_solve:
+                    message = (
+                        "A single (non-rolling) stochastic solve declares "
+                        "stochastic_branches but none reveal at a reachable "
+                        "step of its active time — the branches would be "
+                        "silently ignored. Check stochastic_branches "
+                        f"start_step values against solve {solve!r}'s "
+                        "timeline."
+                    )
+                    self.logger.error(message)
+                    raise FlexToolConfigError(message)
+            else:
+                if trig_step != active_time_list[trig_period][0].timestep:
                     message = (
                         "A stochastic branch must start at the FIRST step of "
-                        "its branching period (period-boundary reveal). "
-                        f"Branch {row[1]!r} of period {row[0]!r} declares "
-                        f"start_step {row[2]!r}, which is not that period's "
-                        "first step. Check stochastic_branches."
+                        "its branching period (period-boundary reveal). The "
+                        f"reveal triggering solve {solve!r} is period "
+                        f"{trig_period!r} start_step {trig_step!r}, which is "
+                        "not that period's first step in this solve. Check "
+                        "stochastic_branches."
                     )
                     self.logger.error(message)
                     raise FlexToolConfigError(message)
-            by_period: defaultdict[str, list] = defaultdict(list)
-            for row in info:
-                by_period[row[0]].append(row)
-            for period_k, rows_k in by_period.items():
-                n_real = sum(1 for r in rows_k if r[3] == "yes")
+                n_real = sum(
+                    1
+                    for r in info
+                    if r[0] == trig_period and r[2] == trig_step and r[3] == "yes"
+                )
                 if n_real != 1:
                     message = (
-                        f"stochastic branching period {period_k!r} must have "
+                        "The triggering stochastic branching cohort (period "
+                        f"{trig_period!r}, start_step {trig_step!r}) must have "
                         f"exactly one realized:yes branch; found {n_real}. "
                         "Check stochastic_branches (one realized branch per "
-                        "branching period; start_step at the period's first "
-                        "step)."
+                        "reveal; start_step at the period's first step)."
                     )
                     self.logger.error(message)
                     raise FlexToolConfigError(message)
+
+                if not is_rolling_sub_solve:
+                    # Single solve: validate EVERY declared reveal, not just
+                    # the triggering cohort — the whole picture is visible, so
+                    # a mid-period or mis-realized reveal here is a real
+                    # authoring error (pre-W1 per-row strictness).
+                    for period_k in declared_start_steps:
+                        if period_k not in active_time_list:
+                            continue
+                        period_first_k = active_time_list[period_k][0].timestep
+                        for step_k in sorted(declared_start_steps[period_k]):
+                            if step_k != period_first_k:
+                                message = (
+                                    "A stochastic branch must start at the "
+                                    "FIRST step of its branching period "
+                                    "(period-boundary reveal). Solve "
+                                    f"{solve!r} declares period {period_k!r} "
+                                    f"start_step {step_k!r}, which is not that "
+                                    "period's first step. Check "
+                                    "stochastic_branches."
+                                )
+                                self.logger.error(message)
+                                raise FlexToolConfigError(message)
+                        n_real_k = sum(
+                            1 for r in info
+                            if r[0] == period_k and r[3] == "yes"
+                        )
+                        if n_real_k != 1:
+                            message = (
+                                f"Stochastic branching period {period_k!r} "
+                                "must have exactly one realized:yes branch; "
+                                f"found {n_real_k}. Check stochastic_branches."
+                            )
+                            self.logger.error(message)
+                            raise FlexToolConfigError(message)
 
             # Walk periods — at the first branch trigger, fan out into
             # branches; subsequent periods continue the same branches.
