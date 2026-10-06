@@ -543,6 +543,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the...
     ('stochastic_invest_method', 'solve'): QuantityType.DIMENSIONLESS,
     # Opt-in mode string (none/recourse) for how stochastic branches participate in investment; a mode carries no physical unit.
+    ('dispatch_realization_method', 'solve'): QuantityType.DIMENSIONLESS,
+    # Opt-in mode string (within_solve/separate_dispatch) for how stochastic branches are realized into dispatch; a mode carries no physical unit.
     ('storage_binding_method', 'node'): QuantityType.DIMENSIONLESS,
     # Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over an...
     ('storage_nested_fix_method', 'node'): QuantityType.DIMENSIONLESS,

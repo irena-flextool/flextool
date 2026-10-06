@@ -1771,6 +1771,8 @@ def migrate_database(
                 _migrate_v73_construction_lead_time(db)
             elif next_version == 74:
                 _migrate_v74(db)
+            elif next_version == 75:
+                _migrate_v75_dispatch_realization_method(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -4211,6 +4213,84 @@ def _migrate_v74(db) -> None:
         "(positive names for the stochastic shared-decision windows); added "
         "reserve__upDown__group.reserve_duration ([h] scalar, default none; "
         "storage energy-adequacy coupling for reserves, #322)."
+    )
+
+
+def _migrate_v75_dispatch_realization_method(db) -> None:
+    """Add the solve.dispatch_realization_method opt-in (v74 -> v75).
+
+    Selects how the stochastic branches of a solve are realized into a
+    committed dispatch.  This is the 2-stage seed of a future multi-stage
+    market structure: ``'within_solve'`` (default, byte-identical to prior
+    behaviour) keeps realization inside the single optimisation — the
+    branches and their realized periods are resolved within one solve, as
+    today.  ``'separate_dispatch'`` will split realization into a dedicated
+    downstream dispatch stage (a second market-clearing pass over the
+    revealed branch), the first step toward a multi-stage sequential-market
+    structure.
+
+    W4 Slice 1 ships only the schema + the hard-reject guard: flag-on
+    (``'separate_dispatch'``) is HARD-REJECTED until the separate-dispatch
+    machinery lands (slices W4b/c/d — building the downstream dispatch
+    stage).  Bound to a new 'dispatch_realization_methods' value list;
+    grouped under 'solve_advanced' (created if the DB lacks it).  This is a
+    structural clone of the v70 ``stochastic_invest_method`` line.
+    """
+    add_value_list_manual(db, [
+        ["dispatch_realization_methods", "within_solve"],
+        ["dispatch_realization_methods", "separate_dispatch"],
+    ])
+
+    default_val, default_type = to_database("within_solve")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="dispatch_realization_method",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="dispatch_realization_methods",
+        description=(
+            "How the stochastic branches of a solve are realized into a "
+            "committed dispatch. 'within_solve' (default) keeps realization "
+            "inside the single optimisation — branches and their realized "
+            "periods are resolved within one solve, byte-identical to prior "
+            "behaviour. 'separate_dispatch' splits realization into a "
+            "dedicated downstream dispatch stage (a second market-clearing "
+            "pass over the revealed branch); this is the 2-stage seed of a "
+            "future multi-stage sequential-market structure and is not yet "
+            "implemented (lands in a later slice)."
+        ),
+    )
+    # Attach to the 'solve_advanced' parameter group, creating it if the
+    # DB lacks it.  Every parameter must belong to a parameter_group so it
+    # is not dropped from group-filtered tabular exports (v69 invariant,
+    # guarded by tests/test_parameter_group_coverage.py), and solve_advanced
+    # is this param's canonical home in the schema.  Real DBs always have it
+    # (created in v44, recoloured in v45), but a DB built from scratch at a
+    # version above v44 — e.g. the minimal fixtures the migration tests seed
+    # — never ran the v44 step and so carries no parameter_groups.  Use the
+    # non-raising get_item (db.item raises SpineDBAPIError when absent) and
+    # get-or-create; the create only fires on such group-less DBs and mirrors
+    # v44's colour/priority for solve_advanced (post-v45 colour b56f6f).
+    if not db.get_item("parameter_group", name="solve_advanced"):
+        db.add_update_item(
+            "parameter_group",
+            name="solve_advanced",
+            color="b56f6f",
+            priority=87,
+        )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="dispatch_realization_method",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v75: added solve.dispatch_realization_method "
+        "(dispatch_realization_methods: within_solve/separate_dispatch, "
+        "default within_solve); 2-stage seed of a future multi-stage market "
+        "structure. 'separate_dispatch' hard-rejected until a later slice."
     )
 
 

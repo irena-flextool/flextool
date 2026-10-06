@@ -1095,7 +1095,7 @@
       "model",
       "version",
       [
-        "74",
+        "75",
         "float"
       ],
       null,
@@ -1710,6 +1710,17 @@
       null,
       "Map for indicating how many years from the present solve are the periods included in the solve. Used for discounting. Index: period, value: years.",
       null
+    ],
+    [
+      "solve",
+      "dispatch_realization_method",
+      [
+        "\"within_solve\"",
+        "str"
+      ],
+      "dispatch_realization_methods",
+      "How the stochastic branches of a solve are realized into a committed dispatch. 'within_solve' (default) keeps realization inside the single optimisation — branches and their realized periods are resolved within one solve, byte-identical to prior behaviour. 'separate_dispatch' splits realization into a dedicated downstream dispatch stage (a second market-clearing pass over the revealed branch); this is the 2-stage seed of a future multi-stage sequential-market structure and is not yet implemented (lands in a later slice).",
+      "solve_advanced"
     ],
     [
       "solve",
@@ -4439,6 +4450,20 @@
       "decomposition_schemes",
       [
         "\"benders\"",
+        "str"
+      ]
+    ],
+    [
+      "dispatch_realization_methods",
+      [
+        "\"within_solve\"",
+        "str"
+      ]
+    ],
+    [
+      "dispatch_realization_methods",
+      [
+        "\"separate_dispatch\"",
         "str"
       ]
     ],

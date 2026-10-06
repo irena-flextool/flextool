@@ -1587,6 +1587,37 @@ def _stochastic_invest_raw_guard(solve_cfg, base_name: str) -> None:
         )
 
 
+def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
+    """W4 Slice 1 Guard — hard-reject a non-default dispatch_realization_method.
+
+    ``solve.dispatch_realization_method`` is the 2-stage seed of a future
+    multi-stage market structure.  Only ``'within_solve'`` (the schema
+    default, today's behaviour) is implemented; ``'separate_dispatch'`` —
+    splitting realization into a dedicated downstream dispatch stage — has
+    no engine machinery yet (it lands in a later slice) and is HARD-REJECTED
+    here.
+
+    The guard reads the RAW authored value rather than the resolver's
+    output: :meth:`SolveConfig.dispatch_realization_method_for` silently
+    collapses any unrecognised value (including ``'separate_dispatch'``) to
+    ``'within_solve'``, so an authoring-time check must inspect the raw dict
+    and reject anything outside the allowed set ``{"", "within_solve"}``.
+    That rejects ``'separate_dispatch'`` AND any typo / unknown value.
+    Blank / absent tolerate-as-default (matches the resolver).  No-op when
+    the solve authors nothing.
+    """
+    raw = solve_cfg.dispatch_realization_method.get(base_name)
+    if raw is None:
+        return
+    val = str(raw).strip().lower()
+    if val not in ("", "within_solve"):
+        raise FlexToolConfigError(
+            f"Solve '{base_name}' sets dispatch_realization_method='{raw}' — "
+            f"'separate_dispatch' is not yet implemented (lands in a later "
+            f"slice); use 'within_solve'."
+        )
+
+
 def _validate_model_solve(state: RunnerState) -> list[str]:
     """Validate ``state.solve.model_solve`` and return the solve list.
 
@@ -1614,6 +1645,14 @@ def _validate_model_solve(state: RunnerState) -> list[str]:
     # ``run()``.
     for _s in solves:
         _stochastic_invest_raw_guard(state.solve, _s)
+        # W4 Slice 1 Guard (fail-fast pass): reject a non-default
+        # dispatch_realization_method ('separate_dispatch' not yet
+        # implemented) for the model's top-level solves before any solve
+        # runs.  Like the stochastic_invest pass, this only sees the
+        # top-level ``solves`` array (not solves reached via
+        # ``contains_solves`` recursion / rolling), so it is a convenience —
+        # the authoritative per-solve guard lives at the top of ``run()``.
+        _dispatch_realization_raw_guard(state.solve, _s)
     return solves
 
 
@@ -2394,6 +2433,14 @@ def _drive_cascade(
             # base-name derivation below (``:2486``).
             _guard_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
             _stochastic_invest_raw_guard(state.solve, _guard_base)
+            # W4 Slice 1 Guard (authoritative): reject a non-default
+            # dispatch_realization_method for any solve that RUNS —
+            # including each roll of a rolling solve and each contained/
+            # chained solve — before building its FlexData/LP.  Omitting
+            # this site would let a contained/chained solve authoring
+            # 'separate_dispatch' silently normalize to 'within_solve' via
+            # the resolver.  'separate_dispatch' is not yet implemented.
+            _dispatch_realization_raw_guard(state.solve, _guard_base)
             # Cross-level eviction — release any EXHAUSTED prior solve-level's
             # live HiGHS instance + flex_data_provider BEFORE this solve builds
             # its FlexData/LP, so two level footprints never coexist (the DES

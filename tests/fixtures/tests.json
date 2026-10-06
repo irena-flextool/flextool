@@ -1687,6 +1687,20 @@
       ]
     ],
     [
+      "dispatch_realization_methods",
+      [
+        "IndpdGhpbl9zb2x2ZSI=",
+        "str"
+      ]
+    ],
+    [
+      "dispatch_realization_methods",
+      [
+        "InNlcGFyYXRlX2Rpc3BhdGNoIg==",
+        "str"
+      ]
+    ],
+    [
       "energy_margin_methods",
       [
         "Im5vbmUi",
@@ -3517,7 +3531,7 @@
       "model",
       "version",
       [
-        "NzQ=",
+        "NzU=",
         "float"
       ],
       null,
@@ -4270,6 +4284,17 @@
       ],
       "decomposition_schemes",
       "Decomposition scheme for this solve. 'none' (default) solves monolithically. 'benders' runs the solve through the Benders region-decomposition driver (a master trade layer coordinating per-region recourse subproblems via appended optimality cuts, producing a valid lower bound) over the groups whose group.decomposition_method is 'benders_regional' (requires at least two such region groups). The choice is per solve, so an investment solve can decompose while a later dispatch solve in the same chain stays monolithic.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "dispatch_realization_method",
+      [
+        "IndpdGhpbl9zb2x2ZSI=",
+        "str"
+      ],
+      "dispatch_realization_methods",
+      "How the stochastic branches of a solve are realized into a committed dispatch. 'within_solve' (default) keeps realization inside the single optimisation \u2014 branches and their realized periods are resolved within one solve, byte-identical to prior behaviour. 'separate_dispatch' splits realization into a dedicated downstream dispatch stage (a second market-clearing pass over the revealed branch); this is the 2-stage seed of a future multi-stage sequential-market structure and is not yet implemented (lands in a later slice).",
       "solve_advanced"
     ],
     [

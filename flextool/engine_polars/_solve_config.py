@@ -248,6 +248,7 @@ class SolveConfig:
         benders_in_out_weight: dict | None = None,
         scaling: dict | None = None,
         stochastic_invest_method: dict | None = None,
+        dispatch_realization_method: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -317,6 +318,15 @@ class SolveConfig:
         self.stochastic_invest_method: dict = (
             stochastic_invest_method
             if stochastic_invest_method is not None else {}
+        )
+
+        # v75 per-solve dispatch-realization method (solve-name ->
+        # "within_solve"/"separate_dispatch"); only authored solves appear.
+        # Resolved at access time via :meth:`dispatch_realization_method_for`
+        # (absent -> "within_solve").
+        self.dispatch_realization_method: dict = (
+            dispatch_realization_method
+            if dispatch_realization_method is not None else {}
         )
 
         # Computed fields — populated by load_from_db after construction.
@@ -555,6 +565,15 @@ class SolveConfig:
             mode=DictMode.DICT,
         )
 
+        # v75 per-solve dispatch-realization method.  Only solves that
+        # explicitly author solve.dispatch_realization_method appear; absent
+        # solves resolve to "within_solve" via
+        # ``dispatch_realization_method_for``.
+        dispatch_realization_method: dict = params_to_dict(
+            db=db, cl="solve", par="dispatch_realization_method",
+            mode=DictMode.DICT,
+        )
+
         # rolling_times: assemble per-solve [jump, horizon, duration].
         rolling_duration: dict = params_to_dict(
             db=db, cl="solve", par="rolling_duration", mode=DictMode.DICT
@@ -663,6 +682,7 @@ class SolveConfig:
             benders_in_out_weight=benders_in_out_weight,
             scaling=scaling,
             stochastic_invest_method=stochastic_invest_method,
+            dispatch_realization_method=dispatch_realization_method,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
@@ -952,6 +972,31 @@ class SolveConfig:
             return "none"
         value = str(raw).strip().lower()
         return value if value in ("none", "recourse") else "none"
+
+    def dispatch_realization_method_for(self, solve_name: str) -> str:
+        """Resolve ``solve.dispatch_realization_method`` for *solve_name*.
+
+        Returns the normalised lower-case mode (``"within_solve"`` or
+        ``"separate_dispatch"``).  Absent / blank / unrecognised ->
+        ``"within_solve"`` (the schema default, byte-identical prior
+        behaviour).  Authoring case is ignored.
+
+        This knob is the 2-stage seed of a future multi-stage market
+        structure: ``"within_solve"`` resolves branch realization inside a
+        single optimisation (today's behaviour); ``"separate_dispatch"``
+        will split realization into a dedicated downstream dispatch stage
+        (a second market-clearing pass over the revealed branch) — not yet
+        implemented, hard-rejected by the W4 Slice 1 guard until a later
+        slice lands the machinery.  There is no run-time override for this
+        knob, so absent resolves to the concrete default ``"within_solve"``.
+        """
+        raw = self.dispatch_realization_method.get(solve_name)
+        if raw is None:
+            return "within_solve"
+        value = str(raw).strip().lower()
+        return value if value in (
+            "within_solve", "separate_dispatch"
+        ) else "within_solve"
 
     def benders_config_for(self, solve_name: str) -> tuple[int, float, float]:
         """Resolve ``(max_iter, tol, in_out_weight)`` for *solve_name*.

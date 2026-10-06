@@ -71,6 +71,11 @@ def _solve_config_with_flag(model_solve, flag_map) -> SolveConfig:
     sc = object.__new__(SolveConfig)
     sc.model_solve = model_solve
     sc.stochastic_invest_method = flag_map
+    # ``_validate_model_solve`` also runs the sibling W4a
+    # dispatch_realization_method fail-fast guard, which reads this dict;
+    # keep it empty (all-default 'within_solve') so that guard is inert and
+    # only the stochastic_invest guard is under test here.
+    sc.dispatch_realization_method = {}
     return sc
 
 
