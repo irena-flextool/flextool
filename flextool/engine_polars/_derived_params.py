@@ -4651,6 +4651,20 @@ def p_flow_upper_from_source(source: "InputSource",
     src_coef_lf = _arc_max_capacity_coef_lf(source, "source")
     sink_coef_lf = _arc_max_capacity_coef_lf(source, "sink")
 
+    # Per-process output "width": Σ sink_coef over every output arc.  The
+    # indirect fuel (source) arc feeds *all* of a unit's outputs, so to
+    # keep the existing-only (dispatch) solve consistent with the
+    # investment solve its capacity bound must cover the throughput of
+    # every output arc simultaneously at its own cap
+    # (slope · Σ_k capacity·sink_coef_k), rather than limiting the *sum* of
+    # outputs to a single unit capacity.  Single-output units sum to 1 →
+    # unchanged; only multi-output units broaden.
+    out_factor_lf = (process_sink_lf
+                        .join(sink_coef_lf, on=["p", "sink"], how="left")
+                        .with_columns(coef=pl.col("coef").fill_null(1.0))
+                        .group_by("p")
+                        .agg(pl.col("coef").sum().alias("out_factor")))
+
     # ── 4. p_unconstrained_flow_cap ────────────────────────────────
     # DB stores the model param as ``max_flow_for_unconstrained_variables``
     # (no ``p_`` prefix — that prefix is only the CSV-emit alias).
@@ -4714,6 +4728,10 @@ def p_flow_upper_from_source(source: "InputSource",
                 on=["p", "source", "sink"], how="left")
         .with_columns(
             _coeff_zero=pl.col("_coeff_zero").fill_null(False))
+        # Output-width factor for the indirect fuel-arc bound (default 1).
+        .join(out_factor_lf, on="p", how="left")
+        .with_columns(
+            out_factor=pl.col("out_factor").fill_null(1.0))
     )
 
     # ── 7. Slope / section join (only relevant for indirect arcs) ───
@@ -4754,6 +4772,7 @@ def p_flow_upper_from_source(source: "InputSource",
     ).with_columns(
         _indirect_branch=(pl.col("eff_term")
                             * pl.col("cap_per_unit")
+                            * pl.col("out_factor")
                             / pl.col("_safe_src_coef")),
         _direct_branch=pl.col("cap_per_unit"),
     ).with_columns(
