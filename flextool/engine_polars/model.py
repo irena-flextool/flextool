@@ -353,6 +353,123 @@ def _add_non_anticipativity_constraints(
                                 rhs_terms = {},
                             )
 
+    # 1b. non_anticipativity_storage_state_first — delivers §D.6
+    #     branch-point continuity by pinning ABSOLUTE ``v_state`` at the
+    #     FIRST tied step of each anchor period ``d``:
+    #
+    #         v_state[n, d, t_first] − v_state[n, b, t_first] == 0
+    #
+    #     The storage net-charge family above ties only the per-(n, t) net
+    #     charge (the consecutive ``v_state`` delta), so across a contiguous
+    #     tied jump it fixes every branch's state SHAPE but leaves a free
+    #     constant offset between the realized trunk and each forecast copy.
+    #     In single-solve the trunk is hard start-bound and every branch is
+    #     reference-value end-bound, so the offset telescopes to zero on its
+    #     own; in rolling the untied post-reveal tail breaks that telescoping
+    #     and the forecast copies float by a constant (~0.06 in
+    #     ``1_week_rolling_wind``).  Pinning absolute ``v_state`` at the first
+    #     tied step restores the anchor: combined with the per-step net-charge
+    #     ties it closes the whole contiguous jump absolutely.
+    #
+    #     This tie is OPTIMUM-CONDITIONAL, not a hard structural anchor: it
+    #     holds the branches equal to EACH OTHER at the branch point, but
+    #     interior drift away from the shared level stays feasible whenever
+    #     balance slack (``vq_state_up`` / ``vq_state_down``) absorbs it or
+    #     the inflow differs across branches at the tied steps — the
+    #     net-charge family controls neither.  For the deterministic-inflow,
+    #     zero-self-discharge reservoirs this fixture exercises, the drift is
+    #     non-optimal and the tie binds.  ``v_online`` / ``v_reserve`` need no
+    #     analog: their own NA families already pin the ABSOLUTE variable at
+    #     EVERY tied step, not just a net delta.
+    #
+    #     NB: the hard roll-to-roll carry-in (all branches inheriting the
+    #     previous roll's ACTUAL jump end-state, vs the current soft
+    #     ``roll_continue`` seed) is a separate W8b concern.  This slice ties
+    #     the branches to each other at the branch point, closing the
+    #     inter-branch offset; the shared level itself is still the soft
+    #     carried value.
+    #
+    #     PROACTIVE horizon-guard (byte-parity): emit the tie for an (n, d)
+    #     ONLY when its tied timesteps are a STRICT SUBSET of that (n, d)'s
+    #     ``v_state`` timeline, i.e. an untied post-reveal tail exists.  When
+    #     the tied set covers the full per-period horizon (single-solve
+    #     dispatch) the node is already doubly anchored (hard start-binding +
+    #     reference-value end), so the row is strictly redundant — suppress
+    #     it so byte-parity-gated single solves receive ZERO new rows.
+    if (v_state is not None and d.groupStochastic is not None
+            and db_pairs.height > 0):
+        gn = d.group_node
+        gs = d.groupStochastic
+        if gn is not None and gn.height > 0 and gs is not None and gs.height > 0:
+            stoch_nodes = (gn.join(gs, on="g", how="inner")
+                            .select("n").unique())
+            if stoch_nodes.height > 0:
+                # ``v_state`` declared cells (n, d, t) — same source the Var
+                # was built from (``nodeState_dt``).
+                vstate_dt = v_state.frame.select("n", "d", "t").unique()
+
+                # Anchor step PER-d (NOT a single global ``dtna.t.min()``):
+                # the first tied step of each anchor period, robust to a
+                # future multi-reveal single solve whose ``d`` have different
+                # tied ranges.
+                first_per_d = (dtna.select("d", "t").unique()
+                               .group_by("d")
+                               .agg(pl.col("t").min().alias("t")))
+
+                # Horizon-guard counts: per-d tied-step count vs per-(n, d)
+                # full ``v_state`` cell count; keep only STRICT subsets.
+                tied_counts = (dtna.select("d", "t").unique()
+                               .group_by("d")
+                               .agg(pl.len().alias("tied_count")))
+                full_counts = (vstate_dt
+                               .group_by("n", "d")
+                               .agg(pl.len().alias("full_count")))
+                nd_keep = (stoch_nodes
+                           .join(dtna.select("d").unique(), how="cross")
+                           .join(tied_counts, on="d", how="inner")
+                           .join(full_counts, on=["n", "d"], how="inner")
+                           .filter(pl.col("tied_count") < pl.col("full_count"))
+                           .select("n", "d").unique())
+
+                if nd_keep.height > 0:
+                    # Domain (n, d, b, t_first) = nd_keep ⋈ first-tied-step ⋈
+                    # db_pairs.
+                    over = (nd_keep
+                            .join(first_per_d, on="d", how="inner")
+                            .join(db_pairs, on="d", how="inner")
+                            .select("n", "d", "b", "t").unique())
+                    # Marker / state-less-cell guard: inner-join
+                    # ``nodeState_dt`` on BOTH (n, d, t) and (n, b, t) so any
+                    # cell lacking a declared ``v_state`` row is dropped.  The
+                    # (n, d, t) side is same-axis (native join); the (n, b, t)
+                    # side is cross-Enum (over.b is branch-Enum, the renamed
+                    # v_state domain's b is period-Enum), so cast both b keys
+                    # to Utf8 for that join and restore axis types after.
+                    over = over.join(vstate_dt, on=["n", "d", "t"],
+                                     how="inner")
+                    vbt = (vstate_dt.rename({"d": "b"})
+                           .with_columns(pl.col("b").cast(pl.Utf8)))
+                    over = (over
+                            .with_columns(pl.col("b").cast(pl.Utf8))
+                            .join(vbt, on=["n", "b", "t"], how="inner")
+                            .with_columns(cast_dim(pl.col("b"), None, "b"))
+                            .select("n", "d", "b", "t").unique())
+                    if over.height > 0:
+                        v_state_at_b = Var(
+                            name=v_state.name + "__nab_first",
+                            dims=("n", "b", "t"),
+                            frame=v_state.frame.rename({"d": "b"}),
+                            lower=v_state.lower, upper=v_state.upper,
+                        )
+                        m.add_cstr(
+                            "non_anticipativity_storage_state_first",
+                            over      = over,
+                            sense     = "==",
+                            lhs_terms = {"v_d":  v_state,
+                                         "v_b": -v_state_at_b},
+                            rhs_terms = {},
+                        )
+
     # 2. non_anticipativity_online_integer
     if v_online_integer is not None:
         # Domain: (p, d, b, t) over process_online_integer × db_pairs × dtna.

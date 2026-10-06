@@ -36,14 +36,22 @@ does NOT call the full helper, which would overwrite the correctly-seeded
 set outputs.  So the two NA-coupling tests below assert for real (xfail
 decorators removed).
 
-Deferred gap (NOT delivered by W3): absolute storage continuity — forecast
-branches continuing from the committed roll-start state (spec §B / §D.6).  The
-storage NA constraint ties NET CHARGE (per-(n, t) charge delta,
-``model.py:219-234``), not absolute ``v_state``.  The realized trunk
-``period1`` is start-anchored while the three forecast copies cyclic-self-link
-their storage start, so absolute ``v_state`` carries a constant realized↔
-forecast offset (~0.06 here) even though the net-charge deltas are tied to
-~1e-16.  Closing that offset is a separate anchor-repointing slice.
+§D.6 branch-point continuity (inter-branch) is now DELIVERED.  The storage NA
+stack ties BOTH the per-(n, t) NET CHARGE (per-step charge delta,
+``model.py:219-234``) AND absolute ``v_state`` at the FIRST tied step of each
+anchor period (``non_anticipativity_storage_state_first``,
+``model.py`` 1b-block).  Telescoping the per-step net-charge ties over the
+contiguous jump off that absolute branch-point anchor closes the whole tied
+range absolutely, so the constant realized↔forecast ``v_state`` offset
+(previously ~0.06 here) collapses to ~0.  The xfail that once guarded this is
+gone.
+
+Remaining deferred item (NOT this slice): the HARD roll-to-roll carry-in — all
+branches inheriting the previous roll's ACTUAL jump end-state rather than the
+current soft ``roll_continue`` seed (spec W8b).  Because that carry-in is still
+soft, the SHARED branch-point level is the soft carried value (~0.38 in
+continuation rolls), not the nominal 0.5 — so the test below asserts the
+branches equal EACH OTHER at the branch point, never equality to 0.5.
 
 The structural signal the frames test asserts is the exact precondition the
 operational-NA gate (``model.py:4519-4522``) requires to emit the four
@@ -203,23 +211,35 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
     cohort includes the realized ``period1``, so this exercises realized↔
     forecast coupling, not merely forecast↔forecast.
 
-    Absolute storage continuity is explicitly NOT delivered by W3 (spec §B /
-    §D.6): the realized trunk ``period1`` is start-anchored while the forecast
-    copies cyclic-self-link their storage start, so absolute ``v_state``
-    carries a constant realized↔forecast offset (measured ~0.06 here) even
-    though the net-charge deltas collapse to ~1e-16.  Closing that offset —
-    forecast branches continuing from the committed roll-start state — is a
-    separate anchor-repointing slice, not part of W3.
+    Two witnesses run here:
 
-    Branches legitimately DIVERGE at non-tied steps, so the cross-branch
-    net-charge equality is restricted to the tied timesteps carried by that
-    roll's ``fd.dt_non_anticipativity``.  The test also asserts that a
-    positive number of tied net-charge cells was actually checked so the
-    witness can never be silently vacuous.
+    * **Net-charge** (diagnostic localization): the per-step ``v_state`` delta
+      is equal across the cohort ``d`` at each tied ``(n, t)``.  This stays in
+      place so a future regression reads as the fine "flows tied but states
+      offset" rather than the coarse "states not tied".
+    * **Absolute ``v_state``** (§B / §D.6, now DELIVERED): at each tied
+      ``(n, t)`` the spread of ABSOLUTE ``v_state`` across the branch cohort is
+      ≤ 1e-6 — the constant realized↔forecast offset (previously ~0.06) is
+      gone, closed by ``non_anticipativity_storage_state_first`` pinning the
+      absolute state at the first tied step and the net-charge ties
+      telescoping the rest of the contiguous jump.
+
+    The absolute assertion compares the branches to EACH OTHER (cross-branch
+    spread), NOT to the nominal 0.5 / ``roll_continue`` value: the hard
+    roll-to-roll carry-in (spec W8b) is not yet delivered, so in continuation
+    rolls the shared branch-point level is the SOFT carried value (~0.38), and
+    asserting against 0.5 would wrongly fail.
+
+    Branches legitimately DIVERGE at non-tied steps, so both equalities are
+    restricted to the tied timesteps carried by that roll's
+    ``fd.dt_non_anticipativity``.  The test also asserts that a positive number
+    of tied cells was actually checked for each witness so neither can be
+    silently vacuous.
     """
     steps = _steps(rolling_result)
     tol = 1e-6
     checked = 0
+    checked_abs = 0
     for name, s in steps.items():
         sol = s.solution
         assert sol is not None, f"roll {name!r} retained no solution"
@@ -288,7 +308,36 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
             )
             checked += 1
 
+        # ── Absolute v_state witness (§B / §D.6) ──
+        # Spread of ABSOLUTE v_state across the branch cohort at each tied
+        # (n, t).  Delivered by non_anticipativity_storage_state_first +
+        # net-charge telescoping; must collapse to ~0 (offset gone).  Compare
+        # branches to EACH OTHER, never to 0.5 (the shared level is the soft
+        # carried value under the still-deferred hard carry-in, W8b).
+        abs_spread = (vs_tied
+                      .group_by(["__n", "__t"])
+                      .agg(
+                          n_branches=pl.col("value").len(),
+                          vmax=pl.col("value").max(),
+                          vmin=pl.col("value").min(),
+                      )
+                      .filter(pl.col("n_branches") > 1))
+        for row in abs_spread.iter_rows(named=True):
+            assert row["vmax"] - row["vmin"] <= tol + 1e-6 * max(
+                1.0, abs(row["vmax"]), abs(row["vmin"])
+            ), (
+                f"roll {name!r}: absolute v_state spread "
+                f"{row['vmax'] - row['vmin']} at (n={row['__n']}, "
+                f"t={row['__t']}) exceeds tol across branches — §D.6 "
+                f"branch-point continuity broken"
+            )
+            checked_abs += 1
+
     assert checked > 0, (
         "no tied (n, t) net-charge cells with >1 branch were checked — the "
         "storage NA witness would be vacuous"
+    )
+    assert checked_abs > 0, (
+        "no tied (n, t) absolute-v_state cells with >1 branch were checked — "
+        "the §D.6 branch-point continuity witness would be vacuous"
     )

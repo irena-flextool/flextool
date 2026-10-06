@@ -477,6 +477,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Non-anticipativity (cross-branch equality).  RHS = 0; skip.
     # flextool/engine_polars/model.py:273, 306, 336, 364
     "non_anticipativity_storage_use": CstrFamily(None),
+    "non_anticipativity_storage_state_first": CstrFamily(None),
     "non_anticipativity_online_integer": CstrFamily(None),
     "non_anticipativity_online_linear": CstrFamily(None),
     "non_anticipativity_reserve": CstrFamily(None),
