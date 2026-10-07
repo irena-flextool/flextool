@@ -190,10 +190,18 @@ def test_sibling_objective_hand_calc(chain) -> None:
 
 @pytest.mark.solver
 def test_parent_forecasts_genuinely_diverge(chain) -> None:
-    """The parent is genuinely stochastic and its branches diverge: peaker
-    hits 50 (rlz), 20 (high) and 90 (low) MW — proving the realized and
-    forecast data are DISTINCT, so the sibling's 50 MW is a real
-    realized-branch projection, not an accidental shared value."""
+    """The parent's FORECAST branches genuinely diverge: peaker hits 20
+    (high) and 90 (low) MW — proving the forecast data are DISTINCT.
+
+    W4d-A note: under ``separate_dispatch`` the parent hedge's REALIZED
+    operational branch now carries OPERATIONAL weight 0 (its operations are
+    owned by the W4c realized-dispatch sibling).  A weight-0 branch is
+    DEGENERATE in the LP objective — the realized peaker is free in [0, 90]
+    and the solver lands it anywhere (empirically 0 here, not the old 50) —
+    so we no longer assert the realized 50 MW level on the parent.  The
+    realized dispatch is pinned on the SIBLING instead
+    (``test_sibling_reads_realized_branch_not_forecast``).  We assert ONLY
+    the forecast divergence {20, 90}."""
     steps, _wf = chain
     parent = _step(steps, PARENT)
     assert parent.solution is not None and parent.optimal
@@ -202,10 +210,45 @@ def test_parent_forecasts_genuinely_diverge(chain) -> None:
         round(v, 6)
         for v in flows.filter(pl.col("source") == "peaker")["value"].to_list()
     )
-    for expected in (PEAKER_MW, PEAKER_HIGH_MW, PEAKER_LOW_MW):
+    for expected in (PEAKER_HIGH_MW, PEAKER_LOW_MW):
         assert any(v == pytest.approx(expected) for v in peaker_vals), (
             f"parent peaker levels {sorted(peaker_vals)} missing {expected}"
         )
+
+
+# W4d-A hand-calc: the parent hedge objective is the FORECAST-only
+# expectation (realized operational weight 0) + the invest annuity.
+#   high forecast: 20 MW * 8760 h * 10 CUR/MWh = 1 752 000
+#   low  forecast: 90 MW * 8760 h * 10 CUR/MWh = 7 884 000
+#   expectation  : 0.5 * 1 752 000 + 0.5 * 7 884 000 = 4 818 000
+#   + invest annuity                                 =   283 500
+#   = 5 101 500
+PARENT_FORECAST_ONLY_OBJECTIVE = 5_101_500.0
+# Negative control: the OLD value when the realized branch was kept in the
+# normalisation denominator (realized self-weight 1.0 in the cohort).
+PARENT_REALIZED_IN_DENOM_OBJECTIVE = 4_851_214.2857
+
+
+@pytest.mark.solver
+def test_parent_objective_is_forecast_only_expectation(chain) -> None:
+    """W4d-A: under ``separate_dispatch`` the parent hedge's OPERATIONAL
+    branch weights are de-scenario'd — forecasts normalise among themselves
+    (realized excluded from the denominator) and the realized branch's own
+    operational weight → 0.  The parent objective is therefore the
+    FORECAST-ONLY expectation (0.5/0.5 of the 20 MW / 90 MW forecasts =
+    4 818 000) plus the invest annuity (283 500) = 5 101 500.
+
+    Negative control: 4 851 214.2857 — the OLD objective with the realized
+    branch kept in the normalisation denominator.  INVEST weight
+    (``pd_branch_weight``) is UNTOUCHED, so the annuity term is unchanged."""
+    steps, wf = chain
+    _step(steps, PARENT)  # ensure the parent step exists
+    obj = float(
+        pl.read_parquet(wf / "output_raw" / f"v_obj__{PARENT}.parquet")
+        ["objective"][0]
+    )
+    assert obj == pytest.approx(PARENT_FORECAST_ONLY_OBJECTIVE, rel=1e-9)
+    assert obj != pytest.approx(PARENT_REALIZED_IN_DENOM_OBJECTIVE, rel=1e-6)
 
 
 @pytest.mark.solver

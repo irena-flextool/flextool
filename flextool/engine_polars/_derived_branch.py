@@ -357,6 +357,34 @@ def steps_in_use_lf(workdir: Path | None,
               .unique())
 
 
+def dispatch_realization_method_read(
+    workdir: Path | None,
+    *, provider: "object | None" = None,
+) -> str:
+    """Read the per-solve ``dispatch_realization_method`` marker (W4d-A).
+
+    Returns the normalised lower-case mode (``"within_solve"`` /
+    ``"separate_dispatch"``).  An absent / empty / unrecognised marker ->
+    ``"within_solve"`` (byte-identical prior behaviour), mirroring
+    :meth:`SolveConfig.dispatch_realization_method_for`.  This is a scalar
+    config read over the standard ``solve_data`` provider channel (same
+    pattern as ``steps_in_use`` / ``period__branch`` / ``solve_branch_weight``);
+    it is NOT a quantity Param, so no autoscale registry entry is required.
+    """
+    if workdir is None:
+        return "within_solve"
+    p = Path(workdir) / "solve_data" / "dispatch_realization_method.csv"
+    df = _provider_get(provider, p)
+    if df is None or df.height == 0 or not df.columns:
+        return "within_solve"
+    col = "method" if "method" in df.columns else df.columns[0]
+    raw = df[col][0]
+    if raw is None:
+        return "within_solve"
+    value = str(raw).strip().lower()
+    return value if value in ("within_solve", "separate_dispatch") else "within_solve"
+
+
 # ---------------------------------------------------------------------------
 # pd_branch_weight / pdt_branch_weight — lazy normalisation
 # ---------------------------------------------------------------------------
@@ -502,6 +530,18 @@ def pdt_branch_weight_lf(
     w_lookup = {row["b"]: float(row["w"]) for row in bw.iter_rows(named=True)
                 if row["w"] is not None}
     pb_set = {(row["d"], row["b"]) for row in pb.iter_rows(named=True)}
+    # W4d-A — under ``separate_dispatch`` the OPERATIONAL branch weights are
+    # de-scenario'd: forecasts normalise among THEMSELVES (the realized
+    # branch is excluded from the denominator) and the realized branch's own
+    # operational weight → 0 (its operations come from the W4c realized-
+    # dispatch sibling, so zeroing it in the hedge is safe).  The marker is
+    # the PARENT solve's own flag; an absent marker → within_solve → the
+    # verbatim legacy arm below (byte-parity).  ``realized_set`` is the
+    # self-anchored realized periods, the SAME ``(d, d) ∈ pb`` predicate
+    # ``derive_solve_branch_weight`` uses.
+    separate = dispatch_realization_method_read(
+        workdir, provider=provider) == "separate_dispatch"
+    realized_set = {d for d, b in pb_set if d == b}
     # branches_for_t[t] = {b : (b, t) ∈ dt} — derived from the dt set.
     # Mirrors flextool's ``branches_for_t`` from steps_in_use rows.
     branches_for_t: dict[str, set[str]] = {}
@@ -517,6 +557,11 @@ def pdt_branch_weight_lf(
     rows: list[tuple[str, str, float]] = []
     pb_iter = list(pb.iter_rows(named=True))
     for d, t in dt_pairs:
+        if separate and d in realized_set:
+            # Realized operational weight → 0 (bypass normalisation; the
+            # realized-dispatch sibling owns these operations).
+            rows.append((d, t, 0.0))
+            continue
         branches_with_t = branches_for_t.get(t, set())
         denom = 0.0
         for row in pb_iter:
@@ -524,6 +569,9 @@ def pdt_branch_weight_lf(
             if b not in branches_with_t:
                 continue
             if (d2, d) not in pb_set:
+                continue
+            if separate and b in realized_set:
+                # Exclude the realized self-branch from the forecast denom.
                 continue
             denom += w(b)
         if denom == 0.0:

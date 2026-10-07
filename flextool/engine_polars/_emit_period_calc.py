@@ -468,6 +468,23 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
                                    provider=provider)
 
+    # W4d-A — the PARENT solve's resolved dispatch_realization_method marker
+    # (absent → within_solve → byte-parity).  Under ``separate_dispatch`` the
+    # OPERATIONAL pdt weights are de-scenario'd (forecasts renormalise among
+    # themselves; the realized branch's own operational weight → 0).  Kept in
+    # lock-step with ``_derived_branch.pdt_branch_weight_lf`` (the authoritative
+    # LP weight) so this emitted CSV stays byte-parity with the LP Param.  The
+    # pd loop above is UNTOUCHED (invest weight, owned by W7).
+    method_df = _read_csv(solve_data_dir / "dispatch_realization_method.csv",
+                          ["method"], provider=provider)
+    separate_dispatch = False
+    if method_df.height > 0:
+        raw = method_df["method"][0]
+        if raw is not None:
+            v = str(raw).strip().lower()
+            separate_dispatch = v == "separate_dispatch"
+    realized_set = {d for d, b in pb_rows if d == b}
+
     pd_rows: list[tuple[str, float]] = []
     for d in period_in_use:
         ts = first_time_for_d.get(d)
@@ -489,12 +506,19 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
 
     pdt_rows: list[tuple[str, str, float]] = []
     for d, t in dt_pairs:
+        if separate_dispatch and d in realized_set:
+            # Realized operational weight → 0 (W4d-A; sibling owns these ops).
+            pdt_rows.append((d, t, 0.0))
+            continue
         branches_with_t = branches_for_t.get(t, set())
         denom = 0.0
         for d2, b in pb_rows:
             if b not in branches_with_t:
                 continue
             if (d2, d) not in pb_set:
+                continue
+            if separate_dispatch and b in realized_set:
+                # Exclude the realized self-branch from the forecast denom.
                 continue
             denom += w(b)
         if denom == 0.0:

@@ -593,6 +593,32 @@ def emit_branch__period_relationship(
                derive_branch__period_relationship(period__branch))
 
 
+def emit_dispatch_realization_method(
+    method: str,
+    filename: str,
+    *, provider,
+) -> None:
+    """Emit the per-solve ``dispatch_realization_method`` marker (W4d-A).
+
+    A one-row ``(method,)`` frame recording the PARENT solve's resolved
+    ``solve.dispatch_realization_method`` (``within_solve`` /
+    ``separate_dispatch``).  Co-located with the other per-solve weight
+    inputs (``solve_branch_weight.csv`` / ``period__branch.csv``) so the
+    operational ``pdt_branch_weight`` producers can read it through the
+    standard ``solve_data`` provider channel.
+
+    The operational branch-weight producers consult this marker to decide
+    whether the realized operational weight is de-scenario'd
+    (``separate_dispatch``: forecasts renormalise among themselves and the
+    realized branch's own operational weight → 0, since its operations come
+    from the W4c realized-dispatch sibling) or left as the legacy
+    sibling-normalised weight (``within_solve``).  An ABSENT marker is read
+    as ``within_solve`` → byte-identical prior behaviour.
+    """
+    _emit_path(provider, filename,
+               _to_utf8_frame(("method",), [(method,)]))
+
+
 def derive_solve_branch_weight(
     complete_solve: str,
     active_time_list: dict[str, list[tuple[str, ...]]],
