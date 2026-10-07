@@ -473,6 +473,8 @@ def test_spawn_helper_fix_storage_guard_raises():
         sc.dispatch_realization_method = {PARENT: "separate_dispatch"}
         sc.realized_periods = {PARENT: realized}
         sc.fix_storage_periods = {PARENT: fix_storage}
+        # W4c — spawn records the sibling -> parent map on this dict.
+        sc.realized_dispatch_parent = {}
         return sc
 
     # Multi-period fix_storage_periods → reject.

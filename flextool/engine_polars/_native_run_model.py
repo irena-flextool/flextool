@@ -166,6 +166,42 @@ def _downgrade_rp_methods_for_non_rp_solve(
         )
 
 
+def project_realized_branch_time_branch_rows(
+    parent_time_branch_list: list[tuple[str, str]],
+    parent_period_branch_list: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """W4c — select the parent's REALIZED-branch ``solve_branch__time_branch``
+    rows for an auto-spawned realized-dispatch sibling.
+
+    A realized-dispatch sibling is deterministic (``stochastic_branches``
+    dropped), so the stochastic pass leaves its
+    ``solve_branch__time_branch`` scaffolding EMPTY and the per-solve folds
+    that collapse a stochastic 3d_map drop it (wind -> 0).  This re-selects
+    the parent's already-materialized realized-branch rows so the folds
+    read the realized branch unchanged.
+
+    *parent_time_branch_list* is the parent's
+    ``solve_branch__time_branch_lists`` entry — realized rows are
+    ``(period, realized_branch)`` (first element == the REAL period name),
+    forecast rows are ``(<period>_<branch>, branch)``.
+    *parent_period_branch_list* is the parent's ``period__branch_lists``
+    entry — the realized branch owns a ``(period, period)`` self-row per
+    period.  A row is kept iff its period has a ``(p, p)`` self-row in the
+    period-branch list (the SAME realized-row predicate
+    ``derive_solve_branch_weight`` uses), which selects the realized rows
+    and excludes the synthetic forecast rows.  A MULTI-period realized
+    window therefore yields one realized row per realized period (the
+    continuation loop appends one ``(period, realized_branch)`` per
+    continued period).
+    """
+    period_branch_set = set(parent_period_branch_list)
+    return [
+        (period, branch)
+        for (period, branch) in parent_time_branch_list
+        if (period, period) in period_branch_set
+    ]
+
+
 def native_run_model(state, solver) -> int:
     """Drive the per-solve cascade natively.
 
@@ -350,6 +386,55 @@ def native_run_model(state, solver) -> int:
                 already_realized_timesteps[period].add(entry.timestep)
             if not realized_time_lists[solve][period]:
                 del realized_time_lists[solve][period]
+
+    # ------------------------------------------------------------------
+    # 3.6 W4c — project each stochastic parameter onto the REALIZED branch
+    # for auto-spawned realized-dispatch siblings.
+    #
+    # A W4b realized-dispatch sibling (``<solve>__realized_dispatch``) is
+    # deterministic and drops ``stochastic_branches``, so the stochastic
+    # pass above leaves its ``solve_branch__time_branch_lists`` EMPTY.  The
+    # per-solve folds that collapse a stochastic 3d_map
+    # ``(branch, time_start, time) -> (d, t)`` — ``_derived_profile``'s
+    # ``_profile_stochastic_lf`` and ``_pdt_lookup.PdtLookup.get`` — then
+    # find no branch rows, drop the 3d_map, and the zero-fallback fills 0
+    # (wind -> 0 -> garbage).  Re-populate the sibling's branch rows from
+    # the parent's ALREADY-materialized realized-branch rows: the
+    # ``(p, p) in period__branch_lists[parent]`` predicate selects the
+    # realized self-rows (the SAME predicate ``derive_solve_branch_weight``
+    # uses at ``_emit_solve_writers.py``) and excludes synthetic forecast
+    # rows (``<p>_high`` ...).  A MULTI-period realized window carries one
+    # realized-branch row per realized period (the continuation loop in
+    # ``_stochastic.py`` appends ``(period, realized_branch)`` for each), so
+    # the filter keeps each — the folds then select the realized branch
+    # unchanged, in every realized period.
+    #
+    # This is purely a scaffolding injection: no new var/cstr/param, no
+    # ``_param_shapes`` routing change, and the sibling stays
+    # NON-genuinely-stochastic (``is_genuinely_stochastic`` keys on
+    # ``period_branch_full`` / ``period_in_use_set``, which are unchanged
+    # here, NOT ``solve_branch__time_branch``) -> zero branch LP variables.
+    # Gated on ``realized_dispatch_parent`` so it is a strict no-op when no
+    # sibling is spawned (byte-parity on deterministic 2d-profile fixtures);
+    # parent-absent / parent-empty cases are handled gracefully.
+    # ------------------------------------------------------------------
+    realized_dispatch_parent = getattr(
+        state.solve, "realized_dispatch_parent", {}
+    ) or {}
+    for sibling, parent in realized_dispatch_parent.items():
+        if sibling not in solve_branch__time_branch_lists:
+            continue
+        if (
+            parent not in solve_branch__time_branch_lists
+            or parent not in period__branch_lists
+        ):
+            continue
+        solve_branch__time_branch_lists[sibling] = (
+            project_realized_branch_time_branch_rows(
+                solve_branch__time_branch_lists[parent],
+                period__branch_lists[parent],
+            )
+        )
 
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:

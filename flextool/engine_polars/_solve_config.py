@@ -353,6 +353,20 @@ class SolveConfig:
         # byte-parity-safe (both empty-ish states resolve to no ties).
         self.non_anticipativity_invest_periods: defaultdict = defaultdict(list)
 
+        # W4c — maps an auto-spawned realized-dispatch sibling name to its
+        # parent solve name.  Populated by
+        # :meth:`spawn_realized_dispatch_sibling`; consumed by the W4c
+        # post-pass in ``_native_run_model`` to project each stochastic
+        # parameter onto the parent's REALIZED branch.  The sibling is
+        # deterministic (``stochastic_branches`` dropped), so
+        # ``create_stochastic_periods`` leaves its
+        # ``solve_branch__time_branch`` scaffolding empty; the post-pass
+        # reuses THIS explicit map (never name-parsing the suffix) to
+        # re-populate it from the parent's realized-branch rows.  Empty
+        # when no sibling is spawned (the post-pass then no-ops, preserving
+        # byte-parity on deterministic 2d-profile fixtures).
+        self.realized_dispatch_parent: dict[str, str] = {}
+
         # Mutable tracking — populated during the recursive solve loop.
         self.real_solves: list[str] = []
         self.first_of_complete_solve: list[str] = []
@@ -993,6 +1007,12 @@ class SolveConfig:
         self.realized_periods[sibling] = copy.deepcopy(
             self.realized_periods.get(parent, [])
         )
+        # W4c — record the explicit sibling -> parent mapping so the
+        # native-run post-pass can project each stochastic parameter onto
+        # the parent's realized branch (see ``_native_run_model`` step 3.6).
+        # Using this map (not a ``__realized_dispatch`` name-parse) keeps
+        # the sibling identification robust.
+        self.realized_dispatch_parent[sibling] = parent
 
     # ------------------------------------------------------------------
     # v60/v62 per-solve decomposition accessors
