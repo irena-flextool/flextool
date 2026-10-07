@@ -69,15 +69,26 @@ def test_2day_stochastic_dispatch_full_storage_parity(scenario_workdir):
     assert_obj_within(sol.obj, work,
                        parquet_glob="v_obj__2day_dispatch.parquet")
 
-    # v_state must be equal across branches at every dt_non_anticipativity
-    # timestep (anchor period == realised period1 → siblings).
-    v_state_df = sol.value("v_state")
-    spread = (v_state_df
+    # v_state must be equal across the FORECAST branches at every
+    # dt_non_anticipativity timestep (forecast-to-forecast).  Under the
+    # corrected ground the realised trunk ``period1`` is NO LONGER an NA hub
+    # — it floats and may pick a different equal-cost storage trajectory —
+    # so it is EXCLUDED from the cross-branch spread (the golden OBJECTIVE,
+    # asserted above, is unchanged: the tie was non-binding in single-solve).
+    v_state_df = sol.value("v_state").with_columns(
+        pl.col("d").cast(pl.Utf8).alias("__d"))
+    forecasts = v_state_df.filter(pl.col("__d") != "period1")
+    assert forecasts.height > 0, "no forecast-period v_state rows"
+    spread = (forecasts
         .group_by(["n", "t"])
         .agg([pl.col("value").min().alias("mn"),
-              pl.col("value").max().alias("mx")])
+              pl.col("value").max().alias("mx"),
+              pl.len().alias("n_fc")])
+        .filter(pl.col("n_fc") > 1)
         .with_columns(spread=pl.col("mx") - pl.col("mn")))
+    assert spread.height > 0, (
+        "no (n, t) cohort with >1 forecast — spread witness vacuous")
     max_spread = float(spread["spread"].max())
     assert max_spread < 1e-9, (
-        f"v_state varies across branches by {max_spread} — non-anticipativity "
-        f"failed to enforce equal storage state.")
+        f"v_state varies across forecasts by {max_spread} — "
+        f"non-anticipativity failed to enforce equal storage state.")

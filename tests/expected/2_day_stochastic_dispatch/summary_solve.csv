@@ -1,11 +1,11 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-05-15 16:38:18.485410+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-10-07 16:43:54.956138+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
-2day_dispatch,67.3517305373
-"Total cost (calculated) full horizon (M CUR)",269.406922149,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",269.406922149
-"Operational costs for realized periods (M CUR)",269.406922149
+2day_dispatch,67.0203687913
+"Total cost (calculated) full horizon (M CUR)",268.081475165,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",268.081475165
+"Operational costs for realized periods (M CUR)",268.081475165
 "Investment costs for realized periods (M CUR)",0
 "Retirement costs / salvage revenue for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",0
@@ -23,6 +23,6 @@ Emissions
 
 "Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
 Removed, downriver, period1, 14400
-Removed, downriver, period1_lower, 14400
-Removed, downriver, period1_mid, 14400
-Removed, downriver, period1_upper, 14400
+Removed, downriver, period1_lower, 14700
+Removed, downriver, period1_mid, 14700
+Removed, downriver, period1_upper, 14700

@@ -203,13 +203,16 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
     NET CHARGE across siblings — the consecutive ``v_state`` delta
     ``v_state[n, d, t] - v_state[n, d, t_prev]`` (``model.py:219-234``) — NOT
     absolute ``v_state``.  This test therefore witnesses the net charge: for
-    each branch-period ``d`` in the cohort (``v_state``'s ``d`` axis carries
+    each FORECAST-period ``d`` in the cohort (``v_state``'s ``d`` axis carries
     the realized trunk ``period1`` plus the three forecast copies
     ``period1_{lower,mid,upper}``) and node ``n``, it sorts by tied timestep
     ``t``, takes the consecutive ``v_state`` delta, and asserts that delta is
-    equal across the cohort ``d`` at each matching ``(n, t)`` tied step.  The
-    cohort includes the realized ``period1``, so this exercises realized↔
-    forecast coupling, not merely forecast↔forecast.
+    equal across the forecast copies at each matching ``(n, t)`` tied step.
+    Under the corrected (forecast-to-forecast) re-ground the trunk
+    ``period1`` is NO LONGER an NA hub — it floats freely — so it is EXCLUDED
+    from the cohort; the coupling witnessed is forecast↔forecast (the
+    forecasts tied to the reference forecast ``period1_lower``), never
+    realized↔forecast.
 
     Two witnesses run here:
 
@@ -240,9 +243,46 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
     tol = 1e-6
     checked = 0
     checked_abs = 0
+    checked_struct = 0
+    # Families that can fire for this storage-only fixture (no online /
+    # reserve authored).  constraint_dual raises for a name that never
+    # emitted a row, so each lookup is guarded.
+    na_families = (
+        "non_anticipativity_storage_use",
+        "non_anticipativity_storage_state_first",
+    )
     for name, s in steps.items():
         sol = s.solution
         assert sol is not None, f"roll {name!r} retained no solution"
+
+        # ── Structural: the trunk period1 is NOT an NA hub or sibling ──
+        # Under the forecast-to-forecast re-ground every emitted NA row keys
+        # ``d`` on a reference FORECAST and ``b`` on another forecast; the
+        # realized trunk ``period1`` must appear in NO axis of any tied row.
+        # ``constraint_dual`` returns the over tuple packed into a single
+        # comma-joined ``key`` string (e.g.
+        # ``"hydro_reservoir,period1_lower,period1_mid,t0001"`` — n,d,b,t),
+        # so inspect the tokens of each key.
+        for fam in na_families:
+            try:
+                over = sol.constraint_dual(fam)
+            except Exception:
+                continue
+            if over.height == 0 or "key" not in over.columns:
+                continue
+            saw_forecast_period = False
+            for key in over["key"].to_list():
+                toks = [tok.strip() for tok in str(key).split(",")]
+                # The bare trunk token ``period1`` must never appear; only
+                # the forecast copies ``period1_<branch>`` are tied.
+                assert "period1" not in toks, (
+                    f"roll {name!r}: trunk period1 in {fam} key {key!r}")
+                if any(tok.startswith("period1_") for tok in toks):
+                    saw_forecast_period = True
+            assert saw_forecast_period, (
+                f"roll {name!r}: {fam} has no forecast-period token")
+            checked_struct += 1
+
         if "v_state" not in sol._vars:
             continue
 
@@ -270,7 +310,14 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
                         pl.col(dcol).cast(pl.Utf8).alias("__d"),
                         pl.col(tcol).cast(pl.Utf8).alias("__t"),
                    )
-                     .join(tied_t, on="__t", how="inner"))
+                     .join(tied_t, on="__t", how="inner")
+                     # Forecast-to-forecast: under the re-ground the trunk
+                     # ``period1`` is no longer an NA hub (it floats), so it
+                     # is excluded from both cross-forecast equality cohorts.
+                     # The retained ``d`` are the forecast copies
+                     # ``period1_{lower,mid,upper}`` tied to the reference
+                     # forecast ``period1_lower``.
+                     .filter(pl.col("__d") != "period1"))
         if vs_tied.height == 0:
             continue
 
@@ -340,4 +387,9 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
     assert checked_abs > 0, (
         "no tied (n, t) absolute-v_state cells with >1 branch were checked — "
         "the §D.6 branch-point continuity witness would be vacuous"
+    )
+    assert checked_struct > 0, (
+        "no non_anticipativity_* family emitted rows to witness the "
+        "forecast-to-forecast hub (trunk period1 absent) — the structural "
+        "witness would be vacuous"
     )

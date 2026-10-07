@@ -182,13 +182,26 @@ def _add_non_anticipativity_constraints(
     m, d, db_pairs: pl.DataFrame, *,
     v_state, v_online_integer, v_online_linear, v_reserve,
     v_flow, has_minload_eff,
+    dtna_override: pl.DataFrame | None = None,
 ) -> None:
     """Emit the four non-anticipativity constraint families (mod:4173-4233).
 
     All four constraints pin the per-branch dispatch variable at the
-    anchor period ``d`` equal to the same variable at sibling branch
-    ``b`` for every (d, t) ∈ ``dt_non_anticipativity``.  The cohort
-    ``db_pairs`` is the (d, b) frame with d != b and b ∈ period_in_use.
+    reference-forecast anchor ``d`` equal to the same variable at sibling
+    FORECAST ``b`` for every (d, t) ∈ the re-grounded tie set.  The cohort
+    ``db_pairs`` is a FORECAST-TO-FORECAST star: ``d`` is a deterministic
+    reference forecast and ``b`` ranges over the OTHER forecasts of the same
+    anchor group.  The tie therefore couples the forecast branches to EACH
+    OTHER (via the reference forecast), NEVER to the realised period / trunk
+    — that is what makes the committed decision non-anticipative, and it
+    holds with no realised branch at all (``n_real`` may be 0).
+
+    The caller (the ``db_pairs`` build block) re-grounds both ``db_pairs``
+    (→ the forecast star) and ``dt_non_anticipativity`` (anchor ``d`` re-keyed
+    from the trunk to the reference forecast ``d_ref`` per anchor group,
+    keeping the same ``t``) and hands the re-keyed tie set in via
+    ``dtna_override``.  Every family here joins ``db_pairs`` (cross) then the
+    tie set on ``"d"``, so both re-keys are required for a non-empty join.
 
     Implementation strategy (d-packed):
       LHS = var[..., d, t]
@@ -212,13 +225,15 @@ def _add_non_anticipativity_constraints(
     ~150 LOC of LHS reconstruction into 4 LOC and matches the .mod's
     LP-equivalent feasible region (verified via parity).
     """
-    dtna = d.dt_non_anticipativity
+    dtna = dtna_override if dtna_override is not None else d.dt_non_anticipativity
     if dtna is None or dtna.height == 0:
         return
 
     # 1. non_anticipativity_storage_use — pin the per-(n, t) NET CHARGE
-    #    LHS across siblings (mod:4173-4217).  Domain: nodes in a
-    #    stochastic-group; (d, b) ∈ db_pairs; (d, t) ∈ dt_non_anticipativity.
+    #    LHS across FORECASTS (mod:4173-4217).  Domain: nodes in a
+    #    stochastic-group; (d, b) ∈ db_pairs (a forecast-to-forecast star
+    #    keyed on the reference forecast d_ref — NOT the realised trunk);
+    #    (d, t) ∈ the re-grounded tie set.
     #
     # LHS:
     #     + sink-side flow contributions (sink == n)
@@ -355,27 +370,31 @@ def _add_non_anticipativity_constraints(
 
     # 1b. non_anticipativity_storage_state_first — delivers §D.6
     #     branch-point continuity by pinning ABSOLUTE ``v_state`` at the
-    #     FIRST tied step of each anchor period ``d``:
+    #     FIRST tied step of each anchor ``d`` (the reference forecast
+    #     d_ref, NOT the realised trunk):
     #
-    #         v_state[n, d, t_first] − v_state[n, b, t_first] == 0
+    #         v_state[n, d_ref, t_first] − v_state[n, b, t_first] == 0
     #
     #     The storage net-charge family above ties only the per-(n, t) net
     #     charge (the consecutive ``v_state`` delta), so across a contiguous
-    #     tied jump it fixes every branch's state SHAPE but leaves a free
-    #     constant offset between the realized trunk and each forecast copy.
-    #     In single-solve the trunk is hard start-bound and every branch is
-    #     reference-value end-bound, so the offset telescopes to zero on its
-    #     own; in rolling the untied post-reveal tail breaks that telescoping
-    #     and the forecast copies float by a constant (~0.06 in
+    #     tied jump it fixes every forecast's state SHAPE but leaves a free
+    #     constant offset between the reference forecast and each other
+    #     forecast copy.  In single-solve each forecast is hard start-bound
+    #     and reference-value end-bound, so the offset telescopes to zero on
+    #     its own; in rolling the untied post-reveal tail breaks that
+    #     telescoping and the forecast copies float by a constant (~0.06 in
     #     ``1_week_rolling_wind``).  Pinning absolute ``v_state`` at the first
     #     tied step restores the anchor: combined with the per-step net-charge
     #     ties it closes the whole contiguous jump absolutely.
     #
-    #     This tie is OPTIMUM-CONDITIONAL, not a hard structural anchor: it
-    #     holds the branches equal to EACH OTHER at the branch point, but
-    #     interior drift away from the shared level stays feasible whenever
-    #     balance slack (``vq_state_up`` / ``vq_state_down``) absorbs it or
-    #     the inflow differs across branches at the tied steps — the
+    #     This tie is LOAD-BEARING and is KEPT (it re-points for free onto the
+    #     forecast star via the shared re-grounded db_pairs / tie set — it is
+    #     a forecast-to-forecast coupling, never a tie to the realised
+    #     period/trunk).  It is OPTIMUM-CONDITIONAL, not a hard structural
+    #     anchor: it holds the forecasts equal to EACH OTHER at the branch
+    #     point, but interior drift away from the shared level stays feasible
+    #     whenever balance slack (``vq_state_up`` / ``vq_state_down``) absorbs
+    #     it or the inflow differs across forecasts at the tied steps — the
     #     net-charge family controls neither.  For the deterministic-inflow,
     #     zero-self-discharge reservoirs this fixture exercises, the drift is
     #     non-optimal and the tie binds.  ``v_online`` / ``v_reserve`` need no
@@ -4617,22 +4636,28 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     _build_prof("before:non_anticipativity")
     # ─── Non-anticipativity constraints (A6) ─────────────────────────────
     # mod:4173-4233.  Four constraint families pin per-branch dispatch
-    # variables to the realised period at every (d, t) ∈ dt_non_anticipativity:
+    # variables FORECAST-TO-FORECAST at every (d, t) ∈ the re-grounded tie
+    # set — the committed decision is the same across the forecast branches,
+    # which IS its non-anticipative realisation.  The tie is NEVER anchored
+    # to the realised period / trunk (there may be no realised branch at all;
+    # ``n_real`` can be 0):
     #
     #   non_anticipativity_storage_use   (n, d, b, t) — net storage charge
     #     LHS at (d, t) equals LHS at (b, t).  Active only when at least
     #     one (g, n) ∈ group_node has g ∈ groupStochastic.
     #   non_anticipativity_online_integer (p, d, b, t) — v_online_integer
-    #     equal across siblings.
+    #     equal across forecasts.
     #   non_anticipativity_online_linear  (p, d, b, t) — v_online_linear
-    #     equal across siblings.
+    #     equal across forecasts.
     #   non_anticipativity_reserve        (p, r, ud, n, d, b, t) — v_reserve
-    #     equal across siblings.
+    #     equal across forecasts.
     #
-    # Domain: (d, b) ∈ period__branch with d != b and b ∈ period_in_use.
-    # The b == d self-loop is vacuous and the metadata-only branches not
-    # in period_in_use (e.g. ``period1_realized``) must be excluded so
-    # the constraint references a real LP variable.
+    # Raw cohort: (d, b) ∈ period__branch with d != b and b ∈ period_in_use.
+    # The b == d self-loop is vacuous and the metadata-only branches not in
+    # period_in_use (e.g. ``period1_realized``) are excluded so the
+    # constraint references a real LP variable.  ``d`` here is the trunk
+    # (the real period name); the re-ground below turns this into a
+    # forecast-to-forecast star keyed on a reference forecast.
     if (d.dt_non_anticipativity is not None
             and d.dt_non_anticipativity.height > 0
             and d.period_branch_full is not None
@@ -4663,15 +4688,79 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             cast_dim(pl.col("b"), None, "b"),
         )
         if db_pairs.height > 0:
-            _add_non_anticipativity_constraints(
-                m, d, db_pairs,
-                v_state          = locals().get("v_state")          if has_storage    else None,
-                v_online_integer = locals().get("v_online_int")     if has_online_int else None,
-                v_online_linear  = locals().get("v_online_lin")     if has_online_lin else None,
-                v_reserve        = reserve_vars.get("v_reserve")    if reserve_vars   else None,
-                v_flow           = locals().get("v_flow")           if has_proc       else None,
-                has_minload_eff  = has_minload_eff,
+            # ── Forecast-to-forecast re-ground (per anchor group) ──
+            # The raw cohort anchors every forecast ``b`` to the trunk ``d``
+            # (the realised/base period).  Re-ground it to a FORECAST star so
+            # the tie couples the forecast branches to EACH OTHER, never to
+            # the trunk (corrected stochastic model: the fan is forecasts
+            # only; realisation of a committed variable IS the cross-forecast
+            # tie; works at n_real=0).
+            #
+            # PER ANCHOR GROUP (NOT a single global reference): group the raw
+            # pairs by trunk ``d``; within each group take the forecasts
+            # (``b`` tokens), pick the lexicographically smallest as the
+            # reference forecast ``d_ref`` (LP-deterministic — a lexical sort
+            # of stable Utf8 tokens, same invariant as add_var/add_cstr domain
+            # sorting), and build the star {(d_ref, b) : b ∈ forecasts, b ≠
+            # d_ref}.  A group with <2 forecasts is skipped (the tie is
+            # vacuous with a single forecast).  A SINGLE GLOBAL d_ref would be
+            # WRONG: it would cross-couple distinct anchor periods at
+            # mismatched timesteps.
+            #
+            # BOTH frames are re-keyed: ``db_pairs`` → the forecast star, and
+            # ``dt_non_anticipativity`` → anchor ``d`` mapped from the trunk
+            # to that group's ``d_ref`` (same ``t``).  The families inner-join
+            # the tie set on ``"d"``; re-keying db_pairs alone would leave the
+            # tie set's ``d`` on the trunk and emit ZERO constraints.
+            #
+            # Realised exclusion: realisation is currently the self-row trunk,
+            # already dropped from ``b`` by ``filter(d != b)`` above — so no
+            # extra filter is needed here.  Should a future realised-
+            # designated non-self in-use branch appear, drop it from the
+            # forecast set at this point (by the realised marker R1 settles).
+            dtna_raw = d.dt_non_anticipativity
+            _raw_db = db_pairs.with_columns(
+                pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8),
             )
+            _dtna_u = dtna_raw.with_columns(pl.col("d").cast(pl.Utf8))
+            _stars: list[pl.DataFrame] = []
+            _dtnas: list[pl.DataFrame] = []
+            for d_trunk in sorted(
+                _raw_db.select("d").unique().to_series().to_list()
+            ):
+                forecasts = sorted(
+                    _raw_db.filter(pl.col("d") == d_trunk)
+                           .select("b").unique().to_series().to_list()
+                )
+                if len(forecasts) < 2:
+                    continue
+                d_ref = forecasts[0]
+                _stars.append(pl.DataFrame({
+                    "d": [d_ref] * (len(forecasts) - 1),
+                    "b": [b for b in forecasts if b != d_ref],
+                }))
+                _dtnas.append(
+                    _dtna_u.filter(pl.col("d") == d_trunk)
+                           .with_columns(pl.lit(d_ref).alias("d"))
+                )
+            if _stars:
+                db_pairs_reground = pl.concat(_stars).with_columns(
+                    cast_dim(pl.col("d"), None, "d"),
+                    cast_dim(pl.col("b"), None, "b"),
+                )
+                dtna_reground = pl.concat(_dtnas).with_columns(
+                    cast_dim(pl.col("d"), None, "d"),
+                )
+                _add_non_anticipativity_constraints(
+                    m, d, db_pairs_reground,
+                    v_state          = locals().get("v_state")          if has_storage    else None,
+                    v_online_integer = locals().get("v_online_int")     if has_online_int else None,
+                    v_online_linear  = locals().get("v_online_lin")     if has_online_lin else None,
+                    v_reserve        = reserve_vars.get("v_reserve")    if reserve_vars   else None,
+                    v_flow           = locals().get("v_flow")           if has_proc       else None,
+                    has_minload_eff  = has_minload_eff,
+                    dtna_override    = dtna_reground,
+                )
 
     # ─── Investment non-anticipativity (v72 — the standard two-stage
     # stochastic-investment mode) ────────────────────────────────────────

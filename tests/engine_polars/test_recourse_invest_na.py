@@ -122,37 +122,62 @@ def test_na_node_invest_coefficient_branch_weighted(_built):
 
 
 @pytest.mark.solver
-def test_na_branch_state_equals_realized(_built):
-    """§15.6 witness 2: at the NA-tied timesteps the branch-leaf
-    ``v_state`` equals the realized value (coupling active in the
-    solution)."""
-    data, _pb, sol = _built
+def test_na_forecasts_v_state_equal(_built):
+    """§15.6 witness 2 (re-grounded, forecast-to-forecast): at the NA-tied
+    timesteps the FORECAST-leaf ``v_state`` values are equal to EACH OTHER.
+
+    Corrected model: non-anticipativity ties the forecasts together via a
+    deterministic reference forecast (``period1_lower`` here), NEVER to the
+    realized trunk ``period1``.  So the coupling asserted is across the
+    forecast copies only; the untied trunk is excluded (it floats).  The
+    tied forecast set is read off the emitted ``non_anticipativity_storage_use``
+    cohort, so the assertion is pinned to exactly what fired.
+    """
+    import polars as pl
+
+    data, pb, sol = _built
     if "v_state" not in sol._vars:
         pytest.skip("fixture has no v_state variable")
-    vs = sol.value("v_state")
-    # Group v_state by (node, time) across branch periods; every period
-    # sharing a (node, time) NA tie must carry the same value.
+
+    recs = pb.cstrs_named("non_anticipativity_storage_use")
+    assert recs, "non_anticipativity_storage_use did not fire"
+    over = pl.concat([r.over for r in recs]).with_columns(
+        pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
+    d_ref = set(over["d"].unique().to_list())
+    b_vals = set(over["b"].unique().to_list())
+    # Forecast-to-forecast: the reference forecast is the lexicographically
+    # smallest; the trunk ``period1`` is tied to nothing.
+    assert d_ref == {"period1_lower"}, d_ref
+    assert b_vals and "period1" not in b_vals, b_vals
+    assert "period1" not in d_ref
+    tied_periods = d_ref | b_vals
+    assert all(p.startswith("period1_") for p in tied_periods), tied_periods
+
+    # Group v_state by (node, time) RESTRICTED to the tied forecast periods;
+    # every forecast sharing a (node, time) tie must carry the same value.
     from collections import defaultdict
 
     tol = 1e-6
-    # dt_non_anticipativity carries the (d, t) tie set; the storage NA
-    # equates the net-charge, so branch v_state at those (n, t) equals the
-    # realized value.  We assert the weaker, robust invariant: for each
-    # (node, time), the spread across the periods present is within tol.
-    by_nt: dict[tuple[str, str], list[float]] = defaultdict(list)
+    vs = sol.value("v_state")
     cols = vs.columns
     ncol = "n" if "n" in cols else ("node" if "node" in cols else cols[0])
     tcol = "t" if "t" in cols else ("time" if "time" in cols else None)
-    if tcol is None:
-        pytest.skip("v_state frame has no time column")
+    dcol = "d" if "d" in cols else ("period" if "period" in cols else None)
+    if tcol is None or dcol is None:
+        pytest.skip("v_state frame has no time/period column")
+    by_nt: dict[tuple[str, str], list[float]] = defaultdict(list)
     for r in vs.iter_rows(named=True):
+        if str(r[dcol]) not in tied_periods:
+            continue
         by_nt[(str(r[ncol]), str(r[tcol]))].append(float(r["value"]))
     coupled = 0
     for (_n, _t), vals in by_nt.items():
         if len(vals) > 1:
             assert max(vals) - min(vals) <= tol + 1e-6 * max(1.0, max(abs(v) for v in vals))
             coupled += 1
-    assert coupled > 0, "no shared (node, time) v_state rows to witness coupling"
+    assert coupled > 0, (
+        "no shared (node, time) v_state rows across forecasts to witness "
+        "coupling")
 
 
 @pytest.mark.solver

@@ -215,25 +215,48 @@ def test_pinned_ops_set_csv_is_legacy_horizon(pinned_ops_wf) -> None:
 @pytest.mark.solver
 def test_pinned_ops_storage_na_fires(pinned_ops_resolved) -> None:
     """§7: unset window -> the storage NA family is present and ranges over
-    the whole horizon (12 rows: 6 (d,t) × the up/low sibling pairs)."""
+    the whole horizon.
+
+    Under the forecast-to-forecast re-ground the cohort is a per-group star
+    keyed on the reference forecast (the lexicographically smallest of the
+    two forecasts ``up`` / ``low`` -> ``p2035_low`` / ``p2040_low``), so each
+    group contributes ONE sibling pair (``low`` -> ``up``) over its 3 tied
+    steps: 6 rows total (3 (d,t) × 2 period groups × 1 sibling), down from
+    the pre-re-ground 12 (which anchored both forecasts to the trunk)."""
+    import polars as pl
+
     _data, _sol, pb = pinned_ops_resolved
     names = pb.cstr_names()
     assert "non_anticipativity_storage_use" in names
     over = pb.cstrs_named("non_anticipativity_storage_use")[0].over
-    assert over.height == 12
+    assert over.height == 6
+    # The hubs are the reference forecasts; the trunk base periods are tied
+    # to nothing.
+    ov = over.with_columns(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
+    assert set(ov["d"].unique().to_list()) == {"p2035_low", "p2040_low"}
+    assert set(ov["b"].unique().to_list()) == {"p2035_up", "p2040_up"}
+    assert not ({"p2035", "p2040"} & set(ov["d"].unique().to_list()))
+    assert not ({"p2035", "p2040"} & set(ov["b"].unique().to_list()))
 
 
 @pytest.mark.solver
 def test_pinned_ops_v_state_equal_across_branches(pinned_ops_resolved) -> None:
-    """§7 (byte-parity guard): with the legacy window the storage NA family
-    ties the branches' net-charge equal, so v_state[resv] is IDENTICAL
-    across mid / up / low on every constrained (d,t)."""
+    """§7 (re-grounded): with the legacy window the storage NA family ties
+    the FORECASTS' net-charge equal, so v_state[resv] is IDENTICAL across the
+    forecast copies ``up`` / ``low`` on every constrained (d,t).
+
+    Forecast-to-forecast: the realized trunk ``mid`` (the bare-period key) is
+    NOT tied and is excluded; only the two forecast copies (the suffixed
+    keys) are asserted equal."""
     _data, sol, _pb = pinned_ops_resolved
     for prefix in ("p2035", "p2040"):
         traj = _v_state_by_branch(sol, prefix)
         assert len(traj) == 3, traj
-        vals = list(traj.values())
-        assert vals[0] == vals[1] == vals[2], (prefix, traj)
+        # Separate the untied trunk (bare prefix key) from the two tied
+        # forecast copies (suffixed keys).
+        forecast_vals = [v for d, v in traj.items() if d != prefix]
+        assert len(forecast_vals) == 2, traj
+        assert forecast_vals[0] == forecast_vals[1], (prefix, traj)
 
 
 @pytest.mark.solver

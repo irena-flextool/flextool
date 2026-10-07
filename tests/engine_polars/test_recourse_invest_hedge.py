@@ -122,39 +122,67 @@ def test_midhorizon_fan_period_branch_and_active_time() -> None:
 
 
 def test_validation_midperiod_start_raises() -> None:
-    """T-V (§3.3 check 1): a branch start_step that is not the first step
-    of its period is rejected (invest is period-granular)."""
+    """T-V (§3.3 check 1): a triggering cohort whose start_step is not the
+    first step of its period is rejected (invest is period-granular, so a
+    reveal must sit on a period boundary). The cohort is otherwise valid —
+    exactly one realized:yes and one forecast — so the ONLY violation is the
+    mid-period start, isolating the boundary-reveal check."""
     solver = _make_solver()
     bad = [
-        ("p2040", "rlz", "t0004", "yes", "1"),
-        ("p2040", "low", "t0005", "no", "3"),   # not p2040's first step
+        ("p2040", "rlz", "t0005", "yes", "1"),   # mid-period (not t0004)
+        ("p2040", "low", "t0005", "no", "3"),    # mid-period (not t0004)
     ]
-    with pytest.raises(FlexToolConfigError, match="first step"):
+    with pytest.raises(FlexToolConfigError, match="period-boundary reveal"):
         _run(solver, bad)
 
 
 def test_validation_two_realized_in_period_raises() -> None:
-    """T-V (§3.3 check 2): a branching period with two realized:yes
-    branches is rejected."""
+    """T-V (§3.3 check 2): the corrected model allows at most one
+    realized:yes branch per revealing cohort (realized is an optional
+    0-or-1 designation); two realized:yes branches are rejected."""
     solver = _make_solver()
     bad = [
         ("p2040", "rlz", "t0004", "yes", "1"),
         ("p2040", "low", "t0004", "yes", "3"),  # two realized
     ]
-    with pytest.raises(FlexToolConfigError, match="exactly one realized"):
+    with pytest.raises(
+        FlexToolConfigError, match="at most one realized:yes"
+    ):
         _run(solver, bad)
 
 
-def test_validation_zero_realized_in_period_raises() -> None:
-    """T-V (§3.3 check 2): a branching period with no realized branch is
-    rejected (subsumes the old 'no realized start time' guard)."""
+def test_validation_zero_realized_in_period_accepted() -> None:
+    """T-V (§3.3 check 2, corrected model): the stochastic fan is FORECASTS
+    ONLY — ``realized`` is an optional 0-or-1 designation. A branching cohort
+    with no realized:yes branch but at least one forecast is therefore VALID
+    and fans out: both forecast branches become active fan members (unlike a
+    realized:yes branch, which is excluded from the active fan)."""
     solver = _make_solver()
-    bad = [
+    good = [
         ("p2040", "rlz", "t0004", "no", "1"),
         ("p2040", "low", "t0004", "no", "3"),
     ]
-    with pytest.raises(FlexToolConfigError, match="exactly one realized"):
-        _run(solver, bad)
+    pb, sbtb, atl, _jumps, _fstl, _rtl, bstl = _run(solver, good)
+
+    # p2035 trunk, p2040 trunk, then BOTH forecasts as fan branches.
+    assert pb["s"] == [
+        ("p2035", "p2035"),
+        ("p2040", "p2040"),
+        ("p2040", "p2040_rlz"),
+        ("p2040", "p2040_low"),
+    ]
+    # Both forecast branches carry active time (no realized member to drop).
+    assert list(atl["s"].keys()) == [
+        "p2035", "p2040", "p2040_rlz", "p2040_low",
+    ]
+    assert atl["s"]["p2040_rlz"] == P2[0:]
+    assert atl["s"]["p2040_low"] == P2[0:]
+    # Branch resolution: each forecast maps to its own branch; no realized
+    # anchor row is emitted (forecasts-only cohort).
+    assert ("p2040_rlz", "rlz") in sbtb["s"]
+    assert ("p2040_low", "low") in sbtb["s"]
+    # The reveal is still recorded at p2040 / t0004.
+    assert bstl["s"] == ("p2040", "t0004")
 
 
 def test_validation_fan_at_first_still_passes() -> None:
@@ -409,11 +437,20 @@ def test_committed_output_realized_only(hedge_wf) -> None:
 
 
 @pytest.mark.solver
-def test_storage_na_fires_on_reveal_pair(hedge_storage_wf) -> None:
-    """T-S (§5.1, §9.1): with a stochastic-group storage node the dispatch
-    non-anticipativity net-charge pinning fires on the reveal pair
-    (p2040, p2040_low) — the branch's storage state is pinned to the
-    realized branch at the reveal window."""
+def test_storage_na_vacuous_on_single_forecast_reveal(hedge_storage_wf) -> None:
+    """T-S (§5.1, §9.1), re-grounded: the hedge fixture's reveal declares a
+    SINGLE forecast (``low``; ``rlz`` is the realised designation = the high
+    scenario), so under the corrected forecast-to-forecast model there is
+    nothing to tie — a single forecast has no sibling — and the storage NA
+    family is correctly VACUOUS (the old trunk-anchored tie
+    ``(p2040, p2040_low)`` is gone; the realised trunk is never an NA hub).
+
+    This pins the degenerate-fixture behaviour: slice R3 (genuine 2-forecast
+    fan + re-derived RP/WS/EVPI/VSS/EEV hand-calcs) will add a second
+    forecast and restore a forecast-to-forecast tie — at which point this
+    assertion is updated to the forecast star.  Until then a single-forecast
+    reveal emitting NO NA constraint is the correct, witnessed property.
+    """
     from polar_high import Problem
     from flextool.engine_polars import build_flextool, load_flextool
 
@@ -421,10 +458,16 @@ def test_storage_na_fires_on_reveal_pair(hedge_storage_wf) -> None:
     pb = Problem()
     build_flextool(pb, data)
     names = pb.cstr_names()
-    assert "non_anticipativity_storage_use" in names
-    over = pb.cstrs_named("non_anticipativity_storage_use")[0].over
-    pairs = {(str(r["d"]), str(r["b"])) for r in over.iter_rows(named=True)}
-    assert pairs == {("p2040", "p2040_low")}
+    # A single forecast → the per-anchor-group star is skipped (<2
+    # forecasts) → no family emitted.  If a future change re-introduces a
+    # trunk-anchored tie this assertion fails loudly.
+    if "non_anticipativity_storage_use" in names:
+        over = pb.cstrs_named("non_anticipativity_storage_use")[0].over
+        pairs = {(str(r["d"]), str(r["b"]))
+                 for r in over.iter_rows(named=True)}
+        assert not pairs, (
+            "single-forecast reveal must not emit an NA tie (forecast-to-"
+            f"forecast is vacuous with one forecast); got {pairs}")
 
 
 def test_storage_branch_copy_predecessor_is_shared_trunk(

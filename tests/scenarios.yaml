@@ -754,6 +754,11 @@
   # realised profile). After the path fix to input/group__process.csv,
   # the LP is constrained by min(per-branch wind profile) per step,
   # raising thermal dispatch by ~47%.
-  expected_objective: 269.406895209
+  #
+  # Re-grounded 269.406895209 → 268.081475165 for the forecast-to-forecast
+  # NA change (R-NA): the trunk is de-anchored and the ties now couple only
+  # the forecasts to each other (star to a reference forecast), a RELAXATION
+  # of the old trunk==f1==f2==f3 star, so the new optimum is ≤ the old.
+  expected_objective: 268.081475165
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 30.0
