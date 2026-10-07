@@ -18,6 +18,7 @@ chain.
 """
 from __future__ import annotations
 
+import copy
 import logging
 from collections import defaultdict
 from typing import Any
@@ -291,6 +292,106 @@ class SpineDbReader:
 
     def __repr__(self) -> str:
         return f"SpineDbReader(db_url={self._db_url!r}, scenario={self._scenario!r})"
+
+    # ------------------------------------------------------------------
+    # W4b — engine-automatic realized-dispatch sibling registration
+
+    #: Solve-class parameters cloned verbatim from the parent onto a
+    #: registered ``*__realized_dispatch`` sibling.  Deliberately an
+    #: ALLOW-LIST (not copy-all-minus-drop): it carries exactly the four
+    #: parameters that define a deterministic dispatch over the realized
+    #: window — the SAME set an author hand-declares for a dispatch solve
+    #: (cf. W8.1's ``stoch_rd_realized_dispatch``, which authors only
+    #: these four).  ``invest_periods`` / ``realized_invest_periods`` /
+    #: ``stochastic_branches`` / ``fix_storage_periods`` / decomposition /
+    #: benders knobs are intentionally NOT copied so the sibling cannot
+    #: invest, branch, or decompose — it is a pure fixed-capacity dispatch.
+    _REALIZED_DISPATCH_SIBLING_PARAMS = (
+        "period_timeset",
+        "realized_periods",
+        "years_represented",
+        "solve_mode",
+    )
+
+    def register_derived_solve(
+        self, parent_name: str, sibling_name: str,
+    ) -> None:
+        """In-memory register a derived ``solve`` entity *sibling_name*
+        cloned from *parent_name* so the per-solve override chain treats
+        it as a REAL Spine solve (:func:`_solve_in_spine` → ``True``), not
+        a synthetic ``<base>_<anchor>`` sub-solve.
+
+        Taking the full override path is what keeps the sibling's LP
+        complete: the synthetic fallback returns ``None`` for every
+        solve-keyed helper, so entity-level structure the realized
+        dispatch must carry (reserves, storage binding, …) would be
+        silently dropped.
+
+        Mechanism — the THREE caches every ``solve`` consumer of this
+        reader touches:
+
+        * ``_entities_by_class[solve_cls]`` — append ``(new_eid,
+          sibling_name, None)`` so :meth:`entities` (``"solve"``) lists
+          it;
+        * ``_entity_by_id[new_eid]`` — map the FRESH id back to
+          ``(solve_cls, sibling_name)`` so value-join / unroll paths
+          resolve the sibling's OWN name.  (Reusing the parent eid for
+          the sibling's rows would map them back to the parent name, so
+          ``_solve_periods(sibling)`` reads empty and the loader silently
+          reverts to the synthetic path — critique fix #1.)
+        * ``_param_rows[(solve_cls, pdef_id)]`` — for each parameter in
+          :data:`_REALIZED_DISPATCH_SIBLING_PARAMS`, append ``(new_eid,
+          <deepcopy of the parent's parsed value>)`` keyed on the FRESH
+          id.
+
+        A fresh deterministic id (``max(_entity_by_id) + 1``) is minted.
+        Idempotent: a second call for an already-registered sibling is a
+        no-op.  Raises :class:`FlexToolConfigError` when the ``solve``
+        class or *parent_name* is absent.
+
+        There is no entity-by-name map or ``model__solve`` relationship
+        cache in this reader (verified: the only ``solve`` consumers are
+        :meth:`entities` via ``_solve_in_spine`` / the synthetic resolver,
+        plus the ``_param_rows`` reads), so these three caches suffice.
+        """
+        solve_cls = self._class_name_to_id.get("solve")
+        if solve_cls is None:
+            raise FlexToolConfigError(
+                "register_derived_solve: no 'solve' entity class in the DB."
+            )
+        ents = self._entities_by_class.get(solve_cls, [])
+        parent_eid: int | None = None
+        for eid, name, _elems in ents:
+            if name == sibling_name:
+                return  # already registered — idempotent no-op
+            if name == parent_name:
+                parent_eid = eid
+        if parent_eid is None:
+            raise FlexToolConfigError(
+                f"register_derived_solve: parent solve {parent_name!r} "
+                f"not found in the 'solve' entity class."
+            )
+        # Fresh, deterministic entity id (never collides with an existing).
+        new_eid = max(self._entity_by_id) + 1
+        self._entities_by_class[solve_cls].append(
+            (new_eid, sibling_name, None)
+        )
+        self._entity_by_id[new_eid] = (solve_cls, sibling_name)
+        # Clone the dispatch-defining parameter rows under the FRESH id.
+        for pname in self._REALIZED_DISPATCH_SIBLING_PARAMS:
+            pdef = self._pdef_by_class_name.get((solve_cls, pname))
+            if pdef is None:
+                continue
+            key = (solve_cls, pdef["id"])
+            rows = self._param_rows.get(key)
+            if not rows:
+                continue
+            for eid, val in rows:
+                if eid == parent_eid:
+                    self._param_rows[key].append(
+                        (new_eid, copy.deepcopy(val))
+                    )
+                    break
 
     # ------------------------------------------------------------------
     # Entity columns: ``[name]`` for 0-dim classes; one column per dim

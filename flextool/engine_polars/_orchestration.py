@@ -1588,34 +1588,210 @@ def _stochastic_invest_raw_guard(solve_cfg, base_name: str) -> None:
 
 
 def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
-    """W4 Slice 1 Guard — hard-reject a non-default dispatch_realization_method.
+    """W4 Guard — validate a non-default ``dispatch_realization_method``.
 
-    ``solve.dispatch_realization_method`` is the 2-stage seed of a future
-    multi-stage market structure.  Only ``'within_solve'`` (the schema
-    default, today's behaviour) is implemented; ``'separate_dispatch'`` —
-    splitting realization into a dedicated downstream dispatch stage — has
-    no engine machinery yet (it lands in a later slice) and is HARD-REJECTED
-    here.
+    ``solve.dispatch_realization_method`` selects how realized operations
+    are produced.  ``'within_solve'`` (the schema default, today's
+    behaviour) is always allowed.  ``'separate_dispatch'`` (W4b) — the
+    engine automatically registers a deterministic realized-dispatch
+    SIBLING ``<solve>__realized_dispatch`` that takes the full
+    invest→dispatch handoff + last-wins path — is now ACCEPTED, but ONLY
+    for a single TOP-LEVEL ``single_solve``.  Every other shape (rolling,
+    a solve that itself ``contains_solves`` children, or a solve nested
+    inside another's ``contains_solves``) is still rejected: the sibling
+    machinery is single-solve only.
 
     The guard reads the RAW authored value rather than the resolver's
     output: :meth:`SolveConfig.dispatch_realization_method_for` silently
-    collapses any unrecognised value (including ``'separate_dispatch'``) to
-    ``'within_solve'``, so an authoring-time check must inspect the raw dict
-    and reject anything outside the allowed set ``{"", "within_solve"}``.
-    That rejects ``'separate_dispatch'`` AND any typo / unknown value.
-    Blank / absent tolerate-as-default (matches the resolver).  No-op when
-    the solve authors nothing.
+    collapses any UNRECOGNISED value (a typo) to ``'within_solve'``, so an
+    authoring-time check must inspect the raw dict.  Blank / absent
+    tolerate-as-default.  No-op when the solve authors nothing.
+
+    ``solve_modes`` / ``contains_solves`` are read with ``getattr`` +
+    ``.get`` defaults so partial unit-test stubs (which may carry only
+    ``model_solve`` + ``dispatch_realization_method``) don't raise.
     """
     raw = solve_cfg.dispatch_realization_method.get(base_name)
     if raw is None:
         return
     val = str(raw).strip().lower()
-    if val not in ("", "within_solve"):
+    if val in ("", "within_solve"):
+        return
+    if val != "separate_dispatch":
+        # Typo / unknown value — unchanged hard-reject.
         raise FlexToolConfigError(
             f"Solve '{base_name}' sets dispatch_realization_method='{raw}' — "
-            f"'separate_dispatch' is not yet implemented (lands in a later "
-            f"slice); use 'within_solve'."
+            f"unrecognised value.  Supported: 'within_solve' (default) and "
+            f"'separate_dispatch'."
         )
+    # separate_dispatch — eligible ONLY for a single top-level single_solve.
+    solve_modes = getattr(solve_cfg, "solve_modes", {}) or {}
+    model_solve = getattr(solve_cfg, "model_solve", {}) or {}
+    contains_solves = getattr(solve_cfg, "contains_solves", {}) or {}
+    top_level: set = set()
+    for _solves in model_solve.values():
+        top_level.update(_solves)
+    nested: set = set()
+    for _children in contains_solves.values():
+        if isinstance(_children, (list, tuple, set)):
+            nested.update(_children)
+        elif _children is not None:
+            nested.add(_children)
+    mode = solve_modes.get(base_name, "single_solve")
+    reasons: list[str] = []
+    if mode != "single_solve":
+        reasons.append(
+            f"it runs under solve_mode='{mode}' (separate_dispatch needs a "
+            f"single_solve)"
+        )
+    if base_name not in top_level:
+        reasons.append("it is not a top-level solve in model.solves")
+    if contains_solves.get(base_name):
+        reasons.append("it has contained solves (contains_solves)")
+    if base_name in nested:
+        reasons.append("it is nested inside another solve's contains_solves")
+    if reasons:
+        raise FlexToolConfigError(
+            f"Solve '{base_name}' sets "
+            f"dispatch_realization_method='separate_dispatch', which is only "
+            f"supported for a single top-level single_solve, but "
+            + "; ".join(reasons)
+            + "."
+        )
+
+
+def _spawn_realized_dispatch_siblings(
+    solve_cfg, cascade_db_reader, logger,
+) -> None:
+    """W4b — register an engine-automatic deterministic realized-dispatch
+    sibling for every eligible top-level solve that authors
+    ``dispatch_realization_method = separate_dispatch``.
+
+    Called ONCE from :func:`_drive_cascade` (after ``cascade_db_reader``
+    is built, BEFORE ``native_run_model``).  For each eligible parent it
+    performs a DUAL in-memory registration so the sibling takes the FULL
+    override path — indistinguishable from W8.1's author-declared
+    dispatch solve:
+
+    1. ``cascade_db_reader.register_derived_solve(parent, sibling)`` — so
+       the per-solve override chain treats the sibling as a REAL Spine
+       solve (``_solve_in_spine`` → ``True``).  Without this the loader
+       falls back to the synthetic ``<base>_<anchor>`` path, which
+       silently drops reserves and other entity-level LP structure the
+       realized dispatch must carry.
+    2. ``solve_cfg.spawn_realized_dispatch_sibling(parent, sibling)`` —
+       insert the sibling RIGHT AFTER its parent in ``model_solve`` (so
+       it consumes the parent's committed capacity through the normal
+       invest→dispatch handoff and last-wins hands it the realized
+       window) and populate its per-solve config as a deterministic,
+       fixed-capacity, monolithic single_solve.
+
+    *solve_cfg* MUST be ``runner.state.solve`` — the config
+    ``native_run_model`` actually drives.  (The run()-site guard reads the
+    SEPARATE outer cascade ``state.solve``, where the sibling is never
+    injected, so it correctly no-ops for the sibling, which authors no
+    ``dispatch_realization_method`` — no infinite re-spawn.)
+
+    Eligibility was already validated by
+    :func:`_dispatch_realization_raw_guard` at both wired sites; this
+    re-selects the same eligible parents from the driving config so the
+    two stay in lockstep.
+
+    The sibling name is ``f"{parent}__realized_dispatch"`` — the DOUBLE
+    underscore keeps it NON-period-like so the synthetic resolver's
+    ``<base>_<anchor>`` split can never mistake the ``__realized_dispatch``
+    tail for a real period anchor (correctness of the synthetic-resolver
+    no-op relies on the anchor never being a real period).  A collision
+    with an existing solve — in ``model_solve`` values,
+    ``contains_solves`` values, or the reader's ``solve`` entities —
+    raises :class:`FlexToolConfigError` naming the colliding owner.
+    """
+    model_solve = getattr(solve_cfg, "model_solve", {}) or {}
+    top_level: set = set()
+    for _solves in model_solve.values():
+        top_level.update(_solves)
+
+    # Collision sources (name → owner category).
+    contains_solves = getattr(solve_cfg, "contains_solves", {}) or {}
+    contained: set = set()
+    for _children in contains_solves.values():
+        if isinstance(_children, (list, tuple, set)):
+            contained.update(_children)
+        elif _children is not None:
+            contained.add(_children)
+    reader_solves: set = set()
+    if cascade_db_reader is not None:
+        try:
+            _ents = cascade_db_reader.entities("solve")
+            _name_col = "name" if "name" in _ents.columns else _ents.columns[0]
+            reader_solves = set(_ents[_name_col].to_list())
+        except Exception:  # noqa: BLE001
+            reader_solves = set()
+
+    eligible = [
+        p for p in sorted(top_level)
+        if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch"
+    ]
+    if eligible and cascade_db_reader is None:
+        raise FlexToolConfigError(
+            "dispatch_realization_method='separate_dispatch' requires the "
+            "DB-backed cascade reader (run via run_chain_from_db with "
+            "db_url + scenario_name); none is available, so the realized-"
+            f"dispatch sibling for {eligible!r} cannot be registered."
+        )
+
+    for parent in eligible:
+        # Positive storage-pinning guard (investigation outcome).
+        # The sibling DROPS ``fix_storage_periods`` — the ONLY solve-level
+        # storage mechanism it sheds (the node-level
+        # ``storage_binding_method`` / ``storage_state_*`` are entity
+        # parameters, preserved via the full override path, so storage
+        # continuity WITHIN the monolithic single_solve is intact).  Any
+        # authored ``fix_storage_periods`` would therefore be silently
+        # re-floated by the sibling — giving a DIFFERENT storage trajectory
+        # than the parent pinned.  Reject CONSERVATIVELY on ANY non-empty
+        # ``fix_storage_periods`` (independent of realized-period count):
+        # even a single pinned boundary is dropped, and gating on period
+        # count would UNDER-fire (a single realized period with a 2-period
+        # fix_storage authored still drops the pin).  The combo is
+        # brand-new; storage pinning in the realized-dispatch solve is a
+        # later slice.  No ``fix_storage_periods`` → fine: the monolithic
+        # solve links storage via its own balance constraints exactly as
+        # the parent would.
+        _fix_storage = getattr(solve_cfg, "fix_storage_periods", {}) or {}
+        if _fix_storage.get(parent):
+            raise FlexToolConfigError(
+                f"Solve '{parent}' sets "
+                f"dispatch_realization_method='separate_dispatch' but also "
+                f"authors fix_storage_periods: separate_dispatch is not yet "
+                f"supported for a solve that authors fix_storage_periods "
+                f"(storage pinning in the realized-dispatch solve is a later "
+                f"slice; the auto realized-dispatch sibling would re-float "
+                f"the pinned storage boundaries).  Clear fix_storage_periods."
+            )
+        sibling = f"{parent}__realized_dispatch"
+        if sibling in top_level or sibling in contained:
+            raise FlexToolConfigError(
+                f"Cannot auto-register realized-dispatch sibling "
+                f"'{sibling}' for solve '{parent}': a solve named "
+                f"'{sibling}' already exists in model.solves / "
+                f"contains_solves."
+            )
+        if sibling in reader_solves:
+            raise FlexToolConfigError(
+                f"Cannot auto-register realized-dispatch sibling "
+                f"'{sibling}' for solve '{parent}': a 'solve' entity named "
+                f"'{sibling}' already exists in the database."
+            )
+        cascade_db_reader.register_derived_solve(parent, sibling)
+        solve_cfg.spawn_realized_dispatch_sibling(parent, sibling)
+        reader_solves.add(sibling)
+        top_level.add(sibling)
+        if logger is not None:
+            logger.info(
+                "W4b: registered engine-automatic realized-dispatch sibling "
+                "'%s' for separate_dispatch solve '%s'", sibling, parent,
+            )
 
 
 def _validate_model_solve(state: RunnerState) -> list[str]:
@@ -2015,6 +2191,16 @@ def _drive_cascade(
                 # recomputes ``p_all_entity_unitsize`` from ``source`` and
                 # the output reader falls back to its reconstruction path.
                 pass
+
+    # W4b — register the engine-automatic realized-dispatch sibling for
+    # every eligible ``separate_dispatch`` top-level solve, BEFORE
+    # ``native_run_model`` expands the solve tree.  Dual in-memory
+    # registration onto the DRIVING config (``runner.state.solve``) and
+    # the cascade reader so the sibling takes the full override path.
+    # No-op (and byte-parity) when no solve authors separate_dispatch.
+    _spawn_realized_dispatch_siblings(
+        runner.state.solve, cascade_db_reader, _drive_logger,
+    )
 
     class _PolarHighCascadeSolver(SolverRunner):
         def __init__(self, runner_state):

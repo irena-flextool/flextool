@@ -21,6 +21,7 @@ Architecture notes
 """
 from __future__ import annotations
 
+import copy
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -915,6 +916,83 @@ class SolveConfig:
                     if new_name not in solves:
                         solves.append(new_name)
                     self.model_solve[model] = solves
+
+    def spawn_realized_dispatch_sibling(
+        self, parent: str, sibling: str,
+    ) -> None:
+        """W4b — positionally insert *sibling* right after *parent* in
+        ``model_solve`` and populate the per-solve config dicts that make
+        it a deterministic, fixed-capacity, monolithic dispatch over the
+        parent's REALIZED window.
+
+        The sibling is the engine-automatic counterpart of W8.1's
+        author-declared ``*_realized_dispatch`` solve: it consumes the
+        parent's committed capacity through the normal invest→dispatch
+        handoff (hence the insert IMMEDIATELY after the parent, not an
+        append) and last-wins hands it the realized window it then owns.
+
+        COPY from the parent (timeline / period scaffolding):
+        ``timesets_used_by_solves``, ``solve_period_years_represented``,
+        ``periods_available``, ``delay_durations``, ``hole_multipliers``,
+        ``rolling_times`` (empty for a single_solve).
+
+        SET: ``solve_modes[sibling] = "single_solve"`` and
+        ``realized_periods[sibling] = realized_periods[parent]`` (the
+        realized window the sibling OWNS after last-wins).
+
+        DROP (no key created — the ``defaultdict(list)`` / plain-dict
+        defaults then make the sibling investment-free, deterministic and
+        monolithic): ``invest_periods``, ``realized_invest_periods``,
+        ``fix_storage_periods``, ``stochastic_branches``,
+        ``non_anticipativity_periods``,
+        ``non_anticipativity_invest_periods``, ``decomposition``,
+        ``benders_max_iter`` / ``benders_tolerance`` /
+        ``benders_in_out_weight``, ``stochastic_invest_method``,
+        ``contains_solves``, and ``dispatch_realization_method`` (absent →
+        :meth:`dispatch_realization_method_for` yields ``within_solve`` →
+        the run()-site guard no-ops → no re-spawn).
+
+        NOT copied — ``scaling`` / ``solver_configs`` / ``use_row_scaling``
+        / ``scale_the_objective`` / ``user_bound_scale``: the cascade
+        ``run()`` closure in ``_orchestration._drive_cascade`` resolves
+        those from the SEPARATE cascade ``state.solve`` (NOT this
+        ``runner.state.solve``, which is the config this method mutates),
+        so copies here would be dead.  The sibling therefore runs under
+        the DEFAULT solver / scaling / decomposition config — correct for
+        a monolithic deterministic dispatch.
+
+        Note on multi-period storage: dropping ``fix_storage_periods`` is
+        correct even when the realized window spans MULTIPLE periods.
+        ``fix_storage_periods`` pins storage at period boundaries for
+        ROLLING / multi-solve handoff continuity; a single monolithic
+        ``single_solve`` instead links storage across its periods through
+        the ordinary storage-balance constraints and respects the
+        node-level ``storage_binding_method`` (an entity parameter, read
+        unchanged via the full override path).  So the sibling's storage
+        trajectory over its realized periods is a correct free
+        deterministic optimisation, not a re-floated gap.
+        """
+        # Positional insert right after the parent (NOT append + remove).
+        for _model, solves in self.model_solve.items():
+            if parent in solves and sibling not in solves:
+                solves.insert(solves.index(parent) + 1, sibling)
+        # COPY the timeline / period scaffolding.
+        for dict_name in (
+            "timesets_used_by_solves",
+            "solve_period_years_represented",
+            "periods_available",
+            "delay_durations",
+            "hole_multipliers",
+            "rolling_times",
+        ):
+            d = getattr(self, dict_name, None)
+            if d is not None and parent in d:
+                d[sibling] = copy.deepcopy(d[parent])
+        # SET the two defining knobs.
+        self.solve_modes[sibling] = "single_solve"
+        self.realized_periods[sibling] = copy.deepcopy(
+            self.realized_periods.get(parent, [])
+        )
 
     # ------------------------------------------------------------------
     # v60/v62 per-solve decomposition accessors

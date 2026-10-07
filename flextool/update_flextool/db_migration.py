@@ -4229,12 +4229,16 @@ def _migrate_v75_dispatch_realization_method(db) -> None:
     revealed branch), the first step toward a multi-stage sequential-market
     structure.
 
-    W4 Slice 1 ships only the schema + the hard-reject guard: flag-on
-    (``'separate_dispatch'``) is HARD-REJECTED until the separate-dispatch
-    machinery lands (slices W4b/c/d — building the downstream dispatch
-    stage).  Bound to a new 'dispatch_realization_methods' value list;
-    grouped under 'solve_advanced' (created if the DB lacks it).  This is a
-    structural clone of the v70 ``stochastic_invest_method`` line.
+    W4 Slice 1 (W4a) shipped the schema; W4b now IMPLEMENTS the engine
+    side: ``'separate_dispatch'`` is ACCEPTED for a single top-level
+    ``single_solve``, for which the engine automatically registers a
+    deterministic realized-dispatch sibling ``<solve>__realized_dispatch``
+    (full invest→dispatch handoff + last-wins).  Other shapes (rolling,
+    contains_solves children, nested) and solves that author
+    fix_storage_periods remain rejected (later slices).  Bound to a new
+    'dispatch_realization_methods' value list; grouped under
+    'solve_advanced' (created if the DB lacks it).  This is a structural
+    clone of the v70 ``stochastic_invest_method`` line.
     """
     add_value_list_manual(db, [
         ["dispatch_realization_methods", "within_solve"],
@@ -4290,7 +4294,9 @@ def _migrate_v75_dispatch_realization_method(db) -> None:
         "v75: added solve.dispatch_realization_method "
         "(dispatch_realization_methods: within_solve/separate_dispatch, "
         "default within_solve); 2-stage seed of a future multi-stage market "
-        "structure. 'separate_dispatch' hard-rejected until a later slice."
+        "structure. 'separate_dispatch' accepted (W4b) for a single "
+        "top-level single_solve — engine auto-spawns the "
+        "<solve>__realized_dispatch sibling."
     )
 
 

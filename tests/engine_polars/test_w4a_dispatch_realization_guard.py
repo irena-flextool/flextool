@@ -1,28 +1,24 @@
-"""W4 Slice 1 (W4a) — dispatch_realization_method hard-reject guard.
+"""W4 — ``dispatch_realization_method`` guard (W4a schema + W4b narrowing).
 
-``solve.dispatch_realization_method`` is the 2-stage seed of a future
-multi-stage market structure.  Only ``'within_solve'`` (the schema
-default, today's behaviour) is implemented; ``'separate_dispatch'`` — a
-dedicated downstream dispatch stage — has no engine machinery yet and is
-HARD-REJECTED until a later slice.
+``solve.dispatch_realization_method`` selects how realized operations are
+produced.  ``'within_solve'`` (the schema default, today's behaviour) is
+always allowed.  ``'separate_dispatch'`` is now ACCEPTED — but ONLY for a
+single TOP-LEVEL ``single_solve`` (W4b), for which the engine
+automatically registers a deterministic realized-dispatch sibling
+``<solve>__realized_dispatch``.  Every other shape is rejected:
+
+  * a rolling (``solve_mode != single_solve``) solve;
+  * a solve that itself ``contains_solves`` children;
+  * a solve nested inside another solve's ``contains_solves``;
+  * any typo / unrecognised value (unchanged hard-reject).
 
 The guard (:func:`_dispatch_realization_raw_guard`) reads the RAW authored
-value and its allowed set is EXPLICITLY ``{"", "within_solve"}`` — it
-raises :class:`FlexToolConfigError` for ``'separate_dispatch'`` AND for any
-unrecognised value.  The normalizing accessor
+value because the normalizing accessor
 (:meth:`SolveConfig.dispatch_realization_method_for`) would silently
-collapse those to ``'within_solve'``, which is why the guard inspects the
-raw dict.
-
-The guard is wired at BOTH v70-style call sites:
-
-* ``_validate_model_solve`` — a fail-fast pass over the model's top-level
-  solves.
-* the authoritative ``run(complete_solve_name)`` site, which strips the
-  ``_roll_\\d+$`` suffix and fires for every solve that RUNS (including
-  each roll of a rolling solve and each contained/chained sub-solve).  The
-  roll-suffix-strip composition is exercised here directly (mirrors the
-  v70 ``test_g1_rolling_suffix_strip_composition``).
+collapse a typo to ``'within_solve'``.  It is wired at BOTH v70-style call
+sites: ``_validate_model_solve`` (fail-fast over top-level solves) and the
+authoritative ``run(complete_solve_name)`` site (which strips the
+``_roll_\\d+$`` suffix and fires for every solve that RUNS).
 """
 from __future__ import annotations
 
@@ -36,18 +32,27 @@ from flextool.engine_polars._solve_state import FlexToolConfigError
 
 
 # ---------------------------------------------------------------------------
-# A bare SolveConfig carrying only the two fields the guard/accessor read —
-# ``model_solve`` and ``dispatch_realization_method``.
+# A bare SolveConfig carrying only the fields the guard/accessor read.
 # ---------------------------------------------------------------------------
 
 
-def _solve_config_with_method(model_solve, method_map) -> SolveConfig:
+def _solve_config_with_method(
+    model_solve,
+    method_map,
+    *,
+    solve_modes=None,
+    contains_solves=None,
+) -> SolveConfig:
     sc = object.__new__(SolveConfig)
     sc.model_solve = model_solve
     sc.dispatch_realization_method = method_map
+    # The W4b eligibility predicate reads these (via getattr/.get defaults,
+    # so partial stubs are tolerated); set them explicitly where a test
+    # exercises the non-single_solve / nested shapes.
+    sc.solve_modes = solve_modes if solve_modes is not None else {}
+    sc.contains_solves = contains_solves if contains_solves is not None else {}
     # ``_validate_model_solve`` also runs the sibling stochastic_invest
-    # fail-fast pass, which reads this dict; keep it empty (all-default) so
-    # that guard is inert and only the dispatch guard is under test.
+    # fail-fast pass; keep it inert.
     sc.stochastic_invest_method = {}
     return sc
 
@@ -69,40 +74,38 @@ def test_resolver_normalisation():
         },
     )
     assert sc.dispatch_realization_method_for("s") == "within_solve"
-    # case-fold
     assert sc.dispatch_realization_method_for("loud") == "within_solve"
-    # the non-default listed value normalises cleanly (resolver recognises
-    # it; the GUARD is what rejects it — see below)
-    assert (
-        sc.dispatch_realization_method_for("sep") == "separate_dispatch"
-    )
-    # blank / typo / absent collapse to the default
+    assert sc.dispatch_realization_method_for("sep") == "separate_dispatch"
     assert sc.dispatch_realization_method_for("blank") == "within_solve"
     assert sc.dispatch_realization_method_for("junk") == "within_solve"
     assert sc.dispatch_realization_method_for("absent") == "within_solve"
 
 
 # ===========================================================================
-# Guard — hard-reject separate_dispatch + any unrecognised value
+# Guard — accept an eligible single top-level separate_dispatch solve
 # ===========================================================================
 
 
-def test_raw_guard_rejects_separate_dispatch_and_typos():
-    """The guard inspects the RAW authored value (the resolver would
-    silently collapse a typo to 'within_solve' and happily pass
-    'separate_dispatch' to downstream machinery that does not exist yet),
-    so 'separate_dispatch' AND any unrecognised value raise — while
-    'within_solve' / blank / absent do not."""
+def test_raw_guard_accepts_eligible_separate_dispatch():
+    """A single top-level ``single_solve`` authoring ``separate_dispatch``
+    passes the guard (the engine will auto-spawn its realized-dispatch
+    sibling).  ``within_solve`` / blank / absent also pass."""
     from flextool.engine_polars._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
-    for bad in ("separate_dispatch", "SEPARATE_DISPATCH", "wihtin_solve",
-                "expected_value"):
-        sc = _solve_config_with_method({"m": ["s"]}, {"s": bad})
-        with pytest.raises(FlexToolConfigError) as exc:
-            _dispatch_realization_raw_guard(sc, "s")
-        assert bad in str(exc.value)
+    sc = _solve_config_with_method(
+        {"m": ["s"]}, {"s": "separate_dispatch"},
+        solve_modes={"s": "single_solve"},
+    )
+    _dispatch_realization_raw_guard(sc, "s")  # no raise
+
+    # Case-folded value also accepted.
+    sc = _solve_config_with_method(
+        {"m": ["s"]}, {"s": "SEPARATE_DISPATCH"},
+        solve_modes={"s": "single_solve"},
+    )
+    _dispatch_realization_raw_guard(sc, "s")  # no raise
 
     # Accepted / tolerated raw values → no raise.
     for ok in ("within_solve", "WITHIN_SOLVE", "", "  within_solve  "):
@@ -113,81 +116,160 @@ def test_raw_guard_rejects_separate_dispatch_and_typos():
         _solve_config_with_method({"m": ["s"]}, {}), "s")
 
 
-def test_separate_dispatch_message_names_solve_and_within_solve():
-    """The reject message names the solve and points at 'within_solve'."""
+def test_raw_guard_rejects_typos():
+    """An unrecognised value (typo) is still a hard-reject — the resolver
+    would silently collapse it to 'within_solve'."""
     from flextool.engine_polars._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
-    sc = _solve_config_with_method({"m": ["my_solve"]},
-                                   {"my_solve": "separate_dispatch"})
+    for bad in ("wihtin_solve", "expected_value", "sep_dispatch"):
+        sc = _solve_config_with_method(
+            {"m": ["s"]}, {"s": bad}, solve_modes={"s": "single_solve"},
+        )
+        with pytest.raises(FlexToolConfigError) as exc:
+            _dispatch_realization_raw_guard(sc, "s")
+        assert bad in str(exc.value)
+
+
+# ===========================================================================
+# Guard narrowing — separate_dispatch rejected for non-single-top-level
+# ===========================================================================
+
+
+def test_raw_guard_rejects_rolling_separate_dispatch():
+    """A rolling (``solve_mode != single_solve``) separate_dispatch solve is
+    rejected — the sibling machinery is single_solve only."""
+    from flextool.engine_polars._orchestration import (
+        _dispatch_realization_raw_guard,
+    )
+
+    sc = _solve_config_with_method(
+        {"m": ["s"]}, {"s": "separate_dispatch"},
+        solve_modes={"s": "rolling_window"},
+    )
+    with pytest.raises(FlexToolConfigError) as exc:
+        _dispatch_realization_raw_guard(sc, "s")
+    msg = str(exc.value)
+    assert "single_solve" in msg and "rolling_window" in msg
+
+
+def test_raw_guard_rejects_separate_dispatch_with_children():
+    """A separate_dispatch solve that itself ``contains_solves`` children is
+    rejected."""
+    from flextool.engine_polars._orchestration import (
+        _dispatch_realization_raw_guard,
+    )
+
+    sc = _solve_config_with_method(
+        {"m": ["parent"]}, {"parent": "separate_dispatch"},
+        solve_modes={"parent": "single_solve"},
+        contains_solves={"parent": ["child_a", "child_b"]},
+    )
+    with pytest.raises(FlexToolConfigError) as exc:
+        _dispatch_realization_raw_guard(sc, "parent")
+    assert "contained solves" in str(exc.value)
+
+
+def test_raw_guard_rejects_nested_separate_dispatch():
+    """A separate_dispatch solve nested inside another's ``contains_solves``
+    is rejected (it is not a top-level solve)."""
+    from flextool.engine_polars._orchestration import (
+        _dispatch_realization_raw_guard,
+    )
+
+    sc = _solve_config_with_method(
+        {"m": ["outer"]}, {"nested": "separate_dispatch"},
+        solve_modes={"nested": "single_solve"},
+        contains_solves={"outer": ["nested"]},
+    )
+    with pytest.raises(FlexToolConfigError) as exc:
+        _dispatch_realization_raw_guard(sc, "nested")
+    msg = str(exc.value)
+    assert "top-level" in msg or "nested" in msg
+
+
+def test_separate_dispatch_reject_message_names_solve():
+    from flextool.engine_polars._orchestration import (
+        _dispatch_realization_raw_guard,
+    )
+
+    sc = _solve_config_with_method(
+        {"m": ["my_solve"]}, {"my_solve": "separate_dispatch"},
+        solve_modes={"my_solve": "rolling_window"},
+    )
     with pytest.raises(FlexToolConfigError) as exc:
         _dispatch_realization_raw_guard(sc, "my_solve")
-    msg = str(exc.value)
-    assert "my_solve" in msg
-    assert "not yet implemented" in msg
-    assert "within_solve" in msg
+    assert "my_solve" in str(exc.value)
 
 
-# --- Call site 1: _validate_model_solve fail-fast pass ------------------
+# ===========================================================================
+# Call site 1: _validate_model_solve fail-fast pass
+# ===========================================================================
 
 
-def test_validate_model_solve_rejects_separate_dispatch():
-    """The fail-fast pass over the model's top-level solves raises on
-    'separate_dispatch' before any solve runs."""
+def test_validate_model_solve_accepts_eligible_separate_dispatch():
+    """The fail-fast pass ACCEPTS an eligible single top-level
+    separate_dispatch solve (alongside other top-level single_solves)."""
     from flextool.engine_polars._orchestration import _validate_model_solve
 
-    sc = _solve_config_with_method({"m": ["s_ok", "s_sep"]},
-                                   {"s_sep": "separate_dispatch"})
+    sc = _solve_config_with_method(
+        {"m": ["s_ok", "s_sep"]}, {"s_sep": "separate_dispatch"},
+        solve_modes={"s_ok": "single_solve", "s_sep": "single_solve"},
+    )
+    state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
+    assert _validate_model_solve(state) == ["s_ok", "s_sep"]
+
+
+def test_validate_model_solve_rejects_rolling_separate_dispatch():
+    from flextool.engine_polars._orchestration import _validate_model_solve
+
+    sc = _solve_config_with_method(
+        {"m": ["s_sep"]}, {"s_sep": "separate_dispatch"},
+        solve_modes={"s_sep": "rolling_window"},
+    )
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
     with pytest.raises(FlexToolConfigError):
         _validate_model_solve(state)
 
 
 def test_validate_model_solve_passes_within_solve_and_absent():
-    """'within_solve' and absent (all-default) pass and return the solve
-    list unchanged."""
     from flextool.engine_polars._orchestration import _validate_model_solve
 
-    # Explicit within_solve on one solve, the other unset.
     sc = _solve_config_with_method({"m": ["s1", "s2"]},
                                    {"s1": "within_solve"})
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
     assert _validate_model_solve(state) == ["s1", "s2"]
 
-    # All default (absent).
     sc2 = _solve_config_with_method({"m": ["s1", "s2"]}, {})
     state2 = dataclasses.make_dataclass("S", ["solve"])(solve=sc2)
     assert _validate_model_solve(state2) == ["s1", "s2"]
 
 
-# --- Call site 2: authoritative run() site (roll-suffix strip) ----------
+# ===========================================================================
+# Call site 2: authoritative run() site (roll-suffix strip)
+# ===========================================================================
 
 
 def test_run_site_rejects_rolling_child_of_separate_dispatch():
-    """The authoritative ``run()`` guard strips the ``_roll_N`` suffix
-    before the raw-dict lookup, so a rolling / contained child of a
-    separate_dispatch solve is rejected — this mirrors the exact code the
-    run() site executes (``re.sub`` strip -> ``_dispatch_realization_raw_guard``),
-    so a contained/chained/rolling sub-solve cannot silently normalize to
-    'within_solve'."""
+    """A rolling child of a separate_dispatch solve reaches run() as
+    ``<base>_roll_<N>``; the guard strips the suffix, then rejects because
+    the base runs under ``solve_mode=rolling_window``."""
     from flextool.engine_polars._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
-    sc = _solve_config_with_method({"m": ["my_solve"]},
-                                   {"my_solve": "separate_dispatch"})
-    # Rolling child name as it reaches run(): "<base>_roll_<N>".
-    complete_solve_name = "my_solve_roll_2"
-    guard_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
+    sc = _solve_config_with_method(
+        {"m": ["my_solve"]}, {"my_solve": "separate_dispatch"},
+        solve_modes={"my_solve": "rolling_window"},
+    )
+    guard_base = re.sub(r"_roll_\d+$", "", "my_solve_roll_2")
     assert guard_base == "my_solve"
     with pytest.raises(FlexToolConfigError):
         _dispatch_realization_raw_guard(sc, guard_base)
 
 
 def test_run_site_passes_within_solve_rolling_child():
-    """A rolling child of a within_solve (or unset) solve passes the
-    run()-site guard."""
     from flextool.engine_polars._orchestration import (
         _dispatch_realization_raw_guard,
     )
@@ -196,6 +278,21 @@ def test_run_site_passes_within_solve_rolling_child():
                                    {"my_solve": "within_solve"})
     guard_base = re.sub(r"_roll_\d+$", "", "my_solve_roll_7")
     _dispatch_realization_raw_guard(sc, guard_base)  # no raise
-    # Unset base → no raise.
     sc2 = _solve_config_with_method({"m": ["my_solve"]}, {})
     _dispatch_realization_raw_guard(sc2, guard_base)  # no raise
+
+
+def test_run_site_sibling_name_no_ops():
+    """The auto-spawned sibling authors no dispatch_realization_method (it
+    lives only in ``runner.state.solve``, not the guard's config), so the
+    run()-site guard no-ops for it — no infinite re-spawn."""
+    from flextool.engine_polars._orchestration import (
+        _dispatch_realization_raw_guard,
+    )
+
+    sc = _solve_config_with_method(
+        {"m": ["my_solve"]}, {"my_solve": "separate_dispatch"},
+        solve_modes={"my_solve": "single_solve"},
+    )
+    # sibling absent from the dispatch dict → no raise.
+    _dispatch_realization_raw_guard(sc, "my_solve__realized_dispatch")
