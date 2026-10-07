@@ -1667,6 +1667,43 @@ def _spawn_realized_dispatch_siblings(
     sibling for every eligible top-level solve that authors
     ``dispatch_realization_method = separate_dispatch``.
 
+    ════════════════════════════════════════════════════════════════════
+    REALIZED-DISPATCH FEATURE MAP (the single anchor for all touch-points)
+    ════════════════════════════════════════════════════════════════════
+    The ``separate_dispatch`` feature (spec ``stochastics_reassessment.md``
+    §B/§H; slices W4a-W4d) is split across these pieces — THIS function is
+    the entry point that ties them together:
+
+    * schema (W4a): ``solve.dispatch_realization_method`` {within_solve,
+      separate_dispatch} — migration ``_migrate_v75_...``, accessor
+      ``SolveConfig.dispatch_realization_method_for``.
+    * validation: ``_dispatch_realization_raw_guard`` (both wired sites) —
+      accepts separate_dispatch only for a single top-level single_solve.
+    * registration (W4b): THIS function → for each eligible parent, a DUAL
+      in-memory registration of the sibling ``<parent>__realized_dispatch``:
+        - ``SpineDbReader.register_derived_solve`` — clones the parent's
+          RAW Spine params (``_REALIZED_DISPATCH_SIBLING_PARAMS``) so the
+          sibling takes the full override path (``_solve_in_spine`` True);
+        - ``SolveConfig.spawn_realized_dispatch_sibling`` — inserts the
+          sibling after the parent in ``model_solve`` and copies the
+          DERIVED SolveConfig scaffolding dicts; records the authoritative
+          ``SolveConfig.realized_dispatch_parent[sibling] = parent``.
+      ►► DUAL-DEFINITION INVARIANT: the reader's raw-param allow-list and
+         the SolveConfig copy/set lists describe the SAME sibling config in
+         two vocabularies (period_timeset↔timesets_used_by_solves,
+         years_represented↔solve_period_years_represented,
+         solve_mode↔solve_modes, realized_periods↔realized_periods). They
+         MUST stay aligned — pinned by
+         ``tests/engine_polars/test_realized_dispatch_coherence.py``.
+    * projection (W4c): ``_native_run_model`` step 3.6 reads
+      ``realized_dispatch_parent`` and projects each stochastic param onto
+      the parent's realized branch (``project_realized_branch_time_branch_rows``).
+    * weighting (W4d): the parent's realized OPERATIONAL weight — keyed off
+      the parent's ``dispatch_realization_method`` — is de-scenario'd in the
+      ``pdt`` producers; reuse ``realized_dispatch_parent`` / the existing
+      per-solve channel, do NOT add a parallel sibling-detection.
+    ════════════════════════════════════════════════════════════════════
+
     Called ONCE from :func:`_drive_cascade` (after ``cascade_db_reader``
     is built, BEFORE ``native_run_model``).  For each eligible parent it
     performs a DUAL in-memory registration so the sibling takes the FULL

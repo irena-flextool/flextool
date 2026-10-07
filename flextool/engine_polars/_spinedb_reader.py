@@ -306,6 +306,16 @@ class SpineDbReader:
     #: ``stochastic_branches`` / ``fix_storage_periods`` / decomposition /
     #: benders knobs are intentionally NOT copied so the sibling cannot
     #: invest, branch, or decompose — it is a pure fixed-capacity dispatch.
+    #:
+    #: ►► DUAL-DEFINITION INVARIANT (fracture guard): these RAW Spine params
+    #: are the reader-side half of the sibling config; the DERIVED-dict half
+    #: lives in ``SolveConfig.spawn_realized_dispatch_sibling`` (the same
+    #: facts in SolveConfig vocabulary — period_timeset↔timesets_used_by_solves,
+    #: years_represented↔solve_period_years_represented, solve_mode↔solve_modes,
+    #: realized_periods↔realized_periods).  Keep the two aligned; the feature
+    #: map lives at ``_orchestration._spawn_realized_dispatch_siblings`` and
+    #: the alignment is pinned by
+    #: ``tests/engine_polars/test_realized_dispatch_coherence.py``.
     _REALIZED_DISPATCH_SIBLING_PARAMS = (
         "period_timeset",
         "realized_periods",

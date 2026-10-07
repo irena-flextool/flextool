@@ -986,6 +986,14 @@ class SolveConfig:
         trajectory over its realized periods is a correct free
         deterministic optimisation, not a re-floated gap.
         """
+        # ►► DUAL-DEFINITION INVARIANT (fracture guard): the dicts copied/set
+        # below are the DERIVED-dict half of the sibling config; the RAW Spine
+        # half is ``SpineDbReader._REALIZED_DISPATCH_SIBLING_PARAMS``.  The four
+        # DEFINING facts must agree across both halves (period_timeset↔
+        # timesets_used_by_solves, years_represented↔solve_period_years_represented,
+        # solve_mode↔solve_modes, realized_periods↔realized_periods).  Feature map:
+        # ``_orchestration._spawn_realized_dispatch_siblings``; alignment pinned by
+        # ``tests/engine_polars/test_realized_dispatch_coherence.py``.
         # Positional insert right after the parent (NOT append + remove).
         for _model, solves in self.model_solve.items():
             if parent in solves and sibling not in solves:
