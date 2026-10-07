@@ -40,9 +40,15 @@ Behavioural quirks
   (``(period, period)`` self-row plus one row per fan member,
   realized and zero-weight included).
 
-* **Single realized branch per period**: each period must have
-  exactly one ``realized: yes`` row (or zero before any branching has
-  occurred).  Found 0 or > 1 → raise ``FlexToolConfigError``.
+* **Forecasts-only fan with optional realized designation**: a
+  stochastic fan is FORECASTS ONLY (probability-weighted, Σ=1, no
+  realized member).  "Realized" is an OPTIONAL 0-or-1 designation per
+  revealing cohort, keyed off the ``realized_yn == "yes"`` column — it
+  feeds only the realization region / separate realized-dispatch solve
+  and is NEVER a weighted fan member.  A revealing cohort must carry
+  ≥1 forecast branch (``realized: no`` with nonzero weight); 0 or 1
+  ``realized: yes`` rows are both valid; 2+ realized rows → raise
+  ``FlexToolConfigError``.
 """
 from __future__ import annotations
 
@@ -415,11 +421,14 @@ class StochasticSolver:
         Raises:
             FlexToolConfigError: When the reveal that triggers a solve does
                 not start at its branching period's first step (not a
-                period-boundary reveal), when that triggering cohort does
-                not carry exactly one ``realized: yes`` row, or when a
-                single (non-rolling) solve declares ``stochastic_branches``
-                none of which reveal at a reachable step of its active time
-                (silently-ignored branches).
+                period-boundary reveal), when that triggering cohort carries
+                more than one ``realized: yes`` row (0 or 1 is valid — the
+                fan is forecasts only, realized is an optional designation),
+                when that cohort carries no forecast branch (``realized: no``
+                with nonzero weight), or when a single (non-rolling) solve
+                declares ``stochastic_branches`` none of which reveal at a
+                reachable step of its active time (silently-ignored
+                branches).
         """
         period__branch_lists: defaultdict[str, list] = defaultdict(list)
         solve_branch__time_branch_lists: defaultdict[str, list] = defaultdict(list)
@@ -466,7 +475,11 @@ class StochasticSolver:
             #        fan-at-first (and does NOT re-introduce Option-B's
             #        "first period can't branch" guard — see Appendix).
             #   (ii) the triggering cohort {rows sharing that (period,
-            #        start_step)} must carry EXACTLY ONE realized:yes row.
+            #        start_step)} must carry AT MOST ONE realized:yes row
+            #        (0 or 1 — the fan is forecasts only; realized is an
+            #        optional designation) AND AT LEAST ONE forecast branch
+            #        (realized:no with nonzero weight); 2+ realized or 0
+            #        forecasts → raise.
             # When no reveal is reachable in this solve's window the solve
             # stays a deterministic trunk (``branched`` remains False, so
             # ``branch_start_time_lists[solve]`` stays None and the walk
@@ -491,11 +504,12 @@ class StochasticSolver:
             # documented limitation for the rolling case.  For a SINGLE
             # (non-rolling) solve the WHOLE reveal picture is visible in the
             # one window, so every declared reveal is validated strictly —
-            # each must sit at its period's first step and each branching
-            # period must carry exactly one realized:yes — restoring the
-            # pre-W1 per-row strictness (a mid-period or extra reveal in a
-            # single solve is a real authoring error, not another roll's
-            # reveal).  This raises, matching the pre-W1 behaviour.
+            # each must sit at its period's first step, each branching
+            # period must carry at most one realized:yes (0 or 1) and at
+            # least one forecast branch (realized:no, nonzero weight) —
+            # restoring the pre-W1 per-row strictness (a mid-period or extra
+            # reveal in a single solve is a real authoring error, not another
+            # roll's reveal).  This raises, matching the pre-W1 behaviour.
             # ----------------------------------------------------------
             is_rolling_sub_solve = (
                 getattr(
@@ -549,13 +563,33 @@ class StochasticSolver:
                     for r in info
                     if r[0] == trig_period and r[2] == trig_step and r[3] == "yes"
                 )
-                if n_real != 1:
+                n_forecast = sum(
+                    1
+                    for r in info
+                    if r[0] == trig_period
+                    and r[2] == trig_step
+                    and r[3] != "yes"
+                    and float(r[4]) != 0.0
+                )
+                if n_real > 1:
                     message = (
                         "The triggering stochastic branching cohort (period "
                         f"{trig_period!r}, start_step {trig_step!r}) must have "
-                        f"exactly one realized:yes branch; found {n_real}. "
-                        "Check stochastic_branches (one realized branch per "
-                        "reveal; start_step at the period's first step)."
+                        f"at most one realized:yes branch per revealing cohort; "
+                        f"found {n_real}. Check stochastic_branches (the fan is "
+                        "forecasts only; realized is an optional 0-or-1 "
+                        "designation; start_step at the period's first step)."
+                    )
+                    self.logger.error(message)
+                    raise FlexToolConfigError(message)
+                if n_forecast < 1:
+                    message = (
+                        "The triggering stochastic branching cohort (period "
+                        f"{trig_period!r}, start_step {trig_step!r}) must "
+                        "contain at least one forecast (non-realized, "
+                        f"nonzero-weight) branch; found {n_forecast}. A "
+                        "stochastic fan is forecasts only — realized is an "
+                        "optional designation. Check stochastic_branches."
                     )
                     self.logger.error(message)
                     raise FlexToolConfigError(message)
@@ -586,11 +620,29 @@ class StochasticSolver:
                             1 for r in info
                             if r[0] == period_k and r[3] == "yes"
                         )
-                        if n_real_k != 1:
+                        n_forecast_k = sum(
+                            1 for r in info
+                            if r[0] == period_k
+                            and r[3] != "yes"
+                            and float(r[4]) != 0.0
+                        )
+                        if n_real_k > 1:
                             message = (
                                 f"Stochastic branching period {period_k!r} "
-                                "must have exactly one realized:yes branch; "
-                                f"found {n_real_k}. Check stochastic_branches."
+                                "must have at most one realized:yes branch per "
+                                f"revealing cohort; found {n_real_k}. Check "
+                                "stochastic_branches."
+                            )
+                            self.logger.error(message)
+                            raise FlexToolConfigError(message)
+                        if n_forecast_k < 1:
+                            message = (
+                                f"Stochastic branching period {period_k!r} "
+                                "must contain at least one forecast "
+                                "(non-realized, nonzero-weight) branch; found "
+                                f"{n_forecast_k}. A stochastic fan is forecasts "
+                                "only — realized is an optional designation. "
+                                "Check stochastic_branches."
                             )
                             self.logger.error(message)
                             raise FlexToolConfigError(message)
@@ -703,9 +755,9 @@ class StochasticSolver:
                     if period in fix_storage_time_list:
                         new_fix_storage_time_list[period] = fix_storage_time_list[period]
 
-            # Find the realized branch for each period.  Each period
-            # must have exactly one realized: yes row (or zero before
-            # any branching has occurred).
+            # Find the realized branch for each period.  Realized is an
+            # optional 0-or-1 designation: a period may have no realized
+            # row (forecasts-only cohort) or exactly one; 2+ → raise.
             for period, active_time in active_time_list.items():
                 found = 0
                 # Before branching: row[0]==period, row[2]==first step,
@@ -730,9 +782,9 @@ class StochasticSolver:
                             solve_branch__time_branch_lists[solve].append(
                                 (period, row[1])
                             )
-                if (branch_start_time_lists[solve] is not None and found == 0) or found > 1:
+                if found > 1:
                     message = (
-                        "Each period should have one and only one realized branch. "
+                        "Each period should have at most one realized branch. "
                         "Found: " + str(found) + "\n"
                     )
                     self.logger.error(message)

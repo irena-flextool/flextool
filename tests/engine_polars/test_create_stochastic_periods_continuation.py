@@ -297,18 +297,42 @@ def test_w1_trigger_cohort_two_realized_raises() -> None:
         ("p1", "rlz2", "t0001", "yes", "1"),
         ("p1", "low", "t0001", "no", "3"),
     ]
-    with pytest.raises(FlexToolConfigError, match="exactly one realized"):
+    with pytest.raises(FlexToolConfigError, match="at most one"):
         _run_one(solver, info, {"p1": ROLL_WIN})
 
 
-def test_w1_trigger_cohort_zero_realized_raises() -> None:
-    """Reject: the triggering cohort carries no realized:yes row."""
+def test_w1_trigger_cohort_zero_realized_fans_out() -> None:
+    """Accept: the fan is forecasts only — a cohort with zero realized:yes
+    rows (two forecasts) is VALID and fans out into both forecasts (no
+    realized self-row appended)."""
     solver = _make_solver_with_modes({})
     info = [
         ("p1", "low", "t0001", "no", "3"),
         ("p1", "high", "t0001", "no", "3"),
     ]
-    with pytest.raises(FlexToolConfigError, match="exactly one realized"):
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run_one(
+        solver, info, {"p1": ROLL_WIN}
+    )
+    assert bstl["s"] == ("p1", "t0001")
+    assert pb["s"] == [
+        ("p1", "p1"),
+        ("p1", "p1_low"),
+        ("p1", "p1_high"),
+    ]
+    # Both forecasts receive active time; no realized self-row (n_real=0).
+    assert sbtb["s"] == [("p1_low", "low"), ("p1_high", "high")]
+    assert list(atl["s"].keys()) == ["p1", "p1_low", "p1_high"]
+
+
+def test_w1_trigger_cohort_zero_forecast_raises() -> None:
+    """Reject: a cohort with only a realized member (no forecast branch —
+    realized:no with nonzero weight) violates the forecasts-only rule."""
+    solver = _make_solver_with_modes({})
+    info = [
+        ("p1", "rlz", "t0001", "yes", "1"),
+        ("p1", "dead", "t0001", "no", "0"),
+    ]
+    with pytest.raises(FlexToolConfigError, match="at least one forecast"):
         _run_one(solver, info, {"p1": ROLL_WIN})
 
 
