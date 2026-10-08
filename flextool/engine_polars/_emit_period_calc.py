@@ -468,27 +468,25 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
                                    provider=provider)
 
-    # W4d-A — the PARENT solve's resolved dispatch_realization_method marker
-    # (absent → within_solve → byte-parity).  Under ``separate_dispatch`` the
-    # OPERATIONAL pdt weights are de-scenario'd (forecasts renormalise among
-    # themselves; the realized branch's own operational weight → 0).  Kept in
-    # lock-step with ``_derived_branch.pdt_branch_weight_lf`` (the authoritative
-    # LP weight) so this emitted CSV stays byte-parity with the LP Param.  The
-    # pd loop above is UNTOUCHED (invest weight, owned by W7).
-    method_df = _read_csv(solve_data_dir / "dispatch_realization_method.csv",
-                          ["method"], provider=provider)
-    separate_dispatch = False
-    if method_df.height > 0:
-        raw = method_df["method"][0]
-        if raw is not None:
-            v = str(raw).strip().lower()
-            separate_dispatch = v == "separate_dispatch"
-    realized_set = {d for d, b in pb_rows if d == b}
+    # Forecasts-only cohort rule (R2/W7, unconditional) — a PHANTOM period is a
+    # trunk self-row ``(d, d) ∈ pb`` that ALSO fans out to a forecast member;
+    # it carries no probability mass → weight 0, excluded from every forecast
+    # denominator.  A lone pre-reveal / deterministic trunk is NOT phantom and
+    # keeps 1.0.  Kept in lock-step with
+    # ``_derived_branch.pdt_branch_weight_lf`` (the authoritative LP weight) via
+    # the shared :func:`_derived_branch.phantom_periods` helper, so this emitted
+    # CSV stays byte-parity with the LP Param.  Now applied to the pd (invest)
+    # loop too (= W7), not just pdt.
+    from flextool.engine_polars._derived_branch import phantom_periods
+    phantom = phantom_periods(pb_set)
 
     pd_rows: list[tuple[str, float]] = []
     for d in period_in_use:
         ts = first_time_for_d.get(d)
         if ts is None:
+            continue
+        if d in phantom:
+            pd_rows.append((d, 0.0))
             continue
         branches_at_ts = times_with_first_set.get(ts, set())
         denom = 0.0
@@ -496,6 +494,8 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
             if b not in branches_at_ts:
                 continue
             if (d2, d) not in pb_set:
+                continue
+            if b in phantom:
                 continue
             denom += w(b)
         if denom == 0.0:
@@ -506,8 +506,8 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
 
     pdt_rows: list[tuple[str, str, float]] = []
     for d, t in dt_pairs:
-        if separate_dispatch and d in realized_set:
-            # Realized operational weight → 0 (W4d-A; sibling owns these ops).
+        if d in phantom:
+            # Phantom trunk operational weight → 0 (forecasts carry the mass).
             pdt_rows.append((d, t, 0.0))
             continue
         branches_with_t = branches_for_t.get(t, set())
@@ -517,8 +517,8 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
                 continue
             if (d2, d) not in pb_set:
                 continue
-            if separate_dispatch and b in realized_set:
-                # Exclude the realized self-branch from the forecast denom.
+            if b in phantom:
+                # Exclude the phantom trunk from the forecast denominator.
                 continue
             denom += w(b)
         if denom == 0.0:

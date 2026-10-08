@@ -157,7 +157,19 @@ def period_branch_pairs_lf(
               "b": schema_dtype(_enums, "b")}
     if ctx is not None:
         pb_df = getattr(ctx, "period_branch", None)
-        if pb_df is not None and pb_df.height > 0:
+        # Trust ``ctx.period_branch`` ONLY when its ``d_anchor`` column is
+        # null-free — under enum activation the ctx frame's anchor column is
+        # null-poisoned (the ``d_anchor`` axis vocabulary is empty by
+        # contract), which would drop every trunk self-row ``(d, d)`` and
+        # silently defeat the forecasts-only ``phantom_periods`` detection
+        # (phantom weights collapse to a naive 1/Σw instead of 0).  This
+        # mirrors the guard in :func:`_collect_lineage_inputs`; on a
+        # null-poisoned ctx we fall through to the raw ``period__branch.csv``
+        # which carries the correct anchors.
+        if (pb_df is not None and pb_df.height > 0
+                and "d_anchor" in pb_df.columns
+                and pb_df["d_anchor"].null_count() == 0
+                and pb_df["b"].null_count() == 0):
             return (pb_df.lazy()
                           .select(alias_to_axis("d_anchor", "d"),
                                   cast_dim(pl.col("b"), _enums, "b"))
@@ -357,32 +369,24 @@ def steps_in_use_lf(workdir: Path | None,
               .unique())
 
 
-def dispatch_realization_method_read(
-    workdir: Path | None,
-    *, provider: "object | None" = None,
-) -> str:
-    """Read the per-solve ``dispatch_realization_method`` marker (W4d-A).
+def phantom_periods(pb_set: "set[tuple[str, str]]") -> set[str]:
+    """Phantom trunk periods under the forecasts-only cohort rule (R2/W7).
 
-    Returns the normalised lower-case mode (``"within_solve"`` /
-    ``"separate_dispatch"``).  An absent / empty / unrecognised marker ->
-    ``"within_solve"`` (byte-identical prior behaviour), mirroring
-    :meth:`SolveConfig.dispatch_realization_method_for`.  This is a scalar
-    config read over the standard ``solve_data`` provider channel (same
-    pattern as ``steps_in_use`` / ``period__branch`` / ``solve_branch_weight``);
-    it is NOT a quantity Param, so no autoscale registry entry is required.
+    A *phantom* is a period ``d`` that is both a trunk self-row
+    (``(d, d) ∈ period__branch``) AND the parent of ≥1 forecast member
+    (``∃ b ≠ d : (d, b) ∈ period__branch``).  The stochastic fan is
+    forecasts-only (Σ = 1), so a phantom trunk carries no probability mass —
+    the branch-weight producers emit weight 0 for it and skip it from every
+    forecast denominator.
+
+    A trunk with NO fan member (``has_fan`` is false) is a genuine pre-reveal
+    cohort-of-one or a deterministic period and is NOT phantom, so it keeps its
+    full 1.0 weight.  Returns the empty set for a deterministic solve
+    (``pb_set`` empty) → the rule is a no-op (byte-parity with HEAD).
     """
-    if workdir is None:
-        return "within_solve"
-    p = Path(workdir) / "solve_data" / "dispatch_realization_method.csv"
-    df = _provider_get(provider, p)
-    if df is None or df.height == 0 or not df.columns:
-        return "within_solve"
-    col = "method" if "method" in df.columns else df.columns[0]
-    raw = df[col][0]
-    if raw is None:
-        return "within_solve"
-    value = str(raw).strip().lower()
-    return value if value in ("within_solve", "separate_dispatch") else "within_solve"
+    trunk = {d for d, b in pb_set if d == b}
+    has_fan = {d for d, b in pb_set if b != d}
+    return trunk & has_fan
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +445,16 @@ def pd_branch_weight_lf(
 
     # Build the parent set: pb_set = frozenset((d2, b)).
     pb_set = {(row["d"], row["b"]) for row in pb.iter_rows(named=True)}
+    # Forecasts-only cohort rule (R2/W7, unconditional) — a PHANTOM period is a
+    # trunk self-row ``(d, d) ∈ pb`` that ALSO fans out to ≥1 forecast member
+    # ``(d, b), b ≠ d``.  The stochastic fan is forecasts-only (Σ=1), so the
+    # phantom trunk carries NO probability mass: it is skipped from every
+    # denominator and emits weight 0; the forecast members renormalise among
+    # themselves.  A trunk with NO fan member is a genuine pre-reveal cohort-of-
+    # one (or a deterministic period) and is NOT phantom → it stays 1.0 (the
+    # ``has_fan`` guard).  This is the W4d-A exclusion made unconditional (no
+    # ``dispatch_realization_method`` marker) and extended to the invest weight.
+    phantom = phantom_periods(pb_set)
     # times_with_first[ts] = {b : (b, ts) ∈ first_ts}
     first_ts_map = {row["d"]: row["ts"] for row in ft.iter_rows(named=True)}
     times_with_first: dict[str, set[str]] = {}
@@ -456,6 +470,9 @@ def pd_branch_weight_lf(
         ts = first_ts_map.get(d)
         if ts is None:
             continue
+        if d in phantom:
+            rows.append((d, 0.0))
+            continue
         branches_at_ts = times_with_first.get(ts, set())
         denom = 0.0
         # Iterate (d2, b) pairs (mirrors mod's ``sum {d2, b in pb}``)
@@ -464,6 +481,8 @@ def pd_branch_weight_lf(
             if b not in branches_at_ts:
                 continue
             if (d2, d) not in pb_set:
+                continue
+            if b in phantom:
                 continue
             denom += w(b)
         if denom == 0.0:
@@ -530,18 +549,13 @@ def pdt_branch_weight_lf(
     w_lookup = {row["b"]: float(row["w"]) for row in bw.iter_rows(named=True)
                 if row["w"] is not None}
     pb_set = {(row["d"], row["b"]) for row in pb.iter_rows(named=True)}
-    # W4d-A — under ``separate_dispatch`` the OPERATIONAL branch weights are
-    # de-scenario'd: forecasts normalise among THEMSELVES (the realized
-    # branch is excluded from the denominator) and the realized branch's own
-    # operational weight → 0 (its operations come from the W4c realized-
-    # dispatch sibling, so zeroing it in the hedge is safe).  The marker is
-    # the PARENT solve's own flag; an absent marker → within_solve → the
-    # verbatim legacy arm below (byte-parity).  ``realized_set`` is the
-    # self-anchored realized periods, the SAME ``(d, d) ∈ pb`` predicate
-    # ``derive_solve_branch_weight`` uses.
-    separate = dispatch_realization_method_read(
-        workdir, provider=provider) == "separate_dispatch"
-    realized_set = {d for d, b in pb_set if d == b}
+    # Forecasts-only cohort rule (R2, unconditional) — see
+    # :func:`pd_branch_weight_lf`.  A PHANTOM period (``(d, d) ∈ pb`` that also
+    # fans out to a forecast member) carries no probability mass: emit 0 and
+    # skip it from every forecast denominator.  Applied unconditionally (no
+    # ``dispatch_realization_method`` marker); a lone pre-reveal / deterministic
+    # trunk has no fan member and is NOT phantom → stays 1.0.
+    phantom = phantom_periods(pb_set)
     # branches_for_t[t] = {b : (b, t) ∈ dt} — derived from the dt set.
     # Mirrors flextool's ``branches_for_t`` from steps_in_use rows.
     branches_for_t: dict[str, set[str]] = {}
@@ -557,9 +571,8 @@ def pdt_branch_weight_lf(
     rows: list[tuple[str, str, float]] = []
     pb_iter = list(pb.iter_rows(named=True))
     for d, t in dt_pairs:
-        if separate and d in realized_set:
-            # Realized operational weight → 0 (bypass normalisation; the
-            # realized-dispatch sibling owns these operations).
+        if d in phantom:
+            # Phantom trunk operational weight → 0 (forecasts carry the mass).
             rows.append((d, t, 0.0))
             continue
         branches_with_t = branches_for_t.get(t, set())
@@ -570,8 +583,8 @@ def pdt_branch_weight_lf(
                 continue
             if (d2, d) not in pb_set:
                 continue
-            if separate and b in realized_set:
-                # Exclude the realized self-branch from the forecast denom.
+            if b in phantom:
+                # Exclude the phantom trunk from the forecast denominator.
                 continue
             denom += w(b)
         if denom == 0.0:
@@ -1469,6 +1482,28 @@ def check_recourse_npv_preconditions(
     Deterministic message order.  Raising wrapper:
     :func:`assert_recourse_npv_preconditions`.
 
+    FORECASTS-ONLY MODEL (R2/R4).  The stochastic fan is forecasts-only
+    (Σ = 1): a trunk period that is both a self-row and the parent of ≥1
+    forecast is a PHANTOM carrying weight 0; the forecast members
+    renormalise among themselves.  The three obligations are read under
+    that model:
+
+      (i)  leaf-weight constancy — the probability-weight is constant
+           along each post-reveal forecast chain (a weight-0 phantom
+           anchor is a pre-reveal / cohort-of-one exclusion, not a
+           violation);
+      (ii) cohort sum-to-1 — the forecast members of a revealing cohort
+           sum to 1 (the weight-0 phantom contributes 0).  Because the
+           producer (``pd_branch_weight_lf``) renormalises each
+           first-step forecast group to 1 and zeroes the phantom, a
+           WELL-FORMED cohort satisfies (ii) BY CONSTRUCTION — (ii) is
+           now largely a renormalisation tautology on the producer path.
+           It retains diagnostic power ONLY against a genuinely malformed
+           cohort whose forecast members straddle DIFFERENT first-step
+           normalization groups (each normalises to 1.0 independently, so
+           the cohort sums > 1) — see ``test_p3b_cohort_sum_violation``;
+      (iii) byte-equal fan-member year rows — unchanged.
+
     These obligations pin the arithmetic that makes a SET-shaped
     (unweighted) lineage filter numerically correct for
     trunk-crossing windows and realized-anchor windows (recourse plan
@@ -1573,6 +1608,11 @@ def check_recourse_npv_preconditions(
             )
 
     # --- (ii) cohort weights sum to 1 -------------------------------------
+    # Forecasts-only (R2/R4): the weight-0 phantom anchor contributes 0 and
+    # the forecast members renormalise to 1, so a well-formed cohort sums to
+    # 1 BY CONSTRUCTION (a renormalisation tautology on the producer path).
+    # This loop still catches a malformed cohort whose forecast members sit
+    # in different first-step normalization groups (each → 1.0 → sum > 1).
     # Fan rows (anchor -> members) in period__branch row order.
     fan_of: dict[str, list[str]] = {}
     for d, b in pb_rows:

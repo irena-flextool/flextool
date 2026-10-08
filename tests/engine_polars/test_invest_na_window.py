@@ -119,18 +119,23 @@ def test_main_objective_hand_calc(na_window_wf) -> None:
 
 @pytest.mark.solver
 def test_main_invest_shared_first_stage(na_window_resolved) -> None:
-    """T-Main (§9.2): p2035 v_invest is EQUAL across branches (shared
-    first stage = 60), while p2040 diverges (recourse: r_rlz = 60,
-    r_low = 0)."""
+    """T-Main (§9.2), R3 re-grounded: the first-stage p2035 v_invest is
+    EQUAL across the two forecast branches (shared first stage = 60:
+    p2035_high == p2035_low), while p2040 diverges (recourse: r_high = 60
+    at p2040_high, r_low = 0 at p2040_low).  The weight-0 phantom trunk
+    p2040 carries 0."""
     _data, sol, _pb = na_window_resolved
     vi = sol.value("v_invest_p")
     got = {r["d"]: round(float(r["value"]), 4)
            for r in vi.iter_rows(named=True)}
-    assert got["p2035"] == pytest.approx(60.0)
+    assert got["p2035_high"] == pytest.approx(60.0)  # shared first stage
     assert got["p2035_low"] == pytest.approx(60.0)   # shared first stage
-    assert got["p2035"] == got["p2035_low"]
-    assert got["p2040"] == pytest.approx(60.0)        # recourse (high)
+    assert got["p2035_high"] == got["p2035_low"]
+    assert got["p2040_high"] == pytest.approx(60.0)   # recourse (high)
     assert got["p2040_low"] == pytest.approx(0.0)     # recourse (low)
+    # The weight-0 phantom recourse trunk p2040 is NOT in the invest-NA
+    # window and is uncosted — degenerate, so only bounded-feasible.
+    assert 0.0 <= got["p2040"] <= 150.0
 
 
 @pytest.mark.solver
@@ -157,14 +162,15 @@ def test_ws_control_and_evpi_gap(na_ws_wf, na_window_wf) -> None:
 
 @pytest.mark.solver
 def test_frame_window_membership(na_window_resolved) -> None:
-    """T-Frame (§3.1): pd_non_anticipativity = {(p2035, p2035_low)} —
-    the window ties only the p2035 anchor's synthetic copy; p2040 is
-    NOT in the window so (p2040, p2040_low) is absent."""
+    """T-Frame (§3.1), R3 re-grounded: pd_non_anticipativity =
+    {(p2035, p2035_high), (p2035, p2035_low)} — the window ties the p2035
+    anchor across BOTH forecast copies of the genuine {high, low} fan;
+    p2040 is NOT in the window so its branch pairs are absent."""
     data, _sol, _pb = na_window_resolved
     pdna = data.pd_non_anticipativity
     pairs = {(str(r["d"]), str(r["b"]))
              for r in pdna.iter_rows(named=True)}
-    assert pairs == {("p2035", "p2035_low")}
+    assert pairs == {("p2035", "p2035_high"), ("p2035", "p2035_low")}
 
 
 def test_frame_empty_when_window_unset(na_ws_wf) -> None:
@@ -179,30 +185,35 @@ def test_frame_empty_when_window_unset(na_ws_wf) -> None:
 
 @pytest.mark.solver
 def test_branch_weights_partition(na_window_resolved) -> None:
-    """T-Weight (F7, §9.4): the tied cohort's weights are a probability
-    partition — pd_branch_weight[p2035] = 0.25, [p2035_low] = 0.75,
-    summing to 1.0 across the tie (so the shared decision is costed once
-    at full weight — the Option-B equivalence arithmetic)."""
+    """T-Weight (F7, §9.4), R3 re-grounded: under forecasts-only the tied
+    cohort's weights are a probability partition over the FORECASTS —
+    pd_branch_weight[p2035_high] = 0.25, [p2035_low] = 0.75, summing to
+    1.0 across the fan (so the shared decision is costed once at full
+    weight — the Option-B equivalence arithmetic).  The real-named trunk
+    p2035 is a weight-0 phantom."""
     data, _sol, _pb = na_window_resolved
     df = data.pd_branch_weight.frame
     val_col = [c for c in df.columns if c != "d"][-1]
     w = {str(r["d"]): round(float(r[val_col]), 6)
          for r in df.iter_rows(named=True)}
-    assert w["p2035"] == pytest.approx(0.25)
+    assert w["p2035"] == pytest.approx(0.0)
+    assert w["p2035_high"] == pytest.approx(0.25)
     assert w["p2035_low"] == pytest.approx(0.75)
 
 
 @pytest.mark.solver
 def test_invest_constraint_rows(na_window_resolved) -> None:
-    """T-C (§9.4): non_anticipativity_invest_p ties (base, p2035,
-    p2035_low); NO row over p2040."""
+    """T-C (§9.4), R3 re-grounded: non_anticipativity_invest_p ties
+    (base, p2035, p2035_high) and (base, p2035, p2035_low) — both
+    forecasts of the genuine fan; NO row over p2040."""
     _data, _sol, pb = na_window_resolved
     names = pb.cstr_names()
     assert "non_anticipativity_invest_p" in names
     over = pb.cstrs_named("non_anticipativity_invest_p")[0].over
     triples = {(str(r["p"]), str(r["d"]), str(r["b"]))
                for r in over.iter_rows(named=True)}
-    assert triples == {("base", "p2035", "p2035_low")}
+    assert triples == {("base", "p2035", "p2035_high"),
+                       ("base", "p2035", "p2035_low")}
 
 
 # --- T-Divest (solver, MANDATORY — F2) -------------------------------------
@@ -210,8 +221,9 @@ def test_invest_constraint_rows(na_window_resolved) -> None:
 
 @pytest.mark.solver
 def test_divest_family_ties_first_period(na_divest_resolved) -> None:
-    """T-Divest (§4.4, F2): a divest-eligible base under recourse+window
-    → non_anticipativity_divest_p ties the first-period divest over
+    """T-Divest (§4.4, F2), R3 re-grounded: a divest-eligible base under
+    recourse+window → non_anticipativity_divest_p ties the first-period
+    divest over both forecasts (base, p2035, p2035_high) and
     (base, p2035, p2035_low)."""
     _data, _sol, pb = na_divest_resolved
     names = pb.cstr_names()
@@ -219,23 +231,26 @@ def test_divest_family_ties_first_period(na_divest_resolved) -> None:
     over = pb.cstrs_named("non_anticipativity_divest_p")[0].over
     triples = {(str(r["p"]), str(r["d"]), str(r["b"]))
                for r in over.iter_rows(named=True)}
-    assert triples == {("base", "p2035", "p2035_low")}
+    assert triples == {("base", "p2035", "p2035_high"),
+                       ("base", "p2035", "p2035_low")}
 
 
 @pytest.mark.solver
 def test_divest_net_capacity_equal_across_branches(na_divest_resolved) -> None:
-    """T-Divest (§4.4): the NET first-stage capacity
-    (existing + invest − divest) is EQUAL across branches at p2035 —
-    the tie shares the net decision, not just gross invest."""
+    """T-Divest (§4.4), R3 re-grounded: the NET first-stage capacity
+    (existing + invest − divest) is EQUAL across the two forecast branches
+    at p2035 — the tie shares the net decision, not just gross invest."""
     _data, sol, _pb = na_divest_resolved
     inv = {r["d"]: float(r["value"])
            for r in sol.value("v_invest_p").iter_rows(named=True)}
     div = {r["d"]: float(r["value"])
            for r in sol.value("v_divest_p").iter_rows(named=True)}
     existing = 50.0
-    net_rlz = existing + inv.get("p2035", 0.0) - div.get("p2035", 0.0)
-    net_low = existing + inv.get("p2035_low", 0.0) - div.get("p2035_low", 0.0)
-    assert net_rlz == pytest.approx(net_low, abs=1e-6)
+    net_high = (existing + inv.get("p2035_high", 0.0)
+                - div.get("p2035_high", 0.0))
+    net_low = (existing + inv.get("p2035_low", 0.0)
+               - div.get("p2035_low", 0.0))
+    assert net_high == pytest.approx(net_low, abs=1e-6)
 
 
 # --- T-None (graceful no-op) -----------------------------------------------

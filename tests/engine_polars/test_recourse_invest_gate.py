@@ -3,22 +3,26 @@
 Design: ``specs/sliceD_recourse_invest_design.md`` §15.1 (variant A) / §18 D5.
 
 Fixture ``stoch_two_period_invest.json`` (built via
-``build_stoch_two_period_invest.py``): two 3-step periods, branches
-rlz w=0.25 / low w=0.75, deterministic demand 100/130 MW, an existing
-wind unit whose branch-varying ``upper_limit`` profile (rlz 0.40/0.40,
-low 0.20/0.10 through the ``group__unit`` stochastic group) leaves the
-investable ``peaker`` (unitsize 1, invest_cost 1, discount_rate 0.05,
-lifetime 1 → annuity 1050 exactly; unbounded-forward windows 2100/1050)
-residual demand rlz 60/90, low 80/120.  Under ``recourse`` the invest
-axis fans, each leaf invests its own capacity, and the objective is the
+``build_stoch_two_period_invest.py``): two 3-step periods, a genuine
+2-forecast fan ``high`` w=1 / ``low`` w=3 (forecasts-only, n_real = 0),
+deterministic demand 100/130 MW, an existing wind unit whose
+branch-varying ``upper_limit`` profile (high 0.40/0.40, low 0.20/0.10
+through the ``group__unit`` stochastic group) leaves the investable
+``peaker`` (unitsize 1, invest_cost 1, discount_rate 0.05, lifetime 1 →
+annuity 1050 exactly; unbounded-forward windows 2100/1050) residual
+demand high 60/90, low 80/120.  This is a FAN-AT-FIRST reveal (branches
+declared at the first period p2035), so under the forecasts-only model
+the reference forecast owns the real period names; the real-named trunk
+periods p2035/p2040 are weight-0 phantoms (pd_branch_weight = 0) and the
+investment fans per forecast onto p2035_high/p2040_high (weight 0.25) and
+p2035_low/p2040_low (weight 0.75).  The objective is the
 probability-weighted expectation:
 
     0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050) = 196 875.
 
-Verified before pinning (design §15.1 verify-before-pin):
-``ed_entity_annual_discounted[peaker, ·]`` = 2100/2100/1050/1050 and the
-LP optimum is (60, 80, 30, 40) — empirically confirmed on the cascade
-before these asserts were written.
+Verified on a driven solve (R3 re-ground): per-forecast invest
+{p2035_high:60, p2040_high:30, p2035_low:80, p2040_low:40}; the phantom
+trunk p2035/p2040 invest 0; objective 196 875.
 """
 from __future__ import annotations
 
@@ -30,21 +34,32 @@ import pytest
 OBJECTIVE = 196_875.0
 SOLVE = "stoch_2p_inv"
 
-# ed_entity_annual_discounted[peaker, d] (§15.1 step 2).
+# ed_entity_annual_discounted[peaker, d] (§15.1 step 2) — the annuity is a
+# per-period window property, identical on the phantom trunk and both
+# forecast copies (2100 at the branching period p2035, 1050 at the
+# continuation period p2040).
 EXPECTED_ANNU = {
     "p2035": 2100.0, "p2040": 1050.0,
+    "p2035_high": 2100.0, "p2040_high": 1050.0,
     "p2035_low": 2100.0, "p2040_low": 1050.0,
 }
+# Forecasts-only weights (R2): phantom trunk → 0, forecasts renormalised
+# {high:0.25, low:0.75}.
 EXPECTED_WEIGHT = {
-    "p2035": 0.25, "p2040": 0.25, "p2035_low": 0.75, "p2040_low": 0.75,
+    "p2035": 0.0, "p2040": 0.0,
+    "p2035_high": 0.25, "p2040_high": 0.25,
+    "p2035_low": 0.75, "p2040_low": 0.75,
 }
 # Objective coefficient of v_invest[peaker, d] = unitsize·annu[d]·weight[d]
-# (§15.2 D4): 525 / 262.5 / 1575 / 787.5.
+# (§15.2 D4): phantom 0; high 525 / 262.5; low 1575 / 787.5.
 EXPECTED_COEFF = {d: EXPECTED_ANNU[d] * EXPECTED_WEIGHT[d]
                   for d in EXPECTED_ANNU}
-# Per-leaf optimal invest (§15.1 step 3).
+# Per-leaf optimal invest (§15.1 step 3): the phantom trunk invests 0; each
+# forecast leaf invests its own capacity.
 EXPECTED_INVEST = {
-    "p2035": 60.0, "p2040": 30.0, "p2035_low": 80.0, "p2040_low": 40.0,
+    "p2035": 0.0, "p2040": 0.0,
+    "p2035_high": 60.0, "p2040_high": 30.0,
+    "p2035_low": 80.0, "p2040_low": 40.0,
 }
 
 
@@ -96,12 +111,25 @@ def test_recourse_objective_hand_calc(recourse_wf):
 
 @pytest.mark.solver
 def test_recourse_per_leaf_invest(_resolved):
-    """§15.2 D2: v_invest carries all four (peaker, d) columns; each leaf
-    invests its own §15.1 quantities (60/30 realized, 80/40 low)."""
+    """§15.2 D2: v_invest carries a (peaker, d) column per period — each
+    forecast leaf invests its own §15.1 quantities (high 60/30, low 80/40).
+
+    The real-named trunk periods p2035/p2040 are weight-0 PHANTOMS: their
+    invest objective coefficient AND demand penalty are both 0, so their
+    invest value is a genuine alternate-optimum (degenerate — the simplex
+    vertex varies with build context).  We pin the economically-determined
+    forecast leaves exactly and assert the phantoms are merely feasible."""
     _data, sol = _resolved
     vi = sol.value("v_invest_p")
     got = {r["d"]: float(r["value"]) for r in vi.iter_rows(named=True)}
-    assert got == pytest.approx(EXPECTED_INVEST)
+    forecast_keys = ("p2035_high", "p2040_high", "p2035_low", "p2040_low")
+    forecast_got = {k: got[k] for k in forecast_keys}
+    assert forecast_got == pytest.approx(
+        {k: EXPECTED_INVEST[k] for k in forecast_keys})
+    # Weight-0 phantom trunk periods are unpinned (degenerate) — only
+    # bounded-feasible (0 ≤ v ≤ invest_max_total 150).
+    assert 0.0 <= got["p2035"] <= 150.0
+    assert 0.0 <= got["p2040"] <= 150.0
 
 
 @pytest.mark.solver
@@ -134,20 +162,31 @@ def test_recourse_edd_lineage_filtered(_resolved):
             for r in data.edd_invest_set.iter_rows(named=True)}
     assert rows == {
         ("p2035", "p2035"), ("p2035", "p2040"),
+        ("p2035_high", "p2035_high"), ("p2035_high", "p2040_high"),
         ("p2035_low", "p2035_low"), ("p2035_low", "p2040_low"),
-        ("p2040", "p2040"), ("p2040_low", "p2040_low"),
+        ("p2040", "p2040"), ("p2040_high", "p2040_high"),
+        ("p2040_low", "p2040_low"),
     }
 
 
 @pytest.mark.solver
 def test_recourse_committed_output_realized_only(recourse_wf):
-    """§11.1: the committed v_invest output carries ONLY the realized
-    periods (real names) — branch rows are horizon-output-only (D8)."""
+    """§11.1, R3 re-grounded (forecasts-only, fan-at-first): the committed
+    v_invest output carries ONLY the real-named (trunk) periods — branch
+    rows are horizon-output-only (D8).  This fixture is FAN-AT-FIRST: the
+    reveal is at the first period p2035, so there is NO pre-reveal
+    here-and-now committed stage — every investment is a per-forecast
+    wait-and-see decision on the branch rows (p2035_high/low, p2040_high/
+    low).  The real-named trunk periods p2035/p2040 are weight-0 phantoms,
+    so the committed (realized-only) investment is 0 on both: there is no
+    non-anticipative here-and-now capacity to commit.  The actual
+    per-forecast investment (high 60/30, low 80/40) is surfaced only under
+    ``output_horizon`` (see test_recourse_output_horizon_branch_rows)."""
     inv = pl.read_parquet(
         recourse_wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
     got = {r["period"]: round(float(r["peaker"]), 6)
            for r in inv.iter_rows(named=True)}
-    assert got == {"p2035": 60.0, "p2040": 30.0}
+    assert got == {"p2035": 0.0, "p2040": 0.0}
 
 
 @pytest.fixture(scope="module")
@@ -160,29 +199,34 @@ def horizon_wf(scenario_workdir):
 
 @pytest.mark.solver
 def test_recourse_output_horizon_branch_rows(horizon_wf):
-    """§11.2 / §15.5 (D8): under ``output_horizon`` the invest-axis output
-    surfaces the non-realized branch rows (80 at p2035_low, 40 at
-    p2040_low) alongside the committed realized rows (60 / 30)."""
+    """§11.2 / §15.5 (D8), R3 re-grounded: under ``output_horizon`` the
+    invest-axis output surfaces every per-forecast branch row — the high
+    fan (60 at p2035_high, 30 at p2040_high) and the low fan (80 at
+    p2035_low, 40 at p2040_low).  The weight-0 phantom trunk p2035/p2040
+    carries 0 (no here-and-now investment under fan-at-first)."""
     inv = pl.read_parquet(
         horizon_wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
     got = {r["period"]: round(float(r["peaker"]), 6)
            for r in inv.iter_rows(named=True)}
-    assert got.get("p2035") == 60.0
-    assert got.get("p2040") == 30.0
+    assert got.get("p2035") == 0.0
+    assert got.get("p2040") == 0.0
+    assert got.get("p2035_high") == 60.0
+    assert got.get("p2040_high") == 30.0
     assert got.get("p2035_low") == 80.0
     assert got.get("p2040_low") == 40.0
 
 
 @pytest.mark.solver
 def test_recourse_per_path_cap_two_leaf_rows(_resolved):
-    """§15.1 / §7.2 (D6): under recourse the entity total cap fans into
-    ONE row per scenario leaf (peaker × {__realized, low}) under the
-    ``…_path`` name — the legacy single-row ``maxInvest_entity_total``
-    (which summed all four periods, 210 > 150, and would spuriously
-    bind) is gone.  Each leaf row sums only its two periods; the D2
-    per-leaf-invest test pins those sums to 90 (60+30) and 120 (80+40),
-    both ≤ 150 → non-binding, hence objective stays 196 875.  The naive
-    all-``d`` sum 210 asymmetry is the proof the caps are per-path."""
+    """§15.1 / §7.2 (D6), R3 re-grounded: under recourse the entity total
+    cap fans into ONE row per scenario leaf (peaker × {__realized, high,
+    low} of the genuine {high, low} fan) under the ``…_path`` name — the
+    legacy single-row ``maxInvest_entity_total`` (which summed all periods,
+    210 > 150, and would spuriously bind) is gone.  Each leaf row sums only
+    its own periods; the D2 per-leaf-invest test pins the forecast sums to
+    90 (high 60+30) and 120 (low 80+40), both ≤ 150 → non-binding, hence
+    objective stays 196 875.  The naive all-``d`` sum 210 asymmetry is the
+    proof the caps are per-path."""
     data, _sol = _resolved
     from flextool.engine_polars import build_flextool
     from polar_high import Problem
@@ -194,19 +238,23 @@ def test_recourse_per_path_cap_two_leaf_rows(_resolved):
     assert "maxInvest_entity_total" not in names  # legacy replaced
     recs = pb.cstrs_named("maxInvest_entity_total_path")
     over = recs[0].over
-    assert over.height == 2  # (peaker, __realized), (peaker, low)
+    assert over.height == 3  # (peaker, {__realized, high, low})
     leaves = sorted(str(v) for v in over["leaf"].to_list())
-    assert leaves == ["__realized", "low"]
+    assert leaves == ["__realized", "high", "low"]
     ents = {str(v) for v in over["p"].to_list()}
     assert ents == {"peaker"}
 
 
 @pytest.mark.solver
 def test_recourse_handoff_drops_non_realized(_resolved, recourse_wf, caplog):
-    """§10.1 (D7): the handoff pre-filter drops branch-named v_invest rows
-    (non-realized scenario) BEFORE the commit loop, debug-logging the
-    dropped mass (low leaf 80 + 40 = 120), and commits only real periods
-    (60 / 30).  Guard 3 stays inert (no raise)."""
+    """§10.1 (D7), R3 re-grounded (forecasts-only fan): the handoff
+    pre-filter drops ALL branch-named v_invest rows (both forecasts) BEFORE
+    the commit loop, debug-logging the dropped mass (high 60+30 + low 80+40
+    = 210 across 4 branch periods), and commits only the real-named periods.
+    Under fan-at-first the committed real-named capacity is 0 (the trunk is
+    a weight-0 phantom — the here-and-now has no non-anticipative invest),
+    but the point of this test is that the branch rows are structurally
+    dropped from the handoff.  Guard 3 stays inert (no raise)."""
     import logging
 
     data, sol = _resolved
@@ -218,16 +266,19 @@ def test_recourse_handoff_drops_non_realized(_resolved, recourse_wf, caplog):
             sol, recourse_wf, SOLVE, flex_data=data)
     assert handoff is not None
     ri = handoff.realized_invest
-    periods = {str(r["period"]) for r in ri.iter_rows(named=True)
-               if float(r["value"]) > 0}
+    periods = {str(r["period"]) for r in ri.iter_rows(named=True)}
+    # Only real-named trunk periods survive the pre-filter — no branch rows.
     assert periods == {"p2035", "p2040"}
-    assert not (periods & {"p2035_low", "p2040_low"})
-    # The pre-filter debug-logged the dropped low-branch mass = 120.
+    assert not (periods & {"p2035_high", "p2040_high",
+                           "p2035_low", "p2040_low"})
+    # The pre-filter debug-logged the dropped branch mass = 210 across all
+    # four forecast branch periods.
     msgs = [r.getMessage() for r in caplog.records
             if "non-realized invest" in r.getMessage()]
     assert msgs, "pre-filter debug log not emitted"
-    assert "120" in msgs[0]
-    assert "p2035_low" in msgs[0] and "p2040_low" in msgs[0]
+    assert "210" in msgs[0]
+    for b in ("p2035_high", "p2040_high", "p2035_low", "p2040_low"):
+        assert b in msgs[0]
 
 
 @pytest.mark.solver

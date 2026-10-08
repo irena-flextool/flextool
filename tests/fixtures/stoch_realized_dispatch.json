@@ -417,6 +417,20 @@
       ]
     ],
     [
+      "dispatch_realization_methods",
+      [
+        "IndpdGhpbl9zb2x2ZSI=",
+        "str"
+      ]
+    ],
+    [
+      "dispatch_realization_methods",
+      [
+        "InNlcGFyYXRlX2Rpc3BhdGNoIg==",
+        "str"
+      ]
+    ],
+    [
       "energy_margin_methods",
       [
         "Im5vbmUi",
@@ -2296,7 +2310,7 @@
       "model",
       "version",
       [
-        "NzQ=",
+        "NzU=",
         "float"
       ],
       null,
@@ -3061,6 +3075,17 @@
       null,
       "Map for indicating how many years from the present solve are the periods included in the solve. Used for discounting. Index: period, value: years.",
       null
+    ],
+    [
+      "solve",
+      "dispatch_realization_method",
+      [
+        "IndpdGhpbl9zb2x2ZSI=",
+        "str"
+      ],
+      "dispatch_realization_methods",
+      "How the stochastic branches of a solve are realized into a committed dispatch. 'within_solve' (default) keeps realization inside the single optimisation \u2014 branches and their realized periods are resolved within one solve, byte-identical to prior behaviour. 'separate_dispatch' splits realization into a dedicated downstream dispatch stage (a second market-clearing pass over the revealed branch); this is the 2-stage seed of a future multi-stage sequential-market structure and is not yet implemented (lands in a later slice).",
+      "solve_advanced"
     ],
     [
       "solve",
@@ -6254,7 +6279,7 @@
       "stoch_rd",
       "stochastic_branches",
       [
-        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzUiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJybHoiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwMSIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInllcyIsIDAuMjVdXX1dXX1dLCBbImhpZ2giLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwMSIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbIm5vIiwgMC4zNzVdXX1dXX1dLCBbImxvdyIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDAxIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sibm8iLCAwLjM3NV1dfV1dfV1dfV1dfQ==",
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzUiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJybHoiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwMSIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInllcyIsIDAuMF1dfV1dfV0sIFsiaGlnaCIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDAxIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sibm8iLCAwLjVdXX1dXX1dLCBbImxvdyIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDAxIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sibm8iLCAwLjVdXX1dXX1dXX1dXX0=",
         "map"
       ],
       "stoch"

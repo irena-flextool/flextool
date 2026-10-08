@@ -23,7 +23,7 @@ differing ONLY in WHERE the branches are declared:
 mid-horizon first stage is genuinely shared (§8.3).
 
 Effective demand seen by the investable ``base`` unit (design §8.1: p2035 =
-40 shared; p2040 realized/high = 120, low = 60) is produced supply-side —
+40 shared; p2040 high = 120, low = 60) is produced supply-side —
 NO stochastic NODE, so the LP stays separable / storage-free and the
 hand-calc is tractable (mirrors ``build_stoch_two_period_invest`` §8's
 mechanism note).  A free existing ``wind`` unit with a branch-varying
@@ -33,7 +33,7 @@ mechanism note).  A free existing ``wind`` unit with a branch-varying
   * wind existing 100 MW, cost 0; profile (share of 100 MW):
       - p2035 (pre-reveal, SHARED across branches): 0.8 → wind 80 →
         base residual 40 (= D1).
-      - p2040 realized (rlz):  0.0 → wind  0 → base residual 120 (= D2 high).
+      - p2040 high:            0.0 → wind  0 → base residual 120 (= D2 high).
       - p2040 low:             0.6 → wind 60 → base residual  60 (= D2 low).
   * unit ``base`` → ``elec`` — the investable peaker (virtual_unitsize 1,
     invest_total, discount_rate 0.05, lifetime 1 → annuity per MW-period
@@ -51,7 +51,7 @@ NO ``inflation_offset_investment/operations``, and NO solve-level
 distinct knob.
 
 Hand calculation (design §8.2), ``x = v_invest[base, p2035]``,
-``r_s = v_invest[base, p2040_s]``, weights ``w_rlz = 0.25`` (D2 = 120),
+``r_s = v_invest[base, p2040_s]``, weights ``w_high = 0.25`` (D2 = 120),
 ``w_low = 0.75`` (D2 = 60):
 
     RP  = min_x 2100·x + Σ_s w_s·3150·(D2_s − x)^+
@@ -225,18 +225,18 @@ def build() -> dict:
     # Mid-horizon reveal (scenario ``hedge``): branches declared at p2040.
     stochastic_branches_rp = _map([
         ("p2040", _nested([
-            ("rlz", _nested([("t0004", _nested([("yes", 1.0)]))])),
+            ("high", _nested([("t0004", _nested([("no", 1.0)]))])),
             ("low", _nested([("t0004", _nested([("no", 3.0)]))])),
         ])),
     ])
     # Wait-and-see (scenario ``hedge_ws``): branches declared at p2035.
     stochastic_branches_ws = _map([
         ("p2035", _nested([
-            ("rlz", _nested([("t0001", _nested([("yes", 1.0)]))])),
+            ("high", _nested([("t0001", _nested([("no", 1.0)]))])),
             ("low", _nested([("t0001", _nested([("no", 3.0)]))])),
         ])),
     ])
-    # Deterministic profile (base alternative) — matches the rlz branch:
+    # Deterministic profile (base alternative) — matches the high branch:
     # 0.8 at p2035 (wind 80 → residual 40), 0.0 at p2040 (residual 120).
     profile_base = _map(
         [(t, 0.80) for t in P1_STEPS] + [(t, 0.0) for t in P2_STEPS]
@@ -244,11 +244,11 @@ def build() -> dict:
     # Branch-varying wind profile (stoch alternative).  Keyed
     # branch → period-first-step → per-step share of the 100 MW wind cap.
     # p2035 (t0001) is SHARED (0.8 in BOTH branches — pre-reveal data must
-    # be identical; under mid-horizon only the realized/trunk value is
-    # ever read).  p2040 (t0004): rlz 0.0 (residual 120), low 0.6
-    # (residual 60).
+    # be identical; under mid-horizon the reference forecast owns the real
+    # period names at n_real = 0, so its value binds the trunk).  p2040
+    # (t0004): high 0.0 (residual 120), low 0.6 (residual 60).
     profile_stoch = _map([
-        ("rlz", _nested([
+        ("high", _nested([
             ("t0001", _nested([(t, 0.80) for t in P1_STEPS])),
             ("t0004", _nested([(t, 0.0) for t in P2_STEPS])),
         ])),

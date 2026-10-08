@@ -3,8 +3,9 @@ per-scenario (wait-and-see) stochastic-investment gate fixture
 (design ``specs/sliceD_recourse_invest_design.md`` §15.1, variant A).
 
 Extends the ``stoch_two_period`` shape (two 3-step periods p2035 / p2040,
-branches ``rlz`` w=1.0 / ``low`` w=3.0 declared at p2035/t0001 so p2040 is
-a CONTINUATION period) with an INVEST entity.  The branch variation rides
+forecast branches ``high`` w=1.0 / ``low`` w=3.0 declared at p2035/t0001 so
+p2040 is a CONTINUATION period) with an INVEST entity.  Both branches are
+forecasts (``realized:no``); n_real = 0 — a genuine ``{high, low}`` fan.  The branch variation rides
 a UNIT profile through ``group__unit`` (the base fixture's mechanism) — no
 NODE enters the stochastic group, so the node-side NA net-charge pinning
 (``model.py`` ``non_anticipativity_storage_use``, gated on ``group_node``
@@ -17,9 +18,9 @@ which is why the demand variation is supply-side here:
   * node ``elec`` — balance, high penalty (VOLL), DETERMINISTIC demand
     100 MW (p2035) / 130 MW (p2040).
   * unit ``wind`` → ``elec`` — existing 100 MW, cost 0, ``upper_limit``
-    profile branch-varying via the stochastic group: rlz 0.40/0.40,
-    low 0.20/0.10 → wind supply rlz 40/40, low 20/10 → peaker residual
-    rlz 60/90, low 80/120 (the §15.1 demand table).
+    profile branch-varying via the stochastic group: high 0.40/0.40,
+    low 0.20/0.10 → wind supply high 40/40, low 20/10 → peaker residual
+    high 60/90, low 80/120 (the §15.1 demand table).
   * unit ``peaker`` → ``elec`` — variable cost 0, virtual_unitsize 1 MW,
     invest_method=invest_total, invest_cost 1 CUR/kW, discount_rate 0.05,
     lifetime 1 (→ annuity 1000·CRF(0.05,1) = 1050 exactly),
@@ -31,7 +32,8 @@ which is why the demand variation is supply-side here:
     the objective stays 196 875).
 
 Hand calculation (design §15.1): with the invest axis fanned, per-scenario
-optimal invest {p2035:60, p2040:30, p2035_low:80, p2040_low:40}; annuity
+optimal invest {p2035_high:60, p2040_high:30, p2035_low:80, p2040_low:40};
+annuity
 windows 2100 (branching) / 1050 (continuation); weighted objective
 
     0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050) = 196 875.
@@ -152,18 +154,18 @@ def build() -> dict:
     # ---- init: model / solve / time structure --------------------------
     stochastic_branches = _map([
         ("p2035", _nested([
-            ("rlz", _nested([("t0001", _nested([("yes", 1.0)]))])),
+            ("high", _nested([("t0001", _nested([("no", 1.0)]))])),
             ("low", _nested([("t0001", _nested([("no", 3.0)]))])),
         ])),
     ])
-    # Deterministic profile (base alternative) — matches the rlz branch.
+    # Deterministic profile (base alternative) — matches the high branch.
     profile_base = _map(
         [(t, 0.40) for t in P1_STEPS] + [(t, 0.40) for t in P2_STEPS]
     )
     # Branch-varying wind profile (stoch alternative): wind supply
-    # rlz 40/40 MW, low 20/10 MW → peaker residual rlz 60/90, low 80/120.
+    # high 40/40 MW, low 20/10 MW → peaker residual high 60/90, low 80/120.
     profile_stoch = _map([
-        ("rlz", _nested([
+        ("high", _nested([
             ("t0001", _nested([(t, 0.40) for t in P1_STEPS])),
             ("t0004", _nested([(t, 0.40) for t in P2_STEPS])),
         ])),

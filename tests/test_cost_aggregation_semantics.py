@@ -964,34 +964,38 @@ def test_stochastic_branch_weight(
     test_solver_config_dir: Path,
     workdir: Path,
 ) -> None:
-    """LP objective applies ``pdt_branch_weight`` to per-(d, t) cost terms
-    (mod objective ~line 2007); Python's
-    ``Total cost (calculated) full horizon`` does NOT apply it (calc_costs
-    sums per-step costs unweighted across periods — see L110, L133 of
-    ``flextool/process_outputs/calc_costs.py`` where branch_weight is
-    only mentioned in comments).
+    """Both the LP objective AND the Python ``Total cost (calculated)``
+    apply ``pdt_branch_weight`` to every per-(d, t) operational + slack cost
+    term, so the two MUST agree.
 
-    For ``2_day_stochastic_dispatch`` (4 branches, each at uniform
-    ``pd_branch_weight = 0.25``) this gives a clean structural identity:
+    The LP objective folds ``pdt_branch_weight[d, t]`` into ``op_factor`` /
+    ``startup_factor`` (``flextool/engine_polars/model.py``).  Option (A)
+    makes the post-process do the same: ``calc_slacks`` / ``calc_costs``
+    weight each per-(d, t) cost term by ``pdt_branch_weight`` (via
+    ``flextool/process_outputs/_branch_weight.py``), so
+    ``Total cost (calculated) full horizon`` IS the probability-weighted
+    expectation == the LP objective.
 
-        LP_obj ≈ python_total_calc × avg(pd_branch_weight)
+    For ``2_day_stochastic_dispatch`` (a genuine 4-forecast fan at
+    ``period1``, each forecast ``pd_branch_weight = 0.25``, plus the
+    weight-0 phantom self-row) the identity is exact:
 
-    or equivalently ``python_total_calc / LP_obj ≈ 1 / avg_weight = 4``.
+        python_total_calc ≈ LP_obj
 
-    Regressions caught:
+    This is the re-grounding the previous ``× avg_weight = 4`` identity
+    anticipated in its own docstring ("someone fixes the calc_costs TODO
+    and multiplies cost terms by pdt_branch_weight: python_total_calc drops
+    to ≈ LP_obj, ratio falls to 1.0 … deserves an update of this test").
 
-    * LP-side regression (mod stops applying ``pdt_branch_weight`` —
-      e.g. a future Python migration of the objective drops it): LP_obj
-      jumps to ≈ python_total_calc, ratio falls to 1.0.
-    * Python-side regression (someone fixes the calc_costs TODO and
-      multiplies cost terms by ``pdt_branch_weight``): python_total_calc
-      drops to ≈ LP_obj, ratio falls to 1.0.
+    Still a genuine tripwire — it fails if EITHER side stops applying the
+    weight:
 
-    Either side moving without the other is a real semantic shift that
-    deserves an update of this test (and probably summary_solve labels).
-    The original ``test_stochastic_branch_weight`` xfail predicted the
-    Python-side fix is still pending; this passing test now stands as a
-    tripwire for either side moving.
+    * LP-side regression (mod/model stops applying ``pdt_branch_weight``):
+      LP_obj jumps up (phantom slack re-enters the objective), diverging
+      from the weighted ``total_calc``.
+    * Python-side regression (option A reverts — the post-process stops
+      weighting): ``total_calc`` jumps up (phantom's free slack summed
+      unweighted ≈ 183 000 M), diverging from the weighted LP_obj.
     """
     csv_dir = _run_scenario(
         "2_day_stochastic_dispatch",
@@ -1001,9 +1005,11 @@ def test_stochastic_branch_weight(
     )
     summary = _read_summary_solve(csv_dir)
 
-    # Pull pd_branch_weight from solve_data — no Python loader exists, so
-    # read the CSV directly. It's the writer's own output (Python migration
-    # batch 63) so the file is guaranteed to exist for any solve.
+    # Pull pd_branch_weight from solve_data — the writer's own output, so the
+    # file is guaranteed to exist for any solve.  Assert the fixture is
+    # genuinely stochastic (a real multi-forecast fan with a weight-0
+    # phantom), otherwise the identity below is vacuous (deterministic runs
+    # weight by 1.0 and trivially reconcile).
     weights: dict[str, float] = {}
     with open(workdir / "solve_data" / "pd_branch_weight.csv") as f:
         next(f)  # header
@@ -1011,27 +1017,33 @@ def test_stochastic_branch_weight(
             if len(row) >= 2 and row[0]:
                 weights[row[0]] = float(row[1])
 
-    assert len(weights) >= 2, (
-        f"Fixture must produce ≥ 2 branches to exercise stochastic "
-        f"weighting; got {weights}"
+    forecast_weights = {b: w for b, w in weights.items() if w > 0.0}
+    phantom_weights = {b: w for b, w in weights.items() if w == 0.0}
+    assert len(forecast_weights) >= 2, (
+        f"Fixture must produce ≥ 2 weighted forecast branches to exercise "
+        f"stochastic weighting; got {weights}"
     )
-    avg_weight = sum(weights.values()) / len(weights)
-    assert avg_weight < 1.0, (
-        f"Branch weights should normalise to < 1 per branch; got "
-        f"avg_weight={avg_weight} from {weights}"
+    assert phantom_weights, (
+        f"Fan-at-first fixture must carry a weight-0 phantom self-row "
+        f"(forecasts-only R2); got {weights}"
+    )
+    assert all(w < 1.0 for w in forecast_weights.values()), (
+        f"Forecast weights should normalise to < 1 per branch; got "
+        f"{forecast_weights}"
     )
 
-    expected_lp = summary["total_calc"] * avg_weight
-    rel_err = abs(summary["objective"] - expected_lp) / max(
-        abs(expected_lp), 1e-9
+    # Core invariant: both sides apply pdt_branch_weight, so the Python
+    # calculated total equals the LP objective (the phantom's free slack
+    # × weight 0 = 0; the forecasts × their weights sum to the expectation).
+    rel_err = abs(summary["total_calc"] - summary["objective"]) / max(
+        abs(summary["objective"]), 1e-9
     )
-    assert rel_err <= 1e-3, (
-        f"branch-weight identity broken: "
+    assert rel_err <= 1e-4, (
+        f"branch-weight reconciliation broken: "
         f"LP_obj={summary['objective']:.6f}, "
         f"python_total_calc={summary['total_calc']:.6f}, "
-        f"avg_pd_branch_weight={avg_weight:.6f}, "
-        f"expected LP ≈ total_calc × avg = {expected_lp:.6f}, "
         f"rel_err={rel_err:.3e}.  Either the LP stopped applying "
-        f"pdt_branch_weight or Python started applying it — see the "
-        f"docstring above for which side moved."
+        f"pdt_branch_weight (LP_obj jumps up) or the post-process option-A "
+        f"weighting reverted (total_calc jumps up with unweighted phantom "
+        f"slack) — see the docstring above for which side moved."
     )

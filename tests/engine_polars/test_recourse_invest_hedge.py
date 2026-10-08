@@ -9,7 +9,7 @@ Fixture ``stoch_two_period_hedge.json`` (built via
 period-Map ``invest_cost`` {p2035: 1, p2040: 3} so the first stage is
 cheaper per delivered p2040-MW; a free ``wind`` unit's branch-varying
 ``upper_limit`` profile carves the residual the investable ``base`` unit
-must cover (p2035 = 40 shared; p2040 realized/high = 120, low = 60).
+must cover (p2035 = 40 shared; p2040 high = 120, low = 60).
 
 Three scenarios on identical scenario data:
   * ``hedge``         — mid-horizon reveal at p2040 (RP = 173 250).
@@ -315,14 +315,28 @@ def test_rp_objective_hand_calc(hedge_wf) -> None:
 def test_rp_invest_is_a_genuine_hedge(hedge_resolved) -> None:
     """T-RP (§8.2): the shared first stage x = v_invest[base, p2035] = 60
     (a hedge between D2_low = 60 and D2_high = 120, above D1 = 40), with
-    recourse r_rlz = 60 at p2040 and r_low = 0 at p2040_low."""
+    recourse r_high = 60 at p2040_high and r_low = 0 at p2040_low.
+
+    Under the forecasts-only model (genuine {high, low} fan, n_real = 0)
+    the reference forecast owns the real period names, so the recourse
+    period's real-named trunk p2040 is a weight-0 PHANTOM: its invest
+    objective coefficient AND its demand penalty are both 0, so its
+    invest value is a genuine alternate-optimum (degenerate — both 0 and
+    60 are cost-identical, and the simplex vertex picked varies with build
+    context).  We therefore pin only the economically-determined
+    variables (the costed forecasts + the pre-reveal shared stage) and
+    assert the phantom is merely feasible, not a specific value."""
     _data, sol, _pb = hedge_resolved
     vi = sol.value("v_invest_p")
     got = {r["d"]: round(float(r["value"]), 4)
            for r in vi.iter_rows(named=True)}
-    assert got == pytest.approx({
-        "p2035": 60.0, "p2040": 60.0, "p2040_low": 0.0,
-    })
+    # Economically pinned (costed) decisions.
+    assert got["p2035"] == pytest.approx(60.0)       # shared first stage
+    assert got["p2040_high"] == pytest.approx(60.0)   # recourse (high)
+    assert got["p2040_low"] == pytest.approx(0.0)     # recourse (low)
+    # The weight-0 phantom recourse trunk is unpinned (degenerate) — only
+    # bounded-feasible (0 ≤ v ≤ invest_max_total 150).
+    assert 0.0 <= got["p2040"] <= 150.0
 
 
 @pytest.mark.solver
@@ -376,14 +390,16 @@ def test_lineage_shared_trunk_on_every_leaf(hedge_resolved) -> None:
 @pytest.mark.solver
 def test_d_leaf_is_a_relation_not_a_partition(hedge_resolved) -> None:
     """T-C / T-L (§6.2): d_leaf is a RELATION — the shared pre-reveal
-    anchor p2035 is on BOTH the __realized leaf and the low leaf, so each
-    scenario path's total cap counts it.  A strict partition would put
-    p2035 on __realized only (under-counting the low path)."""
+    anchor p2035 is on EVERY leaf (__realized, high, low) of the genuine
+    {high, low} fan, so each scenario path's total cap counts it.  A strict
+    partition would put p2035 on one leaf only (under-counting the others).
+    """
     data, _sol, _pb = hedge_resolved
     dl = {(str(r["d"]), str(r["leaf"]))
           for r in data.d_leaf.iter_rows(named=True)}
     assert dl == {
         ("p2035", "__realized"), ("p2040", "__realized"),
+        ("p2035", "high"), ("p2040_high", "high"),
         ("p2035", "low"), ("p2040_low", "low"),
     }
 
@@ -405,52 +421,53 @@ def test_pd_non_anticipativity_empty_no_invest_na(hedge_resolved) -> None:
 @pytest.mark.solver
 def test_per_path_cap_two_leaf_rows(hedge_resolved) -> None:
     """T-C (§6.2 / §8.3): the entity total cap fans into ONE row per
-    scenario leaf (base × {__realized, low}) under the ``…_path`` name;
-    the legacy single-row ``maxInvest_entity_total`` (which would sum all
-    three periods) is gone."""
+    scenario leaf (base × {__realized, high, low} of the genuine {high,
+    low} fan) under the ``…_path`` name; the legacy single-row
+    ``maxInvest_entity_total`` (which would sum all periods) is gone."""
     _data, _sol, pb = hedge_resolved
     names = pb.cstr_names()
     assert "maxInvest_entity_total_path" in names
     assert "maxInvest_entity_total" not in names
     recs = pb.cstrs_named("maxInvest_entity_total_path")
     over = recs[0].over
-    assert over.height == 2
+    assert over.height == 3
     assert sorted(str(v) for v in over["leaf"].to_list()) == [
-        "__realized", "low",
+        "__realized", "high", "low",
     ]
     assert {str(v) for v in over["p"].to_list()} == {"base"}
 
 
 @pytest.mark.solver
 def test_committed_output_realized_only(hedge_wf) -> None:
-    """§9.4: the committed v_invest output carries only the realized
-    (trunk) periods with real names — the shared first stage p2035 = 60
-    and the realized recourse p2040 = 60; branch rows are dropped."""
+    """§9.4 (forecasts-only, owner decision 2): the committed v_invest
+    output carries only the real-named (trunk) periods — branch rows are
+    dropped.  The committed INVESTMENT is the single here-and-now
+    PRE-REVEAL decision: the shared first stage p2035 = 60.  The recourse
+    period p2040 is the weight-0 phantom trunk (pd_branch_weight = 0), so
+    it carries no committed investment (= 0) — the per-forecast recourse
+    lives on the branch rows p2040_high / p2040_low, which the committed
+    output does not surface."""
     inv = pl.read_parquet(
         hedge_wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
     got = {r["period"]: round(float(r["base"]), 6)
            for r in inv.iter_rows(named=True)}
-    assert got == {"p2035": 60.0, "p2040": 60.0}
+    assert got == {"p2035": 60.0, "p2040": 0.0}
 
 
 # --- T-S (storage): NA fires + branch copy links to shared trunk -----------
 
 
 @pytest.mark.solver
-def test_storage_na_vacuous_on_single_forecast_reveal(hedge_storage_wf) -> None:
-    """T-S (§5.1, §9.1), re-grounded: the hedge fixture's reveal declares a
-    SINGLE forecast (``low``; ``rlz`` is the realised designation = the high
-    scenario), so under the corrected forecast-to-forecast model there is
-    nothing to tie — a single forecast has no sibling — and the storage NA
-    family is correctly VACUOUS (the old trunk-anchored tie
-    ``(p2040, p2040_low)`` is gone; the realised trunk is never an NA hub).
-
-    This pins the degenerate-fixture behaviour: slice R3 (genuine 2-forecast
-    fan + re-derived RP/WS/EVPI/VSS/EEV hand-calcs) will add a second
-    forecast and restore a forecast-to-forecast tie — at which point this
-    assertion is updated to the forecast star.  Until then a single-forecast
-    reveal emitting NO NA constraint is the correct, witnessed property.
-    """
+def test_storage_na_forecast_star_on_two_forecast_reveal(
+        hedge_storage_wf) -> None:
+    """T-S (§5.1, §9.1), R3 re-grounded: the hedge fixture is now a genuine
+    2-forecast fan (``high``, ``low``; n_real = 0) revealing at p2040, so
+    under the forecasts-only model the storage non-anticipativity family
+    ties the two forecasts forecast-to-forecast at the reveal step — the
+    branch copies ``p2040_high`` and ``p2040_low`` are pinned to share the
+    pre-reveal net-charge.  The tie is NOT anchored on the weight-0 phantom
+    trunk ``p2040`` (the realised/reference trunk is never an NA hub); the
+    star is the forecast pair only."""
     from polar_high import Problem
     from flextool.engine_polars import build_flextool, load_flextool
 
@@ -458,16 +475,14 @@ def test_storage_na_vacuous_on_single_forecast_reveal(hedge_storage_wf) -> None:
     pb = Problem()
     build_flextool(pb, data)
     names = pb.cstr_names()
-    # A single forecast → the per-anchor-group star is skipped (<2
-    # forecasts) → no family emitted.  If a future change re-introduces a
-    # trunk-anchored tie this assertion fails loudly.
-    if "non_anticipativity_storage_use" in names:
-        over = pb.cstrs_named("non_anticipativity_storage_use")[0].over
-        pairs = {(str(r["d"]), str(r["b"]))
-                 for r in over.iter_rows(named=True)}
-        assert not pairs, (
-            "single-forecast reveal must not emit an NA tie (forecast-to-"
-            f"forecast is vacuous with one forecast); got {pairs}")
+    assert "non_anticipativity_storage_use" in names, (
+        "a genuine 2-forecast reveal must emit a forecast-to-forecast "
+        "storage NA tie")
+    over = pb.cstrs_named("non_anticipativity_storage_use")[0].over
+    pairs = {(str(r["d"]), str(r["b"]))
+             for r in over.iter_rows(named=True)}
+    assert pairs == {("p2040_high", "p2040_low")}, (
+        f"forecast-to-forecast star expected; got {pairs}")
 
 
 def test_storage_branch_copy_predecessor_is_shared_trunk(
@@ -496,7 +511,7 @@ def test_make_step_jump_dtttdt_parity_midhorizon(hedge_wf) -> None:
     sp = pl.read_csv(hedge_wf / "solve_data" / "step_previous.csv")
     assert sp.height == len(dtttdt)
     first_steps = {("p2035", "t0001"), ("p2040", "t0004"),
-                   ("p2040_low", "t0004")}
+                   ("p2040_high", "t0004"), ("p2040_low", "t0004")}
     for r in sp.rows(named=True):
         key = (r["period"], r["time"])
         m = dtttdt[key]

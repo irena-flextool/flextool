@@ -25,13 +25,20 @@ storage trajectory (design F6).  Two scenarios differ ONLY in the
 
 Hand-verified reference numbers (deterministic LP; see the builder):
 
-* ``pinned_ops`` (unset): storage NA fires (12 rows), the set CSV holds
-  the whole 6-step horizon, and ``v_state[resv]`` is IDENTICAL across
-  mid / up / low (all 0.5) — the branches cannot follow their opposite
-  surplus/deficit timing.  Objective 1_920_800; shared v_invest 12.
+* ``pinned_ops`` (unset): storage NA fires, the set CSV holds the whole
+  6-step horizon, and ``v_state[resv]`` is IDENTICAL across the two
+  forecast copies up / low — the branches cannot follow their opposite
+  surplus/deficit timing.  Objective 2_037_600.
 * ``free_ops`` (``[]``): zero NA rows, header-only set CSV, and
   ``v_state[resv]`` DIVERGES (up rises above 0.5, low falls below).
-  Objective 757_369.4 < pinned; shared v_invest 4.5.
+  Objective 764_954.1 < pinned; shared v_invest 4.5.
+
+R3 forecasts-only note: the fixture declares a realized designation
+``mid`` (realized:yes) alongside the two forecasts ``up`` / ``low``.
+Under the corrected model ``mid`` is PULLED from the weighted fan and the
+two forecasts renormalise to {up:0.5, low:0.5}; the objectives above are
+the driven optima under that weighting (mid at weight 0 contributes only
+its real-named-trunk data, not probability mass).
 """
 from __future__ import annotations
 
@@ -43,8 +50,8 @@ import pytest
 SOLVE = "stoch_2p_free"
 
 # Deterministic LP reference objectives (see the fixture builder).
-PINNED_OBJ = 1_920_800.0
-FREE_OBJ = 757_369.4
+PINNED_OBJ = 2_037_600.0
+FREE_OBJ = 764_954.1
 
 
 # ---------------------------------------------------------------------------
@@ -160,24 +167,26 @@ def test_free_ops_shared_single_v_invest(free_ops_resolved) -> None:
 
 @pytest.mark.solver
 def test_free_ops_v_state_diverges_across_branches(free_ops_resolved) -> None:
-    """§7 (F6): with operations freed each branch reaches its OWN storage
-    optimum, so v_state[resv] is strictly distinct across mid / up / low —
-    deterministic given the branch-asymmetric wind timing.  ``up`` (surplus
-    early) charges above 0.5; ``low`` (deficit early) discharges below;
-    ``mid`` (flat) stays idle."""
+    """§7 (F6), R3 re-grounded: with operations freed each FORECAST reaches
+    its OWN storage optimum, so v_state[resv] is strictly distinct across
+    the two forecasts ``up`` / ``low`` — deterministic given the
+    branch-asymmetric wind timing.  ``up`` (surplus early) charges above
+    0.5; ``low`` (deficit early) discharges below.  The realized
+    designation ``mid`` is a weight-0 phantom under forecasts-only (its
+    real-named trunk carries no probability mass), so its storage
+    trajectory is an uncosted free variable (driven to 0) and is NOT the
+    idle-at-0.5 member it was when ``mid`` still carried fan weight; the
+    probability-relevant divergence is between the two forecasts."""
     _data, sol, _pb = free_ops_resolved
     traj = _v_state_by_branch(sol, "p2035")
     assert set(traj) == {"p2035", "p2035_up", "p2035_low"}
     up = traj["p2035_up"]
     low = traj["p2035_low"]
-    mid = traj["p2035"]
-    # mid trunk (flat wind) keeps storage idle at the 0.5 reference.
-    assert mid == [0.5, 0.5, 0.5]
     # up strictly above, low strictly below — at every step, and the two
-    # branches are pairwise distinct (a UNIQUE per-branch optimum).
+    # FORECASTS are distinct (a UNIQUE per-forecast optimum).
     assert all(u > 0.5 for u in up), up
     assert all(lo < 0.5 for lo in low), low
-    assert up != low != mid
+    assert up != low
 
 
 @pytest.mark.solver

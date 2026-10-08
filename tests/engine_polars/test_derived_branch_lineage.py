@@ -97,6 +97,27 @@ DD_41 = [
     ("p2040_low", "p2040_low"),
 ]
 
+# The §4.1 table for the REAL re-grounded ``stoch_two_period`` fixture
+# (R3): a genuine {high, low} forecast fan (n_real = 0), so both forecast
+# scenario paths are active in period_in_use — the realized/reference
+# trunk path (p2035 ↔ p2040) PLUS the high path PLUS the low path, 12 rows
+# (vs the hand-crafted 8-row ``DD_41`` whose PB_41 keeps ``_rlz`` as a
+# metadata-only, not-in-use member).
+DD_41_STOCH = [
+    ("p2035", "p2035"),
+    ("p2035", "p2040"),
+    ("p2035_high", "p2035_high"),
+    ("p2035_high", "p2040_high"),
+    ("p2035_low", "p2035_low"),
+    ("p2035_low", "p2040_low"),
+    ("p2040", "p2035"),
+    ("p2040", "p2040"),
+    ("p2040_high", "p2035_high"),
+    ("p2040_high", "p2040_high"),
+    ("p2040_low", "p2035_low"),
+    ("p2040_low", "p2040_low"),
+]
+
 # §4.3 — deterministic multi-period all-pairs.
 DD_43 = [
     ("p2035", "p2035"),
@@ -397,12 +418,13 @@ def stoch_data(stoch_wf):
 
 def test_t10_integration_stoch(stoch_data):
     """T10: end-to-end ``load_flextool`` on the stoch workdir — the
-    §4.1 8-row table, pd-NA empty (pins provider seeding +
+    §4.1 table for the genuine {high, low} fan (12 rows: realized/reference
+    trunk + both forecast paths), pd-NA empty (pins provider seeding +
     apply_derived_g wiring including enum activation, i.e. the §3.1.1
     null-guard actually engages)."""
     dd = stoch_data.dd_same_scenario
     assert dd is not None
-    assert _rows(dd) == DD_41
+    assert _rows(dd) == DD_41_STOCH
     pd_na = stoch_data.pd_non_anticipativity
     assert pd_na is not None
     assert pd_na.columns == ["d", "b"]

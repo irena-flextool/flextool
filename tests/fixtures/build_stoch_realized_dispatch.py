@@ -46,8 +46,10 @@ Two solves (``model.solves`` ORDER matters — dispatch listed AFTER)
   1. ``stoch_rd`` — GENUINELY stochastic, ``solve_mode=single_solve``
      (fan-at-first).  ``stochastic_invest_method`` left at the DEFAULT
      ``none`` (shared first-stage invest — one unambiguous ``v_invest``).
-     Branch weights SUM TO 1.0 per cohort: rlz 0.25 / high 0.375 /
-     low 0.375.  The fan creates synthetic p2035_high / p2035_low
+     The fan is FORECASTS-ONLY: the realized (``rlz``) branch is a
+     WEIGHT-0 designation (dispatch owned by the separate realized solve);
+     the two forecasts carry all the mass and sum to 1 (high 0.5 /
+     low 0.5).  The fan creates synthetic p2035_high / p2035_low
      periods that own LP variables; every branch carries the SAME
      (deterministic) realized operational data, so the shared first-stage
      invest covers the per-step residual 60 MW → ``v_invest[peaker] = 60``.
@@ -161,13 +163,23 @@ def build() -> dict:
     ]
 
     # ---- init: model / solves / time structure ------------------------
-    # Single-period stochastic fan declared at p2035/t0001; weights SUM
-    # TO 1.0 per cohort (rlz 0.25 / high 0.375 / low 0.375).
+    # Single-period stochastic fan declared at p2035/t0001.  Under the
+    # corrected forecasts-only model the realized (``rlz``) branch is a
+    # WEIGHT-0 designation pulled OUT of the weighted fan (its dispatch is
+    # owned by the separate realized-dispatch solve); the two FORECASTS
+    # carry all the probability mass and sum to 1 ON THEIR OWN
+    # (high 0.5 / low 0.5).  This matches the weights the engine actually
+    # applies: the phantom rule already zeroes the realized trunk and
+    # renormalises the forecasts among themselves, so declaring rlz=0 and
+    # high=low=0.5 is behaviour-preserving (the applied pd/pdt weights are
+    # identical to the old rlz 0.25 / high 0.375 / low 0.375 encoding — the
+    # forecast RATIO 1:1 and the zeroed realized trunk are unchanged) while
+    # self-documenting the corrected model.
     stochastic_branches = _map([
         ("p2035", _nested([
-            ("rlz", _nested([("t0001", _nested([("yes", 0.25)]))])),
-            ("high", _nested([("t0001", _nested([("no", 0.375)]))])),
-            ("low", _nested([("t0001", _nested([("no", 0.375)]))])),
+            ("rlz", _nested([("t0001", _nested([("yes", 0.0)]))])),
+            ("high", _nested([("t0001", _nested([("no", 0.5)]))])),
+            ("low", _nested([("t0001", _nested([("no", 0.5)]))])),
         ])),
     ])
     # DETERMINISTIC realized operational data (base alternative), read by

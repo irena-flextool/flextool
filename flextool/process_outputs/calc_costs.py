@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
+from flextool.process_outputs._branch_weight import weight_dt_by_branch
 
 
 def _agg_period_or_empty(df: pd.DataFrame, realized_periods, period_level: str = 'period') -> pd.DataFrame:
@@ -38,7 +39,14 @@ def compute_costs(par, s, v, r) -> None:
 
     # Per-step scaling factor: step_duration × timestep_weight.  Used by all
     # per-(d, t) cost terms below to match the objective in flextool.mod.
+    # Option (A): fold in pdt_branch_weight[d, t] so every operational cost
+    # term built from step_x_rp (commodity buy/sell, per-process commodity,
+    # other operational) carries the LP's per-(d, t) probability weight.
+    # step_x_rp feeds ONLY cost terms here (never a physical quantity), so
+    # folding the weight in is safe; deterministic runs weight by 1.0.
+    _pdt_bw = getattr(par, "pdt_branch_weight", None)
     step_x_rp = par.step_duration.mul(par.timestep_weight, axis=0)
+    step_x_rp = weight_dt_by_branch(step_x_rp, _pdt_bw)
 
     commodity_price = par.commodity_price[commodity_node.get_level_values('commodity').unique()]
     commodity_price.columns = commodity_price.columns.join(commodity_node)
@@ -143,7 +151,11 @@ def compute_costs(par, s, v, r) -> None:
     # aggregated from the rp-weighted cost_dt directly (instead of
     # multiplying the annualized physical emissions by price, which would
     # drop the per-step rp weighting).
+    # Option (A): weight the CO2 *cost* by pdt_branch_weight (the LP's CO2
+    # price term carries op_factor — model.py §4).  The physical CO2 tonnes
+    # (group_co2_d / process_emissions_co2_d above) stay UNWEIGHTED.
     r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price).mul(par.timestep_weight, axis=0)
+    r.group_cost_co2_dt = weight_dt_by_branch(r.group_cost_co2_dt, _pdt_bw)
     r.group_cost_co2_d = r.group_cost_co2_dt.groupby('period').sum()
     r.cost_co2_dt = r.group_cost_co2_dt.sum(axis=1)
     r.cost_co2_d = r.group_cost_co2_d.sum(axis=1)
@@ -164,6 +176,9 @@ def compute_costs(par, s, v, r) -> None:
         .mul(par.timestep_weight, axis=0)
         .T.groupby('process').sum().T
     )
+    # Option (A): same per-(d, t) weight as the per-group CO2 cost above so
+    # the per-process CO2 cost reconciles to r.cost_co2_dt.
+    r.cost_process_co2_dt = weight_dt_by_branch(r.cost_process_co2_dt, _pdt_bw)
 
     # --- Operational costs ---
     # Mod objective (~line 2347-2376): flow × unitsize × varCost ×
@@ -202,6 +217,10 @@ def compute_costs(par, s, v, r) -> None:
         period_costs = par.process_startup_cost.loc[periods, valid_processes]
         period_costs.index = cost.index
         r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.timestep_weight, axis=0)
+    # Option (A): weight the startup *cost* by pdt_branch_weight (the LP's
+    # startup_factor carries it — model.py §startup).  The physical start
+    # count (r.process_startup_dt above) stays UNWEIGHTED.
+    r.cost_startup_dt = weight_dt_by_branch(r.cost_startup_dt, _pdt_bw)
 
     # --- Investment costs ---
     r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)

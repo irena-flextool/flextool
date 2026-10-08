@@ -466,8 +466,10 @@ def test_w6_edd_invest_set_today_bug_witness(stoch_wf) -> None:
            out.select(["e", "d_invest", "d"]).rows()}
     expected = {
         (WIND, "p2035", "p2035"),
+        (WIND, "p2035", "p2035_high"),  # genuine {high, low} fan (R3)
         (WIND, "p2035", "p2035_low"),  # the surviving year-0 channel
         (WIND, "p2035", "p2040"),
+        (WIND, "p2035", "p2040_high"),  # passes at fill-year 0 (§6.4)
         (WIND, "p2035", "p2040_low"),  # passes at fill-year 0 (§6.4)
         (WIND, "p2040", "p2040"),
     }
@@ -475,7 +477,9 @@ def test_w6_edd_invest_set_today_bug_witness(stoch_wf) -> None:
     # Erratum E1 today-bug witness: under correct byte-copied years
     # this pair WOULD be present; today's walker overwrite drops it.
     # Slice D's year-threading prerequisite resolves it — re-point here.
+    # (Both forecast continuation channels are dropped symmetrically.)
     assert (WIND, "p2040", "p2040_low") not in got
+    assert (WIND, "p2040", "p2040_high") not in got
 
 
 # --- W7 — non-vacuity + repeat-determinism pins ------------------------
@@ -689,17 +693,36 @@ def test_p3a_unequal_chain_weights(tmp_path) -> None:
 
 
 def test_p3b_cohort_sum_violation(tmp_path) -> None:
-    """P3b (§9.3): a cohort whose weights do not sum to 1 → message
-    (ii).  Distinct first-timesteps make each branch its own
-    normalization group, so the cohort weights sum > 1."""
-    ft = [("p2035", "t0001"), ("p2035_low", "t0002"),
-          ("p2040", "t0004"), ("p2040_low", "t0005")]
-    sbtb = [("p2035", "a"), ("p2035_low", "b"),
-            ("p2040", "c"), ("p2040_low", "d")]
+    """P3b (§9.3), R4 re-grounded for forecasts-only: obligation (ii)
+    (cohort forecast weights sum to 1) must still FIRE on a genuinely
+    malformed cohort.
+
+    Under the forecasts-only rule the producer renormalises each
+    first-step forecast GROUP to 1 and zeroes the phantom trunk, so a
+    well-formed cohort trivially sums to 1 (the old "distinct first-step"
+    trick now yields a phantom-0 + single-lone-forecast-at-1.0 cohort that
+    sums to exactly 1 — a tautology).  To keep this a REAL negative test
+    we hand-build a MALFORMED cohort: one phantom anchor ``p2035`` with
+    TWO forecast members ``p2035_a`` / ``p2035_b`` that sit in DIFFERENT
+    first-step normalization groups (``p2035_b`` reveals at ``t0002``, not
+    ``t0001``).  Each forecast then normalises to 1.0 inside its own
+    singleton group, so the producer emits
+    ``{p2035:0, p2035_a:1.0, p2035_b:1.0}`` and the cohort sums to 2.0 ≠ 1
+    — exactly the producer bug obligation (ii) guards against."""
+    pb = [("p2035", "p2035"),
+          ("p2035", "p2035_a"), ("p2035", "p2035_b")]
+    piu = ["p2035", "p2035_a", "p2035_b"]
+    sbtb = [("p2035", "ref"), ("p2035_a", "a"), ("p2035_b", "b")]
+    bw = [("p2035_a", 1.0), ("p2035_b", 1.0)]
+    ft = [("p2035", "t0001"), ("p2035_a", "t0001"),
+          ("p2035_b", "t0002")]   # p2035_b in a DIFFERENT first-step group
+    pyd = [("p2035", 0.0), ("p2035_a", 0.0), ("p2035_b", 0.0)]
+    pyr = [("p2035", "0", 1.0), ("p2035_a", "0", 1.0),
+           ("p2035_b", "0", 1.0)]
     v = check_recourse_npv_preconditions(
         tmp_path, provider=_mk_provider(
-            pb=_PB, piu=_PIU, sbtb=sbtb, bw=_BW, ft=ft,
-            pyd=_PYD, pyr=_PYR))
+            pb=pb, piu=piu, sbtb=sbtb, bw=bw, ft=ft,
+            pyd=pyd, pyr=pyr))
     assert any("obligation (ii)" in m for m in v), v
 
 

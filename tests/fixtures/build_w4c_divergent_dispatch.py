@@ -17,8 +17,10 @@ branch-DISTINCT 3-deep Map ``branch -> time_start -> time -> value``:
 
 The three values are mutually distinct AND distinct from W4b's old 0.40,
 so the proof is unambiguous: the sibling reads 0.50 (not 0.40, not any
-forecast, not the collapsed 0 fallback).  Branch weights are unchanged
-(rlz 0.25 / high 0.375 / low 0.375 — SUM 1.0 per cohort).
+forecast, not the collapsed 0 fallback).  Branch weights are inherited
+from the W4b/W8 builder: the realized ``rlz`` branch is a WEIGHT-0
+designation and the two forecasts carry all the mass (high 0.5 / low 0.5,
+SUM 1.0 on their own) — the corrected forecasts-only encoding.
 
 Hand calculation (sibling dispatch solve)
 -----------------------------------------

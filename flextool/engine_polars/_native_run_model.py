@@ -851,15 +851,6 @@ def native_run_model(state, solver) -> int:
             str(wf / "solve_data/period__branch.csv"),
             provider=sub_solve_provider,
         )
-        # W4d-A — record the PARENT solve's resolved
-        # dispatch_realization_method so the operational pdt_branch_weight
-        # producers can de-scenario the realized operational weight under
-        # ``separate_dispatch`` (absent marker → within_solve → byte-parity).
-        solve_writers.emit_dispatch_realization_method(
-            state.solve.dispatch_realization_method_for(complete_solve[solve]),
-            str(wf / "solve_data/dispatch_realization_method.csv"),
-            provider=sub_solve_provider,
-        )
         solve_writers.emit_branch_weights_and_map(
             complete_solve[solve],
             active_time_lists[solve],

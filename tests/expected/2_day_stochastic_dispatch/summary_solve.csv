@@ -1,11 +1,11 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-10-07 16:43:54.956138+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-10-08 11:32:21.167739+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
-2day_dispatch,67.0203687913
-"Total cost (calculated) full horizon (M CUR)",268.081475165,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",268.081475165
-"Operational costs for realized periods (M CUR)",268.081475165
+2day_dispatch,66.9291187913
+"Total cost (calculated) full horizon (M CUR)",66.9291187913,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",66.9291187913
+"Operational costs for realized periods (M CUR)",66.9291187913
 "Investment costs for realized periods (M CUR)",0
 "Retirement costs / salvage revenue for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",0
@@ -13,16 +13,20 @@
 "Fixed cost removal due to divested entities (M CUR)",0
 "Penalty (slack) costs for realized periods (M CUR)",0
 
-Period,period1,period1_lower,period1_mid,period1_upper
-"Time in use in years",0.00547945205479,0.00547945205479,0.00547945205479,0.00547945205479
-"Operational discount factor",1,1,1,1
-"Investment discount factor",1,1,1,1
+Period,period1,period1_lower,period1_mid,period1_realized,period1_upper
+"Time in use in years",0.00547945205479,0.00547945205479,0.00547945205479,0.00547945205479,0.00547945205479
+"Operational discount factor",1,1,1,1,1
+"Investment discount factor",1,1,1,1,1
 
 Emissions
 "CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
 
 "Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
-Removed, downriver, period1, 14400
+Created, demand_node, period1, 1.44e+05
+Created, downriver, period1, 4800
+Created, hydro_reservoir, period1, 2100
 Removed, downriver, period1_lower, 14700
 Removed, downriver, period1_mid, 14700
+Removed, downriver, period1_realized, 14700
 Removed, downriver, period1_upper, 14700
+Removed, hydro_reservoir, period1, 21300
