@@ -390,7 +390,7 @@ def test_lineage_shared_trunk_on_every_leaf(hedge_resolved) -> None:
 @pytest.mark.solver
 def test_d_leaf_is_a_relation_not_a_partition(hedge_resolved) -> None:
     """T-C / T-L (§6.2): d_leaf is a RELATION — the shared pre-reveal
-    anchor p2035 is on EVERY leaf (__realized, high, low) of the genuine
+    anchor p2035 is on EVERY leaf (__anchor, high, low) of the genuine
     {high, low} fan, so each scenario path's total cap counts it.  A strict
     partition would put p2035 on one leaf only (under-counting the others).
     """
@@ -398,7 +398,7 @@ def test_d_leaf_is_a_relation_not_a_partition(hedge_resolved) -> None:
     dl = {(str(r["d"]), str(r["leaf"]))
           for r in data.d_leaf.iter_rows(named=True)}
     assert dl == {
-        ("p2035", "__realized"), ("p2040", "__realized"),
+        ("p2035", "__anchor"), ("p2040", "__anchor"),
         ("p2035", "high"), ("p2040_high", "high"),
         ("p2035", "low"), ("p2040_low", "low"),
     }
@@ -421,7 +421,7 @@ def test_pd_non_anticipativity_empty_no_invest_na(hedge_resolved) -> None:
 @pytest.mark.solver
 def test_per_path_cap_two_leaf_rows(hedge_resolved) -> None:
     """T-C (§6.2 / §8.3): the entity total cap fans into ONE row per
-    scenario leaf (base × {__realized, high, low} of the genuine {high,
+    scenario leaf (base × {__anchor, high, low} of the genuine {high,
     low} fan) under the ``…_path`` name; the legacy single-row
     ``maxInvest_entity_total`` (which would sum all periods) is gone."""
     _data, _sol, pb = hedge_resolved
@@ -432,7 +432,7 @@ def test_per_path_cap_two_leaf_rows(hedge_resolved) -> None:
     over = recs[0].over
     assert over.height == 3
     assert sorted(str(v) for v in over["leaf"].to_list()) == [
-        "__realized", "high", "low",
+        "__anchor", "high", "low",
     ]
     assert {str(v) for v in over["p"].to_list()} == {"base"}
 

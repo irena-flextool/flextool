@@ -606,7 +606,7 @@ def test_annuity_branch_window_not_collapsed(tmp_path):
     """A genuine recourse window is NOT wrongly collapsed: for the branch
     anchor p2040_low the annuity frame EQUALS the capacity frame on its
     leaf.  The real-named calendar siblings p2040 / p2045 live on the
-    ``__realized`` leaf, unreachable from p2040_low's branch leaf — so
+    ``__anchor`` leaf, unreachable from p2040_low's branch leaf — so
     there is nothing to dedup its own window against."""
     cap, ann = _cap_and_annuity(tmp_path, pb=PB_ST3, piu=PIU_ST3,
                                 sbtb=SBTB_ST3)

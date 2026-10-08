@@ -219,7 +219,7 @@ def test_recourse_output_horizon_branch_rows(horizon_wf):
 @pytest.mark.solver
 def test_recourse_per_path_cap_two_leaf_rows(_resolved):
     """§15.1 / §7.2 (D6), R3 re-grounded: under recourse the entity total
-    cap fans into ONE row per scenario leaf (peaker × {__realized, high,
+    cap fans into ONE row per scenario leaf (peaker × {__anchor, high,
     low} of the genuine {high, low} fan) under the ``…_path`` name — the
     legacy single-row ``maxInvest_entity_total`` (which summed all periods,
     210 > 150, and would spuriously bind) is gone.  Each leaf row sums only
@@ -238,9 +238,9 @@ def test_recourse_per_path_cap_two_leaf_rows(_resolved):
     assert "maxInvest_entity_total" not in names  # legacy replaced
     recs = pb.cstrs_named("maxInvest_entity_total_path")
     over = recs[0].over
-    assert over.height == 3  # (peaker, {__realized, high, low})
+    assert over.height == 3  # (peaker, {__anchor, high, low})
     leaves = sorted(str(v) for v in over["leaf"].to_list())
-    assert leaves == ["__realized", "high", "low"]
+    assert leaves == ["__anchor", "high", "low"]
     ents = {str(v) for v in over["p"].to_list()}
     assert ents == {"peaker"}
 

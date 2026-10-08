@@ -940,11 +940,11 @@ class FlexData:
     dd_same_scenario: pl.DataFrame | None = None       # (d, d_other)
     pd_non_anticipativity: pl.DataFrame | None = None  # (d, b)
     # Slice D — per-scenario-leaf partition of period_in_use (design §7.2):
-    # (d, leaf) with real-named anchors → "__realized", synthetic fan
-    # members → their time-branch id.  Drives the per-path total caps
+    # (d, leaf) with real-named calendar anchors → "__anchor", synthetic
+    # fan members → their time-branch id.  Drives the per-path total caps
     # (maxInvest/maxDivest_entity_total_path, maxDivestGroup_entity_total_path)
     # so a total cap applies once per scenario path, never cross-scenario.
-    # Single "__realized" leaf for deterministic / flag-off solves →
+    # Single "__anchor" leaf for deterministic / flag-off solves →
     # caps stay on the legacy single-row shape (byte-parity).
     d_leaf: pl.DataFrame | None = None                 # (d, leaf)
 

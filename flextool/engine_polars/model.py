@@ -132,7 +132,7 @@ def _emit_entity_total_cap(
 
     Sums ``var * unitsize`` over the invest axis's periods against a
     per-entity total cap.  With a single scenario leaf — deterministic
-    or flag-off, where ``d_leaf`` degenerates to one ``"__realized"``
+    or flag-off, where ``d_leaf`` degenerates to one ``"__anchor"``
     leaf — this emits the legacy ``over=("d",)`` total under the legacy
     NAME, byte-identical to the pre-recourse constraint.  With more than
     one leaf (recourse), it emits ``path_name`` indexed by

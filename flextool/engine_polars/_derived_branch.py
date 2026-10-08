@@ -930,22 +930,26 @@ def _lineage_leaves(
     """Build the solve's scenario leaves (design §2.2).
 
     Returns ``(label, members)`` pairs (F4, Slice E design §6.2): the
-    trunk leaf labeled ``"__realized"`` and each branch leaf labeled its
-    time-branch id — so a caller that keys constraint rows off the leaf
-    (``d_leaf``) carries the authoritative label rather than re-deriving
-    and zipping it (a brittle two-independent-iteration alignment).
+    real-named calendar-anchor leaf labeled ``"__anchor"`` (its members
+    are exactly the ``anchors`` list — the real-named, calendar-canonical
+    periods, under R-NAME owned by the reference forecast; this is NOT a
+    "realized" scenario, just the shared real-named chain) and each
+    branch leaf labeled its time-branch id — so a caller that keys
+    constraint rows off the leaf (``d_leaf``) carries the authoritative
+    label rather than re-deriving and zipping it (a brittle
+    two-independent-iteration alignment).
 
-    Trunk leaf = all anchors (period order).  One leaf per time-branch
+    Anchor leaf = all anchors (period order).  One leaf per time-branch
     possessing at least one synthetic ``period_in_use`` member (F3 —
-    never iterate SBTB's own time-branches: SBTB also carries the
-    realized branch, whose synthetic-member set is empty).  Per branch
+    never iterate SBTB's own time-branches; a forecast branch with an
+    empty synthetic-member set contributes no leaf).  Per branch
     leaf, the per-period representative follows the F6 authority rule:
     the branch-local member is authoritative; a real anchor joins the
     leaf only when it is strictly pre-reveal AND the branch has no
     member for that period (Slice E Option B: a shared pre-reveal trunk
     period thus belongs to EVERY branch leaf's path).
     """
-    leaves: list[tuple[str, list[str]]] = [("__realized", list(anchors))]
+    leaves: list[tuple[str, list[str]]] = [("__anchor", list(anchors))]
     branch_tbs = dict.fromkeys(tb_of[m] for m in synthetic)
     for br in branch_tbs:
         members = [m for m in synthetic if tb_of[m] == br]
@@ -1154,7 +1158,8 @@ def d_leaf_lf(
     """``d_leaf`` — (d, leaf) scenario-leaf PARTITION of ``period_in_use``.
 
     Each in-use period maps to exactly ONE scenario leaf (design §7.2):
-    real-named anchors → the ``"__realized"`` leaf; synthetic fan
+    real-named anchors → the ``"__anchor"`` leaf (the real-named
+    calendar-anchor chain, not a "realized" scenario); synthetic fan
     members → their time-branch id (``tb_of[m]``).  Because the
     continuation fan starts at the solve's first step (§K), leaves
     PARTITION the invest axis — no period is on two leaves — so the map
@@ -1167,7 +1172,7 @@ def d_leaf_lf(
     once per scenario path, never cross-scenario double-counting.
 
     Deterministic / flag-off solves degenerate to a single
-    ``"__realized"`` leaf (``period__branch`` silent → every in-use
+    ``"__anchor"`` leaf (``period__branch`` silent → every in-use
     member is an anchor, mirroring :func:`_classify_lineage`'s
     ``pb_rows == []`` branch), so the total caps stay on the legacy
     single-row shape (byte-parity).  ``leaf`` is a plain ``Utf8``
@@ -1183,7 +1188,7 @@ def d_leaf_lf(
     # Partition → RELATION (Slice E design §6.2).  Under Option B a shared
     # pre-reveal trunk anchor belongs to EVERY scenario leaf's path, so it
     # must count into every leaf's per-path total cap — the strict
-    # partition (anchor → __realized only) would under-count the branch
+    # partition (anchor → __anchor only) would under-count the branch
     # leaves' totals.  Rebuild from ``_lineage_leaves`` (the same relation
     # ``dd_same_scenario`` uses), carrying the authoritative leaf label
     # (F4).  Byte-parity: deterministic / fan-at-first solves have no
@@ -1762,7 +1767,7 @@ def apply_branch_cluster(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     # Slice D per-path total caps (design §7.2): the (d, leaf) partition
     # that keeps entity/group total caps per-scenario-path.  Single
-    # "__realized" leaf for deterministic solves (byte-parity).
+    # "__anchor" leaf for deterministic solves (byte-parity).
     flex_data.d_leaf = d_leaf_df(
         workdir, source, active_solve, ctx=ctx, provider=provider)
 
