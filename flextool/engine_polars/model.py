@@ -2596,9 +2596,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # ``p_process_source_max_capacity_coefficient`` (default 1.0) — a
         # factor that ``p_flow_upper_existing`` (= existing/unitsize) drops
         # entirely.  ``p_arc_max_cap_coef`` carries that factor for direct
-        # arcs ONLY (indirect arcs already fold it into ``p_flow_upper`` via
-        # ``p_flow_upper_from_source`` — including them here would double-
-        # apply, hence the producer excludes process_indirect).  Densify the
+        # arcs and indirect OUTPUT arcs (both bound by the existing-only
+        # RHS above).  Indirect input / zero-coef arcs keep the loose
+        # ``p_flow_upper`` bound, which already folds it, so the producer
+        # excludes them to avoid double-applying.  Densify the
         # sparse coef over flow_upper_rhs's own (p, source, sink) keys and
         # ``fill_null(1.0)`` so unauthored arcs are unaffected — mirroring
         # the availability densify below (a naive ``Param * Param`` inner

@@ -3,9 +3,9 @@ solve,period,time,commodity_cost,commodity_sales,co2,other operational,starts,up
 2day_dispatch,period1,t0002,2622.4538,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1,t0003,3969.4537,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1,t0004,3202.0873,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-2day_dispatch,period1,t0005,3932.4758,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+2day_dispatch,period1,t0005,2757.1812,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1,t0006,4114.3959,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-2day_dispatch,period1,t0007,4982.4845,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+2day_dispatch,period1,t0007,6157.7792,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1,t0008,6666.6667,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1,t0009,6666.6667,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1,t0010,6666.6667,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -99,9 +99,9 @@ solve,period,time,commodity_cost,commodity_sales,co2,other operational,starts,up
 2day_dispatch,period1_lower,t0002,11412.763,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_lower,t0003,9985.4235,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_lower,t0004,10630.024,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-2day_dispatch,period1_lower,t0005,12064.307,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+2day_dispatch,period1_lower,t0005,8930.1884,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_lower,t0006,17484.525,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-2day_dispatch,period1_lower,t0007,19259.93,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+2day_dispatch,period1_lower,t0007,22394.049,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_lower,t0008,24719.45,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_lower,t0009,27918.225,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_lower,t0010,15835.271,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -147,9 +147,9 @@ solve,period,time,commodity_cost,commodity_sales,co2,other operational,starts,up
 2day_dispatch,period1_mid,t0002,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_mid,t0003,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_mid,t0004,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-2day_dispatch,period1_mid,t0005,1175.2947,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+2day_dispatch,period1_mid,t0005,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_mid,t0006,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-2day_dispatch,period1_mid,t0007,3601.3571,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+2day_dispatch,period1_mid,t0007,4776.6518,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_mid,t0008,5857.1066,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_mid,t0009,3591.7324,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 2day_dispatch,period1_mid,t0010,3359.5078,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

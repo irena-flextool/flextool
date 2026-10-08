@@ -2811,12 +2811,13 @@ def apply_derived_b(
             source, pss_frame, active_solve, workdir,
             ctx=ctx, provider=provider)
 
-    # ─── §3.3.3b p_arc_max_cap_coef (direct-arc capacity_max_coeff) ─────
+    # ─── §3.3.3b p_arc_max_cap_coef (per-arc capacity_max_coeff) ───────
     # ``p_flow_upper_existing`` is existing/unitsize only and drops the
     # per-arc ``capacity_max_coeff`` that the .mod's maxToSink /
-    # maxFromSource apply to direct units.  Carry the factor here so the
-    # model.py maxFlow consumer can fold it onto the direct-arc RHS
-    # (indirect arcs already carry it via ``p_flow_upper``).
+    # maxFromSource apply.  Carry the factor here so the model.py maxFlow
+    # consumer can fold it onto every arc bound by the existing-only RHS
+    # (direct arcs + indirect output arcs; indirect input arcs carry it
+    # via ``p_flow_upper``).
     if pss_frame is not None and pss_frame.height > 0:
         flex_data.p_arc_max_cap_coef = p_arc_max_cap_coef_from_source(
             source, pss_frame, classified)
@@ -4378,6 +4379,56 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
               .unique(subset=["p", node_alias], keep="last"))
 
 
+def _arc_conversion_coef_lf(source: "InputSource",
+                               side: str,
+                               ) -> pl.LazyFrame:
+    """Per-(p, node) ``conversion_flow_coeff`` from ``unit__inputNode``
+    (``side='source'`` → ``[p, source, coef]``) or ``unit__outputNode``
+    (``side='sink'`` → ``[p, sink, coef]``).  Only authored rows are
+    returned; callers fill the default 1.0 via left-join.
+    """
+    ec = "unit__inputNode" if side == "source" else "unit__outputNode"
+    df = _try_param(source, ec, "conversion_flow_coeff")
+    if df is None or df.height == 0:
+        return pl.LazyFrame(
+            schema={"p": schema_dtype(_enums, "p"),
+                    side: schema_dtype(_enums, side),
+                    "coef": pl.Float64})
+    rename = {c: ("p" if c == "unit" else side)
+              for c in df.columns if c in ("unit", "node")}
+    return (df.lazy().pipe(rename_to_axis, rename)
+              .with_columns(pl.col("value").cast(pl.Float64).alias("coef"))
+              .select("p", side, "coef")
+              .unique(subset=["p", side], keep="last"))
+
+
+def _delay_fuel_factor_lf(source: "InputSource") -> pl.LazyFrame:
+    """Per-process ``[p, delay_factor]`` = ``1 / max_td(delay_weight)``
+    for delayed processes (a scalar ``delay`` has weight 1 → factor 1).
+
+    One input step of a delayed process feeds several output steps with
+    weights ``w_td``; with every output at its cap, a single input step
+    can carry up to ``slope · Σ out / max(w_td)``.  Processes without a
+    delay are absent (callers default to 1).
+    """
+    empty = pl.LazyFrame(schema={"p": schema_dtype(_enums, "p"),
+                                 "delay_factor": pl.Float64})
+    dist = _delay_distributions_from_source(source)
+    if dist is None:
+        return empty
+    weighted, single, processes = dist
+    max_w: dict[str, float] = {p: 1.0 for p, _ in single}
+    for (p, _), w in weighted.items():
+        max_w[p] = max(max_w.get(p, 0.0), w)
+    factors = {p: 1.0 / w for p, w in max_w.items()
+               if p in processes and w > 0.0}
+    if not factors:
+        return empty
+    return (pl.LazyFrame({"p": list(factors),
+                          "delay_factor": list(factors.values())})
+              .with_columns(alias_to_axis(pl.col("p"), "p")))
+
+
 def _process_source_pairs_lf(source: "InputSource") -> pl.LazyFrame:
     """``process_source`` set ``[p, source]`` — union of unit input arcs
     and connection's first node.  Mirrors flextool.mod L686 + the
@@ -4462,7 +4513,7 @@ def p_arc_max_cap_coef_from_source(source: "InputSource",
                                       classified: pl.DataFrame | None = None,
                                       ) -> "Param | None":
     """Per-(p, source, sink) ``capacity_max_coeff`` factor for **direct**
-    arcs — the multiplier the ``maxFlow`` RHS drops when it uses
+    arcs and indirect **output** arcs — the multiplier the ``maxFlow`` RHS drops when it uses
     ``p_flow_upper_existing`` (which is ``existing/unitsize`` only).
 
     Mirrors flextool.mod ``maxToSink`` / ``maxFromSource``:
@@ -4480,10 +4531,14 @@ def p_arc_max_cap_coef_from_source(source: "InputSource",
       ``(p, sink) ∉ process_sink``; we carry that as ``src_coef`` =
       ``unit__inputNode.capacity_max_coeff``.
 
-    Indirect (CHP / multi-flow) processes are **excluded** — they bound
-    ``v_flow`` via ``p_flow_upper`` (built by
-    :func:`p_flow_upper_from_source`), which already folds both
-    coefficients.  Including them here would double-apply.
+    Indirect (CHP / multi-flow) processes contribute only their OUTPUT
+    arcs (``process_output_flows``): ``model.py`` binds those with the
+    existing-only ``maxToSink`` RHS (``p_flow_upper_existing``), so their
+    ``capacity_max_coeff`` must be folded here or it is silently lost.
+    Indirect input and zero-conversion-coef arcs stay excluded — they
+    keep the loose ``p_flow_upper`` bound (built by
+    :func:`p_flow_upper_from_source`), which already folds the
+    coefficient; including them would double-apply.
 
     Returns a Param keyed ``(p, source, sink)`` carrying only the direct
     arcs whose effective coefficient differs from the schema default
@@ -4498,7 +4553,7 @@ def p_arc_max_cap_coef_from_source(source: "InputSource",
     if _live is not None:
         pss = cast_frame_axes(pss, _live)
 
-    # Direct arcs only: drop rows whose process is indirect.
+    # Direct arcs + indirect OUTPUT arcs (see docstring).
     indirect_p = process_indirect_set(source, classified)
     direct_pss = (pss.lazy()
                     .select("p", "source", "sink")
@@ -4506,6 +4561,12 @@ def p_arc_max_cap_coef_from_source(source: "InputSource",
                           on="p", how="left")
                     .filter(pl.col("_ind").is_null())
                     .select("p", "source", "sink"))
+    out_flows = process_output_flows(source, pss, classified)
+    if out_flows.height > 0:
+        direct_pss = pl.concat([
+            direct_pss,
+            out_flows.lazy().select("p", "source", "sink"),
+        ])
 
     sink_pairs = _process_sink_pairs_lf(source)
     src_coef_lf = _arc_max_capacity_coef_lf(source, "source")
@@ -4648,22 +4709,38 @@ def p_flow_upper_from_source(source: "InputSource",
                     .unique())
 
     # ── 3. Coefficient frames ───────────────────────────────────────
-    src_coef_lf = _arc_max_capacity_coef_lf(source, "source")
     sink_coef_lf = _arc_max_capacity_coef_lf(source, "sink")
 
-    # Per-process output "width": Σ sink_coef over every output arc.  The
-    # indirect fuel (source) arc feeds *all* of a unit's outputs, so to
-    # keep the existing-only (dispatch) solve consistent with the
-    # investment solve its capacity bound must cover the throughput of
-    # every output arc simultaneously at its own cap
-    # (slope · Σ_k capacity·sink_coef_k), rather than limiting the *sum* of
-    # outputs to a single unit capacity.  Single-output units sum to 1 →
-    # unchanged; only multi-output units broaden.
-    out_factor_lf = (process_sink_lf
-                        .join(sink_coef_lf, on=["p", "sink"], how="left")
-                        .with_columns(coef=pl.col("coef").fill_null(1.0))
-                        .group_by("p")
-                        .agg(pl.col("coef").sum().alias("out_factor")))
+    # ── 3b. Indirect input (fuel) arc width ─────────────────────────
+    # The bound on an indirect INPUT arc is a solver-region bound only —
+    # capacity is enforced per OUTPUT arc (maxToSink:
+    # out_k ≤ cap · capacity_max_coeff_k) — so it must cover the largest
+    # fuel the conversion equation can ever ask of a single input arc:
+    #   Σ_s src_conv_s · in_s = slope · Σ_k sink_conv_k · out_k
+    #   ⇒ in_s ≤ cap · slope · Σ_k (sink_conv_k · capacity_max_coeff_k)
+    #                                                  / src_conv_s
+    # (every output at its own cap, all other inputs at zero).  A tighter
+    # bound silently caps multi-output units below their capacity.
+    #  * An output with capacity_max_coeff = 0 is uncapped (coeff_zero),
+    #    so its fuel need is unbounded → the input arc gets p_unc.
+    #  * Outputs with sink_conv ≤ 0 draw no fuel → contribute 0.
+    #  * Delayed processes spread one input step over several output
+    #    steps with weights w_td, so one input step can carry up to
+    #    1/max(w_td) of the steady-state fuel; their delayed conversion
+    #    term uses src_conv = 1 (see _delay), hence min(src_conv, 1).
+    src_conv_lf = _arc_conversion_coef_lf(source, "source")
+    fuel_width_lf = (process_sink_lf
+        .join(sink_coef_lf, on=["p", "sink"], how="left")
+        .join(_arc_conversion_coef_lf(source, "sink")
+                .rename({"coef": "conv"}),
+              on=["p", "sink"], how="left")
+        .with_columns(coef=pl.col("coef").fill_null(1.0),
+                      conv=pl.col("conv").fill_null(1.0).clip(lower_bound=0.0))
+        .group_by("p")
+        .agg(fuel_width=(pl.col("conv") * pl.col("coef")).sum(),
+             _out_uncapped=((pl.col("coef") == 0.0)
+                            & (pl.col("conv") > 0.0)).any()))
+    delay_lf = _delay_fuel_factor_lf(source)
 
     # ── 4. p_unconstrained_flow_cap ────────────────────────────────
     # DB stores the model param as ``max_flow_for_unconstrained_variables``
@@ -4707,11 +4784,20 @@ def p_flow_upper_from_source(source: "InputSource",
                 on="p", how="left")
         .with_columns(
             _has_min_load=pl.col("_has_min_load").fill_null(False))
-        # Source-side capacity_max_coeff (default 1.0).
-        .join(src_coef_lf.rename({"coef": "src_coef"}),
+        # Source-side conversion_flow_coeff (default 1.0) and the
+        # per-process fuel width / delay factor (§3b).
+        .join(src_conv_lf.rename({"coef": "src_conv"}),
                 on=["p", "source"], how="left")
         .with_columns(
-            src_coef=pl.col("src_coef").fill_null(1.0))
+            src_conv=pl.col("src_conv").fill_null(1.0))
+        .join(fuel_width_lf, on="p", how="left")
+        .with_columns(
+            fuel_width=pl.col("fuel_width").fill_null(1.0),
+            _out_uncapped=pl.col("_out_uncapped").fill_null(False))
+        .join(delay_lf, on="p", how="left")
+        .with_columns(
+            _is_delayed=pl.col("delay_factor").is_not_null(),
+            delay_factor=pl.col("delay_factor").fill_null(1.0))
         # Sink-side capacity_max_coeff (default 1.0); also tag
         # (p, sink) ∈ process_sink (the .mod multiplies by sink_coef
         # only when (p, sink) ∈ process_sink, defaulting to 1 outside).
@@ -4728,10 +4814,6 @@ def p_flow_upper_from_source(source: "InputSource",
                 on=["p", "source", "sink"], how="left")
         .with_columns(
             _coeff_zero=pl.col("_coeff_zero").fill_null(False))
-        # Output-width factor for the indirect fuel-arc bound (default 1).
-        .join(out_factor_lf, on="p", how="left")
-        .with_columns(
-            out_factor=pl.col("out_factor").fill_null(1.0))
     )
 
     # ── 7. Slope / section join (only relevant for indirect arcs) ───
@@ -4752,8 +4834,10 @@ def p_flow_upper_from_source(source: "InputSource",
 
     # ── 8. Compute the formula. ─────────────────────────────────────
     # eff_term used when indirect: slope (+ section iff min_load_efficiency).
-    # base_unconstrained: cap_per_unit / src_coef * eff_term.
-    # base_constrained:   cap_per_unit.
+    # indirect input arc: eff_term · cap_per_unit · fuel_width
+    #                     · delay_factor / src_conv          (see §3b)
+    #                     — p_unc when an output is uncapped.
+    # everything else:    cap_per_unit.
     # Multiply by sink_coef when (p, sink) ∈ process_sink, else *1.
     base = base.with_columns(
         eff_term=pl.when(pl.col("_has_min_load"))
@@ -4761,19 +4845,23 @@ def p_flow_upper_from_source(source: "InputSource",
                             + pl.col("section").fill_null(0.0))
                     .otherwise(pl.col("slope").fill_null(0.0)),
     ).with_columns(
-        # Avoid div-by-zero on src_coef; flextool's CSV reader uses
-        # default 1.0 → src_coef=1 when missing (fill_null above).  But
-        # explicit 0 in src_coef would crash; rows with src_coef=0
-        # are also (p,source) ∈ coeff_zero so they're handled by the
-        # _coeff_zero branch.  Guard with a when-then-otherwise.
-        _safe_src_coef=pl.when(pl.col("src_coef") == 0.0)
-                          .then(1.0)
-                          .otherwise(pl.col("src_coef")),
+        # src_conv ≤ 0 arcs are dropped from conversion_indirect (or
+        # would feed it negatively), so the arc is not tied to the fuel
+        # need; keep a finite bound by treating the divisor as 1.
+        # Delayed processes: their delayed term uses src_conv = 1.
+        _src_div=pl.when(pl.col("src_conv") <= 0.0)
+                    .then(1.0)
+                    .when(pl.col("_is_delayed"))
+                    .then(pl.min_horizontal(pl.col("src_conv"), pl.lit(1.0)))
+                    .otherwise(pl.col("src_conv")),
     ).with_columns(
-        _indirect_branch=(pl.col("eff_term")
-                            * pl.col("cap_per_unit")
-                            * pl.col("out_factor")
-                            / pl.col("_safe_src_coef")),
+        _indirect_branch=pl.when(pl.col("_out_uncapped"))
+                            .then(pl.lit(p_unc))
+                            .otherwise(pl.col("eff_term")
+                                       * pl.col("cap_per_unit")
+                                       * pl.col("fuel_width")
+                                       * pl.col("delay_factor")
+                                       / pl.col("_src_div")),
         _direct_branch=pl.col("cap_per_unit"),
     ).with_columns(
         _branch_value=pl.when(pl.col("_is_indirect") & pl.col("_has_source"))

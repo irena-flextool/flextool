@@ -1,3 +1,22 @@
+## Unreleased
+
+- **Multi-output indirect units (e.g. CHP) are no longer capped below their
+  capacity by their fuel input.** The input flow of an indirect unit carries
+  only a loose solver bound; it was set to `slope × capacity`, i.e. enough fuel
+  for one output at full capacity. With several outputs, or an output
+  `conversion_flow_coeff` above 1, that bound became binding and silently
+  limited the unit (e.g. an extraction CHP's electricity pinned well below its
+  cap). The bound now follows the conversion equation:
+  `capacity × slope × Σ_outputs(conversion_flow_coeff × capacity_max_coeff) /
+  input conversion_flow_coeff`, scaled up for delayed units and unbounded when
+  an output has `capacity_max_coeff = 0`.
+- **`capacity_max_coeff` on the outputs of indirect units is enforced again.**
+  Indirect output flows are bounded by existing capacity (plus investment), but
+  the per-output `capacity_max_coeff` factor was only folded in for direct
+  units, so an indirect output could run up to the full unit capacity.
+- Results of models with multi-output indirect units can change (lower or
+  equal cost where the fuel bound was binding; respected output caps).
+
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 
 Patch release. No schema changes. This release also ships the 4.0.3 changes
