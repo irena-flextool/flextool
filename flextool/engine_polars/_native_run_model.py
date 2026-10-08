@@ -829,8 +829,10 @@ def native_run_model(state, solver) -> int:
             # sub-solve Provider too — this iter's readers must find
             # them without waiting for the next seed pass.
             for _key, _frame in cascade_input_provider.items():
-                if _key.startswith("solve_data/pt_") or _key.startswith(
-                    "solve_data/pbt_",
+                if (
+                    _key.startswith("solve_data/pt_")
+                    or _key.startswith("solve_data/pbt_")
+                    or _key.endswith("node_full_timeline_flow")
                 ):
                     sub_solve_provider.put(_key, _frame)
         previous_complete_solve = complete_solve[solve]

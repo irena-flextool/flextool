@@ -828,6 +828,64 @@ class TimelineConfig:
                 _build_frame_with_headers(headers, out_rows),
             )
 
+        # ── Full-timeline inflow energy (timeset-independent scaling) ──
+        # ``scale_to_annual_flow`` normalises each node's inflow to its
+        # ``annual_flow`` using the energy of the WHOLE original timeline
+        # (not the representative subset selected by this solve), so the
+        # scaled inflow is identical regardless of which timesteps the
+        # timeset picks.  Emit the per-node annualised full-timeline
+        # energy; ``_emit_inflow_scaling`` reads it as the scaling
+        # denominator (falling back to the legacy per-solve formula when
+        # this file is absent, i.e. for non-coarsened solves).
+        new_tl = timelines_list[0] if timelines_list else None
+        orig_tl = self.original_timeline.get(new_tl, new_tl)
+        orig_steps = self.timelines.get(orig_tl, [])
+        total_hours = sum(float(step[1]) for step in orig_steps)
+        original_years = total_hours / 8760.0 if total_hours else 0.0
+        if original_years:
+            inflow_path = wf / "input" / "pt_node_inflow.csv"
+            inflow_frame = _provider_get_or_read(
+                provider, _provider_key(inflow_path), inflow_path,
+            )
+            ts_sum: dict[str, float] = {}
+            if inflow_frame is not None and inflow_frame.height > 0:
+                cols = inflow_frame.columns
+                grouped = (
+                    inflow_frame
+                    .select(
+                        pl.col(cols[0]).alias("node"),
+                        pl.col(cols[-1]).cast(pl.Float64, strict=False)
+                        .alias("v"),
+                    )
+                    .group_by("node")
+                    .agg(pl.col("v").sum().alias("v"))
+                )
+                for n_name, v in grouped.iter_rows():
+                    if n_name:
+                        ts_sum[str(n_name)] = (
+                            float(v) if v is not None else 0.0
+                        )
+            const_for_node: dict[str, float] = {}
+            for node__value in node__inflow:
+                try:
+                    const_for_node[node__value[0]] = float(node__value[1])
+                except (ValueError, TypeError):
+                    continue
+            flow_rows: list[list] = []
+            for n_name in dict.fromkeys(
+                list(ts_sum) + list(const_for_node)
+            ):
+                energy = (
+                    ts_sum.get(n_name, 0.0)
+                    + const_for_node.get(n_name, 0.0) * total_hours
+                )
+                flow_rows.append([n_name, energy / original_years])
+            flow_path = wf / "solve_data" / "node_full_timeline_flow.csv"
+            provider.put(
+                _provider_key(flow_path),
+                _build_frame_with_headers(["node", "value"], flow_rows),
+            )
+
 
 # ---------------------------------------------------------------------------
 # Helpers (private)

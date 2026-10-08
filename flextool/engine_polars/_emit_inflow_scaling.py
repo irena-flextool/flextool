@@ -289,6 +289,14 @@ def _compute_inflow_scaling_frames(
         solve_data_dir / "p_timeline_duration_in_years.csv",
         provider=provider,
     )
+    # Full-timeline annualised inflow energy per node — the
+    # timeset-independent ``scale_to_annual_flow`` denominator.  Emitted
+    # by ``create_averaged_timeseries`` only for coarsened
+    # (``new_stepduration``) solves; absent → legacy per-solve formula.
+    ftf = _read_keyed_float(
+        solve_data_dir / "node_full_timeline_flow.csv",
+        provider=provider,
+    )
 
     # Representative weight w[(d, t)] = p_timestep_weight[d, t] (the param
     # the cost objective already uses).  Sourced from the per-solve
@@ -420,12 +428,20 @@ def _compute_inflow_scaling_frames(
     # ── period_flow_annual_multiplier ─────────────────────────────────
     # value = complete_period_share_of_year[d] / period_share_of_annual_flow[n, d].
     # Domain: (n, d) where scale_to_annual_flow AND pdNode annual_flow.
+    # When a full-timeline energy exists for the node (coarsened solve),
+    # use the timeset-independent denominator
+    # value = annual_flow[n, d] / abs(full_timeline_flow[n]) instead.
     rows_pfam: list[tuple[str, str, float]] = []
     for n in nodes:
         if not _has_method(n, "scale_to_annual_flow"):
             continue
+        ft = ftf.get(n, 0.0)
         for d in period_in_use:
-            if pdNode.get((n, "annual_flow", d), 0.0) == 0.0:
+            af = pdNode.get((n, "annual_flow", d), 0.0)
+            if af == 0.0:
+                continue
+            if ft != 0.0:
+                rows_pfam.append((n, d, af / abs(ft)))
                 continue
             denom = psaf.get((n, d), 0.0)
             if denom == 0.0:
@@ -694,6 +710,13 @@ def _compute_inflow_scaling_frames_vectorized(
     )
     p_tdy = _read_keyed_float(
         solve_data_dir / "p_timeline_duration_in_years.csv",
+        provider=provider,
+    )
+    # Full-timeline annualised inflow energy per node — the
+    # timeset-independent ``scale_to_annual_flow`` denominator (see the
+    # legacy oracle for the full rationale).  Absent → legacy formula.
+    ftf = _read_keyed_float(
+        solve_data_dir / "node_full_timeline_flow.csv",
         provider=provider,
     )
 
@@ -1032,19 +1055,33 @@ def _compute_inflow_scaling_frames_vectorized(
         {"period": list(cpsoy.keys()), "v_cpsoy": list(cpsoy.values())},
         schema={"period": pl.Utf8, "v_cpsoy": pl.Float64},
     )
+    # Full-timeline energy lookup: when present (coarsened solve) its
+    # branch overrides the legacy cpsoy/psaf denominator with the
+    # timeset-independent ``af / abs(full_timeline_flow)``.
+    ftf_lk = pl.DataFrame(
+        {"node": list(ftf.keys()), "v_ftf": list(ftf.values())},
+        schema={"node": pl.Utf8, "v_ftf": pl.Float64},
+    )
     pfam_df = (
         annual_flow_only_eo
         .join(period_po, how="cross")
         # (a) af==0/miss → DROP.
         .join(af_lk, on=["node", "period"], how="left")
         .filter(pl.col("v_af").fill_null(0.0) != 0.0)
-        # (b) psaf miss OR exact-0 → DROP.
         .join(psaf_lk, on=["node", "period"], how="left")
-        .filter(pl.col("v_psaf").fill_null(0.0) != 0.0)
         # (c) cpsoy numerator → survive-with-0.
         .join(cpsoy_lk, on="period", how="left")
+        .join(ftf_lk, on="node", how="left")
+        # (b) Full-timeline branch (v_ftf != 0) survives regardless of
+        # psaf; legacy branch keeps the psaf miss-OR-exact-0 → DROP gate.
+        .filter(
+            (pl.col("v_ftf").fill_null(0.0) != 0.0)
+            | (pl.col("v_psaf").fill_null(0.0) != 0.0))
         .with_columns(
-            (pl.col("v_cpsoy").fill_null(0.0) / pl.col("v_psaf"))
+            pl.when(pl.col("v_ftf").fill_null(0.0) != 0.0)
+            .then(pl.col("v_af") / pl.col("v_ftf").abs())
+            .otherwise(
+                pl.col("v_cpsoy").fill_null(0.0) / pl.col("v_psaf"))
             .alias("value_f"),
         )
     )
