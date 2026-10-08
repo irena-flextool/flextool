@@ -400,6 +400,16 @@ class StochasticSolver:
         and zero-weight branches); ``solve_branch__time_branch`` gains
         rows only for branches that received active time.
 
+        Real-name data ownership has a 0-or-1 realized designation: when
+        a period has a realized branch it owns the real names' data; when
+        the whole fan is forecasts-only (n_real=0) no realized branch
+        owns them, so a PRE-REVEAL real-named period (the shared trunk)
+        instead binds the REFERENCE forecast (the lexically-smallest
+        forecast raw token) so its branch-keyed data does not fall through
+        to the zero fallback.  Reveal / continuation periods carry their
+        data on the suffixed forecast copies; their real-named self-row is
+        a harmless weight-0 phantom left untouched (R-NAME).
+
         IMPORTANT: branches do NOT enter ``invest_periods`` either.
         Per ``audit/a6_b_dim_alternative.md`` (R-O6), ``v_invest`` is
         realized-only — recourse investment is a future capability.
@@ -755,9 +765,23 @@ class StochasticSolver:
                     if period in fix_storage_time_list:
                         new_fix_storage_time_list[period] = fix_storage_time_list[period]
 
-            # Find the realized branch for each period.  Realized is an
+            # Find the realized branch for each period, and bind the
+            # reference forecast where none is designated.  Realized is an
             # optional 0-or-1 designation: a period may have no realized
-            # row (forecasts-only cohort) or exactly one; 2+ → raise.
+            # row (forecasts-only cohort) or exactly one; 2+ → raise.  When
+            # NO branch is realized (n_real=0), the real (un-suffixed)
+            # period names are owned by no realized branch, so a PRE-REVEAL
+            # real-named period (the shared trunk, which has no suffixed
+            # forecast copy of its own) would get no solve_branch__time_branch
+            # owner and its branch-keyed data (profiles, pdt params) would
+            # silently fall through to the zero fallback.  In that case the
+            # REFERENCE forecast (the lexically-smallest forecast raw token —
+            # the same d_ref R-NA's db_pairs star uses) owns the real names
+            # for pre-reveal periods so their data binds.  Reveal and
+            # continuation periods carry their data on the suffixed forecast
+            # copies, so their real-named self-row stays a harmless weight-0
+            # phantom we leave alone (binding it would collide with the
+            # recourse lineage chain grouping — see R-NAME design §2).
             for period, active_time in active_time_list.items():
                 found = 0
                 # Before branching: row[0]==period, row[2]==first step,
@@ -789,6 +813,38 @@ class StochasticSolver:
                     )
                     self.logger.error(message)
                     raise FlexToolConfigError(message)
+
+                # R-NAME: when no realized branch owns the real names
+                # (n_real=0), a PRE-REVEAL real-named period (the shared
+                # trunk) binds the reference forecast's data — the
+                # lexically-smallest forecast raw token, the same d_ref
+                # R-NA's db_pairs star uses.  Scoped to pre-reveal ONLY: a
+                # blanket binding would also point the POST-reveal weight-0
+                # phantom self-row at d_ref, making it join the recourse
+                # lineage chain and trip the leaf-weight-constancy
+                # precondition (_derived_branch.py).  The lineage precondition
+                # already excludes pre-reveal anchors, so the pre-reveal trunk
+                # is safe.  A pre-reveal period has no suffixed copy of its
+                # own, so this is the only owner it can get.
+                if found == 0 and active_branches:
+                    bs = branch_start_time_lists[solve]
+                    reveal_period = bs[0] if bs is not None else None
+                    order = list(active_time_list.keys())
+                    if (
+                        reveal_period is not None
+                        and period in order
+                        and reveal_period in order
+                        and order.index(period) < order.index(reveal_period)
+                    ):
+                        # For a hypothetical multi-reveal solve, scope d_ref
+                        # to the FIRST reveal cohort's forecasts; with a
+                        # single reveal (every current fixture) active_branches
+                        # IS exactly that cohort, so its lexical-min token is
+                        # R-NA's reference forecast.
+                        d_ref_tok = sorted(set(active_branches))[0]
+                        solve_branch__time_branch_lists[solve].append(
+                            (period, d_ref_tok)
+                        )
 
             # Update the time lists for this solve.
             realized_time_lists[solve] = new_realized_time_list
