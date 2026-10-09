@@ -2431,250 +2431,23 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # competes with v_flow for the same producer capacity.
         if reserve_up_to_sink_pdt is not None:
             flow_lhs["reserve_up"] = reserve_up_to_sink_pdt
-        # Invest/divest tightening: when active, the .mod's RHS is
-        #   max_cap_coef * availability * (existing + invest*unitsize - divest*unitsize)
-        # For our test scenarios max_cap_coef=1 and availability=1, so we can
-        # move the delta to the LHS:
-        #   v_flow + (divest_term - invest_term) ≤ existing/unitsize
-        # When invest is active in the LP, swap the RHS from p_flow_upper
-        # (which bakes in max_invest_cum for invest_no_limit entities and
-        # would be too loose) to p_flow_upper_existing (existing-only).
-        # When no invest is active, keep p_flow_upper — that preserves the
-        # source-side slope-based bound for indirect (CHP) processes.
-        # Choosing the maxFlow RHS:
-        #   * indirect (CHP / multi-flow) processes need ``p_flow_upper``
-        #     because it bakes in the per-(p, source, sink) max_cap_coef
-        #     factor that the .mod uses to broaden the source-side fuel
-        #     bound (existing / efficiency rather than existing).
-        #     ``p_flow_upper_existing`` is just ``existing/unitsize`` and
-        #     would over-tighten the source flow on CHP.
-        #   * direct processes use ``p_flow_upper_existing`` (the tight
-        #     existing-only bound).  Using ``p_flow_upper`` here would
-        #     bake in ``max_invest_cum`` from preprocessing even on
-        #     entities whose ``ed_invest`` is empty (no v_invest exists).
-        #     network_wind_coal_battery_fullYear_invest's coal_plant has
-        #     ``invest_max_total=700`` set but ``ed_invest.csv`` empty, so
-        #     ``p_flow_upper=2.4`` while the .mod treats it as 1.0; using
-        #     ``p_flow_upper_existing`` (=1.0) matches the .mod here.
-        # When an explicit per-period invest variable exists for the
-        # process, the LHS gains the ``-invest`` summand and the RHS
-        # stays at the tight existing-only value (consistent with the
-        # .mod's RHS expansion).
-        if (d.p_flow_upper_existing is not None
-                and d.process_indirect is not None
-                and d.process_indirect.height > 0
-                and d.p_flow_upper is not None):
-            # ── indirect maxFlow RHS: split by arc side ──────────────────
-            # Bug fix (indirect free-capacity): the .mod's capacity-enforcing
-            # constraint is ``maxToSink`` (RHS = built capacity =
-            # ``existing/unitsize`` with ``− v_invest`` on the LHS), NOT the
-            # variable bound ``p_flow_max`` (= ``p_flow_upper`` = the
-            # ``existing + invest_max`` ceiling).  Direct units already use
-            # ``p_flow_upper_existing``; indirect units wrongly wired the
-            # ceiling into every arc, so a greenfield converter (existing=0)
-            # got ``v_flow − Σv_invest ≤ invest_max/unitsize`` — free
-            # capacity at ``v_invest=0``.  Bind the indirect **OUTPUT** arc
-            # (``source == p``, i.e. ``process_output_flows``) with the
-            # maxToSink existing-only RHS so any output flow forces paid
-            # invest, matching direct units.  The **input/fuel** arcs
-            # (``sink == p``) and any zero-flow-coef aux arcs KEEP the loose
-            # ``p_flow_upper`` bound — pinning them to existing (=0) would
-            # make fuel hard-infeasible (``v_flow_in ≤ 0``); they are
-            # governed by the ``conversion_indirect`` balance + the now-tight
-            # output cap.  The per-arc cap does NOT bound the SUM of the
-            # outputs; that is ``maxOutputSum`` (:func:`_add_max_output_sum`).
-            #
-            # S1 (sink-less indirect residual): a legal but unfixtured
-            # topology (≥2 inputs, 0 outputs → 1way_nvar sink-less) binds its
-            # capacity on a ``sink == p`` SOURCE arc via maxFromSource.  The
-            # output-arc-only rule would leave such a unit free.  No current
-            # fixture triggers it (the sole sink-less fixture unit is DIRECT
-            # 1way_1var), but we do NOT ship a silent hole: raise a clear
-            # error rather than emit a free-capacity converter (chose
-            # guard-and-raise over routing source arcs, because a correct
-            # source-arc maxFromSource RHS needs a source-side existing
-            # producer + source_capacity_max_coeff that this code path does
-            # not carry — implementing it untested would be a worse hole than
-            # a loud raise).
-            #
-            # S2 (2way_nvar residual): bidirectional multi-var indirect units
-            # (``method_2way_nvar_off``) allow negative arc flows, so the
-            # ``conversion_indirect`` equality (which ties the *weighted sum*
-            # of inputs to outputs) does NOT bound each input arc's
-            # magnitude — one input arc could exceed the output cap while the
-            # sum still balances.  Inputs are therefore only categorically
-            # safe for 1-way single-output converters (all the fixtures
-            # have).  No fixture authors ``no_losses_no_variable_cost`` /
-            # ``variable_cost_only`` (the 2way_nvar methods), so this is an
-            # uncovered residual, not a live bug — flagged loudly here.
-            out_arcs = d.process_output_flows
-            in_arcs = d.process_input_flows
-            # S1 guard: every indirect invest/divest-eligible process must
-            # have at least one output arc; otherwise its capacity binds on a
-            # source arc we do not tighten.
-            indir_ps = d.process_indirect.select("p").unique()
-            out_ps = (out_arcs.select("p").unique()
-                      if out_arcs is not None else
-                      indir_ps.head(0))
-            sinkless = indir_ps.join(out_ps, on="p", how="anti")
-            if sinkless.height > 0:
-                names = sorted(str(x) for x in
-                               sinkless.get_column("p").to_list())
-                raise NotImplementedError(
-                    "Indirect (multi-flow) process(es) without an output "
-                    f"arc are not supported: {names}. Such sink-less units "
-                    "bind their capacity on a source arc (maxFromSource), "
-                    "which the maxFlow existing-capacity RHS does not yet "
-                    "cover; emitting them would grant free (unpaid) "
-                    "capacity. Add an output node or extend the indirect "
-                    "maxFlow RHS to route source arcs through the "
-                    "existing-only bound.")
-            # (a) DIRECT arcs — existing-only bound (unchanged).
-            direct_pss_d = (d.p_flow_upper_existing.frame
-                .join(d.process_indirect, on="p", how="anti"))
-            # (b) INDIRECT OUTPUT arcs — existing-only bound, densified over
-            #     ``process_output_flows × d`` with ``fill_null(0.0)`` so a
-            #     greenfield output arc (whose process authors no ``existing``
-            #     row, hence no p_flow_upper_existing row) still gets a
-            #     0-valued RHS → ``v_flow_out − Σv_invest ≤ 0`` fires.
-            #     (Mirrors ``p_process_existing_count``'s absent-existing=0.)
-            d_vals = d.dt.select("d").unique()
-            out_grid = (out_arcs.join(d_vals, how="cross")
-                        if out_arcs is not None and out_arcs.height > 0
-                        else None)
-            if out_grid is not None:
-                out_existing = (out_grid
-                    .join(d.p_flow_upper_existing.frame,
-                          on=("p", "source", "sink", "d"), how="left")
-                    .with_columns(value=pl.col("value").fill_null(0.0))
-                    .select("p", "source", "sink", "d", "value"))
-            else:
-                out_existing = None
-            # (c) INDIRECT INPUT + zero-coef aux arcs — loose ``p_flow_upper``
-            #     bound (unchanged).  Take all indirect arcs from
-            #     p_flow_upper, then anti-join the OUTPUT arcs out so ONLY
-            #     input/fuel arcs and residual (zero-coef) arcs remain loose.
-            #     B1 belt: this guarantees no input arc ever draws the
-            #     existing (=0) RHS.
-            indirect_loose = (d.p_flow_upper.frame
-                .join(d.process_indirect, on="p", how="inner")
-                .select("p", "source", "sink", "d", "t", "value"))
-            if out_arcs is not None and out_arcs.height > 0:
-                indirect_loose = indirect_loose.join(
-                    out_arcs, on=("p", "source", "sink"), how="anti")
-            # Broadcast the (p,source,sink,d) existing slices over t via
-            # inner-join on ``d`` (NOT cross-join — reused-t-across-periods
-            # would inflate the RHS by the period multiplicity).
-            existing_slices = [s for s in (direct_pss_d, out_existing)
-                               if s is not None and s.height > 0]
-            slices_dt: list[pl.DataFrame] = []
-            for s in existing_slices:
-                slices_dt.append(s
-                    .join(d.dt, on="d", how="inner")
-                    .select("p", "source", "sink", "d", "t", "value"))
-            if indirect_loose.height > 0:
-                slices_dt.append(indirect_loose)
-            if slices_dt:
-                combined = pl.concat(slices_dt)
-                # B1 assertion: no input arc drew from the existing slice —
-                # verified structurally (out_existing is filtered to
-                # process_output_flows; indirect_loose is anti-joined against
-                # it), but pin it so a future refactor can't reintroduce the
-                # infeasibility.
-                if (in_arcs is not None and in_arcs.height > 0
-                        and out_existing is not None):
-                    leaked = out_existing.join(
-                        in_arcs, on=("p", "source", "sink"), how="semi")
-                    assert leaked.height == 0, (
-                        "indirect input arc leaked into the existing-only "
-                        f"maxFlow slice (would force v_flow_in ≤ 0): {leaked}")
-                flow_upper_rhs = Param(
-                    ("p", "source", "sink", "d", "t"), combined)
-            else:
-                flow_upper_rhs = d.p_flow_upper_existing
-        else:
-            flow_upper_rhs = (d.p_flow_upper_existing
-                               if d.p_flow_upper_existing is not None
-                               else d.p_flow_upper)
-        # Apply the per-arc DIRECT capacity_max_coeff factor.  The .mod's
-        # maxToSink / maxFromSource multiply the *existing*-capacity RHS by
-        # ``p_process_sink_max_capacity_coefficient`` /
-        # ``p_process_source_max_capacity_coefficient`` (default 1.0) — a
-        # factor that ``p_flow_upper_existing`` (= existing/unitsize) drops
-        # entirely.  ``p_arc_max_cap_coef`` carries that factor for direct
-        # arcs and indirect OUTPUT arcs (both bound by the existing-only
-        # RHS above).  Indirect input / zero-coef arcs keep the loose
-        # ``p_flow_upper`` bound, which already folds it, so the producer
-        # excludes them to avoid double-applying.  Densify the
-        # sparse coef over flow_upper_rhs's own (p, source, sink) keys and
-        # ``fill_null(1.0)`` so unauthored arcs are unaffected — mirroring
-        # the availability densify below (a naive ``Param * Param`` inner
-        # join would DROP the missing-coef rows → RHS=0 → forced v_flow=0).
-        if d.p_arc_max_cap_coef is not None:
-            fr = flow_upper_rhs.frame
-            out_cols = fr.columns  # preserve the (… , value) schema exactly
-            coef_lf = (d.p_arc_max_cap_coef.frame.lazy()
-                .with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}")
-                               for k in ("p", "source", "sink")])
-                .select("_p", "_source", "_sink",
-                        pl.col("value").alias("__coef")))
-            merged_frame = (fr.lazy()
-                .with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}")
-                               for k in ("p", "source", "sink")])
-                .join(coef_lf, on=["_p", "_source", "_sink"], how="left")
-                .with_columns(
-                    value=pl.col("value") * pl.col("__coef").fill_null(1.0))
-                .select(out_cols)
-                .collect())
-            flow_upper_rhs = Param(flow_upper_rhs.dims, merged_frame)
-        # Apply availability factor — the .mod's RHS multiplies by
-        # ``pdtProcess[p, 'availability', d, t]`` (default 1.0).  For
-        # network_coal_wind_battery_co2_fullYear_availability the
-        # availability is non-trivial (0.003-0.99 across hours);
-        # without it the engine under-prices peak hours and runs ~35% low.
-        #
-        # ``Param * Param`` is an inner-join (polar_high contract), so a
-        # naive ``flow_upper_rhs * p_process_availability`` would DROP
-        # every (p, source, sink, d, t) row whose process is absent from
-        # ``p_process_availability`` (the cascade only populates explicit
-        # authored rows; missing processes default to 1.0).  That
-        # spuriously sets ``flow_upper_rhs = 0`` for connections like
-        # ``east_north`` / ``west_north`` and forces v_flow = 0 across
-        # the network → unmet demand → full-load slack at downstream
-        # nodes.  Densify by left-joining and filling missing
-        # availability with 1.0 so the inner-join above acts as the
-        # multiplicative overlay the .mod intends.
-        if d.p_process_availability is not None:
-            # Left-join availability onto flow_upper_rhs's (p, d[, t]) keys
-            # and fold the multiplication directly into the merged frame,
-            # filling missing availability with 1.0.  This avoids polar_high's
-            # inner-join ``Param * Param`` semantics (which would drop the
-            # missing-availability rows entirely — see network_coal_wind_
-            # battery_co2_fullYear_availability where ``east_north`` /
-            # ``west_north`` / ``battery_inverter`` have no DB-authored
-            # availability and would otherwise get RHS=0 → forced
-            # v_flow=0 → full-load slack at every downstream node).
-            fr = flow_upper_rhs.frame
-            if "t" not in fr.columns:
-                # ``p_flow_upper_existing`` is keyed (p, source, sink, d);
-                # broadcast across t via ``d.dt`` before applying the
-                # per-(d, t) availability factor.
-                fr = fr.join(d.dt, on="d", how="inner").select(
-                    "p", "source", "sink", "d", "t", "value")
-            # Phase E.1: p_process_availability may be authored as scalar
-            # / 1d_map[period] / 1d_map[time] / 2d_map, so its dims can be
-            # (p,) / (p, d) / (p, t) / (p, d, t).  Promote lazily to
-            # (p, d, t) before the eager left-join.
-            avail_lf = promote_param_to_dt(d.p_process_availability, d.dt)
-            merged_frame = (fr.lazy()
-                .join(avail_lf,
-                      on=["p", "d", "t"], how="left", suffix="__a")
-                .with_columns(pl.col("value__a").fill_null(1.0))
-                .select("p", "source", "sink", "d", "t",
-                        value=pl.col("value") * pl.col("value__a"))
-                .collect())
-            flow_upper_rhs = Param(("p", "source", "sink", "d", "t"),
-                                    merged_frame)
+        # Capacity RHS + the per-row multiplier the invest/divest terms
+        # carry.  The .mod's maxToSink / maxFromSource read
+        #   v_flow ≤ coef × availability × (existing/us + Σv_invest − Σv_divest)
+        # i.e. capacity_max_coeff and availability scale the WHOLE built
+        # capacity.  Moving the invest/divest delta to the LHS keeps one row:
+        #   v_flow − M·Σv_invest + M·Σv_divest ≤ M·existing/us,
+        # M = coef × availability per (p, source, sink, d, t).  See
+        # :func:`_max_flow_rhs` for the per-arc-class RHS.
+        flow_upper_rhs, cap_mult = _max_flow_rhs(d)
+        inv_procs = []
+        if has_invest_p:
+            inv_procs.append(v_invest_p.frame.select("p"))
+        if has_divest_p:
+            inv_procs.append(v_divest_p.frame.select("p"))
+        invest_mult = (_invest_capacity_multiplier(
+                           pss_dt, cap_mult, pl.concat(inv_procs).unique())
+                       if inv_procs else None)
         if has_divest_p:
             v_div_at = Var(  # virtual rename: d → d_divest, same col_ids
                 name=v_divest_p.name + "__at_divest",
@@ -2685,20 +2458,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             divest_in_dispatch = Sum(
                 Where(v_div_at, d.edd_divest_active),
                 over=("d_divest",))
-            flow_lhs["divest"] = divest_in_dispatch
+            flow_lhs["divest"] = (divest_in_dispatch * invest_mult
+                                  if invest_mult is not None
+                                  else divest_in_dispatch)
         if has_invest_p:
-            # Indirect-fix sub-change (ii) — DEFERRED as safe.  The
-            # ``− Σv_invest`` term below is keyed on ``p`` and broadcasts to
-            # every arc in ``pss_dt``, including indirect INPUT arcs.  Per the
-            # critique (R1/S3) this is correct-and-safe to ship as-is ("(i)
-            # alone"): on an input arc ``v_flow_in − Σv_invest ≤ p_flow_max``
-            # is *looser* than ``v_flow_in ≤ p_flow_max`` (subtracting the
-            # non-negative invest count), so it never over-constrains the
-            # fuel side, and it cannot re-create free OUTPUT capacity because
-            # the output arc is now tightened to ``existing/unitsize`` (the
-            # RHS split above).  Scoping the invest term off input arcs would
-            # only remove a harmless slackening; not doing it keeps the blast
-            # radius minimal.
+            # The ``− Σv_invest`` term is keyed on ``p`` and broadcasts to
+            # every arc in ``pss_dt``, including indirect INPUT arcs.  On an
+            # input arc ``v_flow_in − Σv_invest ≤ p_flow_max`` is *looser*
+            # than ``v_flow_in ≤ p_flow_max`` (subtracting the non-negative
+            # invest count), so it never over-constrains the fuel side, and
+            # it cannot re-create free OUTPUT capacity because the output arc
+            # is tightened to ``existing/unitsize`` (see :func:`_max_flow_rhs`).
+            # Capped arcs scale the term by ``invest_mult`` (coef ×
+            # availability, the same factor as their RHS); loose / uncapped
+            # arcs keep multiplier 1.
             # v_invest is also indexed by d_invest; sum over d_invest in
             # edd_invest with d_invest "alive" at d (already in edd_invest_set).
             v_inv_at = Var(
@@ -2734,7 +2507,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             invest_in_dispatch = Sum(
                 Where(v_inv_at, edd_inv_p),
                 over=("d_invest",))
-            flow_lhs["invest_neg"] = -invest_in_dispatch
+            flow_lhs["invest_neg"] = -(invest_in_dispatch * invest_mult
+                                       if invest_mult is not None
+                                       else invest_in_dispatch)
         m.add_cstr(
             "maxFlow",
             over      = pss_dt,
@@ -2778,15 +2553,22 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # Reuses the same existing-capacity RHS the forward maxFlow uses
         # (``flow_upper_rhs``), restricted to the 2way_1var arcs via the
         # ``over`` index.  Spans the full DC + non-DC arc set.
+        # The reverse direction has the same built capacity as the forward
+        # one (.mod ``minToSink_1var``: v_flow ≥ −coef × (existing + invest −
+        # divest)), so it carries the same invest/divest terms as maxFlow.
         if v_flow_back is not None and twoway1var_arcs is not None:
             back_over = pss_dt.join(
                 twoway1var_arcs, on=("p", "source", "sink"), how="inner")
             if back_over.height > 0:
+                back_lhs: dict = {"flow_back": v_flow_back}
+                for _k in ("invest_neg", "divest"):
+                    if _k in flow_lhs:
+                        back_lhs[_k] = flow_lhs[_k]
                 m.add_cstr(
                     "maxFlow_back",
                     over      = back_over,
                     sense     = "<=",
-                    lhs_terms = {"flow_back": v_flow_back},
+                    lhs_terms = back_lhs,
                     rhs_terms = {"upper": flow_upper_rhs},
                 )
 
@@ -2796,8 +2578,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _add_max_output_sum(
             m, d, v_flow, pss_dt,
             reserve_up_sink_parts=reserve_up_sink_parts,
-            invest_term=flow_lhs.get("invest_neg"),
-            divest_term=flow_lhs.get("divest"),
+            invest_sum=invest_in_dispatch if has_invest_p else None,
+            divest_sum=divest_in_dispatch if has_divest_p else None,
         )
 
     _build_prof("before:dc_power_flow")
@@ -2863,6 +2645,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 continue
             if ramp_param is None:
                 continue
+            # conversion_flow_coeff = 0 edges are outside every ramp limit.
+            idx_set = _drop_uncapped(d, idx_set)
+            if idx_set.height == 0:
+                continue
             sense = "<=" if dir_ == "up" else ">="
             sign  = 1.0  if dir_ == "up" else -1.0  # flips the RHS sign for "down"
             over_idx = idx_set.join(d.dt, how="cross")
@@ -2871,10 +2657,22 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             # already over (p, source, sink, d, t).
             flow_diff = (Where(v_flow, idx_set) - Where(v_flow_prev, idx_set)) \
                          * d.p_step_duration
-            # RHS: ±ramp_speed * 60 * step_dur * existing_count
-            rhs_param = (ramp_param * 60.0 * d.p_step_duration
-                         * d.p_process_existing_count) * sign
+            # RHS: ±ramp_speed · 60 · step_dur · coef
+            #        · (existing_count + Σv_invest − Σv_divest)
+            # (.mod ramp_*_constraint): the side's capacity_max_coeff and
+            # the invested / divested units scale the ramp limit exactly as
+            # they scale the capacity.
+            rate = ramp_param * 60.0 * d.p_step_duration
+            side_coef = (d.p_process_sink_max_capacity_coef if side == "sink"
+                         else d.p_process_source_max_capacity_coef)
+            if side_coef is not None:
+                rate = rate * _coef_factor(idx_set, side_coef, ["p", side])
+            rhs_param = (rate * d.p_process_existing_count) * sign
             rhs_terms: dict = {"limit": rhs_param}
+            if has_invest_p:
+                rhs_terms["invest"] = (invest_in_dispatch * rate) * sign
+            if has_divest_p:
+                rhs_terms["divest"] = (divest_in_dispatch * rate) * (-sign)
             # UC startup/shutdown tightening
             if dir_ == "up":
                 if has_online_lin:
@@ -4420,6 +4218,262 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         m.set_solver_options(d.solver_options)
 
 
+def _utf8_keys(lf: "pl.LazyFrame", keys) -> "pl.LazyFrame":
+    """Add ``_<k>`` Utf8 copies of ``keys`` — join keys that bridge Enum
+    vocabulary edges between frames built by different producers."""
+    return lf.with_columns([pl.col(k).cast(pl.Utf8).alias(f"_{k}")
+                            for k in keys])
+
+
+def _max_flow_rhs(d) -> "tuple[Param, pl.DataFrame | None]":
+    """``maxFlow`` RHS per ``(p, source, sink, d, t)`` and the capacity
+    multiplier of the *capped* arcs.
+
+    Arc classes:
+
+    * **uncapped** — ``conversion_flow_coeff = 0`` edges
+      (``process_source_sink_uncapped``; the hydro-pass-through pattern).
+      They are outside every per-edge capacity constraint: RHS is the raw
+      ``p_flow_upper`` value (``max_flow_for_unconstrained_variables``),
+      with no availability or capacity coefficient.
+    * **loose** — indirect (multi-flow) INPUT arcs.  They keep the
+      structural ``p_flow_upper`` fuel-width bound × availability (the
+      fuel is tied to the outputs by ``conversion_indirect``; pinning the
+      input arc to built capacity would make fuel hard-infeasible).
+    * **capped** — direct arcs and indirect OUTPUT arcs
+      (``process_output_flows``).  The .mod's ``maxToSink`` /
+      ``maxFromSource``::
+
+          v_flow ≤ coef × availability × (existing/us + Σv_invest − Σv_divest)
+
+      RHS = ``existing/us × coef × availability`` (``p_flow_upper_existing``
+      densified to 0 for greenfield arcs, ``p_arc_max_cap_coef`` and
+      ``p_process_availability`` densified to their 1.0 defaults — a naive
+      ``Param * Param`` inner join would DROP unauthored rows → RHS = 0).
+      The returned multiplier frame ``(p, source, sink, d, t, value)`` =
+      ``coef × availability`` on these rows; the caller scales the
+      invest/divest terms by it so the coefficient and availability apply
+      to the WHOLE built capacity, not only to the existing part.
+
+    When ``p_flow_upper_existing`` is absent (hand-built fixtures without
+    an existing-capacity frame) every non-uncapped arc reads
+    ``p_flow_upper`` as its existing count (legacy behaviour).
+
+    Sink-less indirect units (≥2 inputs, 0 outputs) bind their capacity on
+    a source arc (``maxFromSource``) that this split does not route; they
+    raise rather than emit a free-capacity converter.
+    """
+    keys = ["p", "source", "sink"]
+    fue = getattr(d, "p_flow_upper_existing", None)
+    fu = getattr(d, "p_flow_upper", None)
+    pss = d.process_source_sink.select(keys).unique()
+    indirect = getattr(d, "process_indirect", None)
+    out_arcs = getattr(d, "process_output_flows", None)
+
+    # ── uncapped arcs (need p_flow_upper for their unconstrained value) ──
+    unc = getattr(d, "process_source_sink_uncapped", None)
+    if fu is not None and unc is not None and unc.height > 0:
+        unc = (_utf8_keys(pss.lazy(), keys)
+               .join(_utf8_keys(unc.lazy(), keys).select(
+                         [f"_{k}" for k in keys]),
+                     on=[f"_{k}" for k in keys], how="semi")
+               .select(keys).collect())
+    else:
+        unc = pss.head(0)
+
+    # ── loose arcs: indirect arcs that are neither outputs nor uncapped ──
+    split_indirect = (fue is not None and fu is not None
+                      and indirect is not None and indirect.height > 0)
+    if split_indirect:
+        indir_ps = indirect.select("p").unique()
+        out_ps = (out_arcs.select("p").unique()
+                  if out_arcs is not None else indir_ps.head(0))
+        sinkless = indir_ps.join(out_ps, on="p", how="anti")
+        if sinkless.height > 0:
+            names = sorted(str(x) for x in sinkless.get_column("p").to_list())
+            raise NotImplementedError(
+                "Indirect (multi-flow) process(es) without an output "
+                f"arc are not supported: {names}. Such sink-less units "
+                "bind their capacity on a source arc (maxFromSource), "
+                "which the maxFlow existing-capacity RHS does not yet "
+                "cover; emitting them would grant free (unpaid) "
+                "capacity. Add an output node or extend the indirect "
+                "maxFlow RHS to route source arcs through the "
+                "existing-only bound.")
+        loose = pss.join(indir_ps, on="p", how="semi")
+        if out_arcs is not None and out_arcs.height > 0:
+            loose = loose.join(out_arcs.select(keys), on=keys, how="anti")
+        loose = loose.join(unc, on=keys, how="anti")
+        in_arcs = getattr(d, "process_input_flows", None)
+    else:
+        loose = pss.head(0)
+        in_arcs = None
+    capped = (pss.join(loose, on=keys, how="anti")
+                 .join(unc, on=keys, how="anti"))
+    if in_arcs is not None and in_arcs.height > 0:
+        # B1: no indirect input arc may draw the existing-only RHS (it
+        # would force v_flow_in ≤ 0).
+        leaked = capped.join(in_arcs.select(keys), on=keys, how="semi")
+        assert leaked.height == 0, (
+            "indirect input arc leaked into the existing-only maxFlow "
+            f"slice (would force v_flow_in ≤ 0): {leaked}")
+
+    # ── capped: existing/us × coef × availability ───────────────────────
+    cap_dt = capped.join(d.dt, how="cross")
+    cap_lf = _utf8_keys(cap_dt.lazy(), keys)
+    if fue is not None:
+        cap_lf = (cap_lf
+                  .join(_utf8_keys(fue.frame.lazy(), keys)
+                        .select("_p", "_source", "_sink", "d",
+                                pl.col("value").alias("__ex")),
+                        on=["_p", "_source", "_sink", "d"], how="left")
+                  .with_columns(pl.col("__ex").fill_null(0.0)))
+    elif fu is not None:
+        cap_lf = (cap_lf
+                  .join(_utf8_keys(fu.frame.lazy(), keys)
+                        .select("_p", "_source", "_sink", "d", "t",
+                                pl.col("value").alias("__ex")),
+                        on=["_p", "_source", "_sink", "d", "t"], how="left")
+                  .with_columns(pl.col("__ex").fill_null(0.0)))
+    else:
+        cap_lf = cap_lf.with_columns(pl.lit(0.0).alias("__ex"))
+    if d.p_arc_max_cap_coef is not None:
+        cap_lf = (cap_lf
+                  .join(_utf8_keys(d.p_arc_max_cap_coef.frame.lazy(), keys)
+                        .select("_p", "_source", "_sink",
+                                pl.col("value").alias("__coef")),
+                        on=["_p", "_source", "_sink"], how="left")
+                  .with_columns(pl.col("__coef").fill_null(1.0)))
+    else:
+        cap_lf = cap_lf.with_columns(pl.lit(1.0).alias("__coef"))
+    avail = getattr(d, "p_process_availability", None)
+    if avail is not None:
+        avail_lf = _utf8_keys(promote_param_to_dt(avail, d.dt), ["p"])
+        cap_lf = (cap_lf
+                  .join(avail_lf.select("_p", "d", "t",
+                                        pl.col("value").alias("__av")),
+                        on=["_p", "d", "t"], how="left")
+                  .with_columns(pl.col("__av").fill_null(1.0)))
+    else:
+        cap_lf = cap_lf.with_columns(pl.lit(1.0).alias("__av"))
+    cap_frame = (cap_lf
+                 .with_columns(
+                     # Same evaluation order as the .mod RHS:
+                     # (existing × coef) × availability.
+                     value=pl.col("__ex") * pl.col("__coef") * pl.col("__av"),
+                     __mult=pl.col("__coef") * pl.col("__av"))
+                 .select("p", "source", "sink", "d", "t", "value", "__mult")
+                 .collect())
+    cap_mult = (cap_frame.select("p", "source", "sink", "d", "t",
+                                 pl.col("__mult").alias("value"))
+                .filter(pl.col("value") != 1.0))
+    slices = [cap_frame.select("p", "source", "sink", "d", "t", "value")]
+
+    # ── loose: p_flow_upper × availability ──────────────────────────────
+    if loose.height > 0:
+        loose_lf = (_utf8_keys(fu.frame.lazy(), keys)
+                    .join(_utf8_keys(loose.lazy(), keys)
+                          .select([f"_{k}" for k in keys]),
+                          on=[f"_{k}" for k in keys], how="semi")
+                    .select("p", "source", "sink", "d", "t", "value"))
+        if avail is not None:
+            loose_lf = (_utf8_keys(loose_lf, ["p"])
+                        .join(_utf8_keys(promote_param_to_dt(avail, d.dt),
+                                         ["p"])
+                              .select("_p", "d", "t",
+                                      pl.col("value").alias("__av")),
+                              on=["_p", "d", "t"], how="left")
+                        .with_columns(pl.col("__av").fill_null(1.0))
+                        .select("p", "source", "sink", "d", "t",
+                                value=pl.col("value") * pl.col("__av")))
+        slices.append(loose_lf.collect())
+
+    # ── uncapped: raw p_flow_upper (max_flow_for_unconstrained_variables) ─
+    if unc.height > 0:
+        slices.append(_utf8_keys(fu.frame.lazy(), keys)
+                      .join(_utf8_keys(unc.lazy(), keys)
+                            .select([f"_{k}" for k in keys]),
+                            on=[f"_{k}" for k in keys], how="semi")
+                      .select("p", "source", "sink", "d", "t", "value")
+                      .collect())
+
+    ref = slices[0].schema
+    aligned = [slices[0]] + [
+        sl.with_columns([pl.col(c).cast(ref[c], strict=False)
+                         for c in ("p", "source", "sink", "d", "t")
+                         if sl.schema[c] != ref[c]])
+        for sl in slices[1:]]
+    rhs = Param(("p", "source", "sink", "d", "t"), pl.concat(aligned))
+    return rhs, (cap_mult if cap_mult.height > 0 else None)
+
+
+def _capped_arcs(d, arcs: "pl.DataFrame") -> "pl.DataFrame":
+    """``arcs`` (``p, source, sink``) restricted to the CAPPED class of
+    :func:`_max_flow_rhs`: drops indirect-process arcs that are not output
+    arcs (fuel / input arcs) and ``conversion_flow_coeff = 0`` (uncapped)
+    edges."""
+    keys = ["p", "source", "sink"]
+    out = arcs
+    indirect = getattr(d, "process_indirect", None)
+    if indirect is not None and indirect.height > 0:
+        out_arcs = getattr(d, "process_output_flows", None)
+        indir_arcs = out.join(indirect.select("p").unique(), on="p",
+                              how="semi")
+        if out_arcs is not None and out_arcs.height > 0:
+            indir_arcs = indir_arcs.join(out_arcs.select(keys), on=keys,
+                                         how="anti")
+        out = out.join(indir_arcs.select(keys), on=keys, how="anti")
+    return _drop_uncapped(d, out)
+
+
+def _drop_uncapped(d, arcs: "pl.DataFrame") -> "pl.DataFrame":
+    """``arcs`` (any frame carrying ``p, source, sink``) without the
+    ``conversion_flow_coeff = 0`` edges (``process_source_sink_uncapped``),
+    which are outside every per-edge capacity / ramp / min-load
+    constraint.  Columns and dtypes of ``arcs`` are preserved."""
+    unc = getattr(d, "process_source_sink_uncapped", None)
+    if unc is None or unc.height == 0 or arcs.height == 0:
+        return arcs
+    keys = ["p", "source", "sink"]
+    return (_utf8_keys(arcs.lazy(), keys)
+            .join(_utf8_keys(unc.lazy(), keys)
+                  .select([f"_{k}" for k in keys]),
+                  on=[f"_{k}" for k in keys], how="anti")
+            .select(arcs.columns).collect())
+
+
+def _invest_capacity_multiplier(pss_dt: "pl.DataFrame | None",
+                                cap_mult: "pl.DataFrame | None",
+                                procs: "pl.DataFrame",
+                                ) -> "Param | None":
+    """Per-``(p, source, sink, d, t)`` multiplier for the maxFlow
+    invest/divest terms, covering EVERY ``pss_dt`` row of the invest /
+    divest processes ``procs`` — ``cap_mult`` (coef × availability) on
+    capped arcs, 1.0 elsewhere (the multiply is an inner join, so a row
+    missing here would silently drop the invest term from that row).
+
+    ``None`` when no invest/divest process has a non-unit multiplier: the
+    caller then keeps the bare ``Σ v_invest`` term (identical LP).
+    """
+    if pss_dt is None or cap_mult is None or procs.height == 0:
+        return None
+    keys = ["p", "source", "sink", "d", "t"]
+    procs_u = _utf8_keys(procs.lazy(), ["p"]).select("_p")
+    mult_sel = (_utf8_keys(cap_mult.lazy(), keys)
+                .join(procs_u, on="_p", how="semi")
+                .select([f"_{k}" for k in keys] + ["value"])
+                .collect())
+    if mult_sel.height == 0:
+        return None
+    frame = (_utf8_keys(pss_dt.lazy().select(keys), keys)
+             .join(procs_u, on="_p", how="semi")
+             .join(mult_sel.lazy(), on=[f"_{k}" for k in keys], how="left")
+             .with_columns(pl.col("value").fill_null(1.0))
+             .select(*keys, "value")
+             .collect())
+    return Param(tuple(keys), frame)
+
+
 def _indirect_sum_arcs(d) -> "pl.DataFrame | None":
     """Output arcs ``(p, source, sink)`` summed by ``maxOutputSum``.
 
@@ -4447,7 +4501,7 @@ def _indirect_sum_arcs(d) -> "pl.DataFrame | None":
 
 def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
                         reserve_up_sink_parts=None,
-                        invest_term=None, divest_term=None) -> None:
+                        invest_sum=None, divest_sum=None) -> None:
     """Emit ``maxOutputSum`` (and ``maxOutputSum_negCap``): the capacity of
     an indirect (multi-flow) unit bounds the SUM of its output flows.
 
@@ -4458,14 +4512,16 @@ def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
     ``p`` with ≥1 output arc (:func:`_indirect_sum_arcs`)::
 
         Σ_k v_flow[p, p, k, d, t] + Σ_k Σ_r v_reserve_up[p, r, k, d, t]
-            − Σ v_invest[p, d_inv ≤ d] + Σ v_divest[p, d_div ≤ d]
-        ≤ existing[p, d] / unitsize[p] · availability[p, d, t]
+            − av · Σ v_invest[p, d_inv ≤ d] + av · Σ v_divest[p, d_div ≤ d]
+        ≤ existing[p, d] / unitsize[p] · av,     av = availability[p, d, t]
 
-    Units are unit-count (``v_flow`` is per unitsize), exactly as
-    ``maxFlow``.  The invest / divest terms are the SAME ``(p, d)``
-    expressions ``maxFlow`` uses (``− Σ v_invest`` / ``+ Σ v_divest`` over
-    the alive invest / divest periods), entered once per row — not once
-    per arc.  The RHS is the existing-only count ``maxFlow`` binds indirect
+    i.e. availability scales the WHOLE built capacity (existing + invest −
+    divest), as in the .mod's ``maxToSink``.  Units are unit-count
+    (``v_flow`` is per unitsize), exactly as ``maxFlow``.  ``invest_sum`` /
+    ``divest_sum`` are the ``(p, d)`` sums ``maxFlow`` uses (``Σ v_invest``
+    / ``Σ v_divest`` over the alive invest / divest periods), entered once
+    per row — not once per arc — scaled here by the same densified
+    availability as the RHS.  The RHS is the existing-only count ``maxFlow`` binds indirect
     OUTPUT arcs with (``p_flow_upper_existing``; identical on every arc of
     a process), densified so a greenfield unit (no ``existing`` row) gets
     0, times availability densified to the 1.0 default (a naive
@@ -4505,10 +4561,15 @@ def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
         if res_sel.height > 0:
             lhs["reserve_up"] = Sum(Where(v_res_at_sink, res_sel),
                                     over=("r", "ud", "sink"))
-    if invest_term is not None:
-        lhs["invest_neg"] = invest_term
-    if divest_term is not None:
-        lhs["divest"] = divest_term
+    # Availability over the constraint rows, densified to the 1.0 default.
+    avail_pdt = (_availability_factor(d, over)
+                 if d.p_process_availability is not None else None)
+    if invest_sum is not None:
+        lhs["invest_neg"] = -(invest_sum * avail_pdt
+                              if avail_pdt is not None else invest_sum)
+    if divest_sum is not None:
+        lhs["divest"] = (divest_sum * avail_pdt
+                         if avail_pdt is not None else divest_sum)
 
     # RHS: existing count per (p, d) — the value maxFlow's indirect output
     # arcs carry (all arcs of a process share it; ``max`` collapses them).
@@ -4644,7 +4705,16 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
     # mismatches flextool by ~1.2% on the test_a_lot fixtures (the only
     # fixtures whose ``pt_process[*, availability, t]`` table varies
     # across timesteps with v_online < 1).
-    pss_online = d.process_source_sink.join(online_set, on="p", how="inner")
+    #
+    # Like the .mod's maxToSink / maxFromSource online branch
+    # (``coef × v_online × availability``) the row covers only the CAPPED
+    # arcs (:func:`_capped_arcs`: direct arcs + indirect output arcs) and
+    # carries their ``capacity_max_coeff``.  Indirect fuel arcs are tied
+    # to the outputs by ``conversion_indirect`` (capping them at v_online
+    # would cap the output at efficiency × v_online), and
+    # ``conversion_flow_coeff = 0`` edges are uncapped.
+    pss_online = _capped_arcs(
+        d, d.process_source_sink.join(online_set, on="p", how="inner"))
     if pss_online.height > 0:
         over_pss_online = pss_online.join(d.dt, how="cross")
         if d.p_process_availability is not None:
@@ -4655,6 +4725,9 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
             online_rhs = v_online * _availability_factor(d, pss_online)
         else:
             online_rhs = v_online
+        if d.p_arc_max_cap_coef is not None:
+            online_rhs = online_rhs * _coef_factor(
+                pss_online, d.p_arc_max_cap_coef, ["p", "source", "sink"])
         m.add_cstr(f"maxFlow_online{sfx}",
                    over=over_pss_online, sense="<=",
                    lhs_terms={"flow":   v_flow},
@@ -4692,6 +4765,9 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
         pss_minload = (d.process_source_sink
                        .join(online_set, on="p", how="inner")
                        .join(d.process_minload, on="p", how="inner"))
+        # conversion_flow_coeff = 0 edges are outside every min-load
+        # constraint (neither a row nor part of the summed flow).
+        pss_minload = _drop_uncapped(d, pss_minload)
         if pss_minload.height > 0:
             over_minload = pss_minload.join(d.dt, how="cross")
             sum_flow = Sum(Where(v_flow, pss_minload), over=("sink",))

@@ -456,7 +456,8 @@ def derive_process_source_sink_coeff_zero(
     *,
     provider: "object | None" = None,
 ) -> pl.DataFrame:
-    """``process_source_sink`` filtered by zero flow coefficient on EITHER side."""
+    """``process_source_sink`` filtered by zero ``conversion_flow_coeff`` on
+    EITHER side (the uncapped edges)."""
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
@@ -1329,7 +1330,11 @@ def derive_p_flow_max(
                 else:
                     eff_term = slope.get((p, d, t), 0.0)
                 src_coef = src_max_coef.get((p, src), 1.0)
-                base = eff_term * (dcm_v / us) / src_coef
+                # capacity_max_coeff = 0 is a zero cap on the edge (the
+                # uncapped edges are the conversion_flow_coeff = 0 ones,
+                # handled by ``coeff_zero`` above).
+                base = (eff_term * (dcm_v / us) / src_coef
+                        if src_coef != 0.0 else 0.0)
             else:
                 base = dcm_v / us
             sink_coef = (sink_max_coef.get((p, sink), 1.0)

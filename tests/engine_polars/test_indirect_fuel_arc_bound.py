@@ -224,53 +224,6 @@ def test_max_output_sum_rows_emitted(solved_step) -> None:
     assert "maxOutputSum_negCap" not in set(pb.cstr_names())
 
 
-# ── Uncapped output → unbounded fuel need ───────────────────────────────
-_ALT_UNCAPPED = "indirect_fuel_uncapped"
-_SCENARIO_UNCAPPED = "indirect_fuel_uncapped_test"
-
-
-def test_uncapped_output_leaves_fuel_arc_unconstrained(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
-    """An output with ``capacity_max_coeff = 0`` has no cap (coeff_zero),
-    so the fuel it can demand is unbounded — the fuel arc must take the
-    unconstrained value rather than a capacity-derived one."""
-    if str(TESTS_DIR) not in sys.path:
-        sys.path.insert(0, str(TESTS_DIR))
-    from db_utils import json_to_db  # noqa: E402
-    from flextool.engine_polars import run_chain_from_db
-    from flextool.update_flextool.db_migration import migrate_database
-
-    data = json.loads(BASE_FIXTURE_JSON.read_text())
-    data["alternatives"].append([_ALT_UNCAPPED, ""])
-    pv = data["parameter_values"]
-    pv.append(["constraint", "coal_chp_fix", "is_enabled",
-               _b64("no", "str"), _ALT_UNCAPPED])
-    pv.append(["unit__outputNode", [UNIT, "heat"], "capacity_max_coeff",
-               _b64(0.0, "float"), _ALT_UNCAPPED])
-    chain = ["init", "west", "coal_chp", "heat", _ALT_UNCAPPED]
-    data["scenarios"].append([_SCENARIO_UNCAPPED, False, ""])
-    for alt, before in zip(chain, chain[1:] + [None]):
-        data["scenario_alternatives"].append(
-            [_SCENARIO_UNCAPPED, alt, before])
-    work = tmp_path_factory.mktemp("indirect_fuel_uncapped")
-    json_path = work / "uncapped.json"
-    json_path.write_text(json.dumps(data))
-    url = json_to_db(json_path, work / "uncapped.sqlite")
-    migrate_database(url)
-
-    steps = run_chain_from_db(url, _SCENARIO_UNCAPPED,
-                              work_folder=work, keep_solutions=True)
-    fd = list(steps.values())[-1].flex_data
-    rows = (fd.p_flow_upper.frame
-            .with_columns(pl.col(c).cast(pl.Utf8)
-                          for c in ("p", "source", "sink"))
-            .filter((pl.col("p") == UNIT) & (pl.col("source") == FUEL_NODE)
-                    & (pl.col("sink") == UNIT)))
-    assert rows.height > 0
-    assert rows["value"].min() >= 1_000_000.0
-
-
 # ── Delay: one input step can feed a heavier-weighted output step ───────
 class _StubSource:
     """Minimal InputSource exposing only ``unit.delay``."""

@@ -2013,6 +2013,8 @@ def master_network_data(
     new.p_flow_upper = _keep_cross_triple_param(data.p_flow_upper)
     new.p_flow_upper_existing = _keep_cross_triple_param(data.p_flow_upper_existing)
     new.p_arc_max_cap_coef = _keep_cross_triple_param(data.p_arc_max_cap_coef)
+    new.process_source_sink_uncapped = _keep_cross_triple(
+        data.process_source_sink_uncapped)
     new.p_slope = _keep_proc_param(data.p_slope)
     new.p_process_existing_count = _keep_proc_param(data.p_process_existing_count)
     new.p_process_availability = _keep_proc_param(data.p_process_availability)

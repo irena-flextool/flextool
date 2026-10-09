@@ -503,6 +503,9 @@ class FlexData:
     p_flow_upper: Param | None = None            # (p, source, sink, d, t) — preprocessed structural max (existing + max_invest_cum)
     p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxFlow
     p_arc_max_cap_coef: Param | None = None      # (p, source, sink) — per-arc capacity_max_coeff for DIRECT + indirect OUTPUT arcs (maxToSink/maxFromSource); folded onto p_flow_upper_existing in maxFlow
+    process_source_sink_uncapped: pl.DataFrame | None = None  # (p, source, sink) — conversion_flow_coeff = 0 arcs: outside every per-edge capacity / ramp / min-load constraint
+    p_process_sink_max_capacity_coef: Param | None = None    # (p, sink) — unit__outputNode.capacity_max_coeff (explicit rows; default 1.0): ramp / maxFlow_online multiplier
+    p_process_source_max_capacity_coef: Param | None = None  # (p, source) — unit__inputNode.capacity_max_coeff (explicit rows; default 1.0): ramp multiplier
     p_slope: Param | None = None                 # (p, d, t)
     p_commodity_price: Param | None = None       # (c, d, t)
     pd_neg_cap: pl.DataFrame | None = None       # set: (p, d) where existing<0 AND unitsize<0
