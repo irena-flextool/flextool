@@ -8,8 +8,7 @@
   limited the unit (e.g. an extraction CHP's electricity pinned well below its
   cap). The bound now follows the conversion equation:
   `capacity × slope × Σ_outputs(conversion_flow_coeff × capacity_max_coeff) /
-  input conversion_flow_coeff`, scaled up for delayed units and unbounded when
-  an output has `capacity_max_coeff = 0`.
+  input conversion_flow_coeff`, scaled up for delayed units.
 - **`capacity_max_coeff` on the outputs of indirect units is enforced again.**
   Indirect output flows are bounded by existing capacity (plus investment), but
   the per-output `capacity_max_coeff` factor was only folded in for direct
@@ -26,6 +25,39 @@
 - Results of models with multi-output indirect units can change (lower or
   equal cost where the fuel bound was binding; respected output caps; higher
   cost or more investment where the sum of outputs exceeded capacity).
+- **Capacity multipliers now scale invested capacity too.** `capacity_max_coeff`
+  and `availability` multiplied only the existing capacity; invested (and
+  retired) capacity entered the capacity constraints unscaled. An output with
+  `capacity_max_coeff = 0.2` on a unit that invested 900 MW could deliver
+  900 MW instead of 180 MW, and a unit with `availability = 0.5` could use all
+  of its new capacity. The flow caps of direct units, indirect-unit outputs,
+  the output-sum cap and the reverse direction of two-way units now apply
+  `capacity_max_coeff × availability` to `existing + invested − retired`.
+  Investment models with such multipliers will build more capacity.
+- **Ramp limits now follow invested capacity and `capacity_max_coeff`.** The
+  ramp constraints used the existing capacity only, so a ramp-limited unit
+  built by the model could not change its output at all, and the edge's
+  `capacity_max_coeff` was not applied (the documented behaviour).
+- **The reverse direction of a two-way connection can use invested capacity.**
+  Reverse flow of `no_losses_no_variable_cost` connections was capped at the
+  existing capacity only.
+- **`capacity_max_coeff = 0` is a zero cap, as documented.** The engine
+  treated an edge with `capacity_max_coeff = 0` as uncapped (bounded only by
+  `max_flow_for_unconstrained_variables`) in its structural flow bound — a
+  leftover from the parameter rename, when the old coefficient was the flow
+  coefficient. The uncapped (pass-through) edges are the
+  `conversion_flow_coeff = 0` ones; those are now also kept out of the online
+  flow cap, ramp limits and min-load constraints, and are no longer scaled by
+  availability. The `max_flow_for_unconstrained_variables` and
+  `capacity_max_coeff` descriptions are corrected (schema v70,
+  description-only).
+- **`capacity_max_coeff` now applies to online (unit-commitment) units' flow
+  cap**, and that cap no longer limits the fuel input of online multi-output
+  units (it is tied to the outputs by the conversion equation).
+- **`invest_retire_no_limit` lifts the investment limits like
+  `invest_no_limit`.** It was not recognised as a no-limit method: the unit's
+  maximum capacity stayed at its existing capacity, so a unit with no existing
+  capacity could not invest at all.
 
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 

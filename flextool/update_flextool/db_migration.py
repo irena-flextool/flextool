@@ -1761,6 +1761,8 @@ def migrate_database(
                 _migrate_v68_rp_group_flag(db)
             elif next_version == 69:
                 _migrate_v69_backfill_parameter_groups(db)
+            elif next_version == 70:
+                _migrate_v70_capacity_coefficient_descriptions(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3773,6 +3775,55 @@ def _migrate_v69_backfill_parameter_groups(db) -> None:
     _commit_step(db,
         "v69: backfilled parameter groups for model.small_number_threshold "
         "(-> model) and node.penalty_method (-> basics)."
+    )
+
+
+_V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (
+    "[MW] Upper bound assigned to LP variables that have no other cap "
+    "(invest_no_limit / invest_retire_no_limit capacity; flows through "
+    "edges whose conversion_flow_coeff is zero; infinite-capacity "
+    "commodity tiers).  Keep large enough not to constrain the physical "
+    "solution but small enough to avoid numerical issues (default "
+    "1,000,000)."
+)
+_V70_CAPACITY_MAX_COEFF_DESCRIPTION = (
+    "[factor, default 1.0] Fraction of the unit's capacity (existing + "
+    "invested - retired) available to this edge's upper cap (maxToSink / "
+    "maxFromSource / ramp). 0 is a zero cap; to remove the edge from the "
+    "capacity constraints altogether use conversion_flow_coeff = 0. For "
+    "extraction CHP set to 1.0 on each output so each can reach full "
+    "capacity when the other drops."
+)
+
+
+def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
+    """Correct the capacity-coefficient descriptions (v69 -> v70).
+
+    ``model.max_flow_for_unconstrained_variables`` said it bounds "flows
+    through edges whose capacity_max_coeff is zero".  That was an artefact
+    of the v35 rename (the old ``coefficient`` was the flow coefficient):
+    the uncapped edges are the ``conversion_flow_coeff = 0`` ones, while
+    ``capacity_max_coeff = 0`` is a zero cap.  The ``capacity_max_coeff``
+    description now states that it scales the whole capacity (existing +
+    invested - retired) and that 0 is a zero cap.  Description-only;
+    idempotent (``_commit_step`` tolerates the no-change case).
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="model",
+        name="max_flow_for_unconstrained_variables",
+        description=_V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION,
+    )
+    for cls in ("unit__inputNode", "unit__outputNode"):
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=cls,
+            name="capacity_max_coeff",
+            description=_V70_CAPACITY_MAX_COEFF_DESCRIPTION,
+        )
+    _commit_step(db,
+        "v70: capacity_max_coeff = 0 is a zero cap; uncapped edges are "
+        "conversion_flow_coeff = 0 (description updates)."
     )
 
 
