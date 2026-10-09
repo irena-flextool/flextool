@@ -1278,10 +1278,13 @@ def p_process_sink_max_capacity_coef_from_source(source: "InputSource") -> Param
                           "sink", filter_zero=False)
 
 
-def p_process_source_max_capacity_coef_from_source(source: "InputSource") -> Param | None:
-    """``unit__inputNode.input_share_max`` (schema v70; was
-    ``capacity_max_coeff``) → ``Param(("p", "source"))``.
-    Input-side twin of :func:`p_process_sink_max_capacity_coef_from_source`.
+def p_process_source_input_share_max_from_source(source: "InputSource") -> Param | None:
+    """``unit__inputNode.input_share_max`` → ``Param(("p", "source"))``.
+
+    Input-side counterpart of :func:`p_process_sink_max_capacity_coef_from_source`
+    (schema v70 renamed it from ``capacity_max_coeff``).  Explicit rows
+    only, including an authored ``0.0``; consumers densify the 1.0
+    default.
     """
     return _p_side_scalar(source, "unit__inputNode", "input_share_max",
                           "source", filter_zero=False)
@@ -1944,12 +1947,13 @@ def apply_direct_params_a(source: "InputSource",
     # sub-solve path too (passes 3-10 are skipped there).
     flex_data.p_process_sink_min_capacity_coef = (
         p_process_sink_min_capacity_coef_from_source(source))
-    # Per-edge capacity_max_coeff (both sides) — scales the ramp limits and
-    # maxFlow_online.  Pass 1a for the same reason as the min coefficient.
+    # Per-edge capacity factors (output capacity_max_coeff, input
+    # input_share_max) — scale the ramp limits.  Pass 1a for the same
+    # reason as the min coefficient.
     flex_data.p_process_sink_max_capacity_coef = (
         p_process_sink_max_capacity_coef_from_source(source))
-    flex_data.p_process_source_max_capacity_coef = (
-        p_process_source_max_capacity_coef_from_source(source))
+    flex_data.p_process_source_input_share_max = (
+        p_process_source_input_share_max_from_source(source))
 
     # ─── Δ.4 second wave — connection scalars (DC power flow feature) ───
     # Δ.16 — preserve the CSV-loaded value when the source has no rows.

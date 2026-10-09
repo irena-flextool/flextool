@@ -969,6 +969,8 @@ def _build_region_data(
     new.p_unitsize = _filter_param(src.p_unitsize, "p", keep_procs)
     new.p_flow_upper = _filter_param_arc(src.p_flow_upper)
     new.p_flow_upper_existing = _filter_param_arc(src.p_flow_upper_existing)
+    new.p_arc_max_cap_coef = _filter_param_arc(src.p_arc_max_cap_coef)
+    new.p_indirect_input_cap = _filter_param_arc(src.p_indirect_input_cap)
     new.p_slope = _filter_param(src.p_slope, "p", keep_procs)
     new.p_process_existing_count = _filter_param(src.p_process_existing_count, "p", keep_procs)
     new.p_process_availability = _filter_param(src.p_process_availability, "p", keep_procs)
@@ -2013,6 +2015,8 @@ def master_network_data(
     new.p_flow_upper = _keep_cross_triple_param(data.p_flow_upper)
     new.p_flow_upper_existing = _keep_cross_triple_param(data.p_flow_upper_existing)
     new.p_arc_max_cap_coef = _keep_cross_triple_param(data.p_arc_max_cap_coef)
+    new.p_indirect_input_cap = _keep_cross_triple_param(
+        data.p_indirect_input_cap)
     new.process_source_sink_uncapped = _keep_cross_triple(
         data.process_source_sink_uncapped)
     new.p_slope = _keep_proc_param(data.p_slope)

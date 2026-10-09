@@ -8,22 +8,25 @@ output flows".  For an indirect (``nvar``) unit that is ``maxOutputSum``::
 
 (``maxOutputSum_online_<kind>``: ``Σ_k out_k ≤ v_online · availability``),
 on top of the per-arc caps ``out_k ≤ capacity · capacity_max_coeff_k``
-(``maxFlow``).  The input (fuel) arcs carry only a structural "loose"
-bound from ``p_flow_upper`` that exists to give the solver a bounded
-region.  The fuel is tied to the outputs by ``conversion_indirect``::
+(``maxFlow``).  The input (fuel) arcs carry the input limit
+``input_share_max · L · availability · capacity`` (default share 1: a
+loose solver-region bound — see ``test_input_share.py``).  The fuel is
+tied to the outputs by ``conversion_indirect``::
 
     Σ_s src_conv_s · in_s = slope · Σ_k sink_conv_k · out_k
 
 so the largest fuel any single input arc can ever be asked for is::
 
-    in_s ≤ capacity · slope · Σ_k (sink_conv_k · capacity_max_coeff_k)
-                                                          / src_conv_s
+    in_s ≤ capacity · slope · W / src_conv_s
 
-The bound used to be ``slope · capacity`` (enough fuel for ONE output at
-full capacity).  With several outputs — or with a ``conversion_flow_coeff``
-above 1 on an output — the loose bound became the binding constraint and
-silently capped the unit (and in investment solves, where the fuel bound
-is loose, the sum of outputs was not capped at all).
+with ``W = max Σ_k sink_conv_k · x_k`` s.t. ``Σ x_k ≤ 1``,
+``x_k ≤ capacity_max_coeff_k`` (outputs filled in descending
+``sink_conv``).  The bound used to be ``slope · capacity`` (enough fuel for
+ONE output at full capacity).  With several outputs — or with a
+``conversion_flow_coeff`` above 1 on an output — the loose bound became
+the binding constraint and silently capped the unit (and in investment
+solves, where the fuel bound is loose, the sum of outputs was not capped
+at all).
 
 The fixtures use the ``coal_chp`` unit from ``tests.json`` (existing
 1000 MW, efficiency 0.9, outputs ``west`` + ``heat``, input
@@ -49,8 +52,9 @@ CAPACITY = 1000.0
 EFFICIENCY = 0.9
 SINK_CONV = {"west": 2.0, "heat": 0.5}
 SRC_CONV = 0.8
-# Σ_k sink_conv_k · capacity_max_coeff_k / src_conv  (capacity coefs = 1)
-FUEL_FACTOR = sum(SINK_CONV.values()) / SRC_CONV
+# W / src_conv: with capacity coefficients 1 the whole capacity goes to
+# the output with the largest conversion coefficient (W = max sink_conv).
+FUEL_FACTOR = max(SINK_CONV.values()) / SRC_CONV
 # Demands of the main fixture: west (penalty 900 €/MWh) is served first,
 # heat (penalty 100 €/MWh, demand = capacity) gets what is left of the
 # SUM cap.  Per-arc caps alone would serve both in full.
@@ -154,8 +158,8 @@ def test_unit_is_indirect(solved_step) -> None:
 
 def test_fuel_arc_bound_covers_conversion_equation(solved_step) -> None:
     """``p_flow_upper`` on the fuel arc equals the conversion-implied
-    maximum ``slope · cap · Σ(sink_conv·capcoef) / src_conv`` (per unit
-    of unitsize) — not ``slope · cap`` and not ``slope · cap · n_outputs``.
+    maximum ``slope · cap · W / src_conv`` (per unit of unitsize) — not
+    ``slope · cap`` and not ``slope · cap · n_outputs``.
     """
     fd = solved_step.flex_data
     us = _unitsize(fd)

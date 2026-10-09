@@ -1,5 +1,25 @@
 ## Unreleased
 
+- **Input (fuel) limits of units follow `input_share_max`.** An input of a
+  multi-input/multi-output (indirect) unit may now supply at most
+  `input_share_max` × the input that runs the unit at full output
+  (`(slope × W + section) / conversion_flow_coeff` per unit of capacity, `W`
+  being the most fuel the outputs can demand within the capacity and their
+  `capacity_max_coeff`), times availability and capacity. The default 1 is
+  no effective limit; e.g. two fuels with 0.6 each can run the unit at full
+  output only together. Units without investment in the solve get the limit
+  as a bound on the flow variable (fewer constraint rows); investing units
+  keep a constraint whose invested-capacity term now carries the same
+  multiplier (it used 1, so the fuel limit did not follow invested capacity
+  correctly). Direct units honour an authored `input_share_max` as a cap on
+  their flow; source-side ramp limits of indirect inputs scale with the
+  input limit. The previous fuel bound summed `conversion_flow_coeff ×
+  capacity_max_coeff` over all outputs, ignoring that their sum is capped by
+  capacity (looser than needed).
+- **Rolling-window sub-solves now apply the same capacity coefficients as
+  single solves.** Output `capacity_max_coeff`, the uncapped
+  `conversion_flow_coeff = 0` edges and the indirect input limits were not
+  carried into the roll sub-solves.
 - **Input-side capacity coefficients renamed to `input_share_max` /
   `input_share_min` (schema v70).** On `unit__inputNode`,
   `capacity_max_coeff` is now `input_share_max` and `capacity_min_coeff` is
