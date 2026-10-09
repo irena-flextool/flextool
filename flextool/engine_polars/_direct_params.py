@@ -1279,10 +1279,11 @@ def p_process_sink_max_capacity_coef_from_source(source: "InputSource") -> Param
 
 
 def p_process_source_max_capacity_coef_from_source(source: "InputSource") -> Param | None:
-    """``unit__inputNode.capacity_max_coeff`` → ``Param(("p", "source"))``.
+    """``unit__inputNode.input_share_max`` (schema v71; was
+    ``capacity_max_coeff``) → ``Param(("p", "source"))``.
     Input-side twin of :func:`p_process_sink_max_capacity_coef_from_source`.
     """
-    return _p_side_scalar(source, "unit__inputNode", "capacity_max_coeff",
+    return _p_side_scalar(source, "unit__inputNode", "input_share_max",
                           "source", filter_zero=False)
 
 

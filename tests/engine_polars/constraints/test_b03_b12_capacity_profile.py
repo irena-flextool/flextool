@@ -516,7 +516,7 @@ def test_p_arc_max_cap_coef_producer_selection():
                     {"unit": ["u_sink", "u_one"],
                      "node": ["n", "n2"],
                      "value": [0.5, 1.0]}),
-                ("unit__inputNode", "capacity_max_coeff"): _pl.DataFrame(
+                ("unit__inputNode", "input_share_max"): _pl.DataFrame(
                     {"unit": ["u_src"], "node": ["n"], "value": [0.25]}),
             }
 

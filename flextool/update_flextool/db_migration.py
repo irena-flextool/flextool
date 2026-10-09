@@ -1763,6 +1763,8 @@ def migrate_database(
                 _migrate_v69_backfill_parameter_groups(db)
             elif next_version == 70:
                 _migrate_v70_capacity_coefficient_descriptions(db)
+            elif next_version == 71:
+                _migrate_v71_rename_input_capacity_coeffs_to_input_share(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3824,6 +3826,76 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
     _commit_step(db,
         "v70: capacity_max_coeff = 0 is a zero cap; uncapped edges are "
         "conversion_flow_coeff = 0 (description updates)."
+    )
+
+
+_V71_INPUT_SHARE_MAX_DESCRIPTION = (
+    "[factor, default 1.0] Largest share of the unit's full-load input "
+    "energy (flow x conversion_flow_coeff) that this input may supply, "
+    "relative to the unit's capacity (existing + invested - retired) "
+    "times availability. 1 = this input alone can run the unit at full "
+    "output (no effective limit); e.g. two fuels with 0.6 each can each "
+    "supply at most 60% of the full-load fuel, so full output needs both. "
+    "A poorer fuel is handled by its conversion_flow_coeff, not here. "
+    "For a unit without outputs: fraction of the unit's capacity "
+    "available to this input. Not applied to inputs with "
+    "conversion_flow_coeff = 0."
+)
+_V71_INPUT_SHARE_MIN_DESCRIPTION = (
+    "[factor, default 1.0] Lower-limit counterpart of input_share_max "
+    "(renamed from capacity_min_coeff in schema v71). Currently not "
+    "applied by the model: the minimum-load floor of an online unit is "
+    "set on its outputs (unit__outputNode.capacity_min_coeff)."
+)
+
+
+def _migrate_v71_rename_input_capacity_coeffs_to_input_share(db) -> None:
+    """Rename the input-side capacity coefficients (v70 -> v71).
+
+    ``unit__inputNode.capacity_max_coeff`` -> ``input_share_max`` and
+    ``unit__inputNode.capacity_min_coeff`` -> ``input_share_min``.  Unit
+    capacity is the maximum SUM of outputs; on an input the coefficient
+    is the largest share of the unit's full-load input energy that this
+    input may supply (see :data:`_V71_INPUT_SHARE_MAX_DESCRIPTION`).
+    ``unit__outputNode`` keeps ``capacity_max_coeff`` / ``capacity_min_coeff``.
+
+    Pure rename on the definition row (default 1.0, value list, group and
+    valid types are preserved; descriptions are replaced).  Existing
+    ``parameter_value`` rows follow the rename unchanged because
+    spinedb_api links them to the definition by id.  Idempotent: once
+    renamed (or on a DB bootstrapped from a v71+ template) the old row is
+    absent and the step only refreshes the descriptions.
+    """
+    renames = (
+        ("capacity_max_coeff", "input_share_max",
+         _V71_INPUT_SHARE_MAX_DESCRIPTION),
+        ("capacity_min_coeff", "input_share_min",
+         _V71_INPUT_SHARE_MIN_DESCRIPTION),
+    )
+    parameter_definitions = db.mapped_table("parameter_definition")
+    for old_name, new_name, description in renames:
+        try:
+            param = db.item(parameter_definitions,
+                            entity_class_name="unit__inputNode",
+                            name=old_name)
+        except SpineDBAPIError:
+            param = None
+        if param:
+            db.update_parameter_definition(
+                id=param["id"], name=new_name, description=description)
+        else:
+            try:
+                new_param = db.item(parameter_definitions,
+                                    entity_class_name="unit__inputNode",
+                                    name=new_name)
+            except SpineDBAPIError:
+                new_param = None
+            if new_param:
+                db.update_parameter_definition(
+                    id=new_param["id"], description=description)
+    _commit_step(db,
+        "v71: unit__inputNode.capacity_max_coeff -> input_share_max, "
+        "unit__inputNode.capacity_min_coeff -> input_share_min."
     )
 
 

@@ -360,15 +360,15 @@ _PARAMETER_SPECS: list[dict] = [
         "filter_in_type": ["float", "str", "bool"],
     },
     {
-        "cl_pars": [("unit__inputNode", "capacity_max_coeff")],
-        "header": "process,source,p_process_source_capacity_max_coeff",
-        "filename": "input/p_process_source_capacity_max_coeff.csv",
+        "cl_pars": [("unit__inputNode", "input_share_max")],
+        "header": "process,source,p_process_source_input_share_max",
+        "filename": "input/p_process_source_input_share_max.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {
-        "cl_pars": [("unit__inputNode", "capacity_min_coeff")],
-        "header": "process,source,p_process_source_capacity_min_coeff",
-        "filename": "input/p_process_source_capacity_min_coeff.csv",
+        "cl_pars": [("unit__inputNode", "input_share_min")],
+        "header": "process,source,p_process_source_input_share_min",
+        "filename": "input/p_process_source_input_share_min.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {

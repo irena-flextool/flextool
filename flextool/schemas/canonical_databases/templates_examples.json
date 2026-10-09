@@ -2503,7 +2503,7 @@
       "model",
       "version",
       [
-        "70",
+        "71",
         "float"
       ],
       null,
@@ -3547,28 +3547,6 @@
     ],
     [
       "unit__inputNode",
-      "capacity_max_coeff",
-      [
-        "1.0",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity (existing + invested - retired) available to this edge's upper cap (maxToSink / maxFromSource / ramp). 0 is a zero cap; to remove the edge from the capacity constraints altogether use conversion_flow_coeff = 0. For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
-      "basics"
-    ],
-    [
-      "unit__inputNode",
-      "capacity_min_coeff",
-      [
-        "1.0",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
-      "basics"
-    ],
-    [
-      "unit__inputNode",
       "constraint_flow_coeff",
       null,
       null,
@@ -3593,6 +3571,28 @@
       null,
       "[MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.",
       "network"
+    ],
+    [
+      "unit__inputNode",
+      "input_share_max",
+      [
+        "1.0",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Largest share of the unit's full-load input energy (flow x conversion_flow_coeff) that this input may supply, relative to the unit's capacity (existing + invested - retired) times availability. 1 = this input alone can run the unit at full output (no effective limit); e.g. two fuels with 0.6 each can each supply at most 60% of the full-load fuel, so full output needs both. A poorer fuel is handled by its conversion_flow_coeff, not here. For a unit without outputs: fraction of the unit's capacity available to this input. Not applied to inputs with conversion_flow_coeff = 0.",
+      "basics"
+    ],
+    [
+      "unit__inputNode",
+      "input_share_min",
+      [
+        "1.0",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Lower-limit counterpart of input_share_max (renamed from capacity_min_coeff in schema v71). Currently not applied by the model: the minimum-load floor of an online unit is set on its outputs (unit__outputNode.capacity_min_coeff).",
+      "basics"
     ],
     [
       "unit__inputNode",
@@ -5448,18 +5448,6 @@
     ],
     [
       "unit__inputNode",
-      "capacity_max_coeff",
-      "float",
-      0
-    ],
-    [
-      "unit__inputNode",
-      "capacity_min_coeff",
-      "float",
-      0
-    ],
-    [
-      "unit__inputNode",
       "constraint_flow_coeff",
       "map",
       1
@@ -5473,6 +5461,18 @@
     [
       "unit__inputNode",
       "inertia_constant",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "input_share_max",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "input_share_min",
       "float",
       0
     ],

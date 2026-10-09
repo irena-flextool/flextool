@@ -1271,7 +1271,7 @@ def derive_p_flow_max(
                             continue
 
     src_max_coef: dict[tuple[str, str], float] = {}
-    pms_path = input_dir / "p_process_source_capacity_max_coeff.csv"
+    pms_path = input_dir / "p_process_source_input_share_max.csv"
     _df = provider.get(_provider_key(pms_path))
     if _df is not None:
         for r in _df.iter_rows():

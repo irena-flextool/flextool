@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Input-side capacity coefficients renamed to `input_share_max` /
+  `input_share_min` (schema v71).** On `unit__inputNode`,
+  `capacity_max_coeff` is now `input_share_max` and `capacity_min_coeff` is
+  `input_share_min`; `unit__outputNode` keeps `capacity_max_coeff` /
+  `capacity_min_coeff`. Existing databases are migrated automatically and
+  their values move unchanged.
 - **Multi-output indirect units (e.g. CHP) are no longer capped below their
   capacity by their fuel input.** The input flow of an indirect unit carries
   only a loose solver bound; it was set to `slope × capacity`, i.e. enough fuel
