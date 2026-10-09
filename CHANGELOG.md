@@ -14,8 +14,18 @@
   Indirect output flows are bounded by existing capacity (plus investment), but
   the per-output `capacity_max_coeff` factor was only folded in for direct
   units, so an indirect output could run up to the full unit capacity.
+- **The capacity of an indirect unit now caps the sum of its outputs**, as
+  documented ("the maximum sum of output flows"). Previously only each output
+  was capped individually, so a two-output unit (e.g. a CHP) could deliver up
+  to twice its capacity, and investment solves sized such units by their
+  largest single output. The new `maxOutputSum` constraint bounds
+  `Σ outputs + upward reserves` by existing plus invested capacity (times
+  availability); online units additionally bound `Σ outputs` by the online
+  capacity. Outputs with `conversion_flow_coeff = 0` stay excluded;
+  `capacity_max_coeff` remains a per-output cap.
 - Results of models with multi-output indirect units can change (lower or
-  equal cost where the fuel bound was binding; respected output caps).
+  equal cost where the fuel bound was binding; respected output caps; higher
+  cost or more investment where the sum of outputs exceeded capacity).
 
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 

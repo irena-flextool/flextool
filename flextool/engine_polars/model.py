@@ -801,6 +801,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     reserve_up_to_sink_pdt     = None   # leaves (p, sink, d, t)
     reserve_down_to_sink_pdt   = None   # leaves (p, sink, d, t) — for profile_flow_lower_limit
     reserve_down_from_source_pdt = None # leaves (p, source, d, t) — for ramp_source_down
+    # Un-aggregated (v_reserve renamed n→sink, (p, r, 'up', sink) selector)
+    # kept for ``maxOutputSum``, which sums reserve-up over a SUBSET of
+    # sinks (the indirect unit's output arcs) rather than per arc.
+    reserve_up_sink_parts: "tuple[Var, pl.DataFrame] | None" = None
     if reserve_vars and "v_reserve" in reserve_vars:
         v_reserve = reserve_vars["v_reserve"]
         pruna = d.process_reserve_upDown_node_active   # (p, r, ud, n)
@@ -823,6 +827,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     Where(v_res_at_sink, pruna_up_sink),
                     over=("r", "ud"),
                 )  # leaves (p, sink, d, t)
+                reserve_up_sink_parts = (v_res_at_sink, pruna_up_sink)
 
             # (p, r, ud='down', n=sink) — only used by profile_flow_lower_limit
             pruna_down_sink = (pruna.filter(pl.col("ud") == "down")
@@ -2476,7 +2481,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             # ``p_flow_upper`` bound — pinning them to existing (=0) would
             # make fuel hard-infeasible (``v_flow_in ≤ 0``); they are
             # governed by the ``conversion_indirect`` balance + the now-tight
-            # output cap.
+            # output cap.  The per-arc cap does NOT bound the SUM of the
+            # outputs; that is ``maxOutputSum`` (:func:`_add_max_output_sum`).
             #
             # S1 (sink-less indirect residual): a legal but unfixtured
             # topology (≥2 inputs, 0 outputs → 1way_nvar sink-less) binds its
@@ -2783,6 +2789,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     lhs_terms = {"flow_back": v_flow_back},
                     rhs_terms = {"upper": flow_upper_rhs},
                 )
+
+        # maxOutputSum — indirect unit capacity bounds the SUM of outputs
+        # (docs: capacity = "the maximum sum of output flows").  See
+        # :func:`_add_max_output_sum`.
+        _add_max_output_sum(
+            m, d, v_flow, pss_dt,
+            reserve_up_sink_parts=reserve_up_sink_parts,
+            invest_term=flow_lhs.get("invest_neg"),
+            divest_term=flow_lhs.get("divest"),
+        )
 
     _build_prof("before:dc_power_flow")
     # ─── DC power flow (dc_flow_eq + reference-angle pin) ─────────────────
@@ -4404,6 +4420,137 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         m.set_solver_options(d.solver_options)
 
 
+def _indirect_sum_arcs(d) -> "pl.DataFrame | None":
+    """Output arcs ``(p, source, sink)`` summed by ``maxOutputSum``.
+
+    ``process_output_flows`` (``source == p``, ``p ∈ process_indirect``,
+    ``conversion_flow_coeff ≠ 0`` — zero-coefficient outputs are removed
+    from every capacity constraint) restricted to arcs that actually
+    carry a ``v_flow`` column (``process_source_sink``) and to processes
+    still in ``process_indirect`` — region-filtered / Benders-master
+    FlexData narrow ``process_indirect`` and ``process_source_sink`` but
+    not necessarily ``process_output_flows``.  ``None`` when empty.
+    """
+    out_arcs = getattr(d, "process_output_flows", None)
+    indirect = getattr(d, "process_indirect", None)
+    pss = getattr(d, "process_source_sink", None)
+    if (out_arcs is None or out_arcs.height == 0 or indirect is None
+            or indirect.height == 0 or pss is None or pss.height == 0):
+        return None
+    arcs = (out_arcs.select("p", "source", "sink")
+            .join(indirect.select("p").unique(), on="p", how="semi")
+            .join(pss.select("p", "source", "sink"),
+                  on=["p", "source", "sink"], how="semi")
+            .unique(maintain_order=True))
+    return arcs if arcs.height > 0 else None
+
+
+def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
+                        reserve_up_sink_parts=None,
+                        invest_term=None, divest_term=None) -> None:
+    """Emit ``maxOutputSum`` (and ``maxOutputSum_negCap``): the capacity of
+    an indirect (multi-flow) unit bounds the SUM of its output flows.
+
+    FlexTool defines unit capacity (``existing`` + invest − divest) as "the
+    maximum sum of output flows".  ``maxFlow`` only caps each arc
+    individually (``out_k ≤ cap · capacity_max_coeff_k``), so a 2-output
+    CHP could deliver 2 × capacity.  Per ``(p, d, t)`` for every indirect
+    ``p`` with ≥1 output arc (:func:`_indirect_sum_arcs`)::
+
+        Σ_k v_flow[p, p, k, d, t] + Σ_k Σ_r v_reserve_up[p, r, k, d, t]
+            − Σ v_invest[p, d_inv ≤ d] + Σ v_divest[p, d_div ≤ d]
+        ≤ existing[p, d] / unitsize[p] · availability[p, d, t]
+
+    Units are unit-count (``v_flow`` is per unitsize), exactly as
+    ``maxFlow``.  The invest / divest terms are the SAME ``(p, d)``
+    expressions ``maxFlow`` uses (``− Σ v_invest`` / ``+ Σ v_divest`` over
+    the alive invest / divest periods), entered once per row — not once
+    per arc.  The RHS is the existing-only count ``maxFlow`` binds indirect
+    OUTPUT arcs with (``p_flow_upper_existing``; identical on every arc of
+    a process), densified so a greenfield unit (no ``existing`` row) gets
+    0, times availability densified to the 1.0 default (a naive
+    ``Param * Param`` inner join would DROP unauthored processes →
+    RHS = 0).  ``capacity_max_coeff`` is NOT applied: it is a per-arc
+    fraction, still enforced by ``maxFlow``.
+
+    Negative capacity (``pd_neg_cap``: ``existing < 0`` and ``unitsize < 0``
+    for ``(p, d)``): the .mod form ``Σ v_flow · unitsize ≤ existing`` flips
+    to ``Σ v_flow ≥ existing / unitsize`` on division by the negative
+    unitsize.  Unlike ``maxFlow`` (whose ``≤`` row doubles as the variable
+    bound the .mod declares separately, hence kept), the sum row has no
+    variable-bound twin, so those ``(p, d)`` rows are emitted ONLY as the
+    ``≥`` ``maxOutputSum_negCap`` — keeping the ``≤`` too would pin a
+    k-output unit to ``Σ out = c`` while ``maxFlow``/``maxFlow_negCap`` pin
+    every arc to ``c`` (infeasible for k ≥ 2).
+    """
+    if pss_dt is None or pss_dt.height == 0:
+        return
+    fue = getattr(d, "p_flow_upper_existing", None)
+    if fue is None:
+        return
+    arcs = _indirect_sum_arcs(d)
+    if arcs is None:
+        return
+    over = (pss_dt.join(arcs, on=["p", "source", "sink"], how="semi")
+            .select("p", "d", "t")
+            .unique(maintain_order=True))
+    if over.height == 0:
+        return
+
+    lhs: dict = {"flow": Sum(Where(v_flow, arcs), over=("source", "sink"))}
+    if reserve_up_sink_parts is not None:
+        v_res_at_sink, pruna_up_sink = reserve_up_sink_parts
+        res_sel = pruna_up_sink.join(
+            arcs.select("p", "sink").unique(), on=["p", "sink"], how="semi")
+        if res_sel.height > 0:
+            lhs["reserve_up"] = Sum(Where(v_res_at_sink, res_sel),
+                                    over=("r", "ud", "sink"))
+    if invest_term is not None:
+        lhs["invest_neg"] = invest_term
+    if divest_term is not None:
+        lhs["divest"] = divest_term
+
+    # RHS: existing count per (p, d) — the value maxFlow's indirect output
+    # arcs carry (all arcs of a process share it; ``max`` collapses them).
+    exist_pd = (fue.frame
+                .join(arcs, on=["p", "source", "sink"], how="semi")
+                .group_by("p", "d")
+                .agg(pl.col("value").max().alias("__ex")))
+    rhs_lf = (over.lazy()
+              .join(exist_pd.lazy(), on=["p", "d"], how="left")
+              .with_columns(pl.col("__ex").fill_null(0.0)))
+    if d.p_process_availability is not None:
+        avail_lf = promote_param_to_dt(d.p_process_availability, d.dt)
+        rhs_lf = (rhs_lf
+                  .join(avail_lf, on=["p", "d", "t"], how="left",
+                        suffix="__a")
+                  .with_columns(pl.col("value").fill_null(1.0)
+                                .alias("__av")))
+    else:
+        rhs_lf = rhs_lf.with_columns(pl.lit(1.0).alias("__av"))
+    rhs_frame = (rhs_lf
+                 .select("p", "d", "t",
+                         value=pl.col("__ex") * pl.col("__av"))
+                 .collect())
+    rhs = Param(("p", "d", "t"), rhs_frame)
+
+    pd_neg_cap = getattr(d, "pd_neg_cap", None)
+    if pd_neg_cap is not None and pd_neg_cap.height > 0:
+        neg_over = over.join(pd_neg_cap.select("p", "d"),
+                             on=["p", "d"], how="semi")
+        pos_over = over.join(pd_neg_cap.select("p", "d"),
+                             on=["p", "d"], how="anti")
+    else:
+        neg_over = over.head(0)
+        pos_over = over
+    if pos_over.height > 0:
+        m.add_cstr("maxOutputSum", over=pos_over, sense="<=",
+                   lhs_terms=lhs, rhs_terms={"upper": rhs})
+    if neg_over.height > 0:
+        m.add_cstr("maxOutputSum_negCap", over=neg_over, sense=">=",
+                   lhs_terms=lhs, rhs_terms={"upper": rhs})
+
+
 def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                        online_set: "pl.DataFrame",
                        v_online, v_startup, v_shutdown,
@@ -4512,6 +4659,33 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                    over=over_pss_online, sense="<=",
                    lhs_terms={"flow":   v_flow},
                    rhs_terms={"online": online_rhs})
+
+    # maxOutputSum_online: the online-unit analogue of ``maxOutputSum`` —
+    # for an indirect online unit the SUM of its output flows is bounded by
+    # the online count (Σ_k v_flow[p, p, k] ≤ v_online · availability),
+    # mirroring ``maxFlow_online`` (no reserve-up / capacity_max_coeff
+    # term, availability densified to the 1.0 default).  Restricted to
+    # (p, d, t) where v_online exists (``p_idx``).
+    sum_arcs = _indirect_sum_arcs(d)
+    if sum_arcs is not None:
+        sum_arcs_on = sum_arcs.join(online_set.select("p").unique(),
+                                    on="p", how="semi")
+        if sum_arcs_on.height > 0:
+            over_sum_on = (sum_arcs_on.select("p").unique(maintain_order=True)
+                           .join(d.dt, how="cross")
+                           .join(p_idx.select("p", "d", "t"),
+                                 on=["p", "d", "t"], how="semi"))
+            if over_sum_on.height > 0:
+                if d.p_process_availability is not None:
+                    sum_online_rhs = v_online * _availability_factor(
+                        d, sum_arcs_on)
+                else:
+                    sum_online_rhs = v_online
+                m.add_cstr(f"maxOutputSum_online{sfx}",
+                           over=over_sum_on, sense="<=",
+                           lhs_terms={"flow": Sum(Where(v_flow, sum_arcs_on),
+                                                  over=("source", "sink"))},
+                           rhs_terms={"online": sum_online_rhs})
 
     # minFlow_minload: Σ_sinks v_flow >= v_online * min_load
     if d.process_minload is not None and d.process_minload.height > 0:
