@@ -1763,8 +1763,6 @@ def migrate_database(
                 _migrate_v69_backfill_parameter_groups(db)
             elif next_version == 70:
                 _migrate_v70_capacity_coefficient_descriptions(db)
-            elif next_version == 71:
-                _migrate_v71_rename_input_capacity_coeffs_to_input_share(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3796,40 +3794,7 @@ _V70_CAPACITY_MAX_COEFF_DESCRIPTION = (
     "extraction CHP set to 1.0 on each output so each can reach full "
     "capacity when the other drops."
 )
-
-
-def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
-    """Correct the capacity-coefficient descriptions (v69 -> v70).
-
-    ``model.max_flow_for_unconstrained_variables`` said it bounds "flows
-    through edges whose capacity_max_coeff is zero".  That was an artefact
-    of the v35 rename (the old ``coefficient`` was the flow coefficient):
-    the uncapped edges are the ``conversion_flow_coeff = 0`` ones, while
-    ``capacity_max_coeff = 0`` is a zero cap.  The ``capacity_max_coeff``
-    description now states that it scales the whole capacity (existing +
-    invested - retired) and that 0 is a zero cap.  Description-only;
-    idempotent (``_commit_step`` tolerates the no-change case).
-    """
-    db.add_update_item(
-        "parameter_definition",
-        entity_class_name="model",
-        name="max_flow_for_unconstrained_variables",
-        description=_V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION,
-    )
-    for cls in ("unit__inputNode", "unit__outputNode"):
-        db.add_update_item(
-            "parameter_definition",
-            entity_class_name=cls,
-            name="capacity_max_coeff",
-            description=_V70_CAPACITY_MAX_COEFF_DESCRIPTION,
-        )
-    _commit_step(db,
-        "v70: capacity_max_coeff = 0 is a zero cap; uncapped edges are "
-        "conversion_flow_coeff = 0 (description updates)."
-    )
-
-
-_V71_INPUT_SHARE_MAX_DESCRIPTION = (
+_V70_INPUT_SHARE_MAX_DESCRIPTION = (
     "[factor, default 1.0] Largest share of the unit's full-load input "
     "energy (flow x conversion_flow_coeff) that this input may supply, "
     "relative to the unit's capacity (existing + invested - retired) "
@@ -3841,61 +3806,79 @@ _V71_INPUT_SHARE_MAX_DESCRIPTION = (
     "available to this input. Not applied to inputs with "
     "conversion_flow_coeff = 0."
 )
-_V71_INPUT_SHARE_MIN_DESCRIPTION = (
+_V70_INPUT_SHARE_MIN_DESCRIPTION = (
     "[factor, default 1.0] Lower-limit counterpart of input_share_max "
-    "(renamed from capacity_min_coeff in schema v71). Currently not "
+    "(renamed from capacity_min_coeff in schema v70). Currently not "
     "applied by the model: the minimum-load floor of an online unit is "
     "set on its outputs (unit__outputNode.capacity_min_coeff)."
 )
 
 
-def _migrate_v71_rename_input_capacity_coeffs_to_input_share(db) -> None:
-    """Rename the input-side capacity coefficients (v70 -> v71).
+def _pdef_or_none(db, entity_class_name: str, name: str):
+    """``parameter_definition`` row or ``None`` (``db.item`` raises
+    ``SpineDBAPIError`` for a missing row)."""
+    try:
+        return db.item(db.mapped_table("parameter_definition"),
+                       entity_class_name=entity_class_name, name=name)
+    except SpineDBAPIError:
+        return None
 
-    ``unit__inputNode.capacity_max_coeff`` -> ``input_share_max`` and
-    ``unit__inputNode.capacity_min_coeff`` -> ``input_share_min``.  Unit
-    capacity is the maximum SUM of outputs; on an input the coefficient
-    is the largest share of the unit's full-load input energy that this
-    input may supply (see :data:`_V71_INPUT_SHARE_MAX_DESCRIPTION`).
-    ``unit__outputNode`` keeps ``capacity_max_coeff`` / ``capacity_min_coeff``.
 
-    Pure rename on the definition row (default 1.0, value list, group and
-    valid types are preserved; descriptions are replaced).  Existing
-    ``parameter_value`` rows follow the rename unchanged because
-    spinedb_api links them to the definition by id.  Idempotent: once
-    renamed (or on a DB bootstrapped from a v71+ template) the old row is
-    absent and the step only refreshes the descriptions.
+def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
+    """Capacity-coefficient semantics (v69 -> v70).
+
+    * ``model.max_flow_for_unconstrained_variables`` said it bounds "flows
+      through edges whose capacity_max_coeff is zero".  That was an
+      artefact of the v35 rename (the old ``coefficient`` was the flow
+      coefficient): the uncapped edges are the ``conversion_flow_coeff = 0``
+      ones, while ``capacity_max_coeff = 0`` is a zero cap.
+    * ``unit__outputNode.capacity_max_coeff``: the description now states
+      that it scales the whole capacity (existing + invested - retired) and
+      that 0 is a zero cap.
+    * ``unit__inputNode.capacity_max_coeff`` -> ``input_share_max`` and
+      ``unit__inputNode.capacity_min_coeff`` -> ``input_share_min``.  Unit
+      capacity is the maximum SUM of outputs; on an input the coefficient
+      is the largest share of the unit's full-load input energy the input
+      may supply (:data:`_V70_INPUT_SHARE_MAX_DESCRIPTION`).  Pure rename
+      on the definition row (default 1.0, value list, group and valid types
+      preserved; descriptions replaced); ``parameter_value`` rows follow
+      unchanged because spinedb_api links them by id.
+
+    Idempotent: a definition is renamed only when the old one exists and
+    the new one does not; otherwise only the descriptions are refreshed
+    (``_commit_step`` tolerates the no-change case).
     """
-    renames = (
-        ("capacity_max_coeff", "input_share_max",
-         _V71_INPUT_SHARE_MAX_DESCRIPTION),
-        ("capacity_min_coeff", "input_share_min",
-         _V71_INPUT_SHARE_MIN_DESCRIPTION),
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="model",
+        name="max_flow_for_unconstrained_variables",
+        description=_V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION,
     )
-    parameter_definitions = db.mapped_table("parameter_definition")
-    for old_name, new_name, description in renames:
-        try:
-            param = db.item(parameter_definitions,
-                            entity_class_name="unit__inputNode",
-                            name=old_name)
-        except SpineDBAPIError:
-            param = None
-        if param:
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="unit__outputNode",
+        name="capacity_max_coeff",
+        description=_V70_CAPACITY_MAX_COEFF_DESCRIPTION,
+    )
+    for old_name, new_name, description in (
+        ("capacity_max_coeff", "input_share_max",
+         _V70_INPUT_SHARE_MAX_DESCRIPTION),
+        ("capacity_min_coeff", "input_share_min",
+         _V70_INPUT_SHARE_MIN_DESCRIPTION),
+    ):
+        old = _pdef_or_none(db, "unit__inputNode", old_name)
+        new = _pdef_or_none(db, "unit__inputNode", new_name)
+        if old and not new:
             db.update_parameter_definition(
-                id=param["id"], name=new_name, description=description)
-        else:
-            try:
-                new_param = db.item(parameter_definitions,
-                                    entity_class_name="unit__inputNode",
-                                    name=new_name)
-            except SpineDBAPIError:
-                new_param = None
-            if new_param:
-                db.update_parameter_definition(
-                    id=new_param["id"], description=description)
+                id=old["id"], name=new_name, description=description)
+        elif new:
+            db.update_parameter_definition(
+                id=new["id"], description=description)
     _commit_step(db,
-        "v71: unit__inputNode.capacity_max_coeff -> input_share_max, "
-        "unit__inputNode.capacity_min_coeff -> input_share_min."
+        "v70: capacity_max_coeff = 0 is a zero cap; uncapped edges are "
+        "conversion_flow_coeff = 0; unit__inputNode.capacity_max_coeff -> "
+        "input_share_max, unit__inputNode.capacity_min_coeff -> "
+        "input_share_min."
     )
 
 

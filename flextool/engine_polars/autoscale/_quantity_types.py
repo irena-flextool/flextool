@@ -64,8 +64,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin', 'group'): QuantityType.POWER,
     # [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the inv...
-    # Pre-v71 input-side names, carried during the migration window
-    # (renamed to input_share_max / input_share_min by db_migration v71).
+    # Pre-v70 input-side names, carried during the migration window
+    # (renamed to input_share_max / input_share_min by db_migration v70).
     ('capacity_max_coeff', 'unit__inputNode'): QuantityType.FRACTION,
     ('capacity_max_coeff', 'unit__outputNode'): QuantityType.FRACTION,
     # [factor, default 1.0] Fraction of the unit's capacity (existing + invested - retired) available to this edge's upper cap (maxToSink / maxFro...
@@ -236,7 +236,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('input_share_max', 'unit__inputNode'): QuantityType.FRACTION,
     # [factor, default 1.0] Largest share of the unit's full-load input energy (flow x conversion_flow_coeff) that this input may supply, relativ...
     ('input_share_min', 'unit__inputNode'): QuantityType.FRACTION,
-    # [factor, default 1.0] Lower-limit counterpart of input_share_max (renamed from capacity_min_coeff in schema v71). Currently not applied by ...
+    # [factor, default 1.0] Lower-limit counterpart of input_share_max (renamed from capacity_min_coeff in schema v70). Currently not applied by ...
     ('invest_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.
     ('invest_cost', 'node'): QuantityType.PRICE_PER_STORAGE,

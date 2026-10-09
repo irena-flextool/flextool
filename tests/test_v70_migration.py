@@ -1,6 +1,7 @@
-"""Tests for the v71 database migration.
+"""Tests for the v70 database migration.
 
-v71 renames the input-side capacity coefficients on ``unit__inputNode``:
+Besides description updates, v70 renames the input-side capacity
+coefficients on ``unit__inputNode``:
 
 * ``capacity_max_coeff`` -> ``input_share_max``
 * ``capacity_min_coeff`` -> ``input_share_min``
@@ -17,7 +18,10 @@ from pathlib import Path
 from spinedb_api import DatabaseMapping, from_database, import_data
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_migration import (
+    _V70_CAPACITY_MAX_COEFF_DESCRIPTION,
+    migrate_database,
+)
 
 from tests.db_utils import json_to_db
 
@@ -25,15 +29,15 @@ TEST_DIR = Path(__file__).resolve().parent
 FIXTURES_DIR = TEST_DIR / "fixtures"
 
 
-def test_v71_version_constant_is_at_least_71() -> None:
-    assert FLEXTOOL_DB_VERSION >= 71
+def test_v70_version_constant_is_at_least_70() -> None:
+    assert FLEXTOOL_DB_VERSION >= 70
 
 
-def _build_v70_db(url: str) -> None:
-    """Minimal v70 DB with input- and output-side capacity coefficients.
+def _build_v69_db(url: str) -> None:
+    """Minimal v69 DB with input- and output-side capacity coefficients.
 
     Built from scratch (never a checked-in .sqlite).  ``model.version``
-    default is pinned to 70 so ``migrate_database`` runs only the v71
+    default is pinned to 69 so ``migrate_database`` runs from the v70
     step.
     """
     with DatabaseMapping(url, create=True) as db:
@@ -47,15 +51,15 @@ def _build_v70_db(url: str) -> None:
                 ["unit__outputNode", ("unit", "node")],
             ],
             parameter_definitions=[
-                ["model", "version", 70.0, None, "Database version."],
+                ["model", "version", 69.0, None, "Database version."],
                 ["unit__inputNode", "capacity_max_coeff", 1.0, None,
-                 "v70 input max coefficient."],
+                 "v69 input max coefficient."],
                 ["unit__inputNode", "capacity_min_coeff", 1.0, None,
-                 "v70 input min coefficient."],
+                 "v69 input min coefficient."],
                 ["unit__outputNode", "capacity_max_coeff", 1.0, None,
-                 "v70 output max coefficient."],
+                 "v69 output max coefficient."],
                 ["unit__outputNode", "capacity_min_coeff", 1.0, None,
-                 "v70 output min coefficient."],
+                 "v69 output min coefficient."],
             ],
             alternatives=[["Base", ""], ["alt", ""]],
             entities=[
@@ -77,7 +81,7 @@ def _build_v70_db(url: str) -> None:
             ],
         )
         assert not errors, f"seed import errors: {errors[:5]}"
-        db.commit_session("Seed v70 DB with capacity coefficients")
+        db.commit_session("Seed v69 DB with capacity coefficients")
 
 
 def _values(db: DatabaseMapping, cls: str) -> dict:
@@ -98,8 +102,8 @@ def test_input_values_move_to_input_share(tmp_path: Path) -> None:
     """Input-side values move to ``input_share_max`` / ``input_share_min``
     unchanged (same entity and alternative); output-side values stay on
     ``capacity_max_coeff`` / ``capacity_min_coeff``."""
-    url = f"sqlite:///{(tmp_path / 'v70.sqlite').resolve()}"
-    _build_v70_db(url)
+    url = f"sqlite:///{(tmp_path / 'v69.sqlite').resolve()}"
+    _build_v69_db(url)
     migrate_database(url)
 
     db = DatabaseMapping(url, create=False)
@@ -128,7 +132,10 @@ def test_input_values_move_to_input_share(tmp_path: Path) -> None:
         assert "full-load" in share_max["description"]
         out_max = db.get_parameter_definition_item(
             entity_class_name="unit__outputNode", name="capacity_max_coeff")
-        assert out_max["description"] == "v70 output max coefficient."
+        assert out_max["description"] == _V70_CAPACITY_MAX_COEFF_DESCRIPTION
+        out_min = db.get_parameter_definition_item(
+            entity_class_name="unit__outputNode", name="capacity_min_coeff")
+        assert out_min["description"] == "v69 output min coefficient."
     finally:
         db.close()
 

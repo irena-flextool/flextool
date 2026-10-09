@@ -1,7 +1,7 @@
 ## Unreleased
 
 - **Input-side capacity coefficients renamed to `input_share_max` /
-  `input_share_min` (schema v71).** On `unit__inputNode`,
+  `input_share_min` (schema v70).** On `unit__inputNode`,
   `capacity_max_coeff` is now `input_share_max` and `capacity_min_coeff` is
   `input_share_min`; `unit__outputNode` keeps `capacity_max_coeff` /
   `capacity_min_coeff`. Existing databases are migrated automatically and
@@ -55,8 +55,7 @@
   `conversion_flow_coeff = 0` ones; those are now also kept out of the online
   flow cap, ramp limits and min-load constraints, and are no longer scaled by
   availability. The `max_flow_for_unconstrained_variables` and
-  `capacity_max_coeff` descriptions are corrected (schema v70,
-  description-only).
+  `capacity_max_coeff` descriptions are corrected (schema v70).
 - **`capacity_max_coeff` now applies to online (unit-commitment) units' flow
   cap**, and that cap no longer limits the fuel input of online multi-output
   units (it is tied to the outputs by the conversion equation).

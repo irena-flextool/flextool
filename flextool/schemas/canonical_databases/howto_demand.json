@@ -1129,7 +1129,7 @@
       "model",
       "version",
       [
-        "71",
+        "70",
         "float"
       ],
       null,
@@ -2228,7 +2228,7 @@
         "float"
       ],
       null,
-      "[factor, default 1.0] Lower-limit counterpart of input_share_max (renamed from capacity_min_coeff in schema v71). Currently not applied by the model: the minimum-load floor of an online unit is set on its outputs (unit__outputNode.capacity_min_coeff).",
+      "[factor, default 1.0] Lower-limit counterpart of input_share_max (renamed from capacity_min_coeff in schema v70). Currently not applied by the model: the minimum-load floor of an online unit is set on its outputs (unit__outputNode.capacity_min_coeff).",
       "basics"
     ],
     [

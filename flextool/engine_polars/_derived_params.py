@@ -4367,7 +4367,7 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
     """
     if side == "source":
         ec = "unit__inputNode"
-        pname = "input_share_max"  # schema v71 (was capacity_max_coeff)
+        pname = "input_share_max"  # schema v70 (was capacity_max_coeff)
         node_alias = "source"
     else:
         ec = "unit__outputNode"
