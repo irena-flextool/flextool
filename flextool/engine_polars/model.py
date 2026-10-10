@@ -3063,14 +3063,39 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         if delayed_term is not None:
             lhs_terms["input_delayed"] = delayed_term
 
+        rhs_terms = {"output": Sum(Where(output_expr,
+                                         d.process_output_flows),
+                                   over=("source","sink"))}
+        # min_load_efficiency section term (flextool.mod:2582):
+        #   + (v_online_linear + v_online_integer)[p,d,t]
+        #     · pdtProcess_section[p,d,t] · unitsize[p]
+        # for indirect min_load_efficiency units.  The input of an indirect
+        # unit is its own v_flow (noEff), so this is the ONLY place the
+        # section fuel enters: nodeBalance, commodity cost, CO2 and the
+        # reported input flows all read that v_flow.  The section is not
+        # multiplied by any conversion_flow_coeff (as in the .mod).  For a
+        # delayed unit it sits on the output side, at the sink-side time t
+        # with v_online[t]; the delayed inputs supply it through
+        # ``input_delayed``.  (p,d,t) rows without v_online lack the term.
+        if has_minload_eff and d.p_section is not None:
+            ind_mle = d.process_min_load_eff.join(
+                d.process_indirect.select("p").unique(), on="p", how="semi")
+            if ind_mle.height > 0:
+                if has_online_lin:
+                    rhs_terms["section_lin"] = (
+                        Where(v_online_lin, ind_mle)
+                        * d.p_section * d.p_unitsize)
+                if has_online_int:
+                    rhs_terms["section_int"] = (
+                        Where(v_online_int, ind_mle)
+                        * d.p_section * d.p_unitsize)
+
         m.add_cstr(
             "conversion_indirect",
             over      = process_indirect_dt,
             sense     = "==",
             lhs_terms = lhs_terms,
-            rhs_terms = {"output": Sum(Where(output_expr,
-                                              d.process_output_flows),
-                                       over=("source","sink"))},
+            rhs_terms = rhs_terms,
         )
 
         # minInputShare — unit__inputNode.input_share_min (mixing minimum

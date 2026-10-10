@@ -341,10 +341,13 @@ def test_sum_cap_online_variant(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
     """Linear-online coal_chp with a min-load efficiency section: fuel
-    grows with ``v_online``, so the LP keeps ``v_online`` as low as the
+    is ``slope · out + section · online`` (``conversion_indirect``), so it
+    grows with ``v_online`` and the LP keeps ``v_online`` as low as the
     capacity constraints allow.  ``maxOutputSum_online_linear`` forces
     ``v_online · unitsize ≥ west + heat = 800`` MW; per-arc
-    ``maxFlow_online`` alone would let it drop to max(500, 300) = 500."""
+    ``maxFlow_online`` alone would let it drop to max(500, 300) = 500.
+    At online = output = 800 MW the unit is at full load:
+    coal = 800 · (slope + section) = 800 / 0.9."""
     values = _free_chp() + [
         _demand("west", ON_WEST), _demand("heat", ON_HEAT),
         ["unit", UNIT, "startup_method", _b64("linear", "str")],
@@ -369,6 +372,12 @@ def test_sum_cap_online_variant(
     assert online.height == n
     assert (online["value"] * us).to_list() == pytest.approx(
         [ON_WEST + ON_HEAT] * n, rel=1e-6)
+    coal = (flow.filter((pl.col("p") == UNIT)
+                        & (pl.col("source") == FUEL_NODE)
+                        & (pl.col("sink") == UNIT))
+            .sort("d", "t")["value"] * us)
+    assert coal.to_list() == pytest.approx(
+        [(ON_WEST + ON_HEAT) / EFFICIENCY] * n, rel=1e-6)
 
     from polar_high import Problem
 

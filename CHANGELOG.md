@@ -69,6 +69,14 @@
   input capacity; connections are not limited by their flow when offering
   reserve; the reserve balance does not yet convert input-side reserve of a
   one-input/one-output unit by its efficiency.
+- **Fix: multi-input/multi-output (indirect) units with
+  `conversion_method = min_load_efficiency` now burn the no-load fuel.**
+  Their input was `slope × output` only; the `section × online capacity`
+  part of the efficiency curve was missing, so fuel use, commodity cost and
+  CO2 were understated (by 31 % at full load for a unit with `min_load` 0.2,
+  `efficiency_at_min_load` 0.4 and `efficiency` 0.9). The input is now
+  `slope × output + section × online capacity`, as for one-input/one-output
+  units.
 
 - **Input (fuel) limits of units follow `input_share_max`.** An input of a
   multi-input/multi-output (indirect) unit may now supply at most
