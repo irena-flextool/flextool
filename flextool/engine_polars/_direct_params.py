@@ -1656,52 +1656,6 @@ def p_process_reserve_upDown_node_increase_reserve_ratio_value_from_source(
 
 
 # ---------------------------------------------------------------------------
-# §1.17 — Delayed processes (process_delayed__duration)
-
-def process_delayed__duration_from_source(source: "InputSource") -> pl.DataFrame | None:
-    """``unit/connection.delay`` 1d_map(td) → ``[p, td]`` set frame.
-
-    CSV path (``_delay.load_data``) reads ``solve_data/process_delayed__duration.csv``
-    and returns the (p, td) keys as a DataFrame (not a Param — it's a
-    set, since the duration values are 1.0 or absent).
-
-    Note: this is a *set* in FlexData, not a Param — return
-    type matches the field declared on FlexData.
-    """
-    parts: list[pl.LazyFrame] = []
-    for cls in ("unit", "connection"):
-        try:
-            df = source.parameter_explicit(cls, "delay")
-        except (KeyError, AttributeError):
-            try:
-                df = source.parameter(cls, "delay")
-            except KeyError:
-                continue
-        if df is None or df.height == 0:
-            continue
-        cols = df.columns
-        if "name" not in cols:
-            continue
-        # 1d_map(td) — the index column may be 'td' or default 'period'/'i'.
-        # Detect by elimination: any column not in {name, value} is the index.
-        idx_cols = [c for c in cols if c not in ("name", "value")]
-        if len(idx_cols) != 1:
-            continue
-        idx = idx_cols[0]
-        lf = (df.lazy()
-                .rename({"name": "p", idx: "td"})
-                .filter(pl.col("value").is_not_null())
-                .filter(pl.col("value") != 0.0))
-        parts.append(lf.select("p", "td"))
-    if not parts:
-        return None
-    out = pl.concat(parts).unique().collect()
-    if out.height == 0:
-        return None
-    return out.sort("p", "td")
-
-
-# ---------------------------------------------------------------------------
 # Penalty / availability scalars (§1.2 / §1.7) — schema-default broadcast.
 #
 # These differ from the "explicit only" pattern: schema sentinel default
@@ -2181,8 +2135,9 @@ def apply_direct_params_b(source: "InputSource",
     flex_data.p_process_reserve_upDown_node_increase_reserve_ratio_value = (
         p_process_reserve_upDown_node_increase_reserve_ratio_value_from_source(source))
 
-    # ─── Δ.4b — delayed processes (set, not Param) ───────────────────────
-    flex_data.process_delayed__duration = process_delayed__duration_from_source(source)
+    # ``process_delayed__duration`` is produced together with the delay
+    # weights and ``dtt__delay_duration`` by
+    # ``_derived_params.apply_delay_params`` (same td labels).
 
     # ─── Δ.4b — additional Map(period→time) on object classes ───────────
     # Δ.12c-fix gap #1: helpers broadcast non-Map shapes via period_filter.

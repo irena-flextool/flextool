@@ -74,5 +74,10 @@ reserve without any `reservation` is therefore inactive.
    of direct units; `_inverse_slope` in `model.py` follows the current
    convention and must change with it (tripwire:
    `test_down_reserve_floor.py::test_direct_unit_input_side_up_reserve`).
-5. Delayed connections (`method_2way_nvar_off`) are not in
-   `process_indirect`, so their `delay` may be ignored (unverified).
+5. Delayed connections ignore their `delay` (verified for
+   `no_losses_no_variable_cost`, `unidirectional` and `regular`, constant
+   and map delays: the flow arrives in the same time step). Connections are
+   never in `process_indirect`, and the delayed input term exists only in
+   `conversion_indirect`; the .mod had the same gap (its nodeBalance delay
+   term is commented out). Applying a connection delay needs a delayed
+   term in the node balance.

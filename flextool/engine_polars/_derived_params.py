@@ -9829,6 +9829,52 @@ def p_process_delay_weight_from_source(
     return Param(("p", "td"), out)
 
 
+def process_delayed__duration_from_weight(
+    p_process_delay_weight: "Param | None",
+) -> pl.DataFrame | None:
+    """``process_delayed__duration`` ``(p, td)`` — the delay durations of
+    each delayed process (flextool.mod ``process_delay_weighted ∪
+    process_delay_single``).
+
+    Built from the keys of ``p_process_delay_weight`` (non-zero weights),
+    i.e. from the same ``_delay_distributions_from_source`` read as the
+    weights and ``dtt__delay_duration``: a scalar ``delay`` gives
+    ``(p, delay)`` and a map gives one row per duration.  ``td`` therefore
+    has exactly the dtype and values of ``p_process_delay_weight.td`` and
+    ``dtt__delay_duration.td`` (Float64), which ``_delay.delayed_input_expr``
+    joins on.  (A separate map-only reader used to produce this set: a
+    scalar ``delay`` got no rows, the delayed unit lost all its input
+    terms and was forced to zero output.)
+
+    Returns ``None`` when no process is delayed.
+    """
+    if p_process_delay_weight is None or p_process_delay_weight.frame.height == 0:
+        return None
+    out = (p_process_delay_weight.frame
+           .filter(pl.col("value") != 0.0)
+           .select("p", "td")
+           .sort("p", "td"))
+    return out if out.height > 0 else None
+
+
+def apply_delay_params(flex_data: object, source: "InputSource") -> None:
+    """Set the three delay frames — ``dtt__delay_duration``,
+    ``p_process_delay_weight`` and ``process_delayed__duration`` — from one
+    read of ``unit.delay`` / ``connection.delay`` over ``flex_data.dt``.
+
+    Solve-agnostic: :func:`apply_derived_g` calls it, and so does the
+    synthetic (rolling) sub-solve path in ``input._apply_db_overrides``,
+    which skips the derived passes.  Producing all three together keeps
+    the ``td`` labels identical across them.
+    """
+    flex_data.dtt__delay_duration = dtt__delay_duration_from_source(
+        source, getattr(flex_data, "dt", None))
+    flex_data.p_process_delay_weight = p_process_delay_weight_from_source(
+        source)
+    flex_data.process_delayed__duration = (
+        process_delayed__duration_from_weight(flex_data.p_process_delay_weight))
+
+
 def dtt__delay_duration_from_source(
     source: "InputSource",
     dt: pl.DataFrame | None,
@@ -10149,6 +10195,7 @@ G_PUBLIC_FIELDS: tuple[str, ...] = (
     "prundt",
     "dtt__delay_duration",
     "p_process_delay_weight",
+    "process_delayed__duration",
     "pd_branch_weight",
     "pdt_branch_weight",
 )
@@ -10169,7 +10216,8 @@ def apply_derived_g(
       * §3.17 commodity ladder — ``p_f_d_k``,
         ``p_ladder_cum_realized_mwh``.
       * §3.13 reserves — ``prundt``.
-      * §3.15 delay — ``dtt__delay_duration``, ``p_process_delay_weight``.
+      * §3.15 delay — ``dtt__delay_duration``, ``p_process_delay_weight``,
+        ``process_delayed__duration``.
       * §3.18 multi-branch normalisation — full cascade for
         ``pd_branch_weight`` and ``pdt_branch_weight``.
 
@@ -10195,11 +10243,9 @@ def apply_derived_g(
     # ─── §3.13.1 prundt ────────────────────────────────────────────
     flex_data.prundt = prundt_from_source(source, active_solve, dt)
 
-    # ─── §3.15.1 dtt__delay_duration ───────────────────────────────
-    flex_data.dtt__delay_duration = dtt__delay_duration_from_source(source, dt)
-
-    # ─── §3.15.2 p_process_delay_weight ────────────────────────────
-    flex_data.p_process_delay_weight = p_process_delay_weight_from_source(source)
+    # ─── §3.15 dtt__delay_duration, p_process_delay_weight and
+    #     process_delayed__duration (one source read, same td labels) ──
+    apply_delay_params(flex_data, source)
 
     # ─── §3.18 cluster D — multi-branch normalisation + non-anticipativity ──
     # Δ.8 consolidation: delegate the full cluster D port to

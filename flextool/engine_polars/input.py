@@ -4966,6 +4966,17 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         _loadflex_prof("apply_db_overrides:pass_synthetic_section")
         _timed("c.synth section", _wire_section_for_synthetic_solve)
 
+        # DELAY-1 — same class of gap: ``apply_derived_g`` produces
+        # ``dtt__delay_duration``, ``p_process_delay_weight`` and
+        # ``process_delayed__duration`` together (one source read, Float64
+        # ``td``).  On the synthetic path only the CSV seeds were left, whose
+        # labels did not have to match the duration set and made a rolling
+        # run with a delayed unit crash on the ``td`` join.  The producer is
+        # solve-agnostic and builds the shift table over this sub-solve's
+        # ``dt`` exactly like the per-solve CSV writer.
+        _loadflex_prof("apply_db_overrides:pass_synthetic_delay")
+        _timed("c.synth delay", _drv.apply_delay_params, flex_data, db_reader)
+
         # CAPCOEF-1 — same class of gap: ``p_arc_max_cap_coef`` /
         # ``process_source_sink_uncapped`` (apply_derived_b) and
         # ``p_indirect_input_cap`` (apply_derived_d) are skipped on the

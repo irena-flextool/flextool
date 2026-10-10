@@ -77,6 +77,14 @@
   `efficiency_at_min_load` 0.4 and `efficiency` 0.9). The input is now
   `slope × output + section × online capacity`, as for one-input/one-output
   units.
+- **Fix: a unit with a constant `delay` runs again.** Only a map of delays
+  was read into the delay durations; with a constant the unit's inputs were
+  dropped from its conversion and its output was forced to zero without a
+  message. Rolling-window solves with a delayed unit (constant or map) no
+  longer stop with an error. The delay tables of a delayed unit are now
+  checked, and an inconsistency stops the run with a clear error instead of
+  zeroing the unit. Note: `delay` on connections is not applied (the flow
+  arrives in the same time step); this is unchanged.
 
 - **Input (fuel) limits of units follow `input_share_max`.** An input of a
   multi-input/multi-output (indirect) unit may now supply at most
