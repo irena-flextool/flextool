@@ -3037,11 +3037,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # (time-shifted via dtt__delay_duration, weighted by
         # p_process_delay_weight).  Anti-join out the delayed processes
         # from the existing Sum, then add the delayed contribution from
-        # _delay.delayed_input_expr.  The delayed term keeps the
-        # source-side flow_coef at the default 1.0 — no fixture today
-        # combines delay with non-default source coefficients, and
-        # delayed_input_expr would need its own multiplier hook; flag in
-        # ``audit/`` if a future scenario combines them.
+        # _delay.delayed_input_expr.  The delayed term multiplies each
+        # input by its source-side conversion_flow_coeff, like the
+        # undelayed term (flextool.mod conversion_indirect).
         in_flows_undelayed = d.process_input_flows
         if (getattr(d, "process_delayed", None) is not None
                 and d.process_delayed.height > 0):

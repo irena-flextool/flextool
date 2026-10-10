@@ -4953,9 +4953,10 @@ def _indirect_input_cap_lf(source: "InputSource",
     term, per unit online ≤ capacity) only for ``min_load_efficiency``
     processes; ``delay_factor = 1/max(delay weight)`` for delayed
     processes (one input step can feed a heavier-weighted output step);
-    ``src_div_s`` is the input's ``conversion_flow_coeff`` — ``1`` when
-    ``≤ 0`` and ``min(src_conv, 1)`` for delayed processes (their delayed
-    conversion term uses ``src_conv = 1``).  The full-load fuel is
+    ``src_div_s`` is the input's ``conversion_flow_coeff`` (``1`` when
+    ``≤ 0``), for delayed processes too: their delayed conversion term
+    multiplies the input by ``conversion_flow_coeff`` exactly like the
+    undelayed term (``_delay.delayed_input_expr``).  The full-load fuel is
     measured in fuel energy (flow × conversion_flow_coeff), so a poorer
     fuel automatically gets a larger flow limit.
 
@@ -4997,9 +4998,7 @@ def _indirect_input_cap_lf(source: "InputSource",
         .join(_indirect_fuel_width_lf(source), on="p", how="left")
         .with_columns(fuel_width=pl.col("fuel_width").fill_null(0.0))
         .join(_delay_fuel_factor_lf(source), on="p", how="left")
-        .with_columns(
-            _is_delayed=pl.col("delay_factor").is_not_null(),
-            delay_factor=pl.col("delay_factor").fill_null(1.0))
+        .with_columns(delay_factor=pl.col("delay_factor").fill_null(1.0))
         .join(min_load_p, on="p", how="left")
         .with_columns(
             _has_min_load=pl.col("_has_min_load").fill_null(False)))
@@ -5027,13 +5026,10 @@ def _indirect_input_cap_lf(source: "InputSource",
                        .otherwise(0.0)),
             # src_conv ≤ 0 inputs would feed the conversion negatively
             # (not tied to the fuel need): keep a finite limit with a
-            # unit divisor.  Delayed processes: their delayed term uses
-            # src_conv = 1.
+            # unit divisor.  Delayed and undelayed inputs alike enter the
+            # conversion as flow × src_conv.
             _src_div=pl.when(pl.col("src_conv") <= 0.0)
                         .then(1.0)
-                        .when(pl.col("_is_delayed"))
-                        .then(pl.min_horizontal(pl.col("src_conv"),
-                                                pl.lit(1.0)))
                         .otherwise(pl.col("src_conv")))
         .select(*keys,
                 value=(pl.col("share") * pl.col("_fuel")

@@ -85,6 +85,12 @@
   checked, and an inconsistency stops the run with a clear error instead of
   zeroing the unit. Note: `delay` on connections is not applied (the flow
   arrives in the same time step); this is unchanged.
+- **Fix: `input_share_max` on a delayed unit's input divides by the input's
+  `conversion_flow_coeff`.** For delayed units the input limit used
+  `min(conversion_flow_coeff, 1)`, so an input with a coefficient above 1
+  was allowed too much (e.g. coefficient 2 with `input_share_max` 0.6 let
+  the unit run at full output instead of 60 %). Delayed and undelayed
+  inputs now get the same limit.
 
 - **Input (fuel) limits of units follow `input_share_max`.** An input of a
   multi-input/multi-output (indirect) unit may now supply at most

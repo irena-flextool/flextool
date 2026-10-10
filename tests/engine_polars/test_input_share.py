@@ -498,3 +498,82 @@ def test_rolling_sub_solves_apply_input_share_and_output_coeffs(
         assert float(fuel.max()) == pytest.approx(limit * CAPACITY, rel=1e-6)
         west = _flow(step, UNIT, "west")
         assert float(west.max()) <= 0.8 * CAPACITY + 1e-6
+
+
+# ── Delayed inputs: the limit divides by conversion_flow_coeff too ───────
+_DELAY_1H = ["unit", UNIT, "delay", _b64(
+    {"index_type": "float", "rank": 1, "data": [[1.0, 1.0]],
+     "index_name": "constraint", "type": "map"}, "map")]
+
+
+@pytest.mark.parametrize("delayed", [False, True])
+@pytest.mark.parametrize("src_conv", [2.0, 1.0, 0.5])
+def test_delayed_input_share_divides_by_conversion_coeff(
+        tmp_path_factory, src_conv: float, delayed: bool) -> None:
+    """``input_share_max = 0.6`` on coal: west (1000 MW demand) stops at
+    600 MW and coal at 0.6 · 1000 / 0.9 / conv, delayed (1 h) or not.  The
+    delayed conversion term multiplies the input by its
+    ``conversion_flow_coeff`` like the undelayed one, so the limit divides
+    by it too (it used ``min(conv, 1)``: with conv 2 a delayed unit ran at
+    west 1000 / coal 555.6)."""
+    tag = f"{str(src_conv).replace('.', '_')}_{int(delayed)}"
+    values = _no_ratio_constraint() + [
+        ["unit__inputNode", [UNIT, COAL], "conversion_flow_coeff",
+         _b64(src_conv, "float")],
+        _share(COAL, 0.6), _demand("west", CAPACITY), _demand("heat", 0.0)]
+    if delayed:
+        values.append(_DELAY_1H)
+    url, scen = _make_db(tmp_path_factory, alt=f"dshare_{tag}",
+                         values=values)
+    step = _solve(tmp_path_factory, url, scen)
+    if delayed:
+        assert UNIT in _utf8(step.flex_data.process_delayed,
+                             ("p",))["p"].to_list()
+    west = _flow(step, UNIT, "west")
+    n = west.len()
+    assert west.to_list() == pytest.approx([0.6 * CAPACITY] * n, rel=1e-6)
+    assert _flow(step, COAL, UNIT).to_list() == pytest.approx(
+        [0.6 * CAPACITY / EFFICIENCY / src_conv] * n, rel=1e-6)
+
+
+def test_delayed_input_share_rolling_csv_chain(tmp_path_factory) -> None:
+    """Rolling: the roll sub-solves' fuel-arc ``p_flow_upper`` (CSV-chain
+    seed) and ``p_indirect_input_cap`` both divide by the delayed input's
+    ``conversion_flow_coeff`` 2: limit 0.6 / 0.9 / 2 per unit of
+    capacity, and west stops at 600 MW in every roll."""
+    rolling = [
+        ["solve", "y2020_2day_dispatch", "solve_mode",
+         _b64("rolling_window", "str")],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_horizon",
+         _b64(24.0, "float")],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_jump",
+         _b64(12.0, "float")],
+    ]
+    url, scen = _make_db(
+        tmp_path_factory, alt="dshare_roll",
+        values=_no_ratio_constraint() + rolling + [
+            ["unit__inputNode", [UNIT, COAL], "conversion_flow_coeff",
+             _b64(2.0, "float")],
+            _share(COAL, 0.6), _demand("west", CAPACITY),
+            _demand("heat", 0.0), _DELAY_1H])
+    steps = _run(tmp_path_factory, url, scen)
+    limit = 0.6 / EFFICIENCY / 2.0
+    rolls = [k for k in steps if "_roll_" in k]
+    assert len(rolls) >= 2, f"expected roll sub-solves, got {list(steps)}"
+    for name in rolls:
+        step = steps[name]
+        fd = step.flex_data
+        cap = (_utf8(fd.p_indirect_input_cap.frame)
+               .filter(pl.col("p") == UNIT))
+        assert cap["value"].to_list() == pytest.approx(
+            [limit] * cap.height, rel=1e-6), name
+        us = float(_utf8(fd.p_unitsize.frame, ("p",))
+                   .filter(pl.col("p") == UNIT)["value"][0])
+        pfu = (_utf8(fd.p_flow_upper.frame)
+               .filter((pl.col("p") == UNIT) & (pl.col("source") == COAL)))
+        assert pfu.height > 0, name
+        assert pfu["value"].to_list() == pytest.approx(
+            [limit * CAPACITY / us] * pfu.height, rel=1e-6), name
+        west = _flow(step, UNIT, "west")
+        assert west.to_list() == pytest.approx(
+            [0.6 * CAPACITY] * west.len(), rel=1e-6), name

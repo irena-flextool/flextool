@@ -1359,13 +1359,10 @@ def derive_p_flow_max(
                 fuel = slope.get((p, d, t), 0.0) * fuel_width.get(p, 0.0)
                 if p in has_min_load:
                     fuel += section.get((p, d, t), 0.0)
+                # Delayed and undelayed inputs alike enter the
+                # conversion as flow × conversion_flow_coeff.
                 conv_s = src_conv.get((p, src), 1.0)
-                if conv_s <= 0.0:
-                    src_div = 1.0
-                elif p in delay_factor:
-                    src_div = min(conv_s, 1.0)
-                else:
-                    src_div = conv_s
+                src_div = 1.0 if conv_s <= 0.0 else conv_s
                 base = (src_share.get((p, src), 1.0) * fuel
                         * delay_factor.get(p, 1.0) / src_div
                         * (dcm_v / us))
