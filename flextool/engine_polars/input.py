@@ -502,7 +502,12 @@ class FlexData:
     p_all_entity_unitsize: Param | None = None  # (e,) — all entities (processes + connections + nodes); used by scaling
     p_flow_upper: Param | None = None            # (p, source, sink, d, t) — preprocessed structural max (existing + max_invest_cum)
     p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxFlow
-    p_arc_max_cap_coef: Param | None = None      # (p, source, sink) — per-arc capacity_max_coeff for DIRECT arcs (maxToSink/maxFromSource); folded onto p_flow_upper_existing in maxFlow
+    p_arc_max_cap_coef: Param | None = None      # (p, source, sink) — per-arc capacity factor for DIRECT + indirect OUTPUT arcs (maxToSink: capacity_max_coeff, min'd with an authored input_share_max on direct units; maxFromSource: input_share_max); folded onto p_flow_upper_existing in maxFlow
+    p_indirect_input_cap: Param | None = None    # (p, source, sink, d, t) — indirect-unit INPUT arcs: input_share_max × full-load input flow per unit of capacity; × availability × capacity = the arc's limit (v_flow upper bound, or maxFlow row when the unit invests/divests)
+    process_source_sink_uncapped: pl.DataFrame | None = None  # (p, source, sink) — conversion_flow_coeff = 0 arcs: outside every per-edge capacity / ramp / min-load constraint
+    p_process_sink_max_capacity_coef: Param | None = None    # (p, sink) — unit__outputNode.capacity_max_coeff (explicit rows; default 1.0): ramp / maxFlow_online multiplier
+    p_process_source_input_share_max: Param | None = None  # (p, source) — unit__inputNode.input_share_max (explicit rows; default 1.0): source-side ramp multiplier (non-indirect arcs)
+    p_process_source_input_share_min: Param | None = None  # (p, source) — unit__inputNode.input_share_min (explicit rows; default 0): minInputShare mixing minimum of indirect units
     p_slope: Param | None = None                 # (p, d, t)
     p_commodity_price: Param | None = None       # (c, d, t)
     pd_neg_cap: pl.DataFrame | None = None       # set: (p, d) where existing<0 AND unitsize<0
@@ -638,7 +643,7 @@ class FlexData:
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
     p_min_load: Param | None = None                          # (p,)
-    p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: minFlow_minload floor multiplier
+    p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: optional per-output floor (minFlow_output_floor), default 0
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
     pdt_uptime_set: pl.DataFrame | None = None               # (p, d, t) — minimum_uptime constraint domain
@@ -4960,6 +4965,29 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 db_reader, dt, classified)
         _loadflex_prof("apply_db_overrides:pass_synthetic_section")
         _timed("c.synth section", _wire_section_for_synthetic_solve)
+
+        # DELAY-1 — same class of gap: ``apply_derived_g`` produces
+        # ``dtt__delay_duration``, ``p_process_delay_weight`` and
+        # ``process_delayed__duration`` together (one source read, Float64
+        # ``td``).  On the synthetic path only the CSV seeds were left, whose
+        # labels did not have to match the duration set and made a rolling
+        # run with a delayed unit crash on the ``td`` join.  The producer is
+        # solve-agnostic and builds the shift table over this sub-solve's
+        # ``dt`` exactly like the per-solve CSV writer.
+        _loadflex_prof("apply_db_overrides:pass_synthetic_delay")
+        _timed("c.synth delay", _drv.apply_delay_params, flex_data, db_reader)
+
+        # CAPCOEF-1 — same class of gap: ``p_arc_max_cap_coef`` /
+        # ``process_source_sink_uncapped`` (apply_derived_b) and
+        # ``p_indirect_input_cap`` (apply_derived_d) are skipped on the
+        # synthetic path, so roll sub-solves lost the output
+        # ``capacity_max_coeff``, the ``conversion_flow_coeff = 0``
+        # uncapped edges and the indirect input-arc limits.  All three
+        # producers are solve-agnostic; runs after the section wiring
+        # because the input-arc limit reads ``p_section``.
+        _loadflex_prof("apply_db_overrides:pass_synthetic_arc_capacity")
+        _timed("c.synth arc capacity", _drv.wire_arc_capacity_params,
+               flex_data, db_reader)
 
         # INFLOW-1 — synthetic solves skip ``apply_derived_c``; re-wire the
         # inflow signed-split so the non_sync / capacity_margin demand budget

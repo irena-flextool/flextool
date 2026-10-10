@@ -244,21 +244,24 @@ def test_uptime_downtime_invest_interaction(toy_uc_3t):
 
 
 # ---------------------------------------------------------------------------
-# B4.13 — capacity_min_coeff scales the minFlow_minload floor.
+# B4.13 — the min-load floor is per unit and carries no capacity_min_coeff.
 
 def test_min_capacity_coef_scales_minload_floor(toy_uc_3t):
-    """Covers the wiring of ``capacity_min_coeff`` into ``minFlow_minload``.
+    """``capacity_min_coeff`` no longer scales the unit's min-load floor.
 
-    The .mod scales the min-load floor per output arc:
-    ``v_online · min_load · p_process_sink_min_capacity_coefficient[p, sink]``
-    (flextool.mod L3075).  ``toy_uc_3t`` has unit ``u`` (unitsize 100,
-    min_load 0.4) feeding node ``n``.
+    The floor is once per unit on the sum of its outputs,
+    ``Σ outputs ≥ v_online · min_load``, with no coefficient
+    (``minFlow_minload``, one row per ``(p, d, t)``).  An output's
+    ``capacity_min_coeff`` is an optional extra per-output floor of
+    multi-output (indirect) units only (``minFlow_output_floor``); on this
+    single-output direct unit it has no effect.  (Reversal of the former
+    behaviour, where 0.5 halved the floor.)  ``toy_uc_3t`` has unit ``u``
+    (unitsize 100, min_load 0.4) feeding node ``n``.
 
-    We set demand to 10 MW/step with EXPENSIVE upward slack (meeting demand
-    matters) and CHEAP downward slack (dumping the floor's excess is feasible),
-    so the cost-min LP runs ``u`` at its min-load floor and dumps the rest.
-    Baseline floor = ``v_online · min_load = 1 · 0.4`` ⇒ v_flow = 0.4 (40 MW).
-    With ``capacity_min_coeff = 0.5`` on the output arc it halves ⇒ v_flow = 0.2.
+    Demand is 10 MW/step with EXPENSIVE upward slack and CHEAP downward
+    slack, so the cost-min LP runs ``u`` at its min-load floor and dumps
+    the rest: ``v_online · min_load = 1 · 0.4`` ⇒ v_flow = 0.4 (40 MW),
+    with or without the coefficient.
     """
     # Integer commitment so v_online ∈ {0, 1} and the min-load floor actually
     # binds — under linear (fractional) commitment the unit would just
@@ -273,20 +276,26 @@ def test_min_capacity_coef_scales_minload_floor(toy_uc_3t):
     p_pen_dn = Param(("n", "d", "t"),
         nd.with_columns(value=pl.lit(0.01)).select("n", "d", "t", "value"))
 
-    # Baseline: no capacity_min_coeff ⇒ floor uses the full min_load.
     base = dataclasses.replace(d, p_inflow=p_inflow, p_penalty_down=p_pen_dn)
     pb0, sol0 = _solve(base)
     assert sol0.optimal
-    assert any(n.startswith("minFlow_minload") for n in pb0.cstr_names())
+    rows = [r for r in pb0.cstrs_named("minFlow_minload_integer")
+            if r.name == "minFlow_minload_integer"]
+    assert len(rows) == 1
+    assert set(rows[0].over.columns) == {"p", "d", "t"}
+    assert rows[0].over.height == d.dt.height
     vf0 = sol0.value("v_flow").sort(["d", "t"])["value"].to_list()
     assert all(v == pytest.approx(0.4, rel=1e-6) for v in vf0), vf0
 
-    # capacity_min_coeff = 0.5 on (u, n) ⇒ the floor halves to 0.2.
+    # capacity_min_coeff = 0.5 on (u, n): no effect on the unit floor and no
+    # per-output row (single-output direct unit).
     coef = Param(("p", "sink"),
         pl.DataFrame({"p": ["u"], "sink": ["n"], "value": [0.5]}))
     capped = dataclasses.replace(d, p_inflow=p_inflow, p_penalty_down=p_pen_dn,
                                  p_process_sink_min_capacity_coef=coef)
     pb1, sol1 = _solve(capped)
     assert sol1.optimal
+    assert not any(n.startswith("minFlow_output_floor")
+                   for n in pb1.cstr_names())
     vf1 = sol1.value("v_flow").sort(["d", "t"])["value"].to_list()
-    assert all(v == pytest.approx(0.2, rel=1e-6) for v in vf1), vf1
+    assert all(v == pytest.approx(0.4, rel=1e-6) for v in vf1), vf1

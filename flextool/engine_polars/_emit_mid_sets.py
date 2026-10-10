@@ -796,7 +796,10 @@ def _derive_coeff_zero(
     arc_csv: Path, coef_csv: Path, second_col: str,
     *, provider: "object | None" = None,
 ) -> pl.DataFrame:
-    """(process, source/sink) rows whose max-capacity-coefficient is 0.
+    """(process, source/sink) rows whose ``conversion_flow_coeff`` is 0 —
+    the uncapped (hydro-pass-through) edges, outside every per-edge
+    capacity / ramp / min-load constraint.  (``capacity_max_coeff = 0`` is
+    a zero cap, not "uncapped".)
 
     Default of 1 on missing coefficients means only EXPLICITLY-zero rows
     appear in the output (matches the mod's truthy-check behaviour).
@@ -826,7 +829,7 @@ def derive_process_source_coeff_zero(input_dir: Path,
                                        ) -> pl.DataFrame:
     return _derive_coeff_zero(
         input_dir / "process__source.csv",
-        input_dir / "p_process_source_capacity_max_coeff.csv",
+        input_dir / "p_process_source_conversion_flow_coeff.csv",
         "source", provider=provider,
     )
 
@@ -836,7 +839,7 @@ def derive_process_sink_coeff_zero(input_dir: Path,
                                      ) -> pl.DataFrame:
     return _derive_coeff_zero(
         input_dir / "process__sink.csv",
-        input_dir / "p_process_sink_capacity_max_coeff.csv",
+        input_dir / "p_process_sink_conversion_flow_coeff.csv",
         "sink", provider=provider,
     )
 

@@ -23,6 +23,7 @@ pytestmark = pytest.mark.solver
 
 
 SCENARIO = "delay_source_coef"
+DELAY_SOURCE_COEF_OBJ = 1_303_907_750.0
 
 
 def test_delay_source_coef_parity(scenario_workdir):
@@ -62,3 +63,8 @@ def test_delay_source_coef_parity(scenario_workdir):
     build_flextool(pb, data)
     sol = pb.solve()
     assert sol.optimal, "LP must be optimal"
+    # Pinned objective (same as ``water_pump_delayed``): the delayed
+    # input limit divides by conversion_flow_coeff 2 now (it used
+    # min(2, 1)); with input_share_max 1 the limit is exactly the
+    # full-load need, so it does not bind and the optimum is unchanged.
+    assert sol.obj == pytest.approx(DELAY_SOURCE_COEF_OBJ, rel=1e-9)

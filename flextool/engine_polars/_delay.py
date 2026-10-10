@@ -98,6 +98,7 @@ from polar_high import Sum, Where, Param
 # Engine imports kept light — we don't introduce new variable types.
 
 from ._axis_enums import cast_dim
+from ._derived_params import process_delayed__duration_from_weight
 from ._emit_provider_io import _provider_key
 
 
@@ -176,11 +177,10 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
 
     pd_df = pd_df.rename({"process": "p"}) if "process" in pd_df.columns else pd_df
 
-    # Δ.12-drop: ``process_delayed__duration`` (set frame, not Param)
-    # produced authoritatively by
-    # ``apply_direct_params.process_delayed__duration_from_source``.
-    # Seed dropped.
-    pdd_df = None
+    # ``process_delayed__duration`` is derived from the delay-weight
+    # keys below (``_derived_params.process_delayed__duration_from_weight``,
+    # the same producer the DB path uses), so its ``td`` labels match
+    # ``dtt__delay_duration`` and ``p_process_delay_weight`` exactly.
 
     # process_source_(un)delayed: (process, source) frames
     def _read_pse(name: str) -> pl.DataFrame | None:
@@ -255,7 +255,12 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
             rename_map["time_sink"] = "t_sink"
         if "delay_duration" in raw.columns:
             rename_map["delay_duration"] = "td"
-        dtt_df = raw.rename(rename_map).select("d", "t_source", "t_sink", "td")
+        # ``td`` is a duration in hours: Float64, as on the DB path
+        # (``dtt__delay_duration_from_source``).  The CSV carries it as
+        # text whose formatting may differ between writers ("1" / "1.0").
+        dtt_df = (raw.rename(rename_map)
+                  .select("d", "t_source", "t_sink",
+                          pl.col("td").cast(pl.Float64)))
 
     pw_path = sd / "p_process_delay_weight.csv"
     pw_param = None
@@ -266,8 +271,11 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
             rename_map["process"] = "p"
         if "delay_duration" in raw.columns:
             rename_map["delay_duration"] = "td"
-        pw_long = raw.rename(rename_map).select("p", "td", "value")
+        pw_long = raw.rename(rename_map).select(
+            "p", pl.col("td").cast(pl.Float64),
+            pl.col("value").cast(pl.Float64))
         pw_param = Param(("p", "td"), pw_long)
+    pdd_df = process_delayed__duration_from_weight(pw_param)
 
     return dict(
         process_delayed              = pd_df.select("p"),
@@ -279,6 +287,106 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *,
         dtt__delay_duration          = dtt_df,
         p_process_delay_weight       = pw_param,
     )
+
+
+# ---------------------------------------------------------------------------
+# Consistency check
+
+class DelayDataError(RuntimeError):
+    """The delay tables of a delayed unit do not line up.
+
+    An internal wiring error, raised instead of building a conversion
+    equation without the unit's input (which forces its output to zero
+    without any message).
+    """
+
+
+def _p_utf8(df: pl.DataFrame, cols: tuple[str, ...]) -> pl.DataFrame:
+    return df.select(pl.col(c).cast(pl.Utf8) for c in cols).unique()
+
+
+def check_delay_tables(d) -> None:
+    """Raise :class:`DelayDataError` unless every delayed indirect unit can
+    get its delayed input term.
+
+    ``conversion_indirect`` takes a delayed unit's inputs out of the
+    undelayed sum (``process_delayed``), so the delayed term must cover
+    them.  For every unit in ``process_delayed`` that is indirect and has
+    inputs (``process_input_flows``):
+
+    * it has delayed input arcs (``process_source_sink_delayed``);
+    * it has ``process_delayed__duration`` rows;
+    * ``td`` has the same dtype in ``process_delayed__duration``,
+      ``dtt__delay_duration`` and ``p_process_delay_weight``;
+    * every ``(p, td)`` has ``dtt__delay_duration`` rows and a weight.
+
+    Delayed connections are not indirect and are not checked here (no
+    delayed term applies to them).
+    """
+    if not has_feature(d):
+        return
+    indirect = getattr(d, "process_indirect", None)
+    inputs = getattr(d, "process_input_flows", None)
+    if indirect is None or indirect.height == 0 or inputs is None:
+        return
+    units = (_p_utf8(d.process_delayed, ("p",))
+             .join(_p_utf8(indirect, ("p",)), on="p", how="semi")
+             .join(_p_utf8(inputs, ("p",)), on="p", how="semi"))
+    if units.height == 0:
+        return
+    names = sorted(units["p"].to_list())
+
+    def _fail(msg: str, which: list[str]) -> None:
+        raise DelayDataError(
+            f"delayed unit(s) {', '.join(which)}: {msg}. Their inputs are "
+            "excluded from the undelayed conversion, so the unit would "
+            "be forced to zero output.")
+
+    psse = getattr(d, "process_source_sink_delayed", None)
+    if psse is None or psse.height == 0:
+        _fail("no delayed input arcs (process_source_sink_delayed)", names)
+    arcs = (psse.select(pl.col(c).cast(pl.Utf8) for c in ("p", "sink"))
+            .filter(pl.col("sink") == pl.col("p")).select("p").unique())
+    missing = units.join(arcs, on="p", how="anti")
+    if missing.height > 0:
+        _fail("no delayed input arcs (process_source_sink_delayed)",
+              sorted(missing["p"].to_list()))
+
+    pdd = getattr(d, "process_delayed__duration", None)
+    dtt = getattr(d, "dtt__delay_duration", None)
+    pw = getattr(d, "p_process_delay_weight", None)
+    if pdd is None or pdd.height == 0:
+        _fail("no delay durations (process_delayed__duration)", names)
+    missing = units.join(_p_utf8(pdd, ("p",)), on="p", how="anti")
+    if missing.height > 0:
+        _fail("no delay durations (process_delayed__duration)",
+              sorted(missing["p"].to_list()))
+    if dtt is None or dtt.height == 0:
+        _fail("no time-shift rows (dtt__delay_duration)", names)
+    if pw is None or pw.frame.height == 0:
+        _fail("no delay weights (p_process_delay_weight)", names)
+    dtypes = {"process_delayed__duration": pdd.schema["td"],
+              "dtt__delay_duration": dtt.schema["td"],
+              "p_process_delay_weight": pw.frame.schema["td"]}
+    if len(set(dtypes.values())) != 1:
+        _fail("delay duration (td) dtypes differ: "
+              + ", ".join(f"{k} {v}" for k, v in dtypes.items()), names)
+    used = (pdd.with_columns(pl.col("p").cast(pl.Utf8))
+            .join(units, on="p", how="semi"))
+    no_shift = used.join(dtt.select("td").unique(), on="td", how="anti")
+    if no_shift.height > 0:
+        _fail("delay duration(s) without time-shift rows "
+              "(dtt__delay_duration): "
+              + ", ".join(f"{p} {td!r}" for p, td in no_shift.iter_rows()),
+              sorted(set(no_shift["p"].to_list())))
+    no_weight = used.join(
+        pw.frame.select(pl.col("p").cast(pl.Utf8), "td"),
+        on=["p", "td"], how="anti")
+    if no_weight.height > 0:
+        _fail("delay duration(s) without a weight "
+              "(p_process_delay_weight): "
+              + ", ".join(f"{p} {td!r}" for p, td in no_weight.iter_rows()),
+              sorted(set(no_weight["p"].to_list())))
 
 
 # ---------------------------------------------------------------------------
@@ -313,10 +421,12 @@ def delayed_input_expr(d, v_flow):
       * ``Sum`` over (source, td) leaves dims (p, d, t).
 
     Returns ``None`` when there's no delayed-process data (caller should
-    use a no-op).
+    use a no-op).  Raises :class:`DelayDataError` when a delayed indirect
+    unit's tables do not line up (:func:`check_delay_tables`).
     """
     if not has_feature(d):
         return None
+    check_delay_tables(d)
     if d.dtt__delay_duration is None or d.p_process_delay_weight is None:
         return None
     if d.process_source_delayed is None or d.process_delayed__duration is None:

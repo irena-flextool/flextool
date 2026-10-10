@@ -456,7 +456,8 @@ def derive_process_source_sink_coeff_zero(
     *,
     provider: "object | None" = None,
 ) -> pl.DataFrame:
-    """``process_source_sink`` filtered by zero flow coefficient on EITHER side."""
+    """``process_source_sink`` filtered by zero ``conversion_flow_coeff`` on
+    EITHER side (the uncapped edges)."""
     triples = _read_n_col_rows(
         solve_data_dir / "process_source_sink.csv",
         ["process", "source", "sink"],
@@ -1269,30 +1270,58 @@ def derive_p_flow_max(
                         except (ValueError, TypeError):
                             continue
 
-    src_max_coef: dict[tuple[str, str], float] = {}
-    pms_path = input_dir / "p_process_source_capacity_max_coeff.csv"
-    _df = provider.get(_provider_key(pms_path))
-    if _df is not None:
-        for r in _df.iter_rows():
-            if len(r) >= 3:
-                c0, c1 = _cell_str(r[0]), _cell_str(r[1])
-                if c0 and c1:
-                    try:
-                        src_max_coef[(c0, c1)] = float(r[2])
-                    except (ValueError, TypeError):
-                        continue
-    sink_max_coef: dict[tuple[str, str], float] = {}
-    pmk_path = input_dir / "p_process_sink_capacity_max_coeff.csv"
-    _df = provider.get(_provider_key(pmk_path))
-    if _df is not None:
-        for r in _df.iter_rows():
-            if len(r) >= 3:
-                c0, c1 = _cell_str(r[0]), _cell_str(r[1])
-                if c0 and c1:
-                    try:
-                        sink_max_coef[(c0, c1)] = float(r[2])
-                    except (ValueError, TypeError):
-                        continue
+    def _pair_floats(fname: str) -> dict[tuple[str, str], float]:
+        out: dict[tuple[str, str], float] = {}
+        _df = provider.get(_provider_key(input_dir / fname))
+        if _df is not None:
+            for r in _df.iter_rows():
+                if len(r) >= 3:
+                    c0, c1 = _cell_str(r[0]), _cell_str(r[1])
+                    if c0 and c1:
+                        try:
+                            out[(c0, c1)] = float(r[2])
+                        except (ValueError, TypeError):
+                            continue
+        return out
+
+    src_share = _pair_floats("p_process_source_input_share_max.csv")
+    sink_max_coef = _pair_floats("p_process_sink_capacity_max_coeff.csv")
+    src_conv = _pair_floats("p_process_source_conversion_flow_coeff.csv")
+    sink_conv = _pair_floats("p_process_sink_conversion_flow_coeff.csv")
+
+    # Delayed processes (mirror of ``_derived_params._delay_fuel_factor_lf``):
+    # a weighted delay lets one input step feed up to 1/max(weight) of the
+    # steady-state fuel; a single-duration delay has weight 1.
+    delay_max_w: dict[str, float] = {}
+    for p_, _td in _read_pairs_csv(input_dir / "process_delay_single.csv",
+                                   provider=provider):
+        delay_max_w[p_] = max(delay_max_w.get(p_, 0.0), 1.0)
+    for (p_, _td), w in _pair_floats("p_process_delay_weighted.csv").items():
+        delay_max_w[p_] = max(delay_max_w.get(p_, 0.0), w)
+    delay_factor = {p_: 1.0 / w for p_, w in delay_max_w.items() if w > 0.0}
+
+    # W per indirect process (mirror of ``_indirect_fuel_width_lf``): fill
+    # the outputs in descending conversion_flow_coeff order, each up to
+    # min(capacity_max_coeff, remaining share of the unit capacity).
+    sinks_by_p: dict[str, list[str]] = {}
+    for p_, k in sorted(process_sink):
+        if p_ in has_indirect:
+            sinks_by_p.setdefault(p_, []).append(k)
+    fuel_width: dict[str, float] = {}
+    for p_, sinks in sinks_by_p.items():
+        outs = sorted(
+            ((sink_conv.get((p_, k), 1.0), k,
+              max(sink_max_coef.get((p_, k), 1.0), 0.0)) for k in sinks),
+            key=lambda x: (-x[0], x[1]))
+        w_sum = 0.0
+        filled = 0.0
+        for conv, _k, cap in outs:
+            if conv <= 0.0:
+                continue
+            fill = min(cap, max(1.0 - filled, 0.0))
+            w_sum += conv * fill
+            filled += cap
+        fuel_width[p_] = w_sum
 
     # p_unconstrained_flow_cap = max over models of
     # p_max_flow_for_unconstrained_variables[m]; default 1e6 if absent.
@@ -1323,13 +1352,20 @@ def derive_p_flow_max(
             us = unitsize.get(p, 1.0)
             dcm_v = dcm.get((p, d), 0.0)
             if p in has_indirect and (p, src) in process_source:
+                # Input-arc limit (mirror of
+                # ``_derived_params._indirect_input_cap_lf``):
+                # input_share_max × (slope·W + section) × delay_factor
+                # / src_div, times the capacity count.
+                fuel = slope.get((p, d, t), 0.0) * fuel_width.get(p, 0.0)
                 if p in has_min_load:
-                    eff_term = (slope.get((p, d, t), 0.0)
-                                + section.get((p, d, t), 0.0))
-                else:
-                    eff_term = slope.get((p, d, t), 0.0)
-                src_coef = src_max_coef.get((p, src), 1.0)
-                base = eff_term * (dcm_v / us) / src_coef
+                    fuel += section.get((p, d, t), 0.0)
+                # Delayed and undelayed inputs alike enter the
+                # conversion as flow × conversion_flow_coeff.
+                conv_s = src_conv.get((p, src), 1.0)
+                src_div = 1.0 if conv_s <= 0.0 else conv_s
+                base = (src_share.get((p, src), 1.0) * fuel
+                        * delay_factor.get(p, 1.0) / src_div
+                        * (dcm_v / us))
             else:
                 base = dcm_v / us
             sink_coef = (sink_max_coef.get((p, sink), 1.0)
