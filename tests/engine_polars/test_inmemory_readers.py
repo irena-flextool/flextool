@@ -73,6 +73,7 @@ _REQUIRED_PARAM_ATTRS: tuple[str, ...] = (
     "commodity_price",
     "group_co2_price",
     "reserve_upDown_group_reservation",
+    "reserve_upDown_group_shortfall_scale",
     "profile",
     "years_from_start_d",
     "years_represented_d",

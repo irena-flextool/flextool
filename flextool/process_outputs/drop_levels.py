@@ -43,7 +43,8 @@ _PAR_DROP = [
     'process_slope', 'process_section',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
     'node_inflow', 'commodity_price', 'group_co2_price',
-    'reserve_upDown_group_reservation', 'profile',
+    'reserve_upDown_group_reservation',
+    'reserve_upDown_group_shortfall_scale', 'profile',
     'entity_annual_discounted', 'entity_annual_divest_discounted',
     'inflation_factor_investment_yearly',
     # inflation_factor_operations_yearly evolves across rolls: each step

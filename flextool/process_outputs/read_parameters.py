@@ -1230,6 +1230,19 @@ def read_parameters(
         flex_data=flex_data,
     )
 
+    # reserve_upDown_group_shortfall_scale — the vq_reserve multiplier the
+    # LP uses in the reserve balances and the penalty (largest possible
+    # requirement; the reservation for timeseries groups).  The reserve
+    # shortfall in MW and its penalty cost are rebuilt with it.
+    from flextool.engine_polars._reserve import reserve_shortfall_scale
+    p.reserve_upDown_group_shortfall_scale = _pdtX_multi_col(
+        reserve_shortfall_scale(flex_data), solve_name=solve_name,
+        col_dims=("r", "ud", "g"),
+        col_names=("reserve", "upDown", "node_group"),
+        densify_col_tuples=getattr(flex_data, "reserve_upDown_group", None),
+        flex_data=flex_data,
+    )
+
     # profile — (solve, period, time) × profile.
     p.profile = _pdtX_per_entity(
         flex_data.p_profile_value, solve_name=solve_name,
