@@ -123,6 +123,8 @@ def run(
         validate_group_output_memberships,
         validate_capacity_margin_groups,
         validate_connection_node_memberships,
+        validate_unit_input_shares,
+        validate_output_min_coeff,
     )
     from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
     from flextool.input_derivation._process_method import derive_process_method
@@ -193,6 +195,10 @@ def run(
             backend, provider, logger,
             ct_method_overrides=ct_method_overrides,
         )
+        # Once per scenario: input shares and output floors (need the
+        # process method for the online / indirect classification).
+        validate_unit_input_shares(db, provider, logger)
+        validate_output_min_coeff(db, provider, logger)
         validate_ladder_methods(db, logger)
         derive_commodity_ladder_cumulative(backend, provider, logger)
         derive_commodity_ladder_annual(backend, provider, logger)

@@ -298,13 +298,14 @@ def test_no_limit_methods_lift_invest_limits(tmp_path_factory, method):
     _const(_flow(step, CHP, CHP, "heat"), HEAT, rel=1e-6)
 
 
-# ── capacity_min_coeff: the min-load floor scales with built capacity ───
+# ── min_load: the min-load floor scales with built capacity ─────────────
 def test_min_coeff_floor_scales_with_invested_capacity(tmp_path_factory):
-    """Greenfield linear-online ``coal_plant`` (min_load 0.5,
-    ``capacity_min_coeff = 0.8``) serving a flat 600 MW with one 100 MW
-    dip.  A prohibitive startup cost keeps the whole built capacity
-    online, so in the dip the floor ``v_online · min_load · coef`` binds at
-    0.5 · 0.8 · 600 = 240 MW — the floor follows the INVESTED capacity."""
+    """Greenfield linear-online ``coal_plant`` (``min_load = 0.4``)
+    serving a flat 600 MW with one 100 MW dip.  A prohibitive startup cost
+    keeps the whole built capacity online, so in the dip the unit floor
+    ``v_online · min_load`` binds at 0.4 · 600 = 240 MW — the floor follows
+    the INVESTED capacity.  (``capacity_min_coeff`` no longer scales the
+    unit floor; this test used to lower it with 0.8 on the output.)"""
     dip = "t0010"
     step = _solve(tmp_path_factory, alt="mincoef_invest",
                   base_chain=PLANT_CHAIN + ["coal_min_load"],
@@ -312,8 +313,7 @@ def test_min_coeff_floor_scales_with_invested_capacity(tmp_path_factory):
                       ["node", "west", "inflow",
                        _time_map({dip: -100.0}, -WEST)],
                       ["unit", PLANT, "startup_cost", _b64(1.0e6, "float")],
-                      ["unit__outputNode", [PLANT, "west"],
-                       "capacity_min_coeff", _b64(0.8, "float")]])
+                      ["unit", PLANT, "min_load", _b64(0.4, "float")]])
     built = _invested(step, PLANT)
     assert built == pytest.approx(WEST, rel=1e-6)
     t = (step.solution.value("v_flow")
@@ -321,7 +321,7 @@ def test_min_coeff_floor_scales_with_invested_capacity(tmp_path_factory):
                        for c in ("p", "source", "sink", "t"))
          .filter((pl.col("p") == PLANT) & (pl.col("sink") == "west")))
     dip_flow = float(t.filter(pl.col("t") == dip)["value"][0])
-    assert dip_flow == pytest.approx(0.5 * 0.8 * built, rel=1e-6)
+    assert dip_flow == pytest.approx(0.4 * built, rel=1e-6)
 
 
 # ── ramp limits scale with coefficient and invested capacity ────────────

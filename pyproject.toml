@@ -64,7 +64,10 @@ dependencies = [
     # 3.7.0 adds Solution.solve_diagnostics(), which the cascade solve-acceptance
     # path (engine_polars/_solve_acceptance.py) calls to decide whether a
     # HiGHS-uncertified solve is usable — required, or that call AttributeErrors.
-    "polar-high>=3.7.0",
+    # 3.8.0 adds per-element variable bounds (Param-valued ``upper``), which
+    # the indirect-unit input-arc limit (input_share_max) uses on
+    # constant-capacity units.
+    "polar-high>=3.8.0",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older

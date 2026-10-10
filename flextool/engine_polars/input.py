@@ -507,6 +507,7 @@ class FlexData:
     process_source_sink_uncapped: pl.DataFrame | None = None  # (p, source, sink) — conversion_flow_coeff = 0 arcs: outside every per-edge capacity / ramp / min-load constraint
     p_process_sink_max_capacity_coef: Param | None = None    # (p, sink) — unit__outputNode.capacity_max_coeff (explicit rows; default 1.0): ramp / maxFlow_online multiplier
     p_process_source_input_share_max: Param | None = None  # (p, source) — unit__inputNode.input_share_max (explicit rows; default 1.0): source-side ramp multiplier (non-indirect arcs)
+    p_process_source_input_share_min: Param | None = None  # (p, source) — unit__inputNode.input_share_min (explicit rows; default 0): minInputShare mixing minimum of indirect units
     p_slope: Param | None = None                 # (p, d, t)
     p_commodity_price: Param | None = None       # (c, d, t)
     pd_neg_cap: pl.DataFrame | None = None       # set: (p, d) where existing<0 AND unitsize<0
@@ -642,7 +643,7 @@ class FlexData:
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
     p_min_load: Param | None = None                          # (p,)
-    p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: minFlow_minload floor multiplier
+    p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: optional per-output floor (minFlow_output_floor), default 0
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
     pdt_uptime_set: pl.DataFrame | None = None               # (p, d, t) — minimum_uptime constraint domain

@@ -2627,6 +2627,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                           v_invest_p if has_invest_p else None,
                           v_divest_p if has_divest_p else None)
 
+    # Unit output floors: per-unit minimum load (once per unit, on the sum
+    # of its outputs), optional per-output floors, and the rule that
+    # downward reserve cannot take a unit below its floor.
+    if has_proc:
+        _online_specs = []
+        if has_online_lin:
+            _online_specs.append(("linear", p_olin_idx,
+                                  d.process_online_linear, v_online_lin))
+        if has_online_int:
+            _online_specs.append(("integer", p_oint_idx,
+                                  d.process_online_integer, v_online_int))
+        _add_unit_floors(m, d, v_flow, _online_specs,
+                         reserve_vars.get("v_reserve"))
+
     _build_prof("before:ramp_limits")
     # ─── Ramp limits ──────────────────────────────────────────────────────
     if has_ramp:
@@ -3058,6 +3072,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                                               d.process_output_flows),
                                        over=("source","sink"))},
         )
+
+        # minInputShare — unit__inputNode.input_share_min (mixing minimum
+        # on the unit's current input; see :func:`_add_min_input_share`).
+        _add_min_input_share(m, d, v_flow)
 
     _build_prof("before:co2_cap_period")
     # ─── CO2 cap (period level) ───────────────────────────────────────────
@@ -4694,8 +4712,8 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                        v_online, v_startup, v_shutdown,
                        v_invest_p=None, v_divest_p=None) -> None:
     """Emit maxOnline / maxStartup / maxShutdown / online__startup /
-    online__shutdown / maxFlow_online / minFlow_minload for one
-    UC class (``kind`` in {"linear", "integer"}).  Constraint names
+    online__shutdown / maxFlow_online / maxOutputSum_online and the
+    minimum up/down-time rows for one UC class (``kind`` in {"linear", "integer"}).  Constraint names
     are suffixed with ``_<kind>`` so linear+integer scenarios produce
     distinct rows in the LP."""
     sfx = f"_{kind}"
@@ -4837,33 +4855,9 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                                                   over=("source", "sink"))},
                            rhs_terms={"online": sum_online_rhs})
 
-    # minFlow_minload: Σ_sinks v_flow >= v_online * min_load
-    if d.process_minload is not None and d.process_minload.height > 0:
-        pss_minload = (d.process_source_sink
-                       .join(online_set, on="p", how="inner")
-                       .join(d.process_minload, on="p", how="inner"))
-        # conversion_flow_coeff = 0 edges are outside every min-load
-        # constraint (neither a row nor part of the summed flow).
-        pss_minload = _drop_uncapped(d, pss_minload)
-        if pss_minload.height > 0:
-            over_minload = pss_minload.join(d.dt, how="cross")
-            sum_flow = Sum(Where(v_flow, pss_minload), over=("sink",))
-            min_load_floor = (Where(v_online, d.process_minload)
-                              * d.p_min_load)
-            # Per-output-arc min_capacity_coefficient scales the floor
-            # (mod L3075: v_online·min_load·min_cap_coef[p,sink]).  Densify
-            # over the constraint's (p,sink) pairs, filling the 1.0 default,
-            # so a unit with no authored coefficient keeps its full floor
-            # instead of being inner-join-dropped to 0 (the availability-bug
-            # hazard).  Default 1.0 ⇒ no-op when unauthored (parity-clean).
-            if d.p_process_sink_min_capacity_coef is not None:
-                min_load_floor = min_load_floor * _coef_factor(
-                    pss_minload, d.p_process_sink_min_capacity_coef,
-                    ["p", "sink"])
-            m.add_cstr(f"minFlow_minload{sfx}",
-                       over=over_minload, sense=">=",
-                       lhs_terms={"flow_sum": sum_flow},
-                       rhs_terms={"floor":    min_load_floor})
+    # minFlow_minload / minFlow_output_floor are emitted once for both UC
+    # classes by :func:`_add_unit_floors` (they share the downward-reserve
+    # headroom rows with the non-online units).
 
     # minimum_uptime: v_online[p,d,t] >= Σ v_startup[p, d_back, t_back] over
     # uptime_lookback rows.  Per-class (linear/integer) restriction is
@@ -4932,6 +4926,548 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                            over=dn_idx, sense="<=",
                            lhs_terms=lhs_dn,
                            rhs_terms={"existing":     d.p_process_existing_count})
+
+
+# ─── Unit output floors (min load, per-output floors, reserve headroom) ──
+#
+# A unit's OUTPUT MEASURE is the set of arcs that define its capacity
+# (``unit_measured_arcs``): the ``conversion_flow_coeff ≠ 0`` output arcs of
+# an indirect unit (the ``maxOutputSum`` arcs) or the single capped arc of a
+# direct unit.  Three families of ``≥`` rows keep the unit's flow above a
+# floor that already accounts for the downward reserve it offers:
+#
+#   minFlow_minload_<kind>     (p, d, t)            online units with min_load
+#       Σ_{A_p} v_flow  ≥  v_online · min_load  +  Rdn_p
+#   minFlow_output_floor_<kind> (p, p, k, d, t)     multi-output units,
+#       v_flow[p,p,k]   ≥  v_online · min_load · capacity_min_coeff_k + Rdn_k
+#                                                   (capacity_min_coeff_k > 0)
+#   minFlow_reserve            (p, d, t)            any other unit with a
+#       Σ_{A_p} v_flow  ≥  Rdn_p                    reducing reserve on A_p
+#   minFlow_reserve_arc        (p, s, k, d, t)      reducing reserve on an
+#       v_flow[a]       ≥  Rdn_a                    arc of a multi-output
+#                                                   unit or outside A_p
+#
+# ``Rdn`` is the reserve that REDUCES the arc: ``down`` at the node the unit
+# delivers into (``n = sink``) and ``up`` at the node the unit consumes
+# from (``n = source``: a consumption cut).  It is expressed in the arc's
+# flow units: ``v_reserve`` is node MW / unitsize (the ``reserveBalance``
+# convention), so a sink-side reserve and a source-side reserve on an arc
+# whose ``v_flow`` IS the input (an indirect unit's input arc, a sink-less
+# unit) enter with factor 1; a source-side reserve on a direct
+# input→output unit (``v_flow`` is the output, the node draw is
+# ``v_flow · slope``) enters with factor ``1 / slope``.
+#
+# Connections are excluded (a connection offers downward reserve at a node
+# both by cutting import and by raising export).  An indirect unit cutting
+# its INPUT (``up`` reserve at an input node) gets only the zero floor on
+# that input arc (``minFlow_reserve_arc``): expressing "the input cut takes
+# the outputs below min load" would need the conversion mix.  Combined with
+# a downward reserve on its outputs such a unit can therefore end up below
+# its minimum load.
+
+
+def unit_measured_arcs(d) -> "pl.DataFrame | None":
+    """The output-measure arcs ``A_p`` (``p, source, sink``) of every unit.
+
+    * indirect units: their ``conversion_flow_coeff ≠ 0`` output arcs
+      (:func:`_indirect_sum_arcs` — the ``maxOutputSum`` arc set);
+    * direct units: their ``process_source_sink`` arcs minus the
+      ``conversion_flow_coeff = 0`` (uncapped) ones — a single arc.
+
+    Units are ``process_unit`` when populated; hand-built FlexData without
+    it fall back to ``process_minload`` (min_load exists only on units).
+    ``None`` when empty.
+    """
+    pss = getattr(d, "process_source_sink", None)
+    if pss is None or pss.height == 0:
+        return None
+    units = getattr(d, "process_unit", None)
+    if units is None or units.height == 0:
+        units = getattr(d, "process_minload", None)
+    if units is None or units.height == 0:
+        return None
+    keys = ["p", "source", "sink"]
+    unit_p = _utf8_keys(units.lazy().select("p"), ["p"]).select("_p").unique()
+    pss_u = (_utf8_keys(pss.lazy().select(keys), ["p"])
+             .join(unit_p, on="_p", how="semi")
+             .select(keys).collect())
+    if pss_u.height == 0:
+        return None
+    indirect = getattr(d, "process_indirect", None)
+    parts = []
+    if indirect is not None and indirect.height > 0:
+        ind_p = (_utf8_keys(indirect.lazy().select("p"), ["p"])
+                 .select("_p").unique())
+        direct = (_utf8_keys(pss_u.lazy(), ["p"])
+                  .join(ind_p, on="_p", how="anti")
+                  .select(keys).collect())
+        sum_arcs = _indirect_sum_arcs(d)
+        if sum_arcs is not None:
+            parts.append(
+                _utf8_keys(pss_u.lazy(), keys)
+                .join(_utf8_keys(sum_arcs.lazy(), keys)
+                      .select("_p", "_source", "_sink"),
+                      on=["_p", "_source", "_sink"], how="semi")
+                .select(keys).collect())
+    else:
+        direct = pss_u
+    direct = _drop_uncapped(d, direct)
+    if direct.height > 0:
+        parts.append(direct)
+    if not parts:
+        return None
+    out = (pl.concat(parts) if len(parts) > 1 else parts[0]).unique(
+        maintain_order=True)
+    return out if out.height > 0 else None
+
+
+def _reducing_reserve_selectors(d, arcs: "pl.DataFrame"):
+    """Selectors of the reserves that reduce the unit arcs ``arcs``.
+
+    Returns ``(down_sink, up_src_flow, up_src_eff)`` — frames keyed
+    ``(p, r, ud, sink)`` / ``(p, r, ud, source)`` / ``(p, r, ud, source)``
+    (``None`` when empty):
+
+    * ``down_sink``: ``down`` reserve at the arc's sink node;
+    * ``up_src_flow``: ``up`` reserve at the source node of an arc whose
+      ``v_flow`` is the input itself (``sink == p``) — factor 1;
+    * ``up_src_eff``: ``up`` reserve at the source node of a direct
+      input→output arc (``source ≠ p ≠ sink``) — factor ``1 / slope``.
+
+    Only ``process_reserve_upDown_node_active`` rows that also index the
+    ``v_reserve`` domain (``prundt``) are kept.
+    """
+    pruna = getattr(d, "process_reserve_upDown_node_active", None)
+    prundt = getattr(d, "prundt", None)
+    if (pruna is None or pruna.height == 0 or prundt is None
+            or prundt.height == 0 or arcs is None or arcs.height == 0):
+        return None, None, None
+    rk = ["p", "r", "ud", "n"]
+    act = (_utf8_keys(pruna.lazy().select(rk), rk)
+           .join(_utf8_keys(prundt.lazy().select(rk), rk)
+                 .select([f"_{k}" for k in rk]).unique(),
+                 on=[f"_{k}" for k in rk], how="semi"))
+    a = (_utf8_keys(arcs.lazy().select("p", "source", "sink"),
+                    ["p", "source", "sink"])
+         .select("_p", "_source", "_sink"))
+
+    def _sel(ud: str, side: str, arc_filter):
+        cand = (act.filter(pl.col("ud").cast(pl.Utf8) == ud)
+                .join(a.filter(arc_filter)
+                      .select("_p", pl.col(f"_{side}").alias("_n"))
+                      .unique(),
+                      on=["_p", "_n"], how="semi")
+                .select("p", "r", "ud", "n")
+                .collect())
+        if cand.height == 0:
+            return None
+        return (cand.pipe(rename_to_axis, {"n": side})
+                .unique(maintain_order=True))
+
+    down_sink = _sel("down", "sink", pl.col("_sink") != pl.col("_p"))
+    up_src_flow = _sel("up", "source",
+                       (pl.col("_source") != pl.col("_p"))
+                       & (pl.col("_sink") == pl.col("_p")))
+    up_src_eff = _sel("up", "source",
+                      (pl.col("_source") != pl.col("_p"))
+                      & (pl.col("_sink") != pl.col("_p")))
+    return down_sink, up_src_flow, up_src_eff
+
+
+def _inverse_slope(d, procs: "pl.DataFrame") -> "Param":
+    """``1 / slope`` over ``procs × dt`` (default slope 1).
+
+    Converts a source-side reserve (node MW) into the output flow of a
+    direct input→output unit.  NOTE: it mirrors the engine's
+    ``reserveBalance`` convention, which counts every ``v_reserve`` as MW
+    at the reserve node without the ``.mod``'s slope factor for
+    source-side reserves of direct units (see the V1 note in
+    ``_reserve.add_constraints``).  If that factor is added there, this
+    conversion must change with it (tripwire test:
+    ``test_down_reserve_floor.py::test_direct_unit_input_side_up_reserve``).
+    """
+    base = procs.select("p").unique().join(d.dt, how="cross")
+    base_lf = base.lazy().with_columns(pl.col("p").cast(pl.Utf8).alias("_k"))
+    slope = getattr(d, "p_slope", None)
+    if slope is not None:
+        slope_lf = (promote_param_to_dt(slope, d.dt)
+                    .with_columns(pl.col("p").cast(pl.Utf8).alias("_k"))
+                    .select("_k", "d", "t", "value"))
+        base_lf = base_lf.join(slope_lf, on=["_k", "d", "t"], how="left")
+    else:
+        base_lf = base_lf.with_columns(pl.lit(None, pl.Float64).alias("value"))
+    frame = (base_lf
+             .with_columns(pl.col("value").fill_null(1.0))
+             .select("p", "d", "t", value=1.0 / pl.col("value"))
+             .collect())
+    return Param(("p", "d", "t"), frame)
+
+
+def _reserve_views(v_reserve):
+    """``v_reserve`` with its node axis relabelled to ``sink`` / ``source``
+    (same LP columns, same Var name for autoscale)."""
+    at_sink = Var(name=v_reserve.name,
+                  dims=("p", "r", "ud", "sink", "d", "t"),
+                  frame=v_reserve.frame.pipe(rename_to_axis, {"n": "sink"}),
+                  lower=v_reserve.lower, upper=v_reserve.upper)
+    at_source = Var(name=v_reserve.name,
+                    dims=("p", "r", "ud", "source", "d", "t"),
+                    frame=v_reserve.frame.pipe(rename_to_axis,
+                                               {"n": "source"}),
+                    lower=v_reserve.lower, upper=v_reserve.upper)
+    return at_sink, at_source
+
+
+def _rdn_terms(d, views, selectors, *, per_arc: bool) -> dict:
+    """The reducing-reserve RHS terms for a floor row.
+
+    ``per_arc=False`` sums over every reserve and node of the selected
+    arcs (leaves ``(p, d, t)``); ``per_arc=True`` keeps the node axis
+    (leaves ``(p, sink, d, t)`` / ``(p, source, d, t)``) for rows over
+    ``(p, source, sink, d, t)``.
+    """
+    at_sink, at_source = views
+    down_sink, up_src_flow, up_src_eff = selectors
+    terms: dict = {}
+    if down_sink is not None:
+        over = ("r", "ud") if per_arc else ("r", "ud", "sink")
+        terms["reserve_down_sink"] = Sum(Where(at_sink, down_sink), over=over)
+    if up_src_flow is not None:
+        over = ("r", "ud") if per_arc else ("r", "ud", "source")
+        terms["reserve_up_source"] = Sum(Where(at_source, up_src_flow),
+                                         over=over)
+    if up_src_eff is not None:
+        over = ("r", "ud") if per_arc else ("r", "ud", "source")
+        terms["reserve_up_source_eff"] = Sum(
+            Where(at_source, up_src_eff) * _inverse_slope(d, up_src_eff),
+            over=over)
+    return terms
+
+
+def _restrict_selectors(selectors, arcs: "pl.DataFrame"):
+    """Keep the selector rows whose ``(p, node)`` belongs to ``arcs``."""
+    out = []
+    a = _utf8_keys(arcs.lazy().select("p", "source", "sink"),
+                   ["p", "source", "sink"])
+    for sel in selectors:
+        if sel is None:
+            out.append(None)
+            continue
+        side = "sink" if "sink" in sel.columns else "source"
+        keep = (_utf8_keys(sel.lazy(), ["p", side])
+                .join(a.select("_p", f"_{side}").unique(),
+                      on=["_p", f"_{side}"], how="semi")
+                .select(sel.columns).collect())
+        out.append(keep if keep.height > 0 else None)
+    return tuple(out)
+
+
+def _selector_arcs(selectors, arcs: "pl.DataFrame") -> "pl.DataFrame":
+    """The ``arcs`` rows that carry at least one selected reserve."""
+    keys = ["p", "source", "sink"]
+    a = _utf8_keys(arcs.lazy().select(keys), keys)
+    hit = []
+    for sel in selectors:
+        if sel is None:
+            continue
+        side = "sink" if "sink" in sel.columns else "source"
+        s = (_utf8_keys(sel.lazy().select("p", side), ["p", side])
+             .select("_p", f"_{side}").unique())
+        hit.append(a.join(s, on=["_p", f"_{side}"], how="semi")
+                   .select(keys).collect())
+    if not hit:
+        return arcs.head(0).select(keys)
+    return pl.concat(hit).unique(maintain_order=True)
+
+
+def _assert_minload_units_have_outputs(d, on_ml: "pl.LazyFrame",
+                                       a_on: "pl.DataFrame") -> None:
+    """Every online min-load INDIRECT unit must have an output arc.
+
+    An indirect unit whose outputs all carry ``conversion_flow_coeff = 0``
+    has no output measure and gets no floor (the validator warns once per
+    scenario).  A sink-less indirect unit (≥ 2 inputs, no output) cannot
+    reach this point today (``_max_flow_rhs`` raises for it); if that ever
+    changes it must not silently lose its floor, hence the internal error.
+    """
+    indirect = getattr(d, "process_indirect", None)
+    if indirect is None or indirect.height == 0:
+        return
+    missing = (on_ml
+               .join(_utf8_keys(indirect.lazy().select("p"), ["p"])
+                     .select("_p").unique(), on="_p", how="semi")
+               .join(_utf8_keys(a_on.lazy().select("p"), ["p"])
+                     .select("_p").unique(), on="_p", how="anti")
+               .collect())
+    if missing.height == 0:
+        return
+    pss = _utf8_keys(d.process_source_sink.lazy(), ["p", "source"])
+    has_out = (pss.filter(pl.col("_source") == pl.col("_p"))
+               .select("_p").unique().collect())
+    sinkless = missing.join(has_out, on="_p", how="anti")
+    if sinkless.height > 0:
+        raise AssertionError(
+            "internal error: online min-load indirect unit(s) without an "
+            "output arc have no minimum-load floor: "
+            + ", ".join(sinkless["_p"].to_list()))
+
+
+def _add_unit_floors(m, d, v_flow, online_specs: list,
+                     v_reserve=None) -> None:
+    """Emit the unit floor rows (see the block comment above).
+
+    ``online_specs``: ``[(kind, p_idx, online_set, v_online), …]`` for the
+    linear / integer UC classes present.  ``v_reserve``: the reserve
+    variable (``None`` without reserves).
+    """
+    arcs = unit_measured_arcs(d)
+    if arcs is None:
+        return
+    keys = ["p", "source", "sink"]
+    a_count = arcs.group_by("p", maintain_order=True).agg(
+        pl.len().alias("__n"))
+    multi_arcs = (arcs.join(a_count.filter(pl.col("__n") >= 2).select("p"),
+                            on="p", how="semi"))
+
+    # ── reducing-reserve selectors (units only; connections excluded) ──
+    all_unit_arcs = None
+    sel_meas = (None, None, None)
+    sel_all = (None, None, None)
+    views = None
+    if v_reserve is not None:
+        units = getattr(d, "process_unit", None)
+        pss = d.process_source_sink
+        if units is not None and units.height > 0:
+            all_unit_arcs = (_utf8_keys(pss.lazy().select(keys), ["p"])
+                             .join(_utf8_keys(units.lazy().select("p"), ["p"])
+                                   .select("_p").unique(),
+                                   on="_p", how="semi")
+                             .select(keys).collect())
+            sel_all = _reducing_reserve_selectors(d, all_unit_arcs)
+            if any(s is not None for s in sel_all):
+                sel_meas = _restrict_selectors(sel_all, arcs)
+                views = _reserve_views(v_reserve)
+
+    # ── per-unit minimum load + per-output floors (online units) ───────
+    minload = getattr(d, "process_minload", None)
+    minload_rows: list = []
+    floor_rows: list = []
+    if (minload is not None and minload.height > 0
+            and getattr(d, "p_min_load", None) is not None):
+        cmin = getattr(d, "p_process_sink_min_capacity_coef", None)
+        cmin_arcs = None
+        if cmin is not None and multi_arcs.height > 0:
+            cmin_lf = (cmin.frame.lazy()
+                       .with_columns(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                     pl.col("sink").cast(pl.Utf8)
+                                     .alias("_sink"))
+                       .select("_p", "_sink", "value"))
+            cmin_arcs = (_utf8_keys(multi_arcs.lazy(), keys)
+                         .join(cmin_lf, on=["_p", "_sink"], how="inner")
+                         .select(*keys, "value").collect())
+            bad = cmin_arcs.filter((pl.col("value") < 0.0)
+                                   | (pl.col("value") > 1.0))
+            if bad.height > 0:
+                raise FlexToolConfigError(
+                    "capacity_min_coeff must lie in [0, 1]; found "
+                    + ", ".join(f"{r['p']}->{r['sink']}: {r['value']}"
+                                for r in bad.iter_rows(named=True)))
+            cmin_arcs = cmin_arcs.filter(pl.col("value") > 0.0)
+            if cmin_arcs.height == 0:
+                cmin_arcs = None
+        for kind, p_idx, online_set, v_online in online_specs:
+            sfx = f"_{kind}"
+            on_ml = (_utf8_keys(online_set.lazy().select("p"), ["p"])
+                     .join(_utf8_keys(minload.lazy().select("p"), ["p"])
+                           .select("_p").unique(), on="_p", how="semi")
+                     .select("_p").unique())
+            a_on = (_utf8_keys(arcs.lazy(), ["p"])
+                    .join(on_ml, on="_p", how="semi")
+                    .select(keys).collect())
+            _assert_minload_units_have_outputs(d, on_ml, a_on)
+            if a_on.height == 0:
+                continue
+            floor = Where(v_online, d.process_minload) * d.p_min_load
+            over = (a_on.select("p").unique(maintain_order=True)
+                    .join(d.dt, how="cross")
+                    .join(p_idx.select("p", "d", "t"),
+                          on=["p", "d", "t"], how="semi"))
+            if over.height > 0:
+                rhs: dict = {"floor": floor}
+                if views is not None:
+                    rhs.update(_rdn_terms(
+                        d, views, _restrict_selectors(sel_meas, a_on),
+                        per_arc=False))
+                m.add_cstr(f"minFlow_minload{sfx}", over=over, sense=">=",
+                           lhs_terms={"flow_sum": Sum(Where(v_flow, a_on),
+                                                      over=("source",
+                                                            "sink"))},
+                           rhs_terms=rhs)
+                minload_rows.append(over.select("p", "d", "t"))
+            if cmin_arcs is None:
+                continue
+            f_arcs = (_utf8_keys(cmin_arcs.lazy(), ["p"])
+                      .join(on_ml, on="_p", how="semi")
+                      .select(*keys, "value").collect())
+            if f_arcs.height == 0:
+                continue
+            f_over = (f_arcs.select(keys)
+                      .join(d.dt, how="cross")
+                      .join(p_idx.select("p", "d", "t"),
+                            on=["p", "d", "t"], how="semi"))
+            if f_over.height == 0:
+                continue
+            coef = Param(("p", "sink"), f_arcs.select("p", "sink", "value"))
+            rhs = {"floor": floor * coef}
+            if views is not None:
+                rhs.update(_rdn_terms(
+                    d, views,
+                    _restrict_selectors(sel_meas, f_arcs.select(keys)),
+                    per_arc=True))
+            m.add_cstr(f"minFlow_output_floor{sfx}", over=f_over,
+                       sense=">=", lhs_terms={"flow": v_flow},
+                       rhs_terms=rhs)
+            floor_rows.append(f_over)
+
+    if views is None:
+        return
+    res_pdt = (d.prundt.select("p", "d", "t").unique(maintain_order=True))
+
+    # ── minFlow_reserve: units with a reducing reserve on A_p, (p, d, t)
+    #    not covered by a min-load row ──────────────────────────────────
+    meas_hit = _selector_arcs(sel_meas, arcs)
+    if meas_hit.height > 0:
+        a_res = arcs.join(meas_hit.select("p").unique(), on="p", how="semi")
+        over = (a_res.select("p").unique(maintain_order=True)
+                .join(d.dt, how="cross")
+                .join(res_pdt, on=["p", "d", "t"], how="semi"))
+        if minload_rows:
+            over = over.join(pl.concat(minload_rows).unique(),
+                             on=["p", "d", "t"], how="anti")
+        if over.height > 0:
+            m.add_cstr("minFlow_reserve", over=over, sense=">=",
+                       lhs_terms={"flow_sum": Sum(Where(v_flow, a_res),
+                                                  over=("source", "sink"))},
+                       rhs_terms=_rdn_terms(d, views, sel_meas,
+                                            per_arc=False))
+
+    # ── minFlow_reserve_arc: per-arc zero floors where the per-unit row
+    #    cannot see the arc (outside A_p) or the arc is one of several ──
+    all_hit = _selector_arcs(sel_all, all_unit_arcs)
+    if all_hit.height == 0:
+        return
+    outside = (_utf8_keys(all_hit.lazy(), keys)
+               .join(_utf8_keys(arcs.lazy(), keys)
+                     .select("_p", "_source", "_sink"),
+                     on=["_p", "_source", "_sink"], how="anti")
+               .select(keys).collect())
+    in_multi = (_utf8_keys(all_hit.lazy(), keys)
+                .join(_utf8_keys(multi_arcs.lazy(), keys)
+                      .select("_p", "_source", "_sink"),
+                      on=["_p", "_source", "_sink"], how="semi")
+                .select(keys).collect())
+    arc_rows = pl.concat([outside, in_multi]).unique(maintain_order=True)
+    if arc_rows.height == 0:
+        return
+    over = (arc_rows.join(d.dt, how="cross")
+            .join(res_pdt, on=["p", "d", "t"], how="semi"))
+    if floor_rows:
+        over = over.join(pl.concat(floor_rows).unique(),
+                         on=[*keys, "d", "t"], how="anti")
+    if over.height == 0:
+        return
+    m.add_cstr("minFlow_reserve_arc", over=over, sense=">=",
+               lhs_terms={"flow": v_flow},
+               rhs_terms=_rdn_terms(d, views,
+                                    _restrict_selectors(sel_all, arc_rows),
+                                    per_arc=True))
+
+
+def _add_min_input_share(m, d, v_flow) -> None:
+    """``minInputShare`` — ``unit__inputNode.input_share_min``.
+
+    While the unit is running, input ``s`` supplies at least
+    ``input_share_min_s`` of the unit's CURRENT input energy (flow ×
+    ``conversion_flow_coeff``)::
+
+        conv_s · v_flow[p, s, p]  ≥  share_s · Σ_{s'} conv_{s'} · v_flow[p, s', p]
+
+    per ``(p, s, p, d, t)`` for indirect units with ≥ 2 inputs of
+    ``conversion_flow_coeff ≠ 0`` and ``share_s > 0``.  The row is
+    homogeneous: with no input (the unit is not running) it reads
+    ``0 ≥ 0``, so it needs no online variable and holds for units without
+    one.  ``v_flow`` is per unitsize on every input of ``p``, so the
+    unitsize cancels.  The ranges are checked once per scenario by
+    ``input_derivation._validators.validate_unit_input_shares``; the
+    guard below keeps hand-built FlexData honest.
+    """
+    share = getattr(d, "p_process_source_input_share_min", None)
+    pif = getattr(d, "process_input_flows", None)
+    indirect = getattr(d, "process_indirect", None)
+    pss = getattr(d, "process_source_sink", None)
+    if (share is None or share.frame.height == 0 or pif is None
+            or pif.height == 0 or indirect is None or indirect.height == 0
+            or pss is None or pss.height == 0):
+        return
+    keys = ["p", "source", "sink"]
+    in_arcs = (_utf8_keys(pif.lazy().select(keys), keys)
+               .join(_utf8_keys(indirect.lazy().select("p"), ["p"])
+                     .select("_p").unique(), on="_p", how="semi")
+               .join(_utf8_keys(pss.lazy().select(keys), keys)
+                     .select("_p", "_source", "_sink"),
+                     on=["_p", "_source", "_sink"], how="semi"))
+    n_in = in_arcs.group_by("_p").agg(pl.len().alias("__n"))
+    in_arcs = (in_arcs.join(n_in.filter(pl.col("__n") >= 2).select("_p"),
+                            on="_p", how="semi"))
+    share_lf = (share.frame.lazy()
+                .with_columns(pl.col("p").cast(pl.Utf8).alias("_p"),
+                              pl.col("source").cast(pl.Utf8).alias("_source"))
+                .select("_p", "_source", pl.col("value").cast(pl.Float64)))
+    rows = (in_arcs.join(share_lf, on=["_p", "_source"], how="inner")
+            .filter(pl.col("value") > 0.0)
+            .select(*keys, "value").collect())
+    if rows.height == 0:
+        return
+    bad = rows.filter(pl.col("value") > 1.0)
+    sums = (rows.group_by("p").agg(pl.col("value").sum().alias("s"))
+            .filter(pl.col("s") > 1.0 + 1e-9))
+    if bad.height > 0 or sums.height > 0:
+        raise FlexToolConfigError(
+            "input_share_min must lie in [0, 1] and sum to at most 1 per "
+            "unit; offending: "
+            + ", ".join([f"{r['p']}<-{r['source']}: {r['value']}"
+                         for r in bad.iter_rows(named=True)]
+                        + [f"{r['p']}: sum {r['s']}"
+                           for r in sums.iter_rows(named=True)]))
+    procs = rows.select("p").unique()
+    arcs_all = (in_arcs.join(_utf8_keys(procs.lazy(), ["p"]).select("_p"),
+                             on="_p", how="semi")
+                .select(keys).collect())
+    conv = getattr(d, "p_process_source_conversion_flow_coeff", None)
+    expr = v_flow
+    if conv is not None:
+        conv_c = _coef_factor(arcs_all, conv, ["p", "source"])
+        neg = conv_c.frame.filter(pl.col("value") < 0.0)
+        if neg.height > 0:
+            raise FlexToolConfigError(
+                "input_share_min is not defined for a unit with a negative "
+                "input conversion_flow_coeff: "
+                + ", ".join(f"{r['p']}<-{r['source']}"
+                            for r in neg.iter_rows(named=True)))
+        expr = v_flow * conv_c
+    over = (rows.select(keys)
+            .join(d.dt, how="cross"))
+    pidt = getattr(d, "process_indirect_dt", None)
+    if pidt is not None and pidt.height > 0:
+        over = over.join(pidt.select("p", "d", "t"), on=["p", "d", "t"],
+                         how="semi")
+    if over.height == 0:
+        return
+    share_p = Param(("p", "source"), rows.select("p", "source", "value"))
+    m.add_cstr("minInputShare", over=over, sense=">=",
+               lhs_terms={"own": Where(expr, rows.select(keys))},
+               rhs_terms={"total": Sum(Where(expr, arcs_all),
+                                       over=("source",)) * share_p})
 
 
 def _coef_factor(pairs: "pl.DataFrame", coef: "Param", keys: list,

@@ -1256,12 +1256,12 @@ def p_ramp_speed_down_source_from_source(source: "InputSource") -> Param | None:
 def p_process_sink_min_capacity_coef_from_source(source: "InputSource") -> Param | None:
     """``unit__outputNode.capacity_min_coeff`` → ``Param(("p", "sink"))``.
 
-    Default 1.0 (schema).  Per-output-arc multiplier on the
-    ``minFlow_minload`` floor (``v_online · min_load``), mirroring the
-    .mod's ``p_process_sink_min_capacity_coefficient`` (flextool.mod
-    L3075).  Explicit rows only, INCLUDING an authored ``0.0`` ("no floor
-    on this arc") — ``filter_zero=False`` keeps it; the consumer densifies
-    absent arcs to the 1.0 default.
+    Default 0 (schema).  Optional per-output floor of a multi-output unit:
+    ``v_flow[p, p, k] ≥ v_online · min_load · capacity_min_coeff_k``
+    (``minFlow_output_floor``), on top of the unit floor ``Σ outputs ≥
+    v_online · min_load`` which carries no coefficient.  Explicit rows
+    only (``filter_zero=False`` keeps an authored ``0.0``); absent arcs
+    mean no per-output floor.
     """
     return _p_side_scalar(source, "unit__outputNode", "capacity_min_coeff",
                           "sink", filter_zero=False)
@@ -1287,6 +1287,18 @@ def p_process_source_input_share_max_from_source(source: "InputSource") -> Param
     default.
     """
     return _p_side_scalar(source, "unit__inputNode", "input_share_max",
+                          "source", filter_zero=False)
+
+
+def p_process_source_input_share_min_from_source(source: "InputSource") -> Param | None:
+    """``unit__inputNode.input_share_min`` → ``Param(("p", "source"))``.
+
+    Smallest share of the unit's current input energy (flow ×
+    ``conversion_flow_coeff``) the input must supply while the unit runs
+    (``minInputShare``).  Default 0 (no minimum).  Explicit rows only,
+    including an authored ``0.0``.
+    """
+    return _p_side_scalar(source, "unit__inputNode", "input_share_min",
                           "source", filter_zero=False)
 
 
@@ -1942,8 +1954,8 @@ def apply_direct_params_a(source: "InputSource",
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
     flex_data.p_min_load = p_min_load_from_source(source)
-    # Per-output-arc min_capacity_coefficient — scales the minFlow_minload
-    # floor.  Assigned in pass 1a so it is present on the synthetic / rolling
+    # Per-output capacity_min_coeff — the optional per-output floor of
+    # multi-output units (minFlow_output_floor).  Assigned in pass 1a so it is present on the synthetic / rolling
     # sub-solve path too (passes 3-10 are skipped there).
     flex_data.p_process_sink_min_capacity_coef = (
         p_process_sink_min_capacity_coef_from_source(source))
@@ -1954,6 +1966,10 @@ def apply_direct_params_a(source: "InputSource",
         p_process_sink_max_capacity_coef_from_source(source))
     flex_data.p_process_source_input_share_max = (
         p_process_source_input_share_max_from_source(source))
+    # input_share_min — the minInputShare mixing minimum.  Pass 1a so the
+    # rolling / synthetic sub-solve path carries it too.
+    flex_data.p_process_source_input_share_min = (
+        p_process_source_input_share_min_from_source(source))
 
     # ─── Δ.4 second wave — connection scalars (DC power flow feature) ───
     # Δ.16 — preserve the CSV-loaded value when the source has no rows.

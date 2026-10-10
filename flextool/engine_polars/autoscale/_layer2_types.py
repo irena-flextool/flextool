@@ -409,8 +409,18 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine_polars/model.py _add_online_block
     # (maxOutputSum_online_<sfx>)
     "maxOutputSum_online": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3785 (minFlow_minload_<sfx>)
+    # model.py _add_unit_floors (minFlow_minload_<sfx>: per-unit floor)
     "minFlow_minload": CstrFamily(QuantityType.DIMENSIONLESS),
+    # model.py _add_unit_floors (minFlow_output_floor_<sfx>: per-output
+    # floor of a multi-output unit; unit-count flow units)
+    "minFlow_output_floor": CstrFamily(QuantityType.DIMENSIONLESS),
+    # model.py _add_unit_floors: downward-reserve headroom rows (zero
+    # floor) per unit / per arc; unit-count flow units
+    "minFlow_reserve": CstrFamily(QuantityType.DIMENSIONLESS),
+    "minFlow_reserve_arc": CstrFamily(QuantityType.DIMENSIONLESS),
+    # model.py _add_min_input_share: homogeneous input-mixing row
+    # (input_share_min) in unit-count flow units
+    "minInputShare": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3814 (minimum_uptime_<sfx>)
     "minimum_uptime": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3853 (minimum_downtime_<sfx>)

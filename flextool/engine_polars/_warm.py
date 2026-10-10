@@ -292,6 +292,9 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     # touch column bounds, so any diff must force a cold rebuild.
     "p_arc_max_cap_coef", "p_indirect_input_cap",
     "p_process_sink_max_capacity_coef", "p_process_source_input_share_max",
+    # Floors: diffs force a cold rebuild (an unlisted Param that differs
+    # between rolls would silently keep the previous roll's value).
+    "p_process_source_input_share_min", "p_process_sink_min_capacity_coef",
     "p_slope", "p_process_existing_count", "p_process_availability",
     "p_node_availability",
     # Profile Params — drive process_profile_* cstrs.
