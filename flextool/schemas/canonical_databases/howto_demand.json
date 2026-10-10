@@ -478,7 +478,7 @@
       "delay",
       null,
       null,
-      "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.",
+      "[hours] Not yet applied to connections (planned): setting it does not delay the flow, and it currently changes how the connection is modelled (its efficiency losses are dropped). Leave it empty and model a delayed flow with a unit. Intended meaning: a time delay between the input node and the output node, either a constant time difference in hours or a map of time differences (index: time difference in hours, value: weight; the weights should sum to 1).",
       "tech_advanced"
     ],
     [

@@ -26,6 +26,7 @@ from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import (
     _V70_CAPACITY_MAX_COEFF_DESCRIPTION,
     _V70_CAPACITY_MIN_COEFF_DESCRIPTION,
+    _V70_CONNECTION_DELAY_DESCRIPTION,
     _V70_INPUT_SHARE_MIN_DESCRIPTION,
     _V70_PENALTY_RESERVE_DESCRIPTION,
     _migrate_v70_capacity_coefficient_descriptions,
@@ -371,3 +372,21 @@ def test_penalty_reserve_default_restored(tmp_path: Path) -> None:
                 ("penalty_reserve", ("r", "up", "g"), "Base"): 123.0}
         finally:
             db.close()
+
+
+def test_current_fixture_connection_delay_description(tmp_path: Path) -> None:
+    """``connection.delay`` says it is not applied (the engine delays unit
+    flows only); ``unit.delay`` keeps its description."""
+    url = json_to_db(FIXTURES_DIR / "tests.json", tmp_path / "tests.sqlite")
+    migrate_database(url)
+    db = DatabaseMapping(url, create=False)
+    try:
+        db.fetch_all()
+        conn = db.get_parameter_definition_item(
+            entity_class_name="connection", name="delay")
+        assert conn["description"] == _V70_CONNECTION_DELAY_DESCRIPTION
+        unit = db.get_parameter_definition_item(
+            entity_class_name="unit", name="delay")
+        assert "Not yet applied" not in unit["description"]
+    finally:
+        db.close()

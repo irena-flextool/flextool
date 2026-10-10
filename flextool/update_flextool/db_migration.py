@@ -3829,6 +3829,15 @@ _V70_PENALTY_RESERVE_DESCRIPTION = (
     "reserve requirement of the group is soft). Constant. Default 5000 - "
     "applied to every reserve group that has no value of its own."
 )
+_V70_CONNECTION_DELAY_DESCRIPTION = (
+    "[hours] Not yet applied to connections (planned): setting it does not "
+    "delay the flow, and it currently changes how the connection is "
+    "modelled (its efficiency losses are dropped). Leave it empty and "
+    "model a delayed flow with a unit. Intended meaning: a time delay "
+    "between the input node and the output node, either a constant time "
+    "difference in hours or a map of time differences (index: time "
+    "difference in hours, value: weight; the weights should sum to 1)."
+)
 
 
 def _numeric_elements(parsed) -> list[float]:
@@ -3900,6 +3909,8 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
       ``reserveParam_defaults``; v56 cleared it because the 4.x engine read
       explicit values only, leaving the shortfall unpenalised).  The engine
       now applies the default to every reserve group without a value.
+    * ``connection.delay``: the description says it is not applied (the
+      engine delays unit flows only).
 
     Idempotent: a definition is renamed only when the old one exists and
     the new one does not; the input-side deletion, the v36-leftover
@@ -4012,6 +4023,13 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
             id=pen["id"], default_value=pen_val, default_type=pen_type,
             description=_V70_PENALTY_RESERVE_DESCRIPTION)
 
+    # ── connection.delay: not applied by the engine; say so ──
+    conn_delay = _pdef_or_none(db, "connection", "delay")
+    if conn_delay:
+        db.update_parameter_definition(
+            id=conn_delay["id"],
+            description=_V70_CONNECTION_DELAY_DESCRIPTION)
+
     _commit_step(db,
         "v70: capacity_max_coeff = 0 is a zero cap; uncapped edges are "
         "conversion_flow_coeff = 0; unit__inputNode.capacity_max_coeff -> "
@@ -4019,7 +4037,8 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
         "input_share_min (old values deleted, default 0); "
         "unit__outputNode.capacity_min_coeff is a per-output floor "
         "(default 0, out-of-range and v36-leftover values deleted); "
-        "reserve__upDown__group.penalty_reserve default 5000."
+        "reserve__upDown__group.penalty_reserve default 5000; "
+        "connection.delay described as not applied."
     )
 
 

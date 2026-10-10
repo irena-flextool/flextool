@@ -777,7 +777,7 @@ Note: The results are the share of curtailment in relation to the inflow (demand
 ## How to create a delay between two nodes
 **(examples.sqlite scenario: water_pump_delayed)**
 
-Sometimes a flow between two nodes needs to be delayed, for example water flow in river systems can take hours between two power plants. This can be approximated using `delay` parameter available for units (and unidirectional connections). Delay can be expressed using a constant value (hours) or as a weighted map of time delays (index: time delay in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Delay requires that the time resolutions in the model are always integer multiples of these time differences.
+Sometimes a flow between two nodes needs to be delayed, for example water flow in river systems can take hours between two power plants. This can be approximated using the `delay` parameter of units (connections do not apply `delay` yet, so use a unit for a delayed flow). Delay can be expressed using a constant value (hours) or as a weighted map of time delays (index: time delay in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Delay requires that the time resolutions in the model are always integer multiples of these time differences.
 
 ![Delay](./img/concept/delay.png)
 

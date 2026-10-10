@@ -360,7 +360,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 
 - `existing` - [MW] Existing capacity. Constant or period.
 - `efficiency` - [factor, typically between 0-1] Efficiency of a connection. Constant or time.
-- `delay` - [hours] A time delay between the input node and the output node of the connection. Works only with `transfer_method = no_losses_no_variable_cost`.
+- `delay` - [hours] Not yet applied to connections (planned). Setting it does not delay the flow (it arrives in the same time step), and it currently changes how the connection is modelled (its efficiency losses are dropped), so leave it empty. To model a delayed flow between two nodes, use a unit with `delay` instead.
 - `startup_cost` - [CUR/MW] Cost of starting up one MW of virtual capacity (used when `startup_method` activates online variables on the connection).
 - `reactance` - [p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the enclosing `group__node` has `transfer_method = dc_power_flow_with_angles`.
 - `constraint_invested_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build capacity `v_invest[e, d]` on the left side of the user-defined constraint. Not multiplied by unitsize. Renamed from `constraint_capacity_coefficient`; the old expression summed `v_invest` once per active investment period, giving incorrect results in multi-period models — this one emits just `v_invest[e, d]`.

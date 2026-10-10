@@ -71,6 +71,13 @@
   reserve group without a value; authored values are unchanged. Models with
   such groups now procure the reserve (or pay for the shortfall), which can
   raise the objective.
+- **Docs: connection `delay` is not applied.** The reference said it works
+  with `transfer_method = no_losses_no_variable_cost`; in fact no connection
+  delays its flow (neither did the 3.x model). Setting it currently drops
+  the connection's efficiency losses (and turns a `regular` connection
+  one-way), so leave it empty and use a unit for a delayed flow. The
+  reference, the how-to and the parameter description (schema v70 step) now
+  say so.
 - **Known limitations** (follow-ups): upward reserve is still not limited by
   the online capacity (an online unit that is off can offer upward reserve);
   units consuming more to offer downward reserve are not limited by their
@@ -92,7 +99,8 @@
   longer stop with an error. The delay tables of a delayed unit are now
   checked, and an inconsistency stops the run with a clear error instead of
   zeroing the unit. Note: `delay` on connections is not applied (the flow
-  arrives in the same time step); this is unchanged.
+  arrives in the same time step, and the connection's efficiency losses are
+  dropped); this is unchanged.
 - **Fix: `input_share_max` on a delayed unit's input divides by the input's
   `conversion_flow_coeff`.** For delayed units the input limit used
   `min(conversion_flow_coeff, 1)`, so an input with a coefficient above 1
