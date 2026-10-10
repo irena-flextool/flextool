@@ -1,4 +1,4 @@
 group,solve,period,cumulative_flow,average_flow
-coal_electricity,y2020_2day_dispatch,p2020,25939.667,540.4097
-connections_with_east,y2020_2day_dispatch,p2020,51333.333,1069.4444
-to_west_node,y2020_2day_dispatch,p2020,52606.333,1095.9653
+coal_electricity,y2020_2day_dispatch,p2020,25930.444,540.2176
+connections_with_east,y2020_2day_dispatch,p2020,51315.811,1069.0794
+to_west_node,y2020_2day_dispatch,p2020,52587.889,1095.581

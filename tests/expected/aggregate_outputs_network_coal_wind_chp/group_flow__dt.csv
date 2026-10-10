@@ -20,7 +20,7 @@ coal_electricity,y2020_2day_dispatch,p2020,t0018,422.5556
 coal_electricity,y2020_2day_dispatch,p2020,t0019,634.5556
 coal_electricity,y2020_2day_dispatch,p2020,t0020,721.5556
 coal_electricity,y2020_2day_dispatch,p2020,t0021,795.5556
-coal_electricity,y2020_2day_dispatch,p2020,t0022,842.5556
+coal_electricity,y2020_2day_dispatch,p2020,t0022,833.3333
 coal_electricity,y2020_2day_dispatch,p2020,t0023,775.5556
 coal_electricity,y2020_2day_dispatch,p2020,t0024,663.5556
 coal_electricity,y2020_2day_dispatch,p2020,t0025,611.5556
@@ -68,7 +68,7 @@ connections_with_east,y2020_2day_dispatch,p2020,t0018,-69.4444
 connections_with_east,y2020_2day_dispatch,p2020,t0019,-69.4444
 connections_with_east,y2020_2day_dispatch,p2020,t0020,-69.4444
 connections_with_east,y2020_2day_dispatch,p2020,t0021,-69.4444
-connections_with_east,y2020_2day_dispatch,p2020,t0022,-69.4444
+connections_with_east,y2020_2day_dispatch,p2020,t0022,-68.5222
 connections_with_east,y2020_2day_dispatch,p2020,t0023,-69.4444
 connections_with_east,y2020_2day_dispatch,p2020,t0024,-69.4444
 connections_with_east,y2020_2day_dispatch,p2020,t0025,-69.4444
