@@ -1,5 +1,75 @@
 ## Unreleased
 
+- **Minimum load now applies once per unit, on the sum of its outputs.**
+  `min_load` × online capacity is a floor on the sum of the outputs that
+  define the unit's capacity (outputs with `conversion_flow_coeff ≠ 0`; the
+  single flow of a one-input/one-output unit; the input of a unit without
+  outputs). Inputs no longer get a floor of their own. Behaviour changes for
+  every unit with `min_load` and online variables that has several inputs
+  or outputs (or a delay):
+  - a unit with two inputs no longer has to burn `min_load` × online of
+    *each* input — an expensive second input is no longer forced, and a
+    second input that cannot supply no longer keeps the unit offline;
+  - a unit with an efficiency above 1 (heat-pump-like) can now run with
+    `min_load` (before, its input floor pushed the outputs above capacity);
+  - an extraction CHP can run in pure-heat mode while online (before, the
+    input floor forced electricity out of it);
+  - `capacity_min_coeff` on an output no longer lowers or switches off the
+    unit's minimum load (setting it below 1, e.g. 0 on every output, used to
+    do that): the full `min_load` applies. Lower `min_load` instead
+    (`min_load = 0` switches it off). The model warns about such units;
+  - one-input/one-output units behave as before, except that an authored
+    `capacity_min_coeff` below 1 no longer softens their floor.
+- **`capacity_min_coeff` on an output is an optional per-output floor
+  (default 0, schema v70).** While the unit is online, an output of a unit
+  with several outputs must be at least `capacity_min_coeff × min_load ×
+  online capacity`. 0 (the new default) means no separate floor; values
+  outside 0..1 are an error. The schema migration deletes stored output
+  values outside 0..1 (they were copied from old flow coefficients by an old
+  migration, e.g. 2 or −0.025) and values equal to the same output's
+  `capacity_max_coeff` (≠ 1, also left by that migration), and lists them;
+  it also lists the units whose kept values now act differently (all below
+  1: no longer lower the minimum load; > 0 on a unit with several outputs:
+  now a floor on that output). The listing is printed on the console only.
+- **New: `input_share_min` (unit--inputNode, default 0).** While the unit is
+  running, the input must supply at least this share of the unit's current
+  input energy (flow × `conversion_flow_coeff`): e.g. 0.3 makes the input
+  supply 30 % of whatever the unit uses. It applies with or without online
+  variables. Shares on all inputs summing to 1 fix the blend. Errors: a share
+  outside 0..1, shares of a unit summing above 1, a share above the same
+  input's `input_share_max`, and a share on a unit with a negative input
+  `conversion_flow_coeff`; a share on an input with
+  `conversion_flow_coeff = 0` or on a unit with one input has no effect (a
+  warning). The schema migration deletes all values of the old
+  `unit__inputNode.capacity_min_coeff` (the model never applied them, and
+  their old meaning is unrelated) and prints the deleted values; re-author
+  them as `input_share_min` where a mixing minimum is meant.
+- **Downward reserve can no longer take a unit below its floor.** Downward
+  reserve at a node a unit feeds, and upward reserve at a node a unit
+  consumes from (a consumption cut), cannot exceed the unit's flow, and for
+  an online unit cannot take the sum of its outputs below `min_load` ×
+  online capacity (nor an output with `capacity_min_coeff` below its floor).
+  Before, a unit could offer its full capacity as downward reserve even
+  while off. The `max_share` limit (× capacity) still applies on top.
+  Connections are not limited this way.
+- **Reserve shortfall can cover the whole requirement and is always
+  penalised.** The reserve shortfall is now sized by the largest
+  requirement of the group — `reservation` for timeseries requirements
+  (unchanged), Σ capacity × `increase_reserve_ratio` for dynamic and
+  Σ capacity × `large_failure_ratio` for large-failure requirements, summed
+  when a group combines methods. Before it was sized by `reservation` only,
+  so a dynamic or large-failure group with a small or no `reservation` of its
+  own could leave its requirement unmet only up to that amount (or not at
+  all) and, without a `reservation`, without penalty — a requirement that
+  could not be met made the model infeasible. The reserve shortfall outputs
+  use the same sizing.
+- **Known limitations** (follow-ups): upward reserve is still not limited by
+  the online capacity (an online unit that is off can offer upward reserve);
+  units consuming more to offer downward reserve are not limited by their
+  input capacity; connections are not limited by their flow when offering
+  reserve; the reserve balance does not yet convert input-side reserve of a
+  one-input/one-output unit by its efficiency.
+
 - **Input (fuel) limits of units follow `input_share_max`.** An input of a
   multi-input/multi-output (indirect) unit may now supply at most
   `input_share_max` × the input that runs the unit at full output
@@ -22,10 +92,10 @@
   carried into the roll sub-solves.
 - **Input-side capacity coefficients renamed to `input_share_max` /
   `input_share_min` (schema v70).** On `unit__inputNode`,
-  `capacity_max_coeff` is now `input_share_max` and `capacity_min_coeff` is
-  `input_share_min`; `unit__outputNode` keeps `capacity_max_coeff` /
-  `capacity_min_coeff`. Existing databases are migrated automatically and
-  their values move unchanged.
+  `capacity_max_coeff` is now `input_share_max` (values move unchanged) and
+  `capacity_min_coeff` is `input_share_min` (see below: its old values are
+  deleted); `unit__outputNode` keeps `capacity_max_coeff` /
+  `capacity_min_coeff`. Existing databases are migrated automatically.
 - **Multi-output indirect units (e.g. CHP) are no longer capped below their
   capacity by their fuel input.** The input flow of an indirect unit carries
   only a loose solver bound; it was set to `slope × capacity`, i.e. enough fuel
