@@ -74,10 +74,28 @@ reserve without any `reservation` is therefore inactive.
    of direct units; `_inverse_slope` in `model.py` follows the current
    convention and must change with it (tripwire:
    `test_down_reserve_floor.py::test_direct_unit_input_side_up_reserve`).
-5. Delayed connections ignore their `delay` (verified for
+5. Delayed connections do not apply their `delay` (verified for
    `no_losses_no_variable_cost`, `unidirectional` and `regular`, constant
    and map delays: the flow arrives in the same time step). Connections are
    never in `process_indirect`, and the delayed input term exists only in
    `conversion_indirect`; the .mod had the same gap (its nodeBalance delay
-   term is commented out). Applying a connection delay needs a delayed
-   term in the node balance.
+   term is commented out). The `delay` is not inert either: it marks the
+   connection delayed, which moves its arcs from
+   `process_source_sink_eff` to `_noEff` (efficiency losses dropped) and
+   turns a `regular` connection one-way. Applying a connection delay needs
+   a delayed term in the node balance; until then the engine should at
+   least ignore it (or reject it) instead of dropping the losses.
+6. Dynamic and n-1 reserves activate only if some group of the same
+   (reserve, up/down) has a non-zero `reservation` (`prundt_from_source`,
+   `_emit_reserve`; see "Activation" above). A dynamic / n-1-only reserve
+   is silently inactive — e.g. `network_coal_wind_reserve_n_1` does not
+   test any n-1 requirement. Activation should follow the group's
+   `reserve_method` (dynamic: any `increase_reserve_ratio`; n-1: any
+   `large_failure_ratio`), not the presence of a timeseries reservation.
+7. The n-1 requirement is one `reserveBalance` row per (r, ud, g, d, t)
+   whose RHS sums `large_failure_ratio × flow` over ALL large-failure
+   processes of the group; the .mod had one constraint per failing process
+   (the largest single failure sets the requirement). The sum over-procures
+   reserve whenever two or more processes can fail. When split per failing
+   process, the n-1 component of `reserve_shortfall_scale` must become the
+   max over the failing processes instead of the sum.

@@ -83,7 +83,12 @@
   units consuming more to offer downward reserve are not limited by their
   input capacity; connections are not limited by their flow when offering
   reserve; the reserve balance does not yet convert input-side reserve of a
-  one-input/one-output unit by its efficiency.
+  one-input/one-output unit by its efficiency; dynamic and large-failure
+  (n-1) reserves are only active when some group of the same reserve and
+  direction has a non-zero `reservation`; the large-failure requirement sums
+  all failing processes into one requirement instead of one requirement per
+  failing process (over-procures reserve when several processes can fail);
+  connection `delay` is not applied.
 - **Fix: multi-input/multi-output (indirect) units with
   `conversion_method = min_load_efficiency` now burn the no-load fuel.**
   Their input was `slope × output` only; the `section × online capacity`
