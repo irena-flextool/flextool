@@ -752,17 +752,28 @@ def _apply_warm_updates(warm: WarmProblem,
                     raise _IncompatibleUpdate(
                         f"warm-update needs FlexData.{over_field}, but it "
                         f"is None on the new sub-solve")
+                # The cstr's rows are in ``over`` sorted by its columns
+                # (the add_cstr determinism wrapper,
+                # ``engine_polars/__init__.py``), so sort ``new_over``
+                # the same way: position i then names the same row in
+                # both sub-solves (labels shift, order does not).  Do
+                # not trust the producer's row order — a polars 2 lazy
+                # cross join emits right-major order unless told
+                # otherwise, which pushed every other (n, t) inflow onto
+                # the wrong row.
+                new_over = new_over.sort(new_over.columns)
                 # Left-join new_over with next_p on shared dims; values
-                # come out aligned to new_over's row order, which by
-                # fingerprint match has the same row count as the
-                # original LP cstr over.
+                # come out aligned to new_over's row order (kept by
+                # ``maintain_order="left"``), which by fingerprint match
+                # has the same row count as the original LP cstr over.
                 shared = [c for c in next_p.dims if c in new_over.columns]
                 if not shared:
                     rhs_vec = np.full(new_over.height,
                                       float(next_p.frame["value"][0]),
                                       dtype=np.float64)
                 else:
-                    j = new_over.join(next_p.frame, on=shared, how="left")
+                    j = new_over.join(next_p.frame, on=shared, how="left",
+                                      maintain_order="left")
                     rhs_vec = (j["value"].fill_null(0.0)
                                          .to_numpy()
                                          .astype(np.float64, copy=False))

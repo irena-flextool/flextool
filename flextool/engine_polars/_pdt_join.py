@@ -43,6 +43,25 @@ __all__ = (
 )
 
 
+def _cross(left: pl.DataFrame, right: pl.DataFrame) -> pl.DataFrame:
+    """``left × right`` in left-major order (each left row, then every
+    right row in order).
+
+    The order is part of the contract: with sorted inputs the product
+    is sorted by ``(*left.columns, *right.columns)`` — the canonical
+    order that ``add_var`` / ``add_cstr`` assign ids in (the
+    determinism wrapper skips its sort when the frame is already
+    sorted) and that :mod:`._warm` relies on to align a rolled
+    sub-solve's RHS vector with the warm problem's rows by position.
+    ``maintain_order`` must be explicit: polars 2 no longer keeps
+    left-major order by default for a lazy cross join (it may swap the
+    sides and emit right-major order).
+    """
+    return (left.lazy()
+            .join(right.lazy(), how="cross", maintain_order="left_right")
+            .collect())
+
+
 def compute_pss_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     """Lazy-build the ``(p, source, sink, d, t)`` cross-product from
     ``flex_data.process_source_sink`` × ``flex_data.dt``.
@@ -53,7 +72,7 @@ def compute_pss_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     dt = getattr(flex_data, "dt", None)
     if pss is None or dt is None or pss.height == 0 or dt.height == 0:
         return None
-    return pss.lazy().join(dt.lazy(), how="cross").collect()
+    return _cross(pss, dt)
 
 
 def compute_nodeBalance_dt(flex_data: "FlexData") -> pl.DataFrame | None:
@@ -66,7 +85,7 @@ def compute_nodeBalance_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     dt = getattr(flex_data, "dt", None)
     if nb is None or dt is None or nb.height == 0 or dt.height == 0:
         return None
-    return nb.lazy().join(dt.lazy(), how="cross").collect()
+    return _cross(nb, dt)
 
 
 def compute_nodeState_dt(flex_data: "FlexData") -> pl.DataFrame | None:
@@ -79,7 +98,7 @@ def compute_nodeState_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     dt = getattr(flex_data, "dt", None)
     if ns is None or dt is None or ns.height == 0 or dt.height == 0:
         return None
-    return ns.lazy().join(dt.lazy(), how="cross").collect()
+    return _cross(ns, dt)
 
 
 def compute_nodeState_first_dt(flex_data: "FlexData") -> pl.DataFrame | None:
@@ -128,7 +147,7 @@ def compute_nodeState_rp_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     dt = getattr(flex_data, "dt", None)
     if nsrp is None or dt is None or nsrp.height == 0 or dt.height == 0:
         return None
-    return nsrp.lazy().join(dt.lazy(), how="cross").collect()
+    return _cross(nsrp, dt)
 
 
 def compute_nodeState_rp_block_first_dt(
@@ -151,7 +170,7 @@ def compute_nodeState_rp_block_first_dt(
     if (nsrp is None or rpbf is None
             or nsrp.height == 0 or rpbf.height == 0):
         return None
-    return nsrp.lazy().join(rpbf.lazy(), how="cross").collect()
+    return _cross(nsrp, rpbf)
 
 
 def compute_process_indirect_dt(flex_data: "FlexData") -> pl.DataFrame | None:
@@ -164,4 +183,4 @@ def compute_process_indirect_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     dt = getattr(flex_data, "dt", None)
     if pi is None or dt is None or pi.height == 0 or dt.height == 0:
         return None
-    return pi.lazy().join(dt.lazy(), how="cross").collect()
+    return _cross(pi, dt)
