@@ -3830,10 +3830,10 @@ _V70_PENALTY_RESERVE_DESCRIPTION = (
     "applied to every reserve group that has no value of its own."
 )
 _V70_CONNECTION_DELAY_DESCRIPTION = (
-    "[hours] Not yet applied to connections (planned): setting it does not "
-    "delay the flow, and it currently changes how the connection is "
-    "modelled (its efficiency losses are dropped). Leave it empty and "
-    "model a delayed flow with a unit. Intended meaning: a time delay "
+    "[hours] Not yet applied to connections (planned): a connection delay "
+    "is ignored (the connection is modelled as if no delay were set) and "
+    "the model warns about it. Model a delayed flow with a unit. Intended "
+    "meaning: a time delay "
     "between the input node and the output node, either a constant time "
     "difference in hours or a map of time differences (index: time "
     "difference in hours, value: weight; the weights should sum to 1)."
@@ -3910,7 +3910,8 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
       explicit values only, leaving the shortfall unpenalised).  The engine
       now applies the default to every reserve group without a value.
     * ``connection.delay``: the description says it is not applied (the
-      engine delays unit flows only).
+      engine delays unit flows only; a connection delay is ignored with a
+      warning).
 
     Idempotent: a definition is renamed only when the old one exists and
     the new one does not; the input-side deletion, the v36-leftover

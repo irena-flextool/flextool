@@ -1682,7 +1682,8 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
       1. Pull all units + connections.
       2. Pull ``conversion_method`` (units), ``transfer_method``
          (connections), ``startup_method`` (units + connections),
-         ``minimum_time_method`` (units), ``delay`` (units + connections).
+         ``minimum_time_method`` (units), ``delay`` (units only — a
+         connection ``delay`` is ignored).
       3. Count input/output arcs per process.
       4. Apply defaults (``constant_efficiency`` for units,
          ``regular`` for connections; ``no_startup``).
@@ -1756,15 +1757,14 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         pl.col("value").alias("mtm"),
     )) if mtm is not None else None
 
+    # Only units are delayed: a connection ``delay`` is not implemented
+    # and is ignored (input_derivation warns about it), so it must not
+    # mark the connection ``fork_yes`` (that changed its method, dropped
+    # its efficiency losses and made a ``regular`` connection one-way).
     delay_unit = _try_param(source, "unit", "delay")
-    delay_conn = _try_param(source, "connection", "delay")
     delay_parts: list[pl.LazyFrame] = []
     if delay_unit is not None:
         delay_parts.append(delay_unit.lazy().select(
-            alias_to_axis("name", "p"),
-        ).unique())
-    if delay_conn is not None:
-        delay_parts.append(delay_conn.lazy().select(
             alias_to_axis("name", "p"),
         ).unique())
     delay_lazy = (pl.concat(delay_parts).unique()
@@ -9711,8 +9711,7 @@ def _delay_distributions_from_source(
 ) -> tuple[dict[tuple[str, str], float],
             set[tuple[str, str]],
             set[str]] | None:
-    """Read ``unit.delay`` + ``connection.delay`` from the source and
-    classify into:
+    """Read ``unit.delay`` from the source and classify into:
 
     * ``weighted`` — (p, td) → weight when value is a 1d_map.  These are
       multi-duration distributions.
@@ -9720,6 +9719,10 @@ def _delay_distributions_from_source(
     * ``processes`` — set of all delayed processes (union of both).
 
     Returns ``None`` if no delays are defined.
+
+    ``connection.delay`` is not read: connection delay is not implemented
+    and is ignored (``input_derivation`` warns about it), so a connection
+    is modelled exactly as without a delay.
 
     flextool's input writer (input_writer.py:638-648) emits the same
     distinction via ``filter_in_type``: 1d_map → ``p_process_delay_weighted``,
@@ -9729,7 +9732,7 @@ def _delay_distributions_from_source(
     single: set[tuple[str, str]] = set()
     processes: set[str] = set()
     found_any = False
-    for ec in ("unit", "connection"):
+    for ec in ("unit",):
         df = _try_param(source, ec, "delay")
         if df is None or df.height == 0:
             continue
@@ -9856,7 +9859,8 @@ def process_delayed__duration_from_weight(
 def apply_delay_params(flex_data: object, source: "InputSource") -> None:
     """Set the three delay frames — ``dtt__delay_duration``,
     ``p_process_delay_weight`` and ``process_delayed__duration`` — from one
-    read of ``unit.delay`` / ``connection.delay`` over ``flex_data.dt``.
+    read of ``unit.delay`` over ``flex_data.dt`` (a connection ``delay``
+    is ignored).
 
     Solve-agnostic: :func:`apply_derived_g` calls it, and so does the
     synthetic (rolling) sub-solve path in ``input._apply_db_overrides``,
@@ -9890,7 +9894,7 @@ def dtt__delay_duration_from_source(
     csv-string "4.0" becomes shift index 4.
 
     Inputs: ``dt`` (period-time index) + the union of all delay durations
-    from ``unit.delay`` and ``connection.delay``.
+    from ``unit.delay`` (a connection ``delay`` is ignored).
 
     Returns ``None`` when no delays are defined or dt is empty.
     """

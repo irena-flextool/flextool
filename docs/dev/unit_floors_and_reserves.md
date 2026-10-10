@@ -74,17 +74,22 @@ reserve without any `reservation` is therefore inactive.
    of direct units; `_inverse_slope` in `model.py` follows the current
    convention and must change with it (tripwire:
    `test_down_reserve_floor.py::test_direct_unit_input_side_up_reserve`).
-5. Delayed connections do not apply their `delay` (verified for
-   `no_losses_no_variable_cost`, `unidirectional` and `regular`, constant
-   and map delays: the flow arrives in the same time step). Connections are
-   never in `process_indirect`, and the delayed input term exists only in
+5. Connection `delay` is not implemented. Connections are never in
+   `process_indirect`, and the delayed input term exists only in
    `conversion_indirect`; the .mod had the same gap (its nodeBalance delay
-   term is commented out). The `delay` is not inert either: it marks the
-   connection delayed, which moves its arcs from
+   term is commented out). The `delay` used to mark the connection delayed
+   anyway, which made it `fork_yes`, moved its arcs from
    `process_source_sink_eff` to `_noEff` (efficiency losses dropped) and
-   turns a `regular` connection one-way. Applying a connection delay needs
-   a delayed term in the node balance; until then the engine should at
-   least ignore it (or reject it) instead of dropping the losses.
+   turned a `regular` connection one-way. Now every reader of `delay`
+   reads `unit.delay` only (`input_derivation/_specs.py` delay tables,
+   `input_derivation/_process_method.py`, `_derived_params`
+   `_classify_process_method` / `_delay_distributions_from_source`,
+   `_projection_params.process_delayed`), so a connection is modelled as
+   if no delay were set, and `_validators.validate_connection_delay` warns
+   once per connection with a non-zero delay
+   (`tests/engine_polars/test_connection_delay_ignored.py`). Applying a
+   connection delay needs a delayed term in the node balance; when it is
+   added, drop the filters and the warning.
 6. Dynamic and n-1 reserves activate only if some group of the same
    (reserve, up/down) has a non-zero `reservation` (`prundt_from_source`,
    `_emit_reserve`; see "Activation" above). A dynamic / n-1-only reserve

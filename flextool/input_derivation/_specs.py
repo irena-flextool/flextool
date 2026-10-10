@@ -680,14 +680,16 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/p_process_constraint_cumulative_pre_built_capacity_coeff.csv",
         "filter_in_type": ["1d_map"],
     },
+    # Units only: a connection ``delay`` is not implemented and is ignored
+    # (``_validators.validate_connection_delay`` warns about it).
     {
-        "cl_pars": [("unit", "delay"), ("connection", "delay")],
+        "cl_pars": [("unit", "delay")],
         "header": "process,delay_duration,p_process_delay_weighted",
         "filename": "input/p_process_delay_weighted.csv",
         "filter_in_type": ["1d_map"],
     },
     {
-        "cl_pars": [("unit", "delay"), ("connection", "delay")],
+        "cl_pars": [("unit", "delay")],
         "header": "process,delay_duration",
         "filename": "input/process_delay_single.csv",
         "filter_in_type": ["str", "float"],

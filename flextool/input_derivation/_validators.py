@@ -35,6 +35,7 @@ __all__ = [
     "validate_ladder_methods",
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
+    "validate_connection_delay",
     "validate_unit_input_shares",
     "validate_output_min_coeff",
 ]
@@ -321,6 +322,34 @@ def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
                 "nodes or its connection__node__node — '%s' not included. Check your data!",
                 name, name,
             )
+
+
+def validate_connection_delay(db, logger: logging.Logger) -> None:
+    """Warn once per connection that has a non-zero ``delay``.
+
+    Connection delay is not implemented: no connection term shifts the
+    flow in time (the delayed input term exists only in the indirect
+    conversion of units).  The delay is therefore ignored everywhere
+    (``_specs`` delay tables, ``_process_method`` and the engine readers
+    read ``unit.delay`` only), so the connection is modelled exactly as
+    without a delay.  Before, the delay still marked the connection
+    delayed, which dropped its efficiency losses and made a ``regular``
+    connection one-way.  ``db`` is scenario-filtered; a delay of 0 (or a
+    map of zeros) changes nothing and is not reported.
+    """
+    for pv in db.find_parameter_values(
+        entity_class_name="connection", parameter_definition_name="delay",
+    ):
+        if pv["type"] is None:
+            continue
+        if not any(v != 0.0 for v in _numeric_values(pv["parsed_value"])):
+            continue
+        logger.warning(
+            "Connection '%s' has a delay: connection delay is not "
+            "implemented yet and is ignored (the connection is modelled "
+            "without a delay). Use a unit with a delay for a delayed flow.",
+            pv["entity_byname"][0],
+        )
 
 
 def _numeric_values(parsed) -> list[float]:

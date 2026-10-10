@@ -123,6 +123,7 @@ def run(
         validate_group_output_memberships,
         validate_capacity_margin_groups,
         validate_connection_node_memberships,
+        validate_connection_delay,
         validate_unit_input_shares,
         validate_output_min_coeff,
     )
@@ -200,6 +201,7 @@ def run(
         validate_unit_input_shares(db, provider, logger)
         validate_output_min_coeff(db, provider, logger)
         validate_ladder_methods(db, logger)
+        validate_connection_delay(db, logger)
         derive_commodity_ladder_cumulative(backend, provider, logger)
         derive_commodity_ladder_annual(backend, provider, logger)
         derive_commodity_ladder_sets(backend, provider)

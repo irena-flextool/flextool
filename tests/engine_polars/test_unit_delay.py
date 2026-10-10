@@ -193,10 +193,11 @@ def test_check_raises_on_duration_without_weight() -> None:
 # ── Delayed connections ───────────────────────────────────────────────
 @pytest.mark.parametrize("delay", ["constant", "map"])
 def test_delayed_connection_builds(tmp_path_factory, delay: str) -> None:
-    """A connection with ``delay`` is not an indirect unit, so the check
-    leaves it alone and the model builds and solves.  (The delay itself is
-    not applied to connections: the delayed term exists only in
-    ``conversion_indirect``; see docs/dev/unit_floors_and_reserves.md.)"""
+    """A connection ``delay`` is not implemented and is ignored: the
+    connection gets no delay tables (no unit is delayed here, so they are
+    empty) and the model builds and solves.  Equality with the undelayed
+    model is in ``test_connection_delay_ignored.py``; see
+    docs/dev/unit_floors_and_reserves.md."""
     value = (b64(2.0, "float") if delay == "constant"
              else _delay_map([(2.0, 1.0)]))
     url, scen = make_db(
@@ -206,5 +207,5 @@ def test_delayed_connection_builds(tmp_path_factory, delay: str) -> None:
                 ["connection", "west_north", "delay", value]],
         base_chain=["init", "west", "coal", "wind", "network"])
     step = list(run(tmp_path_factory, url, scen).values())[-1]
-    pdd = utf8(step.flex_data.process_delayed__duration)
-    assert pdd.to_dicts() == [{"p": "west_north", "td": "2.0"}]
+    assert step.flex_data.process_delayed__duration is None
+    assert step.flex_data.p_process_delay_weight is None

@@ -580,7 +580,7 @@
       "delay",
       null,
       null,
-      "[hours] Not yet applied to connections (planned): setting it does not delay the flow, and it currently changes how the connection is modelled (its efficiency losses are dropped). Leave it empty and model a delayed flow with a unit. Intended meaning: a time delay between the input node and the output node, either a constant time difference in hours or a map of time differences (index: time difference in hours, value: weight; the weights should sum to 1).",
+      "[hours] Not yet applied to connections (planned): a connection delay is ignored (the connection is modelled as if no delay were set) and the model warns about it. Model a delayed flow with a unit. Intended meaning: a time delay between the input node and the output node, either a constant time difference in hours or a map of time differences (index: time difference in hours, value: weight; the weights should sum to 1).",
       "tech_advanced"
     ],
     [

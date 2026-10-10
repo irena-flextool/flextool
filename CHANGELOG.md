@@ -71,13 +71,15 @@
   reserve group without a value; authored values are unchanged. Models with
   such groups now procure the reserve (or pay for the shortfall), which can
   raise the objective.
-- **Docs: connection `delay` is not applied.** The reference said it works
-  with `transfer_method = no_losses_no_variable_cost`; in fact no connection
-  delays its flow (neither did the 3.x model). Setting it currently drops
-  the connection's efficiency losses (and turns a `regular` connection
-  one-way), so leave it empty and use a unit for a delayed flow. The
-  reference, the how-to and the parameter description (schema v70 step) now
-  say so.
+- **Fix: connection `delay` is ignored, with a warning.** The reference
+  said it works with `transfer_method = no_losses_no_variable_cost`; in fact
+  no connection delays its flow (neither did the 3.x model). Setting it
+  still changed the connection: its efficiency losses were dropped and a
+  `regular` connection became one-way. Until connection delay is
+  implemented, a connection `delay` is ignored — the connection is modelled
+  exactly as without it — and the model warns once per such connection.
+  Use a unit for a delayed flow. The reference, the how-to and the
+  parameter description (schema v70 step) say so.
 - **Known limitations** (follow-ups): upward reserve is still not limited by
   the online capacity (an online unit that is off can offer upward reserve);
   units consuming more to offer downward reserve are not limited by their
@@ -88,7 +90,7 @@
   direction has a non-zero `reservation`; the large-failure requirement sums
   all failing processes into one requirement instead of one requirement per
   failing process (over-procures reserve when several processes can fail);
-  connection `delay` is not applied.
+  connection `delay` is not applied (it is ignored with a warning).
 - **Fix: multi-input/multi-output (indirect) units with
   `conversion_method = min_load_efficiency` now burn the no-load fuel.**
   Their input was `slope × output` only; the `section × online capacity`
@@ -103,9 +105,8 @@
   message. Rolling-window solves with a delayed unit (constant or map) no
   longer stop with an error. The delay tables of a delayed unit are now
   checked, and an inconsistency stops the run with a clear error instead of
-  zeroing the unit. Note: `delay` on connections is not applied (the flow
-  arrives in the same time step, and the connection's efficiency losses are
-  dropped); this is unchanged.
+  zeroing the unit. Note: `delay` on connections is not applied; it is
+  ignored with a warning (see above).
 - **Fix: `input_share_max` on a delayed unit's input divides by the input's
   `conversion_flow_coeff`.** For delayed units the input limit used
   `min(conversion_flow_coeff, 1)`, so an input with a coefficient above 1
