@@ -63,6 +63,14 @@
   all) and, without a `reservation`, without penalty — a requirement that
   could not be met made the model infeasible. The reserve shortfall outputs
   use the same sizing.
+- **Fix: `penalty_reserve` defaults to 5000 again (schema v70).** A reserve
+  group without its own `penalty_reserve` had no shortfall penalty at all,
+  so its reserve requirement was in effect optional. The default of 5000
+  [CUR/MW per hour of shortfall] — the value of the 3.x model and of the
+  schema until an earlier migration cleared it — now applies to every
+  reserve group without a value; authored values are unchanged. Models with
+  such groups now procure the reserve (or pay for the shortfall), which can
+  raise the objective.
 - **Known limitations** (follow-ups): upward reserve is still not limited by
   the online capacity (an online unit that is off can offer upward reserve);
   units consuming more to offer downward reserve are not limited by their

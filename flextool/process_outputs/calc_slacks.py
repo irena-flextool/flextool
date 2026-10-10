@@ -103,5 +103,5 @@ def compute_slacks(par, s, v, r) -> None:
     # add timestep_weight to match mod line ~2388.
     r.costPenalty_reserve_upDown_dt = v.q_reserve.mul(par.step_duration, axis=0) \
         .mul(par.timestep_weight, axis=0) \
-        .mul(par.reserve_upDown_group_penalty, axis=1) \
+        .mul(par.reserve_upDown_group_penalty.reindex(v.q_reserve.columns), axis=1) \
         .mul(par.reserve_upDown_group_shortfall_scale, axis=1)

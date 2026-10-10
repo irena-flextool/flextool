@@ -1096,11 +1096,13 @@ def read_parameters(
         )
 
     # reserve_upDown_group_penalty — Series with MultiIndex (reserve,
-    # upDown, node_group).
-    if (flex_data.p_reserve_upDown_group_penalty_reserve is not None
-            and flex_data.p_reserve_upDown_group_penalty_reserve.frame.height > 0):
+    # upDown, node_group); the same dense penalty the LP objective uses
+    # (authored penalty_reserve, else the default).
+    from flextool.engine_polars._reserve import reserve_penalty
+    reserve_pen = reserve_penalty(flex_data)
+    if reserve_pen is not None and reserve_pen.frame.height > 0:
         p.reserve_upDown_group_penalty = series_with_multi_index(
-            flex_data.p_reserve_upDown_group_penalty_reserve.frame,
+            reserve_pen.frame,
             dims=("r", "ud", "g"),
             names=["reserve", "upDown", "node_group"],
         )

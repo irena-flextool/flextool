@@ -1722,9 +1722,12 @@
     [
       "reserve__upDown__group",
       "penalty_reserve",
+      [
+        "5000.0",
+        "float"
+      ],
       null,
-      null,
-      "[CUR/MW] Penalty for violating a reserve constraint. Constant.",
+      "[CUR/MW] Penalty for each MW of reserve shortfall per hour (the reserve requirement of the group is soft). Constant. Default 5000 - applied to every reserve group that has no value of its own.",
       "reserve"
     ],
     [

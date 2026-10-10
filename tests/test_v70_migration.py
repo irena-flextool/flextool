@@ -11,6 +11,9 @@ coefficients on ``unit__inputNode``:
 floor (the minimum load is per unit, on the sum of outputs): default 0,
 values outside [0, 1] and v36 backfill leftovers (``capacity_min_coeff ==
 capacity_max_coeff != 1``) are deleted and listed; other values stay.
+
+``reserve__upDown__group.penalty_reserve`` gets back its default 5000
+(cleared by v56); authored values are untouched.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from flextool.update_flextool.db_migration import (
     _V70_CAPACITY_MAX_COEFF_DESCRIPTION,
     _V70_CAPACITY_MIN_COEFF_DESCRIPTION,
     _V70_INPUT_SHARE_MIN_DESCRIPTION,
+    _V70_PENALTY_RESERVE_DESCRIPTION,
     _migrate_v70_capacity_coefficient_descriptions,
     migrate_database,
 )
@@ -327,3 +331,43 @@ def test_current_fixture_carries_new_names(tmp_path: Path) -> None:
         assert ("unit__outputNode", "capacity_min_coeff") in names
     finally:
         db.close()
+
+
+def test_penalty_reserve_default_restored(tmp_path: Path) -> None:
+    """The v56-cleared ``penalty_reserve`` default comes back as 5000 with
+    the new description; an authored value stays; re-running keeps it."""
+    url = f"sqlite:///{(tmp_path / 'pen.sqlite').resolve()}"
+    with DatabaseMapping(url, create=True) as db:
+        _, errors = import_data(
+            db,
+            entity_classes=[["reserve", ()], ["upDown", ()], ["group", ()],
+                            ["reserve__upDown__group",
+                             ("reserve", "upDown", "group")]],
+            parameter_definitions=[
+                ["reserve__upDown__group", "penalty_reserve", None, None,
+                 "[CUR/MW] Penalty for violating a reserve constraint. "
+                 "Constant."]],
+            alternatives=[["Base", ""]],
+            entities=[["reserve", "r"], ["upDown", "up"], ["group", "g"],
+                      ["reserve__upDown__group", ("r", "up", "g")]],
+            parameter_values=[["reserve__upDown__group", ("r", "up", "g"),
+                               "penalty_reserve", 123.0, "Base"]],
+        )
+        assert not errors
+        db.commit_session("seed")
+    for _ in range(2):
+        db = DatabaseMapping(url, create=False)
+        try:
+            db.fetch_all()
+            _migrate_v70_capacity_coefficient_descriptions(db)
+            db.fetch_all()
+            d = db.get_parameter_definition_item(
+                entity_class_name="reserve__upDown__group",
+                name="penalty_reserve")
+            assert from_database(d["default_value"],
+                                 d["default_type"]) == 5000.0
+            assert d["description"] == _V70_PENALTY_RESERVE_DESCRIPTION
+            assert _values(db, "reserve__upDown__group") == {
+                ("penalty_reserve", ("r", "up", "g"), "Base"): 123.0}
+        finally:
+            db.close()

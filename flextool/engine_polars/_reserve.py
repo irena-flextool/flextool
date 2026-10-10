@@ -800,6 +800,38 @@ def add_constraints(m, d, vars: dict) -> None:
 # ---------------------------------------------------------------------------
 # Objective
 
+def reserve_penalty(d) -> "Param | None":
+    """``penalty_reserve`` dense over ``reserve_upDown_group``.
+
+    Every ``(r, ud, g)`` of the reserve subsystem gets a penalty: the
+    authored ``p_reserve_upDown_group_penalty_reserve`` where present, else
+    :data:`~flextool.engine_polars._direct_params.PENALTY_RESERVE_DEFAULT`
+    — a group with a requirement but no authored penalty must not get a
+    free shortfall.  ``None`` only when the subsystem is inactive.
+    """
+    from flextool.engine_polars._direct_params import PENALTY_RESERVE_DEFAULT
+
+    rug = getattr(d, "reserve_upDown_group", None)
+    if rug is None or rug.height == 0:
+        return None
+    keys = ["r", "ud", "g"]
+    base = rug.lazy().select(keys).unique(maintain_order=True)
+    pen = getattr(d, "p_reserve_upDown_group_penalty_reserve", None)
+    if pen is not None:
+        authored = _u8(pen.frame.lazy().select(*keys, "value"), keys)
+        base = (base.with_columns(pl.col(k).cast(pl.Utf8).alias(f"__{k}")
+                                  for k in keys)
+                .join(authored.rename({k: f"__{k}" for k in keys}),
+                      on=[f"__{k}" for k in keys], how="left")
+                .drop([f"__{k}" for k in keys]))
+    else:
+        base = base.with_columns(value=pl.lit(None, dtype=pl.Float64))
+    out = (base.with_columns(pl.col("value").cast(pl.Float64)
+                             .fill_null(PENALTY_RESERVE_DEFAULT))
+           .collect())
+    return Param(("r", "ud", "g"), out.lazy())
+
+
 def add_objective_terms(m, d, vars: dict, op_factor):
     """Return the ``vq_reserve`` slack penalty Expr to be added to the
     objective.  Mirrors objective_audit.md §9.4 / flextool.mod 2100-2101.
@@ -808,6 +840,8 @@ def add_objective_terms(m, d, vars: dict, op_factor):
 
     ``scale`` = :func:`reserve_shortfall_scale` — the same multiplier the
     reserve balances use (the reservation for timeseries groups).
+    ``penalty_reserve`` = :func:`reserve_penalty` (authored value, else the
+    default 5000).
 
     where ``op_factor = step_duration · timestep_weight · inflation_op /
     period_share`` (the same factor used elsewhere in the objective).
@@ -823,7 +857,7 @@ def add_objective_terms(m, d, vars: dict, op_factor):
 
     vq_reserve = vars["vq_reserve"]
     scale = reserve_shortfall_scale(d)
-    pen   = d.p_reserve_upDown_group_penalty_reserve
+    pen   = reserve_penalty(d)
     if scale is None or pen is None:
         return None
 

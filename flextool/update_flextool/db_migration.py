@@ -3823,6 +3823,13 @@ _V70_CAPACITY_MIN_COEFF_DESCRIPTION = (
     "output. Range 0..1."
 )
 
+_V70_PENALTY_RESERVE_DEFAULT = 5000.0
+_V70_PENALTY_RESERVE_DESCRIPTION = (
+    "[CUR/MW] Penalty for each MW of reserve shortfall per hour (the "
+    "reserve requirement of the group is soft). Constant. Default 5000 - "
+    "applied to every reserve group that has no value of its own."
+)
+
 
 def _numeric_elements(parsed) -> list[float]:
     """Numeric elements of a parsed value (float, or Map / TimeSeries
@@ -3887,6 +3894,12 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
       alternative — the same backfill).  Both deletions are listed, and the
       units whose remaining values now act differently are listed as a
       notice.
+
+    * ``reserve__upDown__group.penalty_reserve`` gets back its default
+      5000 [CUR/MW per hour of shortfall] (v18 set it, as did the GMPL
+      ``reserveParam_defaults``; v56 cleared it because the 4.x engine read
+      explicit values only, leaving the shortfall unpenalised).  The engine
+      now applies the default to every reserve group without a value.
 
     Idempotent: a definition is renamed only when the old one exists and
     the new one does not; the input-side deletion, the v36-leftover
@@ -3989,13 +4002,24 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
             _print_v70_min_load_notices(
                 db, [pv for pv in out_vals
                      if pv["id"] not in {r["id"] for r in removed}])
+    # ── reserve__upDown__group.penalty_reserve: default 5000 restored ──
+    # (v18 set it, v56 cleared it because the engine ignored it; the
+    # engine now applies it to every group without an authored value).
+    pen = _pdef_or_none(db, "reserve__upDown__group", "penalty_reserve")
+    if pen:
+        pen_val, pen_type = to_database(_V70_PENALTY_RESERVE_DEFAULT)
+        db.update_parameter_definition(
+            id=pen["id"], default_value=pen_val, default_type=pen_type,
+            description=_V70_PENALTY_RESERVE_DESCRIPTION)
+
     _commit_step(db,
         "v70: capacity_max_coeff = 0 is a zero cap; uncapped edges are "
         "conversion_flow_coeff = 0; unit__inputNode.capacity_max_coeff -> "
         "input_share_max, unit__inputNode.capacity_min_coeff -> "
         "input_share_min (old values deleted, default 0); "
         "unit__outputNode.capacity_min_coeff is a per-output floor "
-        "(default 0, out-of-range and v36-leftover values deleted)."
+        "(default 0, out-of-range and v36-leftover values deleted); "
+        "reserve__upDown__group.penalty_reserve default 5000."
     )
 
 

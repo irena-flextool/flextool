@@ -1547,28 +1547,56 @@ def pdtReserve_upDown_group_reservation_from_source(
         period_filter, filter_zero=False)
 
 
+#: Default of ``reserve__upDown__group.penalty_reserve`` [CUR/MW per hour
+#: of shortfall].  The GMPL-era ``flextool.mod`` defaulted it to 5000
+#: (``reserveParam_defaults``) and the schema carried the same default
+#: from v18 until v56 cleared it; v70 restores it in the schema.  The
+#: engine applies it to every reserve group without an authored value.
+PENALTY_RESERVE_DEFAULT: float = 5000.0
+
+
 def p_reserve_upDown_group_penalty_reserve_from_source(source: "InputSource") -> Param | None:
     """``reserve__upDown__group.penalty_reserve`` scalar →
-    ``Param(("r", "ud", "g"))``.  None default — explicit rows only.
+    ``Param(("r", "ud", "g"))``, dense over every ``reserve__upDown__group``
+    entity: the authored value where one exists, otherwise
+    :data:`PENALTY_RESERVE_DEFAULT`.  (Densified here rather than relying on
+    the schema default so the reserve shortfall is never free.)
     """
+    keys = ["reserve", "upDown", "group"]
+    try:
+        ents = source.entities("reserve__upDown__group")
+    except KeyError:
+        ents = None
     try:
         df = source.parameter_explicit("reserve__upDown__group", "penalty_reserve")
     except (KeyError, AttributeError):
         try:
             df = source.parameter("reserve__upDown__group", "penalty_reserve")
         except KeyError:
-            return None
-    if df is None or df.height == 0:
+            df = None
+    if df is not None and not {*keys, "value"}.issubset(df.columns):
+        df = None
+    if ents is None or not set(keys).issubset(ents.columns):
+        ents = df.select(keys) if df is not None else None
+    if ents is None or ents.height == 0:
         return None
-    cols = df.columns
-    if not {"reserve", "upDown", "group", "value"}.issubset(cols):
-        return None
-    lf = (df.lazy()
-            .rename({"reserve": "r", "upDown": "ud", "group": "g"})
-            .filter(pl.col("value").is_not_null()))
-    out = lf.select("r", "ud", "g", "value").collect()
-    if out.height == 0:
-        return None
+    lf = ents.lazy().select(keys).unique(maintain_order=True)
+    if df is not None and df.height > 0:
+        authored = (df.lazy()
+                    .filter(pl.col("value").is_not_null())
+                    .select(*[pl.col(k).cast(pl.Utf8).alias(f"__{k}")
+                              for k in keys],
+                            pl.col("value").cast(pl.Float64)))
+        lf = (lf.with_columns(pl.col(k).cast(pl.Utf8).alias(f"__{k}")
+                              for k in keys)
+                .join(authored, on=[f"__{k}" for k in keys], how="left")
+                .drop([f"__{k}" for k in keys]))
+    else:
+        lf = lf.with_columns(value=pl.lit(None, dtype=pl.Float64))
+    out = (lf.with_columns(pl.col("value").fill_null(PENALTY_RESERVE_DEFAULT))
+             .rename({"reserve": "r", "upDown": "ud", "group": "g"})
+             .select("r", "ud", "g", "value")
+             .collect())
     return Param(("r", "ud", "g"), out.lazy())
 
 
