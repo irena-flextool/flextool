@@ -1973,6 +1973,11 @@ change.</p>
 </tr>
 </tbody>
 </table>
+<p>FlexTool reads results from the solver directly and needs no HiGHS solution
+file, so <code>write_solution_to_file</code>, <code>solution_file</code> and <code>write_solution_style</code>
+are ignored in <code>highs.opt</code> (older templates set them; projects created then
+still have the lines). To have HiGHS write a solution file anyway, set these
+options in the solve's <code>solver_arguments</code>.</p>
 <p>FlexTool reads each solver's baseline at
 solve time, overlays the scenario's <code>solver_arguments</code> Map (plus the
 convenience-knob translations from the <code>--solver-time-limit</code> /

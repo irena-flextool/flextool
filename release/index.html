@@ -628,6 +628,24 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#unreleased">
+<span class="md-ellipsis">
+      
+        Unreleased
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#release-405-11102026-polars-20-rolling-warm-start-fix">
+<span class="md-ellipsis">
+      
+        Release 4.0.5 (11.10.2026) — polars 2.0 rolling warm-start fix
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#release-404-2192026-vre-curtailment-output-solver-option-fixes">
 <span class="md-ellipsis">
       
@@ -2379,6 +2397,24 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#unreleased">
+<span class="md-ellipsis">
+      
+        Unreleased
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#release-405-11102026-polars-20-rolling-warm-start-fix">
+<span class="md-ellipsis">
+      
+        Release 4.0.5 (11.10.2026) — polars 2.0 rolling warm-start fix
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#release-404-2192026-vre-curtailment-output-solver-option-fixes">
 <span class="md-ellipsis">
       
@@ -4070,6 +4106,249 @@
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
 <h1 id="release-notes">Release notes</h1>
+<h2 id="unreleased">Unreleased</h2>
+<ul>
+<li><strong>Minimum load now applies once per unit, on the sum of its outputs.</strong>
+<code>min_load</code> × online capacity is a floor on the sum of the outputs that
+  define the unit's capacity (outputs with <code>conversion_flow_coeff ≠ 0</code>; the
+  single flow of a one-input/one-output unit; the input of a unit without
+  outputs). Inputs no longer get a floor of their own. Behaviour changes for
+  every unit with <code>min_load</code> and online variables that has several inputs
+  or outputs (or a delay):</li>
+<li>a unit with two inputs no longer has to burn <code>min_load</code> × online of
+    <em>each</em> input — an expensive second input is no longer forced, and a
+    second input that cannot supply no longer keeps the unit offline;</li>
+<li>a unit with an efficiency above 1 (heat-pump-like) can now run with
+    <code>min_load</code> (before, its input floor pushed the outputs above capacity);</li>
+<li>an extraction CHP can run in pure-heat mode while online (before, the
+    input floor forced electricity out of it);</li>
+<li><code>capacity_min_coeff</code> on an output no longer lowers or switches off the
+    unit's minimum load (setting it below 1, e.g. 0 on every output, used to
+    do that): the full <code>min_load</code> applies. Lower <code>min_load</code> instead
+    (<code>min_load = 0</code> switches it off). The model warns about such units;</li>
+<li>one-input/one-output units behave as before, except that an authored
+    <code>capacity_min_coeff</code> below 1 no longer softens their floor.</li>
+<li><strong><code>capacity_min_coeff</code> on an output is an optional per-output floor
+  (default 0, schema v70).</strong> While the unit is online, an output of a unit
+  with several outputs must be at least <code>capacity_min_coeff × min_load ×
+  online capacity</code>. 0 (the new default) means no separate floor; values
+  outside 0..1 are an error. The schema migration deletes stored output
+  values outside 0..1 (they were copied from old flow coefficients by an old
+  migration, e.g. 2 or −0.025) and values equal to the same output's
+  <code>capacity_max_coeff</code> (≠ 1, also left by that migration), and lists them;
+  it also lists the units whose kept values now act differently (all below
+  1: no longer lower the minimum load; &gt; 0 on a unit with several outputs:
+  now a floor on that output). The listing is printed on the console only.</li>
+<li><strong>New: <code>input_share_min</code> (unit--inputNode, default 0).</strong> While the unit is
+  running, the input must supply at least this share of the unit's current
+  input energy (flow × <code>conversion_flow_coeff</code>): e.g. 0.3 makes the input
+  supply 30 % of whatever the unit uses. It applies with or without online
+  variables. Shares on all inputs summing to 1 fix the blend. Errors: a share
+  outside 0..1, shares of a unit summing above 1, a share above the same
+  input's <code>input_share_max</code>, and a share on a unit with a negative input
+  <code>conversion_flow_coeff</code>; a share on an input with
+  <code>conversion_flow_coeff = 0</code> or on a unit with one input has no effect (a
+  warning). The schema migration deletes all values of the old
+  <code>unit__inputNode.capacity_min_coeff</code> (the model never applied them, and
+  their old meaning is unrelated) and prints the deleted values; re-author
+  them as <code>input_share_min</code> where a mixing minimum is meant.</li>
+<li><strong>Downward reserve can no longer take a unit below its floor.</strong> Downward
+  reserve at a node a unit feeds, and upward reserve at a node a unit
+  consumes from (a consumption cut), cannot exceed the unit's flow, and for
+  an online unit cannot take the sum of its outputs below <code>min_load</code> ×
+  online capacity (nor an output with <code>capacity_min_coeff</code> below its floor).
+  Before, a unit could offer its full capacity as downward reserve even
+  while off. The <code>max_share</code> limit (× capacity) still applies on top.
+  Connections are not limited this way.</li>
+<li><strong>Reserve shortfall can cover the whole requirement and is always
+  penalised.</strong> The reserve shortfall is now sized by the largest
+  requirement of the group — <code>reservation</code> for timeseries requirements
+  (unchanged), Σ capacity × <code>increase_reserve_ratio</code> for dynamic and
+  Σ capacity × <code>large_failure_ratio</code> for large-failure requirements, summed
+  when a group combines methods. Before it was sized by <code>reservation</code> only,
+  so a dynamic or large-failure group with a small or no <code>reservation</code> of its
+  own could leave its requirement unmet only up to that amount (or not at
+  all) and, without a <code>reservation</code>, without penalty — a requirement that
+  could not be met made the model infeasible. The reserve shortfall outputs
+  use the same sizing.</li>
+<li><strong>Fix: <code>penalty_reserve</code> defaults to 5000 again (schema v70).</strong> A reserve
+  group without its own <code>penalty_reserve</code> had no shortfall penalty at all,
+  so its reserve requirement was in effect optional. The default of 5000
+  [CUR/MW per hour of shortfall] — the value of the 3.x model and of the
+  schema until an earlier migration cleared it — now applies to every
+  reserve group without a value; authored values are unchanged. Models with
+  such groups now procure the reserve (or pay for the shortfall), which can
+  raise the objective.</li>
+<li><strong>Fix: connection <code>delay</code> is ignored, with a warning.</strong> The reference
+  said it works with <code>transfer_method = no_losses_no_variable_cost</code>; in fact
+  no connection delays its flow (neither did the 3.x model). Setting it
+  still changed the connection: its efficiency losses were dropped and a
+  <code>regular</code> connection became one-way. Until connection delay is
+  implemented, a connection <code>delay</code> is ignored — the connection is modelled
+  exactly as without it — and the model warns once per such connection.
+  Use a unit for a delayed flow. The reference, the how-to and the
+  parameter description (schema v70 step) say so.</li>
+<li><strong>Known limitations</strong> (follow-ups): upward reserve is still not limited by
+  the online capacity (an online unit that is off can offer upward reserve);
+  units consuming more to offer downward reserve are not limited by their
+  input capacity; connections are not limited by their flow when offering
+  reserve; the reserve balance does not yet convert input-side reserve of a
+  one-input/one-output unit by its efficiency; dynamic and large-failure
+  (n-1) reserves are only active when some group of the same reserve and
+  direction has a non-zero <code>reservation</code>; the large-failure requirement sums
+  all failing processes into one requirement instead of one requirement per
+  failing process (over-procures reserve when several processes can fail);
+  connection <code>delay</code> is not applied (it is ignored with a warning).</li>
+<li><strong>Fix: multi-input/multi-output (indirect) units with
+  <code>conversion_method = min_load_efficiency</code> now burn the no-load fuel.</strong>
+  Their input was <code>slope × output</code> only; the <code>section × online capacity</code>
+  part of the efficiency curve was missing, so fuel use, commodity cost and
+  CO2 were understated (by 31 % at full load for a unit with <code>min_load</code> 0.2,
+  <code>efficiency_at_min_load</code> 0.4 and <code>efficiency</code> 0.9). The input is now
+  <code>slope × output + section × online capacity</code>, as for one-input/one-output
+  units.</li>
+<li><strong>Fix: a unit with a constant <code>delay</code> runs again.</strong> Only a map of delays
+  was read into the delay durations; with a constant the unit's inputs were
+  dropped from its conversion and its output was forced to zero without a
+  message. Rolling-window solves with a delayed unit (constant or map) no
+  longer stop with an error. The delay tables of a delayed unit are now
+  checked, and an inconsistency stops the run with a clear error instead of
+  zeroing the unit. Note: <code>delay</code> on connections is not applied; it is
+  ignored with a warning (see above).</li>
+<li>
+<p><strong>Fix: <code>input_share_max</code> on a delayed unit's input divides by the input's
+  <code>conversion_flow_coeff</code>.</strong> For delayed units the input limit used
+  <code>min(conversion_flow_coeff, 1)</code>, so an input with a coefficient above 1
+  was allowed too much (e.g. coefficient 2 with <code>input_share_max</code> 0.6 let
+  the unit run at full output instead of 60 %). Delayed and undelayed
+  inputs now get the same limit.</p>
+</li>
+<li>
+<p><strong>Input (fuel) limits of units follow <code>input_share_max</code>.</strong> An input of a
+  multi-input/multi-output (indirect) unit may now supply at most
+  <code>input_share_max</code> × the input that runs the unit at full output
+  (<code>(slope × W + section) / conversion_flow_coeff</code> per unit of capacity, <code>W</code>
+  being the most fuel the outputs can demand within the capacity and their
+  <code>capacity_max_coeff</code>), times availability and capacity. The default 1 is
+  no effective limit; e.g. two fuels with 0.6 each can run the unit at full
+  output only together. Units without investment in the solve get the limit
+  as a bound on the flow variable (fewer constraint rows); investing units
+  keep a constraint whose invested-capacity term now carries the same
+  multiplier (it used 1, so the fuel limit did not follow invested capacity
+  correctly). Direct units honour an authored <code>input_share_max</code> as a cap on
+  their flow; source-side ramp limits of indirect inputs scale with the
+  input limit. The previous fuel bound summed <code>conversion_flow_coeff ×
+  capacity_max_coeff</code> over all outputs, ignoring that their sum is capped by
+  capacity (looser than needed).</p>
+</li>
+<li><strong>Rolling-window sub-solves now apply the same capacity coefficients as
+  single solves.</strong> Output <code>capacity_max_coeff</code>, the uncapped
+  <code>conversion_flow_coeff = 0</code> edges and the indirect input limits were not
+  carried into the roll sub-solves.</li>
+<li><strong>Input-side capacity coefficients renamed to <code>input_share_max</code> /
+  <code>input_share_min</code> (schema v70).</strong> On <code>unit__inputNode</code>,
+  <code>capacity_max_coeff</code> is now <code>input_share_max</code> (values move unchanged) and
+  <code>capacity_min_coeff</code> is <code>input_share_min</code> (see below: its old values are
+  deleted); <code>unit__outputNode</code> keeps <code>capacity_max_coeff</code> /
+  <code>capacity_min_coeff</code>. Existing databases are migrated automatically.</li>
+<li><strong>Multi-output indirect units (e.g. CHP) are no longer capped below their
+  capacity by their fuel input.</strong> The input flow of an indirect unit carries
+  only a loose solver bound; it was set to <code>slope × capacity</code>, i.e. enough fuel
+  for one output at full capacity. With several outputs, or an output
+  <code>conversion_flow_coeff</code> above 1, that bound became binding and silently
+  limited the unit (e.g. an extraction CHP's electricity pinned well below its
+  cap). The bound now follows the conversion equation:
+  <code>capacity × slope × Σ_outputs(conversion_flow_coeff × capacity_max_coeff) /
+  input conversion_flow_coeff</code>, scaled up for delayed units.</li>
+<li><strong><code>capacity_max_coeff</code> on the outputs of indirect units is enforced again.</strong>
+  Indirect output flows are bounded by existing capacity (plus investment), but
+  the per-output <code>capacity_max_coeff</code> factor was only folded in for direct
+  units, so an indirect output could run up to the full unit capacity.</li>
+<li><strong>The capacity of an indirect unit now caps the sum of its outputs</strong>, as
+  documented ("the maximum sum of output flows"). Previously only each output
+  was capped individually, so a two-output unit (e.g. a CHP) could deliver up
+  to twice its capacity, and investment solves sized such units by their
+  largest single output. The new <code>maxOutputSum</code> constraint bounds
+  <code>Σ outputs + upward reserves</code> by existing plus invested capacity (times
+  availability); online units additionally bound <code>Σ outputs</code> by the online
+  capacity. Outputs with <code>conversion_flow_coeff = 0</code> stay excluded;
+  <code>capacity_max_coeff</code> remains a per-output cap.</li>
+<li>Results of models with multi-output indirect units can change (lower or
+  equal cost where the fuel bound was binding; respected output caps; higher
+  cost or more investment where the sum of outputs exceeded capacity).</li>
+<li><strong>Capacity multipliers now scale invested capacity too.</strong> <code>capacity_max_coeff</code>
+  and <code>availability</code> multiplied only the existing capacity; invested (and
+  retired) capacity entered the capacity constraints unscaled. An output with
+  <code>capacity_max_coeff = 0.2</code> on a unit that invested 900 MW could deliver
+  900 MW instead of 180 MW, and a unit with <code>availability = 0.5</code> could use all
+  of its new capacity. The flow caps of direct units, indirect-unit outputs,
+  the output-sum cap and the reverse direction of two-way units now apply
+  <code>capacity_max_coeff × availability</code> to <code>existing + invested − retired</code>.
+  Investment models with such multipliers will build more capacity.</li>
+<li><strong>Ramp limits now follow invested capacity and <code>capacity_max_coeff</code>.</strong> The
+  ramp constraints used the existing capacity only, so a ramp-limited unit
+  built by the model could not change its output at all, and the edge's
+  <code>capacity_max_coeff</code> was not applied (the documented behaviour).</li>
+<li><strong>The reverse direction of a two-way connection can use invested capacity.</strong>
+  Reverse flow of <code>no_losses_no_variable_cost</code> connections was capped at the
+  existing capacity only.</li>
+<li><strong><code>capacity_max_coeff = 0</code> is a zero cap, as documented.</strong> The engine
+  treated an edge with <code>capacity_max_coeff = 0</code> as uncapped (bounded only by
+  <code>max_flow_for_unconstrained_variables</code>) in its structural flow bound — a
+  leftover from the parameter rename, when the old coefficient was the flow
+  coefficient. The uncapped (pass-through) edges are the
+  <code>conversion_flow_coeff = 0</code> ones; those are now also kept out of the online
+  flow cap, ramp limits and min-load constraints, and are no longer scaled by
+  availability. The <code>max_flow_for_unconstrained_variables</code> and
+  <code>capacity_max_coeff</code> descriptions are corrected (schema v70).</li>
+<li><strong><code>capacity_max_coeff</code> now applies to online (unit-commitment) units' flow
+  cap</strong>, and that cap no longer limits the fuel input of online multi-output
+  units (it is tied to the outputs by the conversion equation).</li>
+<li><strong><code>invest_retire_no_limit</code> lifts the investment limits like
+  <code>invest_no_limit</code>.</strong> It was not recognised as a no-limit method: the unit's
+  maximum capacity stayed at its existing capacity, so a unit with no existing
+  capacity could not invest at all.</li>
+<li><strong>Solves no longer write an unused <code>flextool.sol</code> file</strong>, and HiGHS no
+  longer warns "The cost row for the Glpsol solution file is reported last".
+  The <code>highs.opt</code> template carried GLPK-era solution-file options
+  (<code>write_solution_to_file</code>, <code>solution_file</code>, <code>write_solution_style=2</code>);
+  nothing has read that file since glpsol was retired. They are removed
+  from the template, and the same options in an existing project's
+  <code>solver_config/highs.opt</code> are ignored (silently for the old template
+  lines, with a one-time warning for hand-edited values). To have HiGHS
+  write a solution file anyway, set these options in the solve's
+  <code>solver_arguments</code>.</li>
+<li><strong>Dependency versions are capped at the tested series:</strong> <code>polars&lt;3</code>,
+  <code>pandas&gt;=2.2.3,&lt;4</code>, <code>spinedb-api&gt;=0.36.5,&lt;0.37</code>, and <code>highspy&gt;=1.14.0,&lt;1.15</code>
+  (was exactly 1.14.0 — HiGHS patch releases are now allowed). A weekly CI
+  canary tests the newest releases and reports when a cap can be raised.</li>
+</ul>
+<h2 id="release-405-11102026-polars-20-rolling-warm-start-fix">Release 4.0.5 (11.10.2026) — polars 2.0 rolling warm-start fix</h2>
+<p>Patch release. No schema changes.</p>
+<ul>
+<li><strong>Rolling solves no longer receive misaligned time-series values under
+  polars 2.0.</strong> FlexTool requires <code>polars&gt;=1.40</code> without an upper bound, so
+  fresh installs now pull polars 2.0. When consecutive rolls of a rolling
+  solve have the same size, FlexTool reuses the already-built problem and only
+  pushes the new time-series values (e.g. node demand / <code>inflow</code>) into it.
+  Those values were matched to the problem's constraints by position, relying
+  on a row order that polars 2.0 no longer guarantees. With more than one node
+  the values could land on the wrong node and time step — for example one
+  node's demand dropping to zero every other hour — without any error or
+  warning. The values are now put in the constraints' own order before they
+  are pushed, and the underlying node × time-step tables are built in an
+  explicit order, so results are the same with polars 1.x and 2.x.</li>
+<li><strong>If you ran rolling solves with polars 2.0</strong> (check with
+  <code>pip show polars</code>), re-run them with this release: results of every roll
+  after the first may be affected. Installs that used polars 1.x were not
+  affected.</li>
+<li><strong>The GUI opens .sqlite files in the Spine DB Editor also when FlexTool is
+  started from a virtual environment that is not activated</strong> (e.g.
+  <code>.venv/bin/flextool-gui</code>). The GUI looked for the <code>spine-db-editor</code> command
+  on PATH, which does not include such a venv, and so reported the editor
+  missing even though Spine Toolbox was installed. It now starts the editor
+  with the same Python that runs FlexTool, like the command-line launcher.</li>
+</ul>
 <h2 id="release-404-2192026-vre-curtailment-output-solver-option-fixes">Release 4.0.4 (21.9.2026) — VRE curtailment output &amp; solver option fixes</h2>
 <p>Patch release. No schema changes. This release also ships the 4.0.3 changes
 below, which were prepared but never published to PyPI.</p>
