@@ -73,18 +73,30 @@ dependencies = [
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older
     # 1.x wheels reject it ("getOptionIndex: Option "user_objective_scale"
     # is unknown") and the Layer-3 objective centering silently degrades to
-    # an un-conditioned solve.  Pin to 1.14.0 — the highest tested version
-    # and one that ships the option — with a lower bound so a fresh install
-    # can't resolve to an older wheel that lacks it.
-    "highspy>=1.14.0,<=1.14.0",
+    # an un-conditioned solve.  The lower bound keeps a fresh install from
+    # resolving to an older wheel; patch releases are allowed, the next minor
+    # is capped until it has been tested (the weekly canary workflow,
+    # .github/workflows/canary.yml, flags a new minor).  flextool.env_check's
+    # older-Windows auto-heal (HiGHS#2964) still installs highspy==1.13.1
+    # directly with pip; pip lets that through (it only warns about this
+    # requirement), so the heal is unaffected by the lower bound.
+    "highspy>=1.14.0,<1.15",
     # polars 1.40 introduced `pl.struct(...).is_sorted()` (and polar_high's
     # `_verify_dense_sorted` relies on the same call); older versions raise
     # "could not apply comparison on series of dtype 'binary[offset]'" and
-    # silently bypass autoscale Layer 2/3.
-    "polars>=1.40",
-    # Core data + I/O.
-    "pandas",
-    "spinedb-api",
+    # silently bypass autoscale Layer 2/3.  Capped below the next major
+    # (polars majors change row-order and API guarantees — 2.0 broke the
+    # rolling warm-start, fixed in 4.0.5); the weekly canary tests the newest.
+    "polars>=1.40,<3",
+    # Core data + I/O.  pandas: the floor is spinedb-api's own requirement
+    # (>=2.2.3); 3.0.x is what fresh installs get and what CI tests; the next
+    # major is capped.
+    "pandas>=2.2.3,<4",
+    # spinedb-api is 0.x and its minor releases break the API (0.33 SQLAlchemy
+    # 1.4 + mandatory ``with`` sessions, 0.34 new item API, 0.36 SQLAlchemy 2),
+    # so it is capped to the tested minor series.  0.36.5 added the
+    # parameter_group table that FlexTool's databases and Excel export use.
+    "spinedb-api>=0.36.5,<0.37",
     "openpyxl",
     "odfpy",
     "python-calamine",

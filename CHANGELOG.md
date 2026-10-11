@@ -197,6 +197,10 @@
   `invest_no_limit`.** It was not recognised as a no-limit method: the unit's
   maximum capacity stayed at its existing capacity, so a unit with no existing
   capacity could not invest at all.
+- **Dependency versions are capped at the tested series:** `polars<3`,
+  `pandas>=2.2.3,<4`, `spinedb-api>=0.36.5,<0.37`, and `highspy>=1.14.0,<1.15`
+  (was exactly 1.14.0 — HiGHS patch releases are now allowed). A weekly CI
+  canary tests the newest releases and reports when a cap can be raised.
 
 ## Release 4.0.5 (11.10.2026) — polars 2.0 rolling warm-start fix
 
