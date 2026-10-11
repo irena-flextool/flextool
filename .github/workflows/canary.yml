@@ -1,0 +1,82 @@
+name: Dependency canary
+
+# Weekly early warning for FlexTool's capped dependencies (pyproject.toml):
+# install the NEWEST versions of everything with the upper caps lifted and run
+# the same test command as ci.yml's `full` job.  Opens (or updates) one GitHub
+# issue titled "canary: dependency drift" when the tests fail or when a
+# capped package has a release past its cap (e.g. a new highspy minor or a new
+# polars major); closes that issue when a later run is clean.
+# Helper: .github/scripts/dependency_caps.py.  Policy: CONTRIBUTING.md
+# "Dependency caps and the canary".
+
+on:
+  schedule:
+    # Mondays 04:00 UTC (after the nightly ci.yml run at 03:00).
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: dependency-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Newest dependencies (caps lifted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Lift upper caps
+        run: |
+          python -m pip install --upgrade pip packaging
+          python .github/scripts/dependency_caps.py lift --pyproject pyproject.toml --caps-out "$RUNNER_TEMP/caps.json"
+          git diff pyproject.toml
+
+      - name: Install newest versions
+        id: install
+        run: |
+          pip install --upgrade --upgrade-strategy eager -e . pytest pytest-xdist pytest-timeout pyyaml matplotlib
+          pip list
+
+      - name: Installed versions vs caps
+        if: steps.install.outcome == 'success'
+        run: |
+          python .github/scripts/dependency_caps.py report --caps "$RUNNER_TEMP/caps.json" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Set solver binary permissions
+        run: |
+          if [ -f bin/highs ]; then chmod +x bin/highs; fi
+
+      - name: Run tests (as ci.yml full)
+        id: tests
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pytest tests/ -q --tb=short -rfE --ignore=tests/test_xlsx_workflow.py 2>&1 | tee "$RUNNER_TEMP/pytest.log"
+
+      - name: Open, update or close the canary issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python .github/scripts/dependency_caps.py issue \
+            --caps "$RUNNER_TEMP/caps.json" \
+            --install-outcome "${{ steps.install.outcome }}" \
+            --tests-outcome "${{ steps.tests.outcome }}" \
+            --pytest-log "$RUNNER_TEMP/pytest.log" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Fail the run when the tests failed
+        if: steps.tests.outcome == 'failure'
+        run: exit 1

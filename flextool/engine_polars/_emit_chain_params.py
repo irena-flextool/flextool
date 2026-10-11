@@ -33,6 +33,9 @@ from flextool.engine_polars._emit_provider_io import (
 )
 from flextool.engine_polars import _provider_keys as K
 from flextool.engine_polars._provider_translators import read_handoff_frame
+from flextool.engine_polars._derived_params import (
+    INVEST_METHODS_INVEST_NO_LIMIT,
+)
 
 if TYPE_CHECKING:
     from ._solve_handoff import SolveHandoff  # noqa: F401 — retained for legacy callers
@@ -606,7 +609,8 @@ def _compute_p_entity_capacity_max_chain(
     mc_rows: list[tuple[str, str, float]] = []
     for e in entities:
         in_total = e in invest_total
-        has_no_limit = (e, "invest_no_limit") in invest_method_pairs
+        has_no_limit = any((e, m) in invest_method_pairs
+                           for m in INVEST_METHODS_INVEST_NO_LIMIT)
         for d in periods:
             if d not in period_in_use:
                 max_capacity[(e, d)] = 0.0
@@ -643,7 +647,8 @@ def _compute_p_entity_capacity_max_chain(
         if e not in entity_invest:
             continue
         in_total = e in invest_total
-        has_no_limit_method = (e, "invest_no_limit") in invest_method_pairs
+        has_no_limit_method = any((e, m) in invest_method_pairs
+                                  for m in INVEST_METHODS_INVEST_NO_LIMIT)
         for d in periods:
             if d not in period_in_use:
                 invest_cum_max[(e, d)] = 0.0

@@ -336,9 +336,8 @@ def test_native_orchestration_obj_parity(
     """
     work = scenario_workdir(scenario, db_fixture=db_fixture)
     sqlite = work / "tests.sqlite"
-    flx_obj_path = work / "flextool.sol"
-    if not flx_obj_path.exists():
-        pytest.skip(f"{work_name}: no flextool.sol reference")
+    if not any((work / "output_raw").glob("v_obj__*.parquet")):
+        pytest.skip(f"{work_name}: no output_raw/v_obj reference")
     if work_name in _FIXTURES_DERIVATIVE_PATCH:
         pytest.skip(
             f"{work_name}: derivative fixture (post-preprocessing CSV "

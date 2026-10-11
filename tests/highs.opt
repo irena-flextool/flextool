@@ -10,9 +10,6 @@
 # below are kept aligned with that pin so CLI-style invocations
 # (``bin/highs`` with this file passed on the command line) stay
 # consistent with the engine.
-write_solution_to_file=true
-solution_file=flextool.sol
-write_solution_style=2
 mip_report_level=2
 mip_heuristic_effort=0.0
 mip_detect_symmetry=false

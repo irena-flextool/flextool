@@ -608,12 +608,31 @@ def bucket_coefficients(
     cost_acc: dict[QuantityType, _AccVal] = {}
     bound_acc: dict[QuantityType, _AccVal] = {}
 
-    # ── Variable bounds: small (≤ 2 per var family); keep in Python
-    # but match the (sum_log2, count, min, max) accumulator shape.  Bounds
-    # never went through the walk, so this is identical on both paths.
+    # ── Variable bounds: small (≤ 2 per scalar-bound var family); keep in
+    # Python but match the (sum_log2, count, min, max) accumulator shape.
+    # Per-element (array) bounds (polar_high ``add_var(upper=Param)``)
+    # contribute every finite, non-zero entry — the same filter applied
+    # per value.  Bounds never went through the walk, so this is identical
+    # on both paths.
     for name, var in problem._vars.items():
         fam = lookup_var(name)
         for b in (var.lower, var.upper):
+            if isinstance(b, np.ndarray):
+                av_arr = np.abs(b[np.isfinite(b) & (b != 0.0)])
+                if av_arr.size == 0:
+                    continue
+                lv_arr = np.log2(av_arr)
+                ok = np.isfinite(lv_arr)
+                if not ok.any():
+                    continue
+                av_arr = av_arr[ok]
+                ps, pn, pmin, pmax = bound_acc.get(fam.column_type, _INIT_ACC)
+                bound_acc[fam.column_type] = (
+                    ps + float(lv_arr[ok].sum()), pn + int(av_arr.size),
+                    min(pmin, float(av_arr.min())),
+                    max(pmax, float(av_arr.max())),
+                )
+                continue
             if not math.isfinite(b) or b == 0.0:
                 continue
             av = abs(float(b))
@@ -1002,8 +1021,9 @@ def apply_layer2_with_exponents(
     # Variable bound mutation — multiply finite bounds by col_factor.
     # Skip integer columns (col_factors[j] == 1.0 there by construction).
     # This is the one place Layer 2 mutates state that's not behind the
-    # side vectors; intentional because Var.lower/upper are scalar per
-    # family and the cost is O(n_var_families), no peak-memory concern.
+    # side vectors; intentional because the col factor is uniform per
+    # family.  ``Var.scale_bounds`` keeps scalar bounds scalar (the exact
+    # historical ``float(b) * f``) and scales per-element arrays entry-wise.
     for name, var in problem._vars.items():
         if var.integer:
             continue
@@ -1011,10 +1031,7 @@ def apply_layer2_with_exponents(
         f = float(2 ** exponents[fam.column_type]) if fam.column_type in exponents else 1.0
         if f == 1.0:
             continue
-        if math.isfinite(var.lower):
-            var.lower = float(var.lower) * f
-        if math.isfinite(var.upper):
-            var.upper = float(var.upper) * f
+        var.scale_bounds(f)
 
     # ── Row factors ----------------------------------------------------
     # Walk ``_cstrs`` in the same order consumers do; ``row_factors_list``
