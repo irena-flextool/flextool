@@ -197,6 +197,16 @@
   `invest_no_limit`.** It was not recognised as a no-limit method: the unit's
   maximum capacity stayed at its existing capacity, so a unit with no existing
   capacity could not invest at all.
+- **Solves no longer write an unused `flextool.sol` file**, and HiGHS no
+  longer warns "The cost row for the Glpsol solution file is reported last".
+  The `highs.opt` template carried GLPK-era solution-file options
+  (`write_solution_to_file`, `solution_file`, `write_solution_style=2`);
+  nothing has read that file since glpsol was retired. They are removed
+  from the template, and the same options in an existing project's
+  `solver_config/highs.opt` are ignored (silently for the old template
+  lines, with a one-time warning for hand-edited values). To have HiGHS
+  write a solution file anyway, set these options in the solve's
+  `solver_arguments`.
 - **Dependency versions are capped at the tested series:** `polars<3`,
   `pandas>=2.2.3,<4`, `spinedb-api>=0.36.5,<0.37`, and `highspy>=1.14.0,<1.15`
   (was exactly 1.14.0 — HiGHS patch releases are now allowed). A weekly CI

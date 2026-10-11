@@ -120,6 +120,12 @@ change.
 | Xpress  | `solver_config/xpress.opt`   | `CONTROL value` per line                            |
 | COPT    | `solver_config/copt.opt`     | `ParamName value` per line                          |
 
+FlexTool reads results from the solver directly and needs no HiGHS solution
+file, so `write_solution_to_file`, `solution_file` and `write_solution_style`
+are ignored in `highs.opt` (older templates set them; projects created then
+still have the lines). To have HiGHS write a solution file anyway, set these
+options in the solve's `solver_arguments`.
+
 FlexTool reads each solver's baseline at
 solve time, overlays the scenario's `solver_arguments` Map (plus the
 convenience-knob translations from the `--solver-time-limit` /
