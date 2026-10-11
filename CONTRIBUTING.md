@@ -267,3 +267,32 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
 ## CI Workflows
 
 - **`tests.yml`** — runs pytest on all three platforms and verifies the master template is up to date. Triggered on push/PR to `main`.
+- **`ci.yml`** — smoke gate on every push/PR; full suite on push to `main` and nightly; slow tests nightly.
+- **`canary.yml`** — weekly dependency canary (see below).
+
+## Dependency caps and the canary
+
+Dependencies whose new releases have broken FlexTool before carry an upper
+cap in `pyproject.toml`; the rest (polar-high, which we follow closely,
+openpyxl, xlsxwriter, matplotlib, pyyaml, the GUI helpers) are uncapped.
+
+| package | cap | why |
+|---|---|---|
+| `polars` | `<3` (next major) | majors change behaviour silently (2.0 broke the rolling warm-start) |
+| `pandas` | `<4` (next major) | floor `>=2.2.3` is spinedb-api's own requirement |
+| `spinedb-api` | `<0.37` (next minor) | 0.x: minor releases break the API (0.33, 0.34, 0.36); `>=0.36.5` for the `parameter_group` table |
+| `highspy` | `<1.15` (next minor) | patch releases allowed; `>=1.14.0` for `user_objective_scale` |
+
+`flextool/env_check.py` may downgrade highspy to 1.13.1 on older Windows
+(HiGHS#2964); it installs that version with pip directly, which the floor
+does not block (pip only warns).
+
+The weekly **canary** (`.github/workflows/canary.yml`, also runnable by hand
+with *Run workflow*) lifts the caps with `.github/scripts/dependency_caps.py
+lift`, installs the newest versions of everything, prints the installed
+versions against the caps, and runs the `ci.yml` full-suite command. When the
+tests fail, or a capped package has a release past its cap, it opens (or
+updates) the single issue **"canary: dependency drift"** (label `canary`);
+a later clean run closes it. To raise a cap: wait for (or trigger) a green
+canary with the new version installed, bump the cap in `pyproject.toml`, and
+mention it in the CHANGELOG.
