@@ -18,6 +18,12 @@ Patch release. No schema changes.
   `pip show polars`), re-run them with this release: results of every roll
   after the first may be affected. Installs that used polars 1.x were not
   affected.
+- **The GUI opens .sqlite files in the Spine DB Editor also when FlexTool is
+  started from a virtual environment that is not activated** (e.g.
+  `.venv/bin/flextool-gui`). The GUI looked for the `spine-db-editor` command
+  on PATH, which does not include such a venv, and so reported the editor
+  missing even though Spine Toolbox was installed. It now starts the editor
+  with the same Python that runs FlexTool, like the command-line launcher.
 
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 
