@@ -3123,14 +3123,16 @@ class MainWindow(tk.Tk):
             db_url = f"sqlite:///{filepath}"
             proc = self.db_editor_mgr.open_database(db_url, source_name)
             if proc is None:
-                # spine-db-editor not found: point at 'Update FlexTool' and
+                # Spine Toolbox not installed in this environment: point at
+                # 'Update FlexTool' and
                 # offer the system default .sqlite app as a fallback.
                 # askyesnocancel: Yes=Update, No=default app, Cancel=nothing.
                 from flextool.update_flextool import install_info
                 choice = messagebox.askyesnocancel(
                     "Spine DB Editor not available",
-                    "The 'spine-db-editor' command was not found, so .sqlite "
-                    "input sources cannot be opened in the Spine DB Editor.\n\n"
+                    "Spine Toolbox is not installed in the Python environment "
+                    "running FlexTool, so .sqlite input sources cannot be "
+                    "opened in the Spine DB Editor.\n\n"
                     "It is part of Spine Toolbox. You can install it via "
                     "'Update FlexTool' (tick 'Install Spine Toolbox'), or "
                     "manually:\n\n"
@@ -3150,7 +3152,7 @@ class MainWindow(tk.Tk):
                             "Error", f"Could not open file:\n{exc}"
                         )
                 return
-            # spine-db-editor was found and launched, but an incomplete Spine
+            # The Spine DB editor was launched, but an incomplete Spine
             # Toolbox install can still crash it on startup. Check shortly after
             # launch and explain the failure instead of leaving the user with a
             # silent no-op (the crash otherwise only shows in the terminal).
@@ -5999,8 +6001,9 @@ class MainWindow(tk.Tk):
     def _on_show_comp_spinedb(self) -> None:
         """Open the project-wide results.sqlite SpineDB.
 
-        Prefer the Spine DB Editor when ``spine-db-editor`` is available on
-        PATH (i.e. Spine Toolbox is installed in the venv). If it is not,
+        Prefer the Spine DB Editor when Spine Toolbox is installed in the
+        environment running FlexTool (launched as
+        ``python -m spinetoolbox.spine_db_editor.main``). If it is not,
         explain that Spine Toolbox can be added via 'Update FlexTool' and
         offer to open the file with the system's default .sqlite application
         instead.
@@ -6029,15 +6032,15 @@ class MainWindow(tk.Tk):
         db_url = f"sqlite:///{results_db}"
         proc = self.db_editor_mgr.open_database(db_url, source_name)
         if proc is None:
-            # spine-db-editor not found: inform the user, point at
+            # Spine Toolbox not installed here: inform the user, point at
             # 'Update FlexTool', and offer the system default .sqlite app
             # as a fallback. askyesnocancel: Yes=Update, No=default app,
             # Cancel=do nothing.
             choice = messagebox.askyesnocancel(
                 "Spine DB Editor not available",
-                "The 'spine-db-editor' command was not found, so the "
-                "comparison results.sqlite cannot be opened in the Spine DB "
-                "Editor.\n\n"
+                "Spine Toolbox is not installed in the Python environment "
+                "running FlexTool, so the comparison results.sqlite cannot be "
+                "opened in the Spine DB Editor.\n\n"
                 "It is part of Spine Toolbox, which can be added via "
                 "'Update FlexTool' (tick 'Install Spine Toolbox').\n\n"
                 "Open 'Update FlexTool' now?\n\n"
@@ -6053,7 +6056,7 @@ class MainWindow(tk.Tk):
                 except OSError as exc:
                     logger.warning("Could not open results SpineDB: %s", exc)
             return
-        # spine-db-editor was found and launched, but an incomplete Spine
+        # The Spine DB editor was launched, but an incomplete Spine
         # Toolbox install can still crash it on startup. Check shortly after
         # launch and explain the failure instead of leaving a silent no-op.
         self.after(2000, self._check_db_editor_launch, proc, source_name)

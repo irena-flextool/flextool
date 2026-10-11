@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import subprocess
+import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
+
+from flextool.gui.platform_utils import spine_db_editor_argv, spine_toolbox_available
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +23,14 @@ class DbEditorManager:
       is still open in an editor.
     - Open additional databases by launching new editor instances.
 
-    Spine DB Editor (``spine-db-editor``) accepts multiple database URLs
-    on the command line and opens them as tabs (use ``-s`` for separate
-    tabs).  However, there is no IPC mechanism to add a tab to an
-    already-running instance, so each call to :meth:`open_database`
-    launches a new process.
+    The editor is started with the interpreter running FlexTool
+    (``<sys.executable> -m spinetoolbox.spine_db_editor.main <url>...``,
+    see :func:`~flextool.gui.platform_utils.spine_db_editor_argv`), never
+    via a ``spine-db-editor`` looked up on PATH: a ``flextool-gui`` started
+    from a venv that is not activated has no venv ``bin`` on PATH.  It
+    accepts multiple database URLs and opens them as tabs.  However, there
+    is no IPC mechanism to add a tab to an already-running instance, so
+    each call to :meth:`open_database` launches a new process.
     """
 
     def __init__(self) -> None:
@@ -37,26 +43,33 @@ class DbEditorManager:
 
     # ── Opening databases ─────────────────────────────────────────
 
-    def open_database(self, db_url: str, source_name: str) -> subprocess.Popen | None:
-        """Launch ``spine-db-editor`` for *db_url* and track the process.
+    def open_database(
+        self, db_url: str | Sequence[str], source_name: str
+    ) -> subprocess.Popen | None:
+        """Launch the Spine DB editor for *db_url* and track the process.
 
         The editor's own stdout/stderr is redirected to a temporary log file
         so that, if it exits immediately, the caller can read the failure via
         :meth:`read_launch_output` and surface it to the user.
 
         Args:
-            db_url: SQLAlchemy-style database URL (e.g. ``sqlite:///path``).
+            db_url: SQLAlchemy-style database URL (e.g. ``sqlite:///path``),
+                or several URLs to open as tabs of one editor.
             source_name: Logical name used to track which input source is
                 being edited.
 
         Returns:
-            The :class:`subprocess.Popen` object, or ``None`` if the
-            editor executable is not found on ``PATH``.
+            The :class:`subprocess.Popen` object, or ``None`` if Spine
+            Toolbox is not importable by the interpreter running FlexTool
+            (or the launch itself fails).
         """
-        exe = shutil.which("spine-db-editor")
-        if exe is None:
-            logger.warning("spine-db-editor not found on PATH")
+        if not spine_toolbox_available():
+            logger.warning(
+                "Spine Toolbox (spinetoolbox) is not installed in this Python "
+                "environment (%s); cannot open the Spine DB editor",
+                sys.executable)
             return None
+        argv = spine_db_editor_argv(db_url)
 
         log_path: Path | None = None
         log_handle = None
@@ -71,12 +84,12 @@ class DbEditorManager:
         try:
             if log_handle is not None:
                 proc = subprocess.Popen(
-                    [exe, db_url], stdout=log_handle, stderr=subprocess.STDOUT
+                    argv, stdout=log_handle, stderr=subprocess.STDOUT
                 )
             else:
-                proc = subprocess.Popen([exe, db_url])
+                proc = subprocess.Popen(argv)
         except OSError:
-            logger.warning("Failed to launch spine-db-editor", exc_info=True)
+            logger.warning("Failed to launch the Spine DB editor", exc_info=True)
             if log_path is not None:
                 try:
                     log_path.unlink(missing_ok=True)

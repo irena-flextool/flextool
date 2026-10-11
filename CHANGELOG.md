@@ -198,6 +198,33 @@
   maximum capacity stayed at its existing capacity, so a unit with no existing
   capacity could not invest at all.
 
+## Release 4.0.5 (11.10.2026) — polars 2.0 rolling warm-start fix
+
+Patch release. No schema changes.
+
+- **Rolling solves no longer receive misaligned time-series values under
+  polars 2.0.** FlexTool requires `polars>=1.40` without an upper bound, so
+  fresh installs now pull polars 2.0. When consecutive rolls of a rolling
+  solve have the same size, FlexTool reuses the already-built problem and only
+  pushes the new time-series values (e.g. node demand / `inflow`) into it.
+  Those values were matched to the problem's constraints by position, relying
+  on a row order that polars 2.0 no longer guarantees. With more than one node
+  the values could land on the wrong node and time step — for example one
+  node's demand dropping to zero every other hour — without any error or
+  warning. The values are now put in the constraints' own order before they
+  are pushed, and the underlying node × time-step tables are built in an
+  explicit order, so results are the same with polars 1.x and 2.x.
+- **If you ran rolling solves with polars 2.0** (check with
+  `pip show polars`), re-run them with this release: results of every roll
+  after the first may be affected. Installs that used polars 1.x were not
+  affected.
+- **The GUI opens .sqlite files in the Spine DB Editor also when FlexTool is
+  started from a virtual environment that is not activated** (e.g.
+  `.venv/bin/flextool-gui`). The GUI looked for the `spine-db-editor` command
+  on PATH, which does not include such a venv, and so reported the editor
+  missing even though Spine Toolbox was installed. It now starts the editor
+  with the same Python that runs FlexTool, like the command-line launcher.
+
 ## Release 4.0.4 (21.9.2026) — VRE curtailment output & solver option fixes
 
 Patch release. No schema changes. This release also ships the 4.0.3 changes
