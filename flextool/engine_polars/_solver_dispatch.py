@@ -66,6 +66,51 @@ def _parse_highs_opt_file(path: Path | None) -> dict[str, str]:
     return options
 
 
+#: Solution-file options that older ``highs.opt.template`` versions shipped
+#: (a GLPK-era leftover: ``write_solution_style=2`` is the glpsol format).
+#: Every project created before the template was cleaned has a copy, so every
+#: solve wrote an unused ``flextool.sol`` and HiGHS warned "The cost row for
+#: the Glpsol solution file is reported last".  Nothing reads that file, so
+#: the ``highs.opt`` layer drops these keys.  A solution file can still be
+#: requested deliberately through the solve's ``solver_arguments`` (or the
+#: CLI), which are not filtered.
+_HIGHS_OPT_IGNORED_KEYS: dict[str, str] = {
+    "write_solution_to_file": "true",
+    "solution_file": "flextool.sol",
+    "write_solution_style": "2",
+}
+_warned_ignored_highs_opt_keys = False
+
+
+def _drop_solution_file_options(
+    options: dict[str, str], path: Path | None
+) -> dict[str, str]:
+    """Remove the solution-file keys from a parsed ``highs.opt`` dict.
+
+    The exact old-template lines are dropped silently: FlexTool put them
+    there, not the user, and nothing needs to be done about them.  Any other
+    value for these keys was set by hand, so it is dropped with a one-time
+    warning that says where to request a solution file instead.
+    """
+    global _warned_ignored_highs_opt_keys
+    ignored = {k: options.pop(k) for k in list(options) if k in _HIGHS_OPT_IGNORED_KEYS}
+    customised = {
+        k: v for k, v in ignored.items()
+        if v.strip().lower() != _HIGHS_OPT_IGNORED_KEYS[k]
+    }
+    if customised and not _warned_ignored_highs_opt_keys:
+        _warned_ignored_highs_opt_keys = True
+        logging.getLogger(__name__).warning(
+            "Ignoring solution-file options in %s (%s): FlexTool reads its "
+            "results from the solver directly and does not use a solution "
+            "file. To have HiGHS write one anyway, set these options in the "
+            "solve's solver_arguments.",
+            path,
+            ", ".join(f"{k}={v}" for k, v in customised.items()),
+        )
+    return options
+
+
 def _resolve_effective_highs_options(
     *,
     solver_arguments_map: Mapping[str, Any] | None,
@@ -84,7 +129,8 @@ def _resolve_effective_highs_options(
        Each higher layer may overwrite these — operator intent wins.
     2. ``highs.opt`` — floor parsed from ``solver_config/highs.opt``
        via :func:`_parse_highs_opt_file`.  Project-level defaults the
-       user has committed to disk.
+       user has committed to disk.  Solution-file keys are dropped from
+       this layer (:func:`_drop_solution_file_options`).
     3. ``solver_arguments`` — the 1d-map authored on the active
        solve's ``solver_arguments`` parameter (Batch C.1+).
     4. ``cli_overrides`` — keys injected by CLI flags
@@ -118,7 +164,11 @@ def _resolve_effective_highs_options(
         ``polar_high.Problem.set_solver_options``.
     """
     options: dict[str, Any] = dict(baseline) if baseline else {}
-    options.update(_parse_highs_opt_file(highs_opt_path))
+    options.update(
+        _drop_solution_file_options(
+            _parse_highs_opt_file(highs_opt_path), highs_opt_path
+        )
+    )
     if solver_arguments_map:
         for key, value in solver_arguments_map.items():
             options[str(key)] = value

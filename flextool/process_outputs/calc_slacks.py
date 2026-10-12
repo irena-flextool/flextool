@@ -104,16 +104,24 @@ def compute_slacks(par, s, v, r) -> None:
         .mul(par.inflation_factor_operations_yearly, axis=0) \
         .sum(axis=1)
 
-    r.q_reserves_dt = v.q_reserve.mul(par.reserve_upDown_group_reservation[v.q_reserve.columns], axis=1)
+    # vq_reserve is a fraction of the group's largest possible requirement
+    # (``reserve_upDown_group_shortfall_scale``, the same multiplier the LP
+    # uses in the reserve balances and the penalty; the reservation for
+    # timeseries groups).
+    r.q_reserves_dt = v.q_reserve.mul(par.reserve_upDown_group_shortfall_scale[v.q_reserve.columns], axis=1)
     r.q_reserves_d_not_annualized = r.q_reserves_dt.mul(par.step_duration, axis=0).groupby(level='period').sum()
     r.q_reserves_d = annualize_dt_to_d(r.q_reserves_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     # Reserve slack penalty: step_duration is already here (line below);
     # add timestep_weight to match mod line ~2388.
     r.costPenalty_reserve_upDown_dt = v.q_reserve.mul(par.step_duration, axis=0) \
         .mul(par.timestep_weight, axis=0) \
-        .mul(par.reserve_upDown_group_penalty, axis=1) \
-        .mul(par.reserve_upDown_group_reservation, axis=1)
+        .mul(par.reserve_upDown_group_penalty.reindex(v.q_reserve.columns), axis=1) \
+        .mul(par.reserve_upDown_group_shortfall_scale, axis=1)
     # Option (A): weight the reserve slack *penalty* by pdt_branch_weight
-    # (the LP's q_reserve penalty carries op_factor — _reserve.py §obj).  The
-    # physical reserve held (r.q_reserves_dt above) stays UNWEIGHTED.
+    # (the LP's q_reserve penalty carries op_factor — _reserve.py §obj,
+    # ``vq_reserve · scale · penalty · op_factor``).  ``shortfall_scale`` is
+    # the same multiplier the LP uses (it equals the reservation for
+    # timeseries-only groups), so it is applied once here — not alongside
+    # ``reservation``.  The physical reserve held (r.q_reserves_dt above)
+    # stays UNWEIGHTED.
     r.costPenalty_reserve_upDown_dt = weight_dt_by_branch(r.costPenalty_reserve_upDown_dt, _pdt_bw)

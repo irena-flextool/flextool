@@ -188,6 +188,14 @@ class _StubReader:
             return self._solve
         raise KeyError(entity_class)
 
+    def parameter(self, entity_class: str,
+                  parameter_name: str) -> pl.DataFrame:
+        # ``parameter`` is part of the ``InputSource`` protocol and the
+        # synthetic-solve passes read through it (e.g. unit/connection
+        # ``delay``).  The stub DB has no classes, so every read is an
+        # unknown class -> KeyError, as the real readers report it.
+        raise KeyError(entity_class)
+
 
 class _StubSource:
     def __init__(self, workdir: Path | None):
@@ -236,6 +244,7 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     monkeypatch.setattr(_drv, "apply_derived_g", _record("9g"))
     monkeypatch.setattr(_drv, "apply_synthetic_invest_sets",
                         _record("synth_invest"))
+    monkeypatch.setattr(_drv, "apply_delay_params", _record("synth_delay"))
     monkeypatch.setattr(_ex, "apply_existing_chain",
                         _record("10_existing"))
     monkeypatch.setattr(_drv, "_read_active_solve",
@@ -354,6 +363,10 @@ def test_synthetic_solve_skips_per_solve_overrides(tmp_path: Path, monkeypatch):
     assert "2" in calls
     assert "synth_invest" in calls
     assert "1b" in calls
+    # The delay tables are solve-agnostic and rebuilt on the synthetic
+    # path too (rolling sub-solves with a delayed unit need the same td
+    # labels across the three delay frames).
+    assert "synth_delay" in calls
     # The skip is what we're really testing:
     for pass_label in ("3a", "4b", "5c", "6d", "7e", "8f", "9g", "10_existing"):
         assert pass_label not in calls, (

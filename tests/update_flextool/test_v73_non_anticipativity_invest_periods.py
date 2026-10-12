@@ -1,6 +1,6 @@
-"""Tests for the v72 database migration — the invest-NA window.
+"""Tests for the v73 database migration — the invest-NA window.
 
-v72 adds ``solve.non_anticipativity_invest_periods`` — the Array-of-periods
+v73 adds ``solve.non_anticipativity_invest_periods`` — the Array-of-periods
 knob for the standard two-stage stochastic-investment mode: the periods
 over which ``v_invest`` / ``v_divest`` are TIED across stochastic branches
 (a single shared here-and-now decision).
@@ -37,15 +37,15 @@ TEST_DIR = Path(__file__).resolve().parents[1]
 FIXTURES_DIR = TEST_DIR / "fixtures"
 
 
-def test_v72_version_constant_is_at_least_72() -> None:
-    """The engine must report a schema version >= 72 — the
+def test_v73_version_constant_is_at_least_73() -> None:
+    """The engine must report a schema version >= 73 — the
     non_anticipativity_invest_periods lower bound."""
-    assert FLEXTOOL_DB_VERSION >= 72
+    assert FLEXTOOL_DB_VERSION >= 73
 
 
 def _migrated_db(tmp_path: Path) -> DatabaseMapping:
     """Build a fixture DB from JSON (at the fixture's old version, which
-    predates v72), migrate it to HEAD, and return an open mapping."""
+    predates v73), migrate it to HEAD, and return an open mapping."""
     db_path = tmp_path / "lh2.sqlite"
     url = json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
     migrate_database(url)
@@ -74,8 +74,8 @@ def _db_version(url: str) -> int:
 def test_invest_periods_definition_present(tmp_path: Path) -> None:
     """At HEAD the investment shared-window param exists as an unset Array
     param (no default, no value list) grouped under ``solve_advanced``.
-    Added at v72 as ``non_anticipativity_invest_periods`` and renamed to
-    ``shared_invest_periods`` at v74 — this fixture migrates to HEAD, so it
+    Added at v73 as ``non_anticipativity_invest_periods`` and renamed to
+    ``shared_invest_periods`` at v75 — this fixture migrates to HEAD, so it
     carries the current (renamed) name."""
     db = _migrated_db(tmp_path)
     try:
@@ -93,10 +93,10 @@ def test_invest_periods_definition_present(tmp_path: Path) -> None:
 
 
 def test_migration_adds_no_per_solve_value(tmp_path: Path) -> None:
-    """The v72 migration adds the definition ONLY — never a per-solve
+    """The v73 migration adds the definition ONLY — never a per-solve
     value — so every migrated solve resolves to the unset (no-tie) case
     and stays byte-identical.  (Param renamed to ``shared_invest_periods``
-    at v74; this fixture is at HEAD.)"""
+    at v75; this fixture is at HEAD.)"""
     db = _migrated_db(tmp_path)
     try:
         values = [
@@ -112,11 +112,11 @@ def test_migration_adds_no_per_solve_value(tmp_path: Path) -> None:
         db.close()
 
 
-def _build_v71_solve_db(url: str) -> None:
-    """Create a minimal v71 DB (``model`` + ``solve`` classes) carrying no
-    ``non_anticipativity_invest_periods`` — so the v72 block is the ONLY
-    path that can add it.  ``model.version`` default pinned to 71 so
-    ``migrate_database(..., up_to=72)`` runs only the v72 step."""
+def _build_v72_solve_db(url: str) -> None:
+    """Create a minimal v72 DB (``model`` + ``solve`` classes) carrying no
+    ``non_anticipativity_invest_periods`` — so the v73 block is the ONLY
+    path that can add it.  ``model.version`` default pinned to 72 so
+    ``migrate_database(..., up_to=73)`` runs only the v73 step."""
     with DatabaseMapping(url, create=True) as db:
         _count, errors = import_data(
             db,
@@ -125,7 +125,7 @@ def _build_v71_solve_db(url: str) -> None:
                 ["solve", ()],
             ],
             parameter_definitions=[
-                ["model", "version", 71.0, None, "Database version."],
+                ["model", "version", 72.0, None, "Database version."],
             ],
             alternatives=[["Base", ""]],
             entities=[
@@ -133,25 +133,25 @@ def _build_v71_solve_db(url: str) -> None:
             ],
         )
         assert not errors, f"seed import errors: {errors[:5]}"
-        db.commit_session("Seed v71 DB (model + solve, no NA invest periods)")
+        db.commit_session("Seed v72 DB (model + solve, no NA invest periods)")
 
 
-def test_migration_reaches_v72_and_is_idempotent(tmp_path: Path) -> None:
-    """A pre-v72 DB migrates to exactly v72, and re-running the v72 step
+def test_migration_reaches_v73_and_is_idempotent(tmp_path: Path) -> None:
+    """A pre-v73 DB migrates to exactly v73, and re-running the v73 step
     is a no-op that keeps the parameter present."""
-    db_path = tmp_path / "v71_base.sqlite"
+    db_path = tmp_path / "v72_base.sqlite"
     url = f"sqlite:///{db_path.resolve()}"
-    _build_v71_solve_db(url)
+    _build_v72_solve_db(url)
     start_version = _db_version(url)
-    assert start_version < 72, (
-        "seed DB must start below v72 so the v72 block is exercised"
+    assert start_version < 73, (
+        "seed DB must start below v73 so the v73 block is exercised"
     )
 
-    migrate_database(url, up_to=72)
-    assert _db_version(url) == 72
+    migrate_database(url, up_to=73)
+    assert _db_version(url) == 73
 
-    # Idempotent re-run of the v72 step.
-    migrate_database(url, up_to=72)
+    # Idempotent re-run of the v73 step.
+    migrate_database(url, up_to=73)
     with DatabaseMapping(url, create=False) as db:
         db.fetch_all()
         pdef = db.get_parameter_definition_item(
@@ -175,5 +175,5 @@ def test_migration_reaches_v72_and_is_idempotent(tmp_path: Path) -> None:
 )
 def test_master_template_up_to_date() -> None:
     """``sync_master_template(verify_only=True)`` returns True — the
-    spinedb_schema.json regen (with the v72 parameter) was committed."""
+    spinedb_schema.json regen (with the v73 parameter) was committed."""
     assert sync_master_template(verify_only=True) is True

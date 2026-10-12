@@ -1,6 +1,6 @@
-"""Tests for the v70 database migration (Slice C).
+"""Tests for the v71 database migration (Slice C).
 
-v70 adds ``solve.stochastic_invest_method`` — the opt-in enum selecting
+v71 adds ``solve.stochastic_invest_method`` — the opt-in enum selecting
 how stochastic branches participate in investment:
 
 1. Creates the value list ``stochastic_invest_methods`` == {none, recourse}.
@@ -33,17 +33,17 @@ TEST_DIR = Path(__file__).resolve().parents[1]
 FIXTURES_DIR = TEST_DIR / "fixtures"
 
 
-def test_v70_version_constant_is_at_least_70() -> None:
-    """The engine must report a schema version >= 70 — the
+def test_v71_version_constant_is_at_least_71() -> None:
+    """The engine must report a schema version >= 71 — the
     stochastic_invest_method lower bound.  Later migrations keep raising
     the constant, so an exact-equality assertion would regress.
     """
-    assert FLEXTOOL_DB_VERSION >= 70
+    assert FLEXTOOL_DB_VERSION >= 71
 
 
 def _migrated_db(tmp_path: Path) -> DatabaseMapping:
     """Build a fixture DB from JSON (at the fixture's old version, which
-    predates v70 so the parameter can ONLY appear via the v70 block),
+    predates v71 so the parameter can ONLY appear via the v71 block),
     migrate it to HEAD, and return an open mapping."""
     db_path = tmp_path / "lh2.sqlite"
     url = json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
@@ -102,17 +102,17 @@ def test_stochastic_invest_methods_value_list(tmp_path: Path) -> None:
         db.close()
 
 
-def _build_v69_solve_db(url: str) -> None:
-    """Create a minimal v69 DB (``model`` + ``solve`` classes) carrying no
-    ``stochastic_invest_method`` — so the v70 block is the ONLY path that
+def _build_v70_solve_db(url: str) -> None:
+    """Create a minimal v70 DB (``model`` + ``solve`` classes) carrying no
+    ``stochastic_invest_method`` — so the v71 block is the ONLY path that
     can add it.
 
     Built from scratch (never a checked-in .sqlite, never the
-    ``test_fixtures`` corpus): that corpus is regenerated to HEAD (>= v70),
-    so loading one would start AT v70 and never exercise the v70 block.
-    ``model.version`` default is pinned to 69 so ``migrate_database(...,
-    up_to=70)`` runs only the v70 step, keeping this a faithful v70 test
-    even as later migrations extend the chain.  The v70 step is designed
+    ``test_fixtures`` corpus): that corpus is regenerated to HEAD (>= v71),
+    so loading one would start AT v71 and never exercise the v71 block.
+    ``model.version`` default is pinned to 70 so ``migrate_database(...,
+    up_to=71)`` runs only the v71 step, keeping this a faithful v71 test
+    even as later migrations extend the chain.  The v71 step is designed
     to tolerate such minimal DBs (it creates ``solve_advanced`` if absent).
     """
     with DatabaseMapping(url, create=True) as db:
@@ -123,7 +123,7 @@ def _build_v69_solve_db(url: str) -> None:
                 ["solve", ()],
             ],
             parameter_definitions=[
-                ["model", "version", 69.0, None, "Database version."],
+                ["model", "version", 70.0, None, "Database version."],
             ],
             alternatives=[["Base", ""]],
             entities=[
@@ -131,32 +131,32 @@ def _build_v69_solve_db(url: str) -> None:
             ],
         )
         assert not errors, f"seed import errors: {errors[:5]}"
-        db.commit_session("Seed v69 DB (model + solve, no invest method)")
+        db.commit_session("Seed v70 DB (model + solve, no invest method)")
 
 
-def test_migration_reaches_v70_and_is_idempotent(tmp_path: Path) -> None:
-    """A pre-v70 DB migrates to exactly v70, and re-running the v70 step
+def test_migration_reaches_v71_and_is_idempotent(tmp_path: Path) -> None:
+    """A pre-v71 DB migrates to exactly v71, and re-running the v71 step
     is a no-op that keeps the parameter present — the
     ``add_value_list_manual`` / ``add_update_item`` helpers tolerate
     re-adds.
 
-    Seeded from scratch at v69 (see ``_build_v69_solve_db``) so it starts
-    genuinely BELOW v70 and exercises the v70 migration block from below,
+    Seeded from scratch at v70 (see ``_build_v70_solve_db``) so it starts
+    genuinely BELOW v71 and exercises the v71 migration block from below,
     independent of the auto-migrated ``test_fixtures`` corpus.
     """
-    db_path = tmp_path / "v69_base.sqlite"
+    db_path = tmp_path / "v70_base.sqlite"
     url = f"sqlite:///{db_path.resolve()}"
-    _build_v69_solve_db(url)
+    _build_v70_solve_db(url)
     start_version = _db_version(url)
-    assert start_version < 70, (
-        "seed DB must start below v70 so the v70 block is exercised"
+    assert start_version < 71, (
+        "seed DB must start below v71 so the v71 block is exercised"
     )
 
-    migrate_database(url, up_to=70)
-    assert _db_version(url) == 70
+    migrate_database(url, up_to=71)
+    assert _db_version(url) == 71
 
-    # Idempotent re-run of the v70 step — no crash, parameter still present.
-    migrate_database(url, up_to=70)
+    # Idempotent re-run of the v71 step — no crash, parameter still present.
+    migrate_database(url, up_to=71)
     with DatabaseMapping(url, create=False) as db:
         db.fetch_all()
         pdef = db.get_parameter_definition_item(
@@ -181,7 +181,7 @@ def test_migration_reaches_v70_and_is_idempotent(tmp_path: Path) -> None:
 )
 def test_master_template_up_to_date() -> None:
     """``sync_master_template(verify_only=True)`` returns True — the
-    spinedb_schema.json regen (with the v70 parameter) was committed.
+    spinedb_schema.json regen (with the v71 parameter) was committed.
     This is the same assertion CI makes; pinning it locally catches a
     forgotten regen."""
     assert sync_master_template(verify_only=True) is True

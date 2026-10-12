@@ -1,4 +1,4 @@
-"""Tests for the v74 database migration — a single folded bump that:
+"""Tests for the v75 database migration — a single folded bump that:
 
 1. **Renames** the two (unreleased) stochastic shared-decision window
    parameters on the ``solve`` class to positive, non-negated names:
@@ -41,10 +41,10 @@ _OLD_TO_NEW = {
 }
 
 
-def test_v74_version_constant_is_at_least_74() -> None:
-    """The engine must report a schema version >= 74 — the rename +
+def test_v75_version_constant_is_at_least_75() -> None:
+    """The engine must report a schema version >= 75 — the rename +
     reserve_duration lower bound."""
-    assert FLEXTOOL_DB_VERSION >= 74
+    assert FLEXTOOL_DB_VERSION >= 75
 
 
 def _migrated_db(tmp_path: Path, fixture: str) -> DatabaseMapping:
@@ -83,7 +83,7 @@ def test_na_params_renamed_at_head(tmp_path: Path) -> None:
         for old, new in _OLD_TO_NEW.items():
             assert not db.get_parameter_definition_item(
                 entity_class_name="solve", name=old,
-            ), f"{old} should have been renamed away at v74"
+            ), f"{old} should have been renamed away at v75"
             pdef = db.get_parameter_definition_item(
                 entity_class_name="solve", name=new,
             )
@@ -122,12 +122,12 @@ def test_rename_carries_values(tmp_path: Path) -> None:
 # --- reserve_duration added on the reserve relationship class -----------
 
 
-def _build_v73_db(url: str) -> None:
-    """Create a minimal v73 DB carrying the OLD-named window params (with a
+def _build_v74_db(url: str) -> None:
+    """Create a minimal v74 DB carrying the OLD-named window params (with a
     value) on ``solve`` and a ``reserve__upDown__group`` class WITHOUT
-    reserve_duration — so the v74 block is the ONLY path that renames /
-    adds.  ``model.version`` default pinned to 73 so
-    ``migrate_database(..., up_to=74)`` runs only the v74 step."""
+    reserve_duration — so the v75 block is the ONLY path that renames /
+    adds.  ``model.version`` default pinned to 74 so
+    ``migrate_database(..., up_to=75)`` runs only the v75 step."""
     with DatabaseMapping(url, create=True) as db:
         _count, errors = import_data(
             db,
@@ -140,7 +140,7 @@ def _build_v73_db(url: str) -> None:
                 ["reserve__upDown__group", ("reserve", "upDown", "group")],
             ],
             parameter_definitions=[
-                ["model", "version", 73.0, None, "Database version."],
+                ["model", "version", 74.0, None, "Database version."],
                 ["solve", "non_anticipativity_periods", None, None,
                  "Operational non-anticipativity window (pre-rename)."],
                 ["solve", "non_anticipativity_invest_periods", None, None,
@@ -156,23 +156,23 @@ def _build_v73_db(url: str) -> None:
             ],
         )
         assert not errors, f"seed import errors: {errors[:5]}"
-        db.commit_session("Seed v73 DB (old window names + reserve class)")
+        db.commit_session("Seed v74 DB (old window names + reserve class)")
 
 
 def test_migration_renames_adds_and_is_idempotent(tmp_path: Path) -> None:
-    """A pre-v74 DB migrates to exactly v74: the window params are renamed
+    """A pre-v75 DB migrates to exactly v75: the window params are renamed
     (carrying their values), reserve_duration is added, and re-running the
-    v74 step is a no-op."""
-    db_path = tmp_path / "v73_base.sqlite"
+    v75 step is a no-op."""
+    db_path = tmp_path / "v74_base.sqlite"
     url = f"sqlite:///{db_path.resolve()}"
-    _build_v73_db(url)
+    _build_v74_db(url)
     start_version = _db_version(url)
-    assert start_version < 74, (
-        "seed DB must start below v74 so the v74 block is exercised"
+    assert start_version < 75, (
+        "seed DB must start below v75 so the v75 block is exercised"
     )
 
-    migrate_database(url, up_to=74)
-    assert _db_version(url) == 74
+    migrate_database(url, up_to=75)
+    assert _db_version(url) == 75
 
     def _assert_state(db: DatabaseMapping) -> None:
         # Rename: old gone, new present.
@@ -196,7 +196,7 @@ def test_migration_renames_adds_and_is_idempotent(tmp_path: Path) -> None:
             entity_class_name="reserve__upDown__group",
             name="reserve_duration",
         )
-        assert rd, "reserve_duration not added by v74"
+        assert rd, "reserve_duration not added by v75"
         assert rd["default_value"] is None
         assert rd["default_type"] is None
         assert not rd["parameter_value_list_name"]
@@ -205,8 +205,8 @@ def test_migration_renames_adds_and_is_idempotent(tmp_path: Path) -> None:
         db.fetch_all()
         _assert_state(db)
 
-    # Idempotent re-run of the v74 step.
-    migrate_database(url, up_to=74)
+    # Idempotent re-run of the v75 step.
+    migrate_database(url, up_to=75)
     with DatabaseMapping(url, create=False) as db:
         db.fetch_all()
         _assert_state(db)

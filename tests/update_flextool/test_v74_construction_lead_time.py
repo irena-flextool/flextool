@@ -1,6 +1,6 @@
-"""Tests for the v73 database migration — construction lead time (Slice H).
+"""Tests for the v74 database migration — construction lead time (Slice H).
 
-v73 adds two per-entity parameters on each invest entity class
+v74 adds two per-entity parameters on each invest entity class
 (``unit`` / ``connection`` / ``node``):
 
 * ``construction_lead_time`` — ``[years]`` float/map, default unset (0);
@@ -38,14 +38,14 @@ _CLASSES = ("unit", "connection", "node")
 _METHODS = ("immediate", "closest_seam", "previous_seam", "next_seam")
 
 
-def test_v73_version_constant_is_at_least_73() -> None:
-    """The engine must report a schema version >= 73 — the
+def test_v74_version_constant_is_at_least_74() -> None:
+    """The engine must report a schema version >= 74 — the
     construction_lead_time lower bound."""
-    assert FLEXTOOL_DB_VERSION >= 73
+    assert FLEXTOOL_DB_VERSION >= 74
 
 
 def _migrated_db(tmp_path: Path) -> DatabaseMapping:
-    """Build a fixture DB from JSON (at its old version, predating v73),
+    """Build a fixture DB from JSON (at its old version, predating v74),
     migrate it to HEAD, and return an open mapping."""
     db_path = tmp_path / "lh2.sqlite"
     url = json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
@@ -155,7 +155,7 @@ def test_lead_time_parameter_types_ranked(tmp_path: Path) -> None:
 
 
 def test_migration_adds_no_per_entity_value(tmp_path: Path) -> None:
-    """The v73 migration adds definitions ONLY — never a per-entity value —
+    """The v74 migration adds definitions ONLY — never a per-entity value —
     so every migrated entity resolves to unset -> immediate -> byte-parity."""
     db = _migrated_db(tmp_path)
     try:
@@ -171,10 +171,10 @@ def test_migration_adds_no_per_entity_value(tmp_path: Path) -> None:
         db.close()
 
 
-def _build_v72_invest_db(url: str) -> None:
-    """Create a minimal v72 DB with the three invest entity classes carrying
-    no construction_lead_time — so the v73 block is the ONLY path that can
-    add it.  ``model.version`` default pinned to 72."""
+def _build_v73_invest_db(url: str) -> None:
+    """Create a minimal v73 DB with the three invest entity classes carrying
+    no construction_lead_time — so the v74 block is the ONLY path that can
+    add it.  ``model.version`` default pinned to 73."""
     with DatabaseMapping(url, create=True) as db:
         _count, errors = import_data(
             db,
@@ -185,7 +185,7 @@ def _build_v72_invest_db(url: str) -> None:
                 ["node", ()],
             ],
             parameter_definitions=[
-                ["model", "version", 72.0, None, "Database version."],
+                ["model", "version", 73.0, None, "Database version."],
             ],
             alternatives=[["Base", ""]],
             entities=[
@@ -194,25 +194,25 @@ def _build_v72_invest_db(url: str) -> None:
             ],
         )
         assert not errors, f"seed import errors: {errors[:5]}"
-        db.commit_session("Seed v72 DB (invest classes, no lead time)")
+        db.commit_session("Seed v73 DB (invest classes, no lead time)")
 
 
-def test_migration_reaches_v73_and_is_idempotent(tmp_path: Path) -> None:
-    """A pre-v73 DB migrates to exactly v73, and re-running the v73 step is
+def test_migration_reaches_v74_and_is_idempotent(tmp_path: Path) -> None:
+    """A pre-v74 DB migrates to exactly v74, and re-running the v74 step is
     a no-op that keeps the parameters present with distinct type ranks."""
-    db_path = tmp_path / "v72_base.sqlite"
+    db_path = tmp_path / "v73_base.sqlite"
     url = f"sqlite:///{db_path.resolve()}"
-    _build_v72_invest_db(url)
+    _build_v73_invest_db(url)
     start_version = _db_version(url)
-    assert start_version < 73, (
-        "seed DB must start below v73 so the v73 block is exercised"
+    assert start_version < 74, (
+        "seed DB must start below v74 so the v74 block is exercised"
     )
 
-    migrate_database(url, up_to=73)
-    assert _db_version(url) == 73
+    migrate_database(url, up_to=74)
+    assert _db_version(url) == 74
 
-    # Idempotent re-run of the v73 step.
-    migrate_database(url, up_to=73)
+    # Idempotent re-run of the v74 step.
+    migrate_database(url, up_to=74)
     with DatabaseMapping(url, create=False) as db:
         db.fetch_all()
         for cls in _CLASSES:
@@ -243,5 +243,5 @@ def test_migration_reaches_v73_and_is_idempotent(tmp_path: Path) -> None:
 )
 def test_master_template_up_to_date() -> None:
     """``sync_master_template(verify_only=True)`` returns True — the
-    spinedb_schema.json regen (with the v73 parameters) was committed."""
+    spinedb_schema.json regen (with the v74 parameters) was committed."""
     assert sync_master_template(verify_only=True) is True

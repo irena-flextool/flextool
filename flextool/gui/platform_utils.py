@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -93,26 +94,53 @@ def open_folder(dirpath: Path) -> None:
         )
 
 
-def open_spine_db_editor(db_url: str) -> subprocess.Popen | None:
-    """Launch the Spine DB editor on *db_url* as a subprocess, using the current
-    environment's Spine Toolbox (``python -m spinetoolbox.spine_db_editor.main``,
-    matching the CLI launcher) rather than a ``spine-db-editor`` found anywhere
-    on PATH.
+#: Module run (``python -m``) to start the standalone Spine DB editor — the
+#: target of Spine Toolbox's ``spine-db-editor`` console script.
+SPINE_DB_EDITOR_MODULE = "spinetoolbox.spine_db_editor.main"
+
+
+def spine_toolbox_available() -> bool:
+    """Whether Spine Toolbox is importable by the interpreter running FlexTool.
+
+    Deliberately not a PATH lookup: ``flextool-gui`` started from a venv that
+    is not activated (``.venv/bin/flextool-gui``) does not have the venv's
+    ``bin`` on PATH, and a ``spine-db-editor`` found on PATH may belong to a
+    different environment.
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("spinetoolbox") is not None
+
+
+def spine_db_editor_argv(db_urls: str | Sequence[str]) -> list[str]:
+    """argv that opens *db_urls* (one URL or several, each a tab) in the
+    Spine DB editor of the current environment
+    (``<sys.executable> -m spinetoolbox.spine_db_editor.main <url>...``).
+
+    The single source for every FlexTool launcher of the editor (GUI and
+    CLI), so they cannot drift back to a PATH lookup.
+    """
+    urls = [db_urls] if isinstance(db_urls, str) else list(db_urls)
+    return [sys.executable, "-m", SPINE_DB_EDITOR_MODULE, *urls]
+
+
+def open_spine_db_editor(db_urls: str | Sequence[str]) -> subprocess.Popen | None:
+    """Launch the Spine DB editor on *db_urls* as a subprocess, using the
+    current environment's Spine Toolbox (:func:`spine_db_editor_argv`)
+    rather than a ``spine-db-editor`` found anywhere on PATH.
 
     Returns:
         The :class:`subprocess.Popen` object, or ``None`` if Spine Toolbox is
         not installed in this environment.
     """
-    import importlib.util
-
-    if importlib.util.find_spec("spinetoolbox") is None:
-        logger.warning("spinetoolbox is not installed in this environment")
+    if not spine_toolbox_available():
+        logger.warning(
+            "Spine Toolbox (spinetoolbox) is not installed in this Python "
+            "environment (%s); cannot open the Spine DB editor", sys.executable)
         return None
 
     try:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "spinetoolbox.spine_db_editor.main", db_url]
-        )
+        proc = subprocess.Popen(spine_db_editor_argv(db_urls))
         return proc
     except OSError:
         logger.warning("Failed to launch the Spine DB editor", exc_info=True)

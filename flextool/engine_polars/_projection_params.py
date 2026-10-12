@@ -1703,13 +1703,14 @@ def g_invest_cumulative(source: "InputSource") -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 def process_delayed(source: "InputSource") -> pl.DataFrame:
-    """Units / connections with a non-zero ``delay`` Map.
+    """Units with a non-zero ``delay``.
 
-    ``delay`` is a 1d_map(td) parameter; non-empty rows yield
-    membership.  Schema: ``[p]``.
+    Non-empty rows yield membership.  Schema: ``[p]``.  A connection
+    ``delay`` is not implemented and is ignored (``input_derivation``
+    warns about it), so connections are never delayed.
     """
     parts: list[pl.LazyFrame] = []
-    for cls in ("unit", "connection"):
+    for cls in ("unit",):
         df = _try_param(source, cls, "delay")
         if df is None:
             continue

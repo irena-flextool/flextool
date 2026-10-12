@@ -33,6 +33,7 @@ from pathlib import Path
 
 from flextool.cli._console import run_tool
 from flextool.cli.cmd_run_flextool import resolve_output_path
+from flextool.gui.platform_utils import spine_db_editor_argv
 
 
 def resolve_results_db_path(project_folder_file, output_location=None):
@@ -100,16 +101,10 @@ def _build_launch_argv(db_urls):
     ``db_urls`` may be a single URL string or a list of URLs (each becomes a
     tab).  The supported standalone entry point is
     ``spinetoolbox.spine_db_editor.main:main``, whose ``main()`` reads
-    positional ``url`` args.
+    positional ``url`` args.  Shared with the GUI launchers
+    (:func:`flextool.gui.platform_utils.spine_db_editor_argv`).
     """
-    if isinstance(db_urls, str):
-        db_urls = [db_urls]
-    return [
-        sys.executable,
-        "-m",
-        "spinetoolbox.spine_db_editor.main",
-        *db_urls,
-    ]
+    return spine_db_editor_argv(db_urls)
 
 
 def launch_db_editor(db_urls, _popen=subprocess.Popen):
