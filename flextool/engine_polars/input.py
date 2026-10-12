@@ -5954,17 +5954,26 @@ def build_handoff_from_solution(
     # roll starts from a wrong initial v_state.
     roll_end_state_df = None
     nodes_state = _read_singles_csv(sd / "nodeState.csv", provider=provider)
-    # Prefer ``flex_data.realized_dispatch`` (in-memory).
+    # Carry the COMMITTED JUMP-END storage state of the realized TRUNK
+    # (restores GMPL value parity).  Prefer the Provider anchor
+    # ``solve_data/realized_dispatch`` (trunk-only, committed jump-end —
+    # emitted by ``emit_realized_dispatch`` before the handoff is built) over
+    # the in-memory ``flex_data.realized_dispatch``: the latter is loaded from
+    # the forecast-EXPANDED ``dt_realize_dispatch_set.csv`` (all branch periods
+    # × the full look-ahead window), so its lexically-last (d,t) is the
+    # discarded HORIZON-END of a FORECAST branch, not the committed trunk
+    # jump-end — see NOTE above.  Fall back to ``flex_data.realized_dispatch``
+    # only when the Provider key is absent (unit-test synthesis, no real solve).
     last_pairs_df = None
-    if flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
+    rd_path = sd / "realized_dispatch.csv"
+    if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
+        try:
+            last_pairs_df = _provider_read(provider, "solve_data/realized_dispatch", rd_path)
+        except pl.exceptions.NoDataError:
+            last_pairs_df = None
+    if (last_pairs_df is None and flex_data is not None
+            and getattr(flex_data, "realized_dispatch", None) is not None):
         last_pairs_df = flex_data.realized_dispatch
-    else:
-        rd_path = sd / "realized_dispatch.csv"
-        if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
-            try:
-                last_pairs_df = _provider_read(provider, "solve_data/realized_dispatch", rd_path)
-            except pl.exceptions.NoDataError:
-                last_pairs_df = None
     if nodes_state and last_pairs_df is not None and "v_state" in sol._vars:
         # Schema: ``period, step``.  Take the last (period, step) in
         # dispatch order — equivalent to ``_load_realized_period_time_last``

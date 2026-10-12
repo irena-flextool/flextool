@@ -393,3 +393,139 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
         "forecast-to-forecast hub (trunk period1 absent) — the structural "
         "witness would be vacuous"
     )
+
+
+# rolling_solve_jump for this fixture (see module docstring).
+_JUMP = 24
+_STORAGE_NODE = "hydro_reservoir"
+
+
+def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result):
+    """PRODUCER-LEVEL guard for the H1 rolling-storage handoff fix.
+
+    The roll-to-roll storage carry (``SolveHandoff.roll_end_state``, consumed
+    next roll as ``p_roll_continue_state``) must carry the realized TRUNK's
+    ``v_state`` at the COMMITTED JUMP-END, NOT the discarded look-ahead
+    HORIZON-END of a forecast branch.  The fix (``input.py`` ``roll_end_state``
+    producer) sources the value from the Provider anchor
+    ``solve_data/realized_dispatch`` — trunk-only, committed jump-end — instead
+    of the forecast-EXPANDED in-memory ``flex_data.realized_dispatch`` (all
+    branch periods × the full look-ahead window), whose lexically-last ``(d,t)``
+    is a forecast branch at the window horizon.
+
+    WHY this is a PRODUCER-level guard (no solve consumes the value today):
+    the carried number is operationally INERT at the solution level.  The soft
+    ``roll_continue`` balance term does not bind ``v_state[t_first]`` under any
+    wired ``storage_binding_method`` — the schema-default ``bind_forward_only``
+    drops the first-step state-change term and plain ``bind_within_period`` is
+    unwired — so the full solution is byte-identical whatever the carried value
+    is.  A solution-level witness is therefore impossible without the
+    owner-deprecated hard pin; this test guards the PRODUCED value directly.
+    (Cross-ref: scratchpad ``h1_design.md`` §3, ``handoff_carry_bug.md`` §2.)
+
+    Two independent defects are witnessed, so a future regression of EITHER
+    surfaces here:
+
+    * **wrong BRANCH** — the carry must come from the realized trunk
+      ``period1``, not a forecast copy (HEAD picked ``period1_upper``);
+    * **wrong STEP** — the carry must be the committed jump-end step, not the
+      discarded window-horizon step (HEAD picked the horizon).
+
+    Discriminator on ``1_week_rolling_wind``: on continuation rolls 0-5 the
+    trunk committed jump-end ``v_state`` is ``0.0`` (an emptied reservoir),
+    while BOTH window-horizon candidates HEAD could pick — the trunk horizon
+    (``period1`` @ window end) and the forecast horizon (``period1_upper`` @
+    window end) — are a non-zero ``0.5`` end-reference pin (× unitsize = 2500).
+    So ``carried == 0.0`` FAILS on HEAD (which carries 2500) and PASSES with
+    the fix, and the non-zero horizon candidates prove the ``0.0`` is the
+    jump-end of the trunk, not either horizon value.  Roll 6 is the LAST roll:
+    its trunk realizes all the way to the window horizon (jump-end == horizon),
+    so the carry legitimately coincides with the horizon value and no next roll
+    consumes it — it is excluded from the strict ``0.0`` guard.
+    """
+    steps = _steps(rolling_result)
+    names = list(steps)
+    assert len(names) == EXPECTED_ROLLS, (
+        f"expected {EXPECTED_ROLLS} rolls, got {len(names)}")
+
+    for i, name in enumerate(names):
+        s = steps[name]
+        res = s.handoff.roll_end_state
+        assert res is not None, f"roll {name!r}: roll_end_state unexpectedly None"
+        carried = {r["node"]: r["value"] for r in res.iter_rows(named=True)}
+        assert _STORAGE_NODE in carried, (
+            f"roll {name!r}: {_STORAGE_NODE} absent from roll_end_state "
+            f"(got {sorted(carried)})")
+        carried_v = carried[_STORAGE_NODE]
+
+        sol = s.solution
+        assert sol is not None, f"roll {name!r} retained no solution"
+        vs = sol.value("v_state")
+        cols = vs.columns
+        ncol = _pick(cols, "n", "node")
+        dcol = _pick(cols, "d", "period")
+        tcol = _pick(cols, "t", "time")
+        sub = (vs.filter(pl.col(ncol).cast(pl.Utf8) == _STORAGE_NODE)
+                 .with_columns(pl.col(dcol).cast(pl.Utf8).alias("__d"),
+                               pl.col(tcol).cast(pl.Utf8).alias("__t")))
+        assert sub.height > 0, f"roll {name!r}: no {_STORAGE_NODE} v_state rows"
+        horizon_t = sub["__t"].max()
+        jump_end_t = f"t{_JUMP * (i + 1):04d}"
+
+        def _vstate(d, t, _sub=sub):
+            r = _sub.filter((pl.col("__d") == d) & (pl.col("__t") == t))
+            return r["value"][0] if r.height else None
+
+        trunk_jump = _vstate("period1", jump_end_t)
+        trunk_horizon = _vstate("period1", horizon_t)
+        fcast_horizon = _vstate("period1_upper", horizon_t)
+        assert trunk_jump is not None, (
+            f"roll {name!r}: no trunk v_state at jump-end (period1, {jump_end_t})")
+        assert fcast_horizon is not None, (
+            f"roll {name!r}: no forecast v_state at horizon "
+            f"(period1_upper, {horizon_t})")
+
+        if i < EXPECTED_ROLLS - 1:
+            # Continuation roll: the committed jump-end strictly precedes the
+            # discarded look-ahead window horizon (the step distinction is real).
+            assert jump_end_t < horizon_t, (
+                f"roll {name!r}: jump-end {jump_end_t} not before horizon "
+                f"{horizon_t}")
+
+            # (1) VALUE — the carry equals the realized TRUNK's committed
+            #     jump-end v_state (0.0 here).  FAILS ON HEAD, which carries the
+            #     forecast horizon-end (0.5 × unitsize = 2500).
+            assert carried_v == pytest.approx(0.0, abs=1e-9), (
+                f"roll {name!r}: carried storage {carried_v} is not the trunk "
+                f"committed jump-end (expected 0.0); HEAD's bug carries the "
+                f"forecast horizon-end (2500)")
+            assert trunk_jump == pytest.approx(0.0, abs=1e-9), (
+                f"roll {name!r}: trunk jump-end v_state {trunk_jump} unexpected "
+                f"(fixture precondition: emptied reservoir at the jump-end)")
+
+            # (2) STEP identity — the trunk WINDOW-HORIZON value is non-zero and
+            #     differs from the jump-end, so carrying the jump-end (0.0)
+            #     rather than the trunk horizon is a genuine distinction (guards
+            #     the wrong-STEP defect independently).
+            assert trunk_horizon is not None, (
+                f"roll {name!r}: no trunk v_state at horizon "
+                f"(period1, {horizon_t})")
+            assert abs(trunk_horizon - trunk_jump) > 1e-6, (
+                f"roll {name!r}: trunk horizon {trunk_horizon} must differ from "
+                f"the carried jump-end {trunk_jump} for the step guard to bite")
+
+            # (3) BRANCH identity — the FORECAST branch horizon value is
+            #     non-zero and differs from the carried jump-end, so the carry
+            #     is NOT a forecast-branch horizon value (guards the wrong-BRANCH
+            #     defect independently).  This is the exact (period1_upper,
+            #     horizon) cell HEAD lexically selects.
+            assert abs(fcast_horizon - carried_v) > 1e-6, (
+                f"roll {name!r}: carried {carried_v} coincides with the forecast "
+                f"horizon-end {fcast_horizon} — HEAD's wrong source")
+        else:
+            # Last roll: trunk realizes to the window horizon (jump-end ==
+            # horizon), so the carry coincides with the horizon value and no
+            # next roll consumes it.  Sanity only: geometry holds.
+            assert jump_end_t == horizon_t, (
+                f"last roll {name!r}: jump-end {jump_end_t} != horizon "
+                f"{horizon_t} (trunk should realize to the window end)")
