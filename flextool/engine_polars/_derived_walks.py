@@ -388,17 +388,29 @@ def period_walk_iterator(
                   .join(c_lf, on=["e", "d"], how="left")
                   .with_columns(yr_avail=pl.coalesce("yr_c", "yr_d")))
         if pre_overlap > 0:
-            post_survivors = (walk
-                                .select(pl.col("yr_c").is_not_null().sum())
-                                .collect().item())
+            from flextool.engine_polars._solve_state import (
+                CommissioningLagError,
+            )
+            _desync_msg = (
+                "commission_lf join produced no surviving lag rows "
+                "despite a non-empty pre-cast key overlap — dtype or "
+                "calendar desync (see Slice H design §2.5 F3)")
+            try:
+                post_survivors = (walk
+                                    .select(pl.col("yr_c").is_not_null().sum())
+                                    .collect().item())
+            except (pl.exceptions.ComputeError,
+                    pl.exceptions.InvalidOperationError) as exc:
+                # polars >=2.0 refuses an unsupported key-dtype cast (e.g.
+                # i64 -> Enum) outright instead of nulling it the way
+                # polars <2.0 did under ``strict=False``.  Either way, a
+                # non-empty pre-cast overlap whose typed join cannot
+                # materialize IS the dtype desync this guard exists to
+                # catch — surface it as the dedicated error, not a raw
+                # polars one the downstream ``except Exception`` would hide.
+                raise CommissioningLagError(_desync_msg) from exc
             if post_survivors == 0:
-                from flextool.engine_polars._solve_state import (
-                    CommissioningLagError,
-                )
-                raise CommissioningLagError(
-                    "commission_lf join produced no surviving lag rows "
-                    "despite a non-empty pre-cast key overlap — dtype or "
-                    "calendar desync (see Slice H design §2.5 F3)")
+                raise CommissioningLagError(_desync_msg)
     else:
         walk = walk.with_columns(yr_avail=pl.col("yr_d"))
 
