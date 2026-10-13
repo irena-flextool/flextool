@@ -33,6 +33,29 @@ def _commit_step(db, message):
         logging.info("Migration step idempotent (no changes): %s", message)
 
 
+def _ensure_parameter_group(db, name, color, priority):
+    """Get-or-create a ``parameter_group`` so a new parameter can be
+    attached to it.
+
+    Every parameter must belong to a parameter_group or it is dropped from
+    group-filtered tabular exports (v69 invariant, guarded by
+    tests/test_parameter_group_coverage.py).  Real DBs always carry the
+    standard groups (created in v44, recoloured in v45), but a DB built
+    from scratch at a version above v44 — e.g. the minimal fixtures the
+    migration tests seed — never ran v44 and so has no parameter_groups.
+    Use the non-raising ``get_item`` (``db.item`` raises SpineDBAPIError
+    when absent); the create only fires on such group-less DBs and must
+    mirror v44/v45's canonical colour/priority for the group.
+    """
+    if not db.get_item("parameter_group", name=name):
+        db.add_update_item(
+            "parameter_group",
+            name=name,
+            color=color,
+            priority=priority,
+        )
+
+
 def migrate_database(
     database_path,
     up_to: int | None = None,
@@ -3830,24 +3853,8 @@ def _migrate_v71_stochastic_invest_method(db) -> None:
             "nested-tree modes."
         ),
     )
-    # Attach to the 'solve_advanced' parameter group, creating it if the
-    # DB lacks it.  Every parameter must belong to a parameter_group so it
-    # is not dropped from group-filtered tabular exports (v69 invariant,
-    # guarded by tests/test_parameter_group_coverage.py), and solve_advanced
-    # is this param's canonical home in the schema.  Real DBs always have it
-    # (created in v44, recoloured in v45), but a DB built from scratch at a
-    # version above v44 — e.g. the minimal fixtures the migration tests seed
-    # — never ran the v44 step and so carries no parameter_groups.  Use the
-    # non-raising get_item (db.item raises SpineDBAPIError when absent) and
-    # get-or-create; the create only fires on such group-less DBs and mirrors
-    # v44's colour/priority for solve_advanced (post-v45 colour b56f6f).
-    if not db.get_item("parameter_group", name="solve_advanced"):
-        db.add_update_item(
-            "parameter_group",
-            name="solve_advanced",
-            color="b56f6f",
-            priority=87,
-        )
+    # solve_advanced is this param's canonical home in the schema.
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
     db.add_update_item(
         "parameter_definition",
         entity_class_name="solve",
@@ -3902,16 +3909,7 @@ def _migrate_v72_non_anticipativity_periods(db) -> None:
             "ties operations only over those periods' timesteps."
         ),
     )
-    # Attach to the 'solve_advanced' parameter group, creating it if the
-    # DB lacks it (mirrors v71; see that migration for the get-or-create
-    # rationale — minimal fixtures seeded above v44 carry no groups).
-    if not db.get_item("parameter_group", name="solve_advanced"):
-        db.add_update_item(
-            "parameter_group",
-            name="solve_advanced",
-            color="b56f6f",
-            priority=87,
-        )
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
     db.add_update_item(
         "parameter_definition",
         entity_class_name="solve",
@@ -3974,17 +3972,7 @@ def _migrate_v73_non_anticipativity_invest_periods(db) -> None:
             "none (investment is already shared across all periods)."
         ),
     )
-    # Attach to the 'solve_advanced' parameter group, creating it if the
-    # DB lacks it (mirrors v71/v72; see those migrations for the
-    # get-or-create rationale — minimal fixtures seeded above v44 carry
-    # no groups).
-    if not db.get_item("parameter_group", name="solve_advanced"):
-        db.add_update_item(
-            "parameter_group",
-            name="solve_advanced",
-            color="b56f6f",
-            priority=87,
-        )
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
     db.add_update_item(
         "parameter_definition",
         entity_class_name="solve",
@@ -4052,18 +4040,8 @@ def _migrate_v74_construction_lead_time(db) -> None:
         "time is set), previous_seam (round down), next_seam (round up). "
         "Unset resolves to immediate when no lead time, else closest_seam."
     )
-    # ``investment`` group already carries lifetime on these classes; real
-    # DBs have it (created pre-v44).  Minimal fixtures seeded above that
-    # version carry no groups — get-or-create (mirrors v71/v73's
-    # solve_advanced rationale), using the schema colour/priority for
-    # ``investment`` (7fb095 / 20).
-    if not db.get_item("parameter_group", name="investment"):
-        db.add_update_item(
-            "parameter_group",
-            name="investment",
-            color="7fb095",
-            priority=20,
-        )
+    # ``investment`` is construction_lead_time's canonical home.
+    _ensure_parameter_group(db, "investment", "7fb095", 20)
     for class_name in ("unit", "connection", "node"):
         db.add_update_item(
             "parameter_definition",
@@ -4267,24 +4245,8 @@ def _migrate_v76_dispatch_realization_method(db) -> None:
             "implemented (lands in a later slice)."
         ),
     )
-    # Attach to the 'solve_advanced' parameter group, creating it if the
-    # DB lacks it.  Every parameter must belong to a parameter_group so it
-    # is not dropped from group-filtered tabular exports (v69 invariant,
-    # guarded by tests/test_parameter_group_coverage.py), and solve_advanced
-    # is this param's canonical home in the schema.  Real DBs always have it
-    # (created in v44, recoloured in v45), but a DB built from scratch at a
-    # version above v44 — e.g. the minimal fixtures the migration tests seed
-    # — never ran the v44 step and so carries no parameter_groups.  Use the
-    # non-raising get_item (db.item raises SpineDBAPIError when absent) and
-    # get-or-create; the create only fires on such group-less DBs and mirrors
-    # v44's colour/priority for solve_advanced (post-v45 colour b56f6f).
-    if not db.get_item("parameter_group", name="solve_advanced"):
-        db.add_update_item(
-            "parameter_group",
-            name="solve_advanced",
-            color="b56f6f",
-            priority=87,
-        )
+    # solve_advanced is this param's canonical home in the schema.
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
     db.add_update_item(
         "parameter_definition",
         entity_class_name="solve",

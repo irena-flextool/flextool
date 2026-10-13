@@ -368,53 +368,36 @@ def _add_non_anticipativity_constraints(
                                 rhs_terms = {},
                             )
 
-    # 1b. non_anticipativity_storage_state_first — delivers §D.6
-    #     branch-point continuity by pinning ABSOLUTE ``v_state`` at the
-    #     FIRST tied step of each anchor ``d`` (the reference forecast
-    #     d_ref, NOT the realised trunk):
+    # 1b. non_anticipativity_storage_state_first — branch-point continuity by
+    #     pinning ABSOLUTE ``v_state`` at the FIRST tied step of each anchor
+    #     ``d`` (the reference forecast d_ref, NOT the realised trunk):
     #
     #         v_state[n, d_ref, t_first] − v_state[n, b, t_first] == 0
     #
     #     The storage net-charge family above ties only the per-(n, t) net
-    #     charge (the consecutive ``v_state`` delta), so across a contiguous
-    #     tied jump it fixes every forecast's state SHAPE but leaves a free
-    #     constant offset between the reference forecast and each other
-    #     forecast copy.  In single-solve each forecast is hard start-bound
-    #     and reference-value end-bound, so the offset telescopes to zero on
-    #     its own; in rolling the untied post-reveal tail breaks that
-    #     telescoping and the forecast copies float by a constant (~0.06 in
-    #     ``1_week_rolling_wind``).  Pinning absolute ``v_state`` at the first
-    #     tied step restores the anchor: combined with the per-step net-charge
-    #     ties it closes the whole contiguous jump absolutely.
+    #     charge (the consecutive ``v_state`` delta), fixing every forecast's
+    #     state SHAPE across a contiguous tied jump but leaving a free constant
+    #     offset between forecast copies.  In single-solve each forecast is
+    #     hard start-bound and reference-value end-bound so the offset
+    #     telescopes to zero; in rolling the untied post-reveal tail breaks
+    #     that and the copies float by a constant (~0.06 in
+    #     ``1_week_rolling_wind``).  Pinning the absolute state at the first
+    #     tied step closes the jump absolutely.  This is a forecast-to-forecast
+    #     tie (re-pointed onto the forecast star via the shared db_pairs),
+    #     never a tie to the realised period/trunk.  It is OPTIMUM-CONDITIONAL,
+    #     not a hard anchor: interior drift stays feasible when balance slack
+    #     absorbs it or inflow differs across forecasts (the net-charge family
+    #     controls neither), but is non-optimal for this fixture's
+    #     deterministic-inflow zero-self-discharge reservoirs so the tie binds.
+    #     ``v_online`` / ``v_reserve`` need no analog — their NA families
+    #     already pin the absolute variable at EVERY tied step.
     #
-    #     This tie is LOAD-BEARING and is KEPT (it re-points for free onto the
-    #     forecast star via the shared re-grounded db_pairs / tie set — it is
-    #     a forecast-to-forecast coupling, never a tie to the realised
-    #     period/trunk).  It is OPTIMUM-CONDITIONAL, not a hard structural
-    #     anchor: it holds the forecasts equal to EACH OTHER at the branch
-    #     point, but interior drift away from the shared level stays feasible
-    #     whenever balance slack (``vq_state_up`` / ``vq_state_down``) absorbs
-    #     it or the inflow differs across forecasts at the tied steps — the
-    #     net-charge family controls neither.  For the deterministic-inflow,
-    #     zero-self-discharge reservoirs this fixture exercises, the drift is
-    #     non-optimal and the tie binds.  ``v_online`` / ``v_reserve`` need no
-    #     analog: their own NA families already pin the ABSOLUTE variable at
-    #     EVERY tied step, not just a net delta.
-    #
-    #     NB: the hard roll-to-roll carry-in (all branches inheriting the
-    #     previous roll's ACTUAL jump end-state, vs the current soft
-    #     ``roll_continue`` seed) is a separate W8b concern.  This slice ties
-    #     the branches to each other at the branch point, closing the
-    #     inter-branch offset; the shared level itself is still the soft
-    #     carried value.
-    #
-    #     PROACTIVE horizon-guard (byte-parity): emit the tie for an (n, d)
-    #     ONLY when its tied timesteps are a STRICT SUBSET of that (n, d)'s
-    #     ``v_state`` timeline, i.e. an untied post-reveal tail exists.  When
-    #     the tied set covers the full per-period horizon (single-solve
-    #     dispatch) the node is already doubly anchored (hard start-binding +
-    #     reference-value end), so the row is strictly redundant — suppress
-    #     it so byte-parity-gated single solves receive ZERO new rows.
+    #     Horizon-guard (byte-parity): emit the tie for an (n, d) ONLY when its
+    #     tied timesteps are a STRICT SUBSET of that (n, d)'s ``v_state``
+    #     timeline (an untied tail exists).  When the tied set covers the full
+    #     horizon (single-solve dispatch) the node is already doubly anchored
+    #     (hard start + reference end), so the row is redundant — suppress it
+    #     so byte-parity-gated single solves get ZERO new rows.
     if (v_state is not None and d.groupStochastic is not None
             and db_pairs.height > 0):
         gn = d.group_node

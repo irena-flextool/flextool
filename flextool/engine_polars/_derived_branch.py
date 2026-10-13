@@ -1481,77 +1481,47 @@ def check_recourse_npv_preconditions(
         provider: "object | None" = None,
         weight_tol: float = 1e-9,
         ) -> list[str]:
-    """Return violation messages for the three Slice A §2.2 NPV
-    obligations ((i) leaf-weight constancy, (ii) cohort sum-to-1,
-    (iii) byte-equal fan-member year rows).  Empty list == all hold.
-    Deterministic message order.  Raising wrapper:
-    :func:`assert_recourse_npv_preconditions`.
+    """Return violation messages for the three recourse-NPV obligations;
+    empty list == all hold, deterministic order.  Raising wrapper:
+    :func:`assert_recourse_npv_preconditions`.  These obligations pin the
+    arithmetic that makes a SET-shaped (unweighted) lineage filter
+    numerically correct for trunk-crossing and realized-anchor windows, on
+    the invest AND divest side.  Runtime wiring is the Slice D activation
+    site; until then this checker is exercised by tests only.
 
-    FORECASTS-ONLY MODEL (R2/R4).  The stochastic fan is forecasts-only
-    (Σ = 1): a trunk period that is both a self-row and the parent of ≥1
-    forecast is a PHANTOM carrying weight 0; the forecast members
-    renormalise among themselves.  The three obligations are read under
-    that model:
+    The fan is forecasts-only (Σ = 1): a trunk period that is both a
+    self-row and the parent of ≥1 forecast is a PHANTOM carrying weight 0,
+    and the forecast members renormalise among themselves.  Under that
+    model:
 
-      (i)  leaf-weight constancy — the probability-weight is constant
-           along each post-reveal forecast chain (a weight-0 phantom
-           anchor is a pre-reveal / cohort-of-one exclusion, not a
-           violation);
-      (ii) cohort sum-to-1 — the forecast members of a revealing cohort
-           sum to 1 (the weight-0 phantom contributes 0).  Because the
-           producer (``pd_branch_weight_lf``) renormalises each
-           first-step forecast group to 1 and zeroes the phantom, a
-           WELL-FORMED cohort satisfies (ii) BY CONSTRUCTION — (ii) is
-           now largely a renormalisation tautology on the producer path.
-           It retains diagnostic power ONLY against a genuinely malformed
-           cohort whose forecast members straddle DIFFERENT first-step
-           normalization groups (each normalises to 1.0 independently, so
-           the cohort sums > 1) — see ``test_p3b_cohort_sum_violation``;
-      (iii) byte-equal fan-member year rows — unchanged.
+      (i)  leaf-weight constancy — the probability-weight is constant along
+           each post-reveal forecast chain (a weight-0 phantom / pre-reveal
+           anchor is excluded, not a violation);
+      (ii) cohort sum-to-1 — the forecast members of a revealing cohort sum
+           to 1.  The producer (``pd_branch_weight_lf``) renormalises each
+           first-step group to 1 and zeroes the phantom, so a well-formed
+           cohort satisfies (ii) BY CONSTRUCTION; (ii) retains diagnostic
+           power only against a malformed cohort straddling different
+           first-step groups (see ``test_p3b_cohort_sum_violation``);
+      (iii) byte-equal fan-member year rows.
 
-    These obligations pin the arithmetic that makes a SET-shaped
-    (unweighted) lineage filter numerically correct for
-    trunk-crossing windows and realized-anchor windows (recourse plan
-    §9.4) — on the invest AND divest side (variant-agnostic: they
-    constrain inputs, not any one walker).  Runtime wiring is the
-    Slice D activation site (once per solve, before the first
-    lineage-passing call); until then this checker is exercised by
-    tests only.
+    Obligation (iii) is checked against the emitted solve_data year frames
+    (``p_years_d`` / ``period_with_history`` / ``p_years_represented``).
+    The checker does NO disk I/O — it reads frames through the Provider, so
+    the CALLER must seed the true emitted CSVs onto the Provider first.  The
+    check underwrites the filter arithmetic only if the walker's year/factor
+    source is those same CSVs (the Slice D year-threading prerequisite).
 
-    SOUNDNESS SCOPE (Slice B design F4/§6.2): obligation (iii) is
-    checked against the emitted solve_data year frames (``p_years_d`` /
-    ``period_with_history`` / ``p_years_represented``).  This checker
-    performs NO disk I/O — it reads those frames through the Provider
-    (``provider.get``), so the CALLER owns making the true emitted CSVs
-    available on the Provider before invoking it (tests seed the
-    Provider from the workdir; the Slice D activation site inherits the
-    same solve_data frames the rest of the cascade already consumes).
-    The check underwrites the lineage-filter arithmetic IF AND ONLY IF the
-    walker's year/factor source is those same CSVs (the Slice D
-    year-threading prerequisite, Slice B design §6.4).  If Slice D
-    instead anchor-maps branch-period years/factors inside the
-    walker, a FOURTH obligation is required: per fan member, the
-    anchor-map's resolved (year, factor) equals the CSV rows this
-    checker verified — without it the checker re-decouples from the
-    walker, recreating the §6.4 defect.
-
-    Obligation (i)'s chains are defined against SBTB (which carries
-    the realized branch's real-named members too, so the trunk chain
-    is covered).  Slice E mid-horizon reveals re-scope constancy to the
-    POST-REVEAL segment of each chain: a strictly pre-reveal shared-trunk
-    anchor is a certain first-stage decision carrying weight 1.0, so the
-    body below (see the §5/§9.3 note by the obligation-(i) loop) excludes
-    such anchors from the leaf-weight-constancy chains — mixing their 1.0
-    with a branch's scenario weight would be a false violation.  For
-    fan-at-first-step / deterministic solves there are no pre-reveal
-    anchors, so the exclusion is a no-op and the check is byte-unchanged.
-
-    Note: the excluded pre-reveal anchor's own weight-1.0 is STRUCTURAL —
-    it is a cohort-of-one in ``pd_branch_weight_lf`` (no fan siblings on
-    the shared trunk), so it is verified by NEITHER obligation (i) (it is
-    excluded from the chains) NOR obligation (ii) (a lone anchor forms no
-    fan cohort).  This is an acceptable structural blind spot, not an
-    unchecked assumption.
+    Obligation (i)'s chains are defined against SBTB (which carries the
+    realized branch's real-named members, so the trunk chain is covered).
+    A strictly pre-reveal shared-trunk anchor is a certain first-stage
+    decision carrying weight 1.0, so the obligation-(i) loop below excludes
+    it from the constancy chains — mixing its 1.0 with a branch's scenario
+    weight would be a false violation.  For fan-at-first-step / det solves
+    there are no pre-reveal anchors, so the exclusion is a no-op and the
+    check is byte-unchanged.  That excluded anchor's weight-1.0 is a
+    cohort-of-one (verified by neither obligation) — an acceptable
+    structural blind spot, not an unchecked assumption.
     """
     violations: list[str] = []
     pb_rows, piu, tb_of = _lineage_inputs(
@@ -1568,18 +1538,12 @@ def check_recourse_npv_preconditions(
             weights[str(d)] = float(v)
 
     # --- (i) per-leaf weight constancy ------------------------------------
-    # Member chains = PIU representatives grouped by SBTB time-branch.
-    #
-    # Slice E mid-horizon re-scoping (design §5, §9.3; the note at the head
-    # of this function): under Option B a SHARED pre-reveal trunk anchor is
-    # a cohort-of-one first-stage decision carrying weight 1.0, while the
-    # post-reveal members of the same (realized) chain carry the scenario
-    # weight (e.g. 0.25).  That is the CORRECT two-stage weighting — the
-    # first stage is certain, the recourse is probability-weighted — not a
-    # violation.  Constancy is therefore required only over the POST-REVEAL
-    # segment of each chain; the shared pre-reveal anchors are excluded.
-    # For fan-at-first-step / deterministic solves there are no pre-reveal
-    # anchors, so the check is byte-unchanged.
+    # Member chains = PIU representatives grouped by SBTB time-branch.  A
+    # shared pre-reveal trunk anchor is a cohort-of-one first-stage decision
+    # (weight 1.0); the post-reveal members carry the scenario weight — the
+    # correct two-stage weighting, not a violation.  Constancy is required
+    # only over the POST-REVEAL segment, so pre-reveal anchors are excluded
+    # (a no-op, byte-unchanged, for fan-at-first-step / deterministic solves).
     anchors_i, pos_i, synthetic_i, anchor_of_i = _classify_lineage(
         pb_rows, piu, tb_of)
     pre_reveal_anchors: set[str] = set()
