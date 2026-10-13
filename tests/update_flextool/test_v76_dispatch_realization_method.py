@@ -98,6 +98,92 @@ def test_dispatch_realization_method_definition_present(tmp_path: Path) -> None:
         db.close()
 
 
+_OLD_STOCHASTIC_BRANCHES_DESCRIPTION = (
+    "[4d-Map], Sets branches included in the solve. [Period, branch, "
+    "start_time (time_step), realized (yes/no), weight (number)]. Only one "
+    "of the branches should be realized for each start_time"
+)
+
+
+def _build_v75_description_db(url: str) -> None:
+    """Seed a minimal v75 DB carrying the OLD ``solve.stochastic_branches``
+    description and NO ``dispatch_realization_method`` — so the v76 step is
+    the only path that can correct the former and add the latter.
+
+    Built from scratch (never the auto-migrated corpus, which already sits
+    AT v76 so the v76 block is skipped and no description refresh runs).
+    """
+    with DatabaseMapping(url, create=True) as db:
+        _count, errors = import_data(
+            db,
+            entity_classes=[
+                ["model", ()],
+                ["solve", ()],
+            ],
+            parameter_definitions=[
+                ["model", "version", 75.0, None, "Database version."],
+                [
+                    "solve",
+                    "stochastic_branches",
+                    None,
+                    None,
+                    _OLD_STOCHASTIC_BRANCHES_DESCRIPTION,
+                ],
+            ],
+            alternatives=[["Base", ""]],
+            entities=[["solve", "s1"]],
+        )
+        assert not errors, f"seed import errors: {errors[:5]}"
+        db.commit_session("Seed v75 DB with stale stochastics descriptions")
+
+
+def test_dispatch_realization_method_description_corrected(
+    tmp_path: Path,
+) -> None:
+    """Migrating a below-v76 DB drops the stale "not yet implemented" clause
+    and frames ``separate_dispatch`` as an available advanced option
+    (W4b/W4c auto-spawn landed)."""
+    db_path = tmp_path / "v75_desc.sqlite"
+    url = f"sqlite:///{db_path.resolve()}"
+    _build_v75_description_db(url)
+    migrate_database(url, up_to=76)
+    with DatabaseMapping(url, create=False) as db:
+        db.fetch_all()
+        pdef = db.get_parameter_definition_item(
+            entity_class_name="solve",
+            name="dispatch_realization_method",
+        )
+        assert pdef, "dispatch_realization_method not added by migration"
+        desc = pdef["description"]
+        assert "available advanced option" in desc
+        assert "automatic-selection defaults are still being refined" in desc
+        assert "not yet implemented" not in desc
+        assert "lands in a later slice" not in desc
+
+
+def test_stochastic_branches_description_corrected(tmp_path: Path) -> None:
+    """Migrating a below-v76 DB refreshes the older
+    ``solve.stochastic_branches`` description: 'realized' is an optional
+    at-most-one designation over a forecasts-only fan, not a one-of-N
+    requirement."""
+    db_path = tmp_path / "v75_desc.sqlite"
+    url = f"sqlite:///{db_path.resolve()}"
+    _build_v75_description_db(url)
+    migrate_database(url, up_to=76)
+    with DatabaseMapping(url, create=False) as db:
+        db.fetch_all()
+        pdef = db.get_parameter_definition_item(
+            entity_class_name="solve",
+            name="stochastic_branches",
+        )
+        assert pdef, "stochastic_branches definition missing"
+        desc = pdef["description"]
+        assert "optional designation" in desc
+        assert "at most one (0 or 1) per start_time" in desc
+        assert "forecasts-only" in desc
+        assert "Only one of the branches should be realized" not in desc
+
+
 def test_dispatch_realization_methods_value_list(tmp_path: Path) -> None:
     """``dispatch_realization_methods`` == {within_solve, separate_dispatch}."""
     db = _migrated_db(tmp_path)

@@ -1225,10 +1225,10 @@ For the *solve* parameter `stochastic_branches` this means an `analysis_time` at
 
 A branch may optionally be designated realized to supply the committed/jump data each roll (useful when the near-term is known with certainty — deterministic near-term, uncertainty in the tail). If no branch is designated realized, the committed jump is instead fixed by the non-anticipativity tie across the forecasts. Either way, how the committed dispatch is produced is governed by the `solve` parameter `dispatch_realization_method`:
 
-- `within_solve` (default): the committed jump is realized inside the single rolling optimisation — no second solve per roll.
-- `separate_dispatch`: realization is split into a dedicated downstream dispatch pass (committed investments/decisions fixed) that re-clears the revealed branch. This is the seed of a future multi-stage sequential-market structure.
+- `within_solve` (default): the normal path — the committed jump is realized inside the single rolling optimisation, no second solve per roll.
+- `separate_dispatch`: an available advanced option that splits realization into a dedicated downstream dispatch pass (committed investments/decisions fixed) which automatically spawns a separate realized-dispatch solve to re-clear the revealed branch. This is the 2-stage seed of a future multi-stage sequential-market structure.
 
-The selection is engine-managed rather than something you normally set per roll. (See the flags below — this area is still evolving for the 4.1 line; confirm the exact behaviour of `separate_dispatch` before relying on it.)
+The selection is engine-managed rather than something you normally set per roll; `separate_dispatch`'s automatic-selection defaults are still being refined.
 
 Otherwise there is no difference to the previous example.
 

@@ -4196,6 +4196,28 @@ def _migrate_v75(db) -> None:
     )
 
 
+_V76_DISPATCH_REALIZATION_METHOD_DESCRIPTION = (
+    "How the stochastic branches of a solve are realized into a committed "
+    "dispatch. 'within_solve' (default) is the normal path: realization "
+    "stays inside the single optimisation — branches and their realized "
+    "periods are resolved within one solve, byte-identical to prior "
+    "behaviour. 'separate_dispatch' is an available advanced option that "
+    "splits realization into a dedicated downstream dispatch stage, "
+    "automatically spawning a separate realized-dispatch solve (a second "
+    "market-clearing pass over the revealed branch) — the 2-stage seed of "
+    "a future multi-stage sequential-market structure. Its "
+    "automatic-selection defaults are still being refined."
+)
+_V76_STOCHASTIC_BRANCHES_DESCRIPTION = (
+    "[4d-Map], Sets branches included in the solve. [Period, branch, "
+    "start_time (time_step), realized (yes/no), weight (number)]. The "
+    "branches form a probability-weighted forecast fan (forecasts-only). "
+    "'realized' is an optional designation, at most one (0 or 1) per "
+    "start_time, marking which branch's data are treated as the actuals "
+    "for the committed / realized-dispatch results."
+)
+
+
 def _migrate_v76_dispatch_realization_method(db) -> None:
     """Add the solve.dispatch_realization_method opt-in (v75 -> v76).
 
@@ -4219,6 +4241,13 @@ def _migrate_v76_dispatch_realization_method(db) -> None:
     'dispatch_realization_methods' value list; grouped under
     'solve_advanced' (created if the DB lacks it).  This is a structural
     clone of the v71 ``stochastic_invest_method`` line.
+
+    This step also refreshes two stale user-facing descriptions to the
+    corrected stochastics model (description-only, no structural change):
+    ``solve.dispatch_realization_method`` (``separate_dispatch`` is now an
+    available advanced option, not "not yet implemented") and the older
+    ``solve.stochastic_branches`` ('realized' is an optional at-most-one
+    designation over a forecasts-only fan, not a one-of-N requirement).
     """
     add_value_list_manual(db, [
         ["dispatch_realization_methods", "within_solve"],
@@ -4233,17 +4262,7 @@ def _migrate_v76_dispatch_realization_method(db) -> None:
         default_value=default_val,
         default_type=default_type,
         parameter_value_list_name="dispatch_realization_methods",
-        description=(
-            "How the stochastic branches of a solve are realized into a "
-            "committed dispatch. 'within_solve' (default) keeps realization "
-            "inside the single optimisation — branches and their realized "
-            "periods are resolved within one solve, byte-identical to prior "
-            "behaviour. 'separate_dispatch' splits realization into a "
-            "dedicated downstream dispatch stage (a second market-clearing "
-            "pass over the revealed branch); this is the 2-stage seed of a "
-            "future multi-stage sequential-market structure and is not yet "
-            "implemented (lands in a later slice)."
-        ),
+        description=_V76_DISPATCH_REALIZATION_METHOD_DESCRIPTION,
     )
     # solve_advanced is this param's canonical home in the schema.
     _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
@@ -4253,6 +4272,20 @@ def _migrate_v76_dispatch_realization_method(db) -> None:
         name="dispatch_realization_method",
         parameter_group_name="solve_advanced",
     )
+
+    # Correct the stale stochastic_branches description (an older param,
+    # created pre-v76 — line ~160) to the corrected stochastics model: the
+    # fan is a probability-weighted forecasts-only set and 'realized' is an
+    # optional designation (at most one per start_time), NOT a one-of-N
+    # requirement.  Any DB upgrading to v76 passes through this step, so it
+    # is the natural place to refresh the user-facing text.  Idempotent.
+    if _pdef_or_none(db, "solve", "stochastic_branches") is not None:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="stochastic_branches",
+            description=_V76_STOCHASTIC_BRANCHES_DESCRIPTION,
+        )
 
     _commit_step(db,
         "v76: added solve.dispatch_realization_method "

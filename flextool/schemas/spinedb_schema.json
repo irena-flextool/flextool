@@ -2205,7 +2205,7 @@
       "dispatch_realization_method",
       "within_solve",
       "dispatch_realization_methods",
-      "How the stochastic branches of a solve are realized into a committed dispatch. 'within_solve' (default) keeps realization inside the single optimisation — branches and their realized periods are resolved within one solve, byte-identical to prior behaviour. 'separate_dispatch' splits realization into a dedicated downstream dispatch stage (a second market-clearing pass over the revealed branch); this is the 2-stage seed of a future multi-stage sequential-market structure and is not yet implemented (lands in a later slice).",
+      "How the stochastic branches of a solve are realized into a committed dispatch. 'within_solve' (default) is the normal path: realization stays inside the single optimisation — branches and their realized periods are resolved within one solve, byte-identical to prior behaviour. 'separate_dispatch' is an available advanced option that splits realization into a dedicated downstream dispatch stage, automatically spawning a separate realized-dispatch solve (a second market-clearing pass over the revealed branch) — the 2-stage seed of a future multi-stage sequential-market structure. Its automatic-selection defaults are still being refined.",
       "solve_advanced"
     ],
     [
@@ -2349,7 +2349,7 @@
       "stochastic_branches",
       null,
       null,
-      "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time",
+      "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. The branches form a probability-weighted forecast fan (forecasts-only). 'realized' is an optional designation, at most one (0 or 1) per start_time, marking which branch's data are treated as the actuals for the committed / realized-dispatch results.",
       "solve_advanced"
     ],
     [
