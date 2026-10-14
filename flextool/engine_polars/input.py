@@ -5163,6 +5163,45 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
             "apply_db_overrides:pass_synthetic_non_anticipativity")
         _timed("c.synth non_anticipativity",
                _wire_non_anticipativity_for_synthetic_solve)
+
+        # MINTIME-1 — same class of gap as RESERVE-1 / SECTION-1 /
+        # MINLOAD-1 / INFLOW-1.  The synthetic-solve early-return skips
+        # passes 3-10, so ``apply_derived_c``'s (``_derived_params`` §3.8)
+        # min_uptime / min_downtime lookback producers never run on a
+        # rolling sub-solve — ``uptime_lookback`` / ``pdt_uptime_set`` (and
+        # the downtime twins) are the SOLE inputs to ``model.py``'s
+        # ``minimum_uptime`` / ``minimum_downtime`` constraints, so with
+        # them left ``None`` the constraints are silently dropped even
+        # WITHIN a roll (not just at the boundary).  A unit authored with
+        # ``min_uptime`` / ``min_downtime`` is then free to collapse below
+        # its own recent startup obligation inside a single roll.
+        # ``uptime_lookback_from_source`` / ``downtime_lookback_from_source``
+        # are solve-agnostic (no ``active_solve`` filter) and build the
+        # lookback window over the CSV-loaded ``flex_data.dt`` (+
+        # ``p_step_duration``), both populated at ``FlexData`` construction
+        # before this early-return, so calling them here mirrors
+        # ``apply_derived_c`` exactly.  Both helpers return ``None`` when no
+        # process authors ``min_uptime`` / ``min_downtime`` (``_process_min_time``
+        # empty), so this is a no-op — byte-identical — on every rolling
+        # fixture that does not use min-up/down.  Cross-boundary obligation
+        # continuity (an obligation opened in roll N constraining roll N+1's
+        # early steps) is a SEPARATE following slice (Carrier 2); this wire
+        # restores WITHIN-roll enforcement only.
+        def _wire_mintime_for_synthetic_solve():
+            dt = getattr(flex_data, "dt", None)
+            sd = getattr(flex_data, "p_step_duration", None)
+            ulb = _drv.uptime_lookback_from_source(db_reader, dt, sd)
+            if ulb is not None and ulb.height > 0:
+                flex_data.uptime_lookback = ulb
+                flex_data.pdt_uptime_set = (
+                    _drv.pdt_uptime_set_from_lookback(ulb))
+            dlb = _drv.downtime_lookback_from_source(db_reader, dt, sd)
+            if dlb is not None and dlb.height > 0:
+                flex_data.downtime_lookback = dlb
+                flex_data.pdt_downtime_set = (
+                    _drv.pdt_downtime_set_from_lookback(dlb))
+        _loadflex_prof("apply_db_overrides:pass_synthetic_mintime")
+        _timed("c.synth mintime", _wire_mintime_for_synthetic_solve)
         return
 
     _loadflex_prof("apply_db_overrides:pass_derived_a")
