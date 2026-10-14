@@ -1761,6 +1761,8 @@ def migrate_database(
                 _migrate_v68_rp_group_flag(db)
             elif next_version == 69:
                 _migrate_v69_backfill_parameter_groups(db)
+            elif next_version == 70:
+                _migrate_v70_capacity_coefficient_descriptions(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3774,6 +3776,298 @@ def _migrate_v69_backfill_parameter_groups(db) -> None:
         "v69: backfilled parameter groups for model.small_number_threshold "
         "(-> model) and node.penalty_method (-> basics)."
     )
+
+
+_V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (
+    "[MW] Upper bound assigned to LP variables that have no other cap "
+    "(invest_no_limit / invest_retire_no_limit capacity; flows through "
+    "edges whose conversion_flow_coeff is zero; infinite-capacity "
+    "commodity tiers).  Keep large enough not to constrain the physical "
+    "solution but small enough to avoid numerical issues (default "
+    "1,000,000)."
+)
+_V70_CAPACITY_MAX_COEFF_DESCRIPTION = (
+    "[factor, default 1.0] Fraction of the unit's capacity (existing + "
+    "invested - retired) available to this edge's upper cap (maxToSink / "
+    "maxFromSource / ramp). 0 is a zero cap; to remove the edge from the "
+    "capacity constraints altogether use conversion_flow_coeff = 0. For "
+    "extraction CHP set to 1.0 on each output so each can reach full "
+    "capacity when the other drops."
+)
+_V70_INPUT_SHARE_MAX_DESCRIPTION = (
+    "[factor, default 1.0] Largest share of the unit's full-load input "
+    "energy (flow x conversion_flow_coeff) that this input may supply, "
+    "relative to the unit's capacity (existing + invested - retired) "
+    "times availability. 1 = this input alone can run the unit at full "
+    "output (no effective limit); e.g. two inputs with 0.6 each can each "
+    "supply at most 60% of the full-load input, so full output needs both. "
+    "A lower-energy input is handled by its conversion_flow_coeff, not "
+    "here. For a unit without outputs: fraction of the unit's capacity "
+    "available to this input. Not applied to inputs with "
+    "conversion_flow_coeff = 0."
+)
+_V70_INPUT_SHARE_MIN_DESCRIPTION = (
+    "[factor, default 0] While the unit is running, the smallest share of "
+    "the unit's current input energy (flow x conversion_flow_coeff) that "
+    "this input must supply. 0 = no minimum. The shares of a unit's inputs "
+    "may not sum above 1, and a share may not exceed the input's "
+    "input_share_max. Setting it on every input with shares summing to 1 "
+    "fixes the blend. Not applied to inputs with conversion_flow_coeff = 0."
+)
+_V70_CAPACITY_MIN_COEFF_DESCRIPTION = (
+    "[factor, default 0] Optional extra floor on this output of a unit "
+    "with several outputs: while the unit is online, this output must be at "
+    "least capacity_min_coeff x min_load x the online capacity. The unit's "
+    "minimum load (min_load) applies once, to the sum of its outputs, and "
+    "is not scaled by this coefficient. 0 = no separate floor on this "
+    "output. Range 0..1."
+)
+
+_V70_PENALTY_RESERVE_DEFAULT = 5000.0
+_V70_PENALTY_RESERVE_DESCRIPTION = (
+    "[CUR/MW] Penalty for each MW of reserve shortfall per hour (the "
+    "reserve requirement of the group is soft). Constant. Default 5000 - "
+    "applied to every reserve group that has no value of its own."
+)
+_V70_CONNECTION_DELAY_DESCRIPTION = (
+    "[hours] Not yet applied to connections (planned): a connection delay "
+    "is ignored (the connection is modelled as if no delay were set) and "
+    "the model warns about it. Model a delayed flow with a unit. Intended "
+    "meaning: a time delay "
+    "between the input node and the output node, either a constant time "
+    "difference in hours or a map of time differences (index: time "
+    "difference in hours, value: weight; the weights should sum to 1)."
+)
+
+
+def _numeric_elements(parsed) -> list[float]:
+    """Numeric elements of a parsed value (float, or Map / TimeSeries
+    values, recursively); ``[]`` for non-numeric values."""
+    if parsed is None or isinstance(parsed, (str, bool)):
+        return []
+    if isinstance(parsed, (int, float)):
+        return [float(parsed)]
+    values = getattr(parsed, "values", None)
+    if values is None:
+        return []
+    out: list[float] = []
+    for v in values:
+        out.extend(_numeric_elements(v))
+    return out
+
+
+def _describe_pv(pv) -> str:
+    return (f"{pv['entity_class_name']} {'/'.join(pv['entity_byname'])} "
+            f"[{pv['alternative_name']}] = {pv['parsed_value']}")
+
+
+def _pdef_or_none(db, entity_class_name: str, name: str):
+    """``parameter_definition`` row or ``None`` (``db.item`` raises
+    ``SpineDBAPIError`` for a missing row)."""
+    try:
+        return db.item(db.mapped_table("parameter_definition"),
+                       entity_class_name=entity_class_name, name=name)
+    except SpineDBAPIError:
+        return None
+
+
+def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
+    """Capacity coefficients, input shares and the per-unit minimum load
+    (v69 -> v70; the "input-share step").
+
+    * ``model.max_flow_for_unconstrained_variables`` said it bounds "flows
+      through edges whose capacity_max_coeff is zero".  That was an
+      artefact of the v35 rename (the old ``coefficient`` was the flow
+      coefficient): the uncapped edges are the ``conversion_flow_coeff = 0``
+      ones, while ``capacity_max_coeff = 0`` is a zero cap.
+    * ``unit__outputNode.capacity_max_coeff``: the description now states
+      that it scales the whole capacity (existing + invested - retired) and
+      that 0 is a zero cap.
+    * ``unit__inputNode.capacity_max_coeff`` -> ``input_share_max`` (pure
+      rename, values move unchanged): the largest share of the unit's
+      full-load input energy the input may supply.
+    * ``unit__inputNode.capacity_min_coeff`` -> ``input_share_min``, default
+      0, and EVERY stored value is deleted (listed on stdout).  The 4.x
+      engine never applied them, their old meaning (a multiplier on the
+      GLPK-era input-side min-load floor, last honoured by v3.32) is
+      unrelated to the new mixing share (the smallest share of the unit's
+      current input the input must supply), and a carried 1.0 would pin a
+      100 % share.
+    * ``unit__outputNode.capacity_min_coeff``: the minimum load is now once
+      per unit on the sum of its outputs, without a coefficient; this
+      parameter becomes an optional extra per-output floor, default 1 -> 0.
+      Stored values outside [0, 1] are deleted (the v36 backfill copied old
+      flow coefficients such as 2 or -0.025 there; they were never floor
+      intents), and so are the v36 leftovers inside [0, 1] (stored
+      ``capacity_min_coeff == capacity_max_coeff != 1`` in one
+      alternative — the same backfill).  Both deletions are listed, and the
+      units whose remaining values now act differently are listed as a
+      notice.
+
+    * ``reserve__upDown__group.penalty_reserve`` gets back its default
+      5000 [CUR/MW per hour of shortfall] (v18 set it, as did the GMPL
+      ``reserveParam_defaults``; v56 cleared it because the 4.x engine read
+      explicit values only, leaving the shortfall unpenalised).  The engine
+      now applies the default to every reserve group without a value.
+    * ``connection.delay``: the description says it is not applied (the
+      engine delays unit flows only; a connection delay is ignored with a
+      warning).
+
+    Idempotent: a definition is renamed only when the old one exists and
+    the new one does not; the input-side deletion, the v36-leftover
+    deletion and the notices run only in that (pre-step) case; the
+    out-of-range deletion and the definition defaults / descriptions are
+    no-ops once applied.
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="model",
+        name="max_flow_for_unconstrained_variables",
+        description=_V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION,
+    )
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="unit__outputNode",
+        name="capacity_max_coeff",
+        description=_V70_CAPACITY_MAX_COEFF_DESCRIPTION,
+    )
+    zero_val, zero_type = to_database(0.0)
+    pre_step = (_pdef_or_none(db, "unit__inputNode", "capacity_min_coeff")
+                is not None
+                and _pdef_or_none(db, "unit__inputNode", "input_share_min")
+                is None)
+
+    # ── unit__inputNode: rename; input_share_min loses its old values ──
+    if pre_step:
+        old_vals = list(db.find_parameter_values(
+            entity_class_name="unit__inputNode",
+            parameter_definition_name="capacity_min_coeff"))
+        if old_vals:
+            print("v70: deleted the old input-side capacity_min_coeff "
+                  "values (now input_share_min, a different meaning; "
+                  "re-author if needed):")
+            for pv in old_vals:
+                print("  " + _describe_pv(pv))
+            db.remove_items("parameter_value", *[pv["id"] for pv in old_vals])
+    for old_name, new_name, description, default in (
+        ("capacity_max_coeff", "input_share_max",
+         _V70_INPUT_SHARE_MAX_DESCRIPTION, None),
+        ("capacity_min_coeff", "input_share_min",
+         _V70_INPUT_SHARE_MIN_DESCRIPTION, (zero_val, zero_type)),
+    ):
+        old = _pdef_or_none(db, "unit__inputNode", old_name)
+        new = _pdef_or_none(db, "unit__inputNode", new_name)
+        fields = {"description": description}
+        if default is not None:
+            fields["default_value"], fields["default_type"] = default
+        if old and not new:
+            db.update_parameter_definition(id=old["id"], name=new_name,
+                                           **fields)
+        elif new:
+            db.update_parameter_definition(id=new["id"], **fields)
+
+    # ── unit__outputNode.capacity_min_coeff: per-output floor, default 0 ─
+    out_min = _pdef_or_none(db, "unit__outputNode", "capacity_min_coeff")
+    if out_min:
+        db.update_parameter_definition(
+            id=out_min["id"], default_value=zero_val, default_type=zero_type,
+            description=_V70_CAPACITY_MIN_COEFF_DESCRIPTION)
+        out_vals = list(db.find_parameter_values(
+            entity_class_name="unit__outputNode",
+            parameter_definition_name="capacity_min_coeff"))
+        out_of_range = [pv for pv in out_vals
+                        if any(v < 0.0 or v > 1.0 for v in
+                               _numeric_elements(pv["parsed_value"]))]
+        leftovers = []
+        if pre_step:
+            cmax = {(tuple(pv["entity_byname"]), pv["alternative_name"]):
+                    pv["parsed_value"]
+                    for pv in db.find_parameter_values(
+                        entity_class_name="unit__outputNode",
+                        parameter_definition_name="capacity_max_coeff")}
+            bad_ids = {pv["id"] for pv in out_of_range}
+            for pv in out_vals:
+                if pv["id"] in bad_ids:
+                    continue
+                v = pv["parsed_value"]
+                vmax = cmax.get((tuple(pv["entity_byname"]),
+                                 pv["alternative_name"]))
+                if (isinstance(v, float) and isinstance(vmax, float)
+                        and v == vmax and v != 1.0):
+                    leftovers.append(pv)
+        if out_of_range:
+            print("v70: deleted unit__outputNode capacity_min_coeff values "
+                  "outside [0, 1] (now an optional per-output floor; these "
+                  "were copied from old flow coefficients):")
+            for pv in out_of_range:
+                print("  " + _describe_pv(pv))
+        if leftovers:
+            print("v70: deleted unit__outputNode capacity_min_coeff values "
+                  "equal to capacity_max_coeff (left by the v36 coefficient "
+                  "backfill, not a floor intent):")
+            for pv in leftovers:
+                print("  " + _describe_pv(pv))
+        removed = out_of_range + leftovers
+        if removed:
+            db.remove_items("parameter_value", *[pv["id"] for pv in removed])
+        if pre_step:
+            _print_v70_min_load_notices(
+                db, [pv for pv in out_vals
+                     if pv["id"] not in {r["id"] for r in removed}])
+    # ── reserve__upDown__group.penalty_reserve: default 5000 restored ──
+    # (v18 set it, v56 cleared it because the engine ignored it; the
+    # engine now applies it to every group without an authored value).
+    pen = _pdef_or_none(db, "reserve__upDown__group", "penalty_reserve")
+    if pen:
+        pen_val, pen_type = to_database(_V70_PENALTY_RESERVE_DEFAULT)
+        db.update_parameter_definition(
+            id=pen["id"], default_value=pen_val, default_type=pen_type,
+            description=_V70_PENALTY_RESERVE_DESCRIPTION)
+
+    # ── connection.delay: not applied by the engine; say so ──
+    conn_delay = _pdef_or_none(db, "connection", "delay")
+    if conn_delay:
+        db.update_parameter_definition(
+            id=conn_delay["id"],
+            description=_V70_CONNECTION_DELAY_DESCRIPTION)
+
+    _commit_step(db,
+        "v70: capacity_max_coeff = 0 is a zero cap; uncapped edges are "
+        "conversion_flow_coeff = 0; unit__inputNode.capacity_max_coeff -> "
+        "input_share_max, unit__inputNode.capacity_min_coeff -> "
+        "input_share_min (old values deleted, default 0); "
+        "unit__outputNode.capacity_min_coeff is a per-output floor "
+        "(default 0, out-of-range and v36-leftover values deleted); "
+        "reserve__upDown__group.penalty_reserve default 5000; "
+        "connection.delay described as not applied."
+    )
+
+
+def _print_v70_min_load_notices(db, remaining) -> None:
+    """List units whose kept output ``capacity_min_coeff`` values behave
+    differently under the per-unit minimum load."""
+    outputs: dict[str, set[str]] = {}
+    for ent in db.find_entities(entity_class_name="unit__outputNode"):
+        outputs.setdefault(ent["entity_byname"][0], set()).add(
+            ent["entity_byname"][1])
+    by_unit: dict[str, list[float]] = {}
+    for pv in remaining:
+        vals = _numeric_elements(pv["parsed_value"])
+        if vals:
+            by_unit.setdefault(pv["entity_byname"][0], []).extend(vals)
+    lowered = sorted(u for u, v in by_unit.items() if max(v) < 1.0)
+    floors = sorted(u for u, v in by_unit.items()
+                    if len(outputs.get(u, ())) >= 2 and max(v) > 0.0)
+    if lowered:
+        print("v70: capacity_min_coeff no longer lowers or switches off a "
+              "unit's minimum load (it now applies once per unit, to the "
+              "sum of its outputs); lower min_load instead (0 switches it "
+              "off) for: " + ", ".join(lowered))
+    if floors:
+        print("v70: capacity_min_coeff > 0 on an output of a multi-output "
+              "unit is now a separate floor on that output "
+              "(output >= coefficient x min_load x online capacity) for: "
+              + ", ".join(floors))
 
 
 def _migrate_v52_solver_selection(db) -> None:

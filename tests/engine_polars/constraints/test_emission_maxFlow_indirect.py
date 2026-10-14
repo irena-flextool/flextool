@@ -11,15 +11,20 @@ capacity.
 The fix binds the indirect **OUTPUT** arc (``source == p``) with the
 ``maxToSink`` existing-only RHS (``existing/unitsize``, = 0 for greenfield),
 so any positive output flow forces paid ``v_invest > 0`` — matching direct
-units.  The **input/fuel** arcs (``sink == p``) and any zero-flow-coef aux
-arcs keep the loose ``p_flow_upper`` bound (pinning them to 0 would make
-fuel hard-infeasible).
+units.  The **input/fuel** arcs (``sink == p``) carry the input limit
+``M · (existing + Σv_invest − Σv_divest)`` with ``M = input_share_max ×``
+the full-load input per unit of capacity × availability: for these
+investing converters a ``maxFlow`` row ``fuel − M·Σv_invest ≤ M·existing``
+(RHS 0 for greenfield — the fuel follows the BUILT capacity through the
+invest term, so it is not pinned to 0).  Zero-flow-coef aux arcs keep the
+unconstrained ``p_flow_upper`` bound.
 
 Assertions (critique B2 — cover EVERY indirect converter in the fixture,
 including the ones with zero-flow-coef input arcs):
   (a) every indirect OUTPUT-arc ``maxFlow`` RHS = 0 (greenfield), and the
       row carries a ``−v_invest`` LHS term;
-  (b) every indirect INPUT/fuel arc keeps a loose (> 0) RHS — feasibility;
+  (b) every indirect INPUT/fuel arc row carries a ``−M·v_invest`` term with
+      ``M > 0`` — feasibility (fuel can follow invested capacity);
   (c) every zero-flow-coef aux arc keeps its unconstrained (loose) RHS;
   (d) ``flow_upper_rhs`` row-count parity with ``pss_dt`` (no dropped /
       duplicated rows).
@@ -57,6 +62,24 @@ def _build(db_url: str):
         pb = Problem()
         build_flextool(pb, last.flex_data)
     return last.flex_data, pb
+
+
+def _invest_coefs(pb: Problem, rec) -> pl.DataFrame:
+    """``(p, source, sink, d, t, coef)`` of the ``v_invest_p`` terms in the
+    maxFlow LHS, one row per (row, invest column)."""
+    inv_cols = pb._vars["v_invest_p"].frame.select("col_id")
+    parts = []
+    for term in rec.proto.expr.terms:
+        fr = term.frame
+        if not {"p", "source", "sink", "d", "t"} <= set(fr.columns):
+            continue
+        fr = fr.join(inv_cols, on="col_id", how="semi")
+        if fr.height:
+            parts.append(fr.select(
+                *(pl.col(c).cast(pl.Utf8)
+                  for c in ("p", "source", "sink", "d", "t")), "coef"))
+    assert parts, "maxFlow LHS carries no v_invest_p term"
+    return pl.concat(parts)
 
 
 def _maxflow_record(pb: Problem):
@@ -98,42 +121,51 @@ def test_indirect_output_arcs_existing_only_rhs(
     assert out_ps == rhs_out_ps, (
         f"output-arc processes missing from RHS: {out_ps - rhs_out_ps}")
 
-    # (a-ii) the maxFlow LHS carries a ``−v_invest`` term keyed on (p, d)
-    # that broadcasts to the output arcs.  The expr has two term families:
-    # v_flow over (p, source, sink, d, t) and the invest term over (p, d).
-    term_dims = {t.dims for t in rec.proto.expr.terms}
-    assert ("p", "d") in term_dims, (
-        "maxFlow LHS is missing the (p, d) −v_invest term families "
-        f"(got {term_dims}) — greenfield output arcs would not force "
-        "paid invest")
+    # (a-ii) the maxFlow LHS carries a ``−v_invest`` term on every output
+    # arc row (scaled by the arc's capacity multiplier), so a positive
+    # output forces paid invest.
+    inv = _invest_coefs(pb, rec)
+    out_u = out_arcs.select(pl.col(c).cast(pl.Utf8)
+                            for c in ("p", "source", "sink"))
+    out_inv = inv.join(out_u, on=["p", "source", "sink"], how="semi")
+    assert (out_inv.select("p", "source", "sink").unique().height
+            == out_u.unique().height), (
+        "maxFlow LHS is missing the −v_invest term on some indirect output "
+        "arcs — greenfield output arcs would not force paid invest")
+    assert out_inv.get_column("coef").max() < 0.0
 
 
 @pytest.mark.emission
-def test_indirect_input_arcs_stay_loose(
+def test_indirect_input_arcs_follow_invested_capacity(
         h2_trade_parity_db_url: str) -> None:
-    """(b) Every indirect INPUT/fuel arc keeps a loose (> 0) RHS — pinning
-    them to existing (= 0) would make fuel hard-infeasible."""
+    """(b) Every indirect INPUT/fuel arc row carries ``−M·v_invest`` with
+    ``M > 0`` (input limit per unit of capacity × availability) and RHS
+    ``M · existing`` (0 for these greenfield converters) — the fuel follows
+    the BUILT capacity, so it is never pinned to 0 (hard infeasibility)."""
     d, pb = _build(h2_trade_parity_db_url)
     rec = _maxflow_record(pb)
     rhs = rec.proto.rhs.frame
 
     in_arcs = d.process_input_flows
     assert in_arcs is not None and in_arcs.height > 0
+    in_u = in_arcs.select(pl.col(c).cast(pl.Utf8)
+                          for c in ("p", "source", "sink")).unique()
 
     in_rows = rhs.join(in_arcs, on=("p", "source", "sink"), how="semi")
     assert in_rows.height > 0
-    assert in_rows.get_column("value").min() > 0.0, (
-        "an indirect INPUT/fuel arc has RHS <= 0 — fuel would be pinned to "
-        "0 (hard infeasibility). Offending rows: "
-        f"{in_rows.filter(pl.col('value') <= 0.0)}")
+    assert in_rows.get_column("value").max() == 0.0, (
+        "greenfield input arcs must read RHS = M · existing = 0")
 
-    # No input arc may draw from the existing-only (= 0) slice: assert the
-    # input-arc RHS is NOT identically 0 for any process (B1 belt).
-    per_proc_max = (in_rows.group_by("p")
-                    .agg(pl.col("value").max().alias("mx")))
-    zeroed = per_proc_max.filter(pl.col("mx") <= 0.0)
-    assert zeroed.height == 0, (
-        f"input arcs of these processes were pinned to 0: {zeroed}")
+    inv = _invest_coefs(pb, rec).join(in_u, on=["p", "source", "sink"],
+                                      how="semi")
+    covered = inv.select("p", "source", "sink").unique()
+    missing = in_u.join(covered, on=["p", "source", "sink"], how="anti")
+    assert missing.height == 0, (
+        f"input arcs without a −M·v_invest term (fuel pinned to 0): "
+        f"{missing}")
+    assert inv.get_column("coef").max() < 0.0, (
+        "an input-arc invest multiplier M is not positive: "
+        f"{inv.filter(pl.col('coef') >= 0.0)}")
 
 
 @pytest.mark.emission

@@ -286,6 +286,15 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     "p_ladder_ann_price", "p_ladder_ann_quantity",
     # Process topology Params used in many cstrs / objs.
     "p_unitsize", "p_flow_upper", "p_flow_upper_existing",
+    # Per-arc capacity factors.  ``p_indirect_input_cap`` also sets the
+    # per-element ``v_flow`` UPPER BOUND of constant-capacity indirect
+    # input arcs (``_max_flow_rhs``): WarmProblem's update paths do not
+    # touch column bounds, so any diff must force a cold rebuild.
+    "p_arc_max_cap_coef", "p_indirect_input_cap",
+    "p_process_sink_max_capacity_coef", "p_process_source_input_share_max",
+    # Floors: diffs force a cold rebuild (an unlisted Param that differs
+    # between rolls would silently keep the previous roll's value).
+    "p_process_source_input_share_min", "p_process_sink_min_capacity_coef",
     "p_slope", "p_process_existing_count", "p_process_availability",
     "p_node_availability",
     # Profile Params — drive process_profile_* cstrs.
@@ -743,17 +752,28 @@ def _apply_warm_updates(warm: WarmProblem,
                     raise _IncompatibleUpdate(
                         f"warm-update needs FlexData.{over_field}, but it "
                         f"is None on the new sub-solve")
+                # The cstr's rows are in ``over`` sorted by its columns
+                # (the add_cstr determinism wrapper,
+                # ``engine_polars/__init__.py``), so sort ``new_over``
+                # the same way: position i then names the same row in
+                # both sub-solves (labels shift, order does not).  Do
+                # not trust the producer's row order — a polars 2 lazy
+                # cross join emits right-major order unless told
+                # otherwise, which pushed every other (n, t) inflow onto
+                # the wrong row.
+                new_over = new_over.sort(new_over.columns)
                 # Left-join new_over with next_p on shared dims; values
-                # come out aligned to new_over's row order, which by
-                # fingerprint match has the same row count as the
-                # original LP cstr over.
+                # come out aligned to new_over's row order (kept by
+                # ``maintain_order="left"``), which by fingerprint match
+                # has the same row count as the original LP cstr over.
                 shared = [c for c in next_p.dims if c in new_over.columns]
                 if not shared:
                     rhs_vec = np.full(new_over.height,
                                       float(next_p.frame["value"][0]),
                                       dtype=np.float64)
                 else:
-                    j = new_over.join(next_p.frame, on=shared, how="left")
+                    j = new_over.join(next_p.frame, on=shared, how="left",
+                                      maintain_order="left")
                     rhs_vec = (j["value"].fill_null(0.0)
                                          .to_numpy()
                                          .astype(np.float64, copy=False))

@@ -2643,7 +2643,7 @@
         null
       ],
       null,
-      "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.",
+      "[hours] Not yet applied to connections (planned): a connection delay is ignored (the connection is modelled as if no delay were set) and the model warns about it. Model a delayed flow with a unit. Intended meaning: a time delay between the input node and the output node, either a constant time difference in hours or a map of time differences (index: time difference in hours, value: weight; the weights should sum to 1).",
       "tech_advanced"
     ],
     [
@@ -3402,7 +3402,7 @@
         "float"
       ],
       null,
-      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit capacity; flows through edges whose capacity_max_coeff is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
+      "[MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit / invest_retire_no_limit capacity; flows through edges whose conversion_flow_coeff is zero; infinite-capacity commodity tiers).  Keep large enough not to constrain the physical solution but small enough to avoid numerical issues (default 1,000,000).",
       "model"
     ],
     [
@@ -3453,7 +3453,7 @@
       "model",
       "version",
       [
-        "Njk=",
+        "NzA=",
         "float"
       ],
       null,
@@ -4036,11 +4036,11 @@
       "reserve__upDown__group",
       "penalty_reserve",
       [
-        null,
-        null
+        "NTAwMC4w",
+        "float"
       ],
       null,
-      "[CUR/MW] Penalty for violating a reserve constraint. Constant.",
+      "[CUR/MW] Penalty for each MW of reserve shortfall per hour (the reserve requirement of the group is soft). Constant. Default 5000 - applied to every reserve group that has no value of its own.",
       "reserve"
     ],
     [
@@ -4782,28 +4782,6 @@
     ],
     [
       "unit__inputNode",
-      "capacity_max_coeff",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap.",
-      "basics"
-    ],
-    [
-      "unit__inputNode",
-      "capacity_min_coeff",
-      [
-        "MS4w",
-        "float"
-      ],
-      null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
-      "basics"
-    ],
-    [
-      "unit__inputNode",
       "constraint_flow_coeff",
       [
         "bnVsbA==",
@@ -4834,6 +4812,28 @@
       null,
       "[MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.",
       "network"
+    ],
+    [
+      "unit__inputNode",
+      "input_share_max",
+      [
+        "MS4w",
+        "float"
+      ],
+      null,
+      "[factor, default 1.0] Largest share of the unit's full-load input energy (flow x conversion_flow_coeff) that this input may supply, relative to the unit's capacity (existing + invested - retired) times availability. 1 = this input alone can run the unit at full output (no effective limit); e.g. two inputs with 0.6 each can each supply at most 60% of the full-load input, so full output needs both. A lower-energy input is handled by its conversion_flow_coeff, not here. For a unit without outputs: fraction of the unit's capacity available to this input. Not applied to inputs with conversion_flow_coeff = 0.",
+      "basics"
+    ],
+    [
+      "unit__inputNode",
+      "input_share_min",
+      [
+        "MC4w",
+        "float"
+      ],
+      null,
+      "[factor, default 0] While the unit is running, the smallest share of the unit's current input energy (flow x conversion_flow_coeff) that this input must supply. 0 = no minimum. The shares of a unit's inputs may not sum above 1, and a share may not exceed the input's input_share_max. Setting it on every input with shares summing to 1 fixes the blend. Not applied to inputs with conversion_flow_coeff = 0.",
+      "basics"
     ],
     [
       "unit__inputNode",
@@ -4920,18 +4920,18 @@
         "float"
       ],
       null,
-      "[factor, default 1.0] Fraction of the unit's capacity available to this edge's upper cap.",
+      "[factor, default 1.0] Fraction of the unit's capacity (existing + invested - retired) available to this edge's upper cap (maxToSink / maxFromSource / ramp). 0 is a zero cap; to remove the edge from the capacity constraints altogether use conversion_flow_coeff = 0. For extraction CHP set to 1.0 on each output so each can reach full capacity when the other drops.",
       "basics"
     ],
     [
       "unit__outputNode",
       "capacity_min_coeff",
       [
-        "MS4w",
+        "MC4w",
         "float"
       ],
       null,
-      "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online.",
+      "[factor, default 0] Optional extra floor on this output of a unit with several outputs: while the unit is online, this output must be at least capacity_min_coeff x min_load x the online capacity. The unit's minimum load (min_load) applies once, to the sum of its outputs, and is not scaled by this coefficient. 0 = no separate floor on this output. Range 0..1.",
       "basics"
     ],
     [
@@ -6657,18 +6657,6 @@
     ],
     [
       "unit__inputNode",
-      "capacity_max_coeff",
-      "float",
-      0
-    ],
-    [
-      "unit__inputNode",
-      "capacity_min_coeff",
-      "float",
-      0
-    ],
-    [
-      "unit__inputNode",
       "constraint_flow_coeff",
       "map",
       1
@@ -6682,6 +6670,18 @@
     [
       "unit__inputNode",
       "inertia_constant",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "input_share_max",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "input_share_min",
       "float",
       0
     ],

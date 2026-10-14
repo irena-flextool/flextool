@@ -1256,15 +1256,50 @@ def p_ramp_speed_down_source_from_source(source: "InputSource") -> Param | None:
 def p_process_sink_min_capacity_coef_from_source(source: "InputSource") -> Param | None:
     """``unit__outputNode.capacity_min_coeff`` → ``Param(("p", "sink"))``.
 
-    Default 1.0 (schema).  Per-output-arc multiplier on the
-    ``minFlow_minload`` floor (``v_online · min_load``), mirroring the
-    .mod's ``p_process_sink_min_capacity_coefficient`` (flextool.mod
-    L3075).  Explicit rows only, INCLUDING an authored ``0.0`` ("no floor
-    on this arc") — ``filter_zero=False`` keeps it; the consumer densifies
-    absent arcs to the 1.0 default.
+    Default 0 (schema).  Optional per-output floor of a multi-output unit:
+    ``v_flow[p, p, k] ≥ v_online · min_load · capacity_min_coeff_k``
+    (``minFlow_output_floor``), on top of the unit floor ``Σ outputs ≥
+    v_online · min_load`` which carries no coefficient.  Explicit rows
+    only (``filter_zero=False`` keeps an authored ``0.0``); absent arcs
+    mean no per-output floor.
     """
     return _p_side_scalar(source, "unit__outputNode", "capacity_min_coeff",
                           "sink", filter_zero=False)
+
+
+def p_process_sink_max_capacity_coef_from_source(source: "InputSource") -> Param | None:
+    """``unit__outputNode.capacity_max_coeff`` → ``Param(("p", "sink"))``.
+
+    Fraction of the unit's capacity available to this output edge
+    (default 1.0; 0 = zero cap).  Explicit rows only, INCLUDING an
+    authored ``0.0``; consumers densify absent arcs to the 1.0 default.
+    """
+    return _p_side_scalar(source, "unit__outputNode", "capacity_max_coeff",
+                          "sink", filter_zero=False)
+
+
+def p_process_source_input_share_max_from_source(source: "InputSource") -> Param | None:
+    """``unit__inputNode.input_share_max`` → ``Param(("p", "source"))``.
+
+    Input-side counterpart of :func:`p_process_sink_max_capacity_coef_from_source`
+    (schema v70 renamed it from ``capacity_max_coeff``).  Explicit rows
+    only, including an authored ``0.0``; consumers densify the 1.0
+    default.
+    """
+    return _p_side_scalar(source, "unit__inputNode", "input_share_max",
+                          "source", filter_zero=False)
+
+
+def p_process_source_input_share_min_from_source(source: "InputSource") -> Param | None:
+    """``unit__inputNode.input_share_min`` → ``Param(("p", "source"))``.
+
+    Smallest share of the unit's current input energy (flow ×
+    ``conversion_flow_coeff``) the input must supply while the unit runs
+    (``minInputShare``).  Default 0 (no minimum).  Explicit rows only,
+    including an authored ``0.0``.
+    """
+    return _p_side_scalar(source, "unit__inputNode", "input_share_min",
+                          "source", filter_zero=False)
 
 
 # inertia_constant (§1.14) — relationship scalar, CSV filters zero
@@ -1512,28 +1547,56 @@ def pdtReserve_upDown_group_reservation_from_source(
         period_filter, filter_zero=False)
 
 
+#: Default of ``reserve__upDown__group.penalty_reserve`` [CUR/MW per hour
+#: of shortfall].  The GMPL-era ``flextool.mod`` defaulted it to 5000
+#: (``reserveParam_defaults``) and the schema carried the same default
+#: from v18 until v56 cleared it; v70 restores it in the schema.  The
+#: engine applies it to every reserve group without an authored value.
+PENALTY_RESERVE_DEFAULT: float = 5000.0
+
+
 def p_reserve_upDown_group_penalty_reserve_from_source(source: "InputSource") -> Param | None:
     """``reserve__upDown__group.penalty_reserve`` scalar →
-    ``Param(("r", "ud", "g"))``.  None default — explicit rows only.
+    ``Param(("r", "ud", "g"))``, dense over every ``reserve__upDown__group``
+    entity: the authored value where one exists, otherwise
+    :data:`PENALTY_RESERVE_DEFAULT`.  (Densified here rather than relying on
+    the schema default so the reserve shortfall is never free.)
     """
+    keys = ["reserve", "upDown", "group"]
+    try:
+        ents = source.entities("reserve__upDown__group")
+    except KeyError:
+        ents = None
     try:
         df = source.parameter_explicit("reserve__upDown__group", "penalty_reserve")
     except (KeyError, AttributeError):
         try:
             df = source.parameter("reserve__upDown__group", "penalty_reserve")
         except KeyError:
-            return None
-    if df is None or df.height == 0:
+            df = None
+    if df is not None and not {*keys, "value"}.issubset(df.columns):
+        df = None
+    if ents is None or not set(keys).issubset(ents.columns):
+        ents = df.select(keys) if df is not None else None
+    if ents is None or ents.height == 0:
         return None
-    cols = df.columns
-    if not {"reserve", "upDown", "group", "value"}.issubset(cols):
-        return None
-    lf = (df.lazy()
-            .rename({"reserve": "r", "upDown": "ud", "group": "g"})
-            .filter(pl.col("value").is_not_null()))
-    out = lf.select("r", "ud", "g", "value").collect()
-    if out.height == 0:
-        return None
+    lf = ents.lazy().select(keys).unique(maintain_order=True)
+    if df is not None and df.height > 0:
+        authored = (df.lazy()
+                    .filter(pl.col("value").is_not_null())
+                    .select(*[pl.col(k).cast(pl.Utf8).alias(f"__{k}")
+                              for k in keys],
+                            pl.col("value").cast(pl.Float64)))
+        lf = (lf.with_columns(pl.col(k).cast(pl.Utf8).alias(f"__{k}")
+                              for k in keys)
+                .join(authored, on=[f"__{k}" for k in keys], how="left")
+                .drop([f"__{k}" for k in keys]))
+    else:
+        lf = lf.with_columns(value=pl.lit(None, dtype=pl.Float64))
+    out = (lf.with_columns(pl.col("value").fill_null(PENALTY_RESERVE_DEFAULT))
+             .rename({"reserve": "r", "upDown": "ud", "group": "g"})
+             .select("r", "ud", "g", "value")
+             .collect())
     return Param(("r", "ud", "g"), out.lazy())
 
 
@@ -1618,52 +1681,6 @@ def p_process_reserve_upDown_node_large_failure_ratio_value_from_source(
 def p_process_reserve_upDown_node_increase_reserve_ratio_value_from_source(
     source: "InputSource") -> Param | None:
     return _process_reserve_node_param(source, "increase_reserve_ratio")
-
-
-# ---------------------------------------------------------------------------
-# §1.17 — Delayed processes (process_delayed__duration)
-
-def process_delayed__duration_from_source(source: "InputSource") -> pl.DataFrame | None:
-    """``unit/connection.delay`` 1d_map(td) → ``[p, td]`` set frame.
-
-    CSV path (``_delay.load_data``) reads ``solve_data/process_delayed__duration.csv``
-    and returns the (p, td) keys as a DataFrame (not a Param — it's a
-    set, since the duration values are 1.0 or absent).
-
-    Note: this is a *set* in FlexData, not a Param — return
-    type matches the field declared on FlexData.
-    """
-    parts: list[pl.LazyFrame] = []
-    for cls in ("unit", "connection"):
-        try:
-            df = source.parameter_explicit(cls, "delay")
-        except (KeyError, AttributeError):
-            try:
-                df = source.parameter(cls, "delay")
-            except KeyError:
-                continue
-        if df is None or df.height == 0:
-            continue
-        cols = df.columns
-        if "name" not in cols:
-            continue
-        # 1d_map(td) — the index column may be 'td' or default 'period'/'i'.
-        # Detect by elimination: any column not in {name, value} is the index.
-        idx_cols = [c for c in cols if c not in ("name", "value")]
-        if len(idx_cols) != 1:
-            continue
-        idx = idx_cols[0]
-        lf = (df.lazy()
-                .rename({"name": "p", idx: "td"})
-                .filter(pl.col("value").is_not_null())
-                .filter(pl.col("value") != 0.0))
-        parts.append(lf.select("p", "td"))
-    if not parts:
-        return None
-    out = pl.concat(parts).unique().collect()
-    if out.height == 0:
-        return None
-    return out.sort("p", "td")
 
 
 # ---------------------------------------------------------------------------
@@ -1919,11 +1936,22 @@ def apply_direct_params_a(source: "InputSource",
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
     flex_data.p_min_load = p_min_load_from_source(source)
-    # Per-output-arc min_capacity_coefficient — scales the minFlow_minload
-    # floor.  Assigned in pass 1a so it is present on the synthetic / rolling
+    # Per-output capacity_min_coeff — the optional per-output floor of
+    # multi-output units (minFlow_output_floor).  Assigned in pass 1a so it is present on the synthetic / rolling
     # sub-solve path too (passes 3-10 are skipped there).
     flex_data.p_process_sink_min_capacity_coef = (
         p_process_sink_min_capacity_coef_from_source(source))
+    # Per-edge capacity factors (output capacity_max_coeff, input
+    # input_share_max) — scale the ramp limits.  Pass 1a for the same
+    # reason as the min coefficient.
+    flex_data.p_process_sink_max_capacity_coef = (
+        p_process_sink_max_capacity_coef_from_source(source))
+    flex_data.p_process_source_input_share_max = (
+        p_process_source_input_share_max_from_source(source))
+    # input_share_min — the minInputShare mixing minimum.  Pass 1a so the
+    # rolling / synthetic sub-solve path carries it too.
+    flex_data.p_process_source_input_share_min = (
+        p_process_source_input_share_min_from_source(source))
 
     # ─── Δ.4 second wave — connection scalars (DC power flow feature) ───
     # Δ.16 — preserve the CSV-loaded value when the source has no rows.
@@ -2135,8 +2163,9 @@ def apply_direct_params_b(source: "InputSource",
     flex_data.p_process_reserve_upDown_node_increase_reserve_ratio_value = (
         p_process_reserve_upDown_node_increase_reserve_ratio_value_from_source(source))
 
-    # ─── Δ.4b — delayed processes (set, not Param) ───────────────────────
-    flex_data.process_delayed__duration = process_delayed__duration_from_source(source)
+    # ``process_delayed__duration`` is produced together with the delay
+    # weights and ``dtt__delay_duration`` by
+    # ``_derived_params.apply_delay_params`` (same td labels).
 
     # ─── Δ.4b — additional Map(period→time) on object classes ───────────
     # Δ.12c-fix gap #1: helpers broadcast non-Map shapes via period_filter.

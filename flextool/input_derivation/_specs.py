@@ -360,15 +360,15 @@ _PARAMETER_SPECS: list[dict] = [
         "filter_in_type": ["float", "str", "bool"],
     },
     {
-        "cl_pars": [("unit__inputNode", "capacity_max_coeff")],
-        "header": "process,source,p_process_source_capacity_max_coeff",
-        "filename": "input/p_process_source_capacity_max_coeff.csv",
+        "cl_pars": [("unit__inputNode", "input_share_max")],
+        "header": "process,source,p_process_source_input_share_max",
+        "filename": "input/p_process_source_input_share_max.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {
-        "cl_pars": [("unit__inputNode", "capacity_min_coeff")],
-        "header": "process,source,p_process_source_capacity_min_coeff",
-        "filename": "input/p_process_source_capacity_min_coeff.csv",
+        "cl_pars": [("unit__inputNode", "input_share_min")],
+        "header": "process,source,p_process_source_input_share_min",
+        "filename": "input/p_process_source_input_share_min.csv",
         "filter_in_type": ["float", "str", "bool"],
     },
     {
@@ -680,14 +680,16 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/p_process_constraint_cumulative_pre_built_capacity_coeff.csv",
         "filter_in_type": ["1d_map"],
     },
+    # Units only: a connection ``delay`` is not implemented and is ignored
+    # (``_validators.validate_connection_delay`` warns about it).
     {
-        "cl_pars": [("unit", "delay"), ("connection", "delay")],
+        "cl_pars": [("unit", "delay")],
         "header": "process,delay_duration,p_process_delay_weighted",
         "filename": "input/p_process_delay_weighted.csv",
         "filter_in_type": ["1d_map"],
     },
     {
-        "cl_pars": [("unit", "delay"), ("connection", "delay")],
+        "cl_pars": [("unit", "delay")],
         "header": "process,delay_duration",
         "filename": "input/process_delay_single.csv",
         "filter_in_type": ["str", "float"],

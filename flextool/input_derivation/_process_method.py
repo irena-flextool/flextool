@@ -148,8 +148,11 @@ def derive_process_method(
             sink_counts[process_name] = sink_counts.get(process_name, 0) + 1
 
     # --- Collect delayed processes ---
+    # Units only: a connection ``delay`` is not implemented and is ignored
+    # (``_validators.validate_connection_delay`` warns about it); it must
+    # not make the connection ``fork_yes``.
     delayed_processes: set[str] = set()
-    for cl in ["unit", "connection"]:
+    for cl in ["unit"]:
         for pv in backend.find_parameter_values(
             entity_class_name=cl, parameter_definition_name="delay",
         ):

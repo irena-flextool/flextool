@@ -1096,11 +1096,13 @@ def read_parameters(
         )
 
     # reserve_upDown_group_penalty — Series with MultiIndex (reserve,
-    # upDown, node_group).
-    if (flex_data.p_reserve_upDown_group_penalty_reserve is not None
-            and flex_data.p_reserve_upDown_group_penalty_reserve.frame.height > 0):
+    # upDown, node_group); the same dense penalty the LP objective uses
+    # (authored penalty_reserve, else the default).
+    from flextool.engine_polars._reserve import reserve_penalty
+    reserve_pen = reserve_penalty(flex_data)
+    if reserve_pen is not None and reserve_pen.frame.height > 0:
         p.reserve_upDown_group_penalty = series_with_multi_index(
-            flex_data.p_reserve_upDown_group_penalty_reserve.frame,
+            reserve_pen.frame,
             dims=("r", "ud", "g"),
             names=["reserve", "upDown", "node_group"],
         )
@@ -1224,6 +1226,19 @@ def read_parameters(
     # reserve_upDown_group_reservation — multi-column (r, ud, g).
     p.reserve_upDown_group_reservation = _pdtX_multi_col(
         flex_data.pdtReserve_upDown_group_reservation, solve_name=solve_name,
+        col_dims=("r", "ud", "g"),
+        col_names=("reserve", "upDown", "node_group"),
+        densify_col_tuples=getattr(flex_data, "reserve_upDown_group", None),
+        flex_data=flex_data,
+    )
+
+    # reserve_upDown_group_shortfall_scale — the vq_reserve multiplier the
+    # LP uses in the reserve balances and the penalty (largest possible
+    # requirement; the reservation for timeseries groups).  The reserve
+    # shortfall in MW and its penalty cost are rebuilt with it.
+    from flextool.engine_polars._reserve import reserve_shortfall_scale
+    p.reserve_upDown_group_shortfall_scale = _pdtX_multi_col(
+        reserve_shortfall_scale(flex_data), solve_name=solve_name,
         col_dims=("r", "ud", "g"),
         col_names=("reserve", "upDown", "node_group"),
         densify_col_tuples=getattr(flex_data, "reserve_upDown_group", None),

@@ -43,6 +43,7 @@ from polar_high import Sum, Where, Param
 from polar_high.engine import Var
 
 from ._axis_enums import rename_to_axis, schema_dtype
+from ._param_shapes import promote_param_to_dt
 from ._emit_provider_io import _provider_key
 
 
@@ -258,6 +259,179 @@ def load_data(inp: Path | str, sd: Path | str,
 
 
 # ---------------------------------------------------------------------------
+# Shortfall multiplier
+
+def _u8(lf: "pl.LazyFrame", keys) -> "pl.LazyFrame":
+    """Cast ``keys`` to Utf8 (join keys across producers' Enum vocabularies)."""
+    return lf.with_columns([pl.col(k).cast(pl.Utf8) for k in keys])
+
+
+def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel,
+                            side: str) -> "pl.LazyFrame | None":
+    """Largest value of one flow-driven reserve requirement term.
+
+    Mirrors the ``reserveBalance`` RHS ``Σ v_flow · unitsize · ratio`` over
+    the arcs whose ``side`` (``"sink"`` or ``"source"``) is a node ``n`` of
+    group ``g`` and whose ``(p, r, ud, n)`` is in ``ratio_set``, with
+    ``v_flow`` replaced by its structural upper bound ``p_flow_upper``
+    (existing + the most the process can invest by that period, per unit
+    size; ``max_flow_for_unconstrained_variables`` for unlimited invest and
+    for ``conversion_flow_coeff = 0`` arcs).  Returns ``(r, ud, g, d, t,
+    value)`` rows (Utf8 keys), or ``None``.
+    """
+    if (ratio_set is None or ratio_set.height == 0 or ratio_param is None
+            or rug_sel is None or rug_sel.height == 0):
+        return None
+    gn = getattr(d, "group_node", None)
+    pss = getattr(d, "process_source_sink", None)
+    fu = getattr(d, "p_flow_upper", None)
+    us = getattr(d, "p_unitsize", None)
+    if gn is None or gn.height == 0 or pss is None or pss.height == 0:
+        return None
+    if fu is None or us is None:
+        raise ValueError(
+            "_reserve: a dynamic / n-1 reserve requirement needs "
+            "p_flow_upper and p_unitsize to size its shortfall variable.")
+    sel = (_u8(ratio_set.lazy().select("p", "r", "ud", "n"),
+               ["p", "r", "ud", "n"])
+           .join(_u8(gn.lazy().select("g", "n"), ["g", "n"]),
+                 on="n", how="inner")
+           .join(_u8(rug_sel.lazy().select("r", "ud", "g"), ["r", "ud", "g"]),
+                 on=["r", "ud", "g"], how="inner")
+           .join(_u8(ratio_param.frame.lazy()
+                     .select("p", "r", "ud", "n", "value"),
+                     ["p", "r", "ud", "n"])
+                 .rename({"value": "__ratio"}),
+                 on=["p", "r", "ud", "n"], how="inner"))
+    arcs = _u8(pss.lazy().select("p", "source", "sink"),
+               ["p", "source", "sink"]).with_columns(
+        pl.col(side).alias("n"))
+    upper = promote_param_to_dt(fu, d.dt)
+    upper = _u8(upper.select("p", "source", "sink", "d", "t", "value"),
+                ["p", "source", "sink", "d", "t"])
+    us_lf = (_u8(us.frame.lazy().select("p", "value"), ["p"])
+             .rename({"value": "__us"}))
+    out = (sel.join(arcs, on=["p", "n"], how="inner")
+           .join(upper, on=["p", "source", "sink"], how="inner")
+           .join(us_lf, on="p", how="inner")
+           .with_columns(
+               (pl.col("value") * pl.col("__us") * pl.col("__ratio"))
+               .abs().alias("value"))
+           .group_by("r", "ud", "g", "d", "t")
+           .agg(pl.col("value").sum()))
+    return out
+
+
+def reserve_shortfall_scale(d) -> "Param | None":
+    """Per-``(r, ud, g, d, t)`` multiplier of ``vq_reserve``.
+
+    ``vq_reserve`` is a fraction in ``[0, 1]`` (bounded for numerics); the
+    reserve shortfall in MW is ``vq_reserve × scale``, used identically in
+    every ``reserveBalance`` row and in the objective penalty (and by the
+    output reconstruction).  ``scale`` is the largest requirement the
+    group can have, so the shortfall can always cover the whole
+    requirement:
+
+    * ``reservation`` wherever it is authored (the timeseries requirement;
+      a timeseries-only model keeps ``scale = reservation``, unchanged);
+    * dynamic groups: ``Σ`` over the flows that drive the requirement of
+      ``p_flow_upper · unitsize · increase_reserve_ratio``;
+    * n-1 groups: ``Σ`` over the large-failure flows of ``p_flow_upper ·
+      unitsize · large_failure_ratio`` — the same sum over failing
+      processes as the V1 n-1 RHS (for a single failing process this is
+      its capacity × ratio; it must become a max if the RHS is ever made
+      per failing process as in the .mod);
+    * a group combining methods sums the applicable components.
+
+    ``p_flow_upper`` is the structural capacity incl. the most the
+    process can invest by that period; unlimited invest (and
+    ``conversion_flow_coeff = 0`` arcs) use
+    ``max_flow_for_unconstrained_variables``.
+
+    Returns the reservation Param itself when no dynamic / n-1 group
+    exists (byte-identical timeseries LP); ``None`` when there is nothing
+    to scale by.
+    """
+    rug = getattr(d, "reserve_upDown_group", None)
+    if rug is None or rug.height == 0:
+        return None
+    res = getattr(d, "pdtReserve_upDown_group_reservation", None)
+    parts: list = []
+    method_dyn = getattr(d, "reserve_upDown_group_method_dynamic", None)
+    if method_dyn is not None and method_dyn.height > 0:
+        part = _flow_requirement_bound(
+            d,
+            getattr(d, "process_reserve_upDown_node_increase_reserve_ratio",
+                    None),
+            getattr(d, "p_process_reserve_upDown_node_increase_reserve_ratio_value",
+                    None),
+            method_dyn.select("r", "ud", "g").unique(), "sink")
+        if part is not None:
+            parts.append(part)
+        part = _flow_requirement_bound(
+            d,
+            getattr(d, "process_reserve_upDown_node_increase_reserve_ratio",
+                    None),
+            getattr(d, "p_process_reserve_upDown_node_increase_reserve_ratio_value",
+                    None),
+            method_dyn.select("r", "ud", "g").unique(), "source")
+        if part is not None:
+            parts.append(part)
+    method_n1 = getattr(d, "reserve_upDown_group_method_n_1", None)
+    if method_n1 is not None and method_n1.height > 0:
+        for ud, side in (("up", "sink"), ("down", "source")):
+            n1_rug = (method_n1.filter(pl.col("ud").cast(pl.Utf8) == ud)
+                      .select("r", "ud", "g").unique())
+            part = _flow_requirement_bound(
+                d,
+                getattr(d, "process_reserve_upDown_node_large_failure_ratio",
+                        None),
+                getattr(d, "p_process_reserve_upDown_node_large_failure_ratio_value",
+                        None),
+                n1_rug, side)
+            if part is not None:
+                parts.append(part)
+    if not parts:
+        return res
+    keys = ["r", "ud", "g", "d", "t"]
+    if res is not None and res.frame.height > 0:
+        res_lf = _u8(promote_param_to_dt(res, d.dt)
+                     .select(*keys, "value"), keys)
+        parts.append(res_lf)
+    comp = (pl.concat([p.select(*keys, pl.col("value").cast(pl.Float64))
+                       for p in parts])
+            .group_by(keys).agg(pl.col("value").sum()))
+    base = rug.select("r", "ud", "g").join(d.dt.select("d", "t"),
+                                           how="cross")
+    frame = (_u8(base.lazy(), ["r", "ud", "g"])
+             .with_columns(pl.col("d").cast(pl.Utf8).alias("__d"),
+                           pl.col("t").cast(pl.Utf8).alias("__t"))
+             .join(comp.rename({"d": "__d", "t": "__t"})
+                   .with_columns(pl.col("__d").cast(pl.Utf8),
+                                 pl.col("__t").cast(pl.Utf8)),
+                   on=["r", "ud", "g", "__d", "__t"], how="left")
+             .with_columns(pl.col("value").fill_null(0.0))
+             .filter(pl.col("value") != 0.0)
+             .collect())
+    if frame.height == 0:
+        return None
+    # Restore the original key dtypes from ``base`` (Enum axes).
+    frame = (base.with_columns(
+                 pl.col("r").cast(pl.Utf8).alias("__r"),
+                 pl.col("ud").cast(pl.Utf8).alias("__ud"),
+                 pl.col("g").cast(pl.Utf8).alias("__g"),
+                 pl.col("d").cast(pl.Utf8).alias("__d"),
+                 pl.col("t").cast(pl.Utf8).alias("__t"))
+             .join(frame.select(pl.col("r").alias("__r"),
+                                pl.col("ud").alias("__ud"),
+                                pl.col("g").alias("__g"),
+                                "__d", "__t", "value"),
+                   on=["__r", "__ud", "__g", "__d", "__t"], how="inner")
+             .select(*keys, "value"))
+    return Param(tuple(keys), frame)
+
+
+# ---------------------------------------------------------------------------
 # Variables
 
 def add_variables(m, d) -> dict:
@@ -373,11 +547,13 @@ def add_constraints(m, d, vars: dict) -> None:
     else:
         lhs_reserve_core = None
 
-    # vq_reserve · pdtReserve_reservation, dims = (r, ud, g, d, t) already
-    if d.pdtReserve_upDown_group_reservation is not None:
-        lhs_vq = vq_reserve * d.pdtReserve_upDown_group_reservation
-    else:
-        lhs_vq = vq_reserve
+    # vq_reserve · scale, dims = (r, ud, g, d, t).  ``scale`` is the
+    # group's largest possible requirement (:func:`reserve_shortfall_scale`)
+    # so the shortfall can cover the whole requirement of every method
+    # (timeseries: the reservation itself).  The same multiplier prices the
+    # shortfall in :func:`add_objective_terms`.
+    scale = reserve_shortfall_scale(d)
+    lhs_vq = vq_reserve * scale if scale is not None else None
 
     # ── reserveBalance_timeseries_eq ─────────────────────────────────────
     method_ts = d.reserve_upDown_group_method_timeseries
@@ -389,7 +565,9 @@ def add_constraints(m, d, vars: dict) -> None:
         rhs = (d.pdtReserve_upDown_group_reservation
                if d.pdtReserve_upDown_group_reservation is not None
                else 0.0)
-        lhs_terms = {"vq_term": lhs_vq}
+        lhs_terms = {}
+        if lhs_vq is not None:
+            lhs_terms["vq_term"] = lhs_vq
         if lhs_reserve_core is not None:
             lhs_terms["reserve_sum"] = Where(lhs_reserve_core, ts_rug)
         m.add_cstr(
@@ -471,7 +649,9 @@ def add_constraints(m, d, vars: dict) -> None:
         if not rhs_terms:
             rhs_terms = {"zero": 0.0}
 
-        lhs_terms = {"vq_term": Where(lhs_vq, dyn_rug)}
+        lhs_terms = {}
+        if lhs_vq is not None:
+            lhs_terms["vq_term"] = Where(lhs_vq, dyn_rug)
         if lhs_reserve_core is not None:
             lhs_terms["reserve_sum"] = Where(lhs_reserve_core, dyn_rug)
         m.add_cstr(
@@ -535,7 +715,9 @@ def add_constraints(m, d, vars: dict) -> None:
             if not rhs_terms:
                 rhs_terms = {"zero": 0.0}
 
-            lhs_terms = {"vq_term": Where(lhs_vq, n1_rug)}
+            lhs_terms = {}
+            if lhs_vq is not None:
+                lhs_terms["vq_term"] = Where(lhs_vq, n1_rug)
             if lhs_reserve_core is not None:
                 lhs_terms["reserve_sum"] = Where(lhs_reserve_core, n1_rug)
             m.add_cstr(
@@ -618,11 +800,48 @@ def add_constraints(m, d, vars: dict) -> None:
 # ---------------------------------------------------------------------------
 # Objective
 
+def reserve_penalty(d) -> "Param | None":
+    """``penalty_reserve`` dense over ``reserve_upDown_group``.
+
+    Every ``(r, ud, g)`` of the reserve subsystem gets a penalty: the
+    authored ``p_reserve_upDown_group_penalty_reserve`` where present, else
+    :data:`~flextool.engine_polars._direct_params.PENALTY_RESERVE_DEFAULT`
+    — a group with a requirement but no authored penalty must not get a
+    free shortfall.  ``None`` only when the subsystem is inactive.
+    """
+    from flextool.engine_polars._direct_params import PENALTY_RESERVE_DEFAULT
+
+    rug = getattr(d, "reserve_upDown_group", None)
+    if rug is None or rug.height == 0:
+        return None
+    keys = ["r", "ud", "g"]
+    base = rug.lazy().select(keys).unique(maintain_order=True)
+    pen = getattr(d, "p_reserve_upDown_group_penalty_reserve", None)
+    if pen is not None:
+        authored = _u8(pen.frame.lazy().select(*keys, "value"), keys)
+        base = (base.with_columns(pl.col(k).cast(pl.Utf8).alias(f"__{k}")
+                                  for k in keys)
+                .join(authored.rename({k: f"__{k}" for k in keys}),
+                      on=[f"__{k}" for k in keys], how="left")
+                .drop([f"__{k}" for k in keys]))
+    else:
+        base = base.with_columns(value=pl.lit(None, dtype=pl.Float64))
+    out = (base.with_columns(pl.col("value").cast(pl.Float64)
+                             .fill_null(PENALTY_RESERVE_DEFAULT))
+           .collect())
+    return Param(("r", "ud", "g"), out.lazy())
+
+
 def add_objective_terms(m, d, vars: dict, op_factor):
     """Return the ``vq_reserve`` slack penalty Expr to be added to the
     objective.  Mirrors objective_audit.md §9.4 / flextool.mod 2100-2101.
 
-      + Σ vq_reserve · pdtReserve_reservation · penalty_reserve · op_factor
+      + Σ vq_reserve · scale · penalty_reserve · op_factor
+
+    ``scale`` = :func:`reserve_shortfall_scale` — the same multiplier the
+    reserve balances use (the reservation for timeseries groups).
+    ``penalty_reserve`` = :func:`reserve_penalty` (authored value, else the
+    default 5000).
 
     where ``op_factor = step_duration · timestep_weight · inflation_op /
     period_share`` (the same factor used elsewhere in the objective).
@@ -637,13 +856,13 @@ def add_objective_terms(m, d, vars: dict, op_factor):
         return None
 
     vq_reserve = vars["vq_reserve"]
-    res_param = d.pdtReserve_upDown_group_reservation
-    pen       = d.p_reserve_upDown_group_penalty_reserve
-    if res_param is None or pen is None:
+    scale = reserve_shortfall_scale(d)
+    pen   = reserve_penalty(d)
+    if scale is None or pen is None:
         return None
 
     # ``op_factor`` carries ``pdt_branch_weight`` when stochastics is
     # active (folded in by the model.py caller — see A6 close).  In
     # deterministic single-branch runs ``pdt_branch_weight`` is None and
     # ``op_factor`` is the four-Param product the .mod uses.
-    return Sum(vq_reserve * res_param * pen * op_factor)
+    return Sum(vq_reserve * scale * pen * op_factor)
