@@ -830,19 +830,33 @@ class TimelineConfig:
 
         # ── Full-timeline inflow energy (timeset-independent scaling) ──
         # ``scale_to_annual_flow`` normalises each node's inflow to its
-        # ``annual_flow`` using the energy of the WHOLE original timeline
-        # (not the representative subset selected by this solve), so the
-        # scaled inflow is identical regardless of which timesteps the
-        # timeset picks.  Emit the per-node annualised full-timeline
-        # energy; ``_emit_inflow_scaling`` reads it as the scaling
-        # denominator (falling back to the legacy per-solve formula when
-        # this file is absent, i.e. for non-coarsened solves).
+        # ``annual_flow`` using ONE YEAR of the ORIGINAL unmodified
+        # timeline (pre-``new_stepduration``).  A shared timeset makes
+        # ``create_timeline_from_timestep_duration`` accumulate every
+        # solve's periods into a single coarsened timeline; summing over
+        # that leaks later solves' inflow into this solve's scaling.
+        # Instead sum the raw inflow over the first 8760 h of the
+        # original timeline, scaling up with a correction factor when the
+        # original timeline is shorter than a full year.
         new_tl = timelines_list[0] if timelines_list else None
-        orig_tl = self.original_timeline.get(new_tl, new_tl)
-        orig_steps = self.timelines.get(orig_tl, [])
-        total_hours = sum(float(step[1]) for step in orig_steps)
-        original_years = total_hours / 8760.0 if total_hours else 0.0
-        if original_years:
+        # Walk back to the truly unmodified (pre-coarsening) timeline.
+        base_tl = new_tl
+        seen_tl: set[str] = set()
+        while base_tl in self.original_timeline and base_tl not in seen_tl:
+            seen_tl.add(base_tl)
+            base_tl = self.original_timeline[base_tl]
+        base_steps = self.timelines.get(base_tl, [])
+        # First-year window: accumulate steps until one full year (8760 h).
+        year_step_names: set[str] = set()
+        window_hours = 0.0
+        for step in base_steps:
+            year_step_names.add(step[0])
+            window_hours += float(step[1])
+            if window_hours >= 8760.0:
+                break
+        if window_hours:
+            # Correction scales a short original timeline up to a year.
+            correction = 8760.0 / window_hours
             inflow_path = wf / "input" / "pt_node_inflow.csv"
             inflow_frame = _provider_get_or_read(
                 provider, _provider_key(inflow_path), inflow_path,
@@ -852,6 +866,7 @@ class TimelineConfig:
                 cols = inflow_frame.columns
                 grouped = (
                     inflow_frame
+                    .filter(pl.col(cols[1]).is_in(year_step_names))
                     .select(
                         pl.col(cols[0]).alias("node"),
                         pl.col(cols[-1]).cast(pl.Float64, strict=False)
@@ -877,9 +892,9 @@ class TimelineConfig:
             ):
                 energy = (
                     ts_sum.get(n_name, 0.0)
-                    + const_for_node.get(n_name, 0.0) * total_hours
+                    + const_for_node.get(n_name, 0.0) * window_hours
                 )
-                flow_rows.append([n_name, energy / original_years])
+                flow_rows.append([n_name, energy * correction])
             flow_path = wf / "solve_data" / "node_full_timeline_flow.csv"
             provider.put(
                 _provider_key(flow_path),
