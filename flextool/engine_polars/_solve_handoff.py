@@ -26,6 +26,7 @@ carriers, named metric columns for multi-value):
     realized_existing      [entity, period, value]
     divest_cumulative      [entity, value]
     roll_end_state         [node, value]
+    roll_end_online        [process, value]
     fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
     fix_storage_price      [node, period, step, p_fix_storage_price]
     fix_storage_usage      [node, period, step, p_fix_storage_usage]
@@ -115,6 +116,21 @@ class SolveHandoff:
     # No file equivalent (in-memory only).
     upward_roll_end_state: pl.DataFrame | None = None
 
+    # End-of-roll committed online commitment for rolling unit-commitment
+    # carry-over — the online analog of ``roll_end_state``.  Carries the
+    # realized committed-jump-end ``v_online`` (unit-count space, NOT
+    # ×unitsize) per online process so the next roll's
+    # ``online__startup`` / ``online__shutdown`` first-step rows see the
+    # prior roll's commitment as their predecessor instead of the
+    # meaningless within-roll cyclic wrap.  Without it the startup cost is
+    # re-charged at every roll boundary even when the unit stays committed.
+    # Producer: prior roll's v_online_{linear,integer} at its last
+    # realized (d, t).
+    # Consumer: next roll's ``p_roll_continue_online`` overlay (applied at
+    # the continuation roll's first step by ``_add_online_block``).
+    # Schema: ``[process, value]``.  No file equivalent (in-memory only).
+    roll_end_online: pl.DataFrame | None = None
+
     # Storage quota imposed by parent solve on child solve — narrow
     # per-metric carriers in canonical column schema.  The trio is
     # independent (parent may set quantity-only, price-only, or any
@@ -142,7 +158,7 @@ class SolveHandoff:
 
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
-        "roll_end_state", "upward_roll_end_state",
+        "roll_end_state", "upward_roll_end_state", "roll_end_online",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
     )

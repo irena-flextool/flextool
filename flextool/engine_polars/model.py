@@ -5193,15 +5193,77 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                rhs_terms={"max_units": d.p_process_existing_count})
     # online dynamics: v_startup[t] >= v_online[t] - v_online[t-1]
     #                  v_shutdown[t] >= v_online[t-1] - v_online[t]
-    v_online_lag = Lag(v_online, d.dtttdt, "t", "t_previous_within_solve")
-    m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
-               lhs_terms={"startup":     v_startup,
-                          "online_prev": v_online_lag},
-               rhs_terms={"online_now":  v_online})
-    m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
-               lhs_terms={"shutdown":    v_shutdown,
-                          "online_now":  v_online},
-               rhs_terms={"online_prev": v_online_lag})
+    #
+    # OC1 — rolling online-commitment carry.  ``Lag`` reads the predecessor
+    # at ``t_previous_within_solve``, which at the first step of the first
+    # period CYCLICALLY WRAPS to the solve's own last step
+    # (_block_layout.py:326-333).  On a *continuation* roll that wrap is
+    # physically meaningless (it references the discarded look-ahead tail,
+    # not the prior roll's realized commitment) — so a unit that stays
+    # committed across the boundary is re-charged a full startup every roll.
+    # The fix is the online analog of the storage ``roll_continue`` carry:
+    # on a continuation roll, drop the spurious cyclic predecessor at the
+    # boundary (slice the global-first (d, t) off the lag frame — the same
+    # ``dtttdt.slice(1)`` trick ``dtttdt_forward_only`` uses) and inject the
+    # carried prior-roll committed ``v_online`` as the first-step predecessor
+    # constant.  Then ``v_startup >= v_online - carried`` (no startup when
+    # the unit stays committed; a genuine OFF→ON cold start has carried≈0 and
+    # is still charged).
+    #
+    # Gate on carry-PRESENCE (``d.p_roll_continue_online is not None``), NOT
+    # on ``not is_solve_first``: on the standalone rolling-window path
+    # ``p_nested_solve_first`` is ``None`` every roll (verified live), so the
+    # storage gate's ``not is_solve_first`` clause is inert there.  Carry-
+    # presence is the operative signal and is exactly co-extensive with
+    # "continuation roll" (the handoff carrier is empty on roll 1 → ``None``
+    # here → byte-identical baseline path; first-solve / non-rolling /
+    # no-online solves likewise leave it ``None``).
+    rco = d.p_roll_continue_online
+    if rco is not None and d.dtttdt is not None and d.dtttdt.height > 0:
+        dtttdt_cont = d.dtttdt.sort("d", "t").slice(1)
+        first_dt = d.dtttdt.sort("d", "t").select("d", "t").head(1)
+        # Enum-cast the carried p-axis (String, from the handoff frame) to
+        # the model's ``online_set`` p Enum axis before the join; a cross-
+        # dtype (String vs Enum) join raises SchemaError.  Filtering to
+        # this kind's ``online_set`` keeps only the processes this block
+        # owns (a process has one startup_method, so linear/integer never
+        # collide on the same ``p``).
+        _p_dt = online_set.schema["p"]
+        carry_al = rco.frame.with_columns(
+            pl.col("p").cast(_p_dt, strict=False))
+        p_carry_rows = (online_set.select("p").unique()
+                        .join(carry_al, on="p", how="inner")
+                        .join(first_dt, how="cross")
+                        .select("p", "d", "t", "value"))
+        v_online_lag = Lag(v_online, dtttdt_cont, "t",
+                           "t_previous_within_solve")
+        su_lhs = {"startup": v_startup, "online_prev": v_online_lag}
+        sd_rhs = {"online_prev": v_online_lag}
+        if p_carry_rows.height > 0:
+            # +carried predecessor at the boundary row only — sparse
+            # Param((p, d, t)); the engine's Param+Param outer-joins with
+            # 0-fill so it composes with the (boundary-dropped) cyclic lag
+            # without perturbing any other row.  Exactly the
+            # ``roll_continue_value`` construction (nodeBalance_eq).
+            su_lhs["roll_continue_online"] = Param(("p", "d", "t"), p_carry_rows)
+            sd_rhs["roll_continue_online"] = Param(("p", "d", "t"), p_carry_rows)
+        m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
+                   lhs_terms=su_lhs,
+                   rhs_terms={"online_now":  v_online})
+        m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
+                   lhs_terms={"shutdown":    v_shutdown,
+                              "online_now":  v_online},
+                   rhs_terms=sd_rhs)
+    else:
+        v_online_lag = Lag(v_online, d.dtttdt, "t", "t_previous_within_solve")
+        m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
+                   lhs_terms={"startup":     v_startup,
+                              "online_prev": v_online_lag},
+                   rhs_terms={"online_now":  v_online})
+        m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
+                   lhs_terms={"shutdown":    v_shutdown,
+                              "online_now":  v_online},
+                   rhs_terms={"online_prev": v_online_lag})
 
     # maxFlow_online: v_flow <= v_online * availability (assumes
     # max_cap_coef=1).  The .mod's RHS for online processes is

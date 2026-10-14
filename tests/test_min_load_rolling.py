@@ -129,3 +129,22 @@ def test_rolling_min_load_efficiency_solves(
     # positive objective (the MLE coal unit carries fuel cost).
     obj = _read_objective(workdir)
     assert obj > 0 and pd.notna(obj), f"unexpected objective {obj!r}"
+
+    # OC1 — the rolling online-commitment carry must suppress the spurious
+    # per-boundary startup re-charge.  Pre-OC1 the cyclic-wrap predecessor
+    # re-charged the coal unit's startup at every continuation-roll first
+    # step, inflating the realized yearly v_startup to 7.284 (startup cost
+    # 364 200 €); with the carry it drops to the honest 5.854 (292 700 €).
+    # Assert the CORRECTED value so a regression that re-breaks the carry
+    # (reverting to the over-charged total) fails here, not just silently.
+    import polars as pl
+
+    su_files = sorted((workdir / "output_raw").glob("v_startup_linear__*.parquet"))
+    assert su_files, "no realized v_startup_linear output"
+    total_startup = sum(
+        float(pl.read_parquet(f)["coal_plant"].sum()) for f in su_files
+    )
+    assert total_startup == pytest.approx(5.854, abs=5e-3), (
+        f"realized yearly coal v_startup={total_startup} "
+        f"(expected the OC1-corrected 5.854, pre-fix was the over-charged 7.284)"
+    )

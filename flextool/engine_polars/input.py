@@ -650,6 +650,14 @@ class FlexData:
     pdt_downtime_set: pl.DataFrame | None = None             # (p, d, t) — minimum_downtime constraint domain
     uptime_lookback: pl.DataFrame | None = None              # (p, d, t, d_back, t_back) — startup lookback window
     downtime_lookback: pl.DataFrame | None = None            # (p, d, t, d_back, t_back) — shutdown lookback window
+    # Rolling online-commitment carry (online analog of
+    # ``p_roll_continue_state``).  Carried committed-jump-end ``v_online``
+    # of the prior roll per online process; applied at the continuation
+    # roll's first ``online__startup`` / ``online__shutdown`` step as the
+    # predecessor constant so a unit that stays committed is not re-charged
+    # a startup across the roll boundary.  ``None`` on the first roll /
+    # non-rolling / no-online solves (→ byte-identical baseline path).
+    p_roll_continue_online: Param | None = None              # (p,)
 
     # ─── Storage ─────────────────────────────────────────────────────────
     nodeState: pl.DataFrame | None = None
@@ -2266,6 +2274,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         p_min_load=None, p_startup_cost=None, p_section=None,
         pdt_uptime_set=None, pdt_downtime_set=None,
         uptime_lookback=None, downtime_lookback=None,
+        p_roll_continue_online=None,
     )
     if pss is None:
         return blank
@@ -2357,6 +2366,38 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     # by ``apply_derived_c`` (helpers ``uptime_lookback_from_source`` /
     # ``downtime_lookback_from_source`` + ``pdt_uptime_set_from_lookback``
     # / ``pdt_downtime_set_from_lookback``).  Seeds dropped.
+
+    # OC1 — rolling online-commitment carry.  Read the committed-jump-end
+    # ``v_online`` handed off by the prior roll from the canonical handoff
+    # Provider key (``handoff/roll_end_online``, schema ``[process,
+    # value]``).  The translator seeds this key from
+    # ``SolveHandoff.roll_end_online`` at iteration start; it is empty
+    # (→ ``None`` here) on the first roll / non-rolling / no-prior-carrier
+    # solves, so the online dynamics keep their byte-identical baseline
+    # path.  Mirrors the storage ``p_roll_continue_state`` overlay
+    # (:func:`_load_storage`) but lives here because online can exist
+    # without storage (``_load_storage`` short-circuits when there is no
+    # ``nodeState``, so it would never read this carrier for a UC-only
+    # fixture).  The gate that makes the carry fire is carry-PRESENCE
+    # (``p_roll_continue_online is not None``), NOT ``not is_solve_first``:
+    # on the standalone rolling-window path ``p_nested_solve_first`` is
+    # ``None`` every roll, so the storage gate's ``not is_solve_first``
+    # clause is inert there and carry-presence is the operative signal (it
+    # is exactly co-extensive with "continuation roll" — empty on roll 1).
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    p_roll_continue_online = None
+    df_rco = read_handoff_frame(provider, K.HANDOFF_ROLL_END_ONLINE)
+    if df_rco is not None and df_rco.height > 0:
+        df_rco = (df_rco
+                  .pipe(rename_to_axis, {"process": "p"})
+                  .with_columns(value=pl.col("value")
+                                          .cast(pl.Float64, strict=False)
+                                          .fill_null(0.0))
+                  .select("p", "value"))
+        if df_rco.height > 0:
+            p_roll_continue_online = Param(("p",), df_rco)
+
     return dict(
         process_online=p_online,
         process_online_linear=p_online_lin,
@@ -2373,6 +2414,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         pdt_downtime_set=None,
         uptime_lookback=None,
         downtime_lookback=None,
+        p_roll_continue_online=p_roll_continue_online,
     )
 
 
@@ -6071,6 +6113,67 @@ def build_handoff_from_solution(
     # child by topology rather than completion order).
     upward_roll_end_state_df = roll_end_state_df
 
+    # ---- roll_end_online: committed-jump-end v_online per online process ----
+    # OC1 — the online analog of ``roll_end_state`` (above).  Carries the
+    # realized committed-jump-end ``v_online`` so the next roll's
+    # ``online__startup`` / ``online__shutdown`` first-step rows see the
+    # prior roll's commitment as predecessor instead of the within-roll
+    # cyclic wrap (which re-charges a startup at every boundary).  Kept in
+    # unit-count space (NOT ×unitsize): the online dynamics operate on
+    # ``v_online ∈ [0, existing_count]``, the same units the cyclic lag
+    # carries.  Self-contained (own realized-dispatch read + last-(d,t)
+    # pick) because online can exist without any nodeState, so it must not
+    # depend on the storage block above having run.  Keyed on ``p`` alone
+    # (a process has one startup_method at a time, so linear/integer never
+    # mix for the same ``p``); linear and integer rows are unioned.
+    roll_end_online_df = None
+    rd_path_on = sd / "realized_dispatch.csv"
+    last_pairs_on = None
+    if _provider_has(provider, "solve_data/realized_dispatch", rd_path_on):
+        try:
+            last_pairs_on = _provider_read(
+                provider, "solve_data/realized_dispatch", rd_path_on)
+        except pl.exceptions.NoDataError:
+            last_pairs_on = None
+    if (last_pairs_on is None and flex_data is not None
+            and getattr(flex_data, "realized_dispatch", None) is not None):
+        last_pairs_on = flex_data.realized_dispatch
+    _has_online_var = ("v_online_linear" in sol._vars
+                       or "v_online_integer" in sol._vars)
+    if last_pairs_on is not None and last_pairs_on.height > 0 and _has_online_var:
+        cols = last_pairs_on.columns
+        d_col = "period" if "period" in cols else "d"
+        t_col = "step" if "step" in cols else "t"
+        lp_on = (last_pairs_on
+                 .select(alias_to_axis(d_col, "d"), alias_to_axis(t_col, "t"))
+                 .unique()
+                 .sort(["d", "t"]))
+        if lp_on.height > 0:
+            last_d_on = lp_on["d"][-1]
+            last_t_on = lp_on["t"][-1]
+            rco_rows: list[tuple[str, float]] = []
+            for _vname in ("v_online_linear", "v_online_integer"):
+                if _vname not in sol._vars:
+                    continue
+                _v = sol._vars[_vname]
+                # col_id-filtered pull (mirrors the memory-frugal v_state
+                # path above): filter the variable's col_id frame to the
+                # single committed-jump-end (d, t), then read values for
+                # those rows alone instead of materialising the full frame.
+                _last_frame = _v.frame.filter(
+                    (pl.col("d") == last_d_on) & (pl.col("t") == last_t_on))
+                if _last_frame.height == 0:
+                    continue
+                _ids = _last_frame["col_id"].to_numpy()
+                _vals = sol.col_value[_ids]
+                _lst = _last_frame.select(*_v.dims).with_columns(
+                    value=pl.Series(_vals))
+                for r in _lst.iter_rows(named=True):
+                    rco_rows.append((str(r["p"]), float(r["value"])))
+            if rco_rows:
+                roll_end_online_df = pl.DataFrame(
+                    rco_rows, schema=["process", "value"], orient="row")
+
     # ---- fix_storage_quantity: v_state at fix_quantity timesteps × unitsize ----
     # Mirrors flextool's ``write_fix_storage_quantity`` (handoff_writers.py
     # :380).  Restricted to nodes whose storage_nested_fix_method is
@@ -6685,6 +6788,7 @@ def build_handoff_from_solution(
         ) if div_rows else None,
         roll_end_state=roll_end_state_df,
         upward_roll_end_state=upward_roll_end_state_df,
+        roll_end_online=roll_end_online_df,
         fix_storage_quantity=fix_storage_quantity_df,
         fix_storage_price=fix_storage_price_df,
         fix_storage_usage=fix_storage_usage_df,
