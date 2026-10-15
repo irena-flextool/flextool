@@ -5120,6 +5120,37 @@ def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
                    lhs_terms=lhs, rhs_terms={"upper": rhs})
 
 
+def _online_mintime_carry_term(carry: "pl.DataFrame | None",
+                               idx: "pl.DataFrame") -> "Param | None":
+    """OC1 Carrier 2 — densify a cross-roll-boundary min-up/down carry frame
+    ``(p, d, t, value)`` (Utf8 axes, from
+    ``online_mintime_carry_from_source``) to the full constraint domain
+    ``idx`` with explicit 0-fill and wrap it as a ``Param((p, d, t))``.
+
+    Returns ``None`` when there is no carry (first roll / non-rolling /
+    no-min-up-down) so the caller omits the term entirely (byte-identical
+    baseline).  The DENSE 0-fill is required: a restricted-domain ``(p, d,
+    t)`` term misaligns the ``minimum_downtime`` RHS ``existing`` ((p, d)
+    arity) and makes the row infeasible even at 0.0 — densifying to the
+    constraint domain keeps every row's constant well-defined.  The carry's
+    String p/d/t are cast to ``idx``'s (Enum) axis dtypes before the join;
+    a cross-dtype join raises ``SchemaError``.  The left-join against
+    ``idx`` also restricts the carry to this block's processes (``idx`` is
+    already intersected with this kind's ``online_set``)."""
+    if carry is None or carry.height == 0:
+        return None
+    carry_cast = carry.with_columns(
+        pl.col("p").cast(idx.schema["p"], strict=False),
+        pl.col("d").cast(idx.schema["d"], strict=False),
+        pl.col("t").cast(idx.schema["t"], strict=False))
+    dense = (idx.select("p", "d", "t")
+             .join(carry_cast, on=["p", "d", "t"], how="left")
+             .with_columns(pl.col("value").fill_null(0.0)))
+    if dense.height == 0:
+        return None
+    return Param(("p", "d", "t"), dense)
+
+
 def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                        online_set: "pl.DataFrame",
                        v_online, v_startup, v_shutdown,
@@ -5358,10 +5389,22 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                 )
                 startup_sum = Sum(Where(v_startup_at, lkb),
                                   over=("d_back", "t_back"))
+                up_rhs = {"startup_sum": startup_sum}
+                # OC1 Carrier 2 — cross-roll-boundary min_uptime carry.  On a
+                # continuation roll ``d.uptime_carry`` holds the Σ of the
+                # prior roll's realized ``v_startup`` that falls within this
+                # roll's early-step lookback window (period-aware; built by
+                # ``online_mintime_carry_from_source``).  Densify to the
+                # full ``up_idx`` domain with explicit 0-fill and inject on
+                # the RHS so ``v_online ≥ Σ v_startup_in_roll + carry_up``.
+                # ``None`` (first roll / non-rolling / no-carry) → baseline.
+                up_carry = _online_mintime_carry_term(d.uptime_carry, up_idx)
+                if up_carry is not None:
+                    up_rhs["carry_up"] = up_carry
                 m.add_cstr(f"minimum_uptime{sfx}",
                            over=up_idx, sense=">=",
                            lhs_terms={"online":      v_online},
-                           rhs_terms={"startup_sum": startup_sum})
+                           rhs_terms=up_rhs)
 
     # minimum_downtime: existing_count - v_online >= Σ v_shutdown[lookback]
     # Rewritten LP-friendly: v_online + Σ v_shutdown ≤ existing_count.
@@ -5397,6 +5440,18 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                     lhs_dn["invest_neg"] = invest_term
                 if divest_term is not None:
                     lhs_dn["divest"] = divest_term
+                # OC1 Carrier 2 — cross-roll-boundary min_downtime carry.
+                # ``d.downtime_carry`` holds the Σ of the prior roll's
+                # realized ``v_shutdown`` within this roll's early-step
+                # lookback window (period-aware).  Densify to the full
+                # ``dn_idx`` domain with explicit 0-fill (a restricted-
+                # domain (p,d,t) term would misalign the ``existing``
+                # (p,d)-arity RHS and make the row infeasible even at 0.0)
+                # and inject on the LHS so ``v_online + Σ v_shutdown_in_roll
+                # + carry_dn ≤ existing_count``.
+                dn_carry = _online_mintime_carry_term(d.downtime_carry, dn_idx)
+                if dn_carry is not None:
+                    lhs_dn["carry_dn"] = dn_carry
                 m.add_cstr(f"minimum_downtime{sfx}",
                            over=dn_idx, sense="<=",
                            lhs_terms=lhs_dn,

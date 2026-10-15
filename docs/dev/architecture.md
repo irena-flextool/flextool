@@ -789,10 +789,27 @@ names as before for debug inspection:
 | `realized_existing` | `p_entity_period_existing_capacity.csv` (existing column) | Cumulative existing capacity history per `(entity, period)`. |
 | `divest_cumulative` | `p_entity_divested.csv` | Cumulative divest per entity carried forward. |
 | `roll_end_state` / `upward_roll_end_state` | `p_roll_continue_state.csv` | `v_state` at the end of the realized window; pins the next roll's first timestep. |
+| `roll_end_online` | *(in-memory only)* | Committed jump-end `v_online` per online process (OC1 Carrier 1); the next roll's `online__startup`/`online__shutdown` first step sees the prior commitment instead of the within-roll cyclic wrap, so a unit that stays committed is not re-charged a startup across the boundary. |
+| `online_history` | *(in-memory only)* | Trailing realized committed `v_startup`/`v_shutdown` window (OC1 Carrier 2); rebuilt into `uptime_carry`/`downtime_carry` at the next roll and injected on the `minimum_uptime` RHS / `minimum_downtime` LHS so an obligation opened in roll N constrains roll N+1's early steps. |
 | `fix_storage_quantity / price / usage` | `fix_storage_*.csv` | Parent-imposed storage quota at the boundary (any subset of the three metrics — each carries its own `(node, period, step)` index, so a separate timesteps carrier is not needed). |
 | `cumulative_co2` | `co2_cum_realized_tonnes.csv` | Running CO2 totals across rolls. |
 | `cumulative_commodity` | `commodity_ladder_cumulative.csv` | Per-tier commodity consumption (ladder pricing). |
 | `cum_sim_hours` | `ladder_cum_sim_hours.csv` | Running simulated-hour total per period. |
+
+Cross-boundary unit-commitment continuity (OC1 Carriers 1 & 2) is
+**hard-enforced** and **period-aware**: a `min_uptime` / `min_downtime`
+obligation opened near a roll's jump-end carries into the next roll's early
+steps *only within the same period*. FlexTool's online dynamics are
+period-cyclic (a period's first step wraps within that period, never to the
+prior period), so a commitment obligation must not propagate across a period
+boundary — the non-contiguous investment years (e.g. 2020 → 2025) do not
+connect, and forcing one across would be a unit-commitment infeasibility no
+node penalty slack can absorb. A node with the default `penalty_method`
+(`regular`) absorbs any forced-on generation through its downward penalty
+(`vq_state_down`, a feasible spill); a hard-balance node (`penalty_method =
+off`) can instead become infeasible when a myopically-committed unit's
+forced generation cannot be absorbed — that is the model correctly refusing
+an un-absorbable commitment, resolved by allowing slack.
 
 `fix_storage_timesteps`, `ed_history_realized_first`, and `edd_history`
 used to be `SolveHandoff` fields too, populated only by the now-removed

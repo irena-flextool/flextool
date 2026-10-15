@@ -5628,6 +5628,120 @@ def pdt_downtime_set_from_lookback(downtime_lookback: pl.DataFrame | None
               .collect())
 
 
+def online_mintime_carry_from_source(
+        source: "InputSource",
+        dt: pl.DataFrame | None,
+        p_step_duration: object | None,
+        history: pl.DataFrame | None,
+        parameter_name: str,
+        ) -> pl.DataFrame | None:
+    """OC1 Carrier 2 — build the cross-roll-boundary min_uptime /
+    min_downtime carry ``(p, d, t, value)`` for a rolling continuation roll.
+
+    ``parameter_name`` is ``"min_uptime"`` (carries realized ``v_startup``,
+    injected on the ``minimum_uptime`` RHS) or ``"min_downtime"`` (carries
+    realized ``v_shutdown``, injected on the ``minimum_downtime`` LHS).
+
+    ``history`` is the prior rolls' realized committed-commitment window
+    handed off by :class:`SolveHandoff` (``online_history``) — one row per
+    ``(p, d, t)`` with ``startup`` / ``shutdown`` metric columns and a
+    ``duration`` column (carried so the lookback walk is self-contained;
+    the history steps are not in this roll's ``dt``).  ``None`` / empty on
+    the first roll / non-rolling / no-online solves → ``None`` here (the
+    model's online block then takes its byte-identical baseline path).
+
+    Construction (mirrors the within-roll lookback, extended into history):
+
+      * ``L`` is the AUTHORED ``min_uptime`` / ``min_downtime`` parameter
+        (hours), NOT a step count inferred from the per-roll lookback — a
+        short / last roll truncates that window and would silently
+        undercount the carry.
+      * Run :func:`_build_lookback_rows` with that authored ``L`` over the
+        combined, chronologically-ordered timeline ``history ++ roll-dt``
+        (each step with its own duration), then keep only rows whose
+        constrained step ``(d, t)`` is a ROLL step and whose predecessor
+        ``(d_back, t_back)`` is a HISTORY step, summing the carried metric.
+      * PERIOD-AWARE gate (``d == d_back``): a carried obligation is kept
+        ONLY within the same period.  FlexTool's online dynamics are
+        period-cyclic (the predecessor of a period's first step wraps
+        within that period, never to the prior period), so a min-up/down
+        obligation must NOT be carried across a period boundary — the
+        non-contiguous investment years (e.g. 2020 → 2025) do not connect,
+        and forcing one across would be a unit-commitment infeasibility no
+        node penalty slack can absorb.
+
+    Returns the ``(p, d, t, value)`` carry frame (Utf8 axes, caller casts
+    to the model Enum domain), or ``None`` when nothing is carried.
+    """
+    if dt is None or dt.height == 0 or history is None or history.height == 0:
+        return None
+    procs = _process_min_time(source, parameter_name)
+    if not procs:
+        return None
+    metric = "startup" if parameter_name == "min_uptime" else "shutdown"
+    if metric not in history.columns:
+        return None
+
+    roll_ord = _step_order_with_duration(dt, p_step_duration)
+    if not roll_ord:
+        return None
+    roll_set = {(d, t) for d, t, _ in roll_ord}
+
+    # history step durations + per-process metric values (Utf8 keys)
+    hist_dur: dict[tuple[str, str], float] = {}
+    hist_val: dict[tuple[str, str, str], float] = {}
+    for r in history.iter_rows(named=True):
+        d = str(r["d"])
+        t = str(r["t"])
+        try:
+            dur = float(r["duration"])
+        except (TypeError, ValueError):
+            dur = 1.0
+        hist_dur.setdefault((d, t), dur)
+        try:
+            val = float(r[metric])
+        except (TypeError, ValueError):
+            val = 0.0
+        hist_val[(str(r["p"]), d, t)] = val
+    hist_set = set(hist_dur)
+    if not hist_set:
+        return None
+
+    # combined chronologically-ordered timeline: history steps precede the
+    # roll steps (strictly earlier (d, t)); (d, t) string order is the
+    # canonical chronological order (p2020 < p2025, t0001 < t0002).
+    steps_dur: dict[tuple[str, str], float] = dict(hist_dur)
+    for d, t, dur in roll_ord:
+        steps_dur[(d, t)] = dur
+    ordered = sorted((d, t, dur) for (d, t), dur in steps_dur.items())
+
+    out_rows: list[tuple[str, str, str, float]] = []
+    for proc, min_time in procs:
+        if min_time <= 0:
+            continue
+        lb = _build_lookback_rows([(proc, float(min_time))], ordered)
+        for (pp, d, t, d_back, t_back) in lb:
+            if (d, t) not in roll_set:          # constrained step in the roll
+                continue
+            if (d_back, t_back) not in hist_set:  # predecessor in history
+                continue
+            if d != d_back:                     # PERIOD-AWARE: same period only
+                continue
+            v = hist_val.get((pp, d_back, t_back), 0.0)
+            if v != 0.0:
+                out_rows.append((pp, d, t, v))
+    if not out_rows:
+        return None
+    carry = (pl.DataFrame(out_rows, schema=["p", "d", "t", "value"],
+                          orient="row")
+             .group_by(["p", "d", "t"]).agg(pl.col("value").sum())
+             .filter(pl.col("value").abs() > 1e-12)
+             .sort("p", "d", "t"))
+    if carry.height == 0:
+        return None
+    return carry
+
+
 # ---------------------------------------------------------------------------
 # §3.12.1 — process_group_inside_nonSync
 # ---------------------------------------------------------------------------

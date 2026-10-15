@@ -27,6 +27,7 @@ carriers, named metric columns for multi-value):
     divest_cumulative      [entity, value]
     roll_end_state         [node, value]
     roll_end_online        [process, value]
+    online_history         [process, period, step, startup, shutdown, duration]
     fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
     fix_storage_price      [node, period, step, p_fix_storage_price]
     fix_storage_usage      [node, period, step, p_fix_storage_usage]
@@ -131,6 +132,27 @@ class SolveHandoff:
     # Schema: ``[process, value]``.  No file equivalent (in-memory only).
     roll_end_online: pl.DataFrame | None = None
 
+    # OC1 Carrier 2 — trailing realized committed-commitment window for
+    # cross-roll-boundary min_uptime / min_downtime continuity.  Unlike
+    # ``roll_end_online`` (a single jump-end ``v_online`` scalar per
+    # process), this carries a SLIDING WINDOW of the prior rolls' realized
+    # committed ``v_startup`` / ``v_shutdown`` per ``(process, period,
+    # step)``, long enough (trimmed to the authored max min-up/down
+    # duration per period) to cover the next roll's early-step lookback.
+    # The next roll rebuilds ``uptime_carry`` / ``downtime_carry`` from it
+    # (``_derived_params.online_mintime_carry_from_source``) and injects
+    # them on the ``minimum_uptime`` RHS / ``minimum_downtime`` LHS so an
+    # obligation opened in roll N constrains roll N+1's early steps.
+    # PERIOD-AWARE: carried only within the same period (period-cyclic
+    # online dynamics — non-contiguous investment years do not connect).
+    # Each step carries its own ``duration`` (the history steps are not in
+    # the next roll's ``dt``, so the lookback walk must be self-contained).
+    # Producer: this roll's realized v_startup/v_shutdown ∪ prior window.
+    # Consumer: next roll's ``uptime_carry`` / ``downtime_carry``.
+    # Schema: ``[process, period, step, startup, shutdown, duration]``.
+    # No file equivalent (in-memory only).
+    online_history: pl.DataFrame | None = None
+
     # Storage quota imposed by parent solve on child solve — narrow
     # per-metric carriers in canonical column schema.  The trio is
     # independent (parent may set quantity-only, price-only, or any
@@ -159,6 +181,7 @@ class SolveHandoff:
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
         "roll_end_state", "upward_roll_end_state", "roll_end_online",
+        "online_history",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
     )
