@@ -226,7 +226,37 @@ def _add_non_anticipativity_constraints(
     LP-equivalent feasible region (verified via parity).
     """
     dtna = dtna_override if dtna_override is not None else d.dt_non_anticipativity
-    if dtna is None or dtna.height == 0:
+    has_dtna = dtna is not None and dtna.height > 0
+
+    # ONLINE commitment tie over the JUMP (OC1 #1).  Unit commitment on the
+    # committed/realized section (the "jump") is here-and-now: it must be
+    # chosen before the scenario is known, so ``v_online`` is tied EQUAL
+    # across the forecast branches over the whole jump.  The jump is already
+    # the plain ``dt_non_anticipativity`` set in every case EXCEPT the
+    # ``separate_dispatch`` PARENT, whose realized window is handed to the
+    # sibling so its ``dtna`` is empty — there it would tie NOTHING.  So:
+    # ``dtna_online`` = ``dtna`` when ``has_dtna`` (plain single-shot ties its
+    # whole realized window; rolling ties the per-roll jump; mid-horizon ties
+    # the pre-reveal window — all UNCHANGED, byte-parity); ELSE (empty dtna +
+    # forecast branches + an online var) the FULL set of online ``(d, t)``
+    # steps for the anchor forecast periods — the whole horizon = the jump
+    # (no look-ahead yet in the single-shot separate_dispatch case).  ONLINE
+    # ONLY — storage (#1/#1b) and reserve (#4) stay gated on ``has_dtna`` and
+    # join the plain ``dtna``.  Inert for deterministic solves (no branches ⇒
+    # ``db_pairs`` empty) and no-online solves.
+    has_online = v_online_integer is not None or v_online_linear is not None
+    dtna_online = dtna
+    if (not has_dtna and has_online
+            and db_pairs is not None and db_pairs.height > 0
+            and d.p_online_dt is not None and d.p_online_dt.height > 0):
+        jump_steps = (d.p_online_dt.select("d", "t").unique()
+                      .join(db_pairs.select("d").unique(),
+                            on="d", how="inner"))
+        if jump_steps.height > 0:
+            dtna_online = jump_steps
+    has_dtna_online = dtna_online is not None and dtna_online.height > 0
+
+    if not has_dtna and not has_dtna_online:
         return
 
     # 1. non_anticipativity_storage_use — pin the per-(n, t) NET CHARGE
@@ -247,7 +277,7 @@ def _add_non_anticipativity_constraints(
     # which can soak up a flow imbalance at the storage node), so the
     # constraint must directly target the flow LHS expression — not just
     # the resulting v_state.  This matches the .mod's bookkeeping exactly.
-    if (v_flow is not None and d.groupStochastic is not None
+    if (has_dtna and v_flow is not None and d.groupStochastic is not None
             and d.p_unitsize is not None
             and d.p_step_duration is not None):
         gn = d.group_node
@@ -398,7 +428,7 @@ def _add_non_anticipativity_constraints(
     #     horizon (single-solve dispatch) the node is already doubly anchored
     #     (hard start + reference end), so the row is redundant — suppress it
     #     so byte-parity-gated single solves get ZERO new rows.
-    if (v_state is not None and d.groupStochastic is not None
+    if (has_dtna and v_state is not None and d.groupStochastic is not None
             and db_pairs.height > 0):
         gn = d.group_node
         gs = d.groupStochastic
@@ -478,7 +508,7 @@ def _add_non_anticipativity_constraints(
         if d.process_online_integer is not None and d.process_online_integer.height > 0:
             cstr_over = (d.process_online_integer
                 .join(db_pairs, how="cross")
-                .join(dtna, on="d", how="inner")
+                .join(dtna_online, on="d", how="inner")
                 .select("p", "d", "b", "t").unique())
             # Restrict to (p, d, t) and (p, b, t) tuples that actually
             # exist in the var domain (p_online_dt) — otherwise the
@@ -511,7 +541,7 @@ def _add_non_anticipativity_constraints(
         if d.process_online_linear is not None and d.process_online_linear.height > 0:
             cstr_over = (d.process_online_linear
                 .join(db_pairs, how="cross")
-                .join(dtna, on="d", how="inner")
+                .join(dtna_online, on="d", how="inner")
                 .select("p", "d", "b", "t").unique())
             if d.p_online_dt is not None:
                 pdt = d.p_online_dt.select("p", "d", "t").unique()
@@ -538,7 +568,7 @@ def _add_non_anticipativity_constraints(
 
     # 4. non_anticipativity_reserve — fires only when reserve subsystem
     #    is active (sum{(r, ud, g) in reserve__upDown__group} 1 > 0).
-    if v_reserve is not None:
+    if has_dtna and v_reserve is not None:
         pruna = d.process_reserve_upDown_node_active
         ruDg = d.reserve_upDown_group
         if (pruna is not None and pruna.height > 0
@@ -2879,6 +2909,49 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                           v_invest_p if has_invest_p else None,
                           v_divest_p if has_divest_p else None)
 
+    # ─── online_fix_eq — pin v_online to the parent's committed schedule ──
+    # OC1 #1 sub-slice (b): in a separate_dispatch SIBLING the parent's
+    # committed v_online over the jump (``d.p_fix_online``, (p, d, t), in
+    # unit-count space) is pinned onto the sibling's v_online so the realized
+    # dispatch honours the plan's commitment instead of re-deciding it.  Each
+    # pin is INNER-JOINED to its online var's own (p, d, t) index so no
+    # undeclared cell is referenced; the native-typed index carries the axis
+    # Enum types while the join matches through a Utf8 bridge (the carried
+    # frame is Utf8).  Split per UC variant (``online_fix_eq_linear`` /
+    # ``_integer``); the autoscale resolver strips the suffix to the
+    # registered ``online_fix_eq`` family.  ``p_fix_online is None`` (every
+    # non-sibling solve) → not built → byte-identical baseline.
+    if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:
+        _fix_u = d.p_fix_online.frame.select(
+            pl.col("p").cast(pl.Utf8).alias("_pk"),
+            pl.col("d").cast(pl.Utf8).alias("_dk"),
+            pl.col("t").cast(pl.Utf8).alias("_tk"),
+            "value")
+        for _vonline, _vidx, _sfx in (
+                (v_online_lin if has_online_lin else None,
+                 p_olin_idx if has_online_lin else None, "linear"),
+                (v_online_int if has_online_int else None,
+                 p_oint_idx if has_online_int else None, "integer")):
+            if _vonline is None or _vidx is None:
+                continue
+            # Native-typed (p, d, t) index keyed to Utf8 for the value join.
+            _pin = (_vidx.select("p", "d", "t").unique()
+                    .with_columns(_pk=pl.col("p").cast(pl.Utf8),
+                                  _dk=pl.col("d").cast(pl.Utf8),
+                                  _tk=pl.col("t").cast(pl.Utf8))
+                    .join(_fix_u, on=["_pk", "_dk", "_tk"], how="inner")
+                    .select("p", "d", "t", "value"))
+            if _pin.height == 0:
+                continue
+            _over = _pin.select("p", "d", "t").unique()
+            m.add_cstr(
+                f"online_fix_eq_{_sfx}",
+                over=_over,
+                sense="==",
+                lhs_terms={"online": Where(_vonline, _over)},
+                rhs_terms={"target": Param(("p", "d", "t"), _pin)},
+            )
+
     # Unit output floors: per-unit minimum load (once per unit, on the sum
     # of its outputs), optional per-output floors, and the rule that
     # downward reserve cannot take a unit below its floor.
@@ -4521,10 +4594,20 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     # constraint references a real LP variable.  ``d`` here is the trunk
     # (the real period name); the re-ground below turns this into a
     # forecast-to-forecast star keyed on a reference forecast.
-    if (d.dt_non_anticipativity is not None
-            and d.dt_non_anticipativity.height > 0
-            and d.period_branch_full is not None
-            and d.period_branch_full.height > 0):
+    # OC1 #1 — the ONLINE commitment tie over the JUMP needs this block to
+    # run even when ``dt_non_anticipativity`` is EMPTY (the separate_dispatch
+    # PARENT, whose realized window is handed to the sibling, so the legacy
+    # realized/fix-storage union is empty).  Gate on the forecast structure
+    # (``period_branch_full``) plus EITHER a non-empty ``dt_non_anticipativity``
+    # (the existing storage/reserve/online-window tie) OR an online var present
+    # (the new jump tie built from the online steps when dtna is empty).
+    # Without an online var and with empty dtna the block is a no-op, so
+    # non-online stochastic solves stay byte-identical.
+    _has_dtna_outer = (d.dt_non_anticipativity is not None
+                       and d.dt_non_anticipativity.height > 0)
+    if (d.period_branch_full is not None
+            and d.period_branch_full.height > 0
+            and (_has_dtna_outer or has_online_lin or has_online_int)):
         # Build (d, b) cohort: d ≠ b AND b ∈ period_in_use.
         # Cross-axis value compare: "d" is the period axis and "b" is the
         # branch axis (two different Enum vocabularies under Phase 4
@@ -4581,11 +4664,18 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             # extra filter is needed here.  Should a future realised-
             # designated non-self in-use branch appear, drop it from the
             # forecast set at this point (by the realised marker R1 settles).
+            # ``dt_non_anticipativity`` may be None / empty under the relaxed
+            # gate (separate_dispatch parent, online-only path): then there is
+            # nothing to re-ground, ``dtna_reground`` stays None, and the
+            # function builds the jump tie from the online steps via its
+            # internal ``dtna_online``.
             dtna_raw = d.dt_non_anticipativity
+            _has_dtna_rows = dtna_raw is not None and dtna_raw.height > 0
             _raw_db = db_pairs.with_columns(
                 pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8),
             )
-            _dtna_u = dtna_raw.with_columns(pl.col("d").cast(pl.Utf8))
+            _dtna_u = (dtna_raw.with_columns(pl.col("d").cast(pl.Utf8))
+                       if _has_dtna_rows else None)
             _stars: list[pl.DataFrame] = []
             _dtnas: list[pl.DataFrame] = []
             for d_trunk in sorted(
@@ -4602,17 +4692,22 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                     "d": [d_ref] * (len(forecasts) - 1),
                     "b": [b for b in forecasts if b != d_ref],
                 }))
-                _dtnas.append(
-                    _dtna_u.filter(pl.col("d") == d_trunk)
-                           .with_columns(pl.lit(d_ref).alias("d"))
-                )
+                if _dtna_u is not None:
+                    _dtnas.append(
+                        _dtna_u.filter(pl.col("d") == d_trunk)
+                               .with_columns(pl.lit(d_ref).alias("d"))
+                    )
             if _stars:
                 db_pairs_reground = pl.concat(_stars).with_columns(
                     cast_dim(pl.col("d"), None, "d"),
                     cast_dim(pl.col("b"), None, "b"),
                 )
-                dtna_reground = pl.concat(_dtnas).with_columns(
-                    cast_dim(pl.col("d"), None, "d"),
+                # ``dtna_reground`` is None on the separate_dispatch-parent
+                # online-only path (no real dtna rows to re-key) → the
+                # function builds ``dtna_online`` from the jump steps alone.
+                dtna_reground = (
+                    pl.concat(_dtnas).with_columns(cast_dim(pl.col("d"), None, "d"))
+                    if _dtnas else None
                 )
                 _add_non_anticipativity_constraints(
                     m, d, db_pairs_reground,

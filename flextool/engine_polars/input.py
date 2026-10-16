@@ -658,6 +658,13 @@ class FlexData:
     # a startup across the roll boundary.  ``None`` on the first roll /
     # non-rolling / no-online solves (→ byte-identical baseline path).
     p_roll_continue_online: Param | None = None              # (p,)
+    # OC1 #1 sub-slice (b) — separate_dispatch sibling online PIN.  The
+    # parent's committed ``v_online`` over the jump (read from the
+    # ``fix_online`` handoff), pinned onto the sibling's ``v_online`` by
+    # ``online_fix_eq`` so the realized dispatch honours the plan's
+    # commitment.  ``None`` on every solve that is not a realized-dispatch
+    # sibling with a carried pin (→ byte-identical baseline path).
+    p_fix_online: Param | None = None                        # (p, d, t)
     # OC1 Carrier 2 — cross-roll-boundary min_uptime / min_downtime carry.
     # ``online_startup_history`` is the prior rolls' realized committed
     # ``v_startup`` / ``v_shutdown`` window (read from the ``online_history``
@@ -2290,6 +2297,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         pdt_uptime_set=None, pdt_downtime_set=None,
         uptime_lookback=None, downtime_lookback=None,
         p_roll_continue_online=None,
+        p_fix_online=None,
         online_startup_history=None, online_min_time=None,
         uptime_carry=None, downtime_carry=None,
     )
@@ -2415,6 +2423,27 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         if df_rco.height > 0:
             p_roll_continue_online = Param(("p",), df_rco)
 
+    # OC1 #1 sub-slice (b) — read the parent's committed v_online over the
+    # jump (``handoff/fix_online``, schema ``[process, period, step,
+    # value]``), seeded by the separate_dispatch parent's handoff producer.
+    # Empty (→ ``None``) on every solve that is not a realized-dispatch
+    # sibling carrying a pin → the online block keeps its baseline path.
+    p_fix_online = None
+    df_fxo = read_handoff_frame(provider, K.HANDOFF_FIX_ONLINE)
+    if df_fxo is not None and df_fxo.height > 0:
+        df_fxo = (df_fxo
+                  .pipe(rename_to_axis,
+                        {"process": "p", "period": "d", "step": "t"})
+                  .with_columns(
+                      pl.col("p").cast(pl.Utf8, strict=False),
+                      pl.col("d").cast(pl.Utf8, strict=False),
+                      pl.col("t").cast(pl.Utf8, strict=False),
+                      value=pl.col("value").cast(pl.Float64, strict=False)
+                                           .fill_null(0.0))
+                  .select("p", "d", "t", "value"))
+        if df_fxo.height > 0:
+            p_fix_online = Param(("p", "d", "t"), df_fxo)
+
     # OC1 Carrier 2 — read the prior rolls' realized committed-commitment
     # window (``handoff/online_history``) and the authored min-up/down
     # durations.  The window feeds ``uptime_carry`` / ``downtime_carry``
@@ -2475,6 +2504,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         uptime_lookback=None,
         downtime_lookback=None,
         p_roll_continue_online=p_roll_continue_online,
+        p_fix_online=p_fix_online,
         online_startup_history=online_startup_history,
         online_min_time=online_min_time,
         uptime_carry=None,
@@ -5902,6 +5932,7 @@ def build_handoff_from_solution(
     flex_data: "FlexData | None" = None,
     parent_handoff=None,
     provider: "object | None" = None,
+    realized_dispatch_parents: "set[str] | None" = None,
 ):
     """Build a ``SolveHandoff`` from a polar_high ``Solution`` + the work
     folder's per-solve metadata, mirroring flextool's post-solve
@@ -6293,6 +6324,60 @@ def build_handoff_from_solution(
             if rco_rows:
                 roll_end_online_df = pl.DataFrame(
                     rco_rows, schema=["process", "value"], orient="row")
+
+    # ---- fix_online: committed v_online over the JUMP for the sibling ----
+    # OC1 #1 sub-slice (b).  For a separate_dispatch PARENT (its name is a
+    # registered realized-dispatch parent) carry the committed ``v_online``
+    # over the whole jump so the realized-dispatch SIBLING PINS it instead of
+    # re-deciding commitment.  The online NA tie makes ``v_online`` EQUAL
+    # across the forecast branches over the jump (``dtna_online``), so the
+    # value is read from the FORECAST branches and re-keyed from each forecast
+    # branch ``b`` to its REALIZED trunk period ``d`` (``period__branch``) —
+    # the period name the sibling dispatches.  The degenerate weight-0
+    # realized self-row (``b == d``) is excluded, so the carried value is the
+    # well-defined committed schedule, NOT the degenerate realized branch.
+    # Unit-count space (NOT ×unitsize).  ``None`` on every other solve →
+    # byte-identical baseline.
+    fix_online_df = None
+    if (realized_dispatch_parents is not None
+            and solve_name in realized_dispatch_parents
+            and flex_data is not None
+            and getattr(flex_data, "period_branch_full", None) is not None
+            and flex_data.period_branch_full.height > 0
+            and (("v_online_linear" in sol._vars)
+                 or ("v_online_integer" in sol._vars))):
+        # forecast-branch → realized-trunk map (drop the realized self-row).
+        _fcast = (flex_data.period_branch_full.select("d", "b")
+                  .with_columns(pl.col("d").cast(pl.Utf8),
+                                pl.col("b").cast(pl.Utf8))
+                  .filter(pl.col("d") != pl.col("b"))
+                  .rename({"d": "trunk", "b": "fb"}))
+        _parts: list[pl.DataFrame] = []
+        if _fcast.height > 0:
+            for _vn in ("v_online_linear", "v_online_integer"):
+                if _vn not in sol._vars:
+                    continue
+                _v = sol._vars[_vn]
+                _ids = _v.frame["col_id"].to_numpy()
+                _fr = (_v.frame.select(*_v.dims)
+                       .with_columns(value=pl.Series(sol.col_value[_ids]))
+                       .with_columns(pl.col("d").cast(pl.Utf8),
+                                     pl.col("t").cast(pl.Utf8)))
+                _re = (_fr.join(_fcast, left_on="d", right_on="fb",
+                                how="inner")
+                       .select(pl.col("p").cast(pl.Utf8).alias("process"),
+                               pl.col("trunk").alias("period"),
+                               pl.col("t").alias("step"),
+                               "value"))
+                if _re.height > 0:
+                    _parts.append(_re)
+        if _parts:
+            # All forecast branches tie to the same committed value over the
+            # jump; group to one row per (process, period, step).
+            fix_online_df = (pl.concat(_parts)
+                             .group_by(["process", "period", "step"])
+                             .agg(pl.col("value").max())
+                             .sort(["process", "period", "step"]))
 
     # ---- online_history: trailing realized committed v_startup/v_shutdown ----
     # OC1 Carrier 2 — the sliding-window producer (roll_end_online above
@@ -7051,6 +7136,7 @@ def build_handoff_from_solution(
         upward_roll_end_state=upward_roll_end_state_df,
         roll_end_online=roll_end_online_df,
         online_history=online_history_df,
+        fix_online=fix_online_df,
         fix_storage_quantity=fix_storage_quantity_df,
         fix_storage_price=fix_storage_price_df,
         fix_storage_usage=fix_storage_usage_df,

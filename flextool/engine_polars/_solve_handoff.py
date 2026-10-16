@@ -153,6 +153,20 @@ class SolveHandoff:
     # No file equivalent (in-memory only).
     online_history: pl.DataFrame | None = None
 
+    # OC1 #1 sub-slice (b) — a separate_dispatch PARENT's committed v_online
+    # over the JUMP (the whole realized window), pinned into the realized-
+    # dispatch SIBLING so the sibling dispatches realized conditions under
+    # the plan's commitment instead of re-deciding it from scratch.  Unlike
+    # ``roll_end_online`` (a single jump-end scalar per process for the next
+    # ROLL), this carries the FULL per-(process, period, step) committed
+    # schedule for the sibling of the SAME solve.  Read from a FORECAST
+    # branch (the NA-tied, well-defined value), NOT the degenerate weight-0
+    # realized branch.  Unit-count space (NOT ×unitsize).
+    # Producer: parent's committed v_online_{linear,integer} over the jump.
+    # Consumer: sibling's ``p_fix_online`` overlay (``online_fix_eq``).
+    # Schema: ``[process, period, step, value]``.  No file equivalent.
+    fix_online: pl.DataFrame | None = None
+
     # Storage quota imposed by parent solve on child solve — narrow
     # per-metric carriers in canonical column schema.  The trio is
     # independent (parent may set quantity-only, price-only, or any
@@ -181,7 +195,7 @@ class SolveHandoff:
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
         "roll_end_state", "upward_roll_end_state", "roll_end_online",
-        "online_history",
+        "online_history", "fix_online",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
     )

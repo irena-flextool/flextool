@@ -219,6 +219,10 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "minFlow_output_floor_linear", "minFlow_output_floor_integer",
     "minimum_uptime_linear", "minimum_uptime_integer",
     "minimum_downtime_linear", "minimum_downtime_integer",
+    # OC1 #1 sub-slice (b) separate_dispatch sibling v_online pin — model.py
+    # ``online_fix_eq_{linear,integer}`` (resolver strips the UC suffix to
+    # the registered ``online_fix_eq`` base).
+    "online_fix_eq_linear", "online_fix_eq_integer",
     # Slice D per-path total caps — model.py ``_emit_entity_total_cap``
     # and _cumulative_invest.py ``_emit_group_total_divest_cap`` pass the
     # constraint name as a variable (legacy vs ``…_path``), so the

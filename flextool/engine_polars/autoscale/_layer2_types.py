@@ -424,6 +424,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "online__startup": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3748 (online__shutdown_<sfx>)
     "online__shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
+    # OC1 #1 sub-slice (b) — separate_dispatch sibling v_online PIN
+    # (model.py online_fix_eq_<linear|integer>; the resolver strips the UC
+    # suffix to this base).  Pins the dimensionless unit-count v_online to
+    # the parent's committed schedule.
+    "online_fix_eq": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3770 (maxFlow_online_<sfx>)
     "maxFlow_online": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py _add_online_block

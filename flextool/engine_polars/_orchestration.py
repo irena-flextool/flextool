@@ -3944,6 +3944,10 @@ def _drive_cascade(
                 flex_data=data,
                 parent_handoff=parent_handoff,
                 provider=getattr(self.state, "current_provider", None),
+                realized_dispatch_parents=set(
+                    getattr(self.state.solve, "realized_dispatch_parent", {})
+                    .values()
+                ),
             )
             _phase_prof("build_handoff_done")
             if _phase_timing:
