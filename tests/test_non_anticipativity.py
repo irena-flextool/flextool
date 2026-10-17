@@ -112,19 +112,21 @@ def test_dt_non_anticipativity_is_populated(
 def test_storage_state_equal_across_branches(
     stochastic_run_workdir: Path,
 ) -> None:
-    """v_state at the realised period must equal v_state at every
-    branch period at every dt_non_anticipativity timestep.
+    """v_state must be equal across the FORECAST branches at every
+    dt_non_anticipativity timestep (forecast-to-forecast).
 
-    The mod's ``non_anticipativity_storage_use`` constraint pins net
-    storage charge at (d, t) to net charge at (b, t).  Combined with a
-    shared ``storage_state_start`` (a scalar parameter — same across
-    branches by construction) and the storage balance, this yields
-    identical v_state trajectories at every constrained timestep.
+    Corrected stochastic model: ``non_anticipativity_storage_use`` pins the
+    per-(n, t) net storage charge equal across the FORECAST copies via a
+    deterministic reference forecast — it does NOT anchor the forecasts to
+    the realised trunk period (``period1``), which is no longer an NA hub and
+    floats freely (it may pick a different equal-cost storage trajectory).
+    So the invariant witnessed is: the forecast periods carry identical
+    v_state trajectories at every constrained timestep; the realised trunk is
+    EXCLUDED.
 
     A regression where the constraint's index domain is wrong (e.g.
     period__branch swapped with branch__period, or dt_non_anticipativity
-    pulled from the wrong CSV) would let the branches' storage states
-    drift.
+    pulled from the wrong CSV) would let the forecasts' storage states drift.
     """
     workdir = stochastic_run_workdir
     matches = list(
@@ -141,43 +143,49 @@ def test_storage_state_equal_across_branches(
     dtna = _read_csv_pairs(
         workdir / "solve_data" / "dt_non_anticipativity_set.csv"
     )
-    dtna_by_d: dict[str, set[str]] = {}
-    for (d, t) in dtna:
-        dtna_by_d.setdefault(d, set()).add(t)
+    tied_timesteps = {t for (_d, t) in dtna}
 
     # Periods that actually have v_state rows — branches that aren't in
     # period_in_use (e.g. a metadata-only "..._realized" branch) would
     # be absent from v_state and we should skip them.
     periods_with_rows = set(df.index.get_level_values("period"))
 
-    pairs_checked = 0
-    for (d, b) in pb:
-        if d == b:
-            continue
-        if d not in periods_with_rows or b not in periods_with_rows:
-            # b not in period_in_use — constraint domain excludes it.
-            continue
-        timesteps = dtna_by_d.get(d, set())
-        for t in timesteps:
-            try:
-                row_d = df.xs((d, t), level=("period", "time"))
-                row_b = df.xs((b, t), level=("period", "time"))
-            except KeyError:
-                continue
-            for node in df.columns:
-                v_d = float(row_d.iloc[0][node])
-                v_b = float(row_b.iloc[0][node])
-                assert v_d == pytest.approx(v_b, abs=1e-6), (
-                    f"non-anticipativity violated for node={node!r}, "
-                    f"d={d!r}, b={b!r}, t={t!r}: "
-                    f"v_state[d]={v_d}, v_state[b]={v_b}"
-                )
-                pairs_checked += 1
-
-    assert pairs_checked > 0, (
-        "No (d, b, t) tuples were checked — fixture failed to produce "
-        "branches in period_in_use, or v_state has no storage nodes."
+    # Forecast periods = the branch (b) side of the off-diagonal
+    # period__branch pairs; the anchor (d) side is the realised trunk and is
+    # EXCLUDED (it is no longer tied under the forecast-to-forecast ground).
+    trunks = {d for (d, b) in pb if d != b}
+    forecast_periods = sorted(
+        {b for (d, b) in pb if d != b and b in periods_with_rows}
     )
+    assert forecast_periods, (
+        "no forecast periods in period_in_use — fixture degenerated"
+    )
+
+    checked = 0
+    for t in sorted(tied_timesteps):
+        for node in df.columns:
+            vals = []
+            for f in forecast_periods:
+                try:
+                    row_f = df.xs((f, t), level=("period", "time"))
+                except KeyError:
+                    continue
+                vals.append(float(row_f.iloc[0][node]))
+            if len(vals) > 1:
+                assert max(vals) - min(vals) == pytest.approx(0.0, abs=1e-6), (
+                    f"forecast-to-forecast non-anticipativity violated for "
+                    f"node={node!r}, t={t!r}: v_state spread "
+                    f"{max(vals) - min(vals)} across forecasts {forecast_periods}"
+                )
+                checked += 1
+
+    assert checked > 0, (
+        "No (forecast, t) cohorts with >1 forecast were checked — fixture "
+        "failed to produce multiple forecast branches in period_in_use."
+    )
+    # Sanity: the trunk really is present but excluded (a forecast-to-forecast
+    # ground, not a trunk-anchored one).
+    assert trunks and trunks <= periods_with_rows, trunks
 
 
 # ---------------------------------------------------------------------------

@@ -642,7 +642,7 @@ class FlexData:
     p_online_dt: pl.DataFrame | None = None                  # set: (p, d, t) — UC var domain
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
-    p_min_load: Param | None = None                          # (p,)
+    p_min_load: Param | None = None                          # (p, d, t) — per-unit min-load floor (minFlow_minload), time-varying
     p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: optional per-output floor (minFlow_output_floor), default 0
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
@@ -650,6 +650,36 @@ class FlexData:
     pdt_downtime_set: pl.DataFrame | None = None             # (p, d, t) — minimum_downtime constraint domain
     uptime_lookback: pl.DataFrame | None = None              # (p, d, t, d_back, t_back) — startup lookback window
     downtime_lookback: pl.DataFrame | None = None            # (p, d, t, d_back, t_back) — shutdown lookback window
+    # Rolling online-commitment carry (online analog of
+    # ``p_roll_continue_state``).  Carried committed-jump-end ``v_online``
+    # of the prior roll per online process; applied at the continuation
+    # roll's first ``online__startup`` / ``online__shutdown`` step as the
+    # predecessor constant so a unit that stays committed is not re-charged
+    # a startup across the roll boundary.  ``None`` on the first roll /
+    # non-rolling / no-online solves (→ byte-identical baseline path).
+    p_roll_continue_online: Param | None = None              # (p,)
+    # OC1 #1 sub-slice (b) — separate_dispatch sibling online PIN.  The
+    # parent's committed ``v_online`` over the jump (read from the
+    # ``fix_online`` handoff), pinned onto the sibling's ``v_online`` by
+    # ``online_fix_eq`` so the realized dispatch honours the plan's
+    # commitment.  ``None`` on every solve that is not a realized-dispatch
+    # sibling with a carried pin (→ byte-identical baseline path).
+    p_fix_online: Param | None = None                        # (p, d, t)
+    # OC1 Carrier 2 — cross-roll-boundary min_uptime / min_downtime carry.
+    # ``online_startup_history`` is the prior rolls' realized committed
+    # ``v_startup`` / ``v_shutdown`` window (read from the ``online_history``
+    # handoff); ``online_min_time`` is the authored max(min_uptime,
+    # min_downtime) per online process (hours) used only to trim that
+    # window in the next handoff.  ``uptime_carry`` / ``downtime_carry`` are
+    # the per-``(p, d, t)`` carried obligations built from the window at the
+    # continuation roll (period-aware) and injected on the ``minimum_uptime``
+    # RHS / ``minimum_downtime`` LHS by ``_add_online_block``.  All ``None``
+    # on the first roll / non-rolling / no-min-up-down solves (→ the online
+    # block takes its byte-identical baseline path).
+    online_startup_history: pl.DataFrame | None = None       # (p, d, t, startup, shutdown, duration)
+    online_min_time: pl.DataFrame | None = None              # (p, value) — max authored min-up/down hours
+    uptime_carry: pl.DataFrame | None = None                 # (p, d, t, value) — carried Σ v_startup
+    downtime_carry: pl.DataFrame | None = None               # (p, d, t, value) — carried Σ v_shutdown
 
     # ─── Storage ─────────────────────────────────────────────────────────
     nodeState: pl.DataFrame | None = None
@@ -830,6 +860,7 @@ class FlexData:
     p_process_reserve_upDown_node_reliability: Param | None = None      # (p, r, ud, n)
     pdtReserve_upDown_group_reservation: Param | None = None            # (r, ud, g, d, t)
     p_reserve_upDown_group_penalty_reserve: Param | None = None         # (r, ud, g)
+    p_reserve_upDown_group_reserve_duration: Param | None = None        # (r, ud, g)
     p_process_reserve_upDown_node_max_share: Param | None = None        # (p, r, ud, n)
     p_process_reserve_upDown_node_large_failure_ratio_value: Param | None = None     # (p, r, ud, n)
     p_process_reserve_upDown_node_increase_reserve_ratio_value: Param | None = None  # (p, r, ud, n)
@@ -934,6 +965,30 @@ class FlexData:
     dt_non_anticipativity: pl.DataFrame | None = None  # (d, t) — realised dispatch + fix-storage timesteps
     groupStochastic: pl.DataFrame | None = None   # (g,) — groups enabling storage non-anticipativity
     period_in_use_set: pl.DataFrame | None = None  # (d,) — periods active this solve (filters branches)
+    # Scenario-lineage frames (recourse plan §6b Slice A).  Built by
+    # apply_branch_cluster for every solve; None only when the derived
+    # cascade never ran (hand-built FlexData).  dd_same_scenario:
+    # (d, d_other) pairs sharing a scenario leaf-path (all-pairs over
+    # period_in_use for deterministic solves).  pd_non_anticipativity:
+    # (d, b) invest-NA period pairs — empty until mid-horizon branch
+    # points exist (Slice E).
+    dd_same_scenario: pl.DataFrame | None = None       # (d, d_other)
+    pd_non_anticipativity: pl.DataFrame | None = None  # (d, b)
+    # Slice D — per-scenario-leaf partition of period_in_use (design §7.2):
+    # (d, leaf) with real-named calendar anchors → "__anchor", synthetic
+    # fan members → their time-branch id.  Drives the per-path total caps
+    # (maxInvest/maxDivest_entity_total_path, maxDivestGroup_entity_total_path)
+    # so a total cap applies once per scenario path, never cross-scenario.
+    # Single "__anchor" leaf for deterministic / flag-off solves →
+    # caps stay on the legacy single-row shape (byte-parity).
+    d_leaf: pl.DataFrame | None = None                 # (d, leaf)
+
+    # Slice D — per-scenario (wait-and-see) stochastic investment gate.
+    # Set once in ``apply_derived_c`` from
+    # ``solve_data/stochastic_invest_method.csv`` == 'recourse'.  Survives
+    # ``dataclasses.replace`` (region filter) like the lineage frames so
+    # ``model.py`` reads ``d.recourse_invest`` without a second CSV read.
+    recourse_invest: bool = False
 
     # ─── Gap F final — handoff-path auxiliaries ───────────────────────────
     # Per-solve in-memory carriers for fields that ``build_handoff_from_solution``
@@ -2241,6 +2296,10 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         p_min_load=None, p_startup_cost=None, p_section=None,
         pdt_uptime_set=None, pdt_downtime_set=None,
         uptime_lookback=None, downtime_lookback=None,
+        p_roll_continue_online=None,
+        p_fix_online=None,
+        online_startup_history=None, online_min_time=None,
+        uptime_carry=None, downtime_carry=None,
     )
     if pss is None:
         return blank
@@ -2290,8 +2349,11 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                               sd / "p_online_dt_set.csv").pipe(rename_to_axis, {"process": "p", "step": "t"})
     p_odt = p_odt.select("p", "period", "t").pipe(rename_to_axis, {"period": "d"})
 
-    # Δ.12-drop: ``p_min_load`` produced authoritatively by
-    # ``apply_direct_params.p_min_load_from_source``.  Seed dropped.
+    # Δ.12-drop: ``p_min_load`` produced authoritatively as a shape-correct
+    # (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+    # ``p_min_load_pdt_from_source``); the synthetic / no-workdir early-returns
+    # in ``_apply_db_overrides`` re-wire it.  CSV seed dropped.  See
+    # ``specs/fix_map_reading.md`` §5.
     p_min_load = None
 
     # startup_cost is per (p, d) — produced by ``apply_direct_params``
@@ -2329,6 +2391,102 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     # by ``apply_derived_c`` (helpers ``uptime_lookback_from_source`` /
     # ``downtime_lookback_from_source`` + ``pdt_uptime_set_from_lookback``
     # / ``pdt_downtime_set_from_lookback``).  Seeds dropped.
+
+    # OC1 — rolling online-commitment carry.  Read the committed-jump-end
+    # ``v_online`` handed off by the prior roll from the canonical handoff
+    # Provider key (``handoff/roll_end_online``, schema ``[process,
+    # value]``).  The translator seeds this key from
+    # ``SolveHandoff.roll_end_online`` at iteration start; it is empty
+    # (→ ``None`` here) on the first roll / non-rolling / no-prior-carrier
+    # solves, so the online dynamics keep their byte-identical baseline
+    # path.  Mirrors the storage ``p_roll_continue_state`` overlay
+    # (:func:`_load_storage`) but lives here because online can exist
+    # without storage (``_load_storage`` short-circuits when there is no
+    # ``nodeState``, so it would never read this carrier for a UC-only
+    # fixture).  The gate that makes the carry fire is carry-PRESENCE
+    # (``p_roll_continue_online is not None``), NOT ``not is_solve_first``:
+    # on the standalone rolling-window path ``p_nested_solve_first`` is
+    # ``None`` every roll, so the storage gate's ``not is_solve_first``
+    # clause is inert there and carry-presence is the operative signal (it
+    # is exactly co-extensive with "continuation roll" — empty on roll 1).
+    from flextool.engine_polars import _provider_keys as K
+    from flextool.engine_polars._provider_translators import read_handoff_frame
+    p_roll_continue_online = None
+    df_rco = read_handoff_frame(provider, K.HANDOFF_ROLL_END_ONLINE)
+    if df_rco is not None and df_rco.height > 0:
+        df_rco = (df_rco
+                  .pipe(rename_to_axis, {"process": "p"})
+                  .with_columns(value=pl.col("value")
+                                          .cast(pl.Float64, strict=False)
+                                          .fill_null(0.0))
+                  .select("p", "value"))
+        if df_rco.height > 0:
+            p_roll_continue_online = Param(("p",), df_rco)
+
+    # OC1 #1 sub-slice (b) — read the parent's committed v_online over the
+    # jump (``handoff/fix_online``, schema ``[process, period, step,
+    # value]``), seeded by the separate_dispatch parent's handoff producer.
+    # Empty (→ ``None``) on every solve that is not a realized-dispatch
+    # sibling carrying a pin → the online block keeps its baseline path.
+    p_fix_online = None
+    df_fxo = read_handoff_frame(provider, K.HANDOFF_FIX_ONLINE)
+    if df_fxo is not None and df_fxo.height > 0:
+        df_fxo = (df_fxo
+                  .pipe(rename_to_axis,
+                        {"process": "p", "period": "d", "step": "t"})
+                  .with_columns(
+                      pl.col("p").cast(pl.Utf8, strict=False),
+                      pl.col("d").cast(pl.Utf8, strict=False),
+                      pl.col("t").cast(pl.Utf8, strict=False),
+                      value=pl.col("value").cast(pl.Float64, strict=False)
+                                           .fill_null(0.0))
+                  .select("p", "d", "t", "value"))
+        if df_fxo.height > 0:
+            p_fix_online = Param(("p", "d", "t"), df_fxo)
+
+    # OC1 Carrier 2 — read the prior rolls' realized committed-commitment
+    # window (``handoff/online_history``) and the authored min-up/down
+    # durations.  The window feeds ``uptime_carry`` / ``downtime_carry``
+    # (built later on the synthetic/derived path once ``dt`` + the
+    # lookback are in place); ``online_min_time`` is used only to trim the
+    # window when THIS roll's handoff is built.  Both empty (→ ``None``) on
+    # the first roll / non-rolling / no-min-up-down solves.
+    online_startup_history = None
+    df_hist = read_handoff_frame(provider, K.HANDOFF_ONLINE_HISTORY)
+    if df_hist is not None and df_hist.height > 0:
+        df_hist = (df_hist
+                   .pipe(rename_to_axis,
+                         {"process": "p", "period": "d", "step": "t"})
+                   .with_columns(
+                       pl.col("p").cast(pl.Utf8, strict=False),
+                       pl.col("d").cast(pl.Utf8, strict=False),
+                       pl.col("t").cast(pl.Utf8, strict=False),
+                       pl.col("startup").cast(pl.Float64, strict=False)
+                                        .fill_null(0.0),
+                       pl.col("shutdown").cast(pl.Float64, strict=False)
+                                         .fill_null(0.0),
+                       pl.col("duration").cast(pl.Float64, strict=False)
+                                         .fill_null(1.0))
+                   .select("p", "d", "t", "startup", "shutdown", "duration"))
+        if df_hist.height > 0:
+            online_startup_history = df_hist
+
+    # Authored max(min_uptime, min_downtime) per online process (hours) —
+    # used only to trim ``online_history`` in the next handoff.  Solve-
+    # agnostic; ``None`` when no process authors min-up/down.
+    online_min_time = None
+    if source is not None:
+        from flextool.engine_polars import _derived_params as _drv_mt
+        _mt: dict[str, float] = {}
+        for _pn in ("min_uptime", "min_downtime"):
+            for _p, _v in _drv_mt._process_min_time(source, _pn):
+                if _v > _mt.get(_p, 0.0):
+                    _mt[_p] = _v
+        if _mt:
+            online_min_time = pl.DataFrame(
+                {"p": list(_mt.keys()),
+                 "value": [float(v) for v in _mt.values()]})
+
     return dict(
         process_online=p_online,
         process_online_linear=p_online_lin,
@@ -2345,6 +2503,12 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         pdt_downtime_set=None,
         uptime_lookback=None,
         downtime_lookback=None,
+        p_roll_continue_online=p_roll_continue_online,
+        p_fix_online=p_fix_online,
+        online_startup_history=online_startup_history,
+        online_min_time=online_min_time,
+        uptime_carry=None,
+        downtime_carry=None,
     )
 
 
@@ -4829,6 +4993,13 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     from flextool.engine_polars import _projection_params as _pp
     from flextool.engine_polars import _derived_params as _drv
 
+    # F1 — defensive per-solve reset of the recourse process-globals BEFORE
+    # any cascade pass runs, so no producer can inherit a stale anchor-pairs
+    # holder / walker Provider from a prior solve in a chained multi-solve.
+    # (The flag-aware Layer-4 boundaries still overwrite them; this just
+    # guarantees the invariant for any future earlier-step per-period producer.)
+    _drv._reset_recourse_scope()
+
     from flextool.engine_polars._orchestration import get_phase_recorder
     _rec = get_phase_recorder()
     _logger = logging.getLogger("flextool.engine_polars.input")
@@ -4878,6 +5049,14 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # (``_SourceShim`` carries ``work_folder``).
         _loadflex_prof("apply_db_overrides:pass_direct_params_b")
         _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
+        # MINLOAD-1 (no-workdir early-return): ``apply_derived_b`` won't run
+        # on this path either, so re-wire the (p, d, t) ``p_min_load`` ONLINE
+        # gate field from the CSV-loaded ``flex_data.dt`` (see the synthetic
+        # MINLOAD-1 patch below and ``specs/fix_map_reading.md`` §5).
+        _dt_noworkdir = getattr(flex_data, "dt", None)
+        if _dt_noworkdir is not None and _dt_noworkdir.height > 0:
+            flex_data.p_min_load = _drv.p_min_load_pdt_from_source(
+                db_reader, _dt_noworkdir)
         return
     workdir_path = Path(workdir)
 
@@ -4966,6 +5145,28 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         _loadflex_prof("apply_db_overrides:pass_synthetic_section")
         _timed("c.synth section", _wire_section_for_synthetic_solve)
 
+        # MINLOAD-1 — same class of gap as SECTION-1 / RESERVE-1.  The
+        # synthetic-solve early-return skips passes 3-10, so
+        # ``apply_derived_b``'s ``p_min_load`` producer never runs.  After
+        # this fix moved ``p_min_load`` out of pass 1a (``apply_direct_params``)
+        # into ``apply_derived_b`` (so a Map min_load becomes a shape-correct
+        # (p, d, t) Param instead of a summed (p,) scalar — see
+        # ``specs/fix_map_reading.md`` §5), a rolling / synthetic sub-solve
+        # would leave ``p_min_load`` ``None``.  ``p_min_load`` is an ONLINE
+        # feature-gate field (``model.py`` ``_check(ONLINE)``), so every online
+        # unit on the synthetic path would fail the check.
+        # ``p_min_load_pdt_from_source`` is solve-agnostic (no ``active_solve``
+        # filter) and reads the CSV-loaded ``flex_data.dt``, so calling it here
+        # mirrors ``apply_derived_b`` exactly.
+        def _wire_min_load_for_synthetic_solve():
+            dt = getattr(flex_data, "dt", None)
+            if dt is None or dt.height == 0:
+                return
+            flex_data.p_min_load = _drv.p_min_load_pdt_from_source(
+                db_reader, dt)
+        _loadflex_prof("apply_db_overrides:pass_synthetic_min_load")
+        _timed("c.synth min_load", _wire_min_load_for_synthetic_solve)
+
         # DELAY-1 — same class of gap: ``apply_derived_g`` produces
         # ``dtt__delay_duration``, ``p_process_delay_weight`` and
         # ``process_delayed__duration`` together (one source read, Float64
@@ -5016,6 +5217,102 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 _drv.pdtNodeInflow_per_step_from_inflow(p_inflow_csv, sd_csv))
         _loadflex_prof("apply_db_overrides:pass_synthetic_inflow")
         _timed("c.synth inflow", _wire_inflow_split_for_synthetic_solve)
+
+        # NA-1: the synthetic-solve early-return skips passes 3-10, so
+        # ``apply_derived_g``'s ``apply_branch_cluster`` — the sole producer of
+        # ``period_branch_full`` / ``dt_non_anticipativity`` — never runs on a
+        # rolling sub-solve (each ``<base>_rolling_roll_N`` names a solve absent
+        # from Spine).  Without this wire both frames keep their None seeds
+        # (above), the non-anticipativity gate never fires, and stochastic
+        # branches stay uncoupled across the rolling solve.  The two ``*_df``
+        # readers are solve-agnostic — they unroll the per-roll workdir CSVs
+        # (``period__branch.csv`` / ``dt_non_anticipativity_set.csv``) already
+        # written correctly by the per-roll emit — returning None for a
+        # non-stochastic roll.  We replicate ONLY ``apply_branch_cluster``'s two
+        # frame assignments (seed-preserving overlay) and deliberately do NOT
+        # call the full helper, which would overwrite the already-seeded
+        # ``period_in_use_set`` via an unsorted ``.unique()``.  Safe for
+        # non-stochastic synthetic solves: no d≠b fan rows → ``db_pairs`` empty
+        # → the gate's d≠b guard skips the constraint.
+        #
+        # ``period_branch_full`` also feeds ``synthetic_branch_tokens`` (invest
+        # handoff guards) and ``is_genuinely_stochastic`` (benders); on a
+        # rolling-stochastic solve WITH investment or benders those now
+        # activate (parity with the single-solve path), not yet fixture-covered.
+        def _wire_non_anticipativity_for_synthetic_solve():
+            from flextool.engine_polars._derived_branch import (
+                dt_non_anticipativity_df,
+                period_branch_full_df,
+            )
+            _new_pbf = period_branch_full_df(workdir_path, provider=provider)
+            if _new_pbf is not None or getattr(
+                    flex_data, "period_branch_full", None) is None:
+                flex_data.period_branch_full = _new_pbf
+            _new_dtn = dt_non_anticipativity_df(
+                workdir_path, provider=provider)
+            if _new_dtn is not None or getattr(
+                    flex_data, "dt_non_anticipativity", None) is None:
+                flex_data.dt_non_anticipativity = _new_dtn
+        _loadflex_prof(
+            "apply_db_overrides:pass_synthetic_non_anticipativity")
+        _timed("c.synth non_anticipativity",
+               _wire_non_anticipativity_for_synthetic_solve)
+
+        # MINTIME-1 — same class of gap as RESERVE-1 / SECTION-1 /
+        # MINLOAD-1 / INFLOW-1.  The synthetic-solve early-return skips
+        # passes 3-10, so ``apply_derived_c``'s (``_derived_params`` §3.8)
+        # min_uptime / min_downtime lookback producers never run on a
+        # rolling sub-solve — ``uptime_lookback`` / ``pdt_uptime_set`` (and
+        # the downtime twins) are the SOLE inputs to ``model.py``'s
+        # ``minimum_uptime`` / ``minimum_downtime`` constraints, so with
+        # them left ``None`` the constraints are silently dropped even
+        # WITHIN a roll (not just at the boundary).  A unit authored with
+        # ``min_uptime`` / ``min_downtime`` is then free to collapse below
+        # its own recent startup obligation inside a single roll.
+        # ``uptime_lookback_from_source`` / ``downtime_lookback_from_source``
+        # are solve-agnostic (no ``active_solve`` filter) and build the
+        # lookback window over the CSV-loaded ``flex_data.dt`` (+
+        # ``p_step_duration``), both populated at ``FlexData`` construction
+        # before this early-return, so calling them here mirrors
+        # ``apply_derived_c`` exactly.  Both helpers return ``None`` when no
+        # process authors ``min_uptime`` / ``min_downtime`` (``_process_min_time``
+        # empty), so this is a no-op — byte-identical — on every rolling
+        # fixture that does not use min-up/down.  Cross-boundary obligation
+        # continuity (an obligation opened in roll N constraining roll N+1's
+        # early steps) is a SEPARATE following slice (Carrier 2); this wire
+        # restores WITHIN-roll enforcement only.
+        def _wire_mintime_for_synthetic_solve():
+            dt = getattr(flex_data, "dt", None)
+            sd = getattr(flex_data, "p_step_duration", None)
+            ulb = _drv.uptime_lookback_from_source(db_reader, dt, sd)
+            if ulb is not None and ulb.height > 0:
+                flex_data.uptime_lookback = ulb
+                flex_data.pdt_uptime_set = (
+                    _drv.pdt_uptime_set_from_lookback(ulb))
+            dlb = _drv.downtime_lookback_from_source(db_reader, dt, sd)
+            if dlb is not None and dlb.height > 0:
+                flex_data.downtime_lookback = dlb
+                flex_data.pdt_downtime_set = (
+                    _drv.pdt_downtime_set_from_lookback(dlb))
+            # OC1 Carrier 2 — cross-roll-boundary min-up/down continuity.
+            # Build ``uptime_carry`` / ``downtime_carry`` from the prior
+            # rolls' realized committed-commitment window
+            # (``online_startup_history``, read from the handoff by
+            # ``_load_online``) using the AUTHORED min-up/down parameter as
+            # the window length and the PERIOD-AWARE gate (same-period
+            # carry only — period-cyclic online dynamics).  ``None`` on the
+            # first roll / non-rolling / no-min-up-down solves (empty
+            # history) → the online block takes its baseline path.
+            hist = getattr(flex_data, "online_startup_history", None)
+            if hist is not None and hist.height > 0:
+                flex_data.uptime_carry = (
+                    _drv.online_mintime_carry_from_source(
+                        db_reader, dt, sd, hist, "min_uptime"))
+                flex_data.downtime_carry = (
+                    _drv.online_mintime_carry_from_source(
+                        db_reader, dt, sd, hist, "min_downtime"))
+        _loadflex_prof("apply_db_overrides:pass_synthetic_mintime")
+        _timed("c.synth mintime", _wire_mintime_for_synthetic_solve)
         return
 
     _loadflex_prof("apply_db_overrides:pass_derived_a")
@@ -5635,6 +5932,7 @@ def build_handoff_from_solution(
     flex_data: "FlexData | None" = None,
     parent_handoff=None,
     provider: "object | None" = None,
+    realized_dispatch_parents: "set[str] | None" = None,
 ):
     """Build a ``SolveHandoff`` from a polar_high ``Solution`` + the work
     folder's per-solve metadata, mirroring flextool's post-solve
@@ -5674,6 +5972,11 @@ def build_handoff_from_solution(
     import polars as pl  # local — keep this helper's import surface narrow
     # Native import — Γ.8.D moved SolveHandoff into engine_polars.
     from flextool.engine_polars._solve_handoff import SolveHandoff
+    # Slice C Guard 3 — local imports keep this helper's import surface narrow.
+    from flextool.engine_polars._solve_state import FlexToolConfigError
+    from flextool.engine_polars._stochastic_detect import (
+        synthetic_branch_tokens,
+    )
 
     sd = work_folder / "solve_data"
     first_solve = _read_solve_first(work_folder, provider=provider)
@@ -5717,6 +6020,31 @@ def build_handoff_from_solution(
                     continue
                 e = str(r[entity_col])
                 divest_by_e[e] = divest_by_e.get(e, 0.0) + v
+
+    # ---- Slice D (H, §10.1): EXPLICIT non-realized invest drop ----
+    # ``invest_by_ed`` collects every solved v_invest row, including
+    # branch-named (non-realized-scenario) ones fanned in under recourse.
+    # Historically the ``d in realize_invest`` commit gate below dropped
+    # those by accident; make it explicit here — partition on synthetic
+    # branch membership and debug-log the dropped mass BEFORE the commit
+    # loop, so the belt-and-braces Slice C Guard 3 (which asserts no
+    # synthetic token survived into the committed rows) is a true
+    # invariant check, not the mechanism.  Flag-off / deterministic:
+    # ``_synth`` is empty and this block is a no-op (byte-parity).
+    _synth_handoff = synthetic_branch_tokens(
+        getattr(flex_data, "period_branch_full", None))
+    if _synth_handoff:
+        _dropped = {k: v for k, v in invest_by_ed.items()
+                    if k[1] in _synth_handoff}
+        if _dropped:
+            logging.getLogger("flextool.engine_polars.input").debug(
+                "recourse handoff: dropping %d non-realized invest rows, "
+                "total capacity %.6g (periods %s)",
+                len(_dropped), sum(_dropped.values()),
+                sorted({k[1] for k in _dropped}),
+            )
+        invest_by_ed = {k: v for k, v in invest_by_ed.items()
+                        if k[1] not in _synth_handoff}
 
     # ---- iteration set: prior keys ∪ entity × iteration_periods ----
     realize_invest = _read_realize_invest_periods(
@@ -5772,6 +6100,46 @@ def build_handoff_from_solution(
         inv_rows.append((e, d, invested))
         exist_rows.append((e, d, existing))
 
+    # ---- Slice C Guard 3: no committed realized_invest period may be a
+    #      synthetic stochastic-branch fan member (recourse plan §3.3).
+    #      The token set is the BROAD d != b b-token set of
+    #      period_branch_full (shared idiom ``synthetic_branch_tokens``) —
+    #      deliberately broader than Guard 2's PIU-intersected set:
+    #      committing invest at a metadata mirror (e.g. period1_realized,
+    #      the rolling-bookkeeping token) must ALSO be forbidden, and those
+    #      rolling metadata tokens never legitimately appear in
+    #      realized_invest.  None-degrade: when flex_data /
+    #      period_branch_full is unavailable (the Benders TIER-1 snapshot
+    #      call passes flex_data=None by design, :2278-2290) the check is a
+    #      no-op — that path is a Benders invest solve, which Guard 2
+    #      already forbids for stochastic models, so no synthetic token can
+    #      reach it.  On today's (flag-off) code both branches are empty
+    #      (realized branch keeps real names end-to-end), so the guard is
+    #      inert and adds no golden change.
+    _pbf = getattr(flex_data, "period_branch_full", None)
+    _synth = synthetic_branch_tokens(_pbf)
+    if _synth:
+        # (a) config-level: realize_invest lists no synthetic token.
+        _bad_cfg = sorted(set(map(str, realize_invest)) & _synth)
+        if _bad_cfg:
+            raise FlexToolConfigError(
+                f"Solve '{solve_name}': realized_invest_periods lists "
+                f"synthetic stochastic-branch period(s) {_bad_cfg}. "
+                f"Only real (realized-branch) period names may be "
+                f"realized for investment."
+            )
+        # (b) committed rows carry no synthetic period.
+        _bad_commit = sorted({
+            d for (e, d, v) in inv_rows if v != 0.0 and d in _synth
+        })
+        if _bad_commit:
+            raise FlexToolConfigError(
+                f"Solve '{solve_name}': handoff would commit investment "
+                f"at synthetic stochastic-branch period(s) {_bad_commit} "
+                f"— these belong to a non-realized scenario and must not "
+                f"enter the committed capacity chain (recourse plan §3.3)."
+            )
+
     # ---- divest_cumulative: prior + sum_d v_divest * unitsize ----
     entity_divest = set(_read_singles_csv(sd / "entityDivest.csv",
                                             provider=provider))
@@ -5795,17 +6163,26 @@ def build_handoff_from_solution(
     # roll starts from a wrong initial v_state.
     roll_end_state_df = None
     nodes_state = _read_singles_csv(sd / "nodeState.csv", provider=provider)
-    # Prefer ``flex_data.realized_dispatch`` (in-memory).
+    # Carry the COMMITTED JUMP-END storage state of the realized TRUNK
+    # (restores GMPL value parity).  Prefer the Provider anchor
+    # ``solve_data/realized_dispatch`` (trunk-only, committed jump-end —
+    # emitted by ``emit_realized_dispatch`` before the handoff is built) over
+    # the in-memory ``flex_data.realized_dispatch``: the latter is loaded from
+    # the forecast-EXPANDED ``dt_realize_dispatch_set.csv`` (all branch periods
+    # × the full look-ahead window), so its lexically-last (d,t) is the
+    # discarded HORIZON-END of a FORECAST branch, not the committed trunk
+    # jump-end — see NOTE above.  Fall back to ``flex_data.realized_dispatch``
+    # only when the Provider key is absent (unit-test synthesis, no real solve).
     last_pairs_df = None
-    if flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
+    rd_path = sd / "realized_dispatch.csv"
+    if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
+        try:
+            last_pairs_df = _provider_read(provider, "solve_data/realized_dispatch", rd_path)
+        except pl.exceptions.NoDataError:
+            last_pairs_df = None
+    if (last_pairs_df is None and flex_data is not None
+            and getattr(flex_data, "realized_dispatch", None) is not None):
         last_pairs_df = flex_data.realized_dispatch
-    else:
-        rd_path = sd / "realized_dispatch.csv"
-        if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
-            try:
-                last_pairs_df = _provider_read(provider, "solve_data/realized_dispatch", rd_path)
-            except pl.exceptions.NoDataError:
-                last_pairs_df = None
     if nodes_state and last_pairs_df is not None and "v_state" in sol._vars:
         # Schema: ``period, step``.  Take the last (period, step) in
         # dispatch order — equivalent to ``_load_realized_period_time_last``
@@ -5886,6 +6263,262 @@ def build_handoff_from_solution(
     # leaves room for future routing logic (e.g. picking a non-last
     # child by topology rather than completion order).
     upward_roll_end_state_df = roll_end_state_df
+
+    # ---- roll_end_online: committed-jump-end v_online per online process ----
+    # OC1 — the online analog of ``roll_end_state`` (above).  Carries the
+    # realized committed-jump-end ``v_online`` so the next roll's
+    # ``online__startup`` / ``online__shutdown`` first-step rows see the
+    # prior roll's commitment as predecessor instead of the within-roll
+    # cyclic wrap (which re-charges a startup at every boundary).  Kept in
+    # unit-count space (NOT ×unitsize): the online dynamics operate on
+    # ``v_online ∈ [0, existing_count]``, the same units the cyclic lag
+    # carries.  Self-contained (own realized-dispatch read + last-(d,t)
+    # pick) because online can exist without any nodeState, so it must not
+    # depend on the storage block above having run.  Keyed on ``p`` alone
+    # (a process has one startup_method at a time, so linear/integer never
+    # mix for the same ``p``); linear and integer rows are unioned.
+    roll_end_online_df = None
+    rd_path_on = sd / "realized_dispatch.csv"
+    last_pairs_on = None
+    if _provider_has(provider, "solve_data/realized_dispatch", rd_path_on):
+        try:
+            last_pairs_on = _provider_read(
+                provider, "solve_data/realized_dispatch", rd_path_on)
+        except pl.exceptions.NoDataError:
+            last_pairs_on = None
+    if (last_pairs_on is None and flex_data is not None
+            and getattr(flex_data, "realized_dispatch", None) is not None):
+        last_pairs_on = flex_data.realized_dispatch
+    _has_online_var = ("v_online_linear" in sol._vars
+                       or "v_online_integer" in sol._vars)
+    if last_pairs_on is not None and last_pairs_on.height > 0 and _has_online_var:
+        cols = last_pairs_on.columns
+        d_col = "period" if "period" in cols else "d"
+        t_col = "step" if "step" in cols else "t"
+        lp_on = (last_pairs_on
+                 .select(alias_to_axis(d_col, "d"), alias_to_axis(t_col, "t"))
+                 .unique()
+                 .sort(["d", "t"]))
+        if lp_on.height > 0:
+            last_d_on = lp_on["d"][-1]
+            last_t_on = lp_on["t"][-1]
+            rco_rows: list[tuple[str, float]] = []
+            for _vname in ("v_online_linear", "v_online_integer"):
+                if _vname not in sol._vars:
+                    continue
+                _v = sol._vars[_vname]
+                # col_id-filtered pull (mirrors the memory-frugal v_state
+                # path above): filter the variable's col_id frame to the
+                # single committed-jump-end (d, t), then read values for
+                # those rows alone instead of materialising the full frame.
+                _last_frame = _v.frame.filter(
+                    (pl.col("d") == last_d_on) & (pl.col("t") == last_t_on))
+                if _last_frame.height == 0:
+                    continue
+                _ids = _last_frame["col_id"].to_numpy()
+                _vals = sol.col_value[_ids]
+                _lst = _last_frame.select(*_v.dims).with_columns(
+                    value=pl.Series(_vals))
+                for r in _lst.iter_rows(named=True):
+                    rco_rows.append((str(r["p"]), float(r["value"])))
+            if rco_rows:
+                roll_end_online_df = pl.DataFrame(
+                    rco_rows, schema=["process", "value"], orient="row")
+
+    # ---- fix_online: committed v_online over the JUMP for the sibling ----
+    # OC1 #1 sub-slice (b).  For a separate_dispatch PARENT (its name is a
+    # registered realized-dispatch parent) carry the committed ``v_online``
+    # over the whole jump so the realized-dispatch SIBLING PINS it instead of
+    # re-deciding commitment.  The online NA tie makes ``v_online`` EQUAL
+    # across the forecast branches over the jump (``dtna_online``), so the
+    # value is read from the FORECAST branches and re-keyed from each forecast
+    # branch ``b`` to its REALIZED trunk period ``d`` (``period__branch``) —
+    # the period name the sibling dispatches.  The degenerate weight-0
+    # realized self-row (``b == d``) is excluded, so the carried value is the
+    # well-defined committed schedule, NOT the degenerate realized branch.
+    # Unit-count space (NOT ×unitsize).  ``None`` on every other solve →
+    # byte-identical baseline.
+    fix_online_df = None
+    if (realized_dispatch_parents is not None
+            and solve_name in realized_dispatch_parents
+            and flex_data is not None
+            and getattr(flex_data, "period_branch_full", None) is not None
+            and flex_data.period_branch_full.height > 0
+            and (("v_online_linear" in sol._vars)
+                 or ("v_online_integer" in sol._vars))):
+        # forecast-branch → realized-trunk map (drop the realized self-row).
+        _fcast = (flex_data.period_branch_full.select("d", "b")
+                  .with_columns(pl.col("d").cast(pl.Utf8),
+                                pl.col("b").cast(pl.Utf8))
+                  .filter(pl.col("d") != pl.col("b"))
+                  .rename({"d": "trunk", "b": "fb"}))
+        _parts: list[pl.DataFrame] = []
+        if _fcast.height > 0:
+            for _vn in ("v_online_linear", "v_online_integer"):
+                if _vn not in sol._vars:
+                    continue
+                _v = sol._vars[_vn]
+                _ids = _v.frame["col_id"].to_numpy()
+                _fr = (_v.frame.select(*_v.dims)
+                       .with_columns(value=pl.Series(sol.col_value[_ids]))
+                       .with_columns(pl.col("d").cast(pl.Utf8),
+                                     pl.col("t").cast(pl.Utf8)))
+                _re = (_fr.join(_fcast, left_on="d", right_on="fb",
+                                how="inner")
+                       .select(pl.col("p").cast(pl.Utf8).alias("process"),
+                               pl.col("trunk").alias("period"),
+                               pl.col("t").alias("step"),
+                               "value"))
+                if _re.height > 0:
+                    _parts.append(_re)
+        if _parts:
+            # All forecast branches tie to the same committed value over the
+            # jump; group to one row per (process, period, step).
+            fix_online_df = (pl.concat(_parts)
+                             .group_by(["process", "period", "step"])
+                             .agg(pl.col("value").max())
+                             .sort(["process", "period", "step"]))
+
+    # ---- online_history: trailing realized committed v_startup/v_shutdown ----
+    # OC1 Carrier 2 — the sliding-window producer (roll_end_online above
+    # carries only the single jump-end ``v_online``; this carries the
+    # trailing window of realized committed ``v_startup`` / ``v_shutdown``
+    # per (process, period, step) so the next roll can honour a min_uptime /
+    # min_downtime obligation opened near the prior roll's jump-end).
+    # Accumulates ``prior_handoff.online_history`` ∪ this roll's realized
+    # steps, trimmed per (process, period) to the authored max min-up/down
+    # duration (``flex_data.online_min_time``) so it stays bounded over a
+    # long run.  Each step carries its own ``duration`` (the next roll's
+    # ``dt`` does not contain these steps).  Restricted to processes that
+    # author min-up/down (inner-joined on ``online_min_time``) — a process
+    # with no obligation never carries, so it is never stored.
+    online_history_df = None
+    _has_su_sd = any(
+        v in sol._vars for v in
+        ("v_startup_linear", "v_startup_integer",
+         "v_shutdown_linear", "v_shutdown_integer"))
+    online_min_time_df = (getattr(flex_data, "online_min_time", None)
+                          if flex_data is not None else None)
+    # Only produce the window for processes that author min-up/down
+    # (``online_min_time`` non-empty); a solve with no min-up/down never
+    # carries, so nothing is stored — byte-identical to the baseline.
+    if (last_pairs_on is not None and last_pairs_on.height > 0
+            and _has_su_sd
+            and online_min_time_df is not None
+            and online_min_time_df.height > 0):
+        _cols = last_pairs_on.columns
+        _dc = "period" if "period" in _cols else "d"
+        _tc = "step" if "step" in _cols else "t"
+        realized_dt = (last_pairs_on
+                       .select(alias_to_axis(_dc, "d"), alias_to_axis(_tc, "t"))
+                       .unique())
+
+        def _pull_online_metric(vnames):
+            frames = []
+            for vn in vnames:
+                if vn not in sol._vars:
+                    continue
+                _v = sol._vars[vn]
+                _fr = _v.frame.join(realized_dt, on=["d", "t"], how="inner")
+                if _fr.height == 0:
+                    continue
+                _ids = _fr["col_id"].to_numpy()
+                frames.append(_fr.select("p", "d", "t").with_columns(
+                    value=pl.Series(sol.col_value[_ids])))
+            if not frames:
+                return None
+            return (pl.concat(frames).group_by(["p", "d", "t"])
+                    .agg(pl.col("value").sum()))
+
+        su = _pull_online_metric(("v_startup_linear", "v_startup_integer"))
+        sh = _pull_online_metric(("v_shutdown_linear", "v_shutdown_integer"))
+        if su is not None or sh is not None:
+            keys = (pl.concat([f.select("p", "d", "t")
+                               for f in (su, sh) if f is not None])
+                    .unique())
+            hist_now = keys
+            if su is not None:
+                hist_now = hist_now.join(
+                    su.rename({"value": "startup"}), on=["p", "d", "t"],
+                    how="left")
+            else:
+                hist_now = hist_now.with_columns(startup=pl.lit(0.0))
+            if sh is not None:
+                hist_now = hist_now.join(
+                    sh.rename({"value": "shutdown"}), on=["p", "d", "t"],
+                    how="left")
+            else:
+                hist_now = hist_now.with_columns(shutdown=pl.lit(0.0))
+            hist_now = hist_now.with_columns(
+                pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                pl.col("t").cast(pl.Utf8),
+                pl.col("startup").cast(pl.Float64).fill_null(0.0),
+                pl.col("shutdown").cast(pl.Float64).fill_null(0.0))
+            # per-(d, t) durations
+            _sdf = _step_duration_frame(sd, flex_data, provider=provider)
+            if _sdf is not None and _sdf.height > 0:
+                _d2 = "period" if "period" in _sdf.columns else (
+                    "d" if "d" in _sdf.columns else None)
+                _t2 = "time" if "time" in _sdf.columns else (
+                    "step" if "step" in _sdf.columns else (
+                        "t" if "t" in _sdf.columns else None))
+                _v2 = "value" if "value" in _sdf.columns else (
+                    "p_step_duration" if "p_step_duration" in _sdf.columns
+                    else None)
+                if _d2 and _t2 and _v2:
+                    dur = (_sdf.select(
+                        pl.col(_d2).cast(pl.Utf8).alias("d"),
+                        pl.col(_t2).cast(pl.Utf8).alias("t"),
+                        pl.col(_v2).cast(pl.Float64).alias("duration"))
+                        .unique(subset=["d", "t"]))
+                    hist_now = hist_now.join(dur, on=["d", "t"], how="left")
+            if "duration" not in hist_now.columns:
+                hist_now = hist_now.with_columns(duration=pl.lit(1.0))
+            hist_now = hist_now.with_columns(
+                pl.col("duration").cast(pl.Float64).fill_null(1.0))
+
+            # accumulate prior window (rename carrier schema → p/d/t)
+            prior_hist = (prior_handoff.online_history
+                          if prior_handoff is not None else None)
+            if prior_hist is not None and prior_hist.height > 0:
+                prior_renamed = prior_hist.rename(
+                    {"process": "p", "period": "d", "step": "t"}).with_columns(
+                    pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                    pl.col("t").cast(pl.Utf8),
+                    pl.col("startup").cast(pl.Float64),
+                    pl.col("shutdown").cast(pl.Float64),
+                    pl.col("duration").cast(pl.Float64))
+                combined = (pl.concat(
+                    [hist_now.select("p", "d", "t", "startup", "shutdown",
+                                     "duration"),
+                     prior_renamed.select("p", "d", "t", "startup", "shutdown",
+                                          "duration")])
+                    .unique(subset=["p", "d", "t"], keep="first"))
+            else:
+                combined = hist_now.select(
+                    "p", "d", "t", "startup", "shutdown", "duration")
+
+            # trim per (process, period) to the authored min-up/down window
+            if online_min_time_df is not None and online_min_time_df.height > 0:
+                lmap = online_min_time_df.select(
+                    pl.col("p").cast(pl.Utf8),
+                    pl.col("value").cast(pl.Float64).alias("_L"))
+                combined = combined.join(lmap, on="p", how="inner")
+                if combined.height > 0:
+                    combined = (combined.sort(["p", "d", "t"])
+                                .with_columns(
+                                    _rev=pl.col("duration").reverse()
+                                    .cum_sum().reverse().over(["p", "d"]))
+                                # keep steps whose durations strictly after
+                                # them sum to < L (covers the next roll's
+                                # first-step lookback window, plus one).
+                                .filter(pl.col("_rev") - pl.col("duration")
+                                        < pl.col("_L"))
+                                .drop(["_L", "_rev"]))
+            if combined.height > 0:
+                online_history_df = combined.rename(
+                    {"p": "process", "d": "period", "t": "step"}).sort(
+                    ["process", "period", "step"])
 
     # ---- fix_storage_quantity: v_state at fix_quantity timesteps × unitsize ----
     # Mirrors flextool's ``write_fix_storage_quantity`` (handoff_writers.py
@@ -6501,6 +7134,9 @@ def build_handoff_from_solution(
         ) if div_rows else None,
         roll_end_state=roll_end_state_df,
         upward_roll_end_state=upward_roll_end_state_df,
+        roll_end_online=roll_end_online_df,
+        online_history=online_history_df,
+        fix_online=fix_online_df,
         fix_storage_quantity=fix_storage_quantity_df,
         fix_storage_price=fix_storage_price_df,
         fix_storage_usage=fix_storage_usage_df,

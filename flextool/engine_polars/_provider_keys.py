@@ -80,6 +80,7 @@ SOLVE_DATA_INVEST_PERIODS_OF_CURRENT_SOLVE = (
 )
 SOLVE_DATA_PROCESS_SOURCE_TOSINK = "solve_data/process_source_toSink"
 SOLVE_DATA_REGION_COUPLING = "solve_data/region_coupling"
+SOLVE_DATA_STOCHASTIC_INVEST_METHOD = "solve_data/stochastic_invest_method"
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,11 @@ HANDOFF_REALIZED_EXISTING = "handoff/realized_existing"
 HANDOFF_DIVEST_CUMULATIVE = "handoff/divest_cumulative"
 HANDOFF_ROLL_END_STATE = "handoff/roll_end_state"
 HANDOFF_UPWARD_ROLL_END_STATE = "handoff/upward_roll_end_state"
+HANDOFF_ROLL_END_ONLINE = "handoff/roll_end_online"
+HANDOFF_ONLINE_HISTORY = "handoff/online_history"
+# OC1 #1 sub-slice (b) — separate_dispatch parent's committed v_online over
+# the jump, pinned into the realized-dispatch sibling.
+HANDOFF_FIX_ONLINE = "handoff/fix_online"
 HANDOFF_CUMULATIVE_CO2 = "handoff/cumulative_co2"
 HANDOFF_CUMULATIVE_COMMODITY = "handoff/cumulative_commodity"
 HANDOFF_CUM_SIM_HOURS = "handoff/cum_sim_hours"
@@ -165,6 +171,8 @@ OVERRIDE_REALIZED_EXISTING = "override/realized_existing"
 OVERRIDE_DIVEST_CUMULATIVE = "override/divest_cumulative"
 OVERRIDE_ROLL_END_STATE = "override/roll_end_state"
 OVERRIDE_UPWARD_ROLL_END_STATE = "override/upward_roll_end_state"
+OVERRIDE_ROLL_END_ONLINE = "override/roll_end_online"
+OVERRIDE_ONLINE_HISTORY = "override/online_history"
 OVERRIDE_CUMULATIVE_CO2 = "override/cumulative_co2"
 OVERRIDE_CUMULATIVE_COMMODITY = "override/cumulative_commodity"
 OVERRIDE_CUM_SIM_HOURS = "override/cum_sim_hours"

@@ -275,6 +275,28 @@ class InputSource(Protocol):
         docstring for details.
         """
 
+    def parameter_shape_variants(self,
+                                  entity_class: str,
+                                  parameter_name: str,
+                                  ) -> "set[tuple[str, ...]]":
+        """Return the distinct per-row classified axis paths for a
+        period/time registry parameter (spec ``fix_map_reading.md`` §3.2).
+
+        Each element is a tuple of canonical axis labels
+        (``("period",)`` / ``("time",)`` / ``("period", "time")`` /
+        ``()`` for scalar).  Returns an empty set for parameters outside
+        ``PERIOD_TIME_PARAMS`` (or when classification is not possible),
+        in which case :func:`resolve_param_shape` falls back to checking
+        the combined shape against the allow-list.
+
+        This member is OPTIONAL: the resolver consumes it via ``getattr``
+        so test-only stubs that implement only :meth:`parameter_shape_info`
+        keep working.  It is declared here so the two production readers
+        (:class:`SpineDbReader`, :class:`InMemoryReader`) satisfy the
+        ``@runtime_checkable`` isinstance check used at the
+        ``load_flextool`` boundary.
+        """
+
 
 @runtime_checkable
 class FlexInputSource(Protocol):

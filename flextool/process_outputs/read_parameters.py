@@ -1445,6 +1445,25 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
 
+    # Slice D (I-a, §11.3): per-period probability weight + the recourse
+    # flag, so ``calc_costs`` can weight the reported invest/divest cost by
+    # ``pd_branch_weight`` under recourse (reconciling the cost breakdown to
+    # the probability-weighted LP objective).  Flag absent / off → the
+    # weighting is skipped (byte-parity).
+    p.recourse_invest = bool(getattr(flex_data, "recourse_invest", False))
+    p.pd_branch_weight = _pd_series_solve_period(
+        getattr(flex_data, "pd_branch_weight", None), solve_name=solve_name,
+    )
+    # Option (A): the per-(d, t) branch weight the LP objective folds into
+    # ``op_factor`` / ``startup_factor`` (model.py).  ``calc_slacks`` /
+    # ``calc_costs`` apply it to every per-(d, t) operational + penalty cost
+    # term so ``costs__dt.csv`` and the ``Total cost (calculated)`` summary
+    # equal the probability-weighted LP objective.  Absent (deterministic)
+    # → an empty Series → the weighting is an exact ×1.0 no-op (byte-parity).
+    p.pdt_branch_weight = _pdt_series_solve_period_time(
+        getattr(flex_data, "pdt_branch_weight", None), solve_name=solve_name,
+    )
+
     # inflation factors — Series((solve, period)).
     p.inflation_factor_operations_yearly = _pd_series_solve_period(
         flex_data.p_inflation_op, solve_name=solve_name,

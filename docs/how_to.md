@@ -277,6 +277,14 @@ First, the investment parameters need to be included both for the *battery_inver
 Additional parameters:
 
 - `lifetime_method`: Model can either be forced to reinvest when the lifetime ends (`reinvest_automatic`), have a choice (`reinvest_choice`), or be restricted to a one-shot build that retires after its lifetime without rebuild (`no_investment` — for physical one-off additions like plant refurbishments).
+- `construction_lead_time` [years]: physical build time. Capacity *ordered* in a period only becomes *available* this many years later — so `v_invest` still lives (and is costed) in the decision period, but the plant contributes to balances, flows and reserves only from its commissioning year. The lag is snapped to a period boundary by `construction_lead_time_method` (below). The plant's technical `lifetime` also starts at commissioning, so it operates its full life `L` years after the cost window (the construction years are financed but not yet producing — standard overnight-cost + interest-during-construction-lite semantics). Constant or period (a Map may set a different lead time per decision period). Default 0 (instantaneous, exactly as before). Applies to `unit`, `connection` and `node` investments, deterministic and stochastic alike.
+- `construction_lead_time_method`: how the commissioning year `year(order) + construction_lead_time` snaps to a period boundary (capacity turns on at a period start):
+  - `immediate` — no lag; capacity is available from the decision period (byte-identical to prior behaviour). This is also the effective default when no lead time is set.
+  - `closest_seam` — nearest period boundary; an exact midpoint rounds *up* (later, conservative). This is the effective default once a lead time **is** set but no method is chosen.
+  - `previous_seam` — round the commissioning year *down* to the preceding boundary.
+  - `next_seam` — round *up* to the following boundary. If no in-horizon boundary is on/after the commissioning year the order buys no capacity within the model horizon (a warning is issued); a *forced* such order (`invest_forced` / `invest_min_period`) is rejected with a clear error rather than charged for never-delivered capacity.
+
+  **Construction lead time and stochastics compose automatically.** Under recourse (`stochastic_invest_method = recourse`) with an invest non-anticipativity window (`shared_invest_periods`, see the stochastics how-to), a long-lead technology that must be online *after* the branch reveal has to be *ordered* before it — in a pre-reveal, tied period — so its investment is a single shared here-and-now decision, while a short-lead technology can be ordered at/after the reveal and react per scenario. This staging is emergent (no extra parameter): set the window to the pre-reveal periods and the lead time stages the technologies for you. Note the two knobs stay orthogonal — the window is the *information* boundary (which order periods are shared), the lead time is the *physics* (how early you must order); you need both, set consistently, for staging.
 - `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
 
@@ -624,6 +632,8 @@ Finally, make sure there are *up* and *down* entities in the `UpDown' entity. Th
 Next, the reserve requirement will be defined. An entity between the `reserve__upDown__group` class (e.g. *primary--up--electricity*) allows to define the reserve parameters `reserve_method`, `reservation` (i.e. the amount of reserve) and `penalty_reserve` (i.e. the penalty cost in case of lack of reserve). For example, a constant of 10 MW could be used. Even though the name of the `reserve_method` is *timeseries_only*, it can also accept a constant value - it's an exogenous reserve requirement whereas the other two reserve methods are endogenous. Dynamic reserve method calculates the reserve requirement from generation and loads according to user defined factors (`increase_reserve_ratio`). Largest failure method will force enough reserve to cope with a failure of the chosen unit and connection flows.
 
 Parameters from the `reserve__upDown__unit__node` class should be used to define how different units can contribute to different reserves. Note that the entities in this class need to be added to the `Entity Alternative` sheet. Parameter `max_share` says how large share of the total capacity of the timestep (existing * efficiency * (profile)) of the unit can contribute to this reserve category (e.g. *coal_plant* may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter `reliability` affects what portion of the reserved capacity actually contributes to the reserve (e.g. *wind_plant* may contribute only 80% of its generation to reserve due to uncertainty).
+
+If the reserve is provided by a **battery** or other storage (a unit discharging from, or a connection/charger tied to, a storage node), set `reserve_duration` (hours) on the `reserve__upDown__group` entity so the storage actually holds enough energy to sustain the committed reserve power. For example, a 4-hour upward reserve from a battery uses `reserve_duration = 4`: the model then guarantees the battery's stored energy can back its reserve commitment for 4 hours (corrected by the round-trip efficiency). Without `reserve_duration` the reserve is instantaneous-power-only — the battery could commit reserve it has no energy to deliver. The coupling only applies to storage-backed providers; ordinary fuel-fed units are unaffected.
 
  ![Add a reserve](./img/concept/reserves.png)
 
@@ -1119,13 +1129,17 @@ Both flags are documented in [Terminal / CLI](terminal_workflow.md). The FlexToo
 ## How to use stochastics (representing uncertainty)
 **(stochastics.sqlite)**
 
-Stochastics are used to represent the uncertainty of the future in the decision making. The main idea is to represent the distribution of possible futures by discrete scenarios (branches). These are all connected to the same starting point with the realized branch. A non-anticipatory constraint forces the branches to share the decisions that affect multiple timesteps with the realized branch during the realized part of the horizon. These decisions are investments, storage usage and online status of units. The model then optimizes the system to get the minimize the total cost all the branches (weighted by their probability). Only the realized timeline of the realized branch, will be output. The realized branch can continue to the end of the horizon (and be also a forecast) or just to the end of the realized part as in the picture.
+Stochastics are used to represent the uncertainty of the future in the decision making. The main idea is to represent the distribution of possible futures by a set of discrete, probability-weighted **forecast branches**. The branches fan out from a common branching point, and each carries a probability weight; the weights sum to one. The model minimises the **expected** (probability-weighted) cost across all the forecast branches.
+
+Because the decision maker does not yet know which future will occur, decisions that must be committed *before* the uncertainty is revealed cannot differ between the forecasts. A **non-anticipativity** constraint therefore forces the forecast branches to agree with each other on those here-and-now decisions over the committed part of the horizon — and that agreement *is* the (non-anticipative) realization of each such decision. The tied decision types are investments, storage usage and unit online (commitment) status; energy flows are always left free so each forecast dispatches them independently. (`min_uptime`, `min_downtime` and ramp limits are separate physics, always active within each branch's own trajectory — they are not part of the non-anticipativity tie.)
+
+There is **no "realized" branch among the weighted forecasts.** "Realized" is an *optional* designation — at most one branch per branching point — that marks which branch's data are treated as the actuals; it is used only to drive the committed / realized-dispatch results and is never a weighted member of the fan. By default a solve reports only its committed / realized results, not the individual forecast branches (use the `output_horizon` debug option, below, to expose the forecasts).
 
 ![Stochastic system](./img/concept/non-anticipatory.png)
 
-For the stochastics to have an effect on the results, the system needs parameters that change between the stochastic branches. These could be e.g. wind power generation or fuel prices. The model will then have separate variables in every branch for all the decision the model can take (e.g. invesment, storage state, online, flow). As a consequence, the realization phase will also be dependent on the things that happen in the stochastic branches - weighted by the probablity given to each branch. Only one period investment stochastic models are supported currently.
+For the stochastics to have an effect on the results, the system needs parameters that change between the forecast branches. These could be e.g. wind power generation or fuel prices. The model then carries separate variables in every branch for all the decisions it can take (e.g. investment, storage state, online, flow), and minimises their probability-weighted (expected) cost. The committed decisions — tied across the branches as described above — therefore hedge against the whole distribution of forecasts rather than optimising for any single one.
 
-In this example, we show two ways to use stochastics: Single solve, rolling horizon. They all share the same test system that includes: 
+In this example, we show two ways to use stochastics: single solve and rolling horizon. They all share the same test system that includes: 
 
 - A demand node 
 - Coal, gas and wind power plants 
@@ -1139,27 +1153,48 @@ Notes about the storage options with stochastics:
 
 - The best options to use are:
 
-  - `Storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
+  - `storage_state_start_end_method`: fix_start or fix_start_end (and the their values)
   - `storage_solve_horizon_method`: fix_value or fix_price (and their values)
 
 - Do not use any of the `storage_binding_methods`, they do not work correctly with stochastics (there is no unambigious end state that could circle back to the first time step). 
 
 ![Stocahstic system](./img/concept/stochastic_system.png)
 
+### What the model ties across branches (dispatch vs. investment defaults)
+
+Wherever the branches still share the same information — the committed part of the horizon, before the forecast is revealed — the model **ties** some decisions so that all forecast branches agree on them (the branches are tied *to each other*, not to any realized branch) and lets the rest **diverge**. What is tied depends on whether the solve invests.
+
+**Any stochastic solve (dispatch or investment) assumes, by default:**
+
+- **Storage state, unit commitment (online status) and reserves are tied** across the forecast branches over the solve's committed periods — every branch must take the same storage and start-up decisions while they still share information, so these decisions are genuinely non-anticipative. In a **single** solve whose committed periods span the whole horizon this ties them over the whole horizon (so only the flows differ between branches); in a **rolling** solve the tie covers only each roll's committed (jump) slice, and the branches operate freely in the forecast horizon beyond the reveal.
+- **Energy flows are always free** — each forecast dispatches its flows independently.
+- **Continuity is ordinary temporal carry-in.** Only the model's very first timestep starts from the given history / initial state; every later timestep continues from the previous one. At a branching point each child branch continues from its parent branch's last step, so sibling branches start from the same state simply because they share a parent.
+
+**An investment solve additionally assumes, by default:**
+
+- **A single, shared here-and-now investment plan** for all branches (`stochastic_invest_method = none`) — you commit one set of investments regardless of which future occurs.
+
+So a plain **dispatch** solve = commit the committed part (shared storage / online / reserve), forecast the rest, flows free. An **investment** solve = the same operational tie **plus** one shared investment plan.
+
+**Overriding the defaults:**
+
+- *Investment* — set `stochastic_invest_method = recourse` for per-scenario (wait-and-see) investment, or declare a mid-horizon reveal for a genuine two-stage hedge (see *Stochastic investment* below).
+- *Operations* — set the `solve` array parameter `shared_operation_periods` to change the operational tie window: an **empty array** frees operations from the first timestep (each forecast operates freely — combined with a single shared investment this is the classic two-stage capacity-expansion model), or a **list of periods** ties operations only over those periods. See *Stochastics over multiple periods* for the details.
+
 ### Single solve stochastics
 **(stochastics.sqlite scenario: 2_day_stochastic_dispatch)**
 
-In this scenario, 24 hours are realized with an uncertain forecast for the next day. The timeset length is therefore 48 hours and the branching will happen at the timestep t0025. 
-To set up a stochastic solve, we need three things: The stochastic branch information, the stochastic timeseries and choosing which parts of the model use stochastic timeseries.
+In this scenario a near-term operating window is committed with an uncertain forecast for the following day over a 48-hour timeset.
+To set up a stochastic solve, we need three things: the stochastic branch information, the stochastic timeseries, and choosing which parts of the model use stochastic timeseries.
 
-The information about the branches are set with the *solve* parameter `stochastic_branches`. This is a 4 dimensional map. (Edit -> choose map -> right click -> add columns).
-The columns are: period, branch, analysis_time (starting time of the branch), realized (yes/no) and the value is the weight of the branch. Each starting time, including the first timestep, should have one and only one realized branch. This realized branch is used for the non-stochastic parts of the model with a stochastic timeseries. In this example we have three branches: mid, upper and lower representing the three wind forecasts. The weight will influence the relative weight of each branch in the objective function (model costs). The weights are normalized, so that the total weight is always one in each timestep.
+The information about the branches is set with the *solve* parameter `stochastic_branches`. This is a 4-dimensional map. (Edit -> choose map -> right click -> add columns.)
+The columns are: period, branch, analysis_time (starting time of the branch), realized (yes/no), and the value is the branch's **probability weight**. In this example we have forecast branches (e.g. mid, upper and lower) representing the wind forecasts. The weights set each branch's probability in the objective function (expected model cost) and are normalized so that the total weight is always one across the forecast branches at each start time. The *realized* flag is optional: at most one branch per start time may be flagged `yes`, and it only designates which branch's data are the actuals used for the committed / realized-dispatch results — a realized-flagged branch is **not** counted among the weighted forecasts. If no branch is flagged realized, the fan is pure forecasts and the "realization" of the committed decisions comes entirely from the non-anticipativity ties described above.
 
-The stochastic wind timeseries are set with the same *profile* parameter `profile` but with a three dimensional map instead of the regular one dimesional map. The tool recognizes a stochastic timeseries from the dimensions of the data. The three dimensions are: branch, analysis_time and time. Here the realized part of the model (t0001-t0024) uses also the branch 'mid', which is one of the forecast branches as well. In the stochastic part, 'mid' is also set to be 'realized'. It is not actually realized (since the stochastic part is not realized), but it helps the model to choose which branch to use when there is no stochastic data available.
+The stochastic wind timeseries are set with the same *profile* parameter `profile`, but with a three-dimensional map instead of the regular one-dimensional one. The tool recognizes a stochastic timeseries from the dimensions of the data. The three dimensions are: branch, analysis_time and time. The model reads the branch-specific series for each forecast branch; where a branch has no stochastic data available for part of the horizon, it falls back to the committed/reference series.
 
-The parts of the model that will use stochastic data is chosen with a *group* parameter `include_stochastics`. The units, nodes and connections that are added to this group use stochastic timeseries connected to them (if available). Here we add the unit *wind_plant* to this group. There is a possiblity that to have two wind plants with the same profile, but use the stochastics on only one of them. The other would then use only the realized branch.
+The parts of the model that will use stochastic data are chosen with a *group* parameter `include_stochastics`. The units, nodes and connections that are added to this group use the stochastic timeseries connected to them (if available). Here we add the unit *wind_plant* to this group. It is possible to have two wind plants with the same profile but use the stochastics on only one of them; the other would then use its single (non-stochastic) profile.
 
-An option exists to output the stochastic horizons for debugging your system. This is done with the *model* parameter `output_horizon`. It will cause errors in the calculation of the cost in each solve (the costs of the unrealized branches will be included) so turn it off when you want the final results.
+An option exists to output the stochastic (forecast-branch) horizons for debugging your system. This is done with the *model* parameter `output_horizon`. It will cause errors in the calculation of the cost in each solve (the costs of the unrealized forecast branches will be included, making the reported cost too high), so turn it off when you want the final results.
 
 If you change the weights of the stochastic branches, you should see the results change.
 
@@ -1167,14 +1202,15 @@ If you change the weights of the stochastic branches, you should see the results
 
 ### Stochastics over multiple periods
 
-When the solve's horizon spans periods beyond the branching period, the branches extend through all the remaining periods: the realized branch keeps the real period names (with its realized output windows), while every non-realized branch with a nonzero weight gets a synthetic `<period>_<branch>` copy of each later period. The branch probability weights carry forward along each branch, so the weighting is constant along a branch's period chain and sums to one across the branches of each period.
+When the solve's horizon spans periods beyond the branching period, the branches extend through all the remaining periods: the branch that owns the committed data — the designated realized branch, or (when none is designated) a reference forecast — keeps the real period names, while every other forecast branch with a nonzero weight gets a synthetic `<period>_<branch>` copy of each later period. The branch probability weights carry forward along each branch, so the weighting is constant along a branch's period chain and sums to one across the forecast branches of each period.
 
 Notes for multi-period stochastic solves:
 
 - If `years_represented` is defined for the solve, it must cover **all** of the solve's periods. A configuration that defines it for only some periods fails with a configuration error (older versions silently ran on a truncated horizon instead).
-- The realized branch's input weight is always treated as 1.0 along the whole realized chain — the sibling branches' weights are normalized against 1.0, not against a DB value on the realized row.
-- In a single solve whose `realized_periods` span the whole horizon, the non-anticipatory constraints cover the whole horizon: the shared decision types (storage usage, online status, reserve) stay pinned to the realized branch through the later periods, and post-branching divergence shows up only in the flow variables. Use a rolling solve when the branches should be free to commit differently after the information is revealed — each roll then realizes only its jump slice and the non-anticipatory window ends at the reveal.
-- A `realized: yes` row placed at a later period's first timestep does not re-branch the model, but it selects which forecast branch's timeseries the realized chain uses from that period onwards. This can be used deliberately for per-period forecast-series selection; if you did not intend a series swap, keep the `realized: yes` rows only at the solve (or roll) start.
+- The forecast branch weights are normalized to sum to one across the forecasts at each period; a realized designation adds no weight to the fan (it is not a weighted member).
+- In a single solve whose committed periods span the whole horizon, the non-anticipativity constraints cover the whole horizon: the shared decision types (storage usage, online status, reserve) stay tied across the forecast branches through the later periods, and post-branching divergence shows up only in the flow variables. Use a rolling solve when the branches should be free to commit differently after the information is revealed — each roll then commits only its jump slice and the non-anticipativity window ends at the reveal.
+- To free the operational branches within a *single* solve (without moving to a rolling solve), set the `solve` array parameter `shared_operation_periods`. Left unset (the default) it keeps the behaviour above — the operational non-anticipativity window equals the realized-dispatch timesteps (plus any `fix_storage` timesteps), so operations stay tied across the whole committed horizon. Set it to an **empty array** to free operations from the first timestep: the shared decision types then branch freely per forecast while the investment plan is still a single shared decision (`stochastic_invest_method = none`) — this is the classic two-stage capacity-expansion structure (one here-and-now investment, wait-and-see operations). Set it to a **list of periods** to tie operations only over those periods (e.g. a mid-horizon reveal: tie the pre-reveal periods, free the rest); the listed periods' timesteps are intersected with the solve's active timeline, and a curated list *replaces* (does not add to) the default realized-dispatch window. The dispatch output window is unaffected — `realized_periods` still governs which periods are reported.
+- A `realized: yes` row placed at a later period's first timestep does not re-branch the model, but it selects which branch's timeseries the committed chain uses from that period onwards. This can be used deliberately for per-period series selection; if you did not intend a series swap, keep the `realized: yes` row only at the solve (or roll) start.
 
 ### Rolling horizon stochastics
 **(stochastics.sqlite scenario: 1_week_rolling_wind)**
@@ -1183,9 +1219,16 @@ In this scenario we extend the previous timeline to one week and roll through it
 
 *solve*: `rolling_solve_jump` = 24 and `rolling_solve_horizon` = 96. 
 
-The stochastic data should be given so that it can serve the rolling structure: `rolling_solve_jump` dictates the duration of the realized part of each solve and the interval of forecast updates. So, for every 'analysis_time' there needs to be a time series in each stochastic branch that extends to the end of horizon (as defined by `rolling_solve_horizon`). The branches continue to the end of the horizon without branching again. The realized scenario should not typically be used as a forecast branch in a stochastic model. This is why its horizon is shorter than the others.
+The stochastic data should be given so that it can serve the rolling structure: `rolling_solve_jump` dictates the duration of the committed (jump) part of each solve and the interval of forecast updates. So, for every `analysis_time` there needs to be a time series in each forecast branch that extends to the end of the horizon (as defined by `rolling_solve_horizon`). The branches continue to the end of the horizon without branching again. Each roll fans at its first step into the forecast branches; the non-anticipativity tie covers the committed jump slice, and the branches then diverge over the forecast tail. Only the committed jump is carried forward to the next roll as the realized state.
 
-For the *solve* parameter `stochastic_branches` this means analysis times (t0001, t0025, t0049, t0073, t0097, t0121 and t0145)
+For the *solve* parameter `stochastic_branches` this means an `analysis_time` at each roll start (here t0001, t0025, t0049, t0073, t0097, t0121 and t0145).
+
+A branch may optionally be designated realized to supply the committed/jump data each roll (useful when the near-term is known with certainty — deterministic near-term, uncertainty in the tail). If no branch is designated realized, the committed jump is instead fixed by the non-anticipativity tie across the forecasts. Either way, how the committed dispatch is produced is governed by the `solve` parameter `dispatch_realization_method`:
+
+- `within_solve` (default): the normal path — the committed jump is realized inside the single rolling optimisation, no second solve per roll.
+- `separate_dispatch`: an available advanced option that splits realization into a dedicated downstream dispatch pass (committed investments/decisions fixed) which automatically spawns a separate realized-dispatch solve to re-clear the revealed branch. This is the 2-stage seed of a future multi-stage sequential-market structure.
+
+The selection is engine-managed rather than something you normally set per roll; `separate_dispatch`'s automatic-selection defaults are still being refined.
 
 Otherwise there is no difference to the previous example.
 
@@ -1193,6 +1236,34 @@ Otherwise there is no difference to the previous example.
 ![Rolling Branching](./img/concept/rolling_non-anticipatory.png)
 
 ![1Week stochastics](./img/concept/1week_stochastics.png)
+
+### Stochastic investment
+
+By default (`solve.stochastic_invest_method = none`) a stochastic model makes a **single** investment plan shared by every branch — one plan for all futures. The stochastic-investment modes below differ in *what is decided before the uncertainty is revealed*.
+
+#### Standard two-stage stochastic investment (the main mode)
+
+The usual goal is a genuine two-stage plan: **one shared here-and-now investment decision, made before the uncertainty resolves, with every scenario then operating that fleet freely from the first timestep** according to its own realization. The investment is the first-stage (non-anticipative) decision; *all operations are second-stage recourse* — nothing operational is tied across the branches.
+
+For a model that invests in a single period this is available today: keep `stochastic_invest_method = none` (one shared investment) and set `shared_operation_periods = []` (operations branch freely from t0 — see *What the model ties across branches* above). The result is the classic stochastic capacity-expansion model — commit one fleet, minimise the probability-weighted cost of operating it across the scenarios.
+
+For a **multi-period** investment horizon the ideal is that only the *first* period's investment is shared (the genuine here-and-now decision) while later-period investment adapts per scenario (recourse), since by then some uncertainty has resolved. This is delivered by the **investment non-anticipativity window** — the `solve` array parameter `shared_invest_periods`. Compose three knobs:
+
+- `stochastic_invest_method = recourse` (so per-branch investment variables exist to tie);
+- `shared_invest_periods = [<first period>]` (tie the first period's `v_invest`/`v_divest` across branches — a single shared here-and-now decision — while later periods invest per-branch);
+- `shared_operation_periods = []` (operations branch freely from t0).
+
+The result is the standard two-stage stochastic capacity-expansion structure: **shared first-period investment + per-branch (recourse) investment later + free operations**. Set `shared_invest_periods` to more than one period to extend the shared window (e.g. `[p2035, p2040]` shares the first two periods, recourse from the third). Left unset (the default) or set to an empty array it adds no tie — `recourse` stays per-branch everywhere, byte-identical to before. Both invest and divest are tied over the window, so the *net* first-stage capacity (existing + invest − divest) is genuinely shared. The window requires `recourse`; on a `none` solve it is a harmless no-op (investment is already shared across all periods).
+
+#### Per-scenario (wait-and-see) investment
+
+`stochastic_invest_method = recourse` lets each forecast branch invest on its own data at and after the branching period, with probability-weighted investment costs and per-branch limits. When branches start at the solve's **first** step this is a *wait-and-see* analysis — each forecast has perfect foresight, so the objective is an EVPI lower bound, **not** a committed plan (it typically costs less than any single plan can). Useful for scenario screening and per-branch capacity ranges; it is not a plan you can build. Forecast-branch (unrealized) investments are output only under `model.output_horizon` (a debug flag); committed results report the committed / realized region. `recourse` is incompatible with Benders decomposition (the solver rejects the combination).
+
+#### Hedged mid-horizon reveal (first periods deterministic for investment *and* operations)
+
+A third structure keeps the first periods **fully deterministic — a single shared trunk for both investment and operations** — and lets the branches fan out only from a later period. Set the branching period of the `stochastic_branches` map to that later period, with the branches' analysis time at that period's first step (the reveal must fall on a period boundary — investment is period-granular).
+
+The pre-reveal periods stay a single real-named trunk with one shared `v_invest` *and* one shared operational schedule — non-anticipativity holds by construction (there is only one variable per pre-reveal period, so nothing to tie). The post-reveal periods fan per branch (second-stage recourse). Note how this differs from the standard mode above: here the **near-term operations are shared (committed) too**, not just the investment — appropriate when the first periods genuinely are deterministic (a committed near-term operating schedule) rather than a first period that should already be operated per forecast. The objective sits strictly *between* the wait-and-see bound and the deterministic mean-value plan (positive EVPI and VSS); only the committed trunk is output. Mid-horizon reveal is a general stochastics capability — it works for dispatch-only hedged stochastics too, not only for `recourse` investment.
 
 ## How to use CPLEX as the solver
 

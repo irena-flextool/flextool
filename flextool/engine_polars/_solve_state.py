@@ -39,6 +39,47 @@ class FlexToolSolveError(FlexToolError):
     """Raised for solver execution errors."""
 
 
+class LineageFilterError(ValueError):
+    """Raised when the recourse scenario-lineage filter cannot be applied
+    soundly (Slice D §6).
+
+    Subclasses ``ValueError`` so the Slice B lineage guards
+    (``_derived_walks._assert_lineage_castable``,
+    ``_derived_branch.assert_recourse_npv_preconditions``) can raise it
+    without churning their ``pytest.raises(ValueError)`` pins.  Its
+    dedicated type lets the four blanket ``except Exception`` swallows in
+    ``apply_derived_c`` / ``apply_synthetic_invest_sets`` re-raise lineage
+    failures loudly instead of silently reverting to the unfiltered
+    first-stage sets — the exact silent failure the recourse guards exist
+    to prevent.
+    """
+
+
+class CommissioningLagError(ValueError):
+    """Raised when the Slice H construction-lead-time pipeline cannot apply
+    the commissioning lag soundly on a genuinely lag-configured model.
+
+    Two failure modes carry this type:
+
+    * the ``commission_lf`` [e, d] join in
+      :func:`._derived_walks.period_walk_iterator` desyncs (a non-empty
+      pre-cast key overlap collapses to zero post-cast survivors — a dtype
+      or calendar skew that would otherwise silently drop the lag); and
+    * :func:`._derived_existing.commissioning_year_lf` throws on a model
+      whose ``construction_lead_time`` is set (> 0).
+
+    Subclasses ``ValueError`` (like :class:`LineageFilterError`) so it can
+    be raised from the guards without churning any ``pytest.raises(
+    ValueError)`` pins.  Its dedicated type lets the blanket
+    ``except Exception`` swallows in ``apply_derived_c`` /
+    ``apply_synthetic_invest_sets`` re-raise lag failures loudly instead of
+    silently reverting to an unlagged (byte-parity-looking but wrong)
+    model — the exact silent failure the Slice H guards exist to prevent.
+    A no-lag model never reaches these raises (the helper returns ``None``
+    and the walk keeps ``yr_d``), so existing models stay byte-identical.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Lightweight value types
 # ---------------------------------------------------------------------------

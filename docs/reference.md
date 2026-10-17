@@ -79,7 +79,8 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   
   - Stochastic parameters:
 
-    - *stochastic_branches*: 4D-map to set up the stochastic branches, their weights and to choose which of them are realized. See 'How to use stochastics' for more information.
+    - *stochastic_branches*: 4D-map defining the solve's **forecast branches** — the probability-weighted possible futures. Index columns: *period*, *branch*, *analysis_time* (the branch's start timestep), *realized* (yes/no), and the value is the branch's **probability weight**. The weights are normalized to sum to one across the forecast branches at each start time. The *realized* flag is an **optional designation** (at most one branch per start time) marking which branch's data are treated as the actuals for the committed / realized-dispatch results; a realized-flagged branch is **not** a weighted member of the forecast fan. See 'How to use stochastics' for more information.
+    - *stochastic_invest_method*: `none` (default) or `recourse`. `none` makes a single shared here-and-now investment plan across all forecast branches (operations still fan per branch). `recourse` gives per-branch (wait-and-see) investment: each forecast branch invests on its own data at and after the branching period, with probability-weighted investment costs and per-branch investment limits, and reports EVPI/VSS-style stochastic value. Forecast-branch (unrealized) investments are output only under `model.output_horizon` (a debug flag). Incompatible with Benders decomposition. See 'How to use stochastics' for the interpretation caveats.
   
   - For commercial solvers:
 
@@ -530,6 +531,44 @@ For `reserve__upDown__group` entities:
 - `reservation` - [MW] Amount of reserve required. Constant or time.
 - `penalty_reserve` - [CUR/MW] Penalty cost for not fulfilling the reserve requirement, per MW of shortfall and hour. Constant. Default 5000 (applied to every reserve group without a value of its own, so a reserve requirement is never free to leave unmet). The unmet part (reserve shortfall) can cover the whole requirement of every method and is always priced with this penalty: for a timeseries requirement the shortfall is at most `reservation`; for a dynamic requirement at most the sum of the participating flows' capacities × `increase_reserve_ratio`; for a large_failure requirement at most the sum of the failing flows' capacities × `large_failure_ratio` (capacity = existing plus the most that can be invested by that period; with unlimited investment `max_flow_for_unconstrained_variables` is used). A group combining methods adds these up.
 - `increase_reserve_ratio` - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.
+- `reserve_duration` - [h] Time span over which committed reserve power must be sustainable from storage. Constant. Absent or 0 means the reserve is instantaneous-power-only (legacy behaviour); no storage-energy coupling is added.
+
+#### Storage-backed reserve energy adequacy (`reserve_duration`)
+
+By default a reserve reservation only withholds *power* (MW of headroom) from
+the provider. `reserve_duration` additionally requires the provider to hold
+enough *energy* to actually sustain that committed power for the given number
+of hours, when the provider draws on (upward reserve) or charges into
+(downward reserve) a storage node. This is a single-scalar simplification of
+Backbone's duty-cycle formulation (self-discharge over the window is ignored
+in this first version).
+
+For each committed reserve MW the required energy is `reservation_MW ×
+reserve_duration`, corrected by the provider's efficiency:
+
+- **Upward / discharge** — the storage node is the provider's *source*, so the
+  energy drawn is divided by the efficiency (`÷ η`): a lossy discharge must
+  draw more stored energy to deliver the same MW. The stored energy floor is
+  `v_state · unitsize ≥ Σ reservation_MW · reserve_duration / η`.
+- **Downward / charge** — the storage node is the provider's *sink*, so the
+  energy stored is multiplied by the efficiency (`× η`): a lossy charge stores
+  less per MW of charging. The free-headroom bound is
+  `v_state · unitsize + Σ reservation_MW · reserve_duration · η ≤ capacity`
+  (with the same invest/divest capacity replication as the storage state
+  bound).
+
+The coupling is storage-only: reserve provided by non-storage units (e.g. a
+gas turbine drawing on a fuel commodity) is unaffected. The obligation uses the
+provider's full committed MW — the trust derating (`reliability`) is
+deliberately excluded, since the physical energy required is independent of how
+much of the reservation is counted towards the requirement.
+
+Limitation under representative periods: the constraints reference the
+intra-representative-period storage state (`v_state`) only. Under the
+representative-period *blended-weights* storage modes the seasonal inter-period
+state is bounded separately and is not aligned to the reserve's time index, so
+`reserve_duration` couples reserve to intra-period state only — matching
+FlexTool's own intra-period capacity approximation.
 
 ### Reserve provision by units
 

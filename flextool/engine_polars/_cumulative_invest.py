@@ -722,6 +722,57 @@ def _emit_group_invest_period(m, d, vars: dict,
 # ---------------------------------------------------------------------------
 # Group invest / divest — total scope
 
+def _emit_group_total_divest_cap(
+    m, *, legacy_name: str, path_name: str, outer: pl.DataFrame,
+    ge: pl.DataFrame, axis: str, var, unitsize, cap_param,
+    sense: str, d_leaf,
+) -> None:
+    """Per-path divest-group total cap (design §7.2 (G) item 4).
+
+    The divest group total sums ``v_divest * unitsize`` over ALL ``d``
+    (``edd_set`` is None on the divest side) grouped by ``g`` — under
+    recourse that cross-scenario double-counts one cap.  When more than
+    one scenario leaf covers the divest periods (recourse, sense
+    ``"<="``), emit ``path_name`` indexed by ``(g, leaf)`` with the
+    inner sum masked to each leaf's periods.  Single leaf — deterministic
+    / flag-off — or the ``">="`` floor keeps the legacy ``over=g`` shape
+    and NAME (byte-parity; the design registers only the ``max`` path
+    cap).
+    """
+    dl = None
+    if (sense == "<=" and d_leaf is not None
+            and getattr(d_leaf, "height", 0) > 0):
+        inv_periods = var.frame.select("d").unique()
+        _d_dt = var.frame.schema["d"]
+        dlx = d_leaf
+        if dlx.schema["d"] != _d_dt:
+            dlx = dlx.with_columns(pl.col("d").cast(_d_dt, strict=False))
+        dl = dlx.join(inv_periods, on="d", how="semi")
+    n_leaves = (dl["leaf"].n_unique()
+                if dl is not None and dl.height > 0 else 1)
+    if n_leaves <= 1:
+        m.add_cstr(
+            legacy_name,
+            over      = outer,
+            sense     = sense,
+            lhs_terms = {"divest_grp": Sum(Where(var * unitsize, ge),
+                                           over=(axis, "d"))},
+            rhs_terms = {"cap": cap_param},
+        )
+        return
+    mask = ge.join(dl, how="cross")
+    over_path = outer.join(dl.select("leaf").unique().sort("leaf"),
+                           how="cross")
+    m.add_cstr(
+        path_name,
+        over      = over_path,
+        sense     = sense,
+        lhs_terms = {"divest_grp": Sum(Where(var * unitsize, mask),
+                                       over=(axis, "d"))},
+        rhs_terms = {"cap": cap_param},
+    )
+
+
 def _emit_group_invest_total(m, d, vars: dict,
                               kind: str, sense: str) -> None:
     """Mod:
@@ -852,16 +903,18 @@ def _emit_group_invest_total(m, d, vars: dict,
                 pl.col("p").is_in(v_p.frame["p"].unique())) \
                 .filter(pl.col("g").is_in(g_set["g"].unique()))
             if ge_p.height > 0:
-                lhs = Sum(
-                    Where(v_p * d.p_unitsize, ge_p),
-                    over=("p", "d"),
-                )
-                m.add_cstr(
-                    f"{name}_p",
-                    over      = outer,
-                    sense     = sense,
-                    lhs_terms = {"divest_grp": lhs},
-                    rhs_terms = {"cap": cap_param},
+                _emit_group_total_divest_cap(
+                    m,
+                    legacy_name = f"{name}_p",
+                    path_name   = f"{name}_path_p",
+                    outer       = outer,
+                    ge          = ge_p,
+                    axis        = "p",
+                    var         = v_p,
+                    unitsize    = d.p_unitsize,
+                    cap_param   = cap_param,
+                    sense       = sense,
+                    d_leaf      = getattr(d, "d_leaf", None),
                 )
         # Node branch
         if v_n is not None and d.p_state_unitsize is not None:
@@ -876,16 +929,18 @@ def _emit_group_invest_total(m, d, vars: dict,
                 pl.col("n").is_in(v_n.frame["n"].unique())) \
                 .filter(pl.col("g").is_in(g_set["g"].unique()))
             if ge_n.height > 0:
-                lhs = Sum(
-                    Where(v_n * us_n, ge_n),
-                    over=("n", "d"),
-                )
-                m.add_cstr(
-                    f"{name}_n",
-                    over      = outer,
-                    sense     = sense,
-                    lhs_terms = {"divest_grp": lhs},
-                    rhs_terms = {"cap": cap_param},
+                _emit_group_total_divest_cap(
+                    m,
+                    legacy_name = f"{name}_n",
+                    path_name   = f"{name}_path_n",
+                    outer       = outer,
+                    ge          = ge_n,
+                    axis        = "n",
+                    var         = v_n,
+                    unitsize    = us_n,
+                    cap_param   = cap_param,
+                    sense       = sense,
+                    d_leaf      = getattr(d, "d_leaf", None),
                 )
 
 

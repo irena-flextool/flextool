@@ -72,6 +72,12 @@ if TYPE_CHECKING:
     from flextool.engine_polars._solve_state import RunnerState
 
 
+# Module-level logger for advisories that must survive the cascade's
+# deliberate ERROR-silencing of the per-run ``state.logger`` (see
+# :meth:`RecursiveSolveBuilder._warn_if_rolling_carries_invest`).
+_MODULE_LOGGER = logging.getLogger(__name__)
+
+
 # ---------------------------------------------------------------------------
 # ParentSolveInfo — walked through the tree
 # ---------------------------------------------------------------------------
@@ -104,6 +110,11 @@ class RecursiveSolveBuilder:
     def __init__(self, state: "RunnerState") -> None:
         self.state = state
         self.logger: logging.Logger = state.logger
+        # Solve names already warned about carrying investment intent into a
+        # flat rolling_window solve (see :meth:`_warn_if_rolling_carries_invest`).
+        # Keyed by base solve name so the warning fires once per PARENT rolling
+        # solve, never once per roll.
+        self._rolling_invest_warned: set[str] = set()
 
     # ------------------------------------------------------------------
     # Rolling expansion
@@ -323,6 +334,65 @@ class RecursiveSolveBuilder:
         return filtered
 
     # ------------------------------------------------------------------
+    # Investment-intent-in-rolling warning
+    # ------------------------------------------------------------------
+
+    def _warn_if_rolling_carries_invest(self, solve: str) -> None:
+        """Warn once when a flat rolling solve is authored with invest intent.
+
+        Investment in FlexTool is period-granular (``v_invest`` is indexed by
+        ``(p, d)`` / ``(n, d)`` with no timestep axis) and a rolling-window
+        solve advances PAST the beginning of each period as it jumps, so the
+        synthetic per-roll sub-solves (``<base>_roll_<N>``) never anchor an
+        invest period — every invest-set resolves to ``None`` and NO
+        ``v_invest`` variable is built.  This is silent: the rolling solve runs
+        to optimum but simply omits investment.
+
+        The intended pattern is to run a SEPARATE investment solve BEFORE the
+        rolling (operational) solve and hand its realized capacity forward;
+        rolling is for operational modelling only.
+
+        This fires at most once per PARENT rolling solve (keyed on *solve*),
+        never per roll, and ONLY when the solve ITSELF authors investment
+        intent — ``invest_periods`` non-empty, ``realized_invest_periods``
+        non-empty, or ``stochastic_invest_method != "none"``.  A rolling solve
+        that merely sits downstream of an invest solve (invest-eligible
+        entities exist in the model, but the rolling solve authors none of
+        these knobs) does NOT trigger it.  WARNING only — it changes no LP,
+        frame, or output.
+        """
+        if solve in self._rolling_invest_warned:
+            return
+        has_invest_periods = bool(self.state.solve.invest_periods.get(solve))
+        has_realized_invest = bool(
+            self.state.solve.realized_invest_periods.get(solve)
+        )
+        stochastic_invest = (
+            self.state.solve.stochastic_invest_method_for(solve) != "none"
+        )
+        if not (has_invest_periods or has_realized_invest or stochastic_invest):
+            return
+        self._rolling_invest_warned.add(solve)
+        # Emit via a MODULE-level logger, NOT ``self.logger``: the orchestrator
+        # deliberately raises ``state.logger`` to ERROR during the cascade
+        # (``_orchestration._drive_cascade``) to silence per-solve chatter, so
+        # a WARNING through ``self.logger`` would be filtered and never seen.
+        # This advisory must survive that silencing, so it routes through
+        # ``_MODULE_LOGGER`` (effective level inherited from root).
+        _MODULE_LOGGER.warning(
+            "Solve '%s' is a rolling_window solve authored with investment "
+            "intent (invest_periods / realized_invest_periods / "
+            "stochastic_invest_method), but investment is NOT built in a flat "
+            "rolling_window solve: investment is period-granular (v_invest has "
+            "no timestep axis) and a rolling solve advances past period "
+            "beginnings, so no v_invest variable is created and the "
+            "investment intent is silently ignored. Run a separate investment "
+            "solve BEFORE this rolling solve and hand its realized capacity "
+            "forward; rolling solves are for operational modelling only.",
+            solve,
+        )
+
+    # ------------------------------------------------------------------
     # Rolling-solve dispatcher
     # ------------------------------------------------------------------
 
@@ -341,6 +411,10 @@ class RecursiveSolveBuilder:
         roll's first timestep + the parent's jump as the child's
         ``start`` / ``duration``.
         """
+        # Log-only guard: a flat rolling solve silently drops any investment
+        # intent authored on the solve itself (fires once per parent solve).
+        self._warn_if_rolling_carries_invest(solve)
+
         # Lazy import: keep the cross-module dependency one-way at
         # import time; both modules are needed only when a parent's roll
         # constrains a child.

@@ -311,6 +311,288 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
 
 
 # ---------------------------------------------------------------------------
+# Slice H — construction lead time: commissioning-year helper
+# ---------------------------------------------------------------------------
+
+# Two-level default: an entity with a lead time but no explicit method
+# commissions at the closest seam; with no lead time it is immediate.
+_CONSTRUCTION_METHOD_DEFAULT_LAG = "closest_seam"
+_CONSTRUCTION_METHOD_IMMEDIATE = "immediate"
+
+
+def _construction_method_with_default_lf(source: "InputSource",
+                                             lead_lf: pl.LazyFrame,
+                                             ) -> pl.LazyFrame:
+    """Lazy ``[e, d, L, method]`` — resolve ``construction_lead_time_method``
+    with the two-level default (Slice H design §2.4 step 2 / §6.2).
+
+    ``lead_lf`` is the per-(e, d) resolved lead time ``[e, d, L]``.  An
+    explicit method (per entity) always wins.  Where unset, the method
+    resolves to ``immediate`` when ``L == 0`` and ``closest_seam`` when
+    ``L > 0`` — so existing (L=0) models stay byte-identical while a set
+    lead time enables the lag without a mandatory method entry.  The
+    resolution is per-row because ``L`` may be period-varying (a Map).
+    """
+    explicit = (_entity_method_lf(source, "construction_lead_time_method")
+                    .filter(pl.col("method").is_not_null())
+                    .unique(subset=["e"]))
+    # Align the explicit-method ``e`` (String from CSV) to lead_lf.e's
+    # dtype (may be Enum on the post-load path) before the join.
+    e_dt = lead_lf.collect_schema().get("e", pl.Utf8)
+    if e_dt != pl.Utf8:
+        explicit = explicit.with_columns(pl.col("e").cast(e_dt, strict=False))
+    return (lead_lf
+              .join(explicit, on="e", how="left")
+              .with_columns(
+                  method=pl.when(pl.col("method").is_not_null())
+                           .then(pl.col("method"))
+                           .when(pl.col("L") > 0.0)
+                           .then(pl.lit(_CONSTRUCTION_METHOD_DEFAULT_LAG))
+                           .otherwise(pl.lit(_CONSTRUCTION_METHOD_IMMEDIATE)),
+              ))
+
+
+def commissioning_year_lf(source: "InputSource",
+                              active_solve: str | None,
+                              anchor_ed_lf: pl.LazyFrame,
+                              period_in_use: list[str],
+                              *,
+                              workdir: Path | None = None,
+                              provider: "object | None" = None,
+                              ) -> pl.LazyFrame | None:
+    """Lazy ``[e, d, yr_c]`` — the commissioning year ``c = snap(yr(o)+L)``
+    per (entity, order-period ``o``), or ``None`` when no entity has a
+    lag-active method (Slice H design §2.4).
+
+    ``d`` is the order period ``o``.  ``yr_c`` is the cumulative-year
+    coordinate of the seam the ordered capacity commissions on, snapped per
+    ``construction_lead_time_method``:
+
+    * ``previous_seam`` — last seam ``<= t*``;
+    * ``next_seam``     — first seam ``>= t*`` (``+inf`` if none, i.e. the
+      order buys no in-horizon capacity — OQ-7);
+    * ``closest_seam``  — nearer of the two, exact tie -> the later seam;
+      snaps to the last seam when ``t*`` is beyond the horizon.
+
+    where ``t* = yr(o) + L``.  Rows resolving to ``immediate`` (or where the
+    snapped ``yr_c`` equals ``yr(o)`` — e.g. ``L == 0``) are dropped: they
+    must not perturb the availability walk (the walk keeps ``yr_d`` for any
+    (e, d) absent from this frame, giving byte-parity).  Returns ``None`` if
+    the resulting frame is empty.
+
+    **[F2] Seam-calendar identity under recourse.**  The seam years are
+    read from :func:`._derived_params._p_years_d_lf` through the *identical*
+    provider/workdir resolution :func:`._derived_walks.period_walk_iterator`
+    uses (the Slice-D fallback block), so that under recourse a branch order
+    period's ``yr(o)`` lands on the same calendar the walk compares
+    ``yr_dall`` against.  Reproduced verbatim below.
+    """
+    if not period_in_use:
+        return None
+    # [F2] Mirror period_walk_iterator's provider/workdir fallback block
+    # (_derived_walks.py:269-276) VERBATIM so this helper's _p_years_d_lf
+    # call hits the identical calendar as the walk's yr_dall.
+    if provider is None:
+        from flextool.engine_polars._derived_params import (
+            _recourse_walk_provider,
+            _recourse_walk_workdir,
+        )
+        provider = _recourse_walk_provider()
+        if provider is not None and workdir is None:
+            workdir = _recourse_walk_workdir()
+
+    # [F2b] Whether this model genuinely configures a lag (some entity has
+    # ``construction_lead_time > 0``).  Gates the loud-on-desync guards below
+    # so a no-lag model stays byte-identical (returns ``None`` silently) while
+    # a lag-configured model can never SILENTLY produce an empty commissioning
+    # frame from an unresolvable seam calendar — the exact silent-no-lag the
+    # Slice H guards exist to prevent (e.g. a stale recourse walker Provider
+    # resolving ``p_years_d.csv`` from the wrong solve → no in-use seam).
+    _lag_cfg = _construction_lag_configured(source)
+
+    from ._derived_params import _p_years_d_lf
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
+    if pyd_lf is None:
+        if _lag_cfg:
+            from ._solve_state import CommissioningLagError
+            raise CommissioningLagError(
+                "commissioning_year_lf could not resolve a period-year "
+                "calendar (_p_years_d_lf returned None) on a model with a "
+                "configured construction_lead_time (> 0); refusing to "
+                "silently solve the unlagged model (Slice H F2b).")
+        return None
+
+    # Per-(e, o) lead time over the anchor grid, then resolve the method.
+    lead_lf = (_resolve_per_period_lf(
+                    _per_entity_param_lf(source, "construction_lead_time"),
+                    anchor_ed_lf, fill=0.0)
+                 .rename({"value": "L"})
+                 .select("e", "d", "L"))
+    lead_lf = _construction_method_with_default_lf(source, lead_lf)
+
+    # Order-period year yr(o).  Align pyd.d to the anchor d dtype and
+    # fill_null(0.0) exactly as the walk does for yr_d (calendar identity).
+    d_dt = anchor_ed_lf.collect_schema().get("d", pl.Utf8)
+    pyd_d = pyd_lf.rename({"yr": "yr_o"})
+    if d_dt != pl.Utf8:
+        pyd_d = pyd_d.with_columns(pl.col("d").cast(d_dt, strict=False))
+    work = (lead_lf
+              .join(pyd_d, on="d", how="left")
+              .with_columns(pl.col("yr_o").fill_null(0.0)))
+
+    # Seam set S = distinct period-boundary years over ``period_in_use``
+    # (design §2.1) — the values ``yr_dall`` actually takes in the walk.
+    # Restricting to period_in_use is load-bearing: a stray out-of-horizon
+    # period in ``p_years_d`` would otherwise become a phantom ``hi`` seam
+    # and corrupt closest/next snapping (design §2.2 relies on S being
+    # exactly the in-use year set).  Branch-invariant as a set (branch
+    # copies duplicate anchor years).
+    seams = (pyd_lf
+               .filter(pl.col("d").cast(pl.Utf8).is_in(period_in_use))
+               .select(pl.col("yr").alias("seam"))
+               .unique()
+               .sort("seam"))
+
+    # [F2b] An EMPTY seam set on a lag-configured model is a calendar
+    # DESYNC — none of the in-use periods resolved a year (e.g. the seam
+    # calendar came from the wrong solve's ``p_years_d.csv`` via a stale
+    # recourse walker Provider, whose periods don't intersect
+    # ``period_in_use``).  Every snap would then collapse to null → an empty
+    # frame → the lag SILENTLY vanishes.  This is distinct from a legitimate
+    # round-to-zero / immediate model, whose seam set is non-empty (the lag
+    # simply snaps back onto the order period).  Surface it loudly.
+    if _lag_cfg and seams.select(pl.len()).collect().item() == 0:
+        from ._solve_state import CommissioningLagError
+        raise CommissioningLagError(
+            "commissioning_year_lf resolved an EMPTY seam set over "
+            "period_in_use on a model with a configured "
+            "construction_lead_time (> 0) — the period-year calendar does "
+            "not cover any in-use period (calendar desync, e.g. a stale "
+            "recourse walker Provider); refusing to silently solve the "
+            "unlagged model (Slice H F2b).")
+
+    inf = float("inf")
+    work = (work
+              .with_columns(t_star=pl.col("yr_o") + pl.col("L"))
+              .sort("t_star"))
+    # lo = last seam <= t*  (always exists: yr(o) <= t*, yr(o) in S).
+    work = work.join_asof(
+        seams.rename({"seam": "lo"}),
+        left_on="t_star", right_on="lo", strategy="backward")
+    # hi = first seam >= t*  (null when t* is beyond the last seam).
+    work = work.join_asof(
+        seams.rename({"seam": "hi"}),
+        left_on="t_star", right_on="hi", strategy="forward")
+
+    closest = (pl.when(pl.col("hi").is_null())
+                 .then(pl.col("lo"))
+                 .when((pl.col("t_star") - pl.col("lo"))
+                       < (pl.col("hi") - pl.col("t_star")))
+                 .then(pl.col("lo"))
+                 .otherwise(pl.col("hi")))
+    next_seam = (pl.when(pl.col("hi").is_null())
+                   .then(pl.lit(inf))
+                   .otherwise(pl.col("hi")))
+    yr_c = (pl.when(pl.col("method") == "previous_seam")
+              .then(pl.col("lo"))
+              .when(pl.col("method") == "next_seam")
+              .then(next_seam)
+              .when(pl.col("method") == "closest_seam")
+              .then(closest)
+              .otherwise(pl.col("yr_o")))  # immediate / unknown -> no lag
+
+    out = (work
+             .with_columns(yr_c=yr_c.cast(pl.Float64))
+             # Drop immediate rows and any snap that lands on the order
+             # period (L=0, or a snap back to yr(o)) — they must not
+             # perturb the walk (byte-parity by omission).
+             .filter((pl.col("method") != "immediate")
+                     & (pl.col("yr_c") != pl.col("yr_o")))
+             .select("e", "d", "yr_c"))
+
+    out_df = out.collect()
+    if out_df.height == 0:
+        return None
+    return out_df.lazy()
+
+
+def _construction_lag_configured(source: "InputSource") -> bool:
+    """True when some entity carries a non-default (> 0)
+    ``construction_lead_time`` — i.e. the model genuinely configures a
+    commissioning lag (Slice H MINOR-3).
+
+    Used to decide whether a :func:`commissioning_year_lf` failure must be
+    LOUD (a lag-configured model → surface the bug rather than silently
+    solve the wrong, unlagged model) or is harmless (no lag anywhere → the
+    helper legitimately returns ``None`` and the walk keeps ``yr_d``, so a
+    swallow-to-``None`` is byte-parity-safe).  Deliberately conservative:
+    any ``construction_lead_time > 0`` counts, even paired with an explicit
+    ``immediate`` method, so a real misconfiguration is never masked.
+    """
+    try:
+        lead = _per_entity_param_lf(source, "construction_lead_time")
+        return bool(
+            lead.select((pl.col("value") > 0.0).any().alias("has"))
+                .collect()
+                .item())
+    except Exception:  # pragma: no cover — defensive: absence == no lag
+        return False
+
+
+def assert_no_forced_out_of_horizon_commission(
+        source: "InputSource",
+        commission_lf: pl.LazyFrame | None,
+        ) -> None:
+    """[F5] Forbid a FORCED order whose commissioning is out-of-horizon.
+
+    An order whose ``next_seam`` commissioning falls beyond the last seam
+    gets ``yr_c = +inf`` (buys no in-horizon capacity — OQ-7).  For a
+    *voluntary* order that is harmless (the model just never picks it).
+    But when ``invest_forced`` or ``invest_min_period`` PINS
+    ``v_invest >= target`` at that order period, the solve would pay the
+    annuity ``[yr_d, yr_d+life)`` for capacity it never receives (or the
+    forced target becomes unmeetable).  Raise a clear
+    :class:`FlexToolConfigError` rather than solve a silently-degenerate
+    model (design §6 OQ-7 F5).
+
+    ``commission_lf`` is the frame from :func:`commissioning_year_lf`
+    (``None`` -> nothing to check).  Only its ``+inf`` rows are
+    out-of-horizon; ``closest_seam`` / ``previous_seam`` always snap to an
+    in-horizon seam.
+    """
+    if commission_lf is None:
+        return
+    oo = (commission_lf
+            .filter(pl.col("yr_c").is_infinite())
+            .select("e", "d"))
+    if oo.collect().height == 0:
+        return
+    # Does invest_forced or invest_min_period pin v_invest > 0 at (e, o)?
+    forced_parts: list[pl.LazyFrame] = []
+    for name in ("invest_forced", "invest_min_period"):
+        resolved = _resolve_per_period_lf(
+            _per_entity_param_lf(source, name), oo, fill=0.0)
+        forced_parts.append(
+            resolved.filter(pl.col("value") > 0.0).select("e", "d"))
+    forced = pl.concat(forced_parts, how="vertical").unique()
+    bad = oo.join(forced, on=["e", "d"], how="inner").collect()
+    if bad.height > 0:
+        pairs = ", ".join(f"({e}, {d})"
+                          for e, d in bad.select("e", "d").rows())
+        from flextool.engine_polars._solve_state import FlexToolConfigError
+        raise FlexToolConfigError(
+            "construction_lead_time_method=next_seam pins a forced "
+            "investment (invest_forced / invest_min_period) whose "
+            "commissioning falls beyond the model horizon for: "
+            f"{pairs}.  The forced capacity would never be delivered "
+            "in-horizon while still charged its annuity from the order "
+            "period.  Either shorten the lead time, move the order earlier, "
+            "extend the horizon, drop the forced/min-period requirement, or "
+            "use a non-next_seam method (design §6 OQ-7 F5)."
+        )
+
+
+# ---------------------------------------------------------------------------
 # §3.7.0 — entityInvest / entityDivest / e_invest_total / e_divest_total
 # ---------------------------------------------------------------------------
 
@@ -387,6 +669,9 @@ def edd_history_choice_lf(source: "InputSource",
                                   period_with_history: list[str],
                                   period_in_use: list[str],
                                   workdir: Path | None = None,
+                                  *,
+                                  lineage: pl.DataFrame | None = None,
+                                  commission_lf: pl.LazyFrame | None = None,
                                   ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_choice``.
 
@@ -394,10 +679,14 @@ def edd_history_choice_lf(source: "InputSource",
     ``lifetime_method = reinvest_choice``::
 
         keep iff pdy[d] >= pdy[d_h] AND pdy[d] < pdy[d_h] + life[e, d_h]
+
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
-        method="reinvest_choice", bounded=True, workdir=workdir)
+        method="reinvest_choice", bounded=True, workdir=workdir,
+        lineage=lineage, commission_lf=commission_lf)
 
 
 def edd_history_automatic_lf(source: "InputSource",
@@ -405,6 +694,9 @@ def edd_history_automatic_lf(source: "InputSource",
                                        period_with_history: list[str],
                                        period_in_use: list[str],
                                        workdir: Path | None = None,
+                                       *,
+                                       lineage: pl.DataFrame | None = None,
+                                       commission_lf: pl.LazyFrame | None = None,
                                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_automatic`` —
     entities with ``lifetime_method = reinvest_automatic``.
@@ -412,10 +704,14 @@ def edd_history_automatic_lf(source: "InputSource",
     Mirror of ``invest_divest_sets.py:245-246``::
 
         keep iff pdy[d] >= pdy[d_h]
+
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
-        method="reinvest_automatic", bounded=False, workdir=workdir)
+        method="reinvest_automatic", bounded=False, workdir=workdir,
+        lineage=lineage, commission_lf=commission_lf)
 
 
 def edd_history_no_investment_lf(source: "InputSource",
@@ -423,15 +719,22 @@ def edd_history_no_investment_lf(source: "InputSource",
                                             period_with_history: list[str],
                                             period_in_use: list[str],
                                             workdir: Path | None = None,
+                                            *,
+                                            lineage: pl.DataFrame | None = None,
+                                            commission_lf: pl.LazyFrame | None = None,
                                             ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for ``edd_history_no_investment``.
 
     Mirror of ``invest_divest_sets.py:247-248``: same predicate as
     ``edd_history_choice`` but for the ``no_investment`` cohort.
+
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
-        method="no_investment", bounded=True, workdir=workdir)
+        method="no_investment", bounded=True, workdir=workdir,
+        lineage=lineage, commission_lf=commission_lf)
 
 
 def _edd_history_lf_for(source: "InputSource",
@@ -442,9 +745,15 @@ def _edd_history_lf_for(source: "InputSource",
                               method: str,
                               bounded: bool,
                               workdir: Path | None = None,
+                              lineage: pl.DataFrame | None = None,
+                              commission_lf: pl.LazyFrame | None = None,
                               ) -> pl.LazyFrame:
     """Internal helper: build edd_history sub-set for a single
     lifetime_method cohort.
+
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.  ``commission_lf`` shifts
+    this cohort's availability window to the commissioning year (Slice H).
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
@@ -478,14 +787,14 @@ def _edd_history_lf_for(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
             life_lf=life_lf, factor_side=None,
-            workdir=workdir)
+            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
     else:
         walk = period_walk_iterator(
             source, active_solve, anchor,
             period_in_use, period_in_use,
             window_method=WindowMethod.UNBOUNDED_FORWARD,
             life_lf=None, factor_side=None,
-            workdir=workdir)
+            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
     return walk.pipe(rename_to_axis, {"d": "d_history", "d_all": "d"})
 
 
@@ -494,6 +803,9 @@ def edd_history_lf(source: "InputSource",
                        period_with_history: list[str],
                        period_in_use: list[str],
                        workdir: Path | None = None,
+                       *,
+                       lineage: pl.DataFrame | None = None,
+                       commission_lf: pl.LazyFrame | None = None,
                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_history, d]`` for the union ``edd_history`` set.
 
@@ -502,6 +814,9 @@ def edd_history_lf(source: "InputSource",
     walks (:func:`edd_history_choice_lf`,
     :func:`edd_history_automatic_lf`,
     :func:`edd_history_no_investment_lf`).
+
+    ``lineage`` / ``commission_lf`` — see
+    :func:`._derived_walks.period_walk_iterator`.
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
@@ -512,13 +827,16 @@ def edd_history_lf(source: "InputSource",
     parts = [
         edd_history_choice_lf(source, active_solve,
                                   period_with_history, period_in_use,
-                                  workdir),
+                                  workdir, lineage=lineage,
+                                  commission_lf=commission_lf),
         edd_history_automatic_lf(source, active_solve,
                                        period_with_history, period_in_use,
-                                       workdir),
+                                       workdir, lineage=lineage,
+                                       commission_lf=commission_lf),
         edd_history_no_investment_lf(source, active_solve,
                                             period_with_history, period_in_use,
-                                            workdir),
+                                            workdir, lineage=lineage,
+                                            commission_lf=commission_lf),
     ]
     return pl.concat(parts, how="vertical").unique()
 
@@ -669,6 +987,9 @@ def edd_invest_set_lf(source: "InputSource",
                               period_with_history: list[str],
                               period_in_use: list[str],
                               workdir: Path | None = None,
+                              *,
+                              lineage: pl.DataFrame | None = None,
+                              commission_lf: pl.LazyFrame | None = None,
                               ) -> pl.LazyFrame:
     """Lazy ``[e, d_invest, d]`` — ``edd_history_invest`` filtered to
     ``(e, d_invest) ∈ ed_invest``.
@@ -682,10 +1003,14 @@ def edd_invest_set_lf(source: "InputSource",
     every entity with a recognised lifetime_method; this helper filters
     to those whose ``d_history`` (renamed ``d_invest``) is also a
     valid invest decision in the current solve.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     edd = edd_history_lf(source, active_solve,
                               period_with_history, period_in_use,
-                              workdir)
+                              workdir, lineage=lineage,
+                              commission_lf=commission_lf)
     inv_pairs = ed_invest_lf.pipe(rename_to_axis, {"d": "d_history"})
     return (edd
               .join(inv_pairs, on=["e", "d_history"], how="inner")
@@ -698,6 +1023,9 @@ def edd_invest_lookback_set_lf(source: "InputSource",
                                        ed_invest_lf: pl.LazyFrame,
                                        period_in_use: list[str],
                                        workdir: Path | None = None,
+                                       *,
+                                       lineage: pl.DataFrame | None = None,
+                                       commission_lf: pl.LazyFrame | None = None,
                                        ) -> pl.LazyFrame:
     """Lazy ``[e, d_invest, d]`` — ``edd_invest_lookback_set``.
 
@@ -722,6 +1050,9 @@ def edd_invest_lookback_set_lf(source: "InputSource",
     The eager helper now delegates to this lazy port — the previous
     Python ``for r in out.iter_rows`` lifetime gate is replaced with
     a fully lazy join + filter on the shared walker.
+
+    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_in_use:
         return pl.LazyFrame(schema={
@@ -781,7 +1112,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.STRICT_LOOKBACK_BOUNDED,
             life_lf=life_lf, factor_side=None,
-            workdir=workdir)
+            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
 
     # Unbounded cohort — strict-lookback only, no lifetime cap.
     unbounded_anchor = anchor_lf.join(unbounded_e, on="e", how="inner")
@@ -795,7 +1126,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
             period_in_use, period_in_use,
             window_method=WindowMethod.STRICT_LOOKBACK_UNBOUNDED,
             life_lf=None, factor_side=None,
-            workdir=workdir)
+            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
 
     return (pl.concat([bounded_walk, unbounded_walk], how="vertical")
               .pipe(rename_to_axis, {"d": "d_invest", "d_all": "d"})

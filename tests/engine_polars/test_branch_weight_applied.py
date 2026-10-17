@@ -15,9 +15,13 @@ nothing exercised non-unit weights end-to-end into the objective.  This
 test injects non-unit weights and asserts:
 
 1. **Normalisation reaches the CSV / FlexData.**  Injecting input
-   weights ``realized=1 / upper=2 / lower=3 / mid=4`` (sum 10)
-   produces sibling-normalised ``pd_branch_weight`` /
-   ``pdt_branch_weight`` of ``0.1 / 0.2 / 0.3 / 0.4`` — NOT a dense 1.0.
+   weights ``realized=1 / upper=2 / lower=3 / mid=4`` produces
+   sibling-normalised ``pd_branch_weight`` / ``pdt_branch_weight`` of
+   ``0 / 2⁄9 / 3⁄9 / 4⁄9`` — NOT a dense 1.0.  Under the forecasts-only
+   model the ``realized`` branch is the realized:yes designation (it owns
+   the real period name, a weight-0 phantom) and is PULLED from the
+   weighted fan; the three FORECASTS ``upper`` / ``lower`` / ``mid``
+   (input 2/3/4) renormalise among themselves to 2⁄9 / 3⁄9 / 4⁄9.
    The normalisation is done by
    ``apply_derived_g`` →
    ``_derived_branch.apply_branch_cluster`` (``pd_branch_weight_lf`` /
@@ -65,8 +69,15 @@ if str(TESTS_DIR) not in sys.path:
 
 
 # Normalised branch weights expected once the cascade folds the injected
-# input weights ``1 / 2 / 3 / 4`` (sum 10): each value is ``w_b / sum_b``.
-_BASE_NORMALISED_WEIGHTS = {0.1, 0.2, 0.3, 0.4}
+# input weights ``realized=1 / upper=2 / lower=3 / mid=4`` under the
+# forecasts-only rule (R2).  ``phantom_periods`` is purely STRUCTURAL: the
+# weight-0 phantom is the real-named TRUNK period (its ``(d,d)`` self-row
+# that also fans) — NOT the branch merely *named* ``realized``.  The 2day
+# fixture is a genuine 4-forecast fan (realized retagged to a forecast), so
+# all four named branches are forecast MEMBERS that renormalise among
+# themselves over sum 10 → 0.1 / 0.2 / 0.3 / 0.4; the CSV value set also
+# carries the phantom trunk 0.0 member.
+_BASE_NORMALISED_WEIGHTS = {0.0, 0.1, 0.2, 0.3, 0.4}
 
 # Two sum-preserving (sum == 10) input-weight distributions over the
 # four branches.  The redistribution keeps the denominator constant so
@@ -192,7 +203,8 @@ def swapped_run(tmp_path_factory, test_solver_config_dir):
 
 def test_branch_weights_normalised_in_csv_and_flexdata(base_run):
     """NORMALISATION: injected 1/2/3/4 input weights fold to the
-    sibling-normalised 0.1/0.2/0.3/0.4 in both emitted weight CSVs —
+    forecasts-only sibling-normalised {0, 2⁄9, 3⁄9, 4⁄9} in both emitted
+    weight CSVs (realized pulled → phantom 0; forecasts renormalise) —
     NOT a dense 1.0 (which is what a non-stochastic / clobbered path
     would emit)."""
     workdir, _sol = base_run

@@ -754,6 +754,21 @@
   # realised profile). After the path fix to input/group__process.csv,
   # the LP is constrained by min(per-branch wind profile) per step,
   # raising thermal dispatch by ~47%.
-  expected_objective: 269.406895209
+  #
+  # Re-grounded 269.406895209 → 268.081475165 for the forecast-to-forecast
+  # NA change (R-NA): the trunk is de-anchored and the ties now couple only
+  # the forecasts to each other (star to a reference forecast), a RELAXATION
+  # of the old trunk==f1==f2==f3 star, so the new optimum is ≤ the old.
+  #
+  # Re-grounded 268.081475165 → 66.9291187913 (R2 + R3 + option A): the stray
+  # ``realized`` branch is retagged to a 4th forecast (genuine 4-forecast fan,
+  # n_real=0, each 0.25); the forecasts-only R2 weight rule pulls the
+  # reveal-period self-row (phantom period1) to weight 0; and the post-process
+  # now weights every per-(d, t) operational + slack cost term by
+  # pdt_branch_weight (option A), so ``Total cost (calculated)`` equals the
+  # probability-weighted LP objective exactly (the phantom's free slack ×0 = 0;
+  # the four forecasts ×0.25 sum to the expectation).  This value IS the LP
+  # objective (summary_solve ``2day_dispatch`` row == this).
+  expected_objective: 66.9291187913
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 30.0
