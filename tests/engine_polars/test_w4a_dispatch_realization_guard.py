@@ -2,12 +2,13 @@
 
 ``solve.dispatch_realization_method`` selects how realized operations are
 produced.  ``'within_solve'`` (the schema default, today's behaviour) is
-always allowed.  ``'separate_dispatch'`` is now ACCEPTED — but ONLY for a
-single TOP-LEVEL ``single_solve`` (W4b), for which the engine
-automatically registers a deterministic realized-dispatch sibling
-``<solve>__realized_dispatch``.  Every other shape is rejected:
+always allowed.  ``'separate_dispatch'`` is ACCEPTED for a TOP-LEVEL
+``single_solve`` (W4b) OR a TOP-LEVEL ``rolling_window`` solve (OC1 rolling
+separate_dispatch) — for which the engine automatically registers a
+deterministic realized-dispatch sibling ``<solve>__realized_dispatch``
+(single-shot monolithic, or interleaved per-roll for rolling).  These
+shapes are still rejected:
 
-  * a rolling (``solve_mode != single_solve``) solve;
   * a solve that itself ``contains_solves`` children;
   * a solve nested inside another solve's ``contains_solves``;
   * any typo / unrecognised value (unchanged hard-reject).
@@ -137,9 +138,11 @@ def test_raw_guard_rejects_typos():
 # ===========================================================================
 
 
-def test_raw_guard_rejects_rolling_separate_dispatch():
-    """A rolling (``solve_mode != single_solve``) separate_dispatch solve is
-    rejected — the sibling machinery is single_solve only."""
+def test_raw_guard_accepts_rolling_separate_dispatch():
+    """A rolling_window separate_dispatch solve is now ACCEPTED (OC1 rolling
+    separate_dispatch): the sibling machinery interleaves a realized-dispatch
+    roll with each UC roll.  The contains_solves / nesting bans remain (see
+    the dedicated reject tests)."""
     from flextool.engine_polars._orchestration import (
         _dispatch_realization_raw_guard,
     )
@@ -148,10 +151,7 @@ def test_raw_guard_rejects_rolling_separate_dispatch():
         {"m": ["s"]}, {"s": "separate_dispatch"},
         solve_modes={"s": "rolling_window"},
     )
-    with pytest.raises(FlexToolConfigError) as exc:
-        _dispatch_realization_raw_guard(sc, "s")
-    msg = str(exc.value)
-    assert "single_solve" in msg and "rolling_window" in msg
+    _dispatch_realization_raw_guard(sc, "s")  # no raise — rolling is allowed
 
 
 def test_raw_guard_rejects_separate_dispatch_with_children():
@@ -190,13 +190,16 @@ def test_raw_guard_rejects_nested_separate_dispatch():
 
 
 def test_separate_dispatch_reject_message_names_solve():
+    """A still-rejected shape (a separate_dispatch solve that itself
+    ``contains_solves``) names the offending solve in the error."""
     from flextool.engine_polars._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
     sc = _solve_config_with_method(
         {"m": ["my_solve"]}, {"my_solve": "separate_dispatch"},
-        solve_modes={"my_solve": "rolling_window"},
+        solve_modes={"my_solve": "single_solve"},
+        contains_solves={"my_solve": ["child"]},
     )
     with pytest.raises(FlexToolConfigError) as exc:
         _dispatch_realization_raw_guard(sc, "my_solve")
@@ -221,7 +224,9 @@ def test_validate_model_solve_accepts_eligible_separate_dispatch():
     assert _validate_model_solve(state) == ["s_ok", "s_sep"]
 
 
-def test_validate_model_solve_rejects_rolling_separate_dispatch():
+def test_validate_model_solve_accepts_rolling_separate_dispatch():
+    """The fail-fast pass now ACCEPTS a rolling_window separate_dispatch solve
+    (OC1 rolling separate_dispatch)."""
     from flextool.engine_polars._orchestration import _validate_model_solve
 
     sc = _solve_config_with_method(
@@ -229,8 +234,7 @@ def test_validate_model_solve_rejects_rolling_separate_dispatch():
         solve_modes={"s_sep": "rolling_window"},
     )
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
-    with pytest.raises(FlexToolConfigError):
-        _validate_model_solve(state)
+    assert _validate_model_solve(state) == ["s_sep"]
 
 
 def test_validate_model_solve_passes_within_solve_and_absent():
@@ -251,10 +255,10 @@ def test_validate_model_solve_passes_within_solve_and_absent():
 # ===========================================================================
 
 
-def test_run_site_rejects_rolling_child_of_separate_dispatch():
-    """A rolling child of a separate_dispatch solve reaches run() as
-    ``<base>_roll_<N>``; the guard strips the suffix, then rejects because
-    the base runs under ``solve_mode=rolling_window``."""
+def test_run_site_accepts_rolling_separate_dispatch():
+    """A rolling separate_dispatch solve reaches run() as ``<base>_roll_<N>``;
+    the guard strips the suffix to the base and now ACCEPTS it — rolling
+    separate_dispatch is supported (OC1)."""
     from flextool.engine_polars._orchestration import (
         _dispatch_realization_raw_guard,
     )
@@ -265,8 +269,7 @@ def test_run_site_rejects_rolling_child_of_separate_dispatch():
     )
     guard_base = re.sub(r"_roll_\d+$", "", "my_solve_roll_2")
     assert guard_base == "my_solve"
-    with pytest.raises(FlexToolConfigError):
-        _dispatch_realization_raw_guard(sc, guard_base)
+    _dispatch_realization_raw_guard(sc, guard_base)  # no raise
 
 
 def test_run_site_passes_within_solve_rolling_child():

@@ -1639,10 +1639,12 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
             nested.add(_children)
     mode = solve_modes.get(base_name, "single_solve")
     reasons: list[str] = []
-    if mode != "single_solve":
+    # OC1 rolling separate_dispatch: allow rolling_window; keep the
+    # contains/nesting bans.  (Was: single_solve only.)
+    if mode not in ("single_solve", "rolling_window"):
         reasons.append(
             f"it runs under solve_mode='{mode}' (separate_dispatch needs a "
-            f"single_solve)"
+            f"single_solve or rolling_window)"
         )
     if base_name not in top_level:
         reasons.append("it is not a top-level solve in model.solves")

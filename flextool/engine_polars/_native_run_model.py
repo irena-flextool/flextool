@@ -29,6 +29,7 @@ from __future__ import annotations
 import copy
 import csv
 import os
+import re
 import time
 from collections import defaultdict
 
@@ -275,6 +276,59 @@ def native_run_model(state, solver) -> int:
         active_time_lists.update(result.active_time_lists)
         fix_storage_time_lists.update(result.fix_storage_time_lists)
         realized_time_lists.update(copy.deepcopy(result.realized_time_lists))
+
+    # ------------------------------------------------------------------
+    # 1b. OC1 rolling separate_dispatch — INTERLEAVE the dispatch sibling's
+    # rolls with its UC parent's rolls so the run order is
+    # ``[uc_roll_0, disp_roll_0, uc_roll_1, disp_roll_1, ...]``.  The sibling
+    # was spawned ROLLING (mirroring the parent — spawn_realized_dispatch_
+    # sibling), so expansion produced two parallel per-roll sequences
+    # concatenated (``[uc_0, uc_1, uc_2, disp_0, disp_1, disp_2]``); zip them
+    # by roll index.  This gives, via the linear last_captured_solve chain:
+    # uc_k's predecessor = disp_{k-1} (uc rolls forward on the realized
+    # dispatch), disp_k's predecessor = uc_k (the commitment pin).  Also
+    # record the PER-ROLL realized_dispatch_parent so the W4c projection +
+    # the fix_online producer key off the specific UC roll.  No-op for
+    # single-shot separate_dispatch (no ``_roll_`` names) and for plain
+    # rolling (no realized_dispatch_parent).
+    _rdp = getattr(state.solve, "realized_dispatch_parent", {})
+    if _rdp:
+        _roll_re = re.compile(r"^(?P<base>.+)_roll_(?P<idx>\d+)$")
+        _by_base: dict = {}
+        for _nm in all_solves:
+            _m = _roll_re.match(_nm)
+            if _m:
+                _by_base.setdefault(_m.group("base"), {})[
+                    int(_m.group("idx"))] = _nm
+        _uc_to_disp: dict = {}
+        for _sib_base, _par_base in list(_rdp.items()):
+            _sib_rolls = _by_base.get(_sib_base)
+            _par_rolls = _by_base.get(_par_base)
+            if _sib_rolls and _par_rolls:
+                for _idx, _uc in _par_rolls.items():
+                    _dp = _sib_rolls.get(_idx)
+                    if _dp is not None:
+                        _uc_to_disp[_uc] = _dp
+                        _rdp[_dp] = _uc           # per-roll parent map
+        if _uc_to_disp:
+            _rebuilt: list = []
+            _emitted: set = set()
+            _disp_set = set(_uc_to_disp.values())
+            for _nm in all_solves:
+                if _nm in _emitted or _nm in _disp_set:
+                    continue
+                _rebuilt.append(_nm)
+                _emitted.add(_nm)
+                _dp = _uc_to_disp.get(_nm)
+                if _dp is not None:
+                    _rebuilt.append(_dp)
+                    _emitted.add(_dp)
+            # append any disp rolls not yet emitted (defensive; shouldn't happen)
+            for _dp in _disp_set:
+                if _dp not in _emitted:
+                    _rebuilt.append(_dp)
+                    _emitted.add(_dp)
+            all_solves = _rebuilt
 
     # NOTE: the realized-dispatch overlap resolution (last-wins) runs
     # AFTER the stochastic pass below (step 3.5), where
@@ -1214,9 +1268,36 @@ def native_run_model(state, solver) -> int:
             if state.handoffs is not None and last_captured_solve is not None
             else None
         )
-        _provider_translators.translate_handoff_to_provider(
-            prior_handoff, sub_solve_provider,
-        )
+        # OC1 rolling separate_dispatch — a dispatch roll takes TWO sources:
+        # its PIN (commitment + fixed capacity) from its UC roll (the
+        # sequential predecessor), and its ROLL-FORWARD (realized trajectory)
+        # from the PREVIOUS dispatch roll.  The handoff dict is keyed by the
+        # COMPLETE name, and each roll overwrites its base slot, so the
+        # sibling's own complete-name slot still holds disp_{k-1}'s handoff
+        # until THIS roll overwrites it at solve end — that is the
+        # roll-forward source (None on the first dispatch roll).  Two PARTIAL
+        # translates (PIN_FIELDS / ROLL_FORWARD_FIELDS) compose without
+        # clobbering.  uc_k itself rolls forward on disp_{k-1} for free
+        # (its sequential predecessor IS disp_{k-1} in the interleaved order).
+        _rdp_map = getattr(state.solve, "realized_dispatch_parent", {}) or {}
+        _is_dispatch_roll = solve in _rdp_map
+        if _is_dispatch_roll:
+            _provider_translators.translate_handoff_to_provider(
+                prior_handoff, sub_solve_provider,
+                fields=_provider_translators.PIN_FIELDS,
+            )
+            _rf_handoff = (
+                state.handoffs.get(complete_solve[solve])
+                if state.handoffs is not None else None
+            )
+            _provider_translators.translate_handoff_to_provider(
+                _rf_handoff, sub_solve_provider,
+                fields=_provider_translators.ROLL_FORWARD_FIELDS,
+            )
+        else:
+            _provider_translators.translate_handoff_to_provider(
+                prior_handoff, sub_solve_provider,
+            )
         # Phase 4.1e — when nested, parent solve's handoff shadows the
         # sequential prior in ``handoff/*`` keys: both translator calls
         # write the same Provider keys, and parent's call lands after
@@ -1232,7 +1313,7 @@ def native_run_model(state, solver) -> int:
             if state.handoffs is not None and _parent_complete_for_carriers is not None
             else None
         )
-        if parent_handoff is not None:
+        if parent_handoff is not None and not _is_dispatch_roll:
             _provider_translators.translate_handoff_to_provider(
                 parent_handoff, sub_solve_provider,
             )

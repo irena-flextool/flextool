@@ -1010,8 +1010,23 @@ class SolveConfig:
             d = getattr(self, dict_name, None)
             if d is not None and parent in d:
                 d[sibling] = copy.deepcopy(d[parent])
-        # SET the two defining knobs.
-        self.solve_modes[sibling] = "single_solve"
+        # SET the two defining knobs.  The sibling MIRRORS the parent's
+        # solve_mode: a single_solve parent → single_solve monolithic
+        # dispatch; a rolling_window parent → a rolling dispatch whose rolls
+        # interleave with the parent's (OC1 rolling separate_dispatch).  The
+        # ``rolling_times`` were already deep-copied from the parent above, so
+        # the rolling sibling tiles the SAME roll boundaries as the parent.
+        _parent_mode = self.solve_modes.get(parent, "single_solve")
+        self.solve_modes[sibling] = (
+            "rolling_window" if _parent_mode == "rolling_window"
+            else "single_solve"
+        )
+        # A rolling sibling needs a roll_counter entry (make_roll_counter ran
+        # at config load, BEFORE this config-time spawn, so it is absent).
+        if self.solve_modes[sibling] == "rolling_window":
+            if getattr(self, "roll_counter", None) is None:
+                self.roll_counter = self.make_roll_counter()
+            self.roll_counter.setdefault(sibling, 0)
         self.realized_periods[sibling] = copy.deepcopy(
             self.realized_periods.get(parent, [])
         )
