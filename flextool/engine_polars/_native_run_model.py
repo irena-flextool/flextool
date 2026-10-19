@@ -310,6 +310,20 @@ def native_run_model(state, solver) -> int:
                     if _dp is not None:
                         _uc_to_disp[_uc] = _dp
                         _rdp[_dp] = _uc           # per-roll parent map
+                        # OC1 fix — the realized-dispatch roll realizes ONLY
+                        # its JUMP (the committed/realized section).  Restrict
+                        # its SOLVE window to the realized (jump) time list
+                        # instead of inheriting the parent's full roll horizon
+                        # (jump + look-ahead): the look-ahead has no realized
+                        # data and no online pin, so solving it forced
+                        # spurious unserved load.  ``realized_time_lists[_dp]``
+                        # here is the start→next-jump slice (untrimmed at this
+                        # point); copy it as the active window.  The fix_online
+                        # pin and the disp→disp realized carry already align on
+                        # the jump.
+                        if _dp in realized_time_lists:
+                            active_time_lists[_dp] = copy.deepcopy(
+                                realized_time_lists[_dp])
         if _uc_to_disp:
             _rebuilt: list = []
             _emitted: set = set()
