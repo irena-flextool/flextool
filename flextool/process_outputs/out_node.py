@@ -108,21 +108,31 @@ def node_summary(par, s, v, r, debug):
                         & node_dt.columns.get_level_values('category').isin(['Excess load'])]
     node_dt[downward_slack_cols] = downward_slack_data[downward_slack_cols.get_level_values('node')]
 
-    # Inflow
+    # Inflow — par.node_inflow is energy per step (MWh/step).  Divide it by
+    # step_duration in place so the Inflow column becomes a MW rate like every
+    # other node__dt category (identity at step_duration == 1).  Dividing
+    # node_dt's own inflow columns reuses the exact (period, time) index the
+    # flow path already aligns against, so a stray/misaligned row cannot turn
+    # into NaN and get silently zeroed by the fillna(0.0) below.
     inflow_cols = node_dt.columns[
                     node_dt.columns.get_level_values('node').isin(par.node_inflow.columns.intersection(nodes))
                     & node_dt.columns.get_level_values('category').isin(['Inflow'])]
     node_dt[inflow_cols] = par.node_inflow[inflow_cols.get_level_values('node')]
+    node_dt[inflow_cols] = node_dt[inflow_cols].div(par.step_duration, axis=0)
 
     # Fill any remaining NaN values with 0
     node_dt = node_dt.fillna(0.0)
 
     results.append((node_dt, 'node_dt_ep'))
 
-    # 2. Period-level node summary.  Most categories (flows, slacks, self
-    # discharge) are MW — multiply by step_duration to get MWh per step.
-    # Inflow is already MWh/step (par.node_inflow is energy per step, see
-    # mod comment at flextool.mod:2319), so compute it separately.
+    # 2. Period-level node summary.  Every node__dt category is now a MW rate
+    # (Inflow was divided by step_duration at the inflow block above), so the
+    # table is internally consistent and each (d, t) row balances.  The period
+    # path therefore multiplies all categories — inflow included — by
+    # step_duration uniformly to get MWh per step.  (Algebra: the pre-fix
+    # inflow period sum was Σ_t inflow_MWh_step·weight / share; after the fix
+    # it is Σ_t (inflow_MWh_step / sd)·sd·weight / share — identical, so
+    # node__d is unchanged.)
     energy_categories = [c for c in categories if c != 'Inflow']
     energy_cols = node_dt.columns[node_dt.columns.get_level_values('category').isin(energy_categories)]
     inflow_cols = node_dt.columns[node_dt.columns.get_level_values('category') == 'Inflow']
@@ -135,7 +145,7 @@ def node_summary(par, s, v, r, debug):
         par.complete_period_share_of_year, par.step_duration, div_level=1)
     node_d_inflow = annualize_dt_to_d(
         node_dt[inflow_cols], par.timestep_weight,
-        par.complete_period_share_of_year, div_level=1)
+        par.complete_period_share_of_year, par.step_duration, div_level=1)
     node_d = pd.concat([node_d_energy, node_d_inflow], axis=1).reindex(columns=node_dt.columns)
 
     results.append((node_d, 'node_d_ep'))
