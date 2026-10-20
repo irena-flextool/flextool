@@ -1,7 +1,8 @@
-## Unreleased
+## Release 4.1.0 (20.10.2026) — two-stage & recourse stochastic investment, realized-dispatch (UC→dispatch) solves, rolling unit-commitment continuity; construction lead time; indirect-unit capacity, per-unit min-load & reserve fixes (schema v76)
 
 Schema change (adds `solve.stochastic_invest_method`,
 `solve.shared_invest_periods`, `solve.shared_operation_periods`,
+`solve.dispatch_realization_method`,
 `reserve__upDown__group.reserve_duration`, and per-entity
 `construction_lead_time` / `construction_lead_time_method` on
 `unit`/`connection`/`node`; migrated automatically). The stochastic
@@ -70,6 +71,34 @@ whose decisions are *shared* (identical) across stochastic branches.
   stochastics capability; the previous multi-period restriction is lifted. A
   malformed reveal (analysis time off a period boundary, or a branching period
   without exactly one realized branch) is now rejected with a clear error.
+- **Separate realized-dispatch (unit-commitment → dispatch) solve
+  (`solve.dispatch_realization_method`).** A stochastic solve can now hand its
+  committed decisions to a separate deterministic dispatch that re-solves the
+  *realized* operating conditions with the plan's unit commitment, investments
+  and storage held fixed — the classic commit-under-uncertainty then
+  dispatch-against-what-happened structure. Set `dispatch_realization_method =
+  separate_dispatch` and the engine automatically runs a
+  `<solve>__realized_dispatch` sibling after the commitment solve: it pins the
+  committed online units (`v_online`) and fixes the committed capacity while
+  the flows re-optimize against the realized data, and the realized dispatch's
+  results are what the outputs report. Under a rolling-window solve it runs per
+  roll — each roll's commitment solve is followed by the realized dispatch of
+  that roll's realized steps, whose end-state carries into the next roll. The
+  default `within_solve` keeps today's behaviour (operations solved inside the
+  stochastic solve) and is byte-identical. Supported for a single top-level
+  solve and for rolling-window solves; not yet for contained/nested solves.
+- **Rolling unit commitment is now continuous across roll boundaries.** In a
+  rolling-window solve a unit's commitment is carried from one roll to the next
+  instead of being re-decided cold at each boundary: a unit still committed at
+  a roll's end is not charged a fresh start-up at the start of the next roll,
+  and a minimum up-time / down-time obligation opened near a boundary
+  constrains the following roll's early steps (within the same period).
+  Previously each roll started its unit commitment from scratch, over-counting
+  start-up costs and letting committable units cycle or break their minimum
+  up/down times across boundaries. Results of rolling solves with committable
+  (online) units change — typically lower start-up cost and fewer boundary
+  start-ups; non-rolling solves and models without unit commitment are
+  unchanged.
 - **Minimum load now applies once per unit, on the sum of its outputs.**
   `min_load` × online capacity is a floor on the sum of the outputs that
   define the unit's capacity (outputs with `conversion_flow_coeff ≠ 0`; the
