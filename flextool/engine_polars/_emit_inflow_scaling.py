@@ -56,6 +56,7 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars._constants import HOURS_PER_YEAR
 from flextool.engine_polars._emit_provider_io import (
     _emit,
     _provider_key,
@@ -565,7 +566,7 @@ def _compute_inflow_scaling_frames(
     # ── new_peak_inflow_sum, new_old_multiplier/slope/section ─────────
     # Same domain as rows_nps; values derived from peak / npop / npopis.
     npis_dict = {
-        (n, d): pdNode.get((n, "peak_inflow", d), 0.0) * 8760.0
+        (n, d): pdNode.get((n, "peak_inflow", d), 0.0) * HOURS_PER_YEAR
         for n, d, _ in rows_nps
     }
     rows_npis = [(n, d, npis_dict.get((n, d), 0.0)) for n, d, _ in rows_nps]
@@ -1206,7 +1207,7 @@ def _compute_inflow_scaling_frames_vectorized(
         )
         .with_columns(
             # npis = peak * 8760.0 (constraint 3).
-            (pl.col("v_peak") * 8760.0).alias("v_npis"),
+            (pl.col("v_peak") * HOURS_PER_YEAR).alias("v_npis"),
             # npop = 0.0 if old_peak == 0.0 else peak / old_peak.  FILL,
             # not drop (constraint 1); exact ``== 0.0`` guard (constraint 4).
             pl.when(pl.col("old_peak") == 0.0)

@@ -45,6 +45,7 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine_polars._constants import HOURS_PER_YEAR
 from flextool.engine_polars._emit_provider_io import _emit
 
 
@@ -241,7 +242,8 @@ def emit_period_calculated_params(
     for (d2, _t), v in complete_step_duration.items():
         sum_complete_by_d2[d2] = sum_complete_by_d2.get(d2, 0.0) + v
 
-    p_tdy = [(tl, sum_timeline_dur.get(tl, 0.0) / 8760.0) for tl in timelines]
+    p_tdy = [(tl, sum_timeline_dur.get(tl, 0.0) / HOURS_PER_YEAR)
+             for tl in timelines]
     _emit_keyed(provider, "solve_data/p_timeline_duration_in_years.csv",
                 ("timeline", "value"), p_tdy)
 
@@ -251,7 +253,7 @@ def emit_period_calculated_params(
     _emit_keyed(provider, "solve_data/hours_in_period.csv",
                 ("period", "value"), hours_in_period)
 
-    period_share = [(d, h / 8760.0) for d, h in hours_in_period]
+    period_share = [(d, h / HOURS_PER_YEAR) for d, h in hours_in_period]
     _emit_keyed(provider, "solve_data/period_share_of_year.csv",
                 ("period", "value"), period_share)
 
@@ -274,7 +276,7 @@ def emit_period_calculated_params(
     _emit_keyed(provider, "solve_data/complete_hours_in_period.csv",
                 ("period", "value"), complete_hours)
 
-    complete_share = [(d, h / 8760.0) for d, h in complete_hours]
+    complete_share = [(d, h / HOURS_PER_YEAR) for d, h in complete_hours]
     _emit_keyed(provider, "solve_data/complete_period_share_of_year_calc.csv",
                 ("period", "value"), complete_share)
 
@@ -399,7 +401,7 @@ def emit_period_calculated_params(
     f_d_k_rows: list[tuple[str, float]] = []
     for d in period_in_use:
         num = p_ladder_cum.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0)
-        denom = complete_share_lookup.get(d, 0.0) * 8760.0
+        denom = complete_share_lookup.get(d, 0.0) * HOURS_PER_YEAR
         f_d_k_rows.append((d, num / denom))
     _emit_keyed(provider, "solve_data/f_d_k.csv",
                 ("period", "value"), f_d_k_rows)

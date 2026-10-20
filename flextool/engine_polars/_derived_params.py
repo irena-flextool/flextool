@@ -54,6 +54,7 @@ from ._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
+from ._constants import HOURS_PER_YEAR
 from ._emit_provider_io import _provider_key
 from ._param_shapes import (
     broadcast_to_period_time,
@@ -555,7 +556,7 @@ def p_period_share_from_source(
     sd = step_dur.frame
     out = (sd.lazy()
               .group_by("d")
-              .agg((pl.col("value").cast(pl.Float64).sum() / 8760.0)
+              .agg((pl.col("value").cast(pl.Float64).sum() / HOURS_PER_YEAR)
                    .alias("value"))
               .sort("d")
               .collect())
@@ -9554,7 +9555,7 @@ def p_f_d_k_from_source(
     out_lf = (out_lf
                 .with_columns(pl.col("sum_step").fill_null(0.0))
                 .with_columns(value=(pl.col("cum") + pl.col("sum_step"))
-                                       / (pl.col("share") * 8760.0))
+                                       / (pl.col("share") * HOURS_PER_YEAR))
                 .select("d", "value"))
     out = out_lf.collect()
     if out.height == 0:
