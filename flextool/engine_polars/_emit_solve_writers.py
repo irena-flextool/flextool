@@ -321,6 +321,22 @@ def emit_periods(
     _emit_path(provider, filename, derive_periods(solve, periods_dict))
 
 
+def emit_stochastic_invest_method(
+    method: str,
+    filename: str,
+    *, provider,
+) -> None:
+    """Emit the resolved ``solve.stochastic_invest_method`` (Slice D).
+
+    A single-row, single-column (``method``) frame carrying the resolved
+    per-solve mode (``"none"`` / ``"recourse"``).  Read run-time via
+    ``_derived_params._recourse_invest_active`` so the derived/model
+    layers can gate the recourse feature without a ``SolveConfig``.
+    """
+    _emit_path(provider, filename,
+               _to_utf8_frame(("method",), [(method,)]))
+
+
 def _compute_first_and_last_periods(
     active_time_list: dict[str, list[tuple[str, ...]]],
     period__timesets_in_this_solve: list[tuple[str, str]],

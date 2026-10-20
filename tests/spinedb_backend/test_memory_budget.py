@@ -83,7 +83,7 @@ class _PeakWatcher:
         self._thread.join(timeout=1.0)
 
 
-def test_input_derivation_peak_rss_under_budget(tmp_path) -> None:
+def test_input_derivation_peak_rss_under_budget(tmp_path, examples_db_url) -> None:
     """Peak RSS during ``input_derivation.run`` on examples.sqlite
     ``test_a_lot`` must stay under the budget.
 
@@ -106,8 +106,12 @@ def test_input_derivation_peak_rss_under_budget(tmp_path) -> None:
     provider = FlexDataProvider()
     with _PeakWatcher() as watcher:
         t0 = time.perf_counter()
+        # ``examples_db_url`` (tests/conftest.py) is a per-worker ISOLATED
+        # copy of ``templates/examples.sqlite`` (byte-identical, so the
+        # measured budget is unchanged) — reading the shared checked-in
+        # file could deadlock concurrent xdist workers on a sqlite lock.
         input_derivation_run(
-            f"sqlite:///{EXAMPLES_DB}",
+            examples_db_url,
             provider,
             scenario_name="test_a_lot",
             work_folder=tmp_path,

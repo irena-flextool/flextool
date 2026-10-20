@@ -283,6 +283,18 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine_polars/model.py:2457
     "maxDivest_entity_total_n": CstrFamily(QuantityType.ENERGY),
 
+    # Slice D per-path total caps (design §7.2/§14) — one cap row per
+    # (entity, scenario-leaf).  Emitted by
+    # ``_emit_entity_total_cap`` (model.py) when >1 scenario leaf exists
+    # (recourse); the leaf-suffixed sums replace the cross-scenario
+    # ``over=("d",)`` total.  Registered EXACTLY (``_path`` is not a
+    # known ``lookup_cstr`` suffix, so a missing row silently reverts to
+    # an un-scaled LP under STRICT).
+    "maxInvest_entity_total_path": CstrFamily(QuantityType.POWER),
+    "maxInvest_entity_total_path_n": CstrFamily(QuantityType.ENERGY),
+    "maxDivest_entity_total_path": CstrFamily(QuantityType.POWER),
+    "maxDivest_entity_total_path_n": CstrFamily(QuantityType.ENERGY),
+
     # min-invest / min-divest entity totals — group_capacity resolved
     # via _p / _n suffix in _cumulative_invest.py.
     # flextool/engine_polars/_cumulative_invest.py:456 (minInvest_entity_total_p)
@@ -335,6 +347,14 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
         None, member_class_resolver="group_capacity"
     ),
     "minDivestGroup_entity_total": CstrFamily(
+        None, member_class_resolver="group_capacity"
+    ),
+    # Slice D per-path divest-group total cap (design §7.2 item 4 /
+    # §14): ``maxDivestGroup_entity_total_path_{p,n}`` emitted by
+    # ``_emit_group_total_divest_cap`` when >1 scenario leaf exists.  The
+    # ``_p`` / ``_n`` member-class suffix resolves POWER vs ENERGY off
+    # this key (``lookup_cstr`` strips it since the resolver is set).
+    "maxDivestGroup_entity_total_path": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
     # flextool/engine_polars/_cumulative_invest.py:845 (maxInvestGroup_entity_cumulative_p)
@@ -404,6 +424,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "online__startup": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3748 (online__shutdown_<sfx>)
     "online__shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
+    # OC1 #1 sub-slice (b) — separate_dispatch sibling v_online PIN
+    # (model.py online_fix_eq_<linear|integer>; the resolver strips the UC
+    # suffix to this base).  Pins the dimensionless unit-count v_online to
+    # the parent's committed schedule.
+    "online_fix_eq": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3770 (maxFlow_online_<sfx>)
     "maxFlow_online": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py _add_online_block
@@ -444,6 +469,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine_polars/_reserve.py:576 (reserve_process_upward / _downward)
     "reserve_process_upward": CstrFamily(QuantityType.POWER),
     "reserve_process_downward": CstrFamily(QuantityType.POWER),
+    # Storage energy-adequacy coupling for reserve_duration (#322).  Both
+    # framed in MWh: v_state·unitsize (± E) vs a stored-energy bound.
+    # flextool/engine_polars/_reserve.py _add_storage_reserve_constraints
+    "reserve_storage_up_floor": CstrFamily(QuantityType.ENERGY),
+    "reserve_storage_down_headroom": CstrFamily(QuantityType.ENERGY),
 
     # ── Group slack constraints.
     # flextool/engine_polars/_group_slack.py:859
@@ -469,9 +499,18 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Non-anticipativity (cross-branch equality).  RHS = 0; skip.
     # flextool/engine_polars/model.py:273, 306, 336, 364
     "non_anticipativity_storage_use": CstrFamily(None),
+    "non_anticipativity_storage_state_first": CstrFamily(None),
     "non_anticipativity_online_integer": CstrFamily(None),
     "non_anticipativity_online_linear": CstrFamily(None),
     "non_anticipativity_reserve": CstrFamily(None),
+
+    # ── Investment non-anticipativity (cross-branch invest/divest
+    # equality; v72). RHS = 0; skip per-row.  Divest is mandatory (§4.4).
+    # flextool/engine_polars/model.py:_add_non_anticipativity_invest_constraints
+    "non_anticipativity_invest_p": CstrFamily(None),
+    "non_anticipativity_invest_n": CstrFamily(None),
+    "non_anticipativity_divest_p": CstrFamily(None),
+    "non_anticipativity_divest_n": CstrFamily(None),
 
     # ── Profile constraints (per timestep).
     # Node profiles emit at model.py:2879 with names

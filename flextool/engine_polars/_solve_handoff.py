@@ -26,6 +26,8 @@ carriers, named metric columns for multi-value):
     realized_existing      [entity, period, value]
     divest_cumulative      [entity, value]
     roll_end_state         [node, value]
+    roll_end_online        [process, value]
+    online_history         [process, period, step, startup, shutdown, duration]
     fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
     fix_storage_price      [node, period, step, p_fix_storage_price]
     fix_storage_usage      [node, period, step, p_fix_storage_usage]
@@ -115,6 +117,56 @@ class SolveHandoff:
     # No file equivalent (in-memory only).
     upward_roll_end_state: pl.DataFrame | None = None
 
+    # End-of-roll committed online commitment for rolling unit-commitment
+    # carry-over — the online analog of ``roll_end_state``.  Carries the
+    # realized committed-jump-end ``v_online`` (unit-count space, NOT
+    # ×unitsize) per online process so the next roll's
+    # ``online__startup`` / ``online__shutdown`` first-step rows see the
+    # prior roll's commitment as their predecessor instead of the
+    # meaningless within-roll cyclic wrap.  Without it the startup cost is
+    # re-charged at every roll boundary even when the unit stays committed.
+    # Producer: prior roll's v_online_{linear,integer} at its last
+    # realized (d, t).
+    # Consumer: next roll's ``p_roll_continue_online`` overlay (applied at
+    # the continuation roll's first step by ``_add_online_block``).
+    # Schema: ``[process, value]``.  No file equivalent (in-memory only).
+    roll_end_online: pl.DataFrame | None = None
+
+    # OC1 Carrier 2 — trailing realized committed-commitment window for
+    # cross-roll-boundary min_uptime / min_downtime continuity.  Unlike
+    # ``roll_end_online`` (a single jump-end ``v_online`` scalar per
+    # process), this carries a SLIDING WINDOW of the prior rolls' realized
+    # committed ``v_startup`` / ``v_shutdown`` per ``(process, period,
+    # step)``, long enough (trimmed to the authored max min-up/down
+    # duration per period) to cover the next roll's early-step lookback.
+    # The next roll rebuilds ``uptime_carry`` / ``downtime_carry`` from it
+    # (``_derived_params.online_mintime_carry_from_source``) and injects
+    # them on the ``minimum_uptime`` RHS / ``minimum_downtime`` LHS so an
+    # obligation opened in roll N constrains roll N+1's early steps.
+    # PERIOD-AWARE: carried only within the same period (period-cyclic
+    # online dynamics — non-contiguous investment years do not connect).
+    # Each step carries its own ``duration`` (the history steps are not in
+    # the next roll's ``dt``, so the lookback walk must be self-contained).
+    # Producer: this roll's realized v_startup/v_shutdown ∪ prior window.
+    # Consumer: next roll's ``uptime_carry`` / ``downtime_carry``.
+    # Schema: ``[process, period, step, startup, shutdown, duration]``.
+    # No file equivalent (in-memory only).
+    online_history: pl.DataFrame | None = None
+
+    # OC1 #1 sub-slice (b) — a separate_dispatch PARENT's committed v_online
+    # over the JUMP (the whole realized window), pinned into the realized-
+    # dispatch SIBLING so the sibling dispatches realized conditions under
+    # the plan's commitment instead of re-deciding it from scratch.  Unlike
+    # ``roll_end_online`` (a single jump-end scalar per process for the next
+    # ROLL), this carries the FULL per-(process, period, step) committed
+    # schedule for the sibling of the SAME solve.  Read from a FORECAST
+    # branch (the NA-tied, well-defined value), NOT the degenerate weight-0
+    # realized branch.  Unit-count space (NOT ×unitsize).
+    # Producer: parent's committed v_online_{linear,integer} over the jump.
+    # Consumer: sibling's ``p_fix_online`` overlay (``online_fix_eq``).
+    # Schema: ``[process, period, step, value]``.  No file equivalent.
+    fix_online: pl.DataFrame | None = None
+
     # Storage quota imposed by parent solve on child solve — narrow
     # per-metric carriers in canonical column schema.  The trio is
     # independent (parent may set quantity-only, price-only, or any
@@ -142,7 +194,8 @@ class SolveHandoff:
 
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
-        "roll_end_state", "upward_roll_end_state",
+        "roll_end_state", "upward_roll_end_state", "roll_end_online",
+        "online_history", "fix_online",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
     )

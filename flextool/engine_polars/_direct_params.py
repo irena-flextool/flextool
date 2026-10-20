@@ -518,13 +518,11 @@ def p_state_start_from_source(source: "InputSource") -> Param | None:
 
 
 # §5.2.7 — process scalars sliced from p_process.csv
-def p_min_load_from_source(source: "InputSource") -> Param | None:
-    """``unit.min_load`` → ``Param(("p",), [p, value])``.
-
-    Default 0.0 (schema).  CSV path filters by processParam=='min_load'
-    and emits rows only when explicit; we mirror via ``parameter_explicit``.
-    """
-    return _entity_scalar_explicit(source, "unit", "min_load", "p")
+# NOTE: ``unit.min_load`` is NOT a direct (p,) scalar.  It is produced as a
+# shape-correct (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+# ``p_min_load_pdt_from_source``) so a period/time Map keeps its per-(d, t)
+# semantics instead of being summed in the minFlow_minload constraint.
+# See ``specs/fix_map_reading.md`` §5.
 
 
 # §5.18 — connection scalars
@@ -1600,6 +1598,35 @@ def p_reserve_upDown_group_penalty_reserve_from_source(source: "InputSource") ->
     return Param(("r", "ud", "g"), out.lazy())
 
 
+def p_reserve_upDown_group_reserve_duration_from_source(source: "InputSource") -> Param | None:
+    """``reserve__upDown__group.reserve_duration`` scalar →
+    ``Param(("r", "ud", "g"))``.  None default — explicit rows only.
+
+    Hours over which committed reserve power must be sustainable from a
+    storage-backed provider.  Absent (or 0) rows leave the LP untouched
+    (no storage-energy coupling) — see ``_reserve._add_storage_reserve_constraints``.
+    """
+    try:
+        df = source.parameter_explicit("reserve__upDown__group", "reserve_duration")
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("reserve__upDown__group", "reserve_duration")
+        except KeyError:
+            return None
+    if df is None or df.height == 0:
+        return None
+    cols = df.columns
+    if not {"reserve", "upDown", "group", "value"}.issubset(cols):
+        return None
+    lf = (df.lazy()
+            .rename({"reserve": "r", "upDown": "ud", "group": "g"})
+            .filter(pl.col("value").is_not_null()))
+    out = lf.select("r", "ud", "g", "value").collect()
+    if out.height == 0:
+        return None
+    return Param(("r", "ud", "g"), out.lazy())
+
+
 def _process_reserve_node_param(source: "InputSource",
                                   parameter_name: str) -> Param | None:
     """Union ``reserve__upDown__unit__node`` ∪
@@ -1935,9 +1962,18 @@ def apply_direct_params_a(source: "InputSource",
     flex_data.p_state_start = p_state_start_from_source(source)
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
-    flex_data.p_min_load = p_min_load_from_source(source)
-    # Per-output capacity_min_coeff — the optional per-output floor of
-    # multi-output units (minFlow_output_floor).  Assigned in pass 1a so it is present on the synthetic / rolling
+    # ``p_min_load`` is produced authoritatively as a shape-correct
+    # (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+    # ``p_min_load_pdt_from_source``), so a period/time Map isn't summed in
+    # the minFlow_minload constraint.  The synthetic / rolling sub-solve
+    # early-return in ``input.py`` re-wires it (passes 3-10 are skipped
+    # there).  See ``specs/fix_map_reading.md`` §5.  NB: ``p_min_load`` is a
+    # per-unit floor — the ``minFlow_minload`` constraint (``model.py``) sums
+    # flow over all of a unit's outputs — and the (p, d, t) shape lets that
+    # per-unit floor vary over time; the two compose.
+    # Per-output ``capacity_min_coeff`` — the optional per-output floor of
+    # multi-output units (minFlow_output_floor).  Assigned in pass 1a so it is
+    # present on the synthetic / rolling
     # sub-solve path too (passes 3-10 are skipped there).
     flex_data.p_process_sink_min_capacity_coef = (
         p_process_sink_min_capacity_coef_from_source(source))
@@ -2154,6 +2190,8 @@ def apply_direct_params_b(source: "InputSource",
         flex_data.pdtReserve_upDown_group_reservation = v
     flex_data.p_reserve_upDown_group_penalty_reserve = (
         p_reserve_upDown_group_penalty_reserve_from_source(source))
+    flex_data.p_reserve_upDown_group_reserve_duration = (
+        p_reserve_upDown_group_reserve_duration_from_source(source))
     flex_data.p_process_reserve_upDown_node_reliability = (
         p_process_reserve_upDown_node_reliability_from_source(source))
     flex_data.p_process_reserve_upDown_node_max_share = (

@@ -33,6 +33,29 @@ def _commit_step(db, message):
         logging.info("Migration step idempotent (no changes): %s", message)
 
 
+def _ensure_parameter_group(db, name, color, priority):
+    """Get-or-create a ``parameter_group`` so a new parameter can be
+    attached to it.
+
+    Every parameter must belong to a parameter_group or it is dropped from
+    group-filtered tabular exports (v69 invariant, guarded by
+    tests/test_parameter_group_coverage.py).  Real DBs always carry the
+    standard groups (created in v44, recoloured in v45), but a DB built
+    from scratch at a version above v44 — e.g. the minimal fixtures the
+    migration tests seed — never ran v44 and so has no parameter_groups.
+    Use the non-raising ``get_item`` (``db.item`` raises SpineDBAPIError
+    when absent); the create only fires on such group-less DBs and must
+    mirror v44/v45's canonical colour/priority for the group.
+    """
+    if not db.get_item("parameter_group", name=name):
+        db.add_update_item(
+            "parameter_group",
+            name=name,
+            color=color,
+            priority=priority,
+        )
+
+
 def migrate_database(
     database_path,
     up_to: int | None = None,
@@ -1763,6 +1786,18 @@ def migrate_database(
                 _migrate_v69_backfill_parameter_groups(db)
             elif next_version == 70:
                 _migrate_v70_capacity_coefficient_descriptions(db)
+            elif next_version == 71:
+                _migrate_v71_stochastic_invest_method(db)
+            elif next_version == 72:
+                _migrate_v72_non_anticipativity_periods(db)
+            elif next_version == 73:
+                _migrate_v73_non_anticipativity_invest_periods(db)
+            elif next_version == 74:
+                _migrate_v74_construction_lead_time(db)
+            elif next_version == 75:
+                _migrate_v75(db)
+            elif next_version == 76:
+                _migrate_v76_dispatch_realization_method(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -3775,6 +3810,490 @@ def _migrate_v69_backfill_parameter_groups(db) -> None:
     _commit_step(db,
         "v69: backfilled parameter groups for model.small_number_threshold "
         "(-> model) and node.penalty_method (-> basics)."
+    )
+
+
+def _migrate_v71_stochastic_invest_method(db) -> None:
+    """Add the solve.stochastic_invest_method opt-in (v70 -> v71).
+
+    Two-stage stochastic investment with recourse (recourse plan
+    §6b Slice D) is enabled per solve by this enum.  'none' (default,
+    byte-identical to prior behaviour) keeps the R-O6 invariant —
+    stochastic branches never enter the invest axis; v_invest stays
+    realized-only.  'recourse' selects the Slice D machinery.
+
+    Slice C ships only the schema + the validation guards: flag-on is
+    HARD-REJECTED until Slice D lands (branch periods on the invest
+    axis).  Bound to a new 'stochastic_invest_methods' value list;
+    grouped under 'solve_advanced' (created if the DB lacks it).
+    """
+    add_value_list_manual(db, [
+        ["stochastic_invest_methods", "none"],
+        ["stochastic_invest_methods", "recourse"],
+    ])
+
+    default_val, default_type = to_database("none")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="stochastic_invest_method",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="stochastic_invest_methods",
+        description=(
+            "How stochastic branches participate in investment. 'none' "
+            "(default) keeps investment realized-only: stochastic "
+            "branches never enter the invest axis (v_invest stays on "
+            "realized periods), byte-identical to prior behaviour. "
+            "'recourse' enables two-stage stochastic investment with "
+            "recourse — shared (non-anticipative) investment before the "
+            "branch point plus per-branch recourse investment at and "
+            "after the branching period, with probability-weighted "
+            "investment costs. Reserved for future expected-value and "
+            "nested-tree modes."
+        ),
+    )
+    # solve_advanced is this param's canonical home in the schema.
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="stochastic_invest_method",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v71: added solve.stochastic_invest_method "
+        "(stochastic_invest_methods: none/recourse, default none); "
+        "opt-in for recourse stochastic investment (Slice D)."
+    )
+
+
+def _migrate_v72_non_anticipativity_periods(db) -> None:
+    """Add the solve.non_anticipativity_periods window knob (v71 -> v72).
+
+    Slice G decouples the operational non-anticipativity window from
+    ``realized_periods``.  This Array-of-periods parameter selects the
+    (d,t) set over which the four ``non_anticipativity_*`` families
+    (storage/online/reserve) are pinned across stochastic branches:
+
+    * unset (default) -> legacy ``realized_dispatch u fix_storage``
+      window, byte-identical to prior behaviour;
+    * empty Array ``[]`` -> empty window, operations branch freely from
+      t0 (classic two-stage capacity expansion);
+    * ``[p, ...]`` -> tie only over those periods' timesteps
+      (intersected with steps_in_use at emit).
+
+    Array-shaped (read by ``periods_to_tuples``, same as
+    ``realized_periods`` / ``fix_storage_periods``): ``default_value`` and
+    ``default_type`` are ``None`` and it has NO parameter_value_list.
+    Migrating a DB adds only the definition (no per-solve value), so every
+    migrated solve resolves to the unset -> legacy-window case.  Grouped
+    under 'solve_advanced' (created if the DB lacks it).
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_periods",
+        default_value=None,
+        default_type=None,
+        description=(
+            "Array of periods over which operational non-anticipativity "
+            "(storage / online / reserve dispatch tied across stochastic "
+            "branches) is enforced. Unset (default) uses the legacy window "
+            "= all realized-dispatch timesteps union the fix_storage "
+            "timesteps (byte-identical to prior behaviour). An explicitly "
+            "empty Array frees operations from t0 (classic two-stage "
+            "capacity expansion: one shared here-and-now investment plus "
+            "operations that branch freely per scenario). A period list "
+            "ties operations only over those periods' timesteps."
+        ),
+    )
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_periods",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v72: added solve.non_anticipativity_periods (Array of periods, "
+        "default unset); decouples the operational non-anticipativity "
+        "window from realized_periods (Slice G)."
+    )
+
+
+def _migrate_v73_non_anticipativity_invest_periods(db) -> None:
+    """Add the solve.non_anticipativity_invest_periods knob (v72 -> v73).
+
+    The invest-NA window is the standard two-stage stochastic-investment
+    mode: an Array-of-periods parameter selecting the periods over which
+    ``v_invest`` / ``v_divest`` are TIED across stochastic branches (a
+    single shared here-and-now decision).  It pins the four
+    ``non_anticipativity_invest_p/n`` and ``non_anticipativity_divest_p/n``
+    constraint families across the branch fan of those periods:
+
+    * unset (default) OR empty Array ``[]`` -> NO tie, byte-identical to
+      prior behaviour (``recourse`` stays per-branch everywhere; ``none``
+      stays shared);
+    * ``[p, ...]`` -> tie invest/divest at each branch's copy of those
+      periods to the realized anchor -> shared first-stage investment with
+      per-branch (recourse) investment in later periods.
+
+    Unlike the operational ``non_anticipativity_periods`` (v72), the
+    unset/``[]`` distinction carries no behaviour here (both = no tie),
+    so it is read by the plain ``periods_to_tuples`` (not a tri-state).
+
+    Array-shaped (read by ``periods_to_tuples``, same as
+    ``realized_periods`` / ``non_anticipativity_periods``):
+    ``default_value`` and ``default_type`` are ``None`` and it has NO
+    parameter_value_list.  Migrating a DB adds only the definition (no
+    per-solve value), so every migrated solve resolves to unset -> no
+    tie -> today's behaviour.  Grouped under 'solve_advanced' (created if
+    the DB lacks it).
+    """
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_invest_periods",
+        default_value=None,
+        default_type=None,
+        description=(
+            "Array of periods over which investment is non-anticipative "
+            "(v_invest and v_divest tied across stochastic branches — a "
+            "single shared here-and-now decision). Unset (default) or an "
+            "empty Array means NO tie (byte-identical to prior behaviour: "
+            "recourse stays per-branch, none stays shared). A period list "
+            "-- e.g. the first period -- ties investment over those "
+            "periods while later periods invest per-branch (recourse), "
+            "the standard two-stage stochastic capacity-expansion mode. "
+            "Requires stochastic_invest_method=recourse; a no-op under "
+            "none (investment is already shared across all periods)."
+        ),
+    )
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="non_anticipativity_invest_periods",
+        parameter_group_name="solve_advanced",
+    )
+
+    _commit_step(db,
+        "v73: added solve.non_anticipativity_invest_periods (Array of "
+        "periods, default unset); the standard two-stage stochastic "
+        "investment mode — ties v_invest/v_divest across branches over "
+        "the window (shared here-and-now decision), recourse later."
+    )
+
+
+def _migrate_v74_construction_lead_time(db) -> None:
+    """Add construction_lead_time + _method per invest entity (v73 -> v74).
+
+    Slice H — construction lead time.  Two per-entity parameters on each
+    invest entity class (``unit`` / ``connection`` / ``node``):
+
+    * ``construction_lead_time`` — ``[years]`` physical build time.
+      Capacity ordered in a period becomes available this many years
+      later, snapped to a period boundary per
+      ``construction_lead_time_method``.  Constant or period (float / map,
+      mirroring ``lifetime``).  Default 0 (instantaneous, as before).
+    * ``construction_lead_time_method`` — how ``yr(order) +
+      construction_lead_time`` snaps to a period boundary: ``immediate``
+      (no lag; capacity from the decision period; byte-identical to prior
+      behaviour), ``closest_seam`` (nearest boundary, exact tie rounds up;
+      the effective default when a lead time is set), ``previous_seam``
+      (round down), ``next_seam`` (round up).
+
+    Both defaults are ``null`` (see design §0.2 / §6.2): the *unset* vs
+    explicit-``immediate`` distinction is what lets the reader implement
+    the two-level default (unset resolves to ``immediate`` when the lead
+    time is 0, else ``closest_seam``).  A literal ``immediate`` default
+    would materialise on every entity and destroy that distinction.
+
+    Migrating a DB adds only the definitions (never a per-entity value),
+    so every migrated entity resolves to unset -> ``L=0`` -> ``immediate``
+    -> byte-identical to prior behaviour.  Grouped under ``investment``
+    (mirrors ``lifetime``; created if the DB lacks it).
+    """
+    add_value_list_manual(db, [
+        ["construction_lead_time_methods", "immediate"],
+        ["construction_lead_time_methods", "closest_seam"],
+        ["construction_lead_time_methods", "previous_seam"],
+        ["construction_lead_time_methods", "next_seam"],
+    ])
+
+    lead_desc = (
+        "[years] Construction lead time: capacity ordered in a period "
+        "becomes available this many years later, snapped to a period "
+        "boundary per construction_lead_time_method (defaults to "
+        "closest_seam when set; use immediate to keep capacity available "
+        "from the decision period). Constant or period. Default 0 "
+        "(instantaneous, as before)."
+    )
+    method_desc = (
+        "How yr(order)+construction_lead_time snaps to a period boundary: "
+        "immediate (no lag; capacity from the decision period; "
+        "byte-identical to prior behaviour), closest_seam (nearest "
+        "boundary, exact tie rounds up; the effective default when a lead "
+        "time is set), previous_seam (round down), next_seam (round up). "
+        "Unset resolves to immediate when no lead time, else closest_seam."
+    )
+    # ``investment`` is construction_lead_time's canonical home.
+    _ensure_parameter_group(db, "investment", "7fb095", 20)
+    for class_name in ("unit", "connection", "node"):
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=class_name,
+            name="construction_lead_time",
+            default_value=None,
+            default_type=None,
+            parameter_group_name="investment",
+            description=lead_desc,
+        )
+        # ``parameter_type_list=("float","map")`` assigns BOTH types rank 0
+        # in spinedb_api (a quirk of the convenience arg — the map row then
+        # collides with float on the unique (definition, rank) key and is
+        # dropped on re-import).  Add the two allowed types as explicit
+        # ``parameter_type`` items with distinct ranks (float 0, map 1),
+        # matching how ``lifetime`` is stored.
+        for rank, type_name in enumerate(("float", "map")):
+            db.add_update_item(
+                "parameter_type",
+                entity_class_name=class_name,
+                parameter_definition_name="construction_lead_time",
+                type=type_name,
+                rank=rank,
+            )
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name=class_name,
+            name="construction_lead_time_method",
+            default_value=None,
+            default_type=None,
+            parameter_type_list=("str",),
+            parameter_value_list_name="construction_lead_time_methods",
+            parameter_group_name="investment",
+            description=method_desc,
+        )
+
+    _commit_step(db,
+        "v74: added construction_lead_time (float/map, [years], default 0) "
+        "and construction_lead_time_method (immediate/closest_seam/"
+        "previous_seam/next_seam, default unset) on unit/connection/node; "
+        "Slice H construction lead time — commissioning lag lives in the "
+        "availability walk, cost stays at the order period."
+    )
+
+
+# Positive, non-negated descriptions for the renamed stochastic
+# shared-decision window parameters (v75).  The old ``non_anticipativity_*``
+# names were negations of the same concept; the new names state it
+# positively: these periods are SHARED (identical) across branches.
+_SHARED_OPERATION_PERIODS_DESC = (
+    "Array of periods over which operations are SHARED (identical) across "
+    "stochastic branches — the non-anticipative first-stage decision; "
+    "later periods are per-branch recourse. Unset (default) uses the "
+    "legacy window = all realized-dispatch timesteps union the fix_storage "
+    "timesteps (byte-identical to prior behaviour). An explicitly empty "
+    "Array frees operations from t0 (classic two-stage capacity "
+    "expansion: one shared here-and-now investment plus operations that "
+    "branch freely per scenario). A period list shares operations only "
+    "over those periods' timesteps."
+)
+_SHARED_INVEST_PERIODS_DESC = (
+    "Array of periods over which investment is SHARED (identical) across "
+    "stochastic branches — the non-anticipative first-stage decision; "
+    "later periods are per-branch recourse. Unset (default) or an empty "
+    "Array means NO shared tie (byte-identical to prior behaviour: "
+    "recourse stays per-branch, none stays shared). A period list -- e.g. "
+    "the first period -- shares investment over those periods while later "
+    "periods invest per-branch (recourse), the standard two-stage "
+    "stochastic capacity-expansion mode. Requires "
+    "stochastic_invest_method=recourse; a no-op under none (investment is "
+    "already shared across all periods)."
+)
+
+
+def _migrate_v75(db) -> None:
+    """Rename the stochastic shared-decision windows + add reserve_duration
+    (v74 -> v75).
+
+    Two folded changes:
+
+    1. **Rename** the two (unreleased) non-anticipativity window params on
+       the ``solve`` class to positive, non-negated names:
+
+       * ``non_anticipativity_periods``        -> ``shared_operation_periods``
+       * ``non_anticipativity_invest_periods`` -> ``shared_invest_periods``
+
+       The renames are collision-safe (``_rename_or_drop_parameter_definition``)
+       and carry their existing per-solve Array values by definition id, so
+       a migrated DB keeps identical behaviour under the new names.  The
+       descriptions are rewritten to state the meaning positively (these
+       periods are SHARED/identical across branches — the non-anticipative
+       first-stage decision).  No-ops when the source names are absent (a DB
+       built fresh above v74 already carries the new names).
+
+    2. **Add** ``reserve__upDown__group.reserve_duration`` for DBs that
+       predate the parameter (mirrors ``_migrate_v71_reserve_duration`` from
+       the original branch).  A single scalar (hours) coupling a
+       storage-backed reserve provider's committed reserve power to the
+       stored energy (up/discharge) or free headroom (down/charge) needed
+       to sustain it for ``reserve_duration`` hours (issue #322).  Absent or
+       0 means no storage-energy coupling, keeping the LP byte-identical to
+       prior behaviour, so the parameter defaults to null and carries no
+       value list.  Idempotent via ``add_update_item`` — a no-op when the
+       definition is already present (e.g. the master template, which
+       already carries it).  Attached to the existing ``reserve`` parameter
+       group when that group is present.
+    """
+    # 1. Rename the two shared-decision window parameters.
+    _rename_or_drop_parameter_definition(
+        db, "solve", "non_anticipativity_periods",
+        "shared_operation_periods", _SHARED_OPERATION_PERIODS_DESC,
+    )
+    _rename_or_drop_parameter_definition(
+        db, "solve", "non_anticipativity_invest_periods",
+        "shared_invest_periods", _SHARED_INVEST_PERIODS_DESC,
+    )
+
+    # 2. Add reserve__upDown__group.reserve_duration (storage energy
+    #    adequacy for reserves, #322) for DBs that predate it.
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="reserve__upDown__group",
+        name="reserve_duration",
+        default_value=None,
+        default_type=None,
+        parameter_value_list_name=None,
+        description=(
+            "[h] Time span over which committed reserve power must be "
+            "sustainable from storage. Energy obligation = reservation_MW × "
+            "reserve_duration, corrected by the reserve provider's "
+            "efficiency. Only affects reserve provided by units/connections "
+            "that draw on (up) or charge (down) a storage node. Absent or 0 "
+            "means no storage-energy coupling. Constant."
+        ),
+    )
+    # Attach to the 'reserve' parameter group when it exists (consistent
+    # with reservation / reserve_method).
+    if db.get_item("parameter_group", name="reserve"):
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="reserve__upDown__group",
+            name="reserve_duration",
+            parameter_group_name="reserve",
+        )
+
+    _commit_step(db,
+        "v75: renamed non_anticipativity_periods -> shared_operation_periods "
+        "and non_anticipativity_invest_periods -> shared_invest_periods "
+        "(positive names for the stochastic shared-decision windows); added "
+        "reserve__upDown__group.reserve_duration ([h] scalar, default none; "
+        "storage energy-adequacy coupling for reserves, #322)."
+    )
+
+
+_V76_DISPATCH_REALIZATION_METHOD_DESCRIPTION = (
+    "How the stochastic branches of a solve are realized into a committed "
+    "dispatch. 'within_solve' (default) is the normal path: realization "
+    "stays inside the single optimisation — branches and their realized "
+    "periods are resolved within one solve, byte-identical to prior "
+    "behaviour. 'separate_dispatch' is an available advanced option that "
+    "splits realization into a dedicated downstream dispatch stage, "
+    "automatically spawning a separate realized-dispatch solve (a second "
+    "market-clearing pass over the revealed branch) — the 2-stage seed of "
+    "a future multi-stage sequential-market structure. Its "
+    "automatic-selection defaults are still being refined."
+)
+_V76_STOCHASTIC_BRANCHES_DESCRIPTION = (
+    "[4d-Map], Sets branches included in the solve. [Period, branch, "
+    "start_time (time_step), realized (yes/no), weight (number)]. The "
+    "branches form a probability-weighted forecast fan (forecasts-only). "
+    "'realized' is an optional designation, at most one (0 or 1) per "
+    "start_time, marking which branch's data are treated as the actuals "
+    "for the committed / realized-dispatch results."
+)
+
+
+def _migrate_v76_dispatch_realization_method(db) -> None:
+    """Add the solve.dispatch_realization_method opt-in (v75 -> v76).
+
+    Selects how the stochastic branches of a solve are realized into a
+    committed dispatch.  This is the 2-stage seed of a future multi-stage
+    market structure: ``'within_solve'`` (default, byte-identical to prior
+    behaviour) keeps realization inside the single optimisation — the
+    branches and their realized periods are resolved within one solve, as
+    today.  ``'separate_dispatch'`` will split realization into a dedicated
+    downstream dispatch stage (a second market-clearing pass over the
+    revealed branch), the first step toward a multi-stage sequential-market
+    structure.
+
+    W4 Slice 1 (W4a) shipped the schema; W4b now IMPLEMENTS the engine
+    side: ``'separate_dispatch'`` is ACCEPTED for a single top-level
+    ``single_solve``, for which the engine automatically registers a
+    deterministic realized-dispatch sibling ``<solve>__realized_dispatch``
+    (full invest→dispatch handoff + last-wins).  Other shapes (rolling,
+    contains_solves children, nested) and solves that author
+    fix_storage_periods remain rejected (later slices).  Bound to a new
+    'dispatch_realization_methods' value list; grouped under
+    'solve_advanced' (created if the DB lacks it).  This is a structural
+    clone of the v71 ``stochastic_invest_method`` line.
+
+    This step also refreshes two stale user-facing descriptions to the
+    corrected stochastics model (description-only, no structural change):
+    ``solve.dispatch_realization_method`` (``separate_dispatch`` is now an
+    available advanced option, not "not yet implemented") and the older
+    ``solve.stochastic_branches`` ('realized' is an optional at-most-one
+    designation over a forecasts-only fan, not a one-of-N requirement).
+    """
+    add_value_list_manual(db, [
+        ["dispatch_realization_methods", "within_solve"],
+        ["dispatch_realization_methods", "separate_dispatch"],
+    ])
+
+    default_val, default_type = to_database("within_solve")
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="dispatch_realization_method",
+        default_value=default_val,
+        default_type=default_type,
+        parameter_value_list_name="dispatch_realization_methods",
+        description=_V76_DISPATCH_REALIZATION_METHOD_DESCRIPTION,
+    )
+    # solve_advanced is this param's canonical home in the schema.
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
+    db.add_update_item(
+        "parameter_definition",
+        entity_class_name="solve",
+        name="dispatch_realization_method",
+        parameter_group_name="solve_advanced",
+    )
+
+    # Correct the stale stochastic_branches description (an older param,
+    # created pre-v76 — line ~160) to the corrected stochastics model: the
+    # fan is a probability-weighted forecasts-only set and 'realized' is an
+    # optional designation (at most one per start_time), NOT a one-of-N
+    # requirement.  Any DB upgrading to v76 passes through this step, so it
+    # is the natural place to refresh the user-facing text.  Idempotent.
+    if _pdef_or_none(db, "solve", "stochastic_branches") is not None:
+        db.add_update_item(
+            "parameter_definition",
+            entity_class_name="solve",
+            name="stochastic_branches",
+            description=_V76_STOCHASTIC_BRANCHES_DESCRIPTION,
+        )
+
+    _commit_step(db,
+        "v76: added solve.dispatch_realization_method "
+        "(dispatch_realization_methods: within_solve/separate_dispatch, "
+        "default within_solve); 2-stage seed of a future multi-stage market "
+        "structure. 'separate_dispatch' accepted (W4b) for a single "
+        "top-level single_solve — engine auto-spawns the "
+        "<solve>__realized_dispatch sibling."
     )
 
 

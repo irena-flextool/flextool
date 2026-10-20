@@ -29,6 +29,7 @@ from __future__ import annotations
 import copy
 import csv
 import os
+import re
 import time
 from collections import defaultdict
 
@@ -166,6 +167,42 @@ def _downgrade_rp_methods_for_non_rp_solve(
         )
 
 
+def project_realized_branch_time_branch_rows(
+    parent_time_branch_list: list[tuple[str, str]],
+    parent_period_branch_list: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """W4c — select the parent's REALIZED-branch ``solve_branch__time_branch``
+    rows for an auto-spawned realized-dispatch sibling.
+
+    A realized-dispatch sibling is deterministic (``stochastic_branches``
+    dropped), so the stochastic pass leaves its
+    ``solve_branch__time_branch`` scaffolding EMPTY and the per-solve folds
+    that collapse a stochastic 3d_map drop it (wind -> 0).  This re-selects
+    the parent's already-materialized realized-branch rows so the folds
+    read the realized branch unchanged.
+
+    *parent_time_branch_list* is the parent's
+    ``solve_branch__time_branch_lists`` entry — realized rows are
+    ``(period, realized_branch)`` (first element == the REAL period name),
+    forecast rows are ``(<period>_<branch>, branch)``.
+    *parent_period_branch_list* is the parent's ``period__branch_lists``
+    entry — the realized branch owns a ``(period, period)`` self-row per
+    period.  A row is kept iff its period has a ``(p, p)`` self-row in the
+    period-branch list (the SAME realized-row predicate
+    ``derive_solve_branch_weight`` uses), which selects the realized rows
+    and excludes the synthetic forecast rows.  A MULTI-period realized
+    window therefore yields one realized row per realized period (the
+    continuation loop appends one ``(period, realized_branch)`` per
+    continued period).
+    """
+    period_branch_set = set(parent_period_branch_list)
+    return [
+        (period, branch)
+        for (period, branch) in parent_time_branch_list
+        if (period, period) in period_branch_set
+    ]
+
+
 def native_run_model(state, solver) -> int:
     """Drive the per-solve cascade natively.
 
@@ -239,6 +276,73 @@ def native_run_model(state, solver) -> int:
         active_time_lists.update(result.active_time_lists)
         fix_storage_time_lists.update(result.fix_storage_time_lists)
         realized_time_lists.update(copy.deepcopy(result.realized_time_lists))
+
+    # ------------------------------------------------------------------
+    # 1b. OC1 rolling separate_dispatch — INTERLEAVE the dispatch sibling's
+    # rolls with its UC parent's rolls so the run order is
+    # ``[uc_roll_0, disp_roll_0, uc_roll_1, disp_roll_1, ...]``.  The sibling
+    # was spawned ROLLING (mirroring the parent — spawn_realized_dispatch_
+    # sibling), so expansion produced two parallel per-roll sequences
+    # concatenated (``[uc_0, uc_1, uc_2, disp_0, disp_1, disp_2]``); zip them
+    # by roll index.  This gives, via the linear last_captured_solve chain:
+    # uc_k's predecessor = disp_{k-1} (uc rolls forward on the realized
+    # dispatch), disp_k's predecessor = uc_k (the commitment pin).  Also
+    # record the PER-ROLL realized_dispatch_parent so the W4c projection +
+    # the fix_online producer key off the specific UC roll.  No-op for
+    # single-shot separate_dispatch (no ``_roll_`` names) and for plain
+    # rolling (no realized_dispatch_parent).
+    _rdp = getattr(state.solve, "realized_dispatch_parent", {})
+    if _rdp:
+        _roll_re = re.compile(r"^(?P<base>.+)_roll_(?P<idx>\d+)$")
+        _by_base: dict = {}
+        for _nm in all_solves:
+            _m = _roll_re.match(_nm)
+            if _m:
+                _by_base.setdefault(_m.group("base"), {})[
+                    int(_m.group("idx"))] = _nm
+        _uc_to_disp: dict = {}
+        for _sib_base, _par_base in list(_rdp.items()):
+            _sib_rolls = _by_base.get(_sib_base)
+            _par_rolls = _by_base.get(_par_base)
+            if _sib_rolls and _par_rolls:
+                for _idx, _uc in _par_rolls.items():
+                    _dp = _sib_rolls.get(_idx)
+                    if _dp is not None:
+                        _uc_to_disp[_uc] = _dp
+                        _rdp[_dp] = _uc           # per-roll parent map
+                        # OC1 fix — the realized-dispatch roll realizes ONLY
+                        # its JUMP (the committed/realized section).  Restrict
+                        # its SOLVE window to the realized (jump) time list
+                        # instead of inheriting the parent's full roll horizon
+                        # (jump + look-ahead): the look-ahead has no realized
+                        # data and no online pin, so solving it forced
+                        # spurious unserved load.  ``realized_time_lists[_dp]``
+                        # here is the start→next-jump slice (untrimmed at this
+                        # point); copy it as the active window.  The fix_online
+                        # pin and the disp→disp realized carry already align on
+                        # the jump.
+                        if _dp in realized_time_lists:
+                            active_time_lists[_dp] = copy.deepcopy(
+                                realized_time_lists[_dp])
+        if _uc_to_disp:
+            _rebuilt: list = []
+            _emitted: set = set()
+            _disp_set = set(_uc_to_disp.values())
+            for _nm in all_solves:
+                if _nm in _emitted or _nm in _disp_set:
+                    continue
+                _rebuilt.append(_nm)
+                _emitted.add(_nm)
+                _dp = _uc_to_disp.get(_nm)
+                if _dp is not None:
+                    _rebuilt.append(_dp)
+                    _emitted.add(_dp)
+            # append any disp rolls not yet emitted (defensive; shouldn't happen)
+            for _dp in _disp_set:
+                if _dp not in _emitted:
+                    _rebuilt.append(_dp)
+                    _emitted.add(_dp)
+            all_solves = _rebuilt
 
     # NOTE: the realized-dispatch overlap resolution (last-wins) runs
     # AFTER the stochastic pass below (step 3.5), where
@@ -350,6 +454,55 @@ def native_run_model(state, solver) -> int:
                 already_realized_timesteps[period].add(entry.timestep)
             if not realized_time_lists[solve][period]:
                 del realized_time_lists[solve][period]
+
+    # ------------------------------------------------------------------
+    # 3.6 W4c — project each stochastic parameter onto the REALIZED branch
+    # for auto-spawned realized-dispatch siblings.
+    #
+    # A W4b realized-dispatch sibling (``<solve>__realized_dispatch``) is
+    # deterministic and drops ``stochastic_branches``, so the stochastic
+    # pass above leaves its ``solve_branch__time_branch_lists`` EMPTY.  The
+    # per-solve folds that collapse a stochastic 3d_map
+    # ``(branch, time_start, time) -> (d, t)`` — ``_derived_profile``'s
+    # ``_profile_stochastic_lf`` and ``_pdt_lookup.PdtLookup.get`` — then
+    # find no branch rows, drop the 3d_map, and the zero-fallback fills 0
+    # (wind -> 0 -> garbage).  Re-populate the sibling's branch rows from
+    # the parent's ALREADY-materialized realized-branch rows: the
+    # ``(p, p) in period__branch_lists[parent]`` predicate selects the
+    # realized self-rows (the SAME predicate ``derive_solve_branch_weight``
+    # uses at ``_emit_solve_writers.py``) and excludes synthetic forecast
+    # rows (``<p>_high`` ...).  A MULTI-period realized window carries one
+    # realized-branch row per realized period (the continuation loop in
+    # ``_stochastic.py`` appends ``(period, realized_branch)`` for each), so
+    # the filter keeps each — the folds then select the realized branch
+    # unchanged, in every realized period.
+    #
+    # This is purely a scaffolding injection: no new var/cstr/param, no
+    # ``_param_shapes`` routing change, and the sibling stays
+    # NON-genuinely-stochastic (``is_genuinely_stochastic`` keys on
+    # ``period_branch_full`` / ``period_in_use_set``, which are unchanged
+    # here, NOT ``solve_branch__time_branch``) -> zero branch LP variables.
+    # Gated on ``realized_dispatch_parent`` so it is a strict no-op when no
+    # sibling is spawned (byte-parity on deterministic 2d-profile fixtures);
+    # parent-absent / parent-empty cases are handled gracefully.
+    # ------------------------------------------------------------------
+    realized_dispatch_parent = getattr(
+        state.solve, "realized_dispatch_parent", {}
+    ) or {}
+    for sibling, parent in realized_dispatch_parent.items():
+        if sibling not in solve_branch__time_branch_lists:
+            continue
+        if (
+            parent not in solve_branch__time_branch_lists
+            or parent not in period__branch_lists
+        ):
+            continue
+        solve_branch__time_branch_lists[sibling] = (
+            project_realized_branch_time_branch_rows(
+                solve_branch__time_branch_lists[parent],
+                period__branch_lists[parent],
+            )
+        )
 
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:
@@ -664,6 +817,15 @@ def native_run_model(state, solver) -> int:
             solve_writers.derive_periods(
                 complete_solve[solve], state.solve.invest_periods,
             ),
+        )
+        # Slice D — emit the RESOLVED stochastic_invest_method so the
+        # derived/model layers can gate the recourse feature through the
+        # provider/workdir (they hold no SolveConfig).  Absent CSV ==
+        # flag-off (byte-parity-safe default).
+        solve_writers.emit_stochastic_invest_method(
+            state.solve.stochastic_invest_method_for(complete_solve[solve]),
+            str(wf / "solve_data/stochastic_invest_method.csv"),
+            provider=sub_solve_provider,
         )
 
         years_rep = state.solve.solve_period_years_represented[
@@ -1122,9 +1284,36 @@ def native_run_model(state, solver) -> int:
             if state.handoffs is not None and last_captured_solve is not None
             else None
         )
-        _provider_translators.translate_handoff_to_provider(
-            prior_handoff, sub_solve_provider,
-        )
+        # OC1 rolling separate_dispatch — a dispatch roll takes TWO sources:
+        # its PIN (commitment + fixed capacity) from its UC roll (the
+        # sequential predecessor), and its ROLL-FORWARD (realized trajectory)
+        # from the PREVIOUS dispatch roll.  The handoff dict is keyed by the
+        # COMPLETE name, and each roll overwrites its base slot, so the
+        # sibling's own complete-name slot still holds disp_{k-1}'s handoff
+        # until THIS roll overwrites it at solve end — that is the
+        # roll-forward source (None on the first dispatch roll).  Two PARTIAL
+        # translates (PIN_FIELDS / ROLL_FORWARD_FIELDS) compose without
+        # clobbering.  uc_k itself rolls forward on disp_{k-1} for free
+        # (its sequential predecessor IS disp_{k-1} in the interleaved order).
+        _rdp_map = getattr(state.solve, "realized_dispatch_parent", {}) or {}
+        _is_dispatch_roll = solve in _rdp_map
+        if _is_dispatch_roll:
+            _provider_translators.translate_handoff_to_provider(
+                prior_handoff, sub_solve_provider,
+                fields=_provider_translators.PIN_FIELDS,
+            )
+            _rf_handoff = (
+                state.handoffs.get(complete_solve[solve])
+                if state.handoffs is not None else None
+            )
+            _provider_translators.translate_handoff_to_provider(
+                _rf_handoff, sub_solve_provider,
+                fields=_provider_translators.ROLL_FORWARD_FIELDS,
+            )
+        else:
+            _provider_translators.translate_handoff_to_provider(
+                prior_handoff, sub_solve_provider,
+            )
         # Phase 4.1e — when nested, parent solve's handoff shadows the
         # sequential prior in ``handoff/*`` keys: both translator calls
         # write the same Provider keys, and parent's call lands after
@@ -1140,7 +1329,7 @@ def native_run_model(state, solver) -> int:
             if state.handoffs is not None and _parent_complete_for_carriers is not None
             else None
         )
-        if parent_handoff is not None:
+        if parent_handoff is not None and not _is_dispatch_roll:
             _provider_translators.translate_handoff_to_provider(
                 parent_handoff, sub_solve_provider,
             )

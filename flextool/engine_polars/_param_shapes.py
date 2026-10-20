@@ -61,6 +61,7 @@ parameter's structural metadata.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -75,6 +76,8 @@ from flextool.engine_polars._axis_enums import (
     rename_to_axis,
 )
 from flextool.engine_polars._solve_state import FlexToolConfigError
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -416,6 +419,30 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("unit",       "invest_method"): {Shape.SCALAR_STR},
     ("connection", "invest_method"): {Shape.SCALAR_STR},
 }
+
+
+# ---------------------------------------------------------------------------
+# PERIOD_TIME_PARAMS — keys that admit a period/time Map shape
+# ---------------------------------------------------------------------------
+#
+# Spec ``fix_map_reading.md`` §3.1.  Every ``PARAM_ALLOWED_SHAPES`` key
+# whose allow-list contains at least one of ``MAP_PERIOD`` / ``MAP_TIME``
+# / ``MAP_PERIOD_TIME`` — the 16 dual-axis keys PLUS the ~32 period-only
+# keys ({SCALAR, MAP_PERIOD}).  Period-only keys are included on purpose:
+# classifying their rows is what lets the §3.3 per-variant allow-list
+# check catch a stray ``Map(time)`` and raise (today silently dropped).
+#
+# Derived from the registry so the two cannot drift.  Uses the three
+# EXACT Shape enum members — NOT substring matching — so facet shapes
+# such as ``MAP_PERIOD_TIER_FACET`` are correctly EXCLUDED.
+_PERIOD_TIME_SHAPE_MEMBERS: "frozenset[Shape]" = frozenset(
+    (Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME)
+)
+PERIOD_TIME_PARAMS: "frozenset[tuple[str, str]]" = frozenset(
+    key
+    for key, shapes in PARAM_ALLOWED_SHAPES.items()
+    if _PERIOD_TIME_SHAPE_MEMBERS & set(shapes)
+)
 
 
 # ---------------------------------------------------------------------------
@@ -952,6 +979,123 @@ def _entity_dim_columns_for_frame(
     return ["name"]
 
 
+# ---------------------------------------------------------------------------
+# Per-variant allow-list check (spec fix_map_reading.md §3.3)
+# ---------------------------------------------------------------------------
+
+
+# Dedupe the per-(class, param) INFO line to "one per run" (spec §3.3).
+# resolve_param_shape may be called once per sub-solve; this keeps the log
+# to a single line for a mixed-shape parameter across the whole process.
+_MIXED_SHAPE_LOGGED: "set[tuple[str, str]]" = set()
+
+
+def _variant_to_shape(variant: "tuple[str, ...]") -> "Shape | None":
+    """Map one classified axis path (e.g. ``("period",)``) to a Shape.
+
+    Returns ``None`` for a path that does not correspond to a recognised
+    period/time shape (treated as a violation by the caller)."""
+    try:
+        return _shape_from_indices(list(variant))
+    except _UnrecognisedIndex:
+        return None
+
+
+def _entity_axes_map(
+    df: "pl.DataFrame",
+    ent_cols: "tuple[str, ...]",
+) -> "dict[tuple[str, ...], tuple[str, ...]]":
+    """Group *df* rows by entity and return each entity's classified axis
+    path (``("period",)`` / ``("time",)`` / ``("period", "time")`` / ``()``)
+    derived from the non-null ``period`` / ``t`` columns.
+
+    Used only on the error / mixed-shape-logging paths to name entities
+    and count per-shape multiplicities — never on the hot path.
+    """
+    axis_cols = [c for c in ("period", "t") if c in df.columns]
+    ent_present = [c for c in ent_cols if c in df.columns]
+    out: "dict[tuple[str, ...], set[str]]" = {}
+    if not ent_present:
+        return {}
+    for row in df.select(ent_present + axis_cols).iter_rows(named=True):
+        ent = tuple(str(row[c]) for c in ent_present)
+        axes = out.setdefault(ent, set())
+        if "period" in axis_cols and row.get("period") is not None:
+            axes.add("period")
+        if "t" in axis_cols and row.get("t") is not None:
+            axes.add("time")
+    canonical: "dict[tuple[str, ...], tuple[str, ...]]" = {}
+    for ent, axes in out.items():
+        path: list[str] = []
+        if "period" in axes:
+            path.append("period")
+        if "time" in axes:
+            path.append("time")
+        canonical[ent] = tuple(path)
+    return canonical
+
+
+def _validate_shape_variants(
+    variants: "set[tuple[str, ...]]",
+    allowed: "set[Shape]",
+    df: "pl.DataFrame",
+    ent_cols: "tuple[str, ...]",
+    entity_class: str,
+    parameter_name: str,
+) -> None:
+    """Check each per-row shape variant against *allowed* (spec §3.3).
+
+    A combined ``MAP_PERIOD_TIME`` is accepted for a parameter whose
+    allow-list lacks it (e.g. ``commodity.price``) as long as every
+    individual row shape is allowed.  A genuine 2-D row, or a time map
+    on a period-only parameter, is rejected with a
+    :class:`FlexToolConfigError` naming the offending entities and the
+    shape each was authored with.  Logs one INFO line per (class, param)
+    per run when there is more than one variant.
+    """
+    bad_variants = {
+        var for var in variants
+        if (_variant_to_shape(var) is None
+            or _variant_to_shape(var) not in allowed)
+    }
+    if bad_variants:
+        ent_axes = _entity_axes_map(df, ent_cols)
+        parts: list[str] = []
+        for var in sorted(bad_variants, key=lambda t: "+".join(t)):
+            offenders = sorted(
+                "/".join(ent) for ent, path in ent_axes.items()
+                if path == var
+            )
+            shape_name = (
+                _variant_to_shape(var).value
+                if _variant_to_shape(var) is not None
+                else ("+".join(var) if var else "scalar")
+            )
+            who = ", ".join(offenders[:10]) if offenders else "(unknown)"
+            parts.append(f"{shape_name} authored by {who}")
+        raise FlexToolConfigError(
+            f"Parameter ({entity_class!r}, {parameter_name!r}) has rows "
+            f"whose shape is not allowed: {'; '.join(parts)}.  Allowed "
+            f"shapes: {_allowed_shape_names(allowed)}.  Edit the source "
+            "database so every entity uses an allowed shape, or extend "
+            "PARAM_ALLOWED_SHAPES."
+        )
+    key = (entity_class, parameter_name)
+    if len(variants) > 1 and key not in _MIXED_SHAPE_LOGGED:
+        _MIXED_SHAPE_LOGGED.add(key)
+        from collections import Counter
+        ent_axes = _entity_axes_map(df, ent_cols)
+        counts = Counter(ent_axes.values())
+        rendered = ", ".join(
+            f"{('+'.join(path) if path else 'scalar')}: {n}"
+            for path, n in sorted(counts.items(), key=lambda kv: "+".join(kv[0]))
+        )
+        _LOGGER.info(
+            "%s.%s: mixed shapes {%s} -> (d,t)",
+            entity_class, parameter_name, rendered,
+        )
+
+
 def resolve_param_shape(
     source: "InputSource",
     entity_class: str,
@@ -1103,7 +1247,32 @@ def resolve_param_shape(
             and Shape.SCALAR not in allowed):
         shape = Shape.SCALAR_STR
 
-    if shape not in allowed:
+    # Spec fix_map_reading.md §3.3 — per-variant allow-list check.  When
+    # the source exposes ``parameter_shape_variants`` (SpineDbReader /
+    # InMemoryReader, for PERIOD_TIME_PARAMS keys), validate each
+    # per-row shape against ``allowed`` instead of the combined shape.
+    # So a mixed period+time frame (combined ``MAP_PERIOD_TIME``) is
+    # accepted for e.g. ``commodity.price`` — whose allow-list lacks
+    # ``MAP_PERIOD_TIME`` — as long as every individual row shape is
+    # allowed; a genuine 2-D row, or a time map on a period-only
+    # parameter, is still rejected.  Falls back to the combined check
+    # when the source doesn't expose variants (test stubs) or returns an
+    # empty set (non-PERIOD_TIME keys).
+    variants: "set[tuple[str, ...]] | None" = None
+    variants_fn = getattr(source, "parameter_shape_variants", None)
+    if variants_fn is not None:
+        try:
+            raw_variants = variants_fn(entity_class, parameter_name)
+        except (KeyError, AttributeError):
+            raw_variants = None
+        if raw_variants:
+            variants = {tuple(v) for v in raw_variants}
+    if variants:
+        _validate_shape_variants(
+            variants, allowed, df, tuple(ent_cols),
+            entity_class, parameter_name,
+        )
+    elif shape not in allowed:
         # Render observed shape for the message — labels can be empty
         # so reconstruct from the labels list.
         observed = (shape.value if shape is not None
@@ -1306,9 +1475,42 @@ def broadcast_to_period_time(
     # contract is "Enum when global vocabulary is active"; the resolver
     # reads frames in String land via ``InputSource.parameter*``, so the
     # cast happens here at the broadcast boundary.
+    #
+    # Failed-cast guard (spec fix_map_reading.md §3.4).  ``cast_frame_axes``
+    # runs with ``strict=False``, so a period/time token that is NOT in the
+    # model's Enum vocabulary (an unknown or inactive period / timestep)
+    # silently becomes ``null`` on cast.  The null-pattern split below reads
+    # a ``null`` axis token as a "missing axis" default and broadcasts that
+    # row across the WHOLE axis — spreading a bogus value over every (d, t)
+    # and producing duplicate / wrong keys (reproduced: a MAP_TIME row for
+    # ``t01`` ended up carrying both 50 and 60).  Guard it: record which
+    # rows carried a NON-null token BEFORE the cast, then after the cast
+    # DROP the rows whose token was non-null before but null after (the cast
+    # failures), and drive the null-pattern split off the PRE-cast masks —
+    # never the post-cast nulls.  For data whose tokens are all valid/active
+    # (the normal case) nothing is dropped and the pre-cast masks equal the
+    # post-cast nulls, so this is a byte-for-byte no-op.
+    _axis_cols = [c for c in ("period", "t") if c in lf.collect_schema().names()]
+    _mask_cols = {c: f"__{c}_was_null" for c in _axis_cols}
+    if _axis_cols:
+        lf = lf.with_columns(
+            pl.col(c).is_null().alias(_mask_cols[c]) for c in _axis_cols)
     _enums = get_global_axis_enums()
     if _enums is not None:
         lf = cast_frame_axes(lf, _enums)
+        for c in _axis_cols:
+            # Non-null before the cast, null after → unknown/inactive token
+            # outside the model's vocabulary.  Drop it (do not let the split
+            # treat it as a missing-axis default).
+            _failed = (~pl.col(_mask_cols[c])) & pl.col(c).is_null()
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _n = lf.select(_failed.sum().alias("n")).collect().item()
+                if _n:
+                    _LOGGER.debug(
+                        "broadcast_to_period_time: dropped %d row(s) with "
+                        "unknown/inactive '%s' token (failed Enum cast)",
+                        _n, c)
+            lf = lf.filter(~_failed)
 
     shape = resolved.shape
     if shape in (Shape.MAP_PERIOD_TIME, Shape.MAP_TIME_PERIOD):
@@ -1338,30 +1540,31 @@ def broadcast_to_period_time(
         # keyed, so only the ``lf_full`` branch is non-empty and the
         # result is byte-identical to the old inner-join.
         dt_lf = period_filter.lazy().select("d", "t").unique()
+        # Drive the four-way split off the PRE-cast null masks (§3.4) — a
+        # post-cast null may be a failed cast, not an authored default.
+        _d_null = pl.col(_mask_cols["period"])
+        _t_null = pl.col(_mask_cols["t"])
         lf_dt = (lf.pipe(rename_to_axis, {"period": "d"})
-                    .select(*entity_keys, "d", "t", "value"))
+                    .select(*entity_keys, "d", "t", "value",
+                            _mask_cols["period"], _mask_cols["t"]))
         # Fully-keyed rows: exact (d, t) match against the active grid.
-        lf_full = (lf_dt.filter(pl.col("d").is_not_null()
-                                & pl.col("t").is_not_null())
+        lf_full = (lf_dt.filter(~_d_null & ~_t_null)
                         .join(dt_lf, on=["d", "t"], how="inner")
                         .select(*entity_keys, "d", "t", "value"))
         # Period-only default (null t): broadcast across every active
         # timestep of the matching active period.
-        lf_period = (lf_dt.filter(pl.col("d").is_not_null()
-                                  & pl.col("t").is_null())
+        lf_period = (lf_dt.filter(~_d_null & _t_null)
                           .select(*entity_keys, "d", "value")
                           .join(dt_lf, on="d", how="inner")
                           .select(*entity_keys, "d", "t", "value"))
         # Time-only default (null d): broadcast across every active
         # period of the matching active timestep.
-        lf_time = (lf_dt.filter(pl.col("d").is_null()
-                                & pl.col("t").is_not_null())
+        lf_time = (lf_dt.filter(_d_null & ~_t_null)
                         .select(*entity_keys, "t", "value")
                         .join(dt_lf, on="t", how="inner")
                         .select(*entity_keys, "d", "t", "value"))
         # Scalar default (both null): broadcast across the whole grid.
-        lf_scalar = (lf_dt.filter(pl.col("d").is_null()
-                                  & pl.col("t").is_null())
+        lf_scalar = (lf_dt.filter(_d_null & _t_null)
                           .select(*entity_keys, "value")
                           .join(dt_lf, how="cross")
                           .select(*entity_keys, "d", "t", "value"))
@@ -1382,12 +1585,16 @@ def broadcast_to_period_time(
         # broadcast independently across the active-period universe,
         # then concatenate.
         d_lf = period_filter.lazy().select("d").unique()
+        # Split off the PRE-cast null mask (§3.4): a post-cast null may be
+        # an unknown/inactive period that failed the cast, not a scalar
+        # default — those rows were already dropped above.
+        _d_null = pl.col(_mask_cols["period"])
         lf_p = lf.pipe(rename_to_axis, {"period": "d"})
-        lf_scalar = (lf_p.filter(pl.col("d").is_null())
+        lf_scalar = (lf_p.filter(_d_null)
                           .select(*entity_keys, "value")
                           .join(d_lf, how="cross")
                           .select(*entity_keys, "d", "value"))
-        lf_explicit = (lf_p.filter(pl.col("d").is_not_null())
+        lf_explicit = (lf_p.filter(~_d_null)
                             .select(*entity_keys, "d", "value")
                             .join(d_lf, on="d", how="inner")
                             .select(*entity_keys, "d", "value"))
@@ -1405,11 +1612,15 @@ def broadcast_to_period_time(
         # ``network_coal_wind_battery_co2_fullYear_availability`` where
         # ``coal_plant`` is MAP_TIME but ``wind_plant`` is scalar 0.7.
         t_lf = period_filter.lazy().select("t").unique()
-        lf_scalar = (lf.filter(pl.col("t").is_null())
+        # Split off the PRE-cast null mask (§3.4): a post-cast null may be
+        # an unknown/inactive timestep that failed the cast, not a scalar
+        # default — those rows were already dropped above.
+        _t_null = pl.col(_mask_cols["t"])
+        lf_scalar = (lf.filter(_t_null)
                           .select(*entity_keys, "value")
                           .join(t_lf, how="cross")
                           .select(*entity_keys, "t", "value"))
-        lf_explicit = (lf.filter(pl.col("t").is_not_null())
+        lf_explicit = (lf.filter(~_t_null)
                             .select(*entity_keys, "t", "value")
                             .join(t_lf, on="t", how="inner")
                             .select(*entity_keys, "t", "value"))
