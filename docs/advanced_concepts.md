@@ -133,3 +133,61 @@ cost_per_timestep × step_duration × inflation_factor / period_share_of_year
 ```
 
 where `period_share_of_year = hours_in_period / 8760` converts the modelled period to an annual equivalent, and the inflation factor then scales across all represented years. Investment costs follow a similar pattern using a separate inflation factor that accounts for investment timing.
+
+### Using periods that are not one year long
+
+A period does not have to represent exactly one year. It can be shorter
+(e.g. a half-year period for six-monthly investment decisions) or stand in
+for several years (see *How multi-year periods are handled internally*).
+FlexTool keeps the accounting correct for any period length — you mostly
+just need to know what is scaled and what is not.
+
+#### What a period's length means
+
+Each period has a length derived from its modelled timeline,
+`period_share_of_year = hours_in_period / 8760`. Investment granularity is set separately
+with `years_represented` on the solve — including fractional values such
+as `years_represented = 0.5` for half-year steps.
+
+#### What stays correct automatically
+
+- **Operating costs and energy balances are absolute.** They are summed
+  over the timesteps actually in the period, so a shorter period simply
+  incurs less; a longer one, more. No year constant enters these totals.
+- **Annual (per-year) parameters are prorated by period length.** Annual
+  `fixed_cost`, for instance, is applied as `fixed_cost × period_share`, so
+  a half-year period pays half a year of fixed cost. Investment annuities
+  and discounting likewise use the period's (possibly fractional) year
+  count.
+
+#### What "annualised" in the results means
+
+The `..._annualized` result columns divide a period's totals by
+`period_share_of_year` to express them as a per-year rate. This is only a
+reporting convenience so that periods of different lengths can be compared
+on the same footing — it does **not** change the optimisation or the
+period totals. If you want the actual amount incurred in the period, read
+the plain (non-annualised) total.
+
+#### When NOT to rely on inflow scaling
+
+The `inflow_method` options `scale_to_annual_flow`, `scale_in_proportion`
+and `scale_to_annual_and_peak_flow` assume the modelled timeline is a
+representative year: they normalise the inflow by its sum over (one year
+of) the timeline. If your timeline is **not** a representative year — a
+non-representative sub-year slice, or several years with genuinely
+different shapes — do not use these methods. Instead provide an accurate
+absolute inflow time series and leave `inflow_method` at its default
+(`use_original`); then no annual assumption is applied to your inflow.
+
+(There is no equivalent "scale to annual" for `profile`-based limits such
+as capacity factors. A capacity factor is bounded by installed capacity,
+so there is no easy way to scale it accurately.)
+
+#### One approximation to be aware of
+
+When a single period represents multiple years (`years_represented > 1`),
+costs within that period are discounted at the period's single point in
+time rather than year by year. The totals remain correct; only the
+within-period discounting is approximated. Use shorter periods (more of
+them) if you need finer discounting resolution.
