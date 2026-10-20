@@ -9,21 +9,16 @@ The test is allowed to fail until every orphan is tagged.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from spinedb_api import DatabaseMapping
 
-FLEXTOOL_ROOT = Path(__file__).resolve().parent.parent
-EXAMPLE_DB = FLEXTOOL_ROOT / "templates" / "examples.sqlite"
-EXAMPLE_DB_URL = f"sqlite:///{EXAMPLE_DB}"
 
-
-def test_every_parameter_has_a_group() -> None:
-    assert EXAMPLE_DB.exists(), f"Example DB not found: {EXAMPLE_DB}"
-
-    db = DatabaseMapping(EXAMPLE_DB_URL, create=False)
-    try:
+def test_every_parameter_has_a_group(examples_db_url: str) -> None:
+    # ``examples_db_url`` (tests/conftest.py) is a per-worker ISOLATED copy
+    # of ``templates/examples.sqlite`` — never the shared checked-in file —
+    # so concurrent xdist workers cannot deadlock on a sqlite lock (see the
+    # fixture docstring and CLAUDE.md invariant #3).
+    with DatabaseMapping(examples_db_url, create=False) as db:
         db.fetch_all()
         orphans: list[tuple[str, str]] = []
         for pdef in db.get_parameter_definition_items():
@@ -31,8 +26,6 @@ def test_every_parameter_has_a_group() -> None:
             group = ext.get("parameter_group_name")
             if not group:
                 orphans.append((ext["entity_class_name"], pdef["name"]))
-    finally:
-        db.close()
 
     if orphans:
         lines = "\n".join(f"  {cls}.{p}" for cls, p in sorted(orphans))

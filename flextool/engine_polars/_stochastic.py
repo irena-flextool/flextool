@@ -40,9 +40,15 @@ Behavioural quirks
   (``(period, period)`` self-row plus one row per fan member,
   realized and zero-weight included).
 
-* **Single realized branch per period**: each period must have
-  exactly one ``realized: yes`` row (or zero before any branching has
-  occurred).  Found 0 or > 1 → raise ``FlexToolConfigError``.
+* **Forecasts-only fan with optional realized designation**: a
+  stochastic fan is FORECASTS ONLY (probability-weighted, Σ=1, no
+  realized member).  "Realized" is an OPTIONAL 0-or-1 designation per
+  revealing cohort, keyed off the ``realized_yn == "yes"`` column — it
+  feeds only the realization region / separate realized-dispatch solve
+  and is NEVER a weighted fan member.  A revealing cohort must carry
+  ≥1 forecast branch (``realized: no`` with nonzero weight); 0 or 1
+  ``realized: yes`` rows are both valid; 2+ realized rows → raise
+  ``FlexToolConfigError``.
 """
 from __future__ import annotations
 
@@ -360,6 +366,50 @@ class StochasticSolver:
     # create_stochastic_periods — main entry point
     # ------------------------------------------------------------------
 
+    def _validate_cohort(self, info, period, step, descr, realized_suffix=""):
+        """Enforce the fan invariants on one reveal cohort: at most one
+        ``realized:yes`` branch and at least one nonzero-weight forecast.
+
+        ``step`` restricts the count to that start-step (the triggering
+        cohort); ``step=None`` counts every step of ``period`` (the
+        single-solve per-reveal sweep).  ``descr`` / ``realized_suffix``
+        carry the differing message fragments so the raised text stays
+        byte-identical to the two original call sites.  Raises
+        FlexToolConfigError on violation.
+        """
+        n_real = sum(
+            1
+            for r in info
+            if r[0] == period
+            and (step is None or r[2] == step)
+            and r[3] == "yes"
+        )
+        n_forecast = sum(
+            1
+            for r in info
+            if r[0] == period
+            and (step is None or r[2] == step)
+            and r[3] != "yes"
+            and float(r[4]) != 0.0
+        )
+        if n_real > 1:
+            message = (
+                f"{descr} must have at most one realized:yes branch per "
+                f"revealing cohort; found {n_real}. Check "
+                f"stochastic_branches{realized_suffix}."
+            )
+            self.logger.error(message)
+            raise FlexToolConfigError(message)
+        if n_forecast < 1:
+            message = (
+                f"{descr} must contain at least one forecast (non-realized, "
+                f"nonzero-weight) branch; found {n_forecast}. A stochastic "
+                "fan is forecasts only — realized is an optional "
+                "designation. Check stochastic_branches."
+            )
+            self.logger.error(message)
+            raise FlexToolConfigError(message)
+
     def create_stochastic_periods(
         self,
         stochastic_branches: dict[str, Any],
@@ -394,6 +444,16 @@ class StochasticSolver:
         and zero-weight branches); ``solve_branch__time_branch`` gains
         rows only for branches that received active time.
 
+        Real-name data ownership has a 0-or-1 realized designation: when
+        a period has a realized branch it owns the real names' data; when
+        the whole fan is forecasts-only (n_real=0) no realized branch
+        owns them, so a PRE-REVEAL real-named period (the shared trunk)
+        instead binds the REFERENCE forecast (the lexically-smallest
+        forecast raw token) so its branch-keyed data does not fall through
+        to the zero fallback.  Reveal / continuation periods carry their
+        data on the suffixed forecast copies; their real-named self-row is
+        a harmless weight-0 phantom left untouched (R-NAME).
+
         IMPORTANT: branches do NOT enter ``invest_periods`` either.
         Per ``audit/a6_b_dim_alternative.md`` (R-O6), ``v_invest`` is
         realized-only — recourse investment is a future capability.
@@ -413,9 +473,16 @@ class StochasticSolver:
             realized_time_lists, branch_start_time_lists)``.
 
         Raises:
-            FlexToolConfigError: When a solve's start time isn't in any
-                ``stochastic_branches`` row, or when more than one
-                ``realized: yes`` row matches a period.
+            FlexToolConfigError: When the reveal that triggers a solve does
+                not start at its branching period's first step (not a
+                period-boundary reveal), when that triggering cohort carries
+                more than one ``realized: yes`` row (0 or 1 is valid — the
+                fan is forecasts only, realized is an optional designation),
+                when that cohort carries no forecast branch (``realized: no``
+                with nonzero weight), or when a single (non-rolling) solve
+                declares ``stochastic_branches`` none of which reveal at a
+                reachable step of its active time (silently-ignored
+                branches).
         """
         period__branch_lists: defaultdict[str, list] = defaultdict(list)
         solve_branch__time_branch_lists: defaultdict[str, list] = defaultdict(list)
@@ -440,30 +507,121 @@ class StochasticSolver:
             active_branches: list[str] = []
             branch_start_time_lists[solve] = None
 
-            # First step of the solve (used for validation below).
-            first_step: tuple[str, str] | None = None
-            for period, active_time in active_time_list.items():
-                first_step = (period, active_time[0].timestep)
-                break
+            # ----------------------------------------------------------
+            # Triggering-cohort validation (W1).  A solve is triggered by
+            # exactly ONE reveal: the FIRST declared ``start_step`` reachable
+            # while walking THIS solve's (already period/roll-sliced)
+            # ``active_time_list`` in order — the same walk the trigger loop
+            # below does.  ``info`` is read per COMPLETE solve, so a rolling
+            # parent's every roll sees ALL rolls' reveal rows; only the row
+            # that triggers THIS roll is validatable here, so we validate the
+            # triggering cohort only and tolerate the rest (each is validated
+            # in the roll where it triggers — a clean cross-roll pre-pass is
+            # infeasible, since a mid-horizon reveal is a PERIOD boundary, not
+            # a roll boundary, so it can't be told from a garbage step here).
+            # Checks: (i) the trigger step must be its period's FIRST step
+            # (reveals are period-granular boundaries); (ii) the cohort
+            # {rows sharing that (period, start_step)} must carry ≤1
+            # realized:yes (the fan is forecasts-only; realized is optional)
+            # and ≥1 nonzero-weight forecast.
+            #
+            # No reachable reveal → deterministic trunk (``branched`` stays
+            # False): correct for a rolling PRE-REVEAL roll, but for a SINGLE
+            # (non-rolling) solve a non-empty ``info`` means the branches
+            # would be silently ignored → raise.  Rolling vs single is
+            # detected structurally via ``solve_mode == "rolling_window"``
+            # (set in RecursiveSolveBuilder), not the ``_roll_N`` name.  For a
+            # single solve the whole reveal picture is visible in one window,
+            # so EVERY declared reveal is validated strictly (same checks).
+            # ----------------------------------------------------------
+            is_rolling_sub_solve = (
+                getattr(
+                    getattr(self.state, "solve", None), "solve_modes", {}
+                ).get(complete_solves[solve], "single_solve")
+                == "rolling_window"
+            )
 
-            # Validate: when stochastic_branches has rows for this
-            # complete-solve, at least one row's start_step must match
-            # the solve's first step AND be marked realized.
-            found_start = False
+            declared_start_steps: defaultdict[str, set] = defaultdict(set)
             for row in info:
-                if first_step is not None and first_step[1] == row[2] and "yes" == row[3]:
-                    found_start = True
-            if found_start is False and len(info) != 0:
-                message = (
-                    "A realized start time of the solve cannot be found from "
-                    "the stochastic_branches parameter. "
-                    "Check that stochastic_branches has a realized : yes, "
-                    "branch for the start of the solve "
-                    "and that the possible rolling_jump matches with the "
-                    "branch starts"
+                declared_start_steps[row[0]].add(row[2])
+
+            trig_period: str | None = None
+            trig_step: str | None = None
+            for period_w, active_time_w in active_time_list.items():
+                if period_w in declared_start_steps:
+                    for step_w in active_time_w:
+                        if step_w.timestep in declared_start_steps[period_w]:
+                            trig_period = period_w
+                            trig_step = step_w.timestep
+                            break
+                if trig_period is not None:
+                    break
+
+            if trig_period is None:
+                if info and not is_rolling_sub_solve:
+                    message = (
+                        "A single (non-rolling) stochastic solve declares "
+                        "stochastic_branches but none reveal at a reachable "
+                        "step of its active time — the branches would be "
+                        "silently ignored. Check stochastic_branches "
+                        f"start_step values against solve {solve!r}'s "
+                        "timeline."
+                    )
+                    self.logger.error(message)
+                    raise FlexToolConfigError(message)
+            else:
+                if trig_step != active_time_list[trig_period][0].timestep:
+                    message = (
+                        "A stochastic branch must start at the FIRST step of "
+                        "its branching period (period-boundary reveal). The "
+                        f"reveal triggering solve {solve!r} is period "
+                        f"{trig_period!r} start_step {trig_step!r}, which is "
+                        "not that period's first step in this solve. Check "
+                        "stochastic_branches."
+                    )
+                    self.logger.error(message)
+                    raise FlexToolConfigError(message)
+                self._validate_cohort(
+                    info,
+                    trig_period,
+                    trig_step,
+                    f"The triggering stochastic branching cohort (period "
+                    f"{trig_period!r}, start_step {trig_step!r})",
+                    realized_suffix=(
+                        " (the fan is forecasts only; realized is an optional "
+                        "0-or-1 designation; start_step at the period's first "
+                        "step)"
+                    ),
                 )
-                self.logger.error(message)
-                raise FlexToolConfigError(message)
+
+                if not is_rolling_sub_solve:
+                    # Single solve: validate EVERY declared reveal, not just
+                    # the triggering cohort — the whole picture is visible, so
+                    # a mid-period or mis-realized reveal here is a real
+                    # authoring error (pre-W1 per-row strictness).
+                    for period_k in declared_start_steps:
+                        if period_k not in active_time_list:
+                            continue
+                        period_first_k = active_time_list[period_k][0].timestep
+                        for step_k in sorted(declared_start_steps[period_k]):
+                            if step_k != period_first_k:
+                                message = (
+                                    "A stochastic branch must start at the "
+                                    "FIRST step of its branching period "
+                                    "(period-boundary reveal). Solve "
+                                    f"{solve!r} declares period {period_k!r} "
+                                    f"start_step {step_k!r}, which is not that "
+                                    "period's first step. Check "
+                                    "stochastic_branches."
+                                )
+                                self.logger.error(message)
+                                raise FlexToolConfigError(message)
+                        self._validate_cohort(
+                            info,
+                            period_k,
+                            None,
+                            f"Stochastic branching period {period_k!r}",
+                        )
 
             # Walk periods — at the first branch trigger, fan out into
             # branches; subsequent periods continue the same branches.
@@ -573,9 +731,34 @@ class StochasticSolver:
                     if period in fix_storage_time_list:
                         new_fix_storage_time_list[period] = fix_storage_time_list[period]
 
-            # Find the realized branch for each period.  Each period
-            # must have exactly one realized: yes row (or zero before
-            # any branching has occurred).
+            # Find the realized branch for each period, and bind the
+            # reference forecast where none is designated.  Realized is an
+            # optional 0-or-1 designation: a period may have no realized
+            # row (forecasts-only cohort) or exactly one; 2+ → raise.  When
+            # NO branch is realized (n_real=0), the real (un-suffixed)
+            # period names are owned by no realized branch, so a PRE-REVEAL
+            # real-named period (the shared trunk, which has no suffixed
+            # forecast copy of its own) would get no solve_branch__time_branch
+            # owner and its branch-keyed data (profiles, pdt params) would
+            # silently fall through to the zero fallback.  In that case the
+            # REFERENCE forecast (the lexically-smallest forecast raw token —
+            # the same d_ref R-NA's db_pairs star uses) owns the real names
+            # for pre-reveal periods so their data binds.  Reveal and
+            # continuation periods carry their data on the suffixed forecast
+            # copies, so their real-named self-row stays a harmless weight-0
+            # phantom we leave alone (binding it would collide with the
+            # recourse lineage chain grouping — see R-NAME design §2).
+            #
+            # ``order`` and ``d_ref_tok`` are loop-invariant across the period
+            # loop (active_time_list and active_branches are fixed here) —
+            # compute once.  For a hypothetical multi-reveal solve d_ref scopes
+            # to the FIRST reveal cohort's forecasts; with a single reveal
+            # (every current fixture) active_branches IS exactly that cohort,
+            # so its lexical-min token is R-NA's reference forecast.
+            order = list(active_time_list.keys())
+            d_ref_tok = (
+                sorted(set(active_branches))[0] if active_branches else None
+            )
             for period, active_time in active_time_list.items():
                 found = 0
                 # Before branching: row[0]==period, row[2]==first step,
@@ -600,13 +783,38 @@ class StochasticSolver:
                             solve_branch__time_branch_lists[solve].append(
                                 (period, row[1])
                             )
-                if (branch_start_time_lists[solve] is not None and found == 0) or found > 1:
+                if found > 1:
                     message = (
-                        "Each period should have one and only one realized branch. "
+                        "Each period should have at most one realized branch. "
                         "Found: " + str(found) + "\n"
                     )
                     self.logger.error(message)
                     raise FlexToolConfigError(message)
+
+                # R-NAME: when no realized branch owns the real names
+                # (n_real=0), a PRE-REVEAL real-named period (the shared
+                # trunk) binds the reference forecast's data — the
+                # lexically-smallest forecast raw token, the same d_ref
+                # R-NA's db_pairs star uses.  Scoped to pre-reveal ONLY: a
+                # blanket binding would also point the POST-reveal weight-0
+                # phantom self-row at d_ref, making it join the recourse
+                # lineage chain and trip the leaf-weight-constancy
+                # precondition (_derived_branch.py).  The lineage precondition
+                # already excludes pre-reveal anchors, so the pre-reveal trunk
+                # is safe.  A pre-reveal period has no suffixed copy of its
+                # own, so this is the only owner it can get.
+                if found == 0 and active_branches:
+                    bs = branch_start_time_lists[solve]
+                    reveal_period = bs[0] if bs is not None else None
+                    if (
+                        reveal_period is not None
+                        and period in order
+                        and reveal_period in order
+                        and order.index(period) < order.index(reveal_period)
+                    ):
+                        solve_branch__time_branch_lists[solve].append(
+                            (period, d_ref_tok)
+                        )
 
             # Update the time lists for this solve.
             realized_time_lists[solve] = new_realized_time_list

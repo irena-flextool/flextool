@@ -38,6 +38,10 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_DIVEST_CUMULATIVE:  ("entity", "value"),
     K.HANDOFF_ROLL_END_STATE:     ("node", "value"),
     K.HANDOFF_UPWARD_ROLL_END_STATE: ("node", "value"),
+    K.HANDOFF_ROLL_END_ONLINE:    ("process", "value"),
+    K.HANDOFF_ONLINE_HISTORY:     ("process", "period", "step",
+                                   "startup", "shutdown", "duration"),
+    K.HANDOFF_FIX_ONLINE:         ("process", "period", "step", "value"),
     K.HANDOFF_CUMULATIVE_CO2:     ("group", "period", "value"),
     K.HANDOFF_CUMULATIVE_COMMODITY: ("commodity", "tier", "period",
                                       "p_ladder_cum_realized_mwh"),
@@ -56,8 +60,25 @@ def _empty_handoff_frame(key: str) -> pl.DataFrame:
     )
 
 
+# OC1 rolling separate_dispatch — the two carrier FLOWS, so a dispatch roll
+# can take its ROLL-FORWARD (realized trajectory) from the previous dispatch
+# roll and its PIN (commitment + capacity) from its UC roll via TWO partial
+# translates that never clobber each other's keys.
+ROLL_FORWARD_FIELDS: frozenset = frozenset((
+    "roll_end_state", "upward_roll_end_state", "roll_end_online",
+    "online_history", "cumulative_co2", "cumulative_commodity",
+    "cum_sim_hours",
+))
+PIN_FIELDS: frozenset = frozenset((
+    "realized_invest", "realized_existing", "divest_cumulative",
+    "fix_online", "fix_storage_quantity", "fix_storage_price",
+    "fix_storage_usage",
+))
+
+
 def translate_handoff_to_provider(
     handoff: "SolveHandoff | None", provider,
+    fields: "frozenset | set | None" = None,
 ) -> None:
     """Write each consumed ``SolveHandoff`` field as a Provider entry.
 
@@ -66,6 +87,13 @@ def translate_handoff_to_provider(
     available) every key receives an empty header-only frame so
     consumers can read unconditionally and check ``height > 0`` to
     decide whether prior-carrier data is available.
+
+    ``fields`` (OC1 rolling separate_dispatch): when given, only those
+    SolveHandoff field names are written — a PARTIAL translate that leaves
+    every other Provider key untouched.  Used to compose a dispatch roll's
+    handoff from two sources (pin from its UC roll + roll-forward from the
+    previous dispatch roll) without each full translate clobbering the
+    other's keys.  ``None`` (default) writes every field (the full translate).
 
     The translated keys are listed in
     ``flextool.engine_polars._provider_keys`` under the ``HANDOFF_*``
@@ -77,6 +105,9 @@ def translate_handoff_to_provider(
         ("divest_cumulative",   K.HANDOFF_DIVEST_CUMULATIVE),
         ("roll_end_state",      K.HANDOFF_ROLL_END_STATE),
         ("upward_roll_end_state", K.HANDOFF_UPWARD_ROLL_END_STATE),
+        ("roll_end_online",     K.HANDOFF_ROLL_END_ONLINE),
+        ("online_history",      K.HANDOFF_ONLINE_HISTORY),
+        ("fix_online",          K.HANDOFF_FIX_ONLINE),
         ("cumulative_co2",      K.HANDOFF_CUMULATIVE_CO2),
         ("cumulative_commodity", K.HANDOFF_CUMULATIVE_COMMODITY),
         ("cum_sim_hours",       K.HANDOFF_CUM_SIM_HOURS),
@@ -85,6 +116,8 @@ def translate_handoff_to_provider(
         ("fix_storage_usage",    K.HANDOFF_FIX_STORAGE_USAGE),
     )
     for field_name, key in field_to_key:
+        if fields is not None and field_name not in fields:
+            continue
         frame = getattr(handoff, field_name, None) if handoff is not None else None
         if frame is None:
             frame = _empty_handoff_frame(key)
@@ -104,6 +137,8 @@ _HANDOFF_TO_OVERRIDE: dict[str, str] = {
     K.HANDOFF_DIVEST_CUMULATIVE:    K.OVERRIDE_DIVEST_CUMULATIVE,
     K.HANDOFF_ROLL_END_STATE:       K.OVERRIDE_ROLL_END_STATE,
     K.HANDOFF_UPWARD_ROLL_END_STATE: K.OVERRIDE_UPWARD_ROLL_END_STATE,
+    K.HANDOFF_ROLL_END_ONLINE:      K.OVERRIDE_ROLL_END_ONLINE,
+    K.HANDOFF_ONLINE_HISTORY:       K.OVERRIDE_ONLINE_HISTORY,
     K.HANDOFF_CUMULATIVE_CO2:       K.OVERRIDE_CUMULATIVE_CO2,
     K.HANDOFF_CUMULATIVE_COMMODITY: K.OVERRIDE_CUMULATIVE_COMMODITY,
     K.HANDOFF_CUM_SIM_HOURS:        K.OVERRIDE_CUM_SIM_HOURS,

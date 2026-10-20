@@ -12,9 +12,20 @@ arithmetic on three shapes:
 
   * Single-branch self-loop — the degenerate non-stochastic case used by
     every parity baseline today.  Weight must be 1.0.
-  * Two equal-weight sibling branches sharing a parent period — the
-    canonical 2-branch stochastic case.  Weights must be 0.5 / 0.5.
-  * Two unequal-weight branches (1:3) — weights must be 0.25 / 0.75.
+  * A genuine 2-FORECAST fan with equal weights — the trunk self-row is a
+    weight-0 phantom (forecasts-only, R2), the two forecasts normalise to
+    0.5 / 0.5.
+  * A genuine 2-forecast fan with unequal weights (1:3) — phantom 0, the
+    two forecasts normalise proportionally to 0.25 / 0.75 (divide by the
+    SUM of forecast weights, not the count).
+
+Under the corrected forecasts-only cohort rule (R2), the stochastic fan
+is forecasts-only (Σ = 1): a trunk period ``d`` that is both a self-row
+``(d, d)`` AND the parent of ≥1 forecast is a PHANTOM carrying no
+probability mass (weight 0); the forecast members renormalise among
+themselves.  The genuine 2-forecast fans keep the proportional-split
+coverage that a single-forecast fan (which would collapse to {phantom:0,
+forecast:1.0}) would lose.
 
 The writer reads the CSVs positionally with header skip, so a column
 order regression in any of the upstream writers would surface here as
@@ -165,96 +176,112 @@ def test_single_branch_self_loop_weight_is_1(tmp_path: Path) -> None:
 
 
 def test_two_equal_weight_branches_normalise_to_half(tmp_path: Path) -> None:
-    """Two sibling branches with equal input weights → 0.5 / 0.5.
+    """A genuine 2-forecast fan with equal input weights → 0.5 / 0.5.
 
-    The realised period (``p2020``) and an alternative branch
-    (``p2020_alt``) share parent ``p2020`` (FlexTool models this with
-    ``period__branch`` rows ``(p2020, p2020)`` and ``(p2020,
-    p2020_alt)``).  Both branches share the same first timestep and the
-    same dt, so the denominator is the sum of both input weights.
+    The trunk period ``p2020`` fans into TWO forecast branches
+    ``p2020_a`` / ``p2020_b`` (``period__branch`` rows ``(p2020, p2020)``,
+    ``(p2020, p2020_a)``, ``(p2020, p2020_b)``).  Under the forecasts-only
+    rule the trunk self-row ``p2020`` is a weight-0 phantom; the two
+    forecasts share the same first timestep and dt, so the denominator is
+    the sum of the two forecast weights → each 0.5.  (A single-forecast
+    fan would collapse to {p2020:0, forecast:1.0}, losing the split, so
+    this test uses two genuine forecasts.)
     """
     solve_data = tmp_path / "solve_data"
     _write_solve_data(
         solve_data,
         period__branch=[
             ("p2020", "p2020"),
-            ("p2020", "p2020_alt"),
+            ("p2020", "p2020_a"),
+            ("p2020", "p2020_b"),
         ],
         solve_branch_weight=[
-            ("p2020", 1.0),
-            ("p2020_alt", 1.0),
+            ("p2020_a", 1.0),
+            ("p2020_b", 1.0),
         ],
         first_timesteps=[
             ("p2020", "t01"),
-            ("p2020_alt", "t01"),
+            ("p2020_a", "t01"),
+            ("p2020_b", "t01"),
         ],
         steps_in_use=[
             ("p2020", "t01", 1.0),
             ("p2020", "t02", 1.0),
-            ("p2020_alt", "t01", 1.0),
-            ("p2020_alt", "t02", 1.0),
+            ("p2020_a", "t01", 1.0),
+            ("p2020_a", "t02", 1.0),
+            ("p2020_b", "t01", 1.0),
+            ("p2020_b", "t02", 1.0),
         ],
-        period_in_use=["p2020", "p2020_alt"],
+        period_in_use=["p2020", "p2020_a", "p2020_b"],
     )
 
     provider = _run_branch_weights(tmp_path, solve_data)
 
     pd_w = _read_pd_weights(provider)
     assert pd_w == {
-        "p2020": pytest.approx(0.5),
-        "p2020_alt": pytest.approx(0.5),
+        "p2020": pytest.approx(0.0),       # weight-0 phantom trunk
+        "p2020_a": pytest.approx(0.5),
+        "p2020_b": pytest.approx(0.5),
     }
 
     pdt_w = _read_pdt_weights(provider)
     assert pdt_w == {
-        ("p2020", "t01"): pytest.approx(0.5),
-        ("p2020", "t02"): pytest.approx(0.5),
-        ("p2020_alt", "t01"): pytest.approx(0.5),
-        ("p2020_alt", "t02"): pytest.approx(0.5),
+        ("p2020", "t01"): pytest.approx(0.0),
+        ("p2020", "t02"): pytest.approx(0.0),
+        ("p2020_a", "t01"): pytest.approx(0.5),
+        ("p2020_a", "t02"): pytest.approx(0.5),
+        ("p2020_b", "t01"): pytest.approx(0.5),
+        ("p2020_b", "t02"): pytest.approx(0.5),
     }
 
 
 def test_two_unequal_weight_branches_normalise_proportionally(
     tmp_path: Path,
 ) -> None:
-    """Input weights 1 : 3 → 0.25 / 0.75 after normalisation.
+    """A genuine 2-forecast fan with input weights 1 : 3 → 0.25 / 0.75.
 
-    Verifies that the normaliser actually divides by the *sum* of input
-    weights and not, e.g., by the count of sibling branches (which would
-    produce 0.5 / 1.5).
+    Verifies that the normaliser divides by the *sum* of the forecast
+    weights and not, e.g., by the count of forecast branches (which would
+    produce 0.5 / 1.5).  The trunk self-row ``p2020`` is a weight-0
+    phantom (forecasts-only).
     """
     solve_data = tmp_path / "solve_data"
     _write_solve_data(
         solve_data,
         period__branch=[
             ("p2020", "p2020"),
-            ("p2020", "p2020_alt"),
+            ("p2020", "p2020_a"),
+            ("p2020", "p2020_b"),
         ],
         solve_branch_weight=[
-            ("p2020", 1.0),
-            ("p2020_alt", 3.0),
+            ("p2020_a", 1.0),
+            ("p2020_b", 3.0),
         ],
         first_timesteps=[
             ("p2020", "t01"),
-            ("p2020_alt", "t01"),
+            ("p2020_a", "t01"),
+            ("p2020_b", "t01"),
         ],
         steps_in_use=[
             ("p2020", "t01", 1.0),
-            ("p2020_alt", "t01", 1.0),
+            ("p2020_a", "t01", 1.0),
+            ("p2020_b", "t01", 1.0),
         ],
-        period_in_use=["p2020", "p2020_alt"],
+        period_in_use=["p2020", "p2020_a", "p2020_b"],
     )
 
     provider = _run_branch_weights(tmp_path, solve_data)
 
     pd_w = _read_pd_weights(provider)
     assert pd_w == {
-        "p2020": pytest.approx(0.25),
-        "p2020_alt": pytest.approx(0.75),
+        "p2020": pytest.approx(0.0),       # weight-0 phantom trunk
+        "p2020_a": pytest.approx(0.25),
+        "p2020_b": pytest.approx(0.75),
     }
 
     pdt_w = _read_pdt_weights(provider)
     assert pdt_w == {
-        ("p2020", "t01"): pytest.approx(0.25),
-        ("p2020_alt", "t01"): pytest.approx(0.75),
+        ("p2020", "t01"): pytest.approx(0.0),
+        ("p2020_a", "t01"): pytest.approx(0.25),
+        ("p2020_b", "t01"): pytest.approx(0.75),
     }

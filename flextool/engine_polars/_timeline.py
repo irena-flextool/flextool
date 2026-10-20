@@ -1236,21 +1236,77 @@ def make_step_jump(
                             ),
                         )
                     else:
-                        jump = (
-                            active_time[j].index - active_time[-1].index
-                        )
-                        step_lengths.insert(
-                            period_start_pos,
-                            (
-                                period,
-                                step.timestep,
-                                active_time[j - 1].timestep,
-                                active_time[block_last].timestep,
-                                period,
-                                active_time_list[period][-1].timestep,
-                                jump,
-                            ),
-                        )
+                        # No earlier same-time-branch period exists.  Two
+                        # sub-cases (Slice E design §5.2):
+                        #   * MID-HORIZON reveal — this branch copy's own
+                        #     anchor period is NOT the first period, so a
+                        #     shared pre-reveal trunk period precedes it.
+                        #     The copy must inherit the shared end-of-trunk
+                        #     storage state, so link its first step to the
+                        #     nearest anchor STRICTLY BEFORE the copy's own
+                        #     anchor period (two-stage storage-state
+                        #     non-anticipativity).
+                        #   * FIRST-PERIOD fan — the copy's anchor IS the
+                        #     first period; no earlier anchor exists, so it
+                        #     self-cycles on its own last step (byte-parity
+                        #     with the pre-Slice-E behaviour).
+                        # The search is anchored on the copy's OWN anchor
+                        # period (via the (a, b) period__branch rows), NOT
+                        # the copy's list index — an index-based search
+                        # would find the copy's own realized sibling in the
+                        # same calendar period (mid-horizon) or the first
+                        # anchor at index 0 (first-period fan, breaking
+                        # byte-parity).
+                        prev_anchor = None
+                        p_anchor = None
+                        for a, b in period__branch:
+                            if b == period and a != period:
+                                p_anchor = a
+                                break
+                        if p_anchor is not None and p_anchor in period_names:
+                            pos_anchor = period_names.index(p_anchor)
+                            for kk in range(pos_anchor - 1, -1, -1):
+                                if (
+                                    period_names[kk],
+                                    period_names[kk],
+                                ) in period__branch:
+                                    prev_anchor = period_names[kk]
+                                    break
+                        if prev_anchor is not None:
+                            jump = (
+                                active_time[j].index
+                                - active_time_list[prev_anchor][-1].index
+                            )
+                            step_lengths.insert(
+                                period_start_pos,
+                                (
+                                    period,
+                                    step.timestep,
+                                    active_time[j - 1].timestep,
+                                    active_time[block_last].timestep,
+                                    prev_anchor,
+                                    active_time_list[prev_anchor][
+                                        -1
+                                    ].timestep,
+                                    jump,
+                                ),
+                            )
+                        else:
+                            jump = (
+                                active_time[j].index - active_time[-1].index
+                            )
+                            step_lengths.insert(
+                                period_start_pos,
+                                (
+                                    period,
+                                    step.timestep,
+                                    active_time[j - 1].timestep,
+                                    active_time[block_last].timestep,
+                                    period,
+                                    active_time_list[period][-1].timestep,
+                                    jump,
+                                ),
+                            )
                 else:
                     jump = (
                         active_time[j].index

@@ -219,6 +219,28 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "minFlow_output_floor_linear", "minFlow_output_floor_integer",
     "minimum_uptime_linear", "minimum_uptime_integer",
     "minimum_downtime_linear", "minimum_downtime_integer",
+    # OC1 #1 sub-slice (b) separate_dispatch sibling v_online pin — model.py
+    # ``online_fix_eq_{linear,integer}`` (resolver strips the UC suffix to
+    # the registered ``online_fix_eq`` base).
+    "online_fix_eq_linear", "online_fix_eq_integer",
+    # Slice D per-path total caps — model.py ``_emit_entity_total_cap``
+    # and _cumulative_invest.py ``_emit_group_total_divest_cap`` pass the
+    # constraint name as a variable (legacy vs ``…_path``), so the
+    # literal-grep test above cannot see them.  Pin both the legacy and
+    # the ``_path`` shapes behaviorally (design §7.3/§14).
+    "maxInvest_entity_total", "maxInvest_entity_total_n",
+    "maxDivest_entity_total", "maxDivest_entity_total_n",
+    "maxInvest_entity_total_path", "maxInvest_entity_total_path_n",
+    "maxDivest_entity_total_path", "maxDivest_entity_total_path_n",
+    "maxDivestGroup_entity_total_path_p",
+    "maxDivestGroup_entity_total_path_n",
+    # Invest non-anticipativity (v72) — model.py
+    # ``_add_non_anticipativity_invest_constraints`` passes the family
+    # name as a variable (the ``_tie`` helper), so the literal grep above
+    # cannot see them.  All four resolve via an exact CONSTRAINT_FAMILIES
+    # entry (RHS = 0, CstrFamily(None)); divest is mandatory (§4.4).
+    "non_anticipativity_invest_p", "non_anticipativity_invest_n",
+    "non_anticipativity_divest_p", "non_anticipativity_divest_n",
 ]
 
 

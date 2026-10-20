@@ -39,6 +39,11 @@ _V_SOLVE_ONLY = [
 # post-decision value).
 _PAR_DROP = [
     'step_duration', 'timestep_weight', 'flow_min', 'flow_max',
+    # pdt_branch_weight — same (solve, period, time) → (period, time)
+    # treatment as step_duration/timestep_weight (the per-(d, t) cost
+    # terms it multiplies are already solve-stripped).  keep='last' matches:
+    # the roll that commits a realized (period, time) carries its weight.
+    'pdt_branch_weight',
     'process_availability', 'process_source_sink_varCost',
     'process_slope', 'process_section',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',

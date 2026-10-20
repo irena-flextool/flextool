@@ -11,9 +11,11 @@ Model: one 6-step timeline split into two 3-step periods
 (p2035 = t0001-t0003, p2040 = t0004-t0006); a demand node ``city``
 (100 MW then 110 MW), a free wind unit capped by a branch-varying
 profile (via ``group__unit`` so no node enters the stochastic group),
-and a 50 EUR/MWh thermal backstop.  Branches ``rlz`` (realized,
-weight 1.0) and ``low`` (weight 3.0) are declared at p2035/t0001, so
+and a 50 EUR/MWh thermal backstop.  Forecast branches ``high``
+(weight 1.0) and ``low`` (weight 3.0) are declared at p2035/t0001, so
 p2040 is a CONTINUATION period — the surface the fan-out fix repairs.
+Both branches are forecasts (``realized:no``); n_real = 0 — a genuine
+``{high, low}`` fan with no realized designation.
 
 Hand calculation (design §5.2): stochastic objective 70 080 000,
 deterministic control 43 800 000.
@@ -115,7 +117,7 @@ def build() -> dict:
     # ---- init: model / solve / time structure --------------------------
     stochastic_branches = _map([
         ("p2035", _nested([
-            ("rlz", _nested([("t0001", _nested([("yes", 1.0)]))])),
+            ("high", _nested([("t0001", _nested([("no", 1.0)]))])),
             ("low", _nested([("t0001", _nested([("no", 3.0)]))])),
         ])),
     ])
@@ -123,7 +125,7 @@ def build() -> dict:
         [(t, 0.6) for t in P1_STEPS] + [(t, 0.5) for t in P2_STEPS]
     )
     profile_stoch = _map([
-        ("rlz", _nested([
+        ("high", _nested([
             ("t0001", _nested([(t, 0.6) for t in P1_STEPS])),
             ("t0004", _nested([(t, 0.5) for t in P2_STEPS])),
         ])),

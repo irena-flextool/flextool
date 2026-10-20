@@ -20,6 +20,7 @@ symptoms — that is the regression gate the bug-fix work will close.
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -53,8 +54,16 @@ def test_examples_scenario_solves(scenario: str, tmp_path: Path) -> None:
     if not EXAMPLES_DB.is_file():
         pytest.skip(f"examples.sqlite missing: {EXAMPLES_DB}")
 
+    # Read a per-test ISOLATED copy rather than the checked-in
+    # ``projects/examples/input_sources/examples.sqlite`` (byte-identical,
+    # so the smoke contract is unchanged): never open a shared checked-in
+    # sqlite from a test — concurrent workers can deadlock on a read lock
+    # on Windows (CLAUDE.md invariant #3).
+    db_copy = tmp_path / "examples.sqlite"
+    shutil.copy(EXAMPLES_DB, db_copy)
+
     steps = run_chain_from_db(
-        EXAMPLES_DB,
+        db_copy,
         scenario_name=scenario,
         work_folder=tmp_path,
         csv_dump=False,

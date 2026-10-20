@@ -12,19 +12,32 @@ the single source of truth (mirrors the ``lh2_master_build_db_url``
 pattern); no hand calculation is needed — this is a structural
 constraint-domain test.
 
-Post-fix, ``period_branch_full`` gains the continuation pairs and
-``period_in_use`` gains ``p2040_low``, so ``db_pairs``
-(``model.py`` NA dispatch: ``d != b``, ``b ∈ period_in_use``) =
-{(p2035, p2035_low), (p2040, p2040_low)} and the constraint domain
-joins ``dt_non_anticipativity`` on ``d``:
+Forecast-to-forecast ground: the base ``stoch_two_period`` fixture has a
+SINGLE forecast (``low``) per reveal, which under the corrected model makes
+non-anticipativity vacuous (a single forecast has nothing to tie).  This
+structural continuation test therefore adds a SECOND forecast (``high``,
+``realized: no``) to its in-memory variant so the NA family fires
+forecast-to-forecast and the continuation composition can still be
+witnessed.  (This is a self-contained addition to the test's own derived
+variant; the committed hand-calc fixtures the degenerate-fixture slice R3
+targets are untouched.)
 
-    1 stoch node x [(p2035, p2035_low) x 3 t + (p2040, p2040_low) x 3 t]
+Post-fix, ``period_branch_full`` gains the continuation pairs and
+``period_in_use`` gains ``p2035_high`` / ``p2040_low`` / ``p2040_high``.  The
+raw ``db_pairs`` (``model.py`` NA dispatch: ``d != b``, ``b ∈
+period_in_use``) anchors every forecast to the trunk; the re-ground turns
+each anchor group into a FORECAST star keyed on the lexicographically
+smallest forecast (``p2035_high`` / ``p2040_high`` — ``high`` < ``low``),
+tying ``low`` to it:
+
+    1 stoch node x [(p2035_high, p2035_low) x 3 t
+                    + (p2040_high, p2040_low) x 3 t]
     = 6 LP rows.
 
 DEFECT PIN: pre-fix the continuation cohort had no active time, so
-``period_in_use`` lacked ``p2040_low``, ``dt_non_anticipativity`` had
-no p2040 rows, and the constraint collapsed to the branching-period
-rows only (3), with no (p2040, p2040_low, t) domain row at all.
+``period_in_use`` lacked the p2040 forecast copies, ``dt_non_anticipativity``
+had no p2040 rows, and the constraint collapsed to the branching-period
+rows only (3), with no p2040 continuation domain row at all.
 """
 from __future__ import annotations
 
@@ -53,6 +66,11 @@ def _val(v: "str | float") -> list:
         base64.b64encode(json.dumps(v).encode()).decode("ascii"),
         "float" if isinstance(v, float) else "str",
     ]
+
+
+def _nested(pairs):
+    return {"type": "map", "index_type": "str",
+            "data": [[k, v] for k, v in pairs]}
 
 
 @pytest.fixture(scope="module")
@@ -93,6 +111,32 @@ def storage_variant_workdir(tmp_path_factory, test_solver_config_dir):
         ["unit", "hydro", "efficiency", _val(1.0), "base"],
     ]
 
+    # Forecast-to-forecast: add a SECOND forecast ``high`` (realized: no)
+    # alongside ``low`` so each reveal has >=2 forecasts and the NA family
+    # fires (a single forecast would be vacuous under the corrected model).
+    # ``rlz`` stays the realised designation (keeps the trunk period name).
+    branches_2fc = {
+        "index_type": "str",
+        "data": [[
+            "p2035",
+            _nested([
+                ("rlz",  _nested([("t0001", _nested([("yes", 1.0)]))])),
+                ("low",  _nested([("t0001", _nested([("no", 1.5)]))])),
+                ("high", _nested([("t0001", _nested([("no", 1.5)]))])),
+            ]),
+        ]],
+    }
+    replaced = False
+    for row in spec["parameter_values"]:
+        if (row[0] == "solve" and row[2] == "stochastic_branches"):
+            row[3] = [
+                base64.b64encode(json.dumps(branches_2fc).encode())
+                .decode("ascii"),
+                "map",
+            ]
+            replaced = True
+    assert replaced, "stoch_two_period.json has no stochastic_branches row"
+
     root = tmp_path_factory.mktemp("_root_na_storage_continuation")
     json_path = root / "stoch_two_period_storage.json"
     json_path.write_text(json.dumps(spec))
@@ -131,14 +175,17 @@ def test_na_storage_use_composes_with_continuation_cohorts(
     assert data.groupStochastic is not None
     assert data.period_in_use_set is not None
     piu = set(str(v) for v in data.period_in_use_set["d"].to_list())
-    assert {"p2035", "p2035_low", "p2040", "p2040_low"} <= piu
+    assert {"p2035", "p2035_low", "p2035_high",
+            "p2040", "p2040_low", "p2040_high"} <= piu
 
     # dtna == the 6 realized (d, t) rows.
     assert data.dt_non_anticipativity.height == 6
 
-    # Domain: 1 stoch node x [(p2035, p2035_low) x 3 + (p2040,
-    # p2040_low) x 3] = 6 rows (DEFECT PIN — pre-fix: 3, no p2040
-    # continuation pair).
+    # Domain: forecast-to-forecast star keyed on d_ref=p2035_high /
+    # p2040_high (lexicographically smallest forecast; high < low), tying
+    # low to it.  1 stoch node x [(p2035_high, p2035_low) x 3 + (p2040_high,
+    # p2040_low) x 3] = 6 rows (DEFECT PIN — pre-fix the p2040 continuation
+    # pair was absent, collapsing to 3; the trunk p2035/p2040 is NOT a hub).
     assert_cstr_row_count(pb, "non_anticipativity_storage_use", 6)
 
     recs = pb.cstrs_named("non_anticipativity_storage_use")
@@ -150,11 +197,15 @@ def test_na_storage_use_composes_with_continuation_cohorts(
         for r in over.rows(named=True)
     )
     assert rows == sorted(
-        [("reservoir", "p2035", "p2035_low", t)
+        [("reservoir", "p2035_high", "p2035_low", t)
          for t in ("t0001", "t0002", "t0003")]
-        + [("reservoir", "p2040", "p2040_low", t)
+        + [("reservoir", "p2040_high", "p2040_low", t)
            for t in ("t0004", "t0005", "t0006")]
     )
+    # The realised trunk is tied to nothing (forecast-to-forecast).
+    d_vals = {str(r["d"]) for r in over.rows(named=True)}
+    b_vals = {str(r["b"]) for r in over.rows(named=True)}
+    assert not ({"p2035", "p2040"} & (d_vals | b_vals)), (d_vals, b_vals)
 
     # No online / reserve providers in this fixture.
     assert_cstr_absent(pb, "non_anticipativity_online_integer")

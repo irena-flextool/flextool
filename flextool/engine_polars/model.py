@@ -124,17 +124,84 @@ def _check(d, fields: tuple[str, ...], feature: str) -> None:
         )
 
 
+def _emit_entity_total_cap(
+    m, *, legacy_name: str, path_name: str, over_e: pl.DataFrame,
+    var, unitsize, cap_param, d_leaf, lhs_label: str,
+) -> None:
+    """Per-path entity total cap (design §7.2 (G)).
+
+    Sums ``var * unitsize`` over the invest axis's periods against a
+    per-entity total cap.  With a single scenario leaf — deterministic
+    or flag-off, where ``d_leaf`` degenerates to one ``"__anchor"``
+    leaf — this emits the legacy ``over=("d",)`` total under the legacy
+    NAME, byte-identical to the pre-recourse constraint.  With more than
+    one leaf (recourse), it emits ``path_name`` indexed by
+    ``(entity, leaf)`` with the inner ``d``-sum masked to each leaf's
+    own periods; the per-entity ``cap_param`` broadcasts across leaves
+    (one cap per scenario path — no cross-scenario double-count).
+
+    ``leaf`` is a plain ``Utf8`` index column carried through the
+    ``Where`` mask exactly as ``g`` is in the group-total builders;
+    ``Sum(over=("d",))`` leaves ``(entity, leaf)`` matching ``over_e ×
+    leaves``.
+    """
+    dl = None
+    if d_leaf is not None and getattr(d_leaf, "height", 0) > 0:
+        inv_periods = var.frame.select("d").unique()
+        _d_dt = var.frame.schema["d"]
+        dlx = d_leaf
+        if dlx.schema["d"] != _d_dt:
+            dlx = dlx.with_columns(pl.col("d").cast(_d_dt, strict=False))
+        dl = dlx.join(inv_periods, on="d", how="semi")
+    n_leaves = (dl["leaf"].n_unique()
+                if dl is not None and dl.height > 0 else 1)
+    if n_leaves <= 1:
+        m.add_cstr(
+            legacy_name,
+            over      = over_e,
+            sense     = "<=",
+            lhs_terms = {lhs_label: Sum(Where(var * unitsize, over_e),
+                                        over=("d",))},
+            rhs_terms = {"cap": cap_param},
+        )
+        return
+    mask = over_e.join(dl, how="cross")
+    over_path = over_e.join(dl.select("leaf").unique().sort("leaf"),
+                            how="cross")
+    m.add_cstr(
+        path_name,
+        over      = over_path,
+        sense     = "<=",
+        lhs_terms = {lhs_label: Sum(Where(var * unitsize, mask),
+                                    over=("d",))},
+        rhs_terms = {"cap": cap_param},
+    )
+
+
 def _add_non_anticipativity_constraints(
     m, d, db_pairs: pl.DataFrame, *,
     v_state, v_online_integer, v_online_linear, v_reserve,
     v_flow, has_minload_eff,
+    dtna_override: pl.DataFrame | None = None,
 ) -> None:
     """Emit the four non-anticipativity constraint families (mod:4173-4233).
 
     All four constraints pin the per-branch dispatch variable at the
-    anchor period ``d`` equal to the same variable at sibling branch
-    ``b`` for every (d, t) ∈ ``dt_non_anticipativity``.  The cohort
-    ``db_pairs`` is the (d, b) frame with d != b and b ∈ period_in_use.
+    reference-forecast anchor ``d`` equal to the same variable at sibling
+    FORECAST ``b`` for every (d, t) ∈ the re-grounded tie set.  The cohort
+    ``db_pairs`` is a FORECAST-TO-FORECAST star: ``d`` is a deterministic
+    reference forecast and ``b`` ranges over the OTHER forecasts of the same
+    anchor group.  The tie therefore couples the forecast branches to EACH
+    OTHER (via the reference forecast), NEVER to the realised period / trunk
+    — that is what makes the committed decision non-anticipative, and it
+    holds with no realised branch at all (``n_real`` may be 0).
+
+    The caller (the ``db_pairs`` build block) re-grounds both ``db_pairs``
+    (→ the forecast star) and ``dt_non_anticipativity`` (anchor ``d`` re-keyed
+    from the trunk to the reference forecast ``d_ref`` per anchor group,
+    keeping the same ``t``) and hands the re-keyed tie set in via
+    ``dtna_override``.  Every family here joins ``db_pairs`` (cross) then the
+    tie set on ``"d"``, so both re-keys are required for a non-empty join.
 
     Implementation strategy (d-packed):
       LHS = var[..., d, t]
@@ -158,13 +225,45 @@ def _add_non_anticipativity_constraints(
     ~150 LOC of LHS reconstruction into 4 LOC and matches the .mod's
     LP-equivalent feasible region (verified via parity).
     """
-    dtna = d.dt_non_anticipativity
-    if dtna is None or dtna.height == 0:
+    dtna = dtna_override if dtna_override is not None else d.dt_non_anticipativity
+    has_dtna = dtna is not None and dtna.height > 0
+
+    # ONLINE commitment tie over the JUMP (OC1 #1).  Unit commitment on the
+    # committed/realized section (the "jump") is here-and-now: it must be
+    # chosen before the scenario is known, so ``v_online`` is tied EQUAL
+    # across the forecast branches over the whole jump.  The jump is already
+    # the plain ``dt_non_anticipativity`` set in every case EXCEPT the
+    # ``separate_dispatch`` PARENT, whose realized window is handed to the
+    # sibling so its ``dtna`` is empty — there it would tie NOTHING.  So:
+    # ``dtna_online`` = ``dtna`` when ``has_dtna`` (plain single-shot ties its
+    # whole realized window; rolling ties the per-roll jump; mid-horizon ties
+    # the pre-reveal window — all UNCHANGED, byte-parity); ELSE (empty dtna +
+    # forecast branches + an online var) the FULL set of online ``(d, t)``
+    # steps for the anchor forecast periods — the whole horizon = the jump
+    # (no look-ahead yet in the single-shot separate_dispatch case).  ONLINE
+    # ONLY — storage (#1/#1b) and reserve (#4) stay gated on ``has_dtna`` and
+    # join the plain ``dtna``.  Inert for deterministic solves (no branches ⇒
+    # ``db_pairs`` empty) and no-online solves.
+    has_online = v_online_integer is not None or v_online_linear is not None
+    dtna_online = dtna
+    if (not has_dtna and has_online
+            and db_pairs is not None and db_pairs.height > 0
+            and d.p_online_dt is not None and d.p_online_dt.height > 0):
+        jump_steps = (d.p_online_dt.select("d", "t").unique()
+                      .join(db_pairs.select("d").unique(),
+                            on="d", how="inner"))
+        if jump_steps.height > 0:
+            dtna_online = jump_steps
+    has_dtna_online = dtna_online is not None and dtna_online.height > 0
+
+    if not has_dtna and not has_dtna_online:
         return
 
     # 1. non_anticipativity_storage_use — pin the per-(n, t) NET CHARGE
-    #    LHS across siblings (mod:4173-4217).  Domain: nodes in a
-    #    stochastic-group; (d, b) ∈ db_pairs; (d, t) ∈ dt_non_anticipativity.
+    #    LHS across FORECASTS (mod:4173-4217).  Domain: nodes in a
+    #    stochastic-group; (d, b) ∈ db_pairs (a forecast-to-forecast star
+    #    keyed on the reference forecast d_ref — NOT the realised trunk);
+    #    (d, t) ∈ the re-grounded tie set.
     #
     # LHS:
     #     + sink-side flow contributions (sink == n)
@@ -178,7 +277,7 @@ def _add_non_anticipativity_constraints(
     # which can soak up a flow imbalance at the storage node), so the
     # constraint must directly target the flow LHS expression — not just
     # the resulting v_state.  This matches the .mod's bookkeeping exactly.
-    if (v_flow is not None and d.groupStochastic is not None
+    if (has_dtna and v_flow is not None and d.groupStochastic is not None
             and d.p_unitsize is not None
             and d.p_step_duration is not None):
         gn = d.group_node
@@ -299,13 +398,117 @@ def _add_non_anticipativity_constraints(
                                 rhs_terms = {},
                             )
 
+    # 1b. non_anticipativity_storage_state_first — branch-point continuity by
+    #     pinning ABSOLUTE ``v_state`` at the FIRST tied step of each anchor
+    #     ``d`` (the reference forecast d_ref, NOT the realised trunk):
+    #
+    #         v_state[n, d_ref, t_first] − v_state[n, b, t_first] == 0
+    #
+    #     The storage net-charge family above ties only the per-(n, t) net
+    #     charge (the consecutive ``v_state`` delta), fixing every forecast's
+    #     state SHAPE across a contiguous tied jump but leaving a free constant
+    #     offset between forecast copies.  In single-solve each forecast is
+    #     hard start-bound and reference-value end-bound so the offset
+    #     telescopes to zero; in rolling the untied post-reveal tail breaks
+    #     that and the copies float by a constant (~0.06 in
+    #     ``1_week_rolling_wind``).  Pinning the absolute state at the first
+    #     tied step closes the jump absolutely.  This is a forecast-to-forecast
+    #     tie (re-pointed onto the forecast star via the shared db_pairs),
+    #     never a tie to the realised period/trunk.  It is OPTIMUM-CONDITIONAL,
+    #     not a hard anchor: interior drift stays feasible when balance slack
+    #     absorbs it or inflow differs across forecasts (the net-charge family
+    #     controls neither), but is non-optimal for this fixture's
+    #     deterministic-inflow zero-self-discharge reservoirs so the tie binds.
+    #     ``v_online`` / ``v_reserve`` need no analog — their NA families
+    #     already pin the absolute variable at EVERY tied step.
+    #
+    #     Horizon-guard (byte-parity): emit the tie for an (n, d) ONLY when its
+    #     tied timesteps are a STRICT SUBSET of that (n, d)'s ``v_state``
+    #     timeline (an untied tail exists).  When the tied set covers the full
+    #     horizon (single-solve dispatch) the node is already doubly anchored
+    #     (hard start + reference end), so the row is redundant — suppress it
+    #     so byte-parity-gated single solves get ZERO new rows.
+    if (has_dtna and v_state is not None and d.groupStochastic is not None
+            and db_pairs.height > 0):
+        gn = d.group_node
+        gs = d.groupStochastic
+        if gn is not None and gn.height > 0 and gs is not None and gs.height > 0:
+            stoch_nodes = (gn.join(gs, on="g", how="inner")
+                            .select("n").unique())
+            if stoch_nodes.height > 0:
+                # ``v_state`` declared cells (n, d, t) — same source the Var
+                # was built from (``nodeState_dt``).
+                vstate_dt = v_state.frame.select("n", "d", "t").unique()
+
+                # Anchor step PER-d (NOT a single global ``dtna.t.min()``):
+                # the first tied step of each anchor period, robust to a
+                # future multi-reveal single solve whose ``d`` have different
+                # tied ranges.
+                first_per_d = (dtna.select("d", "t").unique()
+                               .group_by("d")
+                               .agg(pl.col("t").min().alias("t")))
+
+                # Horizon-guard counts: per-d tied-step count vs per-(n, d)
+                # full ``v_state`` cell count; keep only STRICT subsets.
+                tied_counts = (dtna.select("d", "t").unique()
+                               .group_by("d")
+                               .agg(pl.len().alias("tied_count")))
+                full_counts = (vstate_dt
+                               .group_by("n", "d")
+                               .agg(pl.len().alias("full_count")))
+                nd_keep = (stoch_nodes
+                           .join(dtna.select("d").unique(), how="cross")
+                           .join(tied_counts, on="d", how="inner")
+                           .join(full_counts, on=["n", "d"], how="inner")
+                           .filter(pl.col("tied_count") < pl.col("full_count"))
+                           .select("n", "d").unique())
+
+                if nd_keep.height > 0:
+                    # Domain (n, d, b, t_first) = nd_keep ⋈ first-tied-step ⋈
+                    # db_pairs.
+                    over = (nd_keep
+                            .join(first_per_d, on="d", how="inner")
+                            .join(db_pairs, on="d", how="inner")
+                            .select("n", "d", "b", "t").unique())
+                    # Marker / state-less-cell guard: inner-join
+                    # ``nodeState_dt`` on BOTH (n, d, t) and (n, b, t) so any
+                    # cell lacking a declared ``v_state`` row is dropped.  The
+                    # (n, d, t) side is same-axis (native join); the (n, b, t)
+                    # side is cross-Enum (over.b is branch-Enum, the renamed
+                    # v_state domain's b is period-Enum), so cast both b keys
+                    # to Utf8 for that join and restore axis types after.
+                    over = over.join(vstate_dt, on=["n", "d", "t"],
+                                     how="inner")
+                    vbt = (vstate_dt.rename({"d": "b"})
+                           .with_columns(pl.col("b").cast(pl.Utf8)))
+                    over = (over
+                            .with_columns(pl.col("b").cast(pl.Utf8))
+                            .join(vbt, on=["n", "b", "t"], how="inner")
+                            .with_columns(cast_dim(pl.col("b"), None, "b"))
+                            .select("n", "d", "b", "t").unique())
+                    if over.height > 0:
+                        v_state_at_b = Var(
+                            name=v_state.name + "__nab_first",
+                            dims=("n", "b", "t"),
+                            frame=v_state.frame.rename({"d": "b"}),
+                            lower=v_state.lower, upper=v_state.upper,
+                        )
+                        m.add_cstr(
+                            "non_anticipativity_storage_state_first",
+                            over      = over,
+                            sense     = "==",
+                            lhs_terms = {"v_d":  v_state,
+                                         "v_b": -v_state_at_b},
+                            rhs_terms = {},
+                        )
+
     # 2. non_anticipativity_online_integer
     if v_online_integer is not None:
         # Domain: (p, d, b, t) over process_online_integer × db_pairs × dtna.
         if d.process_online_integer is not None and d.process_online_integer.height > 0:
             cstr_over = (d.process_online_integer
                 .join(db_pairs, how="cross")
-                .join(dtna, on="d", how="inner")
+                .join(dtna_online, on="d", how="inner")
                 .select("p", "d", "b", "t").unique())
             # Restrict to (p, d, t) and (p, b, t) tuples that actually
             # exist in the var domain (p_online_dt) — otherwise the
@@ -338,7 +541,7 @@ def _add_non_anticipativity_constraints(
         if d.process_online_linear is not None and d.process_online_linear.height > 0:
             cstr_over = (d.process_online_linear
                 .join(db_pairs, how="cross")
-                .join(dtna, on="d", how="inner")
+                .join(dtna_online, on="d", how="inner")
                 .select("p", "d", "b", "t").unique())
             if d.p_online_dt is not None:
                 pdt = d.p_online_dt.select("p", "d", "t").unique()
@@ -365,7 +568,7 @@ def _add_non_anticipativity_constraints(
 
     # 4. non_anticipativity_reserve — fires only when reserve subsystem
     #    is active (sum{(r, ud, g) in reserve__upDown__group} 1 > 0).
-    if v_reserve is not None:
+    if has_dtna and v_reserve is not None:
         pruna = d.process_reserve_upDown_node_active
         ruDg = d.reserve_upDown_group
         if (pruna is not None and pruna.height > 0
@@ -390,6 +593,85 @@ def _add_non_anticipativity_constraints(
                                  "v_b": -v_res_at_b},
                     rhs_terms = {},
                 )
+
+
+def _add_non_anticipativity_invest_constraints(
+    m, d, *,
+    v_invest_p, v_invest_n, v_divest_p, v_divest_n,
+) -> None:
+    """Emit the four invest non-anticipativity families (v72, design §4).
+
+    Ties ``v_invest`` / ``v_divest`` across stochastic branches over the
+    resolved window ``pd_non_anticipativity`` (d, b): for every window
+    pair the branch copy's invest/divest column ``[·, b]`` is pinned equal
+    to the realized anchor's column ``[·, d]`` (RHS 0).  Four families:
+
+      * ``non_anticipativity_invest_p`` — process invest (p, d) vs (p, b)
+      * ``non_anticipativity_invest_n`` — node/storage invest (n, d)/(n, b)
+      * ``non_anticipativity_divest_p`` — process divest (mandatory, F2)
+      * ``non_anticipativity_divest_n`` — node/storage divest
+
+    Tying invest AND divest is mandatory (design §4.4): divest fans under
+    recourse exactly as invest does, so a tied invest with a per-branch
+    divest would leak the NET first-stage capacity
+    ``(existing + invest − divest)`` across branches on every
+    invest+divest-eligible (reinvest / lifetime) entity.
+
+    The domain guard (design §4.2-4.3, F3) is load-bearing AND cross-Enum:
+    ``pd_non_anticipativity.b`` is on the BRANCH axis (its values are
+    period-copy tokens like ``p2035_low``) while ``pd_invest_set.d``
+    renamed ``d→b`` is on the PERIOD axis — polars refuses a join between
+    the two Enum vocabularies.  So the guard join casts BOTH ``b`` keys to
+    Utf8 (the ``db_pairs`` dance, :func:`build_flextool` ~line 4440) and
+    restores the axis types via ``cast_dim`` afterwards.  This is the
+    FIRST test-covered use of this cross-Enum guard join (the operational
+    online guard is dormant), so the solver-level invest-tie test is its
+    mandatory coverage.
+    """
+    pdb = d.pd_non_anticipativity                       # (d, b)
+    if pdb is None or pdb.height == 0:
+        return
+
+    def _tie(name: str, v, inv_set, ent: str) -> None:
+        if v is None or inv_set is None or inv_set.height == 0:
+            return
+        pd_inv = inv_set.select(ent, "d").unique()                  # (ent, d)
+        # d-side join is same-axis (both period-Enum) → native.
+        cstr = pd_inv.join(pdb, on="d", how="inner")                # (ent, d, b)
+        if cstr.height == 0:
+            return
+        # ── F3 guard: (ent, b) must be a declared invest cell.  b is
+        #    branch-Enum on cstr, period-Enum on pd_inv.d → cast both b
+        #    keys to Utf8 for the join, restore axis types afterwards.
+        guard = (pd_inv.rename({"d": "b"})
+                 .with_columns(pl.col("b").cast(pl.Utf8)))
+        cstr_over = (cstr
+            .with_columns(pl.col("b").cast(pl.Utf8))
+            .join(guard, on=[ent, "b"], how="inner")
+            .with_columns(cast_dim(pl.col("d"), None, "d"),
+                          cast_dim(pl.col("b"), None, "b"))
+            .select(ent, "d", "b").unique())
+        if cstr_over.height == 0:
+            return
+        v_at_b = Var(
+            name=v.name + "__nab",
+            dims=(ent, "b"),
+            frame=v.frame.rename({"d": "b"}),
+            lower=v.lower, upper=v.upper,
+        )
+        m.add_cstr(
+            name,
+            over      = cstr_over,
+            sense     = "==",
+            lhs_terms = {"v_d":  v,
+                         "v_b": -v_at_b},
+            rhs_terms = {},
+        )
+
+    _tie("non_anticipativity_invest_p", v_invest_p, d.pd_invest_set, "p")
+    _tie("non_anticipativity_invest_n", v_invest_n, d.nd_invest_set, "n")
+    _tie("non_anticipativity_divest_p", v_divest_p, d.pd_divest_set, "p")
+    _tie("non_anticipativity_divest_n", v_divest_n, d.nd_divest_set, "n")
 
 
 def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
@@ -2627,6 +2909,49 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                           v_invest_p if has_invest_p else None,
                           v_divest_p if has_divest_p else None)
 
+    # ─── online_fix_eq — pin v_online to the parent's committed schedule ──
+    # OC1 #1 sub-slice (b): in a separate_dispatch SIBLING the parent's
+    # committed v_online over the jump (``d.p_fix_online``, (p, d, t), in
+    # unit-count space) is pinned onto the sibling's v_online so the realized
+    # dispatch honours the plan's commitment instead of re-deciding it.  Each
+    # pin is INNER-JOINED to its online var's own (p, d, t) index so no
+    # undeclared cell is referenced; the native-typed index carries the axis
+    # Enum types while the join matches through a Utf8 bridge (the carried
+    # frame is Utf8).  Split per UC variant (``online_fix_eq_linear`` /
+    # ``_integer``); the autoscale resolver strips the suffix to the
+    # registered ``online_fix_eq`` family.  ``p_fix_online is None`` (every
+    # non-sibling solve) → not built → byte-identical baseline.
+    if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:
+        _fix_u = d.p_fix_online.frame.select(
+            pl.col("p").cast(pl.Utf8).alias("_pk"),
+            pl.col("d").cast(pl.Utf8).alias("_dk"),
+            pl.col("t").cast(pl.Utf8).alias("_tk"),
+            "value")
+        for _vonline, _vidx, _sfx in (
+                (v_online_lin if has_online_lin else None,
+                 p_olin_idx if has_online_lin else None, "linear"),
+                (v_online_int if has_online_int else None,
+                 p_oint_idx if has_online_int else None, "integer")):
+            if _vonline is None or _vidx is None:
+                continue
+            # Native-typed (p, d, t) index keyed to Utf8 for the value join.
+            _pin = (_vidx.select("p", "d", "t").unique()
+                    .with_columns(_pk=pl.col("p").cast(pl.Utf8),
+                                  _dk=pl.col("d").cast(pl.Utf8),
+                                  _tk=pl.col("t").cast(pl.Utf8))
+                    .join(_fix_u, on=["_pk", "_dk", "_tk"], how="inner")
+                    .select("p", "d", "t", "value"))
+            if _pin.height == 0:
+                continue
+            _over = _pin.select("p", "d", "t").unique()
+            m.add_cstr(
+                f"online_fix_eq_{_sfx}",
+                over=_over,
+                sense="==",
+                lhs_terms={"online": Where(_vonline, _over)},
+                rhs_terms={"target": Param(("p", "d", "t"), _pin)},
+            )
+
     # Unit output floors: per-unit minimum load (once per unit, on the sum
     # of its outputs), optional per-output floors, and the rule that
     # downward reserve cannot take a unit below its floor.
@@ -2933,14 +3258,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
                 "p", max_prior_cap)
             e_inv_max_p = Param(("p",), cap_frame)
-            m.add_cstr(
-                "maxInvest_entity_total",
-                over      = e_inv_p,
-                sense     = "<=",
-                lhs_terms = {"invest_total":
-                    Sum(Where(v_invest_p * d.p_unitsize, e_inv_p),
-                        over=("d",))},
-                rhs_terms = {"cap": e_inv_max_p},
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxInvest_entity_total",
+                path_name   = "maxInvest_entity_total_path",
+                over_e      = e_inv_p,
+                var         = v_invest_p,
+                unitsize    = d.p_unitsize,
+                cap_param   = e_inv_max_p,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "invest_total",
             )
     if (has_divest_p and d.e_divest_total is not None
             and d.e_divest_total.height > 0
@@ -2958,14 +3285,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
                 "p", prior_divested)
             e_div_max_p = Param(("p",), cap_frame)
-            m.add_cstr(
-                "maxDivest_entity_total",
-                over      = e_div_p,
-                sense     = "<=",
-                lhs_terms = {"divest_total":
-                    Sum(Where(v_divest_p * d.p_unitsize, e_div_p),
-                        over=("d",))},
-                rhs_terms = {"cap": e_div_max_p},
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxDivest_entity_total",
+                path_name   = "maxDivest_entity_total_path",
+                over_e      = e_div_p,
+                var         = v_divest_p,
+                unitsize    = d.p_unitsize,
+                cap_param   = e_div_max_p,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "divest_total",
             )
     # Node analogues for per-entity totals.
     if (has_invest_n and d.e_invest_total is not None
@@ -2985,13 +3314,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 "n", max_prior_cap)
             e_inv_max_n = Param(("n",), cap_frame)
             us_n = Param(("n",), d.p_state_unitsize.frame)
-            m.add_cstr(
-                "maxInvest_entity_total_n",
-                over      = e_inv_n,
-                sense     = "<=",
-                lhs_terms = {"invest_total":
-                    Sum(Where(v_invest_n * us_n, e_inv_n), over=("d",))},
-                rhs_terms = {"cap": e_inv_max_n},
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxInvest_entity_total_n",
+                path_name   = "maxInvest_entity_total_path_n",
+                over_e      = e_inv_n,
+                var         = v_invest_n,
+                unitsize    = us_n,
+                cap_param   = e_inv_max_n,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "invest_total",
             )
     if (has_divest_n and d.e_divest_total is not None
             and d.e_divest_total.height > 0
@@ -3010,13 +3342,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 "n", prior_divested)
             e_div_max_n = Param(("n",), cap_frame)
             us_n = Param(("n",), d.p_state_unitsize.frame)
-            m.add_cstr(
-                "maxDivest_entity_total_n",
-                over      = e_div_n,
-                sense     = "<=",
-                lhs_terms = {"divest_total":
-                    Sum(Where(v_divest_n * us_n, e_div_n), over=("d",))},
-                rhs_terms = {"cap": e_div_max_n},
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxDivest_entity_total_n",
+                path_name   = "maxDivest_entity_total_path_n",
+                over_e      = e_div_n,
+                var         = v_divest_n,
+                unitsize    = us_n,
+                cap_param   = e_div_max_n,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "divest_total",
             )
 
     _build_prof("before:conversion_indirect")
@@ -4027,19 +4362,35 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                 * d.p_storage_state_reference_price * ref_price_factor)
 
     # Invest / divest objective contributions.
-    # NOTE: per .mod:2116-2119 — investment / divestment objective terms
-    # are explicitly NOT weighted by pd_branch_weight under the current
-    # stochastics regime.  The .mod author's note:
     #
-    #     "Currently investment happens only on the realized branch and
-    #      the rest get them as existing.  Only one period investment is
-    #      supported with stochastics.  The branch weight should be added
-    #      if this is changed."
-    #
-    # Preprocessing excludes branch periods from ``period_invest`` so
-    # ``v_invest[e, d]`` only exists on realised periods — the weight
-    # would be 1.0 anyway.  No multiplier needed.  Recourse-investment is
-    # explicitly out of scope (see audit/a6_b_dim_alternative.md).
+    # Slice D — per-scenario (wait-and-see) stochastic investment.  Under
+    # ``recourse`` the invest axis is fanned, so every scenario branch
+    # (realised included) carries its OWN ``v_invest[e, d]`` columns at and
+    # after the branching period; each is probability-weighted by
+    # ``pd_branch_weight[d]`` so the objective is the expected value over
+    # scenario leaves.  Under ``none`` (default) the invest axis is
+    # realised-only, the weight would be 1.0, and the multiply is skipped
+    # for byte-parity.  (Replaces the .mod:2116-2119 "NOT weighted / the
+    # branch weight should be added if this is changed" note — this is that
+    # change.)  ALL EIGHT invest/divest annuity/fixed-cost Params are
+    # weighted: process-side annu/lf/lfd/annd AND node-side
+    # annu_n/lf_n/lfd_n/annd_n (else storage/node invest stays unweighted).
+    _recourse_wt = (getattr(d, "recourse_invest", False)
+                    and d.pd_branch_weight is not None)
+
+    def _wt(param):
+        """Multiply a ``(x, d)`` cost Param by ``pd_branch_weight[d]``
+        (Slice D).  No-op when the param is None or the flag is off."""
+        if param is None or not _recourse_wt:
+            return param
+        f = (param.frame
+                  .join(d.pd_branch_weight.frame.rename({"value": "w"}),
+                        on="d", how="left")
+                  .with_columns(value=pl.col("value")
+                                * pl.col("w").fill_null(1.0))
+                  .drop("w"))
+        return Param(param.dims, f)
+
     if has_invest_p:
         annu = Param(("p", "d"),
             d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
@@ -4048,9 +4399,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu is not None:
-            obj = obj + Sum(v_invest_p * d.p_unitsize * annu)
+            obj = obj + Sum(v_invest_p * d.p_unitsize * _wt(annu))
         if lf is not None:
-            obj = obj + Sum(v_invest_p * d.p_unitsize * lf)
+            obj = obj + Sum(v_invest_p * d.p_unitsize * _wt(lf))
     if has_divest_p:
         lfd = Param(("p", "d"),
             d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})) \
@@ -4059,9 +4410,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd is not None:
-            obj = obj - Sum(v_divest_p * d.p_unitsize * lfd)
+            obj = obj - Sum(v_divest_p * d.p_unitsize * _wt(lfd))
         if annd is not None:
-            obj = obj - Sum(v_divest_p * d.p_unitsize * annd)
+            obj = obj - Sum(v_divest_p * d.p_unitsize * _wt(annd))
     if has_invest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         annu_n = Param(("n", "d"),
@@ -4071,9 +4422,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu_n is not None:
-            obj = obj + Sum(v_invest_n * us_n * annu_n)
+            obj = obj + Sum(v_invest_n * us_n * _wt(annu_n))
         if lf_n is not None:
-            obj = obj + Sum(v_invest_n * us_n * lf_n)
+            obj = obj + Sum(v_invest_n * us_n * _wt(lf_n))
     if has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         lfd_n = Param(("n", "d"),
@@ -4083,9 +4434,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd_n is not None:
-            obj = obj - Sum(v_divest_n * us_n * lfd_n)
+            obj = obj - Sum(v_divest_n * us_n * _wt(lfd_n))
         if annd_n is not None:
-            obj = obj - Sum(v_divest_n * us_n * annd_n)
+            obj = obj - Sum(v_divest_n * us_n * _wt(annd_n))
 
     # ─── §8.1 Existing-entity fixed cost (constant term) — opt-in ─────────
     # mod:2107-2115:
@@ -4155,6 +4506,16 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             res_vars["v_invest_p"]   = v_invest_p
         if has_divest_p:
             res_vars["v_divest_p"]   = v_divest_p
+        # Storage energy-adequacy coupling for reserve_duration (#322):
+        # v_state precedes this dispatch site (declared above), so threading
+        # it (+ v_invest_n / v_divest_n for the down-headroom capacity
+        # replication) is order-safe.  Each gated on its own has_* flag.
+        if has_storage:
+            res_vars["v_state"]      = v_state
+        if has_invest_n:
+            res_vars["v_invest_n"]   = v_invest_n
+        if has_divest_n:
+            res_vars["v_divest_n"]   = v_divest_n
         _reserve.add_constraints(m, d, res_vars)
         res_obj = _reserve.add_objective_terms(m, d, res_vars, op_factor)
         if res_obj is not None:
@@ -4211,26 +4572,42 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     _build_prof("before:non_anticipativity")
     # ─── Non-anticipativity constraints (A6) ─────────────────────────────
     # mod:4173-4233.  Four constraint families pin per-branch dispatch
-    # variables to the realised period at every (d, t) ∈ dt_non_anticipativity:
+    # variables FORECAST-TO-FORECAST at every (d, t) ∈ the re-grounded tie
+    # set — the committed decision is the same across the forecast branches,
+    # which IS its non-anticipative realisation.  The tie is NEVER anchored
+    # to the realised period / trunk (there may be no realised branch at all;
+    # ``n_real`` can be 0):
     #
     #   non_anticipativity_storage_use   (n, d, b, t) — net storage charge
     #     LHS at (d, t) equals LHS at (b, t).  Active only when at least
     #     one (g, n) ∈ group_node has g ∈ groupStochastic.
     #   non_anticipativity_online_integer (p, d, b, t) — v_online_integer
-    #     equal across siblings.
+    #     equal across forecasts.
     #   non_anticipativity_online_linear  (p, d, b, t) — v_online_linear
-    #     equal across siblings.
+    #     equal across forecasts.
     #   non_anticipativity_reserve        (p, r, ud, n, d, b, t) — v_reserve
-    #     equal across siblings.
+    #     equal across forecasts.
     #
-    # Domain: (d, b) ∈ period__branch with d != b and b ∈ period_in_use.
-    # The b == d self-loop is vacuous and the metadata-only branches not
-    # in period_in_use (e.g. ``period1_realized``) must be excluded so
-    # the constraint references a real LP variable.
-    if (d.dt_non_anticipativity is not None
-            and d.dt_non_anticipativity.height > 0
-            and d.period_branch_full is not None
-            and d.period_branch_full.height > 0):
+    # Raw cohort: (d, b) ∈ period__branch with d != b and b ∈ period_in_use.
+    # The b == d self-loop is vacuous and the metadata-only branches not in
+    # period_in_use (e.g. ``period1_realized``) are excluded so the
+    # constraint references a real LP variable.  ``d`` here is the trunk
+    # (the real period name); the re-ground below turns this into a
+    # forecast-to-forecast star keyed on a reference forecast.
+    # OC1 #1 — the ONLINE commitment tie over the JUMP needs this block to
+    # run even when ``dt_non_anticipativity`` is EMPTY (the separate_dispatch
+    # PARENT, whose realized window is handed to the sibling, so the legacy
+    # realized/fix-storage union is empty).  Gate on the forecast structure
+    # (``period_branch_full``) plus EITHER a non-empty ``dt_non_anticipativity``
+    # (the existing storage/reserve/online-window tie) OR an online var present
+    # (the new jump tie built from the online steps when dtna is empty).
+    # Without an online var and with empty dtna the block is a no-op, so
+    # non-online stochastic solves stay byte-identical.
+    _has_dtna_outer = (d.dt_non_anticipativity is not None
+                       and d.dt_non_anticipativity.height > 0)
+    if (d.period_branch_full is not None
+            and d.period_branch_full.height > 0
+            and (_has_dtna_outer or has_online_lin or has_online_int)):
         # Build (d, b) cohort: d ≠ b AND b ∈ period_in_use.
         # Cross-axis value compare: "d" is the period axis and "b" is the
         # branch axis (two different Enum vocabularies under Phase 4
@@ -4257,14 +4634,122 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             cast_dim(pl.col("b"), None, "b"),
         )
         if db_pairs.height > 0:
-            _add_non_anticipativity_constraints(
-                m, d, db_pairs,
-                v_state          = locals().get("v_state")          if has_storage    else None,
-                v_online_integer = locals().get("v_online_int")     if has_online_int else None,
-                v_online_linear  = locals().get("v_online_lin")     if has_online_lin else None,
-                v_reserve        = reserve_vars.get("v_reserve")    if reserve_vars   else None,
-                v_flow           = locals().get("v_flow")           if has_proc       else None,
-                has_minload_eff  = has_minload_eff,
+            # ── Forecast-to-forecast re-ground (per anchor group) ──
+            # The raw cohort anchors every forecast ``b`` to the trunk ``d``
+            # (the realised/base period).  Re-ground it to a FORECAST star so
+            # the tie couples the forecast branches to EACH OTHER, never to
+            # the trunk (corrected stochastic model: the fan is forecasts
+            # only; realisation of a committed variable IS the cross-forecast
+            # tie; works at n_real=0).
+            #
+            # PER ANCHOR GROUP (NOT a single global reference): group the raw
+            # pairs by trunk ``d``; within each group take the forecasts
+            # (``b`` tokens), pick the lexicographically smallest as the
+            # reference forecast ``d_ref`` (LP-deterministic — a lexical sort
+            # of stable Utf8 tokens, same invariant as add_var/add_cstr domain
+            # sorting), and build the star {(d_ref, b) : b ∈ forecasts, b ≠
+            # d_ref}.  A group with <2 forecasts is skipped (the tie is
+            # vacuous with a single forecast).  A SINGLE GLOBAL d_ref would be
+            # WRONG: it would cross-couple distinct anchor periods at
+            # mismatched timesteps.
+            #
+            # BOTH frames are re-keyed: ``db_pairs`` → the forecast star, and
+            # ``dt_non_anticipativity`` → anchor ``d`` mapped from the trunk
+            # to that group's ``d_ref`` (same ``t``).  The families inner-join
+            # the tie set on ``"d"``; re-keying db_pairs alone would leave the
+            # tie set's ``d`` on the trunk and emit ZERO constraints.
+            #
+            # Realised exclusion: realisation is currently the self-row trunk,
+            # already dropped from ``b`` by ``filter(d != b)`` above — so no
+            # extra filter is needed here.  Should a future realised-
+            # designated non-self in-use branch appear, drop it from the
+            # forecast set at this point (by the realised marker R1 settles).
+            # ``dt_non_anticipativity`` may be None / empty under the relaxed
+            # gate (separate_dispatch parent, online-only path): then there is
+            # nothing to re-ground, ``dtna_reground`` stays None, and the
+            # function builds the jump tie from the online steps via its
+            # internal ``dtna_online``.
+            dtna_raw = d.dt_non_anticipativity
+            _has_dtna_rows = dtna_raw is not None and dtna_raw.height > 0
+            _raw_db = db_pairs.with_columns(
+                pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8),
+            )
+            _dtna_u = (dtna_raw.with_columns(pl.col("d").cast(pl.Utf8))
+                       if _has_dtna_rows else None)
+            _stars: list[pl.DataFrame] = []
+            _dtnas: list[pl.DataFrame] = []
+            for d_trunk in sorted(
+                _raw_db.select("d").unique().to_series().to_list()
+            ):
+                forecasts = sorted(
+                    _raw_db.filter(pl.col("d") == d_trunk)
+                           .select("b").unique().to_series().to_list()
+                )
+                if len(forecasts) < 2:
+                    continue
+                d_ref = forecasts[0]
+                _stars.append(pl.DataFrame({
+                    "d": [d_ref] * (len(forecasts) - 1),
+                    "b": [b for b in forecasts if b != d_ref],
+                }))
+                if _dtna_u is not None:
+                    _dtnas.append(
+                        _dtna_u.filter(pl.col("d") == d_trunk)
+                               .with_columns(pl.lit(d_ref).alias("d"))
+                    )
+            if _stars:
+                db_pairs_reground = pl.concat(_stars).with_columns(
+                    cast_dim(pl.col("d"), None, "d"),
+                    cast_dim(pl.col("b"), None, "b"),
+                )
+                # ``dtna_reground`` is None on the separate_dispatch-parent
+                # online-only path (no real dtna rows to re-key) → the
+                # function builds ``dtna_online`` from the jump steps alone.
+                dtna_reground = (
+                    pl.concat(_dtnas).with_columns(cast_dim(pl.col("d"), None, "d"))
+                    if _dtnas else None
+                )
+                _add_non_anticipativity_constraints(
+                    m, d, db_pairs_reground,
+                    v_state          = locals().get("v_state")          if has_storage    else None,
+                    v_online_integer = locals().get("v_online_int")     if has_online_int else None,
+                    v_online_linear  = locals().get("v_online_lin")     if has_online_lin else None,
+                    v_reserve        = reserve_vars.get("v_reserve")    if reserve_vars   else None,
+                    v_flow           = locals().get("v_flow")           if has_proc       else None,
+                    has_minload_eff  = has_minload_eff,
+                    dtna_override    = dtna_reground,
+                )
+
+    # ─── Investment non-anticipativity (v72 — the standard two-stage
+    # stochastic-investment mode) ────────────────────────────────────────
+    # Ties v_invest / v_divest across stochastic branches over the resolved
+    # window pd_non_anticipativity (design §4).  Gated on recourse_invest
+    # (per-branch invest columns must exist to tie) AND a non-empty frame;
+    # under the unset window the frame is provably empty (byte-parity) and
+    # this block never fires.  Under stochastic_invest_method=none the frame
+    # may build but the domain guard drops every pair (no fanned invest
+    # column) — a graceful no-op.
+    _pdna = d.pd_non_anticipativity
+    if _pdna is not None and _pdna.height > 0:
+        if getattr(d, "recourse_invest", False):
+            _add_non_anticipativity_invest_constraints(
+                m, d,
+                v_invest_p = locals().get("v_invest_p") if has_invest_p else None,
+                v_invest_n = locals().get("v_invest_n") if has_invest_n else None,
+                v_divest_p = locals().get("v_divest_p") if has_divest_p else None,
+                v_divest_n = locals().get("v_divest_n") if has_divest_n else None,
+            )
+        else:
+            # Window set on a non-recourse (none) solve: investment is
+            # already shared across all periods, so there is nothing to
+            # tie.  Graceful no-op + advisory (never mutates the problem,
+            # design §4.5 / OQ-3).
+            _LOG.info(
+                "shared_invest_periods is set but "
+                "stochastic_invest_method is not 'recourse'; investment is "
+                "already shared across all periods, so the invest-NA window "
+                "has no effect (use 'recourse' for shared-first-period / "
+                "recourse-later)."
             )
 
     # Apply objective scaling if provided (default 1.0 = no scaling).
@@ -4730,6 +5215,37 @@ def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
                    lhs_terms=lhs, rhs_terms={"upper": rhs})
 
 
+def _online_mintime_carry_term(carry: "pl.DataFrame | None",
+                               idx: "pl.DataFrame") -> "Param | None":
+    """OC1 Carrier 2 — densify a cross-roll-boundary min-up/down carry frame
+    ``(p, d, t, value)`` (Utf8 axes, from
+    ``online_mintime_carry_from_source``) to the full constraint domain
+    ``idx`` with explicit 0-fill and wrap it as a ``Param((p, d, t))``.
+
+    Returns ``None`` when there is no carry (first roll / non-rolling /
+    no-min-up-down) so the caller omits the term entirely (byte-identical
+    baseline).  The DENSE 0-fill is required: a restricted-domain ``(p, d,
+    t)`` term misaligns the ``minimum_downtime`` RHS ``existing`` ((p, d)
+    arity) and makes the row infeasible even at 0.0 — densifying to the
+    constraint domain keeps every row's constant well-defined.  The carry's
+    String p/d/t are cast to ``idx``'s (Enum) axis dtypes before the join;
+    a cross-dtype join raises ``SchemaError``.  The left-join against
+    ``idx`` also restricts the carry to this block's processes (``idx`` is
+    already intersected with this kind's ``online_set``)."""
+    if carry is None or carry.height == 0:
+        return None
+    carry_cast = carry.with_columns(
+        pl.col("p").cast(idx.schema["p"], strict=False),
+        pl.col("d").cast(idx.schema["d"], strict=False),
+        pl.col("t").cast(idx.schema["t"], strict=False))
+    dense = (idx.select("p", "d", "t")
+             .join(carry_cast, on=["p", "d", "t"], how="left")
+             .with_columns(pl.col("value").fill_null(0.0)))
+    if dense.height == 0:
+        return None
+    return Param(("p", "d", "t"), dense)
+
+
 def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                        online_set: "pl.DataFrame",
                        v_online, v_startup, v_shutdown,
@@ -4803,15 +5319,77 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                rhs_terms={"max_units": d.p_process_existing_count})
     # online dynamics: v_startup[t] >= v_online[t] - v_online[t-1]
     #                  v_shutdown[t] >= v_online[t-1] - v_online[t]
-    v_online_lag = Lag(v_online, d.dtttdt, "t", "t_previous_within_solve")
-    m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
-               lhs_terms={"startup":     v_startup,
-                          "online_prev": v_online_lag},
-               rhs_terms={"online_now":  v_online})
-    m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
-               lhs_terms={"shutdown":    v_shutdown,
-                          "online_now":  v_online},
-               rhs_terms={"online_prev": v_online_lag})
+    #
+    # OC1 — rolling online-commitment carry.  ``Lag`` reads the predecessor
+    # at ``t_previous_within_solve``, which at the first step of the first
+    # period CYCLICALLY WRAPS to the solve's own last step
+    # (_block_layout.py:326-333).  On a *continuation* roll that wrap is
+    # physically meaningless (it references the discarded look-ahead tail,
+    # not the prior roll's realized commitment) — so a unit that stays
+    # committed across the boundary is re-charged a full startup every roll.
+    # The fix is the online analog of the storage ``roll_continue`` carry:
+    # on a continuation roll, drop the spurious cyclic predecessor at the
+    # boundary (slice the global-first (d, t) off the lag frame — the same
+    # ``dtttdt.slice(1)`` trick ``dtttdt_forward_only`` uses) and inject the
+    # carried prior-roll committed ``v_online`` as the first-step predecessor
+    # constant.  Then ``v_startup >= v_online - carried`` (no startup when
+    # the unit stays committed; a genuine OFF→ON cold start has carried≈0 and
+    # is still charged).
+    #
+    # Gate on carry-PRESENCE (``d.p_roll_continue_online is not None``), NOT
+    # on ``not is_solve_first``: on the standalone rolling-window path
+    # ``p_nested_solve_first`` is ``None`` every roll (verified live), so the
+    # storage gate's ``not is_solve_first`` clause is inert there.  Carry-
+    # presence is the operative signal and is exactly co-extensive with
+    # "continuation roll" (the handoff carrier is empty on roll 1 → ``None``
+    # here → byte-identical baseline path; first-solve / non-rolling /
+    # no-online solves likewise leave it ``None``).
+    rco = d.p_roll_continue_online
+    if rco is not None and d.dtttdt is not None and d.dtttdt.height > 0:
+        dtttdt_cont = d.dtttdt.sort("d", "t").slice(1)
+        first_dt = d.dtttdt.sort("d", "t").select("d", "t").head(1)
+        # Enum-cast the carried p-axis (String, from the handoff frame) to
+        # the model's ``online_set`` p Enum axis before the join; a cross-
+        # dtype (String vs Enum) join raises SchemaError.  Filtering to
+        # this kind's ``online_set`` keeps only the processes this block
+        # owns (a process has one startup_method, so linear/integer never
+        # collide on the same ``p``).
+        _p_dt = online_set.schema["p"]
+        carry_al = rco.frame.with_columns(
+            pl.col("p").cast(_p_dt, strict=False))
+        p_carry_rows = (online_set.select("p").unique()
+                        .join(carry_al, on="p", how="inner")
+                        .join(first_dt, how="cross")
+                        .select("p", "d", "t", "value"))
+        v_online_lag = Lag(v_online, dtttdt_cont, "t",
+                           "t_previous_within_solve")
+        su_lhs = {"startup": v_startup, "online_prev": v_online_lag}
+        sd_rhs = {"online_prev": v_online_lag}
+        if p_carry_rows.height > 0:
+            # +carried predecessor at the boundary row only — sparse
+            # Param((p, d, t)); the engine's Param+Param outer-joins with
+            # 0-fill so it composes with the (boundary-dropped) cyclic lag
+            # without perturbing any other row.  Exactly the
+            # ``roll_continue_value`` construction (nodeBalance_eq).
+            su_lhs["roll_continue_online"] = Param(("p", "d", "t"), p_carry_rows)
+            sd_rhs["roll_continue_online"] = Param(("p", "d", "t"), p_carry_rows)
+        m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
+                   lhs_terms=su_lhs,
+                   rhs_terms={"online_now":  v_online})
+        m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
+                   lhs_terms={"shutdown":    v_shutdown,
+                              "online_now":  v_online},
+                   rhs_terms=sd_rhs)
+    else:
+        v_online_lag = Lag(v_online, d.dtttdt, "t", "t_previous_within_solve")
+        m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
+                   lhs_terms={"startup":     v_startup,
+                              "online_prev": v_online_lag},
+                   rhs_terms={"online_now":  v_online})
+        m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
+                   lhs_terms={"shutdown":    v_shutdown,
+                              "online_now":  v_online},
+                   rhs_terms={"online_prev": v_online_lag})
 
     # maxFlow_online: v_flow <= v_online * availability (assumes
     # max_cap_coef=1).  The .mod's RHS for online processes is
@@ -4906,10 +5484,22 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                 )
                 startup_sum = Sum(Where(v_startup_at, lkb),
                                   over=("d_back", "t_back"))
+                up_rhs = {"startup_sum": startup_sum}
+                # OC1 Carrier 2 — cross-roll-boundary min_uptime carry.  On a
+                # continuation roll ``d.uptime_carry`` holds the Σ of the
+                # prior roll's realized ``v_startup`` that falls within this
+                # roll's early-step lookback window (period-aware; built by
+                # ``online_mintime_carry_from_source``).  Densify to the
+                # full ``up_idx`` domain with explicit 0-fill and inject on
+                # the RHS so ``v_online ≥ Σ v_startup_in_roll + carry_up``.
+                # ``None`` (first roll / non-rolling / no-carry) → baseline.
+                up_carry = _online_mintime_carry_term(d.uptime_carry, up_idx)
+                if up_carry is not None:
+                    up_rhs["carry_up"] = up_carry
                 m.add_cstr(f"minimum_uptime{sfx}",
                            over=up_idx, sense=">=",
                            lhs_terms={"online":      v_online},
-                           rhs_terms={"startup_sum": startup_sum})
+                           rhs_terms=up_rhs)
 
     # minimum_downtime: existing_count - v_online >= Σ v_shutdown[lookback]
     # Rewritten LP-friendly: v_online + Σ v_shutdown ≤ existing_count.
@@ -4945,6 +5535,18 @@ def _add_online_block(m, d, v_flow, kind: str, p_idx: "pl.DataFrame",
                     lhs_dn["invest_neg"] = invest_term
                 if divest_term is not None:
                     lhs_dn["divest"] = divest_term
+                # OC1 Carrier 2 — cross-roll-boundary min_downtime carry.
+                # ``d.downtime_carry`` holds the Σ of the prior roll's
+                # realized ``v_shutdown`` within this roll's early-step
+                # lookback window (period-aware).  Densify to the full
+                # ``dn_idx`` domain with explicit 0-fill (a restricted-
+                # domain (p,d,t) term would misalign the ``existing``
+                # (p,d)-arity RHS and make the row infeasible even at 0.0)
+                # and inject on the LHS so ``v_online + Σ v_shutdown_in_roll
+                # + carry_dn ≤ existing_count``.
+                dn_carry = _online_mintime_carry_term(d.downtime_carry, dn_idx)
+                if dn_carry is not None:
+                    lhs_dn["carry_dn"] = dn_carry
                 m.add_cstr(f"minimum_downtime{sfx}",
                            over=dn_idx, sense="<=",
                            lhs_terms=lhs_dn,

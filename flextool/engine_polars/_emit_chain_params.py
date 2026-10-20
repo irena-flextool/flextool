@@ -467,6 +467,18 @@ def _compute_p_entity_existing_chain(
         for r in divest_cumulative.iter_rows(named=True):
             p_divested[str(r["entity"])] = float(r["value"])
 
+    # Entities that appear in the realized-capacity handoff at all.  An
+    # entity ABSENT from this set carried NO realized_existing forward (the
+    # planning solve emitted none — e.g. a no-invest operational model, where
+    # the realized_existing producer's iter_keys is empty).  For such an
+    # entity a continuation solve must fall back to its DB pre-existing
+    # capacity rather than resolve to 0 (OC1 capacity-resolution fix): the
+    # realized handoff ADDS committed invest on top of existing, it must never
+    # ZERO the operational existing.  Byte-parity for invest models: there the
+    # producer emits EVERY entity (seeded with pre_existing on the first
+    # solve), so every capacity-bearing entity is present here and the
+    # fallback never fires.
+    realized_entities: set = {k[0] for k in ed_history_realized}
     later_existing: dict[tuple[str, str], float] = {}
     later_invested: dict[tuple[str, str], float] = {}
     if not solve_first:
@@ -490,6 +502,15 @@ def _compute_p_entity_existing_chain(
         for d in periods_in_use:
             if solve_first:
                 v_all = pre_existing.get((e, d), 0.0)
+            elif e not in realized_entities:
+                # OC1 capacity-resolution fix: no realized_existing was
+                # carried for this entity → use its DB pre-existing capacity
+                # so a dispatch/continuation solve never has LESS than the
+                # plan's operational existing (the no-invest separate_dispatch
+                # case; byte-parity for invest models, see note above).
+                v_all = pre_existing.get((e, d), 0.0)
+                if e in entity_divest:
+                    v_all -= p_divested.get(e, 0.0)
             else:
                 v_all = later_existing.get((e, d), 0.0)
                 if e in entity_divest:

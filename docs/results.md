@@ -16,7 +16,7 @@ The CSV / Excel / plot files are **derived** from the parquets, so deleting or r
 
 All annualized numbers are scaled to **a full year of operation** by dividing through by `complete_period_share_of_year`. All values are returned in user units — auto-scaling (see [LP scaling pipeline](dev/scaling.md)) and time-block aggregation under flex-temporal decomposition are unwound before they reach the parquets, so users always read MW / MWh / [CUR] in the original problem space.
 
-For stochastic models the parquets carry only the **realised branch** of each solve by default. Setting the `model` parameter `output_horizon = yes` adds the forecast-branch rows to the time-series tables (`*_t`, `*_dt`) so the unrealised futures are visible for debugging — note that cost aggregates in that mode mix realised + unrealised contributions and should not be used as final results (see also [How to use stochastics](how_to.md#how-to-use-stochastics-representing-uncertainty)).
+For stochastic models the parquets carry only the **realised / committed** results of each solve by default — the here-and-now committed decisions plus, where a branch is designated realized, its dispatch — not the individual forecast branches. Setting the `model` parameter `output_horizon = yes` adds the forecast-branch (unrealised) rows to the time-series tables (`*_t`, `*_dt`) so the unrealised futures are visible for debugging — note that cost aggregates in that mode mix the committed results with the unrealised forecast contributions and should not be used as final results (see also [How to use stochastics](how_to.md#how-to-use-stochastics-representing-uncertainty)).
 
 - [Costs](#costs)
 - [Cost by entity](#cost-by-entity)

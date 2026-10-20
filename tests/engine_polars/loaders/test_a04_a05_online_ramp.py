@@ -171,13 +171,21 @@ def test_pdt_online_zero_startup_cost_excluded(online_workdir):
     dt = pl.DataFrame({"d": ["p2020"], "t": ["t0001"]})
 
     class _ZeroStartupSource:
-        def parameter_explicit(self, ec: str, name: str) -> pl.DataFrame:
+        # ``parameter`` is the core InputSource read; ``parameter_explicit``
+        # the optional refinement.  Both expose only the lone zero-startup
+        # row — every other ``(ec, name)`` raises ``KeyError`` so callers
+        # (e.g. Carrier 2's ``_process_min_time`` probe for min_uptime /
+        # min_downtime) see "no such parameter" and contribute nothing.
+        def parameter(self, ec: str, name: str) -> pl.DataFrame:
             if (ec, name) == ("unit", "startup_cost"):
                 # Hand-calc: explicit zero row triggers filter(value != 0).
                 return pl.DataFrame({"name": ["coal_plant"],
                                      "period": ["p2020"],
                                      "value": [0.0]})
             raise KeyError((ec, name))
+
+        def parameter_explicit(self, ec: str, name: str) -> pl.DataFrame:
+            return self.parameter(ec, name)
 
     out = _load_online(inp, sd, dt, pss, source=_ZeroStartupSource())
     # Hand-calc: filter removes the only sc row -> sc_frame.height == 0
