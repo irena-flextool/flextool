@@ -966,6 +966,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Reserve groups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#storage-backed-reserve-energy-adequacy-reserve_duration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage-backed reserve energy adequacy (reserve_duration)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -2469,6 +2486,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Reserve groups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#storage-backed-reserve-energy-adequacy-reserve_duration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage-backed reserve energy adequacy (reserve_duration)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -2637,7 +2671,8 @@
 <li>
 <p>Stochastic parameters:</p>
 <ul>
-<li><em>stochastic_branches</em>: 4D-map to set up the stochastic branches, their weights and to choose which of them are realized. See 'How to use stochastics' for more information.</li>
+<li><em>stochastic_branches</em>: 4D-map defining the solve's <strong>forecast branches</strong> — the probability-weighted possible futures. Index columns: <em>period</em>, <em>branch</em>, <em>analysis_time</em> (the branch's start timestep), <em>realized</em> (yes/no), and the value is the branch's <strong>probability weight</strong>. The weights are normalized to sum to one across the forecast branches at each start time. The <em>realized</em> flag is an <strong>optional designation</strong> (at most one branch per start time) marking which branch's data are treated as the actuals for the committed / realized-dispatch results; a realized-flagged branch is <strong>not</strong> a weighted member of the forecast fan. See 'How to use stochastics' for more information.</li>
+<li><em>stochastic_invest_method</em>: <code>none</code> (default) or <code>recourse</code>. <code>none</code> makes a single shared here-and-now investment plan across all forecast branches (operations still fan per branch). <code>recourse</code> gives per-branch (wait-and-see) investment: each forecast branch invests on its own data at and after the branching period, with probability-weighted investment costs and per-branch investment limits, and reports EVPI/VSS-style stochastic value. Forecast-branch (unrealized) investments are output only under <code>model.output_horizon</code> (a debug flag). Incompatible with Benders decomposition. See 'How to use stochastics' for the interpretation caveats.</li>
 </ul>
 </li>
 <li>
@@ -3144,7 +3179,41 @@ and the <code>storage_state_reference_price</code> parameter yourself.</p>
 <li><code>reservation</code> - [MW] Amount of reserve required. Constant or time.</li>
 <li><code>penalty_reserve</code> - [CUR/MW] Penalty cost for not fulfilling the reserve requirement, per MW of shortfall and hour. Constant. Default 5000 (applied to every reserve group without a value of its own, so a reserve requirement is never free to leave unmet). The unmet part (reserve shortfall) can cover the whole requirement of every method and is always priced with this penalty: for a timeseries requirement the shortfall is at most <code>reservation</code>; for a dynamic requirement at most the sum of the participating flows' capacities × <code>increase_reserve_ratio</code>; for a large_failure requirement at most the sum of the failing flows' capacities × <code>large_failure_ratio</code> (capacity = existing plus the most that can be invested by that period; with unlimited investment <code>max_flow_for_unconstrained_variables</code> is used). A group combining methods adds these up.</li>
 <li><code>increase_reserve_ratio</code> - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.</li>
+<li><code>reserve_duration</code> - [h] Time span over which committed reserve power must be sustainable from storage. Constant. Absent or 0 means the reserve is instantaneous-power-only (legacy behaviour); no storage-energy coupling is added.</li>
 </ul>
+<h4 id="storage-backed-reserve-energy-adequacy-reserve_duration">Storage-backed reserve energy adequacy (<code>reserve_duration</code>)</h4>
+<p>By default a reserve reservation only withholds <em>power</em> (MW of headroom) from
+the provider. <code>reserve_duration</code> additionally requires the provider to hold
+enough <em>energy</em> to actually sustain that committed power for the given number
+of hours, when the provider draws on (upward reserve) or charges into
+(downward reserve) a storage node. This is a single-scalar simplification of
+Backbone's duty-cycle formulation (self-discharge over the window is ignored
+in this first version).</p>
+<p>For each committed reserve MW the required energy is <code>reservation_MW ×
+reserve_duration</code>, corrected by the provider's efficiency:</p>
+<ul>
+<li><strong>Upward / discharge</strong> — the storage node is the provider's <em>source</em>, so the
+  energy drawn is divided by the efficiency (<code>÷ η</code>): a lossy discharge must
+  draw more stored energy to deliver the same MW. The stored energy floor is
+  <code>v_state · unitsize ≥ Σ reservation_MW · reserve_duration / η</code>.</li>
+<li><strong>Downward / charge</strong> — the storage node is the provider's <em>sink</em>, so the
+  energy stored is multiplied by the efficiency (<code>× η</code>): a lossy charge stores
+  less per MW of charging. The free-headroom bound is
+  <code>v_state · unitsize + Σ reservation_MW · reserve_duration · η ≤ capacity</code>
+  (with the same invest/divest capacity replication as the storage state
+  bound).</li>
+</ul>
+<p>The coupling is storage-only: reserve provided by non-storage units (e.g. a
+gas turbine drawing on a fuel commodity) is unaffected. The obligation uses the
+provider's full committed MW — the trust derating (<code>reliability</code>) is
+deliberately excluded, since the physical energy required is independent of how
+much of the reservation is counted towards the requirement.</p>
+<p>Limitation under representative periods: the constraints reference the
+intra-representative-period storage state (<code>v_state</code>) only. Under the
+representative-period <em>blended-weights</em> storage modes the seasonal inter-period
+state is bounded separately and is not aligned to the reserve's time index, so
+<code>reserve_duration</code> couples reserve to intra-period state only — matching
+FlexTool's own intra-period capacity approximation.</p>
 <h3 id="reserve-provision-by-units">Reserve provision by units</h3>
 <p>For <code>reserve__upDown__unit__node</code> entities:</p>
 <ul>

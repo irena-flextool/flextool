@@ -2524,6 +2524,16 @@ names as before for debug inspection:</p>
 <td><code>v_state</code> at the end of the realized window; pins the next roll's first timestep.</td>
 </tr>
 <tr>
+<td><code>roll_end_online</code></td>
+<td><em>(in-memory only)</em></td>
+<td>Committed jump-end <code>v_online</code> per online process (OC1 Carrier 1); the next roll's <code>online__startup</code>/<code>online__shutdown</code> first step sees the prior commitment instead of the within-roll cyclic wrap, so a unit that stays committed is not re-charged a startup across the boundary.</td>
+</tr>
+<tr>
+<td><code>online_history</code></td>
+<td><em>(in-memory only)</em></td>
+<td>Trailing realized committed <code>v_startup</code>/<code>v_shutdown</code> window (OC1 Carrier 2); rebuilt into <code>uptime_carry</code>/<code>downtime_carry</code> at the next roll and injected on the <code>minimum_uptime</code> RHS / <code>minimum_downtime</code> LHS so an obligation opened in roll N constrains roll N+1's early steps.</td>
+</tr>
+<tr>
 <td><code>fix_storage_quantity / price / usage</code></td>
 <td><code>fix_storage_*.csv</code></td>
 <td>Parent-imposed storage quota at the boundary (any subset of the three metrics — each carries its own <code>(node, period, step)</code> index, so a separate timesteps carrier is not needed).</td>
@@ -2545,6 +2555,20 @@ names as before for debug inspection:</p>
 </tr>
 </tbody>
 </table>
+<p>Cross-boundary unit-commitment continuity (OC1 Carriers 1 &amp; 2) is
+<strong>hard-enforced</strong> and <strong>period-aware</strong>: a <code>min_uptime</code> / <code>min_downtime</code>
+obligation opened near a roll's jump-end carries into the next roll's early
+steps <em>only within the same period</em>. FlexTool's online dynamics are
+period-cyclic (a period's first step wraps within that period, never to the
+prior period), so a commitment obligation must not propagate across a period
+boundary — the non-contiguous investment years (e.g. 2020 → 2025) do not
+connect, and forcing one across would be a unit-commitment infeasibility no
+node penalty slack can absorb. A node with the default <code>penalty_method</code>
+(<code>regular</code>) absorbs any forced-on generation through its downward penalty
+(<code>vq_state_down</code>, a feasible spill); a hard-balance node (<code>penalty_method =
+off</code>) can instead become infeasible when a myopically-committed unit's
+forced generation cannot be absorbed — that is the model correctly refusing
+an un-absorbable commitment, resolved by allowing slack.</p>
 <p><code>fix_storage_timesteps</code>, <code>ed_history_realized_first</code>, and <code>edd_history</code>
 used to be <code>SolveHandoff</code> fields too, populated only by the now-removed
 <code>capture_post_solve()</code> disk-read constructor. They were retired when the
