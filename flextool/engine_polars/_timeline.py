@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 import spinedb_api as api
 
+from flextool.engine_polars._constants import HOURS_PER_YEAR
 from flextool.engine_polars._solve_config import (
     DictMode,
     get_single_entities,
@@ -826,6 +827,76 @@ class TimelineConfig:
             provider.put(
                 dst_key,
                 _build_frame_with_headers(headers, out_rows),
+            )
+
+        # ── Full-timeline inflow energy (timeset-independent scaling) ──
+        # ``scale_to_annual_flow`` normalises each node's inflow to its
+        # ``annual_flow`` using the ORIGINAL unmodified timeline
+        # (pre-``new_stepduration``).  A shared timeset makes
+        # ``create_timeline_from_timestep_duration`` accumulate every
+        # solve's periods into a single coarsened timeline; summing over
+        # that leaks later solves' inflow into this solve's scaling.
+        # Instead sum the raw inflow over the WHOLE original timeline and
+        # annualise it with its ``timeline_duration_in_years`` (= total
+        # hours / HOURS_PER_YEAR), exactly as the sibling
+        # ``scale_in_proportion`` method annualises.  No "find one year"
+        # windowing is needed: a sub-year timeline scales up (duration <
+        # 1), a multi-year timeline averages over its years (duration >
+        # 1), and a one-year timeline is unchanged (duration == 1).
+        new_tl = timelines_list[0] if timelines_list else None
+        # Walk back to the truly unmodified (pre-coarsening) timeline.
+        base_tl = new_tl
+        seen_tl: set[str] = set()
+        while base_tl in self.original_timeline and base_tl not in seen_tl:
+            seen_tl.add(base_tl)
+            base_tl = self.original_timeline[base_tl]
+        base_steps = self.timelines.get(base_tl, [])
+        all_step_names: set[str] = {step[0] for step in base_steps}
+        total_hours = sum(float(step[1]) for step in base_steps)
+        duration_in_years = total_hours / HOURS_PER_YEAR
+        if duration_in_years:
+            inflow_path = wf / "input" / "pt_node_inflow.csv"
+            inflow_frame = _provider_get_or_read(
+                provider, _provider_key(inflow_path), inflow_path,
+            )
+            ts_sum: dict[str, float] = {}
+            if inflow_frame is not None and inflow_frame.height > 0:
+                cols = inflow_frame.columns
+                grouped = (
+                    inflow_frame
+                    .filter(pl.col(cols[1]).is_in(all_step_names))
+                    .select(
+                        pl.col(cols[0]).alias("node"),
+                        pl.col(cols[-1]).cast(pl.Float64, strict=False)
+                        .alias("v"),
+                    )
+                    .group_by("node")
+                    .agg(pl.col("v").sum().alias("v"))
+                )
+                for n_name, v in grouped.iter_rows():
+                    if n_name:
+                        ts_sum[str(n_name)] = (
+                            float(v) if v is not None else 0.0
+                        )
+            const_for_node: dict[str, float] = {}
+            for node__value in node__inflow:
+                try:
+                    const_for_node[node__value[0]] = float(node__value[1])
+                except (ValueError, TypeError):
+                    continue
+            flow_rows: list[list] = []
+            for n_name in dict.fromkeys(
+                list(ts_sum) + list(const_for_node)
+            ):
+                energy = (
+                    ts_sum.get(n_name, 0.0)
+                    + const_for_node.get(n_name, 0.0) * total_hours
+                )
+                flow_rows.append([n_name, energy / duration_in_years])
+            flow_path = wf / "solve_data" / "node_full_timeline_flow.csv"
+            provider.put(
+                _provider_key(flow_path),
+                _build_frame_with_headers(["node", "value"], flow_rows),
             )
 
 

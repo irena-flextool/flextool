@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from ._axis_enums import alias_to_axis
+from ._constants import HOURS_PER_YEAR
 
 if TYPE_CHECKING:
     from flextool.engine_polars._input_source import InputSource
@@ -304,7 +305,7 @@ def derive_per_solve_aggregates(
     # ── p_timeline_duration_in_years[timeline] ───────────────────────
     # = sum_t step_duration[timeline, t] / 8760
     p_tdy = (tl_lf.group_by("timeline")
-                   .agg((pl.col("step_duration").sum() / 8760.0)
+                   .agg((pl.col("step_duration").sum() / HOURS_PER_YEAR)
                         .alias("value"))
                    .sort("timeline")
                    .collect())
@@ -321,7 +322,8 @@ def derive_per_solve_aggregates(
     # PerSolveAggregates dataclass already exposes the per-(d, d) frame
     # which downstream branch-aware helpers can fold themselves.
     cpsoy = (expanded_lf
-               .group_by("d").agg((pl.col("step_duration").sum() / 8760.0)
+               .group_by("d").agg((pl.col("step_duration").sum()
+                                    / HOURS_PER_YEAR)
                                   .alias("value"))
                .sort("d")
                .collect())
