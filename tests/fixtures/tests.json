@@ -8293,6 +8293,16 @@
     [
       "node",
       "dr_storage",
+      "self_discharge_loss",
+      [
+        "MWUtMDY=",
+        "float"
+      ],
+      "dr_shift_holding_loss"
+    ],
+    [
+      "node",
+      "dr_storage",
       "storage_binding_method",
       [
         "ImJpbmRfd2l0aGluX3NvbHZlIg==",
@@ -11519,6 +11529,10 @@
       ""
     ],
     [
+      "dr_shift_holding_loss",
+      "Small holding loss on the demand-response shift storage (dr_storage). Breaks the tie between equally-cheap shift timings so the optimum is unique (issue #328)."
+    ],
+    [
       "ev",
       ""
     ],
@@ -13582,6 +13596,11 @@
     [
       "network_all_tech",
       "dr_shift_demand",
+      "dr_shift_holding_loss"
+    ],
+    [
+      "network_all_tech",
+      "dr_shift_holding_loss",
       "coal_min_load"
     ],
     [
