@@ -1,3 +1,41 @@
+## Release 4.1.1 (21.10.2026) — scale_to_annual_flow over the whole timeline, multi-output indirect-unit capacity, node__dt balance under coarsening
+
+No schema change (stays v76); no migration needed.
+
+- **`scale_to_annual_flow` uses the whole original timeline.** The annual
+  inflow target is now matched against the raw inflow summed over the
+  entire original (unmodified) timeline and annualised by its length,
+  the same way `scale_in_proportion` does, instead of against the
+  representative weeks or a "first 8760 hours" window. Results are
+  unchanged for timelines of one year or less; timelines longer than one
+  year now average over all their years instead of using only the first.
+  Two test results that use `scale_to_annual_flow` with timesets differing
+  from 8760 hours were updated accordingly.
+
+- **Indirect-unit capacity for multi-output units.** The capacity bound on
+  the fuel (source) arc of an indirect unit now covers the throughput of
+  every output arc at its own capacity, instead of limiting the *sum* of
+  outputs to a single unit capacity. This keeps a dispatch-only solve
+  consistent with the investment solve. Single-output units are unchanged.
+
+- **`node__dt` balances under timeline coarsening.** With
+  `new_stepduration` (step duration ≠ 1) the Inflow column of `node__dt`
+  was energy per step while the flow and slack columns were MW rates, so
+  the rows did not sum to zero. Inflow is now reported as a MW rate too.
+  Output-only: the solve was already correct, and `node__d` is unchanged.
+
+- **Internal:** the hours-per-year unit (8760) is centralised as a single
+  `HOURS_PER_YEAR` constant used by every annualisation in the engine.
+
+- **Docs:** new section in the advanced guide on using periods that are
+  not one year long (what stays correct automatically, what the annualised
+  result columns mean, and when not to rely on the annual inflow-scaling
+  methods).
+
+- **Release automation:** pushing a version tag now also creates the
+  GitHub Release (notes taken from this changelog), after the PyPI
+  publish succeeds.
+
 ## Release 4.1.0 (20.10.2026) — two-stage & recourse stochastic investment, realized-dispatch (UC→dispatch) solves, rolling unit-commitment continuity; construction lead time; indirect-unit capacity, per-unit min-load & reserve fixes (schema v76)
 
 Schema change (adds `solve.stochastic_invest_method`,
