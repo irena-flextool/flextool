@@ -59,6 +59,13 @@ from flextool.engine_polars import _provider_keys
 from flextool.engine_polars import _provider_translators
 
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine_polars._realized_overlap import (
+    effective_realized_invest_periods,
+    find_realized_invest_overlaps,
+    resolve_realized_dispatch_overlap,
+    warn_realized_dispatch_overlaps,
+    warn_realized_invest_overlaps,
+)
 from flextool.engine_polars._solve_state import compute_level_key
 
 # Native solve-tree expansion + stochastic branching + timeline helpers.
@@ -430,30 +437,59 @@ def native_run_model(state, solver) -> int:
     # wins") and makes each solve's persisted realized slice disjoint, so
     # the downstream multi-solve output union stays a clean concat.
     #
-    # Implementation: iterate solves in REVERSE cascade order so a later
-    # solve is seen first and claims its (period, timestep) pairs.  When
-    # an earlier solve reaches a timestep already claimed by a later
-    # solve, truncate it (and the rest of that period's realized window —
-    # realized windows are contiguous per period, so once one cell is
-    # taken the remainder overlaps too).  Drops the resolved cells from
-    # ``realized_time_lists`` itself, which then flows into
-    # ``solve_data/realized_dispatch.csv`` and thus each roll's
-    # ``flex_data.realized_dispatch`` that drives per-roll persistence.
+    # Only the timesteps a later solve actually claims are dropped; the
+    # rest of the earlier solve's window is kept in order (it may become
+    # non-contiguous — every downstream consumer of
+    # ``solve_data/realized_dispatch`` is set/membership based, and the
+    # roll-end storage state reads the last step the solve still
+    # realizes).  Only periods a solve really
+    # realizes (its ``realized_periods`` — the same filter
+    # ``derive_realized_dispatch`` applies) take part.  The resolved
+    # lists flow into ``solve_data/realized_dispatch.csv`` and thus each
+    # roll's ``flex_data.realized_dispatch`` that drives per-roll
+    # persistence.  See :mod:`._realized_overlap`.
+    #
+    # Each drop is reported as one warning per (earlier solve, later
+    # solve, period).  Within-solve rolls realize disjoint jump windows
+    # and never overlap.  The auto-spawned realized-dispatch sibling
+    # (``realized_dispatch_parent``) re-realizes its parent's window by
+    # design, so that pair is silent.
     # ------------------------------------------------------------------
-    already_realized_timesteps: dict[str, set[str]] = {}
-    for solve, realized_time_list in reversed(realized_time_lists.items()):
-        for period, timesteps in list(realized_time_list.items()):
-            if period not in already_realized_timesteps:
-                already_realized_timesteps[period] = set()
-            for i, entry in enumerate(timesteps):
-                # Hitting a cell already owned by a later solve means the
-                # rest of this period's window overlaps too — truncate.
-                if entry.timestep in already_realized_timesteps[period]:
-                    del realized_time_lists[solve][period][i:]
-                    break
-                already_realized_timesteps[period].add(entry.timestep)
-            if not realized_time_lists[solve][period]:
-                del realized_time_lists[solve][period]
+    _realized_period_names = {
+        _s: {
+            t[1]
+            for t in state.solve.realized_periods.get(complete_solve[_s], [])
+        }
+        for _s in realized_time_lists
+    }
+    _dispatch_overlaps = resolve_realized_dispatch_overlap(
+        realized_time_lists, _realized_period_names,
+    )
+    _rdp_map = getattr(state.solve, "realized_dispatch_parent", {}) or {}
+    warn_realized_dispatch_overlaps(
+        _dispatch_overlaps,
+        silent_pairs={(_par, _sib) for _sib, _par in _rdp_map.items()},
+    )
+
+    # Investment-period overlap: a period's investments should be
+    # realized by one solve only.  Warning only (the maintainer decides
+    # whether to escalate).  One entry per distinct complete solve, in
+    # cascade order — rolls of one solve share its configuration and are
+    # not compared with each other.
+    _invest_claims: list[tuple[str, list[str]]] = []
+    _seen_complete: set[str] = set()
+    for _s in all_solves:
+        _cs = complete_solve[_s]
+        if _cs in _seen_complete:
+            continue
+        _seen_complete.add(_cs)
+        _invest_claims.append((_cs, effective_realized_invest_periods(
+            _cs,
+            realized_invest_periods=state.solve.realized_invest_periods,
+            invest_periods=state.solve.invest_periods,
+            realized_periods=state.solve.realized_periods,
+        )))
+    warn_realized_invest_overlaps(find_realized_invest_overlaps(_invest_claims))
 
     # ------------------------------------------------------------------
     # 3.6 W4c — project each stochastic parameter onto the REALIZED branch
