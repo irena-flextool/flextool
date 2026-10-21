@@ -268,13 +268,15 @@
     - connection__dt.csv
     - costs__dt.csv
   time_budget_seconds: 10.0
-  # Non-unique optimum: the demand-response shift (dr_shift_demand/dr_storage)
-  # has multiple equally-optimal solutions, so the solver may pick a different
-  # (valid) vertex per platform and the golden CSV isn't bit-portable. Skipped
-  # until the scenario is reformulated for a unique optimum (see GitHub issue).
-  skip_reason: >-
-    non-unique optimum (demand-response shift); golden not portable across
-    platforms — reformulate for a unique optimum before re-enabling
+  # Unique optimum by construction (#328).  Without a holding cost the
+  # demand-response shift (dr_shift_demand -> dr_storage) is free to move
+  # between any hours where fusion (flat 15 EUR/MWh) is the marginal west
+  # source, so platforms picked different, equally optimal shift timings.
+  # The dr_shift_holding_loss alternative gives dr_storage a tiny
+  # self_discharge_loss (1e-6 /h): the shift then holds as little energy as
+  # possible (least feasible state trajectory, which is unique).  It is kept
+  # well below the battery's own 1e-4 /h loss so it does not re-time the
+  # battery.  Cost of the extra energy: ~12 EUR/a on a ~324 MEUR objective.
 
 - scenario: network_coal_wind_battery_co2_fullYear_availability
   csvs:
