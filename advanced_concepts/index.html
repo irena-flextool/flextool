@@ -758,6 +758,78 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#using-periods-that-are-not-one-year-long" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using periods that are not one year long
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using periods that are not one year long">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-a-periods-length-means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a period's length means
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-stays-correct-automatically" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What stays correct automatically
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-annualised-in-the-results-means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What "annualised" in the results means
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-not-to-rely-on-inflow-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When NOT to rely on inflow scaling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-approximation-to-be-aware-of" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One approximation to be aware of
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1822,6 +1894,78 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#using-periods-that-are-not-one-year-long" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using periods that are not one year long
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using periods that are not one year long">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-a-periods-length-means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a period's length means
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-stays-correct-automatically" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What stays correct automatically
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-annualised-in-the-results-means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What "annualised" in the results means
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-not-to-rely-on-inflow-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When NOT to rely on inflow scaling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-approximation-to-be-aware-of" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One approximation to be aware of
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2050,6 +2194,53 @@ Approximation: nominal = real + inflation approximately (e.g., 5% + 2% = 7%).</p
 <div class="highlight"><pre><span></span><code>cost_per_timestep × step_duration × inflation_factor / period_share_of_year
 </code></pre></div>
 <p>where <code>period_share_of_year = hours_in_period / 8760</code> converts the modelled period to an annual equivalent, and the inflation factor then scales across all represented years. Investment costs follow a similar pattern using a separate inflation factor that accounts for investment timing.</p>
+<h3 id="using-periods-that-are-not-one-year-long">Using periods that are not one year long</h3>
+<p>A period does not have to represent exactly one year. It can be shorter
+(e.g. a half-year period for six-monthly investment decisions) or stand in
+for several years (see <em>How multi-year periods are handled internally</em>).
+FlexTool keeps the accounting correct for any period length — you mostly
+just need to know what is scaled and what is not.</p>
+<h4 id="what-a-periods-length-means">What a period's length means</h4>
+<p>Each period has a length derived from its modelled timeline,
+<code>period_share_of_year = hours_in_period / 8760</code>. Investment granularity is set separately
+with <code>years_represented</code> on the solve — including fractional values such
+as <code>years_represented = 0.5</code> for half-year steps.</p>
+<h4 id="what-stays-correct-automatically">What stays correct automatically</h4>
+<ul>
+<li><strong>Operating costs and energy balances are absolute.</strong> They are summed
+  over the timesteps actually in the period, so a shorter period simply
+  incurs less; a longer one, more. No year constant enters these totals.</li>
+<li><strong>Annual (per-year) parameters are prorated by period length.</strong> Annual
+  <code>fixed_cost</code>, for instance, is applied as <code>fixed_cost × period_share</code>, so
+  a half-year period pays half a year of fixed cost. Investment annuities
+  and discounting likewise use the period's (possibly fractional) year
+  count.</li>
+</ul>
+<h4 id="what-annualised-in-the-results-means">What "annualised" in the results means</h4>
+<p>The <code>..._annualized</code> result columns divide a period's totals by
+<code>period_share_of_year</code> to express them as a per-year rate. This is only a
+reporting convenience so that periods of different lengths can be compared
+on the same footing — it does <strong>not</strong> change the optimisation or the
+period totals. If you want the actual amount incurred in the period, read
+the plain (non-annualised) total.</p>
+<h4 id="when-not-to-rely-on-inflow-scaling">When NOT to rely on inflow scaling</h4>
+<p>The <code>inflow_method</code> options <code>scale_to_annual_flow</code>, <code>scale_in_proportion</code>
+and <code>scale_to_annual_and_peak_flow</code> assume the modelled timeline is a
+representative year: they normalise the inflow by its sum over (one year
+of) the timeline. If your timeline is <strong>not</strong> a representative year — a
+non-representative sub-year slice, or several years with genuinely
+different shapes — do not use these methods. Instead provide an accurate
+absolute inflow time series and leave <code>inflow_method</code> at its default
+(<code>use_original</code>); then no annual assumption is applied to your inflow.</p>
+<p>(There is no equivalent "scale to annual" for <code>profile</code>-based limits such
+as capacity factors. A capacity factor is bounded by installed capacity,
+so there is no easy way to scale it accurately.)</p>
+<h4 id="one-approximation-to-be-aware-of">One approximation to be aware of</h4>
+<p>When a single period represents multiple years (<code>years_represented &gt; 1</code>),
+costs within that period are discounted at the period's single point in
+time rather than year by year. The totals remain correct; only the
+within-period discounting is approximated. Use shorter periods (more of
+them) if you need finer discounting resolution.</p>
 
 
 
