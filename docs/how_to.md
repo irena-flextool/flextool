@@ -253,7 +253,9 @@ Finally `connection_node_node` is needed between inverter, the battery and the d
 
 Here we will use the previous battery scenario to represent the investment options in the tool.
 
-The solve will invest only if it has an array of `invest_periods` set, telling the periods where it is allowed to make investment decisions. In a multi solve investment model (rolling investments) it can be useful to separately set `invest_realized_periods` so that the investment results get reported only from the chosen periods from each solve (in order to avoid overlapping reporting of investment decisions that are replaced by  investment decisions in later solves). Furthermore, `realized_periods` will define the solves and periods from which the dispatch results are output into results.
+The solve will invest only if it has an array of `invest_periods` set, telling the periods where it is allowed to make investment decisions. In a multi solve investment model (rolling investments) it can be useful to separately set `realized_invest_periods` so that the investment results get reported only from the chosen periods from each solve (in order to avoid overlapping reporting of investment decisions that are replaced by  investment decisions in later solves). Furthermore, `realized_periods` will define the solves and periods from which the dispatch results are output into results.
+
+Each period's investments should be realized by only one solve: do not list the same period in the `realized_invest_periods` of two solves. If you do, FlexTool logs a warning naming both solves and the period. Dispatch timesteps, on the other hand, may be realized by more than one solve (for example an investment solve and a dispatch solve nested inside it that both have the same period in `realized_periods`). For the overlapping timesteps the solve that runs later is kept and the earlier solve's results are not reported. FlexTool logs one warning per pair of solves and period, giving the number of overlapping timesteps. Timesteps that only the earlier solve realizes are still reported from the earlier solve.
 
 First, the investment parameters need to be included both for the *battery_inverter* and *battery* entities:
 
@@ -859,7 +861,7 @@ Next figure shows the values needed to define one solve (out of the four solves 
 - `years_represented` parameter is used by the model to calculate the discounting factors for the periods in the model (often future years). It should state the number of years each period will be representing. For example, a period for 2025 could represent the years 2025-2029 if its `years_represented` is set to 5. Any investments would be taking place at the start of 2025 and discounted to the beginning of 2025, but the operational costs would accrue from each year in 2025-2029 each with a different discounting factor (decreasing based on the interest rate).
 - `invest_periods` the periods in which the model is allowed to make investments. To be given for each solve.
 - `realized_periods` the periods that will be realized in this solve (outputs dispatch results for these periods). To be given for each solve.
-- `invest_realized_periods` parameter states the periods that will realize the investment decisions. If not stated, it will use `realized_periods`.
+- `realized_invest_periods` parameter states the periods that will realize the investment decisions. If not stated, it will use `realized_periods`.
 - `period_timeset` defines the set of representative 'periods' (timesets in FlexTool) to be used in each FlexTool `period`.
 
 Note the the `solve_mode`: *rolling_window* is not used! This is not for investment runs (without nesting) as it rolls freely, and investments should only be made at the start of the period. This example is called 'manual rolling' later when those are discussed.
