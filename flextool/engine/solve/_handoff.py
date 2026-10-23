@@ -42,7 +42,7 @@ frames straight through to ``handoff/cumulative_commodity`` /
 ``handoff/cum_sim_hours`` without a per-iteration rename.
 
 (Δ.1 — ``periods_already_emitted`` was previously listed here; it
-moved to ``_output_writer.OutputWriterState`` since it gates writer-
+moved to ``_writer.OutputWriterState`` since it gates writer-
 side emission and isn't a true solver-handoff carrier.)
 
 The three ``fix_storage_*`` narrow carriers replaced the legacy

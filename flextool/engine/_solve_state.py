@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from flextool.cli._timing import TimingRecorder
     from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._solve_handoff import SolveHandoff
+    from flextool.engine.solve._handoff import SolveHandoff
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ class RunnerState:
     # pulling :class:`FlexDataProvider` into the import graph.
     cascade_input_provider: object | None = None
     # Per-sub-solve Provider currently driving the cascade.  Set by
-    # ``_native_run_model`` immediately before each ``solver.run``
+    # ``_run_model`` immediately before each ``solver.run``
     # invocation; consumed by post-solve writers that need a Provider
     # handle but were called without one.  ``None`` outside an active
     # solve iteration.

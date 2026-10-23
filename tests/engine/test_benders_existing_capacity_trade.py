@@ -45,8 +45,8 @@ import pytest
 from polar_high import Problem, WarmProblem
 
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine import _region_filter
-from flextool.engine._benders import solve_benders
+from flextool.engine.solve import _region_filter
+from flextool.engine.solve._benders import solve_benders
 
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
@@ -236,7 +236,7 @@ def _set_single_solve(db_url: str, solve: str) -> None:
 def invest_solve_data(tmp_path_factory):
     """FlexData for the ``lh2_invest`` solve (the Benders invest solve over
     fixed-capacity pipes), snapshotted from a single-solve chain run."""
-    from flextool.engine._orchestration import run_chain_from_db
+    from flextool.engine.solve._orchestration import run_chain_from_db
 
     tmp_path = tmp_path_factory.mktemp("lh2_benders_invest_solve")
     url = _build_invest_db(tmp_path)

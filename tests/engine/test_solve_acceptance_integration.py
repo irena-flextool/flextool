@@ -17,7 +17,7 @@ import pytest
 import spinedb_api as api
 
 from flextool.engine import run_chain_from_db
-from flextool.engine._solve_acceptance import (
+from flextool.engine.solve._acceptance import (
     Acceptance,
     classify_acceptance as _real_classify,
 )
@@ -56,7 +56,7 @@ def test_near_optimal_accept_does_not_abort_cascade(
         )
 
     monkeypatch.setattr(
-        "flextool.engine._orchestration.classify_acceptance", _fake
+        "flextool.engine.solve._orchestration.classify_acceptance", _fake
     )
 
     steps = run_chain_from_db(sqlite, scenario, keep_solutions=True)
@@ -98,7 +98,7 @@ def test_reject_still_raises(scenario_workdir, monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "flextool.engine._orchestration.classify_acceptance", _fake
+        "flextool.engine.solve._orchestration.classify_acceptance", _fake
     )
 
     with pytest.raises(FlexToolSolveError):

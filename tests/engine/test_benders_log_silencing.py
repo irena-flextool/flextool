@@ -6,7 +6,7 @@ those HiGHS solves verbose floods the console with many interleaved native
 logs.  By DEFAULT the engine now mutes the HiGHS native log on the master
 WarmProblem and on every region WarmProblem (via
 ``WarmProblem.set_output_flag(False)``, gated by
-``flextool.engine._benders._benders_quiet``) and relies on the
+``flextool.engine.solve._benders._benders_quiet``) and relies on the
 orchestrator's concise per-iteration LB/UB/gap log for visible progress.
 ``FLEXTOOL_BENDERS_VERBOSE`` restores the full native HiGHS output.
 

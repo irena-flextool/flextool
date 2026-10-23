@@ -178,15 +178,15 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # complete (CLAUDE.md #1).
     # ``f`` = cross-region trade flow, in the SAME unitsize-normalised units
     # as the region half-flow ``v_flow`` ⇒ same family as v_flow.
-    # flextool/engine/_benders.py:483
+    # flextool/engine/solve/_benders.py:483
     "f": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
     # ``C`` = invested trade-connection capacity (normalised) ⇒ same family
     # as v_invest_p.
-    # flextool/engine/_benders.py:473
+    # flextool/engine/solve/_benders.py:473
     "C": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
     # ``eta`` = per-region recourse cost (enters the objective at coef 1.0
     # carrying the region's currency cost) ⇒ CURRENCY column.
-    # flextool/engine/_benders.py:489
+    # flextool/engine/solve/_benders.py:489
     "eta": VarFamily(QuantityType.CURRENCY),
 }
 
@@ -525,12 +525,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # them keeps the registry-coverage invariant complete (CLAUDE.md #1).
     # ``maxInvest``: C[conn] <= max_units — capacity bound, mirrors the
     # entity-scope ``maxInvest_var_bound`` (POWER RHS).
-    # flextool/engine/_benders.py:520
+    # flextool/engine/solve/_benders.py:520
     "maxInvest": CstrFamily(QuantityType.POWER),
     # ``trade_capacity``: C[conn] - f[arc,d,t] >= 0 — the RHS is identically
     # zero (no per-row scaling), so CstrFamily(None) like the other zero-RHS
     # structural rows; the column scalers on C / f still propagate.
-    # flextool/engine/_benders.py:504
+    # flextool/engine/solve/_benders.py:504
     "trade_capacity": CstrFamily(None),
 }
 

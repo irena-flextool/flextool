@@ -7,7 +7,7 @@ subprocess/commercial path read the *same* files (the GUI's cwd is
 frequently not the folder holding the project's ``highs.opt``).
 
 The copy logic is factored into
-:func:`flextool.engine._orchestration._seed_work_folder_solver_config`,
+:func:`flextool.engine.solve._orchestration._seed_work_folder_solver_config`,
 tested here directly to avoid a heavy end-to-end solve.  Covered:
 
 * the work folder gets ``solver_config/highs.opt`` and its contents
@@ -24,7 +24,7 @@ import logging
 from pathlib import Path
 
 from flextool._resources import package_data_path
-from flextool.engine._orchestration import (
+from flextool.engine.solve._orchestration import (
     _SOLVER_CONFIG_NAMES,
     _seed_work_folder_solver_config,
 )
@@ -98,7 +98,7 @@ def test_all_bundled_solvers_seeded(tmp_path: Path) -> None:
 
 def test_missing_source_and_template_skipped(tmp_path: Path, monkeypatch) -> None:
     """A solver with neither operator file nor template is skipped, no crash."""
-    import flextool.engine._orchestration as orch
+    import flextool.engine.solve._orchestration as orch
 
     # Force the template lookup to fail for one synthetic solver name so we
     # exercise the "neither source nor template" branch.

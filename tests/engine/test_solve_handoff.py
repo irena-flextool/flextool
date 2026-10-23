@@ -31,7 +31,7 @@ from pathlib import Path
 import pandas as pd
 import polars as pl
 
-from flextool.engine._solve_handoff import (
+from flextool.engine.solve._handoff import (
     SolveHandoff,
 )
 

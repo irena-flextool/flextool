@@ -38,7 +38,7 @@ from flextool.engine._solve_state import (
     ActiveTimeEntry,
     FlexToolConfigError,
 )
-from flextool.engine._stochastic import StochasticSolver
+from flextool.engine.solve._stochastic import StochasticSolver
 from flextool.engine._timeline import make_step_jump
 
 SOLVE = "stoch_2p_hedge"

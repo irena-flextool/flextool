@@ -790,7 +790,7 @@ def _resolve_solver_config_dir() -> Path:
        override hook used by the existing ``highs.opt`` resolution path
        in tests / CI).
     2. ``<cwd>/solver_config`` — the same default that
-       :func:`flextool.engine._orchestration.run_chain_from_db`
+       :func:`flextool.engine.solve._orchestration.run_chain_from_db`
        uses for ``highs.opt``.
 
     Returns the resolved :class:`Path` regardless of whether it exists;

@@ -5,7 +5,7 @@ Phase 2 of the polar-high multi-solver handoff (see
 ``solver_*`` parameters introduced by the v52 schema migration into
 :class:`flextool.engine._solve_config.SolverConfig` and provides
 the per-solver option-translation helper
-:func:`flextool.engine._solver_dispatch.build_solver_options`.
+:func:`flextool.engine.solve._solver_dispatch.build_solver_options`.
 
 These tests cover:
 
@@ -49,7 +49,7 @@ from flextool.engine._solve_config import (  # noqa: E402
     SolveConfig,
     SolverConfig,
 )
-from flextool.engine._solver_dispatch import (  # noqa: E402
+from flextool.engine.solve._solver_dispatch import (  # noqa: E402
     _PARAM_MAP,
     build_solver_options,
 )

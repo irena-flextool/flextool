@@ -2,7 +2,7 @@
 
 Phase 2 proved the HAND-built master converges to the monolith optimum.  Phase
 3a SWAPS the hand master for a FlexTool-generated one
-(:func:`flextool.engine._region_filter.master_network_data` +
+(:func:`flextool.engine.solve._region_filter.master_network_data` +
 ``build_flextool`` + appended ``η_r`` recourse columns), run through the SAME
 multi-cut loop on the SAME no-RP 3-region prototype, so the known answer
 isolates the reuse-master mechanics (the network-only producer, terminal
@@ -35,8 +35,8 @@ import pytest
 from polar_high import Problem
 
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine import _region_filter
-from flextool.engine._benders import solve_benders
+from flextool.engine.solve import _region_filter
+from flextool.engine.solve._benders import solve_benders
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 _M_EXPECTED = 8.5442474e9
@@ -248,7 +248,7 @@ def test_flextool_master_matches_hand_master(ti_data, monolith) -> None:
 def test_region_layer2_fires_and_matches_unscaled(
     ti_data, monolith, monkeypatch
 ) -> None:
-    from flextool.engine import _benders as _b
+    from flextool.engine.solve import _benders as _b
 
     M = monolith.obj
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")

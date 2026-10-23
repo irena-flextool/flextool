@@ -869,7 +869,7 @@ def _build_warm_problem(
     Late-imports ``build_flextool`` to avoid a build-time cycle between
     this module and ``model.py``.
     """
-    from flextool.engine._solver_dispatch import apply_data_solver_options
+    from flextool.engine.solve._solver_dispatch import apply_data_solver_options
     from flextool.engine.model import build_flextool
 
     pb = Problem()

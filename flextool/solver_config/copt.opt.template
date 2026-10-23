@@ -2,7 +2,7 @@
 #
 # Format: one "<ParamName> <value>" per line.  Lines starting with "#"
 # are comments.  Consumed by FlexTool's commercial-solver subprocess
-# driver (flextool/engine/_subprocess_solve.py): each non-comment
+# driver (flextool/engine/solve/_subprocess_solve.py): each non-comment
 # line is translated to ``set <ParamName> <value>`` and piped on stdin
 # to ``copt_cmd`` before ``read <mps>`` / ``optimize``.
 #

@@ -13,8 +13,8 @@ import ast
 import re
 from pathlib import Path
 
-from flextool.engine import _benders
-from flextool.engine._benders import _benders_failure_message
+from flextool.engine.solve import _benders
+from flextool.engine.solve._benders import _benders_failure_message
 
 # Located through the module so the test follows the file if it moves.
 _BENDERS_SRC = Path(_benders.__file__)

@@ -2791,7 +2791,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # Phase C — ``binding_within_solve_blended_weights`` is also derived
     # here from the per-solve provider so the partition reflects any
     # cascade-applied silent downgrade (see
-    # :func:`._native_run_model._downgrade_rp_methods_for_non_rp_solve`).
+    # :func:`._run_model._downgrade_rp_methods_for_non_rp_solve`).
     # apply_projection_params no longer touches this field — the
     # per-solve CSV is the single source of truth.
     binding_within_solve_blended_weights = None
@@ -3135,13 +3135,13 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     f"tightly-coupled field `{_name}` is missing or "
                     f"empty.  Under the storage-binding-methods-restructure "
                     f"(Phase C onwards), the per-solve downgrade in "
-                    f"_native_run_model._downgrade_rp_methods_for_non_rp_solve "
+                    f"_run_model._downgrade_rp_methods_for_non_rp_solve "
                     f"normally strips bind_within_solve_blended_weights "
                     f"to bind_within_solve when a solve's active "
                     f"timeset has no representative_period_weights.  "
                     f"If you are seeing THIS error, the downgrade was "
                     f"bypassed — either load_flextool was called "
-                    f"directly (not via _native_run_model) or there "
+                    f"directly (not via _run_model) or there "
                     f"is an upstream emitter bug.  Please report this "
                     f"with the calling code.  Required RP set family: "
                     f"nodeState_rp, rp_base_period_set, rp_base__rep, "
@@ -3813,7 +3813,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
 # shortcuts (``highs_method`` / ``highs_parallel`` / ``highs_presolve``)
 # exist any longer — those overrides are now authored on
 # ``solver_arguments`` and routed through
-# :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`.
+# :func:`flextool.engine.solve._solver_dispatch._resolve_effective_highs_options`.
 # Only a forward-compatibility set of numeric / boolean HiGHS option
 # rows would still be picked up here (table below).  When the CSV
 # carries none of those rows the loader returns ``None`` and HiGHS
@@ -4240,7 +4240,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         if Path(sd).exists():
             seed_provider_from_dir(provider, sd, "solve_data")
 
-    from flextool.engine._orchestration import get_phase_recorder
+    from flextool.engine.solve._orchestration import get_phase_recorder
     _entry_rec = get_phase_recorder()
     _entry_logger = logging.getLogger("flextool.engine.input")
     if _entry_rec is not None:
@@ -4995,7 +4995,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # guarantees the invariant for any future earlier-step per-period producer.)
     _drv._reset_recourse_scope()
 
-    from flextool.engine._orchestration import get_phase_recorder
+    from flextool.engine.solve._orchestration import get_phase_recorder
     _rec = get_phase_recorder()
     _logger = logging.getLogger("flextool.engine.input")
 
@@ -5955,7 +5955,7 @@ def build_handoff_from_solution(
       via :func:`_extract_cum_sim_hours` (this-roll realized hours +
       ``prior_handoff.cum_sim_hours``).
     (Δ.1 — ``periods_already_emitted`` was here; it moved to
-    ``_output_writer.OutputWriterState`` since it's a writer-side
+    ``_writer.OutputWriterState`` since it's a writer-side
     emission gate, not a solver handoff carrier.  The on-disk source
     ``solve_data/period_capacity.csv`` is unchanged.)
 
@@ -5966,7 +5966,7 @@ def build_handoff_from_solution(
     """
     import polars as pl  # local — keep this helper's import surface narrow
     # Native import — Γ.8.D moved SolveHandoff into engine.
-    from flextool.engine._solve_handoff import SolveHandoff
+    from flextool.engine.solve._handoff import SolveHandoff
     # Slice C Guard 3 — local imports keep this helper's import surface narrow.
     from flextool.engine._solve_state import FlexToolConfigError
     from flextool.engine._stochastic_detect import (
@@ -6525,7 +6525,7 @@ def build_handoff_from_solution(
     # the quantity case and isn't exercised by the multi_invest fixture.
     # Phase 4.1l — the narrow per-metric carrier is built directly from
     # v_state × unitsize; the legacy wide intermediate frame has been
-    # retired (its last consumer, _native_run_model._fan_out_fix_storage,
+    # retired (its last consumer, _run_model._fan_out_fix_storage,
     # was deleted in 4.1l).
     fix_storage_quantity_df = None
     fq_nodes: set[str] = set()
@@ -6697,7 +6697,7 @@ def build_handoff_from_solution(
             cum_sim_hours_df = prior_handoff.cum_sim_hours
 
     # Δ.1 — ``periods_already_emitted`` extraction removed.  The carrier
-    # moved to ``_output_writer.OutputWriterState`` (writer-side state).
+    # moved to ``_writer.OutputWriterState`` (writer-side state).
     # ``solve_data/period_capacity.csv`` is unchanged (handoff_writers
     # still bumps it post-solve).
 

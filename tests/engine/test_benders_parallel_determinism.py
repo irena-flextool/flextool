@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 
 from flextool.engine import load_flextool
-from flextool.engine._benders import solve_benders
+from flextool.engine.solve._benders import solve_benders
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 

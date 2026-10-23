@@ -1,7 +1,7 @@
 """First-transfer A/B GATING tests for the PARENT subprocess solver.
 
 Exercises the warm-start A/B measurement gate in
-:func:`flextool.engine._subprocess_solve._solve_highs_subprocess`
+:func:`flextool.engine.solve._subprocess_solve._solve_highs_subprocess`
 (spec §7 B / §6.2): on a fingerprint's FIRST warm transfer the parent
 runs one extra COLD timing probe child alongside the warm main run, then
 compares wall times.  A regression (warm slower than
@@ -21,8 +21,8 @@ import numpy as np
 import polars as pl
 
 import polar_high as fp
-from flextool.engine import _subprocess_solve as _subp
-from flextool.engine._subprocess_solve import solve_via_subprocess
+from flextool.engine.solve import _subprocess_solve as _subp
+from flextool.engine.solve._subprocess_solve import solve_via_subprocess
 
 # A single-roll storage-dispatch LP large enough to take a non-trivial
 # number of simplex iterations cold (so both the cold probe and the warm

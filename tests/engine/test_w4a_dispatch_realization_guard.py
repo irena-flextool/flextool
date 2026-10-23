@@ -91,7 +91,7 @@ def test_raw_guard_accepts_eligible_separate_dispatch():
     """A single top-level ``single_solve`` authoring ``separate_dispatch``
     passes the guard (the engine will auto-spawn its realized-dispatch
     sibling).  ``within_solve`` / blank / absent also pass."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
@@ -120,7 +120,7 @@ def test_raw_guard_accepts_eligible_separate_dispatch():
 def test_raw_guard_rejects_typos():
     """An unrecognised value (typo) is still a hard-reject — the resolver
     would silently collapse it to 'within_solve'."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
@@ -143,7 +143,7 @@ def test_raw_guard_accepts_rolling_separate_dispatch():
     separate_dispatch): the sibling machinery interleaves a realized-dispatch
     roll with each UC roll.  The contains_solves / nesting bans remain (see
     the dedicated reject tests)."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
@@ -157,7 +157,7 @@ def test_raw_guard_accepts_rolling_separate_dispatch():
 def test_raw_guard_rejects_separate_dispatch_with_children():
     """A separate_dispatch solve that itself ``contains_solves`` children is
     rejected."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
@@ -174,7 +174,7 @@ def test_raw_guard_rejects_separate_dispatch_with_children():
 def test_raw_guard_rejects_nested_separate_dispatch():
     """A separate_dispatch solve nested inside another's ``contains_solves``
     is rejected (it is not a top-level solve)."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
@@ -192,7 +192,7 @@ def test_raw_guard_rejects_nested_separate_dispatch():
 def test_separate_dispatch_reject_message_names_solve():
     """A still-rejected shape (a separate_dispatch solve that itself
     ``contains_solves``) names the offending solve in the error."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
@@ -214,7 +214,7 @@ def test_separate_dispatch_reject_message_names_solve():
 def test_validate_model_solve_accepts_eligible_separate_dispatch():
     """The fail-fast pass ACCEPTS an eligible single top-level
     separate_dispatch solve (alongside other top-level single_solves)."""
-    from flextool.engine._orchestration import _validate_model_solve
+    from flextool.engine.solve._orchestration import _validate_model_solve
 
     sc = _solve_config_with_method(
         {"m": ["s_ok", "s_sep"]}, {"s_sep": "separate_dispatch"},
@@ -227,7 +227,7 @@ def test_validate_model_solve_accepts_eligible_separate_dispatch():
 def test_validate_model_solve_accepts_rolling_separate_dispatch():
     """The fail-fast pass now ACCEPTS a rolling_window separate_dispatch solve
     (OC1 rolling separate_dispatch)."""
-    from flextool.engine._orchestration import _validate_model_solve
+    from flextool.engine.solve._orchestration import _validate_model_solve
 
     sc = _solve_config_with_method(
         {"m": ["s_sep"]}, {"s_sep": "separate_dispatch"},
@@ -238,7 +238,7 @@ def test_validate_model_solve_accepts_rolling_separate_dispatch():
 
 
 def test_validate_model_solve_passes_within_solve_and_absent():
-    from flextool.engine._orchestration import _validate_model_solve
+    from flextool.engine.solve._orchestration import _validate_model_solve
 
     sc = _solve_config_with_method({"m": ["s1", "s2"]},
                                    {"s1": "within_solve"})
@@ -259,7 +259,7 @@ def test_run_site_accepts_rolling_separate_dispatch():
     """A rolling separate_dispatch solve reaches run() as ``<base>_roll_<N>``;
     the guard strips the suffix to the base and now ACCEPTS it — rolling
     separate_dispatch is supported (OC1)."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
@@ -273,7 +273,7 @@ def test_run_site_accepts_rolling_separate_dispatch():
 
 
 def test_run_site_passes_within_solve_rolling_child():
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 
@@ -289,7 +289,7 @@ def test_run_site_sibling_name_no_ops():
     """The auto-spawned sibling authors no dispatch_realization_method (it
     lives only in ``runner.state.solve``, not the guard's config), so the
     run()-site guard no-ops for it — no infinite re-spawn."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _dispatch_realization_raw_guard,
     )
 

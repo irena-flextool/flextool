@@ -74,7 +74,7 @@ import pytest
 from polar_high import Param, Problem, WarmProblem
 
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine import _region_filter
+from flextool.engine.solve import _region_filter
 from flextool.engine._axis_enums import (
     get_global_axis_enums,
     reset_global_axis_enums,

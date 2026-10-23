@@ -145,7 +145,7 @@ def test_invalid_scaling_value_raises():
 
 def test_baseline_options_off_forces_simplex_scale_zero():
     """``--scaling=off`` must force ``simplex_scale_strategy=0``."""
-    from flextool.engine._orchestration import _baseline_highs_options
+    from flextool.engine.solve._orchestration import _baseline_highs_options
 
     opts = _baseline_highs_options(scaling_mode=ScalingMode.OFF)
     assert opts["simplex_scale_strategy"] == 0
@@ -156,8 +156,8 @@ def test_baseline_options_off_forces_simplex_scale_zero():
 )
 def test_baseline_options_non_off_keeps_simplex_scale_advanced(mode):
     """All modes other than OFF leave HiGHS' equilibration on (=2)."""
-    from flextool.engine._orchestration import _baseline_highs_options
-    from flextool.engine._determinism import (
+    from flextool.engine.solve._orchestration import _baseline_highs_options
+    from flextool.engine.solve._determinism import (
         SIMPLEX_SCALE_STRATEGY_ADVANCED,
     )
 
@@ -167,8 +167,8 @@ def test_baseline_options_non_off_keeps_simplex_scale_advanced(mode):
 
 def test_baseline_options_default_mode_keeps_simplex_scale_advanced():
     """No-mode-supplied call keeps the determinism-pinned advanced value."""
-    from flextool.engine._orchestration import _baseline_highs_options
-    from flextool.engine._determinism import (
+    from flextool.engine.solve._orchestration import _baseline_highs_options
+    from flextool.engine.solve._determinism import (
         SIMPLEX_SCALE_STRATEGY_ADVANCED,
     )
 

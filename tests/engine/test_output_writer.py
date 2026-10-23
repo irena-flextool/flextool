@@ -171,7 +171,7 @@ def test_output_writer_state_periods_relocation_marker() -> None:
     """Δ.1 contract — :class:`SolveHandoff` no longer carries
     ``periods_already_emitted``; the carrier moved to
     :class:`OutputWriterState`."""
-    from flextool.engine._solve_handoff import SolveHandoff
+    from flextool.engine.solve._handoff import SolveHandoff
     h = SolveHandoff()
     assert not hasattr(h, "periods_already_emitted"), (
         "Δ.1 regression: SolveHandoff still carries periods_already_emitted; "
@@ -284,7 +284,7 @@ def test_restore_space_mangled_names_noop_on_shim() -> None:
     from flextool.engine.output._writer import (
         _restore_space_mangled_names,
     )
-    from flextool.engine._subprocess_solve import _SolHighsShim
+    from flextool.engine.solve._subprocess_solve import _SolHighsShim
 
     names = ["v_flow[c,a b,d]"]
     shim = _SolHighsShim(

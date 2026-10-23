@@ -28,7 +28,7 @@ What FlexTool actually leaves on disk
 -------------------------------------
 FlexTool does **not** persist a per-sub-solve optimality/acceptance status
 file.  The authoritative "was this solve acceptable" decision
-(:func:`flextool.engine._solve_acceptance.classify_acceptance`, run
+(:func:`flextool.engine.solve._acceptance.classify_acceptance`, run
 at the solve site, and the cascade exit-scan
 ``flextool.cli.cmd_run_flextool._scan_cascade_optimality`` that consumes
 it) lives *in memory* and is surfaced only via:

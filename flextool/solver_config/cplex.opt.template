@@ -5,7 +5,7 @@
 # Lines starting with "#" are comments.
 #
 # Consumed by FlexTool's commercial-solver subprocess driver
-# (flextool/engine/_subprocess_solve.py): each non-comment line is
+# (flextool/engine/solve/_subprocess_solve.py): each non-comment line is
 # translated to ``set <name> <value>`` and piped on stdin to the
 # ``cplex`` interactive optimizer before ``read <mps>`` / ``optimize``.
 #

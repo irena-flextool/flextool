@@ -1,8 +1,8 @@
 """Tests for cross-region coupling-column identification.
 
 The cross-region coupling identification machinery
-(:func:`flextool.engine._benders._identify_coupling_cols` and the
-:class:`flextool.engine._benders.Coupling` dataclass) is SHARED:
+(:func:`flextool.engine.solve._benders._identify_coupling_cols` and the
+:class:`flextool.engine.solve._benders.Coupling` dataclass) is SHARED:
 it splits a whole-system model into regions and matches each cross-region
 arc's export half-flow columns to the importing region's columns.  These
 tests pin that contract on the LH2 three-region fixture.
@@ -18,8 +18,8 @@ import pytest
 from polar_high import Problem, WarmProblem
 
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine._benders import _identify_coupling_cols
-from flextool.engine._region_filter import split as region_split
+from flextool.engine.solve._benders import _identify_coupling_cols
+from flextool.engine.solve._region_filter import split as region_split
 
 
 # ---------------------------------------------------------------------------

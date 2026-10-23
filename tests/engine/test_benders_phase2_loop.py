@@ -1,7 +1,7 @@
 """Benders (Option C) Phase 2 — master + multi-cut loop acceptance gate.
 
 Proves the hand-built persistent Benders master + the multi-cut loop
-(``flextool.engine._benders.solve_benders``) converges to the MONOLITH
+(``flextool.engine.solve._benders.solve_benders``) converges to the MONOLITH
 optimum ``M`` on the prototype fixture ``lh2_three_region_trade_invest`` with a
 VALID lower bound — the key contrast with the Lagrangian bug, whose autarkic
 "bound" 9.071e9 sits ABOVE the true optimum M=8.544e9.
@@ -18,7 +18,7 @@ import pytest
 from polar_high import Problem
 
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine._benders import solve_benders
+from flextool.engine.solve._benders import solve_benders
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 _M_EXPECTED = 8.544247e9

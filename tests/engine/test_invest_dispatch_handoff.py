@@ -95,7 +95,7 @@ def invest_solve_data(tmp_path_factory):
     the chain ran only that solve (so the snapshot carries the invest
     sets).  Returns ``(data, work_folder)``.
     """
-    from flextool.engine._orchestration import run_chain_from_db
+    from flextool.engine.solve._orchestration import run_chain_from_db
 
     tmp_path = tmp_path_factory.mktemp("lh2_invest_solve")
     url = _build_invest_db(tmp_path)
@@ -168,7 +168,7 @@ def test_invest_dispatch_chain_handoff_reaches_dispatch(tmp_path) -> None:
        non-null ``p_entity_invested`` for the invested wind units.
     """
     from flextool.engine import run_chain_from_db
-    from flextool.engine._orchestration import SnapshotSolution
+    from flextool.engine.solve._orchestration import SnapshotSolution
 
     url = _build_invest_db(tmp_path)
     work_folder = tmp_path / "work"

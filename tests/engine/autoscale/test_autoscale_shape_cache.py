@@ -4,7 +4,7 @@ Commit 8464dc76 (``fix(autoscale): cache scaling decision per rolling
 group; skip per-roll range traversal``) added a per-structural-fingerprint
 cache on the cascade solver:
 
-* :class:`flextool.engine._orchestration._AutoscaleShapeCacheEntry`
+* :class:`flextool.engine.solve._orchestration._AutoscaleShapeCacheEntry`
   stores the Layer-2 exponents + Layer-3 plan + pre/post
   :class:`RangeReport`s the autoscaler decided on the first solve of a
   given LP shape.
@@ -61,11 +61,9 @@ if str(TEST_DIR) not in sys.path:
 from db_utils import json_to_db  # noqa: E402
 
 import test_commodity_ladder_rolling as _ladder  # noqa: E402
-from flextool.engine import (  # noqa: E402
-    _orchestration,
-    _warm,
-    run_chain_from_db,
-)
+from flextool.engine import run_chain_from_db  # noqa: E402
+from flextool.engine.solve import _orchestration  # noqa: E402
+from flextool.engine.solve import _warm  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 SCENARIO = "coal_cum_within_period"
@@ -238,7 +236,7 @@ class _FingerprintPerturber:
 
     Reproduces the real DES condition that motivated commit ``b7751db5``:
     on a rolling-dispatch cascade the structural data fingerprint
-    (:func:`flextool.engine._warm._fingerprint`) *slides* every
+    (:func:`flextool.engine.solve._warm._fingerprint`) *slides* every
     roll — a windowed period/dt field's height tracks the rolling
     horizon — even though every roll builds an LP of *identical shape*.
 
@@ -247,7 +245,7 @@ class _FingerprintPerturber:
     exactly ONCE per solve iteration (``fp = _fingerprint(data)``).  Because
     that binding is re-resolved from the ``_warm`` module on every ``run``
     call, the perturbation must replace the attribute on the SOURCE module
-    (:mod:`flextool.engine._warm`), not on ``_orchestration``.
+    (:mod:`flextool.engine.solve._warm`), not on ``_orchestration``.
     Returning a fresh incrementing tuple on every call
     therefore yields a distinct fingerprint per solve — exactly the DES
     behaviour.  Because the value differs from the previous solve's, the

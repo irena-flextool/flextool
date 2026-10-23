@@ -16,7 +16,7 @@ The orchestrator:
 Design choices
 --------------
 
-* The orchestrator drives ``_native_run_model.native_run_model`` once
+* The orchestrator drives ``_run_model.native_run_model`` once
   per top-level invocation, with a **polar_high-as-inner-solver** wrapper
   that:
     - Reads the per-solve snapshot via ``load_flextool``.
@@ -58,8 +58,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from flextool.engine._solve_acceptance import classify_acceptance
-from flextool.engine._solve_handoff import SolveHandoff
+from flextool.engine.solve._acceptance import classify_acceptance
+from flextool.engine.solve._handoff import SolveHandoff
 from flextool.engine._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
@@ -68,7 +68,7 @@ from flextool.engine._solve_state import (
     PathConfig,
     RunnerState,
 )
-from flextool.engine._determinism import (
+from flextool.engine.solve._determinism import (
     DETERMINISM_OPTIONS,
     SIMPLEX_SCALE_STRATEGY_ADVANCED,
 )
@@ -1387,7 +1387,7 @@ class SnapshotSolution:
 class OrchestrationStep:
     """Per-solve result of :func:`run_orchestration`.
 
-    Mirrors :class:`flextool.engine.chain.ChainStep` but produced
+    Mirrors :class:`flextool.engine.solve.chain.ChainStep` but produced
     by the native orchestrator path.  ``handoff`` is the carrier used to
     seed the *next* solve's preprocessing.
 
@@ -1697,7 +1697,7 @@ def _spawn_realized_dispatch_siblings(
          solve_mode↔solve_modes, realized_periods↔realized_periods). They
          MUST stay aligned — pinned by
          ``tests/engine/test_realized_dispatch_coherence.py``.
-    * projection (W4c): ``_native_run_model`` step 3.6 reads
+    * projection (W4c): ``_run_model`` step 3.6 reads
       ``realized_dispatch_parent`` and projects each stochastic param onto
       the parent's realized branch (``project_realized_branch_time_branch_rows``).
     * weighting (W4d): the parent's realized OPERATIONAL weight — keyed off
@@ -2081,7 +2081,7 @@ def _drive_cascade(
     Parameter ``warm`` toggles per-iteration warm-LP updates: when True,
     the cascade reuses one ``WarmProblem`` across consecutive
     structurally-compatible iterations.  See
-    :mod:`flextool.engine._warm` for the structural-fingerprint
+    :mod:`flextool.engine.solve._warm` for the structural-fingerprint
     + Param-classification machinery.  Cold rebuild (``warm=False``)
     remains the default for backward compatibility with every existing
     caller.
@@ -2092,8 +2092,8 @@ def _drive_cascade(
     """
     # Late imports — keep the orchestration module's import surface narrow
     # for callers that only need the dataclass.
-    from flextool.engine._solver_base import SolverRunner
-    from flextool.engine._native_run_model import native_run_model
+    from flextool.engine.solve._solver_base import SolverRunner
+    from flextool.engine.solve._run_model import native_run_model
 
     from polar_high import NamedBasis, Problem, WarmProblem
     from flextool.engine.input import (
@@ -2101,12 +2101,12 @@ def _drive_cascade(
         load_flextool,
     )
     from flextool.engine.model import build_flextool
-    from flextool.engine._solver_dispatch import apply_data_solver_options
+    from flextool.engine.solve._solver_dispatch import apply_data_solver_options
     from flextool.engine.output._writer import (
         OutputWriterState,
         write_outputs_for_solve,
     )
-    from flextool.engine._warm import (
+    from flextool.engine.solve._warm import (
         _IncompatibleUpdate,
         _apply_warm_updates,
         _build_warm_problem,
@@ -2149,7 +2149,7 @@ def _drive_cascade(
     runner.state._level_providers = {}
     # Step 2.5 — forward the cascade-input Provider seeded in
     # ``run_chain_from_db`` onto runner.state so the per-sub-solve hook
-    # at :mod:`flextool.engine._native_run_model` (line 365-370)
+    # at :mod:`flextool.engine.solve._run_model` (line 365-370)
     # picks it up.  ``None`` is allowed for entry points that bypass
     # ``run_chain_from_db`` — the hook then builds an empty Provider.
     _cip = getattr(state, "cascade_input_provider", None)
@@ -2157,7 +2157,7 @@ def _drive_cascade(
         runner.state.cascade_input_provider = _cip
     # Phase 5c — forward the engine-side ``override_provider``
     # callable onto ``runner.state`` so the per-sub-solve hook in
-    # :mod:`flextool.engine._native_run_model` (Phase 5b) picks
+    # :mod:`flextool.engine.solve._run_model` (Phase 5b) picks
     # it up.  ``None`` keeps the no-override default.
     _op = getattr(state, "override_provider", None)
     if _op is not None:
@@ -2206,7 +2206,7 @@ def _drive_cascade(
         # (unit ∪ node ∪ connection).  Computed ONCE here against the
         # whole-model (unfiltered-scenario) ``cascade_db_reader`` and seeded
         # into the cascade-input Provider, which every per-sub-solve Provider
-        # copies frame-by-frame (see ``_native_run_model`` seed loop).  This
+        # copies frame-by-frame (see ``_run_model`` seed loop).  This
         # (a) avoids the per-roll recompute in ``apply_derived_b`` and
         # (b) gives the output reader a complete carrier covering every
         # entity — including invest candidates absent from the LAST solve's
@@ -2265,7 +2265,7 @@ def _drive_cascade(
             # finished consuming it.  Bounds peak RSS during the cascade
             # — without this, every iter's full ``Var.frame`` dataframe
             # set stays parked until the post-loop slim at the bottom of
-            # :func:`_native_run_model`, which on multi-roll runs is too
+            # :func:`_run_model`, which on multi-roll runs is too
             # late (storage→dispatch OOMs).
             self._prev_step_key: "str | None" = None
             # Phase 2 — per-step level_key sidecar.  Populated when
@@ -2389,7 +2389,7 @@ def _drive_cascade(
             consume-side guard in :meth:`run` fires only for a downstream
             consumer of a Benders solve that produced no investment.
             """
-            from flextool.engine._benders import solve_benders
+            from flextool.engine.solve._benders import solve_benders
             from flextool.decomposition.region_filter import (
                 discover_decomposition_regions_from_db,
             )
@@ -2486,7 +2486,7 @@ def _drive_cascade(
             # emitted (and the solve itself takes today's exact path — this
             # announcement adds no solves either way, it is derived from
             # the already-loaded input frames).
-            from flextool.engine._region_filter import (
+            from flextool.engine.solve._region_filter import (
                 compute_master_hosted_nodes,
                 load_region_membership,
             )
@@ -2620,7 +2620,7 @@ def _drive_cascade(
                     ),
                 )
                 # Deposit so the next solve's load picks it up via the
-                # ``last_captured_solve`` translation in _native_run_model
+                # ``last_captured_solve`` translation in _run_model
                 # (which re-reads ``state.handoffs[last_captured_solve]``
                 # after this method returns 0).
                 self.state.handoffs[complete_solve_name] = handoff
@@ -2679,7 +2679,7 @@ def _drive_cascade(
             # and it is not the level THIS solve belongs to; same-level steps
             # are kept for warm reuse.  ``self._warm_problem`` for an exhausted
             # level was already nulled at the level boundary
-            # (_native_run_model.py:497-505), so nulling the step's
+            # (_run_model.py:497-505), so nulling the step's
             # ``solution.highs`` here drops the last reference and frees it.
             # malloc_trim reclaims the HiGHS (glibc) heap; the polars-side
             # provider is freed by dropping the Python ref.
@@ -2778,7 +2778,7 @@ def _drive_cascade(
             _try_malloc_trim()
             # Memory checkpoint — fires on level-boundary iters (the
             # last roll of a roll group) so the recorded delta aggregates
-            # across all rolls in the group.  ``_native_run_model`` sets
+            # across all rolls in the group.  ``_run_model`` sets
             # the flag before each ``solver.run()`` call.
             _emit_phase = bool(getattr(
                 self.state, "emit_phase_checkpoints_this_iter", False,
@@ -3132,7 +3132,7 @@ def _drive_cascade(
                             user_label="Matrix built by polar-high",
                         )
                     inner_pb = self._warm_problem.problem
-                    from flextool.engine._solver_dispatch import (
+                    from flextool.engine.solve._solver_dispatch import (
                         _resolve_effective_highs_options,
                     )
                     highs_options = _resolve_effective_highs_options(
@@ -3336,7 +3336,7 @@ def _drive_cascade(
                 # sit in the same stdout stream as the blank separator
                 # above and HiGHS' native banner below — the GUI's
                 # ``execution_window`` parses these printed markers.
-                from flextool.engine._solver_dispatch import (
+                from flextool.engine.solve._solver_dispatch import (
                     _resolve_effective_highs_options,
                 )
                 _eff_touched = _resolve_effective_highs_options(
@@ -3457,7 +3457,7 @@ def _drive_cascade(
                         "lp_build_end", self.state.logger,
                         user_label="Matrix built by polar-high",
                     )
-                from flextool.engine._solver_dispatch import (
+                from flextool.engine.solve._solver_dispatch import (
                     _resolve_effective_highs_options,
                 )
                 highs_options = _resolve_effective_highs_options(
@@ -3665,7 +3665,7 @@ def _drive_cascade(
                 # from the MPS.  The cascade-level SolverConfig lookup uses
                 # the active solve name with the standard
                 # default-when-absent fallback.
-                from flextool.engine._solver_dispatch import (
+                from flextool.engine.solve._solver_dispatch import (
                     run_one_solve,
                 )
                 _t_solve_start = (
@@ -3930,7 +3930,7 @@ def _drive_cascade(
             # parent overlay skip their workdir CSV reads where the same
             # data is already in scope.  ``parent_handoff`` is the upper
             # nesting parent (used for fix_storage propagation, deposited
-            # by ``_native_run_model``); ``prior_handoff`` is the
+            # by ``_run_model``); ``prior_handoff`` is the
             # sequence predecessor (used for cumulative accumulators).
             parent_complete = getattr(
                 self.state, "current_parent_complete", None
@@ -4064,7 +4064,7 @@ def _drive_cascade(
             self._prev_step_key = step_key
             # Phase 2 — record this step's level_key for the warm-path
             # per-level slim below.  ``state._current_level_key`` was
-            # set by ``_native_run_model`` immediately before this call.
+            # set by ``_run_model`` immediately before this call.
             _this_level_key = getattr(
                 self.state, "_current_level_key", None,
             )
@@ -4442,7 +4442,7 @@ def run_chain_from_db(
 
     if logger is None:
         logger = logging.getLogger(
-            f"flextool.engine.run_chain_from_db[{scenario_name}]"
+            f"flextool.engine.solve.run_chain_from_db[{scenario_name}]"
         )
 
     # v52 multi-solver dispatch (Phase 2 startup hint).  Probe each
@@ -4453,7 +4453,7 @@ def run_chain_from_db(
     # Step 4b.  Cached at module level so repeat cascade runs don't
     # re-probe.
     try:
-        from flextool.engine._solver_dispatch import (
+        from flextool.engine.solve._solver_dispatch import (
             probe_solver_licenses,
         )
         statuses = probe_solver_licenses()
@@ -4555,7 +4555,7 @@ def run_chain_from_db(
     # ``write_workdir_inputs`` populate it from the Spine DB.  The
     # Provider is then attached to the cascade ``RunnerState`` below
     # so the per-sub-solve hook in
-    # :mod:`flextool.engine._native_run_model` picks it up at
+    # :mod:`flextool.engine.solve._run_model` picks it up at
     # provider seed time.
     from flextool.engine._flex_data_provider import FlexDataProvider
     cascade_input_provider = FlexDataProvider()
@@ -4633,12 +4633,12 @@ def run_chain_from_db(
     # Step 2.5 — seed the cascade-input Provider onto the state so
     # ``_drive_cascade`` can forward it onto ``runner.state`` (which the
     # per-sub-solve Provider hook in
-    # :mod:`flextool.engine._native_run_model` consults).
+    # :mod:`flextool.engine.solve._run_model` consults).
     state.cascade_input_provider = cascade_input_provider  # type: ignore[attr-defined]
     # Phase 5c — attach the optional external override provider onto
     # the cascade ``RunnerState``.  ``_drive_cascade`` forwards it onto
     # the underlying ``runner.state``; the per-sub-solve hook in
-    # :mod:`flextool.engine._native_run_model` (Phase 5b) invokes
+    # :mod:`flextool.engine.solve._run_model` (Phase 5b) invokes
     # it after the parent-handoff translator at every iteration.
     state.override_provider = override_provider
 

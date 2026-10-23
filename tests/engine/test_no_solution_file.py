@@ -25,8 +25,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine import _solver_dispatch
-from flextool.engine._solver_dispatch import (
+from flextool.engine.solve import _solver_dispatch
+from flextool.engine.solve._solver_dispatch import (
     _resolve_effective_highs_options,
 )
 

@@ -418,7 +418,7 @@ class RecursiveSolveBuilder:
         # Lazy import: keep the cross-module dependency one-way at
         # import time; both modules are needed only when a parent's roll
         # constrains a child.
-        from flextool.engine._stochastic import StochasticSolver
+        from flextool.engine.solve._stochastic import StochasticSolver
 
         solves: list[str] = []
         complete_solves: dict = dict()

@@ -271,7 +271,7 @@ def test_param_cells_size_bound_on_real_fixture(scenario_workdir) -> None:
     that explodes the per-cell map."""
     from flextool.engine.input import load_flextool
     from flextool.engine.model import build_flextool
-    from flextool.engine.chain import _MUTABLE_PARAMS
+    from flextool.engine.solve.chain import _MUTABLE_PARAMS
 
     data_dir = scenario_workdir("test_a_lot")
 

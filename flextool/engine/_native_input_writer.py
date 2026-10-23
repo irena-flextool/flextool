@@ -16,7 +16,7 @@ Downstream readers
 (:func:`flextool.engine.input.load_flextool`,
 :func:`flextool.engine.output._writer.write_outputs_for_solve`,
 the per-solve preprocessing dispatched by
-:func:`flextool.engine._native_run_model.native_run_model`)
+:func:`flextool.engine.solve._run_model.native_run_model`)
 resolve every input through the Provider.
 
 For the ``--csv-dump`` debug path the cascade calls

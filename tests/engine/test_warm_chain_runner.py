@@ -187,7 +187,7 @@ def test_warm_native_reuses_warmproblem_on_identical_data(
     would invoke flextool's full preprocessing) and exercises the
     orchestration's ``_PolarHighCascadeSolver.run`` logic in isolation.
     """
-    from flextool.engine._warm import (
+    from flextool.engine.solve._warm import (
         _build_warm_problem,
         _apply_warm_updates,
         _fingerprint,

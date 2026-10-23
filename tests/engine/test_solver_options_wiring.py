@@ -17,8 +17,8 @@ from polar_high import Problem
 
 from flex_toy_existing_fixed_cost import data as toy_data
 
-from flextool.engine import _benders
-from flextool.engine._solver_dispatch import apply_data_solver_options
+from flextool.engine.solve import _benders
+from flextool.engine.solve._solver_dispatch import apply_data_solver_options
 
 OPTS = {"random_seed": 7, "primal_feasibility_tolerance": 1e-8}
 
@@ -53,7 +53,7 @@ def test_build_flextool_does_not_set_solver_options() -> None:
 
 
 def test_warm_problem_builder_applies_data_options() -> None:
-    from flextool.engine._warm import _build_warm_problem
+    from flextool.engine.solve._warm import _build_warm_problem
 
     warm = _build_warm_problem(_toy_with_options())
     assert warm.problem._solver_options == OPTS
@@ -61,7 +61,7 @@ def test_warm_problem_builder_applies_data_options() -> None:
 
 
 def test_warm_problem_builder_explicit_options_win() -> None:
-    from flextool.engine._warm import _build_warm_problem
+    from flextool.engine.solve._warm import _build_warm_problem
 
     warm = _build_warm_problem(_toy_with_options(), solver_options={"threads": 2})
     assert warm.problem._solver_options == {"threads": 2}

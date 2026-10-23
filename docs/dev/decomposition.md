@@ -122,7 +122,7 @@ The reference catalogue entry is `group.decomposition_method` in
 `benders_regional` (the `_region` suffix makes the geographic flavour
 explicit, leaving naming room for any future temporal variant). The
 source of truth is
-`flextool/engine/_region_filter.py:load_decomposition_method`.
+`flextool/engine/solve/_region_filter.py:load_decomposition_method`.
 
 ### 2.3 Half-flow rewriting
 
@@ -250,7 +250,7 @@ want decomposed, optionally overriding the two `benders_*` knobs:
 Because the decision is per solve, a single chain can mix schemes — for
 example a Benders investment solve followed by a monolithic
 full-resolution dispatch solve. The orchestrator
-(`engine._orchestration`) reads each solve's resolved
+(`engine.solve._orchestration`) reads each solve's resolved
 `decomposition` value as it iterates `model.solves`. This is distinct
 from the group-level `group.decomposition_method`
 (`none` / `benders_regional`), which declares *which groups are
@@ -275,15 +275,15 @@ solving — useful for inspecting how the rewriter sees a given region.
 
 | Symbol | Module |
 |---|---|
-| `solve_benders(data, *, ...)` — top-level entry | `flextool/engine/_benders.py` |
+| `solve_benders(data, *, ...)` — top-level entry | `flextool/engine/solve/_benders.py` |
 | `BendersResult` — return type | same |
 | `Coupling`, `_build_arcs`, the master + cut loop | same |
-| `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine/_region_filter.py` |
+| `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine/solve/_region_filter.py` |
 | `RegionSplit`, `HalfFlow`, `split` | same |
 | `load_decomposition_method` (reads ``decomposition_method`` from solve_data) | same |
 | `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)` | `polar_high` (external) |
 
-The per-solve routing lives in `flextool/engine/_orchestration.py`
+The per-solve routing lives in `flextool/engine/solve/_orchestration.py`
 (`_PolarHighCascadeSolver._run_benders_solve`, driven by
 `SolveConfig.decomposition_for`). The Benders path is also surfaced
 as a "Solve modes" entry in

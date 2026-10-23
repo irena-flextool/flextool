@@ -169,7 +169,7 @@ def test_cumulative_carriers_propagate_with_prior_handoff(_fixture):
     """
     sol, _handoff, work, data = _fixture
     # Prior carries 100 simulated hours in p2019 and 12 mwh on (coal, 1, p2019).
-    from flextool.engine._solve_handoff import SolveHandoff
+    from flextool.engine.solve._handoff import SolveHandoff
     prior = SolveHandoff(
         cum_sim_hours=pl.DataFrame(
             [("p2019", 100.0)], schema=["period", "p_ladder_cum_sim_hours"], orient="row"),

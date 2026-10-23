@@ -338,7 +338,7 @@ class TestLh2ThreeRegion:
         checked = 0
         for col_str in df.columns:
             # Column labels are stringified Python tuples produced by
-            # _output_writer; parse the process name out of the string.
+            # _writer; parse the process name out of the string.
             # Lightweight inline parse — Python's ast.literal_eval works
             # but ast import overhead vs the tuple-shape check is moot.
             import ast

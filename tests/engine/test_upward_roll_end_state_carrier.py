@@ -34,7 +34,7 @@ from flextool.engine._provider_translators import (
     read_handoff_frame,
     translate_handoff_to_provider,
 )
-from flextool.engine._solve_handoff import SolveHandoff
+from flextool.engine.solve._handoff import SolveHandoff
 
 
 class _FakeProvider:

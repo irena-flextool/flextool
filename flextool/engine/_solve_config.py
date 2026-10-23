@@ -153,7 +153,7 @@ class SolverSettings:
     *arguments* is the per-solve HiGHS option overrides Map authored
     on the ``solver_arguments`` parameter (1d-map of HiGHS option name
     → value).  Read into the effective-options resolver via
-    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`
+    :func:`flextool.engine.solve._solver_dispatch._resolve_effective_highs_options`
     where it is overlaid on top of ``solver_config/highs.opt`` and
     below the CLI overrides.  Empty when no solve authored an entry.
     """
@@ -191,7 +191,7 @@ class SolverConfig:
     time_limit
         Wall-clock seconds; ``None`` means no limit.  Translated to
         each solver's native parameter name by
-        :func:`flextool.engine._solver_dispatch.build_solver_options`.
+        :func:`flextool.engine.solve._solver_dispatch.build_solver_options`.
     mip_gap
         Relative MIP gap; ``None`` means solver default.
     threads
@@ -356,7 +356,7 @@ class SolveConfig:
         # W4c — maps an auto-spawned realized-dispatch sibling name to its
         # parent solve name.  Populated by
         # :meth:`spawn_realized_dispatch_sibling`; consumed by the W4c
-        # post-pass in ``_native_run_model`` to project each stochastic
+        # post-pass in ``_run_model`` to project each stochastic
         # parameter onto the parent's REALIZED branch.  The sibling is
         # deterministic (``stochastic_branches`` dropped), so
         # ``create_stochastic_periods`` leaves its
@@ -1032,7 +1032,7 @@ class SolveConfig:
         )
         # W4c — record the explicit sibling -> parent mapping so the
         # native-run post-pass can project each stochastic parameter onto
-        # the parent's realized branch (see ``_native_run_model`` step 3.6).
+        # the parent's realized branch (see ``_run_model`` step 3.6).
         # Using this map (not a ``__realized_dispatch`` name-parse) keeps
         # the sibling identification robust.
         self.realized_dispatch_parent[sibling] = parent
@@ -1129,7 +1129,7 @@ class SolveConfig:
         ``in_out_weight`` (default 0.0 = OFF = exact Benders) is the DB
         value; the machine-local ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` env
         overrides it downstream in
-        :func:`flextool.engine._benders._resolve_benders_in_out_weight`.
+        :func:`flextool.engine.solve._benders._resolve_benders_in_out_weight`.
         """
         max_iter_raw = self.benders_max_iter.get(solve_name)
         tol_raw = self.benders_tolerance.get(solve_name)

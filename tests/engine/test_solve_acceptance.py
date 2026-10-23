@@ -1,6 +1,6 @@
 """Unit tests for the solve accept/reject policy.
 
-Exercises :func:`flextool.engine._solve_acceptance.classify_acceptance`
+Exercises :func:`flextool.engine.solve._acceptance.classify_acceptance`
 as a pure function over synthesised solver diagnostics — no DB, no live
 solve.  The central regression case is the observed crossover-off roll:
 HiGHS status ``kUnknown``, primal feasible, ``primal_dual_objective_error
@@ -17,7 +17,7 @@ import pytest
 from polar_high import SolveDiagnostics
 from polar_high.autoscale import RangeReport
 
-from flextool.engine._solve_acceptance import classify_acceptance
+from flextool.engine.solve._acceptance import classify_acceptance
 
 
 # --- stubs ------------------------------------------------------------------

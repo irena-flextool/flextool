@@ -22,7 +22,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import load_flextool
-from flextool.engine._region_filter import (
+from flextool.engine.solve._region_filter import (
     _BENDERS_UNCAP_SENTINEL,
     split,
 )

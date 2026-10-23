@@ -6,7 +6,7 @@ The cascade in Step 2.5 runs purely in-memory by default; the
 
 * ``data.dump_csvs(work_folder)`` — per-solve snapshot of every
   ``solve_data/*.csv`` artefact (executed inside the per-iter handoff
-  in :mod:`flextool.engine._orchestration`).
+  in :mod:`flextool.engine.solve._orchestration`).
 * :func:`FlexDataProvider.snapshot_processed_inputs` — post-cascade
   snapshot of every ``input/*.csv`` derived frame the writer-port
   modules produced.

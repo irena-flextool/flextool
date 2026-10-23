@@ -43,7 +43,7 @@ def rp_build(tmp_path_factory, lh2_rp_invest_db_url, test_solver_config_dir):
     disk and ``provider`` is the live in-memory sub-solve Provider
     (kept via ``keep_solutions=True``), so the test can compare the two
     reload paths."""
-    from flextool.engine._orchestration import run_chain_from_db
+    from flextool.engine.solve._orchestration import run_chain_from_db
 
     parent = tmp_path_factory.mktemp("_root_rp_roundtrip")
     wf = parent / "work_lh2_three_region_rp_invest"

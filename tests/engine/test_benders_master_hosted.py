@@ -1,7 +1,7 @@
 """Benders master-hosted nodes — driver integration (C8), end-to-end.
 
 Master-hosted nodes are balance/state nodes in NO region group: the
-driver (:func:`flextool.engine._benders.solve_benders`) derives
+driver (:func:`flextool.engine.solve._benders.solve_benders`) derives
 the set from the input's ``group_node`` membership, announces it loudly,
 re-partitions around it (single-sided region↔master coupling arcs,
 master-local arcs/procs native in the master — C6/C7), folds the
@@ -42,14 +42,14 @@ import pytest
 import polar_high.benders as ph_benders
 from polar_high import Param, Problem, WarmProblem
 
-import flextool.engine._benders as fx_benders
+import flextool.engine.solve._benders as fx_benders
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine._benders import (
+from flextool.engine.solve._benders import (
     _assert_finite_boundary_penalties,
     _master_autarky_cost,
     solve_benders,
 )
-from flextool.engine._region_filter import (
+from flextool.engine.solve._region_filter import (
     compute_master_hosted_nodes,
     load_region_membership,
     split,

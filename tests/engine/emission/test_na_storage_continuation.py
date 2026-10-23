@@ -79,7 +79,7 @@ def storage_variant_workdir(tmp_path_factory, test_solver_config_dir):
     scenario; returns the fully-preprocessed workdir."""
     from db_utils import json_to_db
 
-    from flextool.engine._orchestration import run_chain_from_db
+    from flextool.engine.solve._orchestration import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
 
     spec = json.loads(

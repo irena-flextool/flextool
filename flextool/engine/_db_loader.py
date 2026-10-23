@@ -149,5 +149,5 @@ class FlexToolRunner:
         # Persist the cascade-input Provider on ``self.state`` so the
         # native cascade picks up the seeded ``input/<class>`` frames.
         # Mirrors the same handoff that
-        # ``engine._orchestration.run_orchestration`` performs.
+        # ``engine.solve._orchestration.run_orchestration`` performs.
         self.state.cascade_input_provider = provider

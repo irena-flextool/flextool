@@ -38,8 +38,8 @@ import pytest
 
 from polar_high import Param, Problem, Sum
 
-from flextool.engine import _subprocess_solve as sps
-from flextool.engine._subprocess_solve import (
+from flextool.engine.solve import _subprocess_solve as sps
+from flextool.engine.solve._subprocess_solve import (
     _col_names_from_vars,
     _generic_col_id,
     _generic_row_id,

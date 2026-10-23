@@ -6184,10 +6184,10 @@ def _migrate_v56_retype_solver_arguments_to_1d_map(db) -> None:
     no-real-data fast path is the only one exercised by the gate.
 
     Engine consumption: the new 1d-map values are read by the resolver
-    in :mod:`flextool.engine._solver_dispatch` and merged with
+    in :mod:`flextool.engine.solve._solver_dispatch` and merged with
     ``solver_config/highs.opt`` (floor) and the CLI flags (top) into
     the final HiGHS options dict.  See
-    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`.
+    :func:`flextool.engine.solve._solver_dispatch._resolve_effective_highs_options`.
     """
     parameter_definitions = db.mapped_table("parameter_definition")
     try:
@@ -6301,7 +6301,7 @@ def _migrate_v56_fold_solver_options_into_solver_arguments(db) -> None:
     user databases that authored entries.
 
     Engine consumption: ``_resolve_effective_highs_options`` in
-    :mod:`flextool.engine._solver_dispatch` already reads the
+    :mod:`flextool.engine.solve._solver_dispatch` already reads the
     1d-map ``solver_arguments`` via the resolver; after this commit
     every override the user authored is routed through that single
     path.  ``solver_options`` is no longer read from the DB.
@@ -6654,7 +6654,7 @@ def _migrate_v56_remove_solver_threads(db) -> None:
     break is acceptable.  Equivalent control remains available via
     the existing ``--highs-threads N`` CLI flag (CLI > solver_arguments
     > highs.opt precedence inside
-    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`)
+    :func:`flextool.engine.solve._solver_dispatch._resolve_effective_highs_options`)
     and via the GUI's per-job ``max_cores_per_job`` setting which
     plumbs the flag automatically.  GUI controls for this knob's
     DB-stored equivalent are deferred to the v56 follow-up PR
@@ -6733,7 +6733,7 @@ def _migrate_v56_remove_solver_time_limit(db) -> None:
     control is exposed via the new ``--solver-time-limit SECONDS``
     CLI flag, plumbed via the existing ``FLEXTOOL_HIGHS_TIME_LIMIT``
     env var into the engine-side
-    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`
+    :func:`flextool.engine.solve._solver_dispatch._resolve_effective_highs_options`
     resolver as a CLI override on the HiGHS ``time_limit`` key
     (CLI > solver_arguments > highs.opt precedence).  GUI controls
     for the DB-stored equivalent are deferred to the v56 follow-up
@@ -6760,7 +6760,7 @@ def _migrate_v56_remove_solver_log_level(db) -> None:
     fully dead.  Equivalent control is now exposed via the new
     ``--solver-log-level {silent,normal,verbose}`` CLI flag, plumbed
     via the ``FLEXTOOL_SOLVER_LOG_LEVEL`` env var into the engine-side
-    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`
+    :func:`flextool.engine.solve._solver_dispatch._resolve_effective_highs_options`
     resolver (CLI > solver_arguments > highs.opt precedence).
     ``silent`` maps to HiGHS ``output_flag=false``; ``verbose`` maps
     to ``output_flag=true`` plus ``log_dev_level=2``; ``normal`` maps

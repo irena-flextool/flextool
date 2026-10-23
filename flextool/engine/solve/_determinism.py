@@ -40,7 +40,7 @@ Pinned:
 
 These propagate through the orchestrator's HiGHS-options builders to the
 ``set_solver_options(highs_options)`` call sites in
-:mod:`flextool.engine._orchestration` (both the warm path and the
+:mod:`flextool.engine.solve._orchestration` (both the warm path and the
 cold path).  This is the actual control point — ``tests/highs.opt`` is
 copied into the bin-dir fixture for CLI-style runs but is NOT read by
 ``polar_high.Problem`` (which is what ``test_scenarios.py`` drives via

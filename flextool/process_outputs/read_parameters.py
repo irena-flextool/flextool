@@ -1020,7 +1020,7 @@ def read_parameters(
         The active solve identifier.  Used to inject the leading
         ``solve`` index level the downstream wide-format consumers
         expect.  Defaults to ``"solve"`` for tests; production callers
-        in :mod:`flextool.engine._orchestration` pass the real
+        in :mod:`flextool.engine.solve._orchestration` pass the real
         ``complete_solve_name``.
 
     Returns

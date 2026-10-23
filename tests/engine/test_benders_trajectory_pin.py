@@ -40,12 +40,12 @@ import os
 import pytest
 
 from flextool.engine import load_flextool
-from flextool.engine._benders import solve_benders
+from flextool.engine.solve._benders import solve_benders
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 
 # Every env knob the Benders loop (or its region autoscale) resolves.
-# Grep anchor: ``FLEXTOOL_BENDERS_`` in flextool/engine/_benders.py.
+# Grep anchor: ``FLEXTOOL_BENDERS_`` in flextool/engine/solve/_benders.py.
 _PINNED_ENV = [
     "FLEXTOOL_BENDERS_IN_OUT_WEIGHT",
     "FLEXTOOL_BENDERS_WORKERS",

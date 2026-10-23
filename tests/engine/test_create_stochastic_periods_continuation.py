@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from flextool.engine._solve_state import ActiveTimeEntry, FlexToolConfigError
-from flextool.engine._stochastic import StochasticSolver
+from flextool.engine.solve._stochastic import StochasticSolver
 
 
 def _ats(names_and_indices):

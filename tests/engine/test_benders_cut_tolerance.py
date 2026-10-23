@@ -21,7 +21,7 @@ import logging
 
 import pytest
 
-from flextool.engine._benders import _check_cuts_satisfied
+from flextool.engine.solve._benders import _check_cuts_satisfied
 
 
 # The exact failing cell from the N=7 run, reconstructed as a single-cell cut

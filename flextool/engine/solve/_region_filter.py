@@ -8,7 +8,7 @@ half-flow arcs, one in each region.
 The virtual entities are pure bookkeeping — the half-flow on the export
 side and the half-flow on the import side carry the **same flow** at
 optimality.  In the Benders scheme that coupling is enforced by the
-coordinating master (:mod:`flextool.engine._benders`): the master
+coordinating master (:mod:`flextool.engine.solve._benders`): the master
 holds the inter-regional trade flows and pins each region's forward
 cross-region half-flow to its chosen value before solving the region as a
 subproblem.  Inside a region's standalone LP, the half-flow column is just
@@ -84,7 +84,7 @@ class HalfFlow:
     HalfFlows: ``pipe(A→B)`` becomes an export in A and an import in B;
     ``pipe(B→A)`` becomes an export in B and an import in A.  Each
     coupling pair shares the same ``(original_p, original_source,
-    original_sink)`` triple — the :mod:`flextool.engine._benders`
+    original_sink)`` triple — the :mod:`flextool.engine.solve._benders`
     coordinator pairs export and import on that key.
     """
     region: str

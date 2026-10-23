@@ -63,7 +63,7 @@ Two solves (``model.solves`` ORDER matters — dispatch listed AFTER)
      dispatches peaker at 60 MW.
 
 Last-wins: both solves realize p2035/t0001-t0003; ``stoch_rd`` is
-emptied of its realized window (truncated in ``_native_run_model``) so
+emptied of its realized window (truncated in ``_run_model``) so
 the deterministic dispatch solve OWNS the reported realized operations.
 
 Hand calculation (dispatch solve, assertion (d))

@@ -26,7 +26,7 @@ from flextool.engine import _provider_keys as K
 
 if TYPE_CHECKING:
     from flextool.engine._flex_data_provider import FlexDataProvider
-    from flextool.engine._solve_handoff import SolveHandoff
+    from flextool.engine.solve._handoff import SolveHandoff
 
 
 # Schemas for each handoff carrier's empty-frame fallback.  Column names

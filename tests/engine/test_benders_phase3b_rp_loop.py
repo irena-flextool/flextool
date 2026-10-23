@@ -60,12 +60,12 @@ import pytest
 from polar_high import Problem, WarmProblem
 
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine import _region_filter
+from flextool.engine.solve import _region_filter
 from flextool.engine._axis_enums import (
     get_global_axis_enums,
     set_global_axis_enums,
 )
-from flextool.engine._benders import (
+from flextool.engine.solve._benders import (
     _BendersMaster,
     _build_arcs,
     _reverse_cols,
@@ -107,7 +107,7 @@ def rp_workdir_and_provider(
     import shutil
     from urllib.parse import urlparse
 
-    from flextool.engine._orchestration import run_chain_from_db
+    from flextool.engine.solve._orchestration import run_chain_from_db
 
     parent = tmp_path_factory.mktemp("_root_rp_invest_benders")
     wf = parent / "work_lh2_three_region_rp_invest"

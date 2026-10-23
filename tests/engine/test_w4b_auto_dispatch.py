@@ -398,7 +398,7 @@ def test_spawn_helper_registers_in_both_reader_and_config(tmp_path):
     after the parent in the driving config's ``model_solve``."""
     from flextool.engine._spinedb_reader import SpineDbReader
     from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _spawn_realized_dispatch_siblings,
     )
 
@@ -420,7 +420,7 @@ def test_spawn_helper_collision_raises(tmp_path):
     owner, rather than silently clobbering it."""
     from flextool.engine._spinedb_reader import SpineDbReader
     from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _spawn_realized_dispatch_siblings,
     )
     from flextool.engine._solve_state import FlexToolConfigError
@@ -450,7 +450,7 @@ def test_spawn_helper_fix_storage_guard_raises():
     period with a multi-period fix_storage authored).  Empty / unset
     ``fix_storage_periods`` is NOT rejected."""
     from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _spawn_realized_dispatch_siblings,
     )
     from flextool.engine._solve_state import FlexToolConfigError

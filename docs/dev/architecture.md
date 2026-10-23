@@ -253,7 +253,7 @@ Same `build_flextool` body, three wrappers from `polar_high`:
   once, then mutates marked Params (`_apply_warm_updates` in
   `_solve_handoff.py`) between rolls. The optimisation room for the future
   rolling-overlap work (only update changing coefficients) lives here.
-- **Benders (regional)** — `engine._benders.solve_benders` driven by
+- **Benders (regional)** — `engine.solve._benders.solve_benders` driven by
   the orchestrator. Slices `FlexData` by region via `_region_filter`, then
   runs a **Benders decomposition**: a coordinating *master* (a persistent
   `polar_high.WarmProblem`) holds the inter-regional trade flows and the
@@ -629,8 +629,8 @@ CI-enforced verify chain (`tests.yml::template-check`):
 group and prepare sub-problems for the Benders solve mode (the filter-only
 `--region` CLI entry point that materialises one region's standalone input
 directory). The in-engine slicer used by the live Benders driver lives at
-`engine/_region_filter.py`; the master + cut loop is in
-`engine/_benders.py`.
+`engine/solve/_region_filter.py`; the master + cut loop is in
+`engine/solve/_benders.py`.
 
 ### `flextool/model_builder/` and `flextool/representative_periods/`
 
@@ -942,7 +942,7 @@ slack semantics.
    solve's **post-autoscale** LP is still wide-ranged (i.e. the autoscaler
    could not tame the spread), and even then it is framed as a possibility
    — never as the certified cause. Accept/reject itself is decided by
-   `engine/_solve_acceptance.py` from the solver's own diagnostics
+   `engine/solve/_acceptance.py` from the solver's own diagnostics
    (see "Solve acceptance" below), not by the range report.
 7. **Manual override.** `--user-bound-scale N` (or DB
    `solve.user_bound_scale`) pins Layer 3's bound-scale exponent and
@@ -962,7 +962,7 @@ HiGHS refuses to *certify* — post-solve leaves the dual objective slightly
 inconsistent, so HiGHS reports `kUnknown` rather than a failure. FlexTool
 consumes the primal for every output, so such a solve is usable.
 
-`engine/_solve_acceptance.py::classify_acceptance` decides from the
+`engine/solve/_acceptance.py::classify_acceptance` decides from the
 solver's own diagnostics (`polar_high.Solution.solve_diagnostics()`, a
 snapshot of `getModelStatus()` + `getInfo()`):
 

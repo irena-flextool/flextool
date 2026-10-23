@@ -1,7 +1,7 @@
 """Phase C regression: silent-degrade replaces the Phase 5 strict check.
 
 Covers the
-:func:`flextool.engine._native_run_model._downgrade_rp_methods_for_non_rp_solve`
+:func:`flextool.engine.solve._run_model._downgrade_rp_methods_for_non_rp_solve`
 helper introduced in Phase C of the
 ``storage-binding-methods-restructure`` migration.
 
@@ -32,7 +32,7 @@ import polars as pl
 import pytest
 
 from flextool.engine._flex_data_provider import FlexDataProvider
-from flextool.engine._native_run_model import (
+from flextool.engine.solve._run_model import (
     _downgrade_rp_methods_for_non_rp_solve,
 )
 

@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from flextool.engine import load_flextool
-from flextool.engine._benders import (
+from flextool.engine.solve._benders import (
     _BendersMaster,
     _BENDERS_CUT_COMPACT_AT_ENV,
     _BENDERS_CUT_POLICY_ENV,
@@ -249,7 +249,7 @@ def caplog_active_rows():
     """
     active: list[int] = []
     dropped: list[int] = []
-    logger = logging.getLogger("flextool.engine._benders")
+    logger = logging.getLogger("flextool.engine.solve._benders")
 
     class _Grab(logging.Handler):
         def emit(self, record):

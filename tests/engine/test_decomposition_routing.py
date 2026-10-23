@@ -15,7 +15,7 @@ The solver-backed end-to-end routing check lives in
 """
 from __future__ import annotations
 
-from flextool.engine._orchestration import (
+from flextool.engine.solve._orchestration import (
     _benders_consume_guard_message,
 )
 from flextool.engine._solve_config import SolveConfig

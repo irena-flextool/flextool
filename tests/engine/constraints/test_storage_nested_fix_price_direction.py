@@ -35,7 +35,7 @@ from flextool.engine.input import (
     FlexData,
     build_handoff_from_solution,
 )
-from flextool.engine._solve_handoff import SolveHandoff
+from flextool.engine.solve._handoff import SolveHandoff
 
 from .conftest import _time_axes, solver_options
 

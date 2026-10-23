@@ -66,7 +66,7 @@ def _synthetic_step_flex_data(test_db_url, test_solver_config_dir, tmp_path_fact
     ``flex_data`` was loaded through ``load_flextool``'s synthetic
     early-return branch — the exact code path INFLOW-1 fixes.
     """
-    from flextool.engine._orchestration import run_chain_from_db
+    from flextool.engine.solve._orchestration import run_chain_from_db
 
     wf = tmp_path_factory.mktemp("inflow1") / "work"
     if wf.exists():

@@ -7,7 +7,7 @@ solve membership INSIDE its per-period loop; the first ``append``
 inserts the solve key into the ``defaultdict``, so every later period
 saw the key present and was skipped — exactly one (arbitrary) period
 got seeded.  Multi-period solves relying on the default then failed
-the years-represented completeness check in ``_native_run_model.py``
+the years-represented completeness check in ``_run_model.py``
 with ``FlexToolConfigError`` ("defined, but not to all of the
 periods"), including plain deterministic multi-period solves.
 
@@ -120,7 +120,7 @@ def test_full_definition_untouched() -> None:
 def test_partial_definition_untouched() -> None:
     """A PARTIAL authored definition is preserved verbatim — Rule 6
     does not backfill the missing periods (the completeness check in
-    ``_native_run_model.py`` later raises for them; pre-existing
+    ``_run_model.py`` later raises for them; pre-existing
     contract, unchanged by the fix)."""
     authored = [("p2035", 2.0)]
     cfg = _solve_config(authored)

@@ -1,7 +1,7 @@
 """Unit tests for the Benders-side region invest/divest assembly.
 
 Exercises the two pure helpers in
-:mod:`flextool.engine._benders` (formerly in the deleted
+:mod:`flextool.engine.solve._benders` (formerly in the deleted
 subgradient ``_lagrangian`` module; the owner-selection / normalisation
 logic was ported into Benders and is now its sole home):
 
@@ -25,7 +25,7 @@ import polars as pl
 
 from polar_high import Problem
 
-from flextool.engine._benders import (
+from flextool.engine.solve._benders import (
     _assemble_region_invest_vars as _assemble_invest_vars,
     _resolve_entity_owner,
 )

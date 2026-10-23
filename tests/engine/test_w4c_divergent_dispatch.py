@@ -9,7 +9,7 @@ branch-distinct stochastic 3d_map ``(branch, time_start, time) -> value``
 was DROPPED by the sibling (no branch scaffolding -> zero-fallback ->
 wind 0 -> VOLL), so forecasts could not diverge from the realized data.
 
-W4c closes that gap: a post-pass in ``_native_run_model`` projects the
+W4c closes that gap: a post-pass in ``_run_model`` projects the
 parent's REALIZED-branch ``solve_branch__time_branch`` rows onto the
 sibling (keyed off the explicit ``SolveConfig.realized_dispatch_parent``
 map, recorded by ``spawn_realized_dispatch_sibling``).  The per-solve
@@ -301,7 +301,7 @@ def test_projection_helper_multi_period_realized_window():
     """Lock the continuation-loop coverage: for a 2-period realized window
     the projection carries ONE realized-branch row per realized period and
     excludes every synthetic forecast row — in parent order."""
-    from flextool.engine._native_run_model import (
+    from flextool.engine.solve._run_model import (
         project_realized_branch_time_branch_rows,
     )
 
@@ -338,7 +338,7 @@ def test_projection_helper_single_period_and_empty():
     """Single-period realized window -> one realized row; a parent with no
     realized self-row (defensive / parent-empty) -> empty projection (no
     crash)."""
-    from flextool.engine._native_run_model import (
+    from flextool.engine.solve._run_model import (
         project_realized_branch_time_branch_rows,
     )
 

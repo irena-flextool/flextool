@@ -13,7 +13,7 @@ Why this test exists / what it protects
 ---------------------------------------
 This file was written BEFORE W1 as a coverage-first guard.  Before W1 the
 rolling solve CRASHED during E0 branch-reveal validation
-(``flextool/engine/_stochastic.py`` raised ``FlexToolConfigError`` —
+(``flextool/engine/solve/_stochastic.py`` raised ``FlexToolConfigError`` —
 "a stochastic branch must start at the FIRST step of its branching period").
 This is the W1/W3 defect tracked in ``specs/stochastics_reassessment.md``
 §A.1 / §A.2 / §E / §F.
@@ -66,7 +66,7 @@ import os
 import polars as pl
 import pytest
 
-from flextool.engine._orchestration import run_chain_from_db
+from flextool.engine.solve._orchestration import run_chain_from_db
 from flextool.engine._solve_state import FlexToolConfigError
 
 SCENARIO = "1_week_rolling_wind"

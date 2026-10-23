@@ -3,7 +3,7 @@
 The legacy file-symlink driver (loading per-sub-solve
 ``solve_data_<sub>/`` snapshots directly from a work folder) retired
 in Δ.12e once the native cascade in
-:mod:`flextool.engine._orchestration` reached feature parity:
+:mod:`flextool.engine.solve._orchestration` reached feature parity:
 warm-LP across structurally-compatible iterations (Δ.12d), in-memory
 handoff carriers between sub-solves (Δ.11/Δ.12), full output writer
 coverage (Δ.1, Δ.12c-fix), and override-chain authority for Direct /
@@ -12,15 +12,15 @@ Derived / Projection params (Δ.12-drop, Δ.12c, Δ.12c-fix2).
 What's left here is a thin convenience wrapper that converts a
 work-folder path (containing a ``tests.sqlite`` / ``input.sqlite``)
 into the canonical native call
-:func:`flextool.engine._orchestration.run_chain_from_db` and
+:func:`flextool.engine.solve._orchestration.run_chain_from_db` and
 adapts the result to :class:`ChainStep` shape for backwards
 compatibility with the few external callers that still import
 ``run_chain`` directly.
 
 The warm-update primitives (structural fingerprint, Param classification,
-:func:`_apply_warm_updates`) live in :mod:`flextool.engine._warm`
+:func:`_apply_warm_updates`) live in :mod:`flextool.engine.solve._warm`
 and are re-exported here as module-level names for backwards
-compatibility (e.g. ``from flextool.engine.chain import
+compatibility (e.g. ``from flextool.engine.solve.chain import
 _MUTABLE_PARAMS`` in ``test_warm_param_autoupdate``).
 """
 from __future__ import annotations
@@ -30,12 +30,12 @@ from pathlib import Path
 from polar_high import Solution
 
 # Backwards-compat re-exports of warm-update primitives that now live in
-# :mod:`flextool.engine._warm`.  Documented in the module
+# :mod:`flextool.engine.solve._warm`.  Documented in the module
 # docstring above; consumed by ``tests/engine/test_warm_param_autoupdate.py``
 # (and any external caller that still does ``from
-# flextool.engine.chain import _MUTABLE_PARAMS``).  Listed in
+# flextool.engine.solve.chain import _MUTABLE_PARAMS``).  Listed in
 # ``__all__`` so ruff F401 does not strip them as unused.
-from flextool.engine._warm import (  # noqa: F401
+from flextool.engine.solve._warm import (  # noqa: F401
     _STRUCTURAL_FIELDS,
     _WARM_PARAMS,
     _MUTABLE_PARAMS,
@@ -170,7 +170,7 @@ def run_chain(
        :data:`_NATIVE_SCENARIO_OVERRIDES`) or the explicit
        ``scenario`` kwarg / ``FLEXTOOL_NATIVE_SCENARIO`` env var.
     3. Delegates to
-       :func:`flextool.engine._orchestration.run_chain_from_db`.
+       :func:`flextool.engine.solve._orchestration.run_chain_from_db`.
     4. Adapts the result from
        :class:`flextool.engine.OrchestrationStep` to
        :class:`ChainStep` shape (the legacy return type a few
@@ -194,7 +194,7 @@ def run_chain(
         When True, attempt warm LP updates between consecutive
         structurally-compatible sub-solves using
         :class:`polar_high.WarmProblem`.  See
-        :func:`flextool.engine._orchestration.run_orchestration`
+        :func:`flextool.engine.solve._orchestration.run_orchestration`
         for the per-iteration semantics.
     scenario : str | None, default None
         Explicit scenario name override.  ``None`` consults the
@@ -229,7 +229,7 @@ def run_chain(
         )
 
     # Late import to avoid a build-time cycle between chain and _orchestration.
-    from flextool.engine._orchestration import run_chain_from_db
+    from flextool.engine.solve._orchestration import run_chain_from_db
 
     if scenario is None:
         scenario = os.environ.get("FLEXTOOL_NATIVE_SCENARIO") or None

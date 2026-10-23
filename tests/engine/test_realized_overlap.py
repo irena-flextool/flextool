@@ -1,6 +1,6 @@
 """Unit tests for cross-solve realization overlap (issue #321).
 
-Pure tests of :mod:`flextool.engine._realized_overlap` — no DB, no
+Pure tests of :mod:`flextool.engine.solve._realized_overlap` — no DB, no
 solve.  Covers the LAST-WINS dispatch resolution (including the partial-
 overlap cases that used to leave timesteps realized by no solve), the
 aggregated dispatch-overlap warning, and the investment-period overlap
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from flextool.engine._realized_overlap import (
+from flextool.engine.solve._realized_overlap import (
     DispatchOverlap,
     InvestOverlap,
     effective_realized_invest_periods,
@@ -21,7 +21,7 @@ from flextool.engine._realized_overlap import (
 )
 from flextool.engine._solve_state import ActiveTimeEntry
 
-LOGGER_NAME = "flextool.engine._realized_overlap"
+LOGGER_NAME = "flextool.engine.solve._realized_overlap"
 
 
 def _ts(i: int) -> str:

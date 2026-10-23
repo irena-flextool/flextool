@@ -25,7 +25,7 @@ import pytest
 from polar_high import Problem
 
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine._benders import (
+from flextool.engine.solve._benders import (
     _BENDERS_IN_OUT_WEIGHT_ENV,
     _cut_separates,
     _resolve_benders_in_out_weight,

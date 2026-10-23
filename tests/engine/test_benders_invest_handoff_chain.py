@@ -122,7 +122,7 @@ def test_benders_routing_and_handoff_through_orchestrator(
        trade pipes carry forward positive capacity (handoff deposit wired).
     """
     from flextool.engine import run_chain_from_db
-    from flextool.engine._orchestration import SnapshotSolution
+    from flextool.engine.solve._orchestration import SnapshotSolution
 
     url = _build_trade_invest_db(tmp_path)
     work_folder = tmp_path / "work"
@@ -214,7 +214,7 @@ def test_invest_dispatch_chain_consumes_handoff_under_benders(tmp_path) -> None:
        carries positive ``p_entity_invested`` for the invested wind units.
     """
     from flextool.engine import run_chain_from_db
-    from flextool.engine._orchestration import SnapshotSolution
+    from flextool.engine.solve._orchestration import SnapshotSolution
 
     url = _build_invest_db(tmp_path)
     work_folder = tmp_path / "work"

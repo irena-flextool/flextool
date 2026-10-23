@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import pytest
 
-from flextool.engine import _orchestration, run_chain_from_db
+from flextool.engine import run_chain_from_db
+from flextool.engine.solve import _orchestration
 
 pytestmark = pytest.mark.solver
 

@@ -214,7 +214,7 @@ def test_scenario(
 
     # Run the model via the engine cascade (the legacy GMPL
     # ``FlexToolRunner.run_model`` path was removed in Δ.22 — see
-    # ``flextool/engine/_solver_base.py``).  ``run_chain_from_db``
+    # ``flextool/engine/solve/_solver_base.py``).  ``run_chain_from_db``
     # writes ``input/`` + ``solve_data/`` and drives the per-solve
     # cascade end-to-end; the post-process CSVs are then written by
     # ``write_outputs`` below (which needs the last sub-solve's

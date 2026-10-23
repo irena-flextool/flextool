@@ -19,7 +19,7 @@ Function signature
 * positional ``state: RunnerState``
 * positional ``solve_name: str``
 * keyword-only ``provider: object`` — required; the cascade caller
-  (``_native_run_model.native_run_model``) supplies the per-sub-solve
+  (``_run_model.native_run_model``) supplies the per-sub-solve
   Provider.  No fallback to ``state.current_provider`` — direct
   threading is the only path.
 

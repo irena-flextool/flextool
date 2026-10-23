@@ -790,7 +790,7 @@ def test_same_level_cold_rebuild_releases_prior_highs(
     dispatch-on-dispatch stack).  Structural assertion via the env-gated
     cross-level audit; LP is trivial so no GB needed.
     """
-    from flextool.engine import _orchestration
+    from flextool.engine.solve import _orchestration
 
     monkeypatch.setenv("FLEXTOOL_LEVEL_RELEASE_AUDIT", "1")
     _orchestration._LEVEL_RELEASE_AUDIT.clear()

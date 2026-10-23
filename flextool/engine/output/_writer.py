@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from polar_high import Solution
 
-    from flextool.engine._solve_handoff import SolveHandoff
+    from flextool.engine.solve._handoff import SolveHandoff
     from flextool.engine.input import FlexData
 
 _logger = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ def write_outputs_for_solve(
     test); callers should pass solutions from a real
     :func:`polar_high.Problem.solve` call.  Post task #15 every cold
     solve (HiGHS and commercial) goes through
-    :func:`flextool.engine._subprocess_solve.solve_via_subprocess`,
+    :func:`flextool.engine.solve._subprocess_solve.solve_via_subprocess`,
     which always returns a Solution with a populated ``highs`` instance
     read back from the MPS — so the None branch is only hit by unit
     tests that synthesize Solutions by hand.

@@ -7,7 +7,7 @@ This module owns:
 * :func:`run_one_solve` — dispatch a single :class:`polar_high.Problem`
   to either ``Problem.solve()`` (in-process HiGHS, default — preserves
   streaming + ``Solution.highs``) or
-  :func:`flextool.engine._subprocess_solve.solve_via_subprocess`
+  :func:`flextool.engine.solve._subprocess_solve.solve_via_subprocess`
   (every cold path — HiGHS via ``cmd_solve_mps`` and commercial solvers
   via their CLI binaries; both return real ``polar_high.Solution``
   objects with the HiGHS instance read back from the MPS).
@@ -123,9 +123,9 @@ def _resolve_effective_highs_options(
     Precedence (lowest → highest):
 
     1. ``baseline`` — engine-pinned defaults from
-       :func:`flextool.engine._orchestration._baseline_highs_options`
+       :func:`flextool.engine.solve._orchestration._baseline_highs_options`
        (Curtis-Reid simplex scale + the four determinism keys from
-       :data:`flextool.engine._determinism.DETERMINISM_OPTIONS`).
+       :data:`flextool.engine.solve._determinism.DETERMINISM_OPTIONS`).
        Each higher layer may overwrite these — operator intent wins.
     2. ``highs.opt`` — floor parsed from ``solver_config/highs.opt``
        via :func:`_parse_highs_opt_file`.  Project-level defaults the
@@ -135,7 +135,7 @@ def _resolve_effective_highs_options(
        solve's ``solver_arguments`` parameter (Batch C.1+).
     4. ``cli_overrides`` — keys injected by CLI flags
        (``--highs-threads``, ``--solver-time-limit``, …) via
-       :func:`flextool.engine._orchestration._finalise_highs_options`.
+       :func:`flextool.engine.solve._orchestration._finalise_highs_options`.
        Highest precedence; the operator's command-line intent is
        authoritative.
 
@@ -304,7 +304,7 @@ def run_one_solve(
     writer adapter), and the established option-resolution chain.
 
     The commercial path (gurobi / cplex / xpress / copt) routes through
-    :func:`flextool.engine._subprocess_solve.solve_via_subprocess`,
+    :func:`flextool.engine.solve._subprocess_solve.solve_via_subprocess`,
     which spawns the solver's CLI binary against an MPS written by
     ``Problem.write_mps`` and reads the .sol back through a read-only
     ``highspy.Highs`` populated via ``setSolution``.  Downstream consumers
@@ -324,7 +324,7 @@ def run_one_solve(
         messages are also logged at ERROR level before being raised.
     save_memory
         When True on the HiGHS path, divert to
-        :func:`flextool.engine._subprocess_solve.solve_via_subprocess`:
+        :func:`flextool.engine.solve._subprocess_solve.solve_via_subprocess`:
         polar-high writes the LP to a temp MPS file via
         ``Problem.write_mps(release=True)`` (a direct polars→MPS writer
         that never builds a ``highspy.Highs`` instance, peaking at
@@ -378,7 +378,7 @@ def run_one_solve(
             # when present, else whatever was already stored on the
             # Problem via ``set_solver_options`` upstream (autoscale
             # Layer 3 may have mutated those).
-            from flextool.engine._subprocess_solve import (
+            from flextool.engine.solve._subprocess_solve import (
                 solve_via_subprocess,
             )
             effective_opts = (
@@ -410,7 +410,7 @@ def run_one_solve(
     # into the CLI scripts — see :mod:`_subprocess_solve` for the
     # current contract.  ``time_limit`` flows through as the subprocess
     # timeout.
-    from flextool.engine._subprocess_solve import (
+    from flextool.engine.solve._subprocess_solve import (
         _BINARY_NAMES,
         solve_via_subprocess,
     )

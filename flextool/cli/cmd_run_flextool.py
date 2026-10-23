@@ -854,7 +854,7 @@ def main():
     # Benders decomposition is now DB-driven and per-solve: the
     # orchestrator reads ``solve.decomposition`` for each solve and runs
     # the Benders region driver for the ones set to ``benders``
-    # (see engine._orchestration / docs/dev/decomposition.md).  The
+    # (see engine.solve._orchestration / docs/dev/decomposition.md).  The
     # old global ``--decomposition lagrangian`` standalone path was
     # removed; nothing special happens here — the normal run path below
     # handles every scheme.
@@ -897,7 +897,7 @@ def main():
         # on top is just noise.  Other exceptions get the full
         # traceback because they're (probably) bugs in flextool.
         try:
-            from flextool.engine._solver_dispatch import (
+            from flextool.engine.solve._solver_dispatch import (
                 FlexToolUserError,
             )
         except Exception:  # noqa: BLE001

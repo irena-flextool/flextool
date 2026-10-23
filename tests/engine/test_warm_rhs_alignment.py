@@ -24,7 +24,7 @@ from flextool.engine._pdt_join import (
     compute_process_indirect_dt,
     compute_pss_dt,
 )
-from flextool.engine._warm import _apply_warm_updates
+from flextool.engine.solve._warm import _apply_warm_updates
 
 NODES = ["heat", "west"]
 

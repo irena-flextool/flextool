@@ -22,7 +22,7 @@ Two kinds of overlap can occur between the solves of one model run
   run continues unchanged.
 
 Everything here is pure (no solve, no I/O) so it is unit-testable in
-isolation; ``_native_run_model`` calls it at step 3.5.
+isolation; ``_run_model`` calls it at step 3.5.
 
 Warnings go through a MODULE-level logger, not the run's ``state.logger``:
 the orchestrator raises ``state.logger`` to ERROR for the whole cascade
@@ -208,7 +208,7 @@ def effective_realized_invest_periods(
     """Periods whose investments *solve* realizes, as the cascade sees it.
 
     Mirrors the ``realized_invest_periods_of_current_solve`` emission in
-    ``_native_run_model``: ``realized_invest_periods`` (the ``p_in`` member
+    ``_run_model``: ``realized_invest_periods`` (the ``p_in`` member
     of each ``(p_from, p_in)`` tuple), falling back to ``realized_periods``
     when ``realized_invest_periods`` is empty but both ``invest_periods``
     and ``realized_periods`` are set.  Order preserved, duplicates removed.

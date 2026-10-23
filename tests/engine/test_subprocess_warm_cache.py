@@ -1,7 +1,7 @@
 """Warm-start basis-cache tests for the PARENT subprocess solver.
 
 Exercises the parent half of the ``save_memory`` warm-start arm in
-:func:`flextool.engine._subprocess_solve.solve_via_subprocess`:
+:func:`flextool.engine.solve._subprocess_solve.solve_via_subprocess`:
 a fingerprint-keyed native HiGHS ``.bas`` basis cache that survives the
 per-solve ``out_dir`` cleanup, is injected via the child's
 ``--warm-basis`` on a matching re-solve, refreshed atomically
@@ -21,7 +21,7 @@ import numpy as np
 import polars as pl
 
 import polar_high as fp
-from flextool.engine._subprocess_solve import solve_via_subprocess
+from flextool.engine.solve._subprocess_solve import solve_via_subprocess
 
 # A single-roll storage-dispatch LP large enough to take a non-trivial
 # number of simplex iterations cold, so an injected basis measurably cuts

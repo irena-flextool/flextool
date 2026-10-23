@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from flextool.engine._benders import (
+from flextool.engine.solve._benders import (
     _benders_failure_message,
     _resolve_benders_max_stall,
     _stall_worst_offenders,

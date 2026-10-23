@@ -48,7 +48,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine._orchestration import run_chain_from_db
+from flextool.engine.solve._orchestration import run_chain_from_db
 from flextool.engine._solve_state import FlexToolConfigError
 from flextool.engine._stochastic_detect import (
     is_genuinely_stochastic,

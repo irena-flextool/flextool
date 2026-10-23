@@ -289,7 +289,7 @@ def test_fix_usage_producer_applies_slope(toy_storage_2t, tmp_path):
     # injected via a dynamic attribute (the field was retired in Phase 3
     # but the consumer still falls back to ``getattr(parent_handoff,
     # "fix_storage_timesteps", None)``).
-    from flextool.engine._solve_handoff import SolveHandoff
+    from flextool.engine.solve._handoff import SolveHandoff
     fs_steps = pl.DataFrame({"period": ["d1"], "step": ["t02"]})
     parent_handoff = SolveHandoff()
     parent_handoff.fix_storage_timesteps = fs_steps  # type: ignore[attr-defined]

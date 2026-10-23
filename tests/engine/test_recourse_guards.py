@@ -94,7 +94,7 @@ def test_g1_resolver_normalisation():
 def test_g1_validate_model_solve_accepts_recourse():
     """Slice D: Guard 1 is LIFTED for 'recourse' — the fail-fast pass no
     longer raises on a recourse solve and returns the solve list."""
-    from flextool.engine._orchestration import _validate_model_solve
+    from flextool.engine.solve._orchestration import _validate_model_solve
 
     sc = _solve_config_with_flag({"m": ["s_ok", "s_rec"]},
                                   {"s_rec": "recourse"})
@@ -106,7 +106,7 @@ def test_g1_raw_value_typo_rejected():
     """Slice D §12/F4: the guard inspects the RAW authored value (the
     resolver would silently collapse a typo to 'none'), so an unrecognised
     authored value raises — while 'recourse' / blank / absent do not."""
-    from flextool.engine._orchestration import (
+    from flextool.engine.solve._orchestration import (
         _stochastic_invest_raw_guard,
         _validate_model_solve,
     )
@@ -130,7 +130,7 @@ def test_g1_raw_value_typo_rejected():
 
 
 def test_g1_validate_model_solve_passes_flag_none():
-    from flextool.engine._orchestration import _validate_model_solve
+    from flextool.engine.solve._orchestration import _validate_model_solve
 
     sc = _solve_config_with_flag({"m": ["s1", "s2"]}, {})  # all default none
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
@@ -171,7 +171,7 @@ def test_g2a_genuine_stochastic_detected():
 def test_g2a_solve_benders_raises_on_stochastic():
     """The defensive site at the top of ``solve_benders`` fires before any
     region work."""
-    from flextool.engine._benders import solve_benders
+    from flextool.engine.solve._benders import solve_benders
 
     pbf = _pbf([("p2035", "p2035"), ("p2035", "p2035_low")], enum=True)
     piu = _piu(["p2035", "p2035_low"], enum=True)

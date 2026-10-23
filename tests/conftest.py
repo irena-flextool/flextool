@@ -823,7 +823,7 @@ def scenario_workdir(
             work = scenario_workdir("base")
             data = load_flextool(work)
     """
-    from flextool.engine._orchestration import run_chain_from_db
+    from flextool.engine.solve._orchestration import run_chain_from_db
 
     url_by_fixture = {
         "main": test_db_url,

@@ -1190,7 +1190,7 @@ def emit_rp_data(
 
     Phase E added ``variant`` + ``per_period_inputs`` (see
     :func:`_compute_rp_frames` for semantics).  The caller in
-    :mod:`flextool.engine._native_run_model` selects the variant
+    :mod:`flextool.engine.solve._run_model` selects the variant
     based on the binding-method mix of nodes in this solve; mixed
     within_solve/within_period in a single solve is rejected upstream
     with ``FlexToolConfigError`` because the per-solve RP frame family

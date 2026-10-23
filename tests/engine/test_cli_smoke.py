@@ -302,7 +302,7 @@ def test_decomposition_benders_db_driven(
     """The fixture authors ``solve.decomposition = benders`` (migrated
     from the legacy ``lagrangian`` value), so the ``lh2_trade_invest``
     solve routes through the native coordinator
-    (``engine._benders.solve_benders``) from inside the
+    (``engine.solve._benders.solve_benders``) from inside the
     orchestrator — no CLI flag.
 
     Acceptance bar:
@@ -332,7 +332,7 @@ def test_decomposition_benders_db_driven(
     # been routed through the Benders driver, so its step carries the
     # decomposition objective and the convergence flag plus a
     # :class:`SnapshotSolution` invest carrier.
-    from flextool.engine._orchestration import SnapshotSolution
+    from flextool.engine.solve._orchestration import SnapshotSolution
 
     step = next(reversed(list(steps.values())))
     assert step.obj is not None, (
@@ -374,7 +374,7 @@ def test_orchestration_step_is_benders_defaults_false() -> None:
     cmd_run_flextool guard only skips write_outputs for the Benders
     region-driven case.
     """
-    from flextool.engine._orchestration import OrchestrationStep
+    from flextool.engine.solve._orchestration import OrchestrationStep
 
     step = OrchestrationStep(
         solve_name="dispatch_solve",

@@ -20,7 +20,7 @@ solve, not by trusting the static ``available_solvers`` catalog.
 Mock strategy
 -------------
 Tests that need to exercise the commercial path without a real solver
-install monkey-patch :data:`flextool.engine._solver_dispatch`'s
+install monkey-patch :data:`flextool.engine.solve._solver_dispatch`'s
 imports of ``polar_solve``, ``available_solvers`` and the exception
 types via :func:`unittest.mock.patch`.  This keeps the test pinned to
 the FlexTool surface even when polar-high's internal layout drifts.
@@ -49,7 +49,7 @@ from flextool.engine import run_chain_from_db  # noqa: E402
 from flextool.engine._solve_config import (  # noqa: E402
     SolverConfig,
 )
-from flextool.engine._solver_dispatch import (  # noqa: E402
+from flextool.engine.solve._solver_dispatch import (  # noqa: E402
     FlexToolUserError,
     build_solver_options,
     run_one_solve,
@@ -271,7 +271,7 @@ def test_solver_not_installed_error() -> None:
     non-HiGHS solvers.  ``SolverNotAvailableError`` from polar-high's
     Python wrapper is no longer the failure surface; the new failure
     surface is the CLI-binary lookup in
-    :func:`flextool.engine._subprocess_solve._find_solver_binary`.
+    :func:`flextool.engine.solve._subprocess_solve._find_solver_binary`.
     """
     cfg = SolverConfig(name="gurobi", io_api="direct")
     pb = _make_minimal_problem()
@@ -279,7 +279,7 @@ def test_solver_not_installed_error() -> None:
     # Force the binary-lookup path to fail even if gurobi_cl happens to
     # be on the test machine.
     with patch(
-        "flextool.engine._subprocess_solve._find_solver_binary",
+        "flextool.engine.solve._subprocess_solve._find_solver_binary",
         return_value=None,
     ):
         with pytest.raises(FlexToolUserError) as ei:
@@ -415,10 +415,10 @@ def test_solver_options_passthrough(
 
     binary = Path("/fake/gurobi_cl")
     with patch(
-        "flextool.engine._subprocess_solve._find_solver_binary",
+        "flextool.engine.solve._subprocess_solve._find_solver_binary",
         return_value=binary,
     ), patch(
-        "flextool.engine._subprocess_solve.subprocess.run",
+        "flextool.engine.solve._subprocess_solve.subprocess.run",
         side_effect=_fake_subprocess_run,
     ):
         sol = run_one_solve(pb, cfg)
@@ -569,7 +569,7 @@ def test_multi_solver_scenario() -> None:
     # dispatch routes to FlexToolUserError with the gurobi-specific
     # hint, confirming the per-solve dispatch picks the right path.
     with patch(
-        "flextool.engine._subprocess_solve._find_solver_binary",
+        "flextool.engine.solve._subprocess_solve._find_solver_binary",
         return_value=None,
     ):
         with pytest.raises(FlexToolUserError) as ei:
@@ -605,10 +605,8 @@ def test_warm_false_highs_soft_promotes_to_subprocess(
     call so we don't actually shell out, but assert (a) the subprocess
     path was chosen and (b) the warning was emitted exactly once.
     """
-    from flextool.engine import (
-        _orchestration as _orch,
-        _subprocess_solve as _subp,
-    )
+    from flextool.engine.solve import _orchestration as _orch
+    from flextool.engine.solve import _subprocess_solve as _subp
 
     db_url = _make_migrated_db(tmp_path)
 

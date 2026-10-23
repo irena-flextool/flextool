@@ -31,7 +31,7 @@ import pytest
 from polar_high import Problem
 
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine._benders import solve_benders
+from flextool.engine.solve._benders import solve_benders
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 # The two cross-region pipes the master owns.

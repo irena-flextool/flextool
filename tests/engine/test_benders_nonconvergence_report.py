@@ -24,8 +24,8 @@ from flextool.cli.cmd_run_flextool import (
     _benders_nonconvergence_banner,
     _scan_cascade_optimality,
 )
-from flextool.engine._benders import BendersResult
-from flextool.engine._orchestration import OrchestrationStep
+from flextool.engine.solve._benders import BendersResult
+from flextool.engine.solve._orchestration import OrchestrationStep
 
 # Model-instance vocabulary that must not leak into a user-facing diagnostic
 # (mirrors ``test_benders_failure_messages``): FlexTool class names only.

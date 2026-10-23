@@ -370,7 +370,7 @@ def test_t9_region_filter_pass_through(tmp_path):
     drop sets leaves both lineage frames row-identical — the generic
     field sweep filters only frames carrying n/p/e/cn/g columns, and
     the lineage frames carry only d/d_other/b."""
-    from flextool.engine._region_filter import _drop_master_rows
+    from flextool.engine.solve._region_filter import _drop_master_rows
     from flextool.engine.input import FlexData
 
     dd, pd_na = _build(tmp_path, pb=PB_41, piu=PIU_41, sbtb=SBTB_41)

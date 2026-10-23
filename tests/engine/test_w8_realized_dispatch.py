@@ -251,7 +251,7 @@ def test_realized_operations_sourced_from_dispatch_solve(chain) -> None:
     Both solves declare ``realized_periods=[p2035]`` over the same steps.
     The dispatch solve is listed AFTER the stochastic solve in
     ``model.solves``, so the engine's last-wins resolution
-    (``_native_run_model`` reversed-order claim) TRUNCATES the stochastic
+    (``_run_model`` reversed-order claim) TRUNCATES the stochastic
     solve's realized window and the dispatch solve owns it.
 
     Detection via each solve's per-solve realized window

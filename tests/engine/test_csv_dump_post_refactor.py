@@ -179,7 +179,7 @@ def test_no_csv_dump_means_no_emit_leak_on_disk(
     Out of scope: post-solve writers in
     :mod:`flextool.process_outputs.handoff_writers` and the
     ``scale_the_objective.csv`` reader-side stamp in
-    :mod:`flextool.engine._orchestration` deliberately drop
+    :mod:`flextool.engine.solve._orchestration` deliberately drop
     their handoff state to ``solve_data/`` regardless of the flag —
     they're cross-roll carriers, not part of the writer→emitter
     refactor surface listed in ``specs/writer_to_emitter.md §6``.
@@ -192,7 +192,7 @@ def test_no_csv_dump_means_no_emit_leak_on_disk(
     # Files dropped to ``solve_data/`` by the post-solve handoff
     # pipeline.  These predate the writer→emitter refactor and are
     # written by ``flextool.process_outputs.handoff_writers`` /
-    # ``flextool.engine._orchestration._dump_scale_the_objective``
+    # ``flextool.engine.solve._orchestration._dump_scale_the_objective``
     # — never via an ``emit_*`` site — so they're not in scope here.
     _POST_SOLVE_HANDOFF_LEAK_EXEMPT = {
         "fix_storage_price.csv",

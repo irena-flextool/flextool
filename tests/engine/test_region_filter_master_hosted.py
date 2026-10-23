@@ -46,7 +46,7 @@ from polar_high import Param, Problem
 
 from flextool.engine import build_flextool, load_flextool
 from flextool.engine._pdt_join import compute_pss_dt
-from flextool.engine._region_filter import (
+from flextool.engine.solve._region_filter import (
     _BENDERS_UNCAP_SENTINEL,
     _GROUP_FEATURE_PARAM_FIELDS,
     _GROUP_FEATURE_SET_FIELDS,

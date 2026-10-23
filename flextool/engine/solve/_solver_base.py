@@ -1,7 +1,7 @@
 """SolverRunner shell — base class for the native cascade's solver subclasses.
 
 The cascade's ``_PolarHighCascadeSolver`` / ``_NoOpSolver`` in
-:mod:`flextool.engine._orchestration` extend :class:`SolverRunner`
+:mod:`flextool.engine.solve._orchestration` extend :class:`SolverRunner`
 and override ``run`` to drive the polar-high LP build/solve in-process.
 Direct instantiation + ``run()`` is not supported.
 """

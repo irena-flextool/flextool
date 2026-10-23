@@ -15,7 +15,7 @@ Design decisions
   :func:`._orchestration._drive_cascade`) intercepts the already-native
   preprocessing helpers.
 * **Native solve-tree expansion** via
-  :class:`flextool.engine._recursive_solve.RecursiveSolveBuilder`
+  :class:`flextool.engine.solve._recursive_solve.RecursiveSolveBuilder`
   + :class:`._stochastic.StochasticSolver`.
 * **Direct handoff construction.**  The post-solve ``SolveHandoff`` is
   built by ``build_handoff_from_solution`` directly from the polar_high
@@ -59,7 +59,7 @@ from flextool.engine import _provider_keys
 from flextool.engine import _provider_translators
 
 from flextool.engine._flex_data_provider import FlexDataProvider
-from flextool.engine._realized_overlap import (
+from flextool.engine.solve._realized_overlap import (
     effective_realized_invest_periods,
     find_realized_invest_overlaps,
     resolve_realized_dispatch_overlap,
@@ -69,11 +69,11 @@ from flextool.engine._realized_overlap import (
 from flextool.engine._solve_state import compute_level_key
 
 # Native solve-tree expansion + stochastic branching + timeline helpers.
-from flextool.engine._recursive_solve import (
+from flextool.engine.solve._recursive_solve import (
     ParentSolveInfo,
     RecursiveSolveBuilder,
 )
-from flextool.engine._stochastic import StochasticSolver
+from flextool.engine.solve._stochastic import StochasticSolver
 from flextool.engine._timeline import (
     get_active_time,
     make_period_block,
