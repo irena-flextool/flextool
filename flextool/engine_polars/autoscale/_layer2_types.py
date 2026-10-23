@@ -247,7 +247,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # arcs (DC + non-DC).  flextool/engine_polars/model.py (maxFlow_back).
     "maxFlow_back": CstrFamily(QuantityType.DIMENSIONLESS),
     # Indirect-unit capacity on the SUM of output flows (+ its neg-cap
-    # ``≥`` twin).  flextool/engine_polars/model.py (_add_max_output_sum).
+    # ``≥`` twin).  flextool/engine_polars/model.py (_eq_max_output_sum).
     "maxOutputSum": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxOutputSum_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
     # Legacy name for the DC-only back-flow cap; the cap is now emitted as

@@ -24,7 +24,7 @@ from typing import Any
 
 import polars as pl
 from polar_high import Sum, Where, Lag, Param
-from polar_high.engine import Var
+from polar_high.engine import Expr, Var
 
 from . import _commodity_ladder
 from . import _cumulative_invest
@@ -129,8 +129,9 @@ class _Build:
     Holds only what more than one step reads; everything else stays local
     to its family function.  Fields are filled in step order: flags and
     index sets by ``_prepare``, variables by ``_declare_variables``, shared
-    expressions by ``_shared_expressions``, the objective by the ``_obj_*``
-    and ``_feature_*`` steps.
+    expressions by ``_shared_expressions``.  The objective is not held here:
+    the ``_obj_*`` and ``_feature_*`` steps return their terms to
+    :func:`build_flextool`.
     """
 
     m: Any
@@ -214,9 +215,6 @@ class _Build:
     divest_in_dispatch_p: Any = None        # Σ v_divest_p active in d, (p, d)
     op_factor: Any = None                   # weight of operational cost terms, (d, t)
 
-    # ── objective under construction ──
-    obj: Any = None
-
 
 def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
                    scale_the_objective: float = 1.0) -> None:
@@ -233,6 +231,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     ``scale_the_objective``: multiplier on the whole objective (1.0 = none).
     """
     b = _Build(m=m, d=d, include_existing_fixed_cost=include_existing_fixed_cost)
+    # Objective steps return their term (or None); terms are summed in this
+    # order.  Constraint steps return None.
+    obj = None
     for step in (
         _prepare,                        # flags, data checks, index sets
         _declare_variables,
@@ -245,6 +246,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_storage_usage_fix,
         _eq_block_coupling,
         _eq_max_flow,
+        _eq_max_output_sum,
         _eq_dc_power_flow,
         _eq_online,
         _eq_online_fix,
@@ -252,7 +254,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_ramp,
         _eq_invest_bounds,
         _eq_conversion,
-        _eq_co2_caps,
+        _eq_co2_max_period,
+        _eq_co2_max_total,
         _eq_user_constraints,
         _eq_storage_state,
         _eq_profiles,
@@ -276,9 +279,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_non_anticipativity_invest,
     ):
         _build_prof(step.__name__)
-        step(b)
+        term = step(b)
+        if term is not None:
+            obj = term if obj is None else obj + term
 
-    obj = b.obj
     if scale_the_objective != 1.0:
         obj = obj * scale_the_objective
     m.set_objective(obj, sense="min")
@@ -306,7 +310,6 @@ def _prepare(b: _Build) -> None:
     m.coef_zero_threshold = float(getattr(d, "small_number_threshold", 0.0001))
 
     _check(d, ALWAYS, "always")
-    _validate_storage_binding_implemented(d)
 
     # ── feature flags ──
     b.has_proc = _has_rows(d.process_source_sink)
@@ -427,28 +430,6 @@ def _node_list(nodes: list) -> str:
     """Comma-separated node names for error messages, at most ten shown."""
     shown = ", ".join(str(n) for n in nodes[:10])
     return shown + ("" if len(nodes) <= 10 else f", ... {len(nodes) - 10} more")
-
-
-def _validate_storage_binding_implemented(d) -> None:
-    """Raise for storage_binding_method values without a constraint yet.
-
-    A node with such a method would get no state-change term in
-    nodeBalance_eq.  No method is pending today; add
-    ``(method_name, node_frame)`` pairs here when a value-list entry lands
-    before its constraint.
-    """
-    not_yet_implemented: tuple = ()
-    for method_name, frame in not_yet_implemented:
-        if _has_rows(frame):
-            raise FlexToolConfigError(
-                f"Node(s) {_node_list(frame.get_column('n').to_list())} carry "
-                f"storage_binding_method = "
-                f"'{method_name}', which is recognized by the v55 "
-                f"value_list but its constraint implementation has "
-                f"not landed yet.  For now, change these nodes to one "
-                f"of the implemented methods using a scenario "
-                f"alternative override."
-            )
 
 
 def _validate_has_balance(d, nodeBalance_dt) -> None:
@@ -2051,6 +2032,19 @@ def _eq_max_flow(b: _Build) -> None:
                 rhs_terms = {"upper": b.flow_upper_rhs},
             )
 
+
+def _eq_max_output_sum(b: _Build) -> None:
+    """Output-sum capacity limit of indirect (multi-flow) units."""
+    if not b.has_proc or b.pss_dt.height == 0:
+        return
+    m, d = b.m, b.d
+    flow_upper_existing = getattr(d, "p_flow_upper_existing", None)
+    if flow_upper_existing is None:
+        return
+    arcs = _indirect_sum_arcs(d)
+    if arcs is None:
+        return
+
     # ─── EQ. ─── maxOutputSum / maxOutputSum_negCap ──────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_k v_flow[p,p,k,d,t] + Σ_k Σ_r v_reserve_up[p,r,k,d,t]
@@ -2062,12 +2056,69 @@ def _eq_max_flow(b: _Build) -> None:
     # applied.  Negative-capacity (p,d) rows get only the ≥ twin
     # maxOutputSum_negCap: with both, a k-output unit would need Σ out = c
     # while maxFlow pins every arc to c.
-    _add_max_output_sum(
-        m, d, b.v_flow, pss_dt,
-        reserve_up_sink_parts=b.reserve_up_sink_parts,
-        invest_sum=b.invest_in_dispatch_p,
-        divest_sum=b.divest_in_dispatch_p,
-    )
+    # existing[p,d]/unitsize[p] is the value maxFlow's output arcs of p carry
+    # (all equal; max collapses them); a unit without an existing row gets 0.
+    # Availability defaults to 1.0 for processes without availability data.
+    over = (b.pss_dt.join(arcs, on=["p", "source", "sink"], how="semi")
+            .select("p", "d", "t")
+            .unique(maintain_order=True))
+    if over.height == 0:
+        return
+
+    lhs: dict = {"flow": Sum(Where(b.v_flow, arcs), over=("source", "sink"))}
+    if b.reserve_up_sink_parts is not None:
+        reserve_at_sink, up_sink = b.reserve_up_sink_parts
+        up_sink = up_sink.join(arcs.select("p", "sink").unique(), on=["p", "sink"], how="semi")
+        if up_sink.height > 0:
+            lhs["reserve_up"] = Sum(Where(reserve_at_sink, up_sink), over=("r", "ud", "sink"))
+    avail = _availability_factor(d, over) if d.p_process_availability is not None else None
+    if b.invest_in_dispatch_p is not None:
+        lhs["invest_neg"] = -(b.invest_in_dispatch_p * avail if avail is not None
+                              else b.invest_in_dispatch_p)
+    if b.divest_in_dispatch_p is not None:
+        lhs["divest"] = (b.divest_in_dispatch_p * avail if avail is not None
+                         else b.divest_in_dispatch_p)
+
+    existing = (flow_upper_existing.frame
+                .join(arcs, on=["p", "source", "sink"], how="semi")
+                .group_by("p", "d")
+                .agg(pl.col("value").max().alias("__ex")))
+    rhs_lf = (over.lazy()
+              .join(existing.lazy(), on=["p", "d"], how="left")
+              .with_columns(pl.col("__ex").fill_null(0.0)))
+    if d.p_process_availability is not None:
+        avail_lf = promote_param_to_dt(d.p_process_availability, d.dt)
+        rhs_lf = (rhs_lf
+                  .join(avail_lf, on=["p", "d", "t"], how="left", suffix="__a")
+                  .with_columns(pl.col("value").fill_null(1.0).alias("__av")))
+    else:
+        rhs_lf = rhs_lf.with_columns(pl.lit(1.0).alias("__av"))
+    rhs = Param(("p", "d", "t"),
+                rhs_lf.select("p", "d", "t", value=pl.col("__ex") * pl.col("__av")).collect())
+
+    pd_neg_cap = getattr(d, "pd_neg_cap", None)
+    if _has_rows(pd_neg_cap):
+        neg_over = over.join(pd_neg_cap.select("p", "d"), on=["p", "d"], how="semi")
+        pos_over = over.join(pd_neg_cap.select("p", "d"), on=["p", "d"], how="anti")
+    else:
+        neg_over = over.head(0)
+        pos_over = over
+    if pos_over.height > 0:
+        m.add_cstr(
+            "maxOutputSum",
+            over      = pos_over,
+            sense     = "<=",
+            lhs_terms = lhs,
+            rhs_terms = {"upper": rhs},
+        )
+    if neg_over.height > 0:
+        m.add_cstr(
+            "maxOutputSum_negCap",
+            over      = neg_over,
+            sense     = ">=",
+            lhs_terms = lhs,
+            rhs_terms = {"upper": rhs},
+        )
 
 
 def _eq_dc_power_flow(b: _Build) -> None:
@@ -2688,8 +2739,8 @@ def _eq_conversion(b: _Build) -> None:
         _add_min_input_share(m, d, v_flow)
 
 
-def _eq_co2_caps(b: _Build) -> None:
-    """CO2 emission caps per period and over all periods."""
+def _eq_co2_max_period(b: _Build) -> None:
+    """CO2 emission cap per period."""
     m, d = b.m, b.d
     v_flow = b.v_flow
     # ─── CO2 cap (period level) ───────────────────────────────────────────
@@ -2723,6 +2774,11 @@ def _eq_co2_caps(b: _Build) -> None:
             rhs_terms = {"cap": d.p_co2_max_period},
         )
 
+
+def _eq_co2_max_total(b: _Build) -> None:
+    """CO2 emission cap over all periods."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
     # ─── CO2 cap (multi-period total) ─────────────────────────────────────
     # Port of v3.32.0 ``co2_max_total`` (.mod:4019-4055).  Identical
     # per-(d,t) annualised-tonnes LHS shape as ``co2_max_period``, but
@@ -3409,7 +3465,15 @@ def _eq_profiles(b: _Build) -> None:
 # Objective
 
 
-def _obj_balance_slack(b: _Build) -> None:
+def _sum_terms(terms: list) -> Expr | None:
+    """t₁ + t₂ + … in list order; None for an empty list."""
+    total = None
+    for term in terms:
+        total = term if total is None else total + term
+    return total
+
+
+def _obj_balance_slack(b: _Build) -> Expr:
     """Balance slack penalty."""
     d = b.d
     vq_up = b.vq_state_up
@@ -3421,17 +3485,17 @@ def _obj_balance_slack(b: _Build) -> None:
     # with the .mod's convention and is critical for parity in scenarios
     # that have non-1.0 capacity scaling.
     if d.p_node_capacity_for_scaling is not None:
-        b.obj = (Sum(vq_up   * d.p_penalty_up
-                   * d.p_node_capacity_for_scaling * op_factor)
-             + Sum(vq_down * d.p_penalty_down
-                   * d.p_node_capacity_for_scaling * op_factor))
-    else:
-        b.obj = (Sum(vq_up   * d.p_penalty_up   * op_factor)
-             + Sum(vq_down * d.p_penalty_down * op_factor))
+        return (Sum(vq_up   * d.p_penalty_up
+                    * d.p_node_capacity_for_scaling * op_factor)
+                + Sum(vq_down * d.p_penalty_down
+                      * d.p_node_capacity_for_scaling * op_factor))
+    return (Sum(vq_up   * d.p_penalty_up   * op_factor)
+            + Sum(vq_down * d.p_penalty_down * op_factor))
 
 
-def _obj_commodity(b: _Build) -> None:
+def _obj_commodity(b: _Build) -> Expr | None:
     """Commodity purchase cost and sales revenue."""
+    terms: list = []
     d = b.d
     v_flow = b.v_flow
     v_online_lin = b.v_online_linear
@@ -3459,76 +3523,80 @@ def _obj_commodity(b: _Build) -> None:
                 .filter(~pl.col("c").is_in(ladder_c)))
 
     if b.has_proc and flow_from_commodity_eff_legacy is not None and flow_from_commodity_eff_legacy.height > 0:
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_flow * d.p_unitsize * d.p_slope, flow_from_commodity_eff_legacy)
-            * d.p_commodity_price * op_factor)
+            * d.p_commodity_price * op_factor))
         if b.has_minload_eff:
             # Section term: + v_online * section * unitsize, summed over
             # eff (p, source, sink) tuples whose process is in
             # process_min_load_eff, multiplied by commodity price.
             if b.has_online_lin:
-                b.obj = b.obj + Sum(
+                terms.append(Sum(
                     Where(Where(v_online_lin, d.process_min_load_eff)
                           * d.p_section * d.p_unitsize,
                           flow_from_commodity_eff_legacy)
-                    * d.p_commodity_price * op_factor)
+                    * d.p_commodity_price * op_factor))
             if b.has_online_int:
-                b.obj = b.obj + Sum(
+                terms.append(Sum(
                     Where(Where(v_online_int, d.process_min_load_eff)
                           * d.p_section * d.p_unitsize,
                           flow_from_commodity_eff_legacy)
-                    * d.p_commodity_price * op_factor)
+                    * d.p_commodity_price * op_factor))
     if b.has_proc and flow_from_commodity_noEff_legacy is not None and flow_from_commodity_noEff_legacy.height > 0:
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_flow * d.p_unitsize, flow_from_commodity_noEff_legacy)
-            * d.p_commodity_price * op_factor)
+            * d.p_commodity_price * op_factor))
     # §2.4 commodity sell: sink-side flow into priced node = revenue (negative
     # cost contribution).  Note: full superset of (p, source, sink) — no
     # eff/noEff split (the .mod sells regardless of process partition).
     if (b.has_proc and flow_to_commodity_legacy is not None
             and flow_to_commodity_legacy.height > 0
             and d.p_commodity_price is not None):
-        b.obj = b.obj - Sum(
+        terms.append(-Sum(
             Where(v_flow * d.p_unitsize, flow_to_commodity_legacy)
-            * d.p_commodity_price * op_factor)
+            * d.p_commodity_price * op_factor))
+    return _sum_terms(terms)
 
 
-def _obj_co2_price(b: _Build) -> None:
+def _obj_co2_price(b: _Build) -> Expr | None:
     """CO2 emission cost."""
+    terms: list = []
     d = b.d
     v_flow = b.v_flow
     v_online_lin = b.v_online_linear
     v_online_int = b.v_online_integer
     op_factor = b.op_factor
     if b.has_co2_price:
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_priced)
-            * d.p_co2_content * d.p_co2_price * op_factor)
+            * d.p_co2_content * d.p_co2_price * op_factor))
         if b.has_minload_eff:
             if b.has_online_lin:
-                b.obj = b.obj + Sum(
+                terms.append(Sum(
                     Where(Where(v_online_lin, d.process_min_load_eff)
                           * d.p_section * d.p_unitsize,
                           d.flow_from_co2_priced)
-                    * d.p_co2_content * d.p_co2_price * op_factor)
+                    * d.p_co2_content * d.p_co2_price * op_factor))
             if b.has_online_int:
-                b.obj = b.obj + Sum(
+                terms.append(Sum(
                     Where(Where(v_online_int, d.process_min_load_eff)
                           * d.p_section * d.p_unitsize,
                           d.flow_from_co2_priced)
-                    * d.p_co2_content * d.p_co2_price * op_factor)
+                    * d.p_co2_content * d.p_co2_price * op_factor))
     # §4.1 CO2 noEff buy: source-side flow into a CO2-priced node where
     # the process is on the noEff side.  No slope, no section term.
     if (d.flow_from_co2_priced_noEff is not None
             and d.flow_from_co2_priced_noEff.height > 0
             and d.p_co2_content is not None and d.p_co2_price is not None):
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_flow * d.p_unitsize, d.flow_from_co2_priced_noEff)
-            * d.p_co2_content * d.p_co2_price * op_factor)
+            * d.p_co2_content * d.p_co2_price * op_factor))
+    return _sum_terms(terms)
 
 
-def _obj_variable_cost(b: _Build) -> None:
+def _obj_variable_cost(b: _Build) -> Expr | None:
     """Variable operation and maintenance cost."""
+    terms: list = []
     d = b.d
     v_flow = b.v_flow
     v_online_lin = b.v_online_linear
@@ -3540,9 +3608,9 @@ def _obj_variable_cost(b: _Build) -> None:
     if (b.has_proc and d.pssdt_varCost_noEff is not None
             and d.pssdt_varCost_noEff.height > 0
             and d.p_pssdt_varCost is not None):
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_flow * d.p_unitsize, d.pssdt_varCost_noEff)
-            * d.p_pssdt_varCost * op_factor)
+            * d.p_pssdt_varCost * op_factor))
 
     # ─── Process variable cost (§5.2 eff unit, source-side O&M) ──────────
     # The .mod term has a leading minus sign — it's an "anti-cost" that
@@ -3560,24 +3628,24 @@ def _obj_variable_cost(b: _Build) -> None:
         # collapses to v_flow * unitsize * slope.
         flow_term = Where(v_flow * d.p_unitsize * d.p_slope,
                           d.pssdt_varCost_eff_unit_source)
-        b.obj = b.obj - Sum(flow_term * d.p_pdt_varCost_source * op_factor)
+        terms.append(-Sum(flow_term * d.p_pdt_varCost_source * op_factor))
         if b.has_minload_eff:
             # section sub-term (linear / integer)
             section_idx = (d.pssdt_varCost_eff_unit_source
                            .join(d.process_min_load_eff, on="p", how="inner"))
             if section_idx.height > 0:
                 if b.has_online_lin:
-                    b.obj = b.obj - Sum(
+                    terms.append(-Sum(
                         Where(Where(v_online_lin, d.process_min_load_eff)
                               * d.p_section * d.p_unitsize,
                               section_idx)
-                        * d.p_pdt_varCost_source * op_factor)
+                        * d.p_pdt_varCost_source * op_factor))
                 if b.has_online_int:
-                    b.obj = b.obj - Sum(
+                    terms.append(-Sum(
                         Where(Where(v_online_int, d.process_min_load_eff)
                               * d.p_section * d.p_unitsize,
                               section_idx)
-                        * d.p_pdt_varCost_source * op_factor)
+                        * d.p_pdt_varCost_source * op_factor))
 
     # ─── Process variable cost (§5.3 eff unit, sink-side O&M) ────────────
     # + Σ pdtProcess_sink[p,sink,'other_operational_cost',d,t]
@@ -3585,9 +3653,9 @@ def _obj_variable_cost(b: _Build) -> None:
     if (b.has_proc and d.pssdt_varCost_eff_unit_sink is not None
             and d.pssdt_varCost_eff_unit_sink.height > 0
             and d.p_pdt_varCost_sink is not None):
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_flow * d.p_unitsize, d.pssdt_varCost_eff_unit_sink)
-            * d.p_pdt_varCost_sink * op_factor)
+            * d.p_pdt_varCost_sink * op_factor))
 
     # ─── Process variable cost (§5.4 eff connection) ─────────────────────
     # + Σ pdtProcess[p,'other_operational_cost',d,t]
@@ -3595,13 +3663,15 @@ def _obj_variable_cost(b: _Build) -> None:
     if (b.has_proc and d.pssdt_varCost_eff_connection is not None
             and d.pssdt_varCost_eff_connection.height > 0
             and d.p_pdt_varCost_process is not None):
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_flow * d.p_unitsize, d.pssdt_varCost_eff_connection)
-            * d.p_pdt_varCost_process * op_factor)
+            * d.p_pdt_varCost_process * op_factor))
+    return _sum_terms(terms)
 
 
-def _obj_startup_cost(b: _Build) -> None:
+def _obj_startup_cost(b: _Build) -> Expr | None:
     """Startup cost."""
+    terms: list = []
     d = b.d
     v_startup_lin = b.v_startup_linear
     v_startup_int = b.v_startup_integer
@@ -3614,17 +3684,19 @@ def _obj_startup_cost(b: _Build) -> None:
     if d.pdt_branch_weight is not None:
         startup_factor = startup_factor * d.pdt_branch_weight
     if b.has_startup_cost_lin:
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_startup_lin, d.pdt_online_linear)
-            * d.p_startup_cost * d.p_unitsize * startup_factor)
+            * d.p_startup_cost * d.p_unitsize * startup_factor))
     if b.has_startup_cost_int:
-        b.obj = b.obj + Sum(
+        terms.append(Sum(
             Where(v_startup_int, d.pdt_online_integer)
-            * d.p_startup_cost * d.p_unitsize * startup_factor)
+            * d.p_startup_cost * d.p_unitsize * startup_factor))
+    return _sum_terms(terms)
 
 
-def _obj_storage_reference_price(b: _Build) -> None:
+def _obj_storage_reference_price(b: _Build) -> Expr | None:
     """Value of the final storage state."""
+    terms: list = []
     d = b.d
     v_state = b.v_state
     # ─── §10.1 Storage-state reference-price revenue (mod:2107-2111) ─────
@@ -3663,13 +3735,15 @@ def _obj_storage_reference_price(b: _Build) -> None:
                                 / d.p_period_share)
             if d.pdt_branch_weight is not None:
                 ref_price_factor = ref_price_factor * d.pdt_branch_weight
-            b.obj = b.obj - Sum(
+            terms.append(-Sum(
                 Where(v_state, ssrp_over) * d.p_state_unitsize
-                * d.p_storage_state_reference_price * ref_price_factor)
+                * d.p_storage_state_reference_price * ref_price_factor))
+    return _sum_terms(terms)
 
 
-def _obj_invest_divest(b: _Build) -> None:
+def _obj_invest_divest(b: _Build) -> Expr | None:
     """Investment and divestment annuities and fixed costs."""
+    terms: list = []
     d = b.d
     v_invest_p = b.v_invest_p
     v_divest_p = b.v_divest_p
@@ -3713,9 +3787,9 @@ def _obj_invest_divest(b: _Build) -> None:
             d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu is not None:
-            b.obj = b.obj + Sum(v_invest_p * d.p_unitsize * _wt(annu))
+            terms.append(Sum(v_invest_p * d.p_unitsize * _wt(annu)))
         if lf is not None:
-            b.obj = b.obj + Sum(v_invest_p * d.p_unitsize * _wt(lf))
+            terms.append(Sum(v_invest_p * d.p_unitsize * _wt(lf)))
     if b.has_divest_p:
         lfd = Param(("p", "d"),
             d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})) \
@@ -3724,9 +3798,9 @@ def _obj_invest_divest(b: _Build) -> None:
             d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd is not None:
-            b.obj = b.obj - Sum(v_divest_p * d.p_unitsize * _wt(lfd))
+            terms.append(-Sum(v_divest_p * d.p_unitsize * _wt(lfd)))
         if annd is not None:
-            b.obj = b.obj - Sum(v_divest_p * d.p_unitsize * _wt(annd))
+            terms.append(-Sum(v_divest_p * d.p_unitsize * _wt(annd)))
     if b.has_invest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         annu_n = Param(("n", "d"),
@@ -3736,9 +3810,9 @@ def _obj_invest_divest(b: _Build) -> None:
             d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})) \
             if d.ed_lifetime_fixed_cost is not None else None
         if annu_n is not None:
-            b.obj = b.obj + Sum(v_invest_n * us_n * _wt(annu_n))
+            terms.append(Sum(v_invest_n * us_n * _wt(annu_n)))
         if lf_n is not None:
-            b.obj = b.obj + Sum(v_invest_n * us_n * _wt(lf_n))
+            terms.append(Sum(v_invest_n * us_n * _wt(lf_n)))
     if b.has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         lfd_n = Param(("n", "d"),
@@ -3748,9 +3822,10 @@ def _obj_invest_divest(b: _Build) -> None:
             d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
             if d.ed_entity_annual_divest_discounted is not None else None
         if lfd_n is not None:
-            b.obj = b.obj - Sum(v_divest_n * us_n * _wt(lfd_n))
+            terms.append(-Sum(v_divest_n * us_n * _wt(lfd_n)))
         if annd_n is not None:
-            b.obj = b.obj - Sum(v_divest_n * us_n * _wt(annd_n))
+            terms.append(-Sum(v_divest_n * us_n * _wt(annd_n)))
+    return _sum_terms(terms)
 
 
 def _obj_existing_fixed_cost(b: _Build) -> None:
@@ -3791,7 +3866,7 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
 # Feature modules
 
 
-def _feature_group_slack(b: _Build) -> None:
+def _feature_group_slack(b: _Build) -> Expr | None:
     """Group slack constraints and penalties (_group_slack)."""
     m, d = b.m, b.d
     v_flow = b.v_flow
@@ -3824,12 +3899,11 @@ def _feature_group_slack(b: _Build) -> None:
         vars_["vq_state_up"]   = vq_up
         vars_["vq_state_down"] = vq_down
         _group_slack.add_constraints(m, d, vars_)
-        gs_obj = _group_slack.add_objective_terms(m, d, vars_, op_factor)
-        if gs_obj is not None:
-            b.obj = b.obj + gs_obj
+        return _group_slack.add_objective_terms(m, d, vars_, op_factor)
+    return None
 
 
-def _feature_reserve(b: _Build) -> None:
+def _feature_reserve(b: _Build) -> Expr | None:
     """Reserve constraints and costs (_reserve)."""
     m, d = b.m, b.d
     v_flow = b.v_flow
@@ -3866,12 +3940,11 @@ def _feature_reserve(b: _Build) -> None:
         if b.has_divest_n:
             res_vars["v_divest_n"]   = v_divest_n
         _reserve.add_constraints(m, d, res_vars)
-        res_obj = _reserve.add_objective_terms(m, d, res_vars, op_factor)
-        if res_obj is not None:
-            b.obj = b.obj + res_obj
+        return _reserve.add_objective_terms(m, d, res_vars, op_factor)
+    return None
 
 
-def _feature_cumulative_invest(b: _Build) -> None:
+def _feature_cumulative_invest(b: _Build) -> Expr | None:
     """Cumulative and group investment limits (_cumulative_invest)."""
     m, d = b.m, b.d
     v_flow = b.v_flow
@@ -3890,12 +3963,11 @@ def _feature_cumulative_invest(b: _Build) -> None:
             "v_flow":     v_flow     if b.has_proc     else None,
         }
         _cumulative_invest.add_constraints(m, d, cum_vars)
-        ci_obj = _cumulative_invest.add_objective_terms(m, d, cum_vars, op_factor)
-        if ci_obj is not None:
-            b.obj = b.obj + ci_obj
+        return _cumulative_invest.add_objective_terms(m, d, cum_vars, op_factor)
+    return None
 
 
-def _feature_delay(b: _Build) -> None:
+def _feature_delay(b: _Build) -> Expr | None:
     """Delayed flows (_delay)."""
     m, d = b.m, b.d
     v_flow = b.v_flow
@@ -3904,13 +3976,11 @@ def _feature_delay(b: _Build) -> None:
     if _delay.has_feature(d):
         delay_vars: dict = {"v_flow": v_flow if b.has_proc else None}
         _delay.add_constraints(m, d, delay_vars)
-    delay_obj = _delay.add_objective_terms(
+    return _delay.add_objective_terms(
         m, d, {"v_flow": v_flow if b.has_proc else None}, op_factor)
-    if delay_obj is not None:
-        b.obj = b.obj + delay_obj
 
 
-def _feature_commodity_ladder(b: _Build) -> None:
+def _feature_commodity_ladder(b: _Build) -> Expr | None:
     """Commodity price ladder (_commodity_ladder)."""
     m, d = b.m, b.d
     v_flow = b.v_flow
@@ -3931,13 +4001,12 @@ def _feature_commodity_ladder(b: _Build) -> None:
             flow_from_commodity_noEff=d.flow_from_commodity_noEff,
             flow_to_commodity=d.flow_to_commodity,
         )
-        ladder_obj = _commodity_ladder.add_objective_terms(
+        return _commodity_ladder.add_objective_terms(
             m, d, ladder_vars,
             p_inflation_op=d.p_inflation_op,
             p_period_share=d.p_period_share,
         )
-        if ladder_obj is not None:
-            b.obj = b.obj + ladder_obj
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -5028,85 +5097,6 @@ def _indirect_sum_arcs(d) -> "pl.DataFrame | None":
                   on=["p", "source", "sink"], how="semi")
             .unique(maintain_order=True))
     return arcs if arcs.height > 0 else None
-
-
-def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
-                        reserve_up_sink_parts=None,
-                        invest_sum=None, divest_sum=None) -> None:
-    """Emit maxOutputSum / maxOutputSum_negCap (EQ. header in _eq_max_flow)."""
-    if pss_dt is None or pss_dt.height == 0:
-        return
-    fue = getattr(d, "p_flow_upper_existing", None)
-    if fue is None:
-        return
-    arcs = _indirect_sum_arcs(d)
-    if arcs is None:
-        return
-    over = (pss_dt.join(arcs, on=["p", "source", "sink"], how="semi")
-            .select("p", "d", "t")
-            .unique(maintain_order=True))
-    if over.height == 0:
-        return
-
-    lhs: dict = {"flow": Sum(Where(v_flow, arcs), over=("source", "sink"))}
-    if reserve_up_sink_parts is not None:
-        v_res_at_sink, pruna_up_sink = reserve_up_sink_parts
-        res_sel = pruna_up_sink.join(
-            arcs.select("p", "sink").unique(), on=["p", "sink"], how="semi")
-        if res_sel.height > 0:
-            lhs["reserve_up"] = Sum(Where(v_res_at_sink, res_sel),
-                                    over=("r", "ud", "sink"))
-    # Availability over the constraint rows, densified to the 1.0 default
-    # (a plain Param product would drop processes without availability data).
-    avail_pdt = (_availability_factor(d, over)
-                 if d.p_process_availability is not None else None)
-    if invest_sum is not None:
-        lhs["invest_neg"] = -(invest_sum * avail_pdt
-                              if avail_pdt is not None else invest_sum)
-    if divest_sum is not None:
-        lhs["divest"] = (divest_sum * avail_pdt
-                         if avail_pdt is not None else divest_sum)
-
-    # RHS: existing count per (p, d) — the value maxFlow's indirect output
-    # arcs carry (all arcs of a process share it; ``max`` collapses them);
-    # a greenfield unit without an existing row gets 0.
-    exist_pd = (fue.frame
-                .join(arcs, on=["p", "source", "sink"], how="semi")
-                .group_by("p", "d")
-                .agg(pl.col("value").max().alias("__ex")))
-    rhs_lf = (over.lazy()
-              .join(exist_pd.lazy(), on=["p", "d"], how="left")
-              .with_columns(pl.col("__ex").fill_null(0.0)))
-    if d.p_process_availability is not None:
-        avail_lf = promote_param_to_dt(d.p_process_availability, d.dt)
-        rhs_lf = (rhs_lf
-                  .join(avail_lf, on=["p", "d", "t"], how="left",
-                        suffix="__a")
-                  .with_columns(pl.col("value").fill_null(1.0)
-                                .alias("__av")))
-    else:
-        rhs_lf = rhs_lf.with_columns(pl.lit(1.0).alias("__av"))
-    rhs_frame = (rhs_lf
-                 .select("p", "d", "t",
-                         value=pl.col("__ex") * pl.col("__av"))
-                 .collect())
-    rhs = Param(("p", "d", "t"), rhs_frame)
-
-    pd_neg_cap = getattr(d, "pd_neg_cap", None)
-    if pd_neg_cap is not None and pd_neg_cap.height > 0:
-        neg_over = over.join(pd_neg_cap.select("p", "d"),
-                             on=["p", "d"], how="semi")
-        pos_over = over.join(pd_neg_cap.select("p", "d"),
-                             on=["p", "d"], how="anti")
-    else:
-        neg_over = over.head(0)
-        pos_over = over
-    if pos_over.height > 0:
-        m.add_cstr("maxOutputSum", over=pos_over, sense="<=",
-                   lhs_terms=lhs, rhs_terms={"upper": rhs})
-    if neg_over.height > 0:
-        m.add_cstr("maxOutputSum_negCap", over=neg_over, sense=">=",
-                   lhs_terms=lhs, rhs_terms={"upper": rhs})
 
 
 def _online_mintime_carry_term(carry: "pl.DataFrame | None",
