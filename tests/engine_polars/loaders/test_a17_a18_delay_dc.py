@@ -8,7 +8,7 @@ False on the resulting FlexData-shaped object.
 A.18: pin the truncated π literal ``_PI_LITERAL = 3.14159265`` used as
 the ±bound on ``v_angle``.  Regression-pin: a refactor that swaps to
 ``math.pi`` would silently change LP coefficients vs flextool's MPS
-golden output.  See ``flextool.mod:1680-1681``.
+golden output.
 """
 from __future__ import annotations
 
@@ -81,9 +81,9 @@ def test_angle_var_bounds_pi_literal(tmp_path: Path):
     )
     assert _dc_power_flow.has_feature(d) is True
 
-    b = SimpleNamespace(m=Problem(), d=d, v_flow_back=None, dc_pf_vars={})
+    b = SimpleNamespace(m=Problem(), d=d, v_angle=None)
     _dc_power_flow.add_variables(b)
-    v_angle = b.dc_pf_vars["v_angle"]
+    v_angle = b.v_angle
     # Hand-calc: bounds are ±_PI_LITERAL == ±3.14159265 exactly.
     assert v_angle.lower == -3.14159265
     assert v_angle.upper == 3.14159265

@@ -153,7 +153,7 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ── Commodity ladder.  v_trade is DIMENSIONLESS; row coef
     # ``unitsize`` turns it into ENERGY for the ladder caps and the
     # balance row.
-    # flextool/engine_polars/_commodity_ladder.py:399
+    # flextool/engine_polars/_commodity_ladder.py add_variables
     "v_trade": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="unitsize"),
 
     # ── Group-level slacks.  Direct physical units.
@@ -166,10 +166,10 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
 
     # ── DC power flow.
     # ``v_angle`` (radians).  Dimensionless in our taxonomy.
-    # flextool/engine_polars/_dc_power_flow.py:250
+    # flextool/engine_polars/_dc_power_flow.py add_variables
     "v_angle": VarFamily(QuantityType.DIMENSIONLESS),
     # ``v_flow_back`` mirrors v_flow on the reverse direction.
-    # flextool/engine_polars/_dc_power_flow.py:296
+    # flextool/engine_polars/model.py _declare_variables
     "v_flow_back": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Benders (Option C) hand-built master families.  The hand master
@@ -444,9 +444,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "minimum_downtime": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # ── DC PF.
-    # flextool/engine_polars/_dc_power_flow.py:397 — RHS=0, skip.
+    # flextool/engine_polars/_dc_power_flow.py _eq_dc_flow — RHS=0, skip.
     "dc_flow_eq": CstrFamily(None),
-    # flextool/engine_polars/_dc_power_flow.py:340 — fixed-zero angle
+    # flextool/engine_polars/_dc_power_flow.py _eq_reference_angle — fixed-zero angle
     # at the reference node; RHS=0, skip per-row scaling.
     "dc_reference_angle_eq": CstrFamily(None),
 
@@ -476,11 +476,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "non_sync_constraint": CstrFamily(QuantityType.POWER),
 
     # ── Commodity ladder.  ENERGY (MWh).
-    # flextool/engine_polars/_commodity_ladder.py:521
+    # flextool/engine_polars/_commodity_ladder.py _eq_ladder_balance
     "commodity_ladder_balance": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/_commodity_ladder.py:561  ← the H2_trade trigger
+    # flextool/engine_polars/_commodity_ladder.py _eq_tier_cap_annual
     "ladder_tier_cap_annual_roll": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/_commodity_ladder.py:607
+    # flextool/engine_polars/_commodity_ladder.py _eq_tier_cap_cumulative
     "ladder_tier_cap_cumulative_roll": CstrFamily(QuantityType.ENERGY),
 
     # ── Forbid-invest rows.  RHS = 0 by construction; skip per-row.

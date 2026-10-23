@@ -4929,7 +4929,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # ``schema_dtype`` / ``lit_axis`` / ``alias_to_axis`` reach for
         # the live ContextVar when called with ``enums=None``, and
         # without this stash the ContextVar is reset before
-        # ``build_flextool`` runs (see _delay.build_indirect_delayed_in_flow
+        # ``build_flextool`` runs (see _delay.delayed_input_expr
         # which calls ``cast_dim(..., None, ...)``).
         flex_data._axis_enums = axis_enums
 

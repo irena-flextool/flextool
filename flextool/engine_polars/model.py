@@ -124,7 +124,7 @@ class _Build:
     to its family function.  Fields are filled in step order: flags and
     index sets by ``_prepare``, variables by ``_declare_variables``, shared
     expressions by ``_shared_expressions``.  The objective is not held here:
-    the ``_obj_*``, ``_feature_*`` and ``objective_terms`` steps return their terms to
+    the ``_obj_*`` and ``objective_terms`` steps return their terms to
     :func:`build_flextool`.
     """
 
@@ -205,8 +205,8 @@ class _Build:
     vq_capacity_margin: Var | None = None
     vq_inertia: Var | None = None
     vq_non_synchronous: Var | None = None
-    dc_pf_vars: dict = field(default_factory=dict)
-    ladder_vars: dict = field(default_factory=dict)
+    v_angle: Var | None = None
+    v_trade: Var | None = None
 
     # ── shared expressions ──
     node_balance_flow_terms: dict = field(default_factory=dict)
@@ -268,7 +268,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_storage_start_binding_cyclic,
         _eq_storage_reference_value,
         _eq_profiles,
-        # ── objective ──
+        # ── core objective terms ──
         _obj_balance_slack,
         _obj_commodity,
         _obj_co2_price,
@@ -278,14 +278,14 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _obj_storage_reference_price,
         _obj_invest_divest,
         _obj_existing_fixed_cost,
-        # ── feature modules: constraints + objective terms ──
+        # ── further constraint families and their objective terms ──
         _group_slack.add_constraints,
         _group_slack.objective_terms,
         _reserve.add_constraints,
         _reserve.objective_terms,
         _cumulative_invest.add_constraints,
-        _feature_delay,
-        _feature_commodity_ladder,
+        _commodity_ladder.add_constraints,
+        _commodity_ladder.objective_terms,
         # ── stochastic ties ──
         _non_anticipativity.add_dispatch_constraints,
         _non_anticipativity.add_invest_constraints,
@@ -606,7 +606,7 @@ def _declare_variables(b: _Build) -> None:
     # DC power-flow angles (v_angle) and commodity-ladder trades (v_trade):
     # declared by their feature modules.
     _dc_power_flow.add_variables(b)
-    b.ladder_vars = _commodity_ladder.add_variables(m, d) if b.has_ladder else {}
+    _commodity_ladder.add_variables(b)
 
     # Group soft-floor slacks (vq_capacity_margin, vq_inertia, vq_non_synchronous): declared by _group_slack.
     _group_slack.add_variables(b)
@@ -2917,52 +2917,6 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
     fc_const = fc_frame["contrib"].sum()
     if fc_const:
         b.m.add_obj_constant(float(fc_const))
-
-
-# ---------------------------------------------------------------------------
-# Feature modules
-
-
-def _feature_delay(b: _Build) -> Expr | None:
-    """Delayed flows (_delay)."""
-    m, d = b.m, b.d
-    v_flow = b.v_flow
-    op_factor = b.op_factor
-    # ─── Delayed processes / DR ──────────────────────────────────────────
-    if _delay.has_feature(d):
-        delay_vars: dict = {"v_flow": v_flow if b.has_proc else None}
-        _delay.add_constraints(m, d, delay_vars)
-    return _delay.add_objective_terms(
-        m, d, {"v_flow": v_flow if b.has_proc else None}, op_factor)
-
-
-def _feature_commodity_ladder(b: _Build) -> Expr | None:
-    """Commodity price ladder (_commodity_ladder)."""
-    m, d = b.m, b.d
-    v_flow = b.v_flow
-    ladder_vars = b.ladder_vars
-    # ─── Commodity price ladder ──────────────────────────────────────────
-    # Per-tier v_trade balance + tier-cap constraints + per-tier price
-    # objective contribution.  The legacy commodity price term above
-    # already filtered out ladder commodities, so this term replaces it.
-    if b.has_ladder:
-        _commodity_ladder.add_constraints(
-            m, d, ladder_vars,
-            v_flow=v_flow if b.has_proc else None,
-            p_unitsize=d.p_unitsize,
-            p_slope=d.p_slope,
-            p_step_duration=d.p_step_duration,
-            p_timestep_weight=d.p_timestep_weight,
-            flow_from_commodity_eff=d.flow_from_commodity_eff,
-            flow_from_commodity_noEff=d.flow_from_commodity_noEff,
-            flow_to_commodity=d.flow_to_commodity,
-        )
-        return _commodity_ladder.add_objective_terms(
-            m, d, ladder_vars,
-            p_inflation_op=d.p_inflation_op,
-            p_period_share=d.p_period_share,
-        )
-    return None
 
 
 # ---------------------------------------------------------------------------

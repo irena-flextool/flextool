@@ -4,9 +4,9 @@ Two structural-finding regression pins (B19) and two ladder-objective
 oracles (B20):
 
 * B19-1 — ``v_delay_dispatch * p_delay_dispatch_cost`` term DOES NOT
-          exist in engine_polars.  ``_delay.add_objective_terms``
-          (``_delay.py:407-416``) is a no-op stub; delay cost flows
-          through commodity prices on source flows.
+          exist in engine_polars.  ``_delay`` adds no objective
+          terms; delay cost flows through commodity prices on source
+          flows.
 * B19-2 — ``v_dr_call * p_dr_cost`` term DOES NOT exist.  No DR
           variable / parameter is registered anywhere in the polars
           engine.  Consolidated with B19-1 in a single test that solves
@@ -14,8 +14,8 @@ oracles (B20):
           present and the obj matches the closed-form value that
           accounts ONLY for commodity-priced flows.
 * B20-3 — Annualisation factor ``inflation_op / period_share`` on the
-          ladder objective contribution (``_commodity_ladder.py:538-540,
-          548-549, 556-557``).  Step_duration / timestep_weight do NOT
+          ladder objective contribution
+          (``_commodity_ladder.objective_terms``).  Step_duration / timestep_weight do NOT
           enter the ladder term — that asymmetry is also pinned.
 * B20-4 — Legacy commodity price suppression for ladder commodities
           (``model.py:2401-2414``).  When the same commodity carries

@@ -1,53 +1,10 @@
-"""DC power flow physics — linearised AC transmission constraints.
+"""DC power flow: linearised AC flow on the connections of a DC power-flow network.
 
-Mirrors the .mod's ``dc_flow_eq`` family (flextool.mod:3236-3244)::
-
-    s.t. dc_flow_eq {p in connection_dc_power_flow,
-                     (p, source, sink) in process_source_toSink,
-                     (p, 'sink', b_out) in process__side__block,
-                     (b_out, d, t) in block__period__step
-                     : source in node_dc_power_flow
-                       && sink in node_dc_power_flow} :
-      v_flow[p, source, sink, d, t] * p_entity_unitsize[p]
-      =
-      p_connection_susceptance[p] * (v_angle[source, d, t] - v_angle[sink, d, t])
-
-In flextool's V1 DC PF scenarios all participating nodes sit on the
-default (hourly) block, so the block-aware filter
-(``(p, 'sink', b_out) in process__side__block`` × ``(b_out, d, t) in
-block__period__step``) reduces to the plain ``(d, t)`` set.  Our
-emission follows that V1 simplification: we index dc_flow_eq over
-``connection_dc_power_flow × process_source_toSink × dt`` filtered to
-``source, sink in node_dc_power_flow``.  Block-aware extension is
-out of scope until a fixture exercises non-default blocks for DC PF
-nodes (none do as of v51).
-
-Inputs
-------
-* ``input/node_dc_power_flow.csv``      single-column ``node``
-* ``input/connection_dc_power_flow.csv`` single-column ``process``
-* ``input/node_reference_angle.csv``    single-column ``node`` (angle pinned to 0)
-* ``input/p_connection_susceptance.csv`` two-column ``process,p_connection_susceptance``
-
-Reference-angle policy
-----------------------
-Reference selection is handled by the
-:mod:`flextool.input_derivation._dc_power_flow` derivation, which
-emits the ``node_reference_angle.csv`` file.  Per connected component
-of the DC PF subnetwork, exactly one node carries angle = 0:
-
-  * If the group has ``reference_node`` set explicitly, that node is used.
-  * Otherwise BFS finds connected components (via
-    ``connection__node__node`` adjacency) and picks the node with the
-    largest ``existing`` capacity in each component.
-
-The engine reads the resulting CSV verbatim and pins
-``v_angle[ref, d, t] = 0`` via the angle Var's per-row tight bound (the
-.mod uses the same trick — ``p_angle_lower = p_angle_upper = 0`` for
-ref nodes).  The non-reference angle bounds are ±π (the .mod literal
-``3.14159265``); polar_high's scalar-bound Var declaration uses ±π as
-the loose bound, then emits an explicit equality ``v_angle[ref] = 0``
-for reference nodes (since polar_high Var bounds are scalar).
+Owns the variable v_angle and the rows dc_reference_angle_eq and dc_flow_eq: the flow on each DC arc equals
+the connection's susceptance times the voltage-angle difference of its end nodes.  One node per connected
+component (node_reference_angle, chosen in input derivation) has its angle pinned to 0.  The reverse flow
+v_flow_back of the arcs, its capacity row and its node-balance terms belong to model.py, which shares them
+with the other method_2way_1var_off arcs; :func:`nodeBalance_back_flow_terms` builds those balance terms.
 """
 from __future__ import annotations
 
@@ -55,11 +12,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
-
-from polar_high import Param, Where
+from polar_high import Param, Sum, Where
+from polar_high.engine import Var
 
 from ._axis_enums import cast_dim
-
+from ._model_common import _has_rows
 
 if TYPE_CHECKING:
     from .model import _Build
@@ -68,14 +25,9 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Feature detection
 
-def has_feature(d) -> bool:
-    """True iff DC power flow data is populated and non-empty.
 
-    Activation requires both at least one node in ``node_dc_power_flow``
-    AND at least one connection in ``connection_dc_power_flow``.  A
-    fixture with header-only CSVs (most of the v51 fixtures) returns
-    False.
-    """
+def has_feature(d) -> bool:
+    """True when at least one node is in node_dc_power_flow and one connection in connection_dc_power_flow."""
     nd = getattr(d, "node_dc_power_flow", None)
     cd = getattr(d, "connection_dc_power_flow", None)
     if nd is None or cd is None:
@@ -84,42 +36,23 @@ def has_feature(d) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Data loading
+# Loader
 
-def load_data(
-    inp_dir: str | Path,
-    *,
-    provider: "object | None" = None,
-) -> dict:
-    """Read DC power flow frames via the Provider (disk-fallback for
-    off-cascade test harnesses).
 
-    Returns a dict with keys matching the FlexData field names:
+def load_data(inp_dir: str | Path, *, provider=None) -> dict:
+    """The DC power-flow sets and susceptance, as ``field_name -> DataFrame | Param | None``.
 
-        node_dc_power_flow         pl.DataFrame | None  # cols: (n,)
-        connection_dc_power_flow   pl.DataFrame | None  # cols: (p,)
-        node_reference_angle       pl.DataFrame | None  # cols: (n,)
-        p_connection_susceptance   Param | None         # dims: (p,)
+    Fields::
 
-    All values are ``None`` (or empty) when the feature is inactive
-    (header-only frames, which is what the
-    :func:`flextool.input_derivation._dc_power_flow.derive_dc_power_flow`
-    pass writes for non-DC-PF scenarios).
+        node_dc_power_flow         (n,)
+        connection_dc_power_flow   (p,)
+        node_reference_angle       (n,)      angle pinned to 0
+        p_connection_susceptance   Param (p,)
+        process_source_toSink_dc   (p, source, sink), one orientation per arc
 
-    Step 2.5-F Phase B
-    ------------------
-
-    The four frames are now produced by
-    :mod:`flextool.input_derivation._dc_power_flow` and placed on the
-    cascade-input :class:`FlexDataProvider` under
-    ``input/node_dc_power_flow``, ``input/connection_dc_power_flow``,
-    ``input/node_reference_angle``, ``input/p_connection_susceptance``.
-    In-cascade the Provider is the authoritative source; the disk-read
-    arm is preserved exclusively for off-cascade fixture loaders that
-    seed inputs to ``input/`` and invoke the loader without a Provider.
+    Every value is None when the feature is inactive (header-only frames).  Frames are read through
+    ``provider``; ``inp_dir`` is accepted for the loaders' uniform call.
     """
-    inp = Path(inp_dir)
-
     blank = dict(
         node_dc_power_flow       = None,
         connection_dc_power_flow = None,
@@ -128,7 +61,8 @@ def load_data(
         process_source_toSink_dc = None,
     )
 
-    def _frame_for(key: str, path: Path) -> "pl.DataFrame | None":
+    def _frame_for(key: str) -> pl.DataFrame | None:
+        """The provider's frame for ``key``; None when missing or empty."""
         if provider is None or not provider.has(key):
             return None
         df = provider.get(key)
@@ -136,27 +70,19 @@ def load_data(
             return None
         return df
 
-    def _project_single(df: "pl.DataFrame | None", col_in: str,
-                        col_out: str) -> "pl.DataFrame | None":
+    def _project_single(df: pl.DataFrame | None, col_in: str, col_out: str) -> pl.DataFrame | None:
+        """``df`` reduced to ``col_in`` renamed to ``col_out``."""
         if df is None:
             return None
         if col_in in df.columns and col_in != col_out:
             df = df.rename({col_in: col_out})
         return df.select(col_out)
 
-    nd_raw = _frame_for("input/node_dc_power_flow",
-                        inp / "node_dc_power_flow.csv")
-    cd_raw = _frame_for("input/connection_dc_power_flow",
-                        inp / "connection_dc_power_flow.csv")
-    rd_raw = _frame_for("input/node_reference_angle",
-                        inp / "node_reference_angle.csv")
+    nd = _project_single(_frame_for("input/node_dc_power_flow"), "node", "n")
+    cd = _project_single(_frame_for("input/connection_dc_power_flow"), "process", "p")
+    rd = _project_single(_frame_for("input/node_reference_angle"), "node", "n")
 
-    nd = _project_single(nd_raw, "node", "n")
-    cd = _project_single(cd_raw, "process", "p")
-    rd = _project_single(rd_raw, "node", "n")
-
-    pcs_raw = _frame_for("input/p_connection_susceptance",
-                         inp / "p_connection_susceptance.csv")
+    pcs_raw = _frame_for("input/p_connection_susceptance")
     pcs_param = None
     if pcs_raw is not None:
         df = pcs_raw.rename(
@@ -165,9 +91,7 @@ def load_data(
                 ("p_connection_susceptance", "value"),
             ] if c in pcs_raw.columns}
         ).select("p", "value")
-        # The Provider may carry the value as Utf8 (mirroring the legacy
-        # CSV emission); cast to Float64 so Param's downstream consumers
-        # see numeric values regardless of source.
+        # The provider may carry the value as text.
         if df["value"].dtype == pl.Utf8:
             df = df.with_columns(pl.col("value").cast(pl.Float64))
         pcs_param = Param(("p",), df)
@@ -175,12 +99,8 @@ def load_data(
     if nd is None and cd is None and rd is None and pcs_param is None:
         return blank
 
-    # Forward-direction (p, source, sink) for DC PF arcs.  The cascade's
-    # ``process_source_sink`` doubles up 2-way connections (both arc
-    # orientations), but the .mod's dc_flow_eq is indexed over
-    # ``process_source_toSink`` which is one direction per arc.  Read it
-    # from the Provider's ``solve_data/process_source_toSink`` key (the
-    # cascade writes it via _emit_calc_params.derive_process_source_toSink).
+    # One orientation per arc: process_source_sink lists a two-way connection in both directions, but
+    # dc_flow_eq has one row per arc.
     sst = None
     if provider is not None and provider.has("solve_data/process_source_toSink"):
         sst = provider.get("solve_data/process_source_toSink")
@@ -205,38 +125,27 @@ def load_data(
 
 
 # ---------------------------------------------------------------------------
-# Variable + constraint emission
+# Arcs
 
-# Same float literal flextool's preprocessing (preprocessing/dc_angle_bounds.py)
-# uses for the non-reference upper / lower angle bound.  An 8-digit
-# truncation of π — preserved here for parity with flextool's MPS bit
-# pattern.  See flextool.mod:1680-1681.
+
+# Bound of the non-reference angles: π truncated to 8 digits, the literal the angle bounds have always used
+# (a change would shift the LP's bound values).
 _PI_LITERAL = 3.14159265
 
 
-def dc_arcs_frame(d) -> "pl.DataFrame | None":
-    """Return the DC-power-flow arc set ``(p, source, sink)``.
+def dc_arcs_frame(d) -> pl.DataFrame | None:
+    """(p, source, sink) of the DC arcs; None when there are none.
 
-    A DC arc is a ``connection_dc_power_flow`` connection whose both
-    endpoints sit in ``node_dc_power_flow``, in the one-direction-per-arc
-    orientation (``process_source_toSink_dc`` when available, else the
-    dual-direction ``process_source_sink`` fallback for off-cascade
-    harnesses).  Returns ``None`` when no such arcs exist.
-
-    Factored out of :func:`add_variables` so ``model.py`` can compute the
-    DC subset that ``dc_flow_eq`` ranges over without owning the
-    ``v_flow_back`` Var (which is now shared across ALL
-    ``method_2way_1var_off`` arcs, DC + non-DC).
+    A DC arc is an arc of a connection_dc_power_flow connection whose both end nodes are in
+    node_dc_power_flow, in one orientation (process_source_toSink_dc; process_source_sink, which has both
+    orientations, when that set is absent).  model.py adds these arcs to the v_flow_back arcs.
     """
     if (d.process_source_sink is None
             or d.connection_dc_power_flow is None
             or d.connection_dc_power_flow.height == 0):
         return None
-    # source/sink carry the entity-union (``e``) Enum; ``n`` of
-    # node_dc_power_flow carries the node-only Enum.  Lift the latter
-    # to ``e`` so ``is_in`` matches dtypes.
-    _dc_n_e = d.node_dc_power_flow.with_columns(
-        cast_dim(pl.col("n"), None, "e"))["n"]
+    # source / sink carry the entity-union Enum, node_dc_power_flow.n the node Enum: widen n to match.
+    _dc_n_e = d.node_dc_power_flow.with_columns(cast_dim(pl.col("n"), None, "e"))["n"]
     arcs_src = (getattr(d, "process_source_toSink_dc", None)
                 if getattr(d, "process_source_toSink_dc", None) is not None
                 else d.process_source_sink)
@@ -244,9 +153,7 @@ def dc_arcs_frame(d) -> "pl.DataFrame | None":
         for col in ("p", "source", "sink"):
             target_dtype = d.process_source_sink.schema[col]
             if arcs_src.schema[col] != target_dtype:
-                arcs_src = arcs_src.with_columns(
-                    pl.col(col).cast(target_dtype, strict=False)
-                )
+                arcs_src = arcs_src.with_columns(pl.col(col).cast(target_dtype, strict=False))
     dc_arcs = (arcs_src
         .join(d.connection_dc_power_flow, on="p", how="inner")
         .filter(pl.col("source").is_in(_dc_n_e))
@@ -254,189 +161,123 @@ def dc_arcs_frame(d) -> "pl.DataFrame | None":
     return dc_arcs if dc_arcs.height > 0 else None
 
 
+# ---------------------------------------------------------------------------
+# Variables
+
+
 def add_variables(b: _Build) -> None:
-    """Declare ``v_angle[n, d, t]`` and stash the DC arc frame in ``b.dc_pf_vars``.
-
-    ``v_angle`` is indexed by (n, d, t) where n ∈ ``node_dc_power_flow``.
-    Bounds are set to the loose ±π for non-reference nodes; reference-angle
-    pin to 0 is enforced by ``dc_reference_angle_eq`` below (polar_high
-    Vars have scalar bounds, so we can't pin per-row in the Var declaration).
-
-    The reverse-flow auxiliary ``v_flow_back[p, source, sink, d, t]`` is no
-    longer created here — ``model.py`` declares it ONCE over the union of
-    all ``method_2way_1var_off`` arcs (DC + non-DC) so the single-signed
-    flow ``v_flow ∈ [-cap, +cap]`` can run sink→source on any such arc.
-    The shared Var is read from ``b.v_flow_back`` and stashed in
-    ``b.dc_pf_vars`` so :func:`add_constraints` can splice it into
-    ``dc_flow_eq`` as ``v_flow - v_flow_back``.  The nodeBalance injection
-    and the capacity cap (``maxFlow_back``) for the back auxiliary are
-    likewise owned by ``model.py`` over the full set.
-    """
-    m, d = b.m, b.d
-    v_flow_back = b.v_flow_back
-    if not has_feature(d):
+    """Declare v_angle when the DC power-flow network is active."""
+    d = b.d
+    if not has_feature(d) or d.dt is None or d.dt.height == 0:
         return
-    if d.dt is None or d.dt.height == 0:
-        return
-
-    # v_angle's index is the cross of node_dc_power_flow × dt.
     angle_idx = d.node_dc_power_flow.join(d.dt, how="cross").select("n", "d", "t")
     if angle_idx.height == 0:
         return
 
-    v_angle = m.add_var(
+    # ─── VAR. ─── v_angle ────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # −π ≤ v_angle[n,d,t] ≤ π   ∀ n ∈ node_dc_power_flow, (d,t) ∈ dt
+    # Voltage angle of node n, radians (π = 3.14159265).  Variable bounds are
+    # scalar, so the reference nodes are pinned to 0 by dc_reference_angle_eq.
+    b.v_angle = b.m.add_var(
         "v_angle", ("n", "d", "t"), angle_idx,
         lower=-_PI_LITERAL, upper=_PI_LITERAL,
     )
 
-    out: dict = {"v_angle": v_angle}
 
-    dc_arcs = dc_arcs_frame(d)
-    if dc_arcs is not None:
-        out["dc_arcs"] = dc_arcs
-        if v_flow_back is not None:
-            out["v_flow_back"] = v_flow_back
-
-    b.dc_pf_vars = out
+# ---------------------------------------------------------------------------
+# Constraints
 
 
 def add_constraints(b: _Build) -> None:
-    """Emit the dc_flow_eq + reference-angle pin.
-
-    Reads ``b.dc_pf_vars`` (from :func:`add_variables`), the model's
-    ``v_flow[p, source, sink, d, t]`` and ``d.p_unitsize``.  The back-flow
-    capacity cap is not here: ``model.py`` emits it as ``maxFlow_back`` over
-    the full ``method_2way_1var_off`` arc set (a superset of the DC arcs).
-    """
-    if not (b.has_proc and b.dc_pf_vars):
+    """dc_reference_angle_eq and dc_flow_eq, when the DC power-flow network is active."""
+    if not b.has_proc or b.v_angle is None:
         return
+    _eq_reference_angle(b)
+    _eq_dc_flow(b)
+
+
+def _eq_reference_angle(b: _Build) -> None:
+    """dc_reference_angle_eq: the angle of each reference node is 0."""
     d = b.d
-    m = b.m
-    vars = b.dc_pf_vars
-    v_flow = b.v_flow
-    p_unitsize = d.p_unitsize
-    if not has_feature(d):
+    if not _has_rows(d.node_reference_angle):
         return
-    v_angle = vars.get("v_angle")
-    if v_angle is None:
+    ref_idx = d.node_reference_angle.join(d.dt, how="cross").select("n", "d", "t")
+    if ref_idx.height == 0:
         return
 
-    # ── 1. Reference-angle pin ───────────────────────────────────────────
-    # v_angle[ref, d, t] == 0 for ref ∈ node_reference_angle.
-    # The .mod preprocesses this as a tight Var bound (p_angle_lower =
-    # p_angle_upper = 0 on those rows).  polar_high Var bounds are scalar,
-    # so emit an explicit equality constraint instead — same algebra.
-    if (d.node_reference_angle is not None
-            and d.node_reference_angle.height > 0):
-        ref_idx = (d.node_reference_angle
-                   .join(d.dt, how="cross")
-                   .select("n", "d", "t"))
-        if ref_idx.height > 0:
-            m.add_cstr(
-                "dc_reference_angle_eq",
-                over      = ref_idx,
-                sense     = "==",
-                lhs_terms = {"angle": Where(v_angle, ref_idx)},
-                rhs_terms = {},
-            )
+    # ─── EQ. ─── dc_reference_angle_eq ───────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_angle[n,d,t] = 0   ∀ n ∈ node_reference_angle, (d,t) ∈ dt
+    # Fixes the angle reference of each connected DC network.
+    b.m.add_cstr(
+        "dc_reference_angle_eq",
+        over      = ref_idx,
+        sense     = "==",
+        lhs_terms = {"angle": Where(b.v_angle, ref_idx)},
+        rhs_terms = {},
+    )
 
-    # ── 2. dc_flow_eq ────────────────────────────────────────────────────
-    # (v_flow - v_flow_back) * unitsize[p]
-    #   == susceptance[p] * (v_angle[source, d, t] - v_angle[sink, d, t])
-    # Indexed over (p, source, sink, d, t) where p ∈
-    # connection_dc_power_flow AND source, sink ∈ node_dc_power_flow.
-    if v_flow is None or p_unitsize is None or d.p_connection_susceptance is None:
+
+def _eq_dc_flow(b: _Build) -> None:
+    """dc_flow_eq: flow on each DC arc from the angle difference of its end nodes."""
+    d, v_flow, v_angle = b.d, b.v_flow, b.v_angle
+    if v_flow is None or d.p_unitsize is None or d.p_connection_susceptance is None:
         return
-    if d.process_source_sink is None:
+    dc_arcs = dc_arcs_frame(d)
+    if dc_arcs is None:
         return
 
-    dc_arcs = vars.get("dc_arcs")
-    if dc_arcs is None or dc_arcs.height == 0:
-        return
-
+    # ─── EQ. ─── dc_flow_eq ──────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # (v_flow[p,s,k,d,t] − v_flow_back[p,s,k,d,t]) · unitsize[p]
+    #   = susceptance[p] · (v_angle[s,d,t] − v_angle[k,d,t])
+    #   ∀ (p,s,k) ∈ DC arcs (dc_arcs_frame), (d,t) ∈ dt
+    # Linearised AC flow: the signed flow (MW) on a DC arc follows the angle difference of its end nodes.
+    # v_flow_back is absent when the model has no reverse-flow variable.  All DC nodes are on the
+    # default time block, so the rows run over dt.
     over = dc_arcs.join(d.dt, how="cross").select("p", "source", "sink", "d", "t")
-
-    # LHS: (v_flow - v_flow_back) * unitsize.  v_flow_back is the
-    # non-negative reverse-direction auxiliary (see add_variables).  In
-    # fixtures with no negative-flow demand the LP keeps v_flow_back at
-    # zero and the term reduces to v_flow * unitsize.
-    v_flow_back = vars.get("v_flow_back")
     flow_signed = Where(v_flow, dc_arcs)
-    if v_flow_back is not None:
-        flow_signed = flow_signed - v_flow_back
-    lhs_flow = flow_signed * p_unitsize
-
-    # RHS: susceptance[p] * (v_angle[source, d, t] - v_angle[sink, d, t]).
-    # v_angle is indexed by (n, d, t).  We need it twice — once aliased as
-    # ``source`` and once aliased as ``sink`` — so the join with the per-arc
-    # ``over`` frame matches the right column on each side.  Build virtual
-    # Vars sharing v_angle's column ids but with renamed dim columns.
-    from polar_high.engine import Var
-
-    v_angle_src = Var(
-        name=v_angle.name + "__as_source",
-        dims=("source", "d", "t"),
-        frame=v_angle.frame.rename({"n": "source"}),
-        lower=v_angle.lower, upper=v_angle.upper,
-    )
-    v_angle_snk = Var(
-        name=v_angle.name + "__as_sink",
-        dims=("sink", "d", "t"),
-        frame=v_angle.frame.rename({"n": "sink"}),
-        lower=v_angle.lower, upper=v_angle.upper,
-    )
-    susc = d.p_connection_susceptance   # Param over (p,)
-    rhs_angle_diff = (Where(v_angle_src, dc_arcs.select("p", "source"))
-                      - Where(v_angle_snk, dc_arcs.select("p", "sink"))) * susc
-
-    m.add_cstr(
+    if b.v_flow_back is not None:
+        flow_signed = flow_signed - b.v_flow_back
+    # Views of v_angle (same columns) indexed by the arc's source and sink node.
+    v_angle_src = Var(name=v_angle.name + "__as_source", dims=("source", "d", "t"),
+                      frame=v_angle.frame.rename({"n": "source"}), lower=v_angle.lower, upper=v_angle.upper)
+    v_angle_snk = Var(name=v_angle.name + "__as_sink", dims=("sink", "d", "t"),
+                      frame=v_angle.frame.rename({"n": "sink"}), lower=v_angle.lower, upper=v_angle.upper)
+    angle_diff = (Where(v_angle_src, dc_arcs.select("p", "source"))
+                  - Where(v_angle_snk, dc_arcs.select("p", "sink"))) * d.p_connection_susceptance
+    b.m.add_cstr(
         "dc_flow_eq",
         over      = over,
         sense     = "==",
-        lhs_terms = {"flow": lhs_flow},
-        rhs_terms = {"angle_diff": rhs_angle_diff},
+        lhs_terms = {"flow": flow_signed * d.p_unitsize},
+        rhs_terms = {"angle_diff": angle_diff},
     )
 
 
-def nodeBalance_back_flow_terms(arcs, v_flow_back, p_unitsize,
-                                p_step_duration) -> dict:
-    """Return the v_flow_back contribution to nodeBalance, keyed by name.
+# ---------------------------------------------------------------------------
+# Node-balance terms of v_flow_back (used by model.py)
 
-    The signed flow on a ``method_2way_1var_off`` arc is
-    ``v_flow - v_flow_back``.  ``v_flow`` is already plumbed into
-    ``model.py``'s nb_terms via ``flow_to_n`` / source-side
-    ``flow_from_nodeBalance_*`` sets.  The ``-v_flow_back`` half mirrors
-    those terms with reversed signs:
 
-      * sink-side gets ``-v_flow_back × unitsize`` (back flow LEAVES sink)
-      * source-side gets ``+v_flow_back × unitsize`` (back flow ARRIVES at source)
+def nodeBalance_back_flow_terms(arcs: pl.DataFrame | None, v_flow_back: Var | None, p_unitsize: Param,
+                                p_step_duration: Param) -> dict:
+    """The v_flow_back terms of nodeBalance_eq, open dims (n, d, t); {} without reverse flow.
 
-    *arcs* is the ``(p, source, sink)`` frame the back auxiliary spans
-    (the full ``method_2way_1var_off`` set — DC + non-DC).  Returns ``{}``
-    when no back flow is active.
+    back_at_sink[n,d,t]   = − Σ_{(p,s,n) ∈ arcs} v_flow_back[p,s,n,d,t] · unitsize[p] · step_duration[d,t]
+    back_at_source[n,d,t] = + Σ_{(p,n,k) ∈ arcs} v_flow_back[p,n,k,d,t] · unitsize[p] · step_duration[d,t]
+    The signed flow of an arc is v_flow − v_flow_back, so the reverse flow leaves the sink node and arrives
+    at the source node.  ``arcs`` = every arc with a reverse-flow variable (twoway1var_arcs).
     """
     if v_flow_back is None or arcs is None or arcs.height == 0:
         return {}
-
-    from polar_high import Sum
-
-    # Sink side: back flow leaves the sink — subtract from sink balance.
-    # Build ``flow_from_n_back`` = (p, source, sink, n=sink): same shape
-    # as flow_to_n but flips the sign in nodeBalance.  We use
-    # `Where(... )` with the frame having an explicit ``n`` column to
-    # collapse the (p, source, sink) dims into (n, d, t) via Sum.
-    sink_as_n = arcs.with_columns(n=pl.col("sink")).select(
-        "p", "source", "sink", "n")
-    src_as_n = arcs.with_columns(n=pl.col("source")).select(
-        "p", "source", "sink", "n")
-
+    sink_as_n = arcs.with_columns(n=pl.col("sink")).select("p", "source", "sink", "n")
+    src_as_n = arcs.with_columns(n=pl.col("source")).select("p", "source", "sink", "n")
     return {
-        # back flow at sink: -v_flow_back × unitsize × step_duration
         "back_at_sink": -Sum(
             Where(v_flow_back * p_unitsize, sink_as_n) * p_step_duration,
             over=("p", "source", "sink"),
         ),
-        # back flow at source: +v_flow_back × unitsize × step_duration
         "back_at_source": Sum(
             Where(v_flow_back * p_unitsize, src_as_n) * p_step_duration,
             over=("p", "source", "sink"),
